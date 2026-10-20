@@ -2983,6 +2983,9 @@ importers:
 
   verticals/siampark-agreements:
     dependencies:
+      '@app/siampark-ops':
+        specifier: workspace:*
+        version: link:../siampark-ops
       '@app/admin-ui':
         specifier: workspace:*
         version: link:../../packages/admin-ui

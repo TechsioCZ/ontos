@@ -1,0 +1,101 @@
+.sp-occupancy-calendar {
+  min-width: 0;
+}
+.sp-calendar-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+}
+.sp-calendar-controls strong {
+  min-width: 100px;
+  text-align: center;
+  text-transform: capitalize;
+}
+.sp-calendar-muted {
+  color: var(--color-fg-secondary);
+  font-size: 12px;
+  line-height: 1.7;
+}
+.sp-calendar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 12px;
+}
+.sp-calendar-legend span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sp-calendar-legend b {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+}
+.sp-calendar-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  padding-bottom: 8px;
+}
+.sp-calendar-scroll table {
+  border-collapse: separate;
+  border-spacing: 2px;
+  min-width: 1020px;
+  width: 100%;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.sp-calendar-scroll caption {
+  text-align: left;
+  color: var(--color-fg-secondary);
+  padding-bottom: 12px;
+  font-size: 12px;
+}
+.sp-calendar-scroll th {
+  font-weight: 500;
+  padding: 6px 2px;
+}
+.sp-calendar-scroll th[aria-current='date'] {
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.sp-calendar-scroll th:first-child {
+  position: sticky;
+  left: 0;
+  min-width: 68px;
+  text-align: left;
+  background: var(--color-surface);
+  z-index: 1;
+}
+.sp-calendar-scroll td a {
+  display: grid;
+  place-items: center;
+  min-width: 26px;
+  min-height: 30px;
+  border-radius: 4px;
+  text-decoration: none;
+  color: var(--color-fg-secondary);
+}
+.sp-day-occupied {
+  background: var(--color-surface-subtle);
+  box-shadow: inset 0 -2px 0 var(--color-fg-secondary);
+  font-weight: 700;
+  color: var(--color-page-fg) !important;
+}
+.sp-day-reserved {
+  border: 1px dashed var(--color-fg-secondary);
+  font-weight: 600;
+  color: var(--color-page-fg) !important;
+}
+.sp-calendar-scroll td a:hover {
+  outline: 1px solid var(--color-fg-secondary);
+}
+.sp-calendar-scroll a:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}

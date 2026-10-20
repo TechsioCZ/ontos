@@ -58,6 +58,7 @@ import csResource from '../../../../../locales/cs/siampark-occupancy.json';
 import enResource from '../../../../../locales/en/siampark-occupancy.json';
 import '../../../index.css';
 import { TenantDirectory, TenantDossierCard } from './tenant-dossier.tsx';
+import { OccupancyCalendar } from './occupancy-calendar.tsx';
 
 const RecordsSearchSchema = Schema.Struct({ resourceId: Schema.optional(OccupancyRefSchema.fields.resourceId) });
 const LABEL_CHOOSE = 'siampark-occupancy.demo.choose';
@@ -1297,6 +1298,9 @@ const RecordsPageContent = () => {
               title={t('siampark-occupancy.pages.records.title')}
             />
             {snapshot !== undefined && <OccupancySummary state={state} />}
+            {snapshot !== undefined && state.properties !== undefined && (
+              <OccupancyCalendar language={state.language} properties={state.properties} snapshot={snapshot} />
+            )}
             <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:gap-2">
               <LinkButton href="#tenants" size="sm" theme="outlined" variant="secondary">
                 Nájemci a kontaktní osoby ↓

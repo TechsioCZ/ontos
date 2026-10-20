@@ -1,3 +1,4 @@
+import { dayOccupancy } from '../../src/routes/[lang]/siampark/occupancy/occupancy-calendar.tsx';
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Exit, Schema } from 'effect';
 
@@ -496,3 +497,11 @@ it.effect('rejects dossier updates without trusted author, for another tenant an
     ).toBe(true);
   }),
 );
+
+it('uses the source lease interval for each calendar day and immediately frees cancelled reservations', () => {
+  const confirmed = { ...draft, state: 'CONFIRMED' as const, startDate: '2027-01-01', endDate: '2027-01-31' };
+  expect(dayOccupancy([confirmed], unitRef.resourceId, '2027-01-15')).toBe(confirmed);
+  expect(dayOccupancy([confirmed], unitRef.resourceId, '2027-01-31')).toBeUndefined();
+  expect(dayOccupancy([{ ...confirmed, state: 'CANCELLED' }], unitRef.resourceId, '2027-01-15')).toBeUndefined();
+  expect(dayOccupancy([{ ...confirmed, state: 'DRAFT' }], unitRef.resourceId, '2027-01-15')).toBeUndefined();
+});

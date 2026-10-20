@@ -1,3 +1,4 @@
+import { RecordDiscussion } from '@app/siampark-ops/ui/record-discussion';
 import { DetailList, PageHeader, SectionCard, SidePanel, formatDate, formatMoney } from '@app/admin-ui';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
@@ -112,6 +113,13 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
             </SectionCard>
           </div>
           <ContractTermsCard state={state} />
+          <RecordDiscussion
+            subject={{
+              kind: 'contract',
+              id: selected.contractRef.resourceId,
+              label: selected.subject ?? unitName(selected.unitRef?.resourceId),
+            }}
+          />
           {selected.note !== null && (
             <SectionCard title={t('siampark-agreements.detail.note')}>
               <p className="siamparkagreements:whitespace-pre-wrap siamparkagreements:text-sm">{selected.note}</p>
@@ -599,7 +607,9 @@ const RecordsPageContent = () => {
                       </Table.Cell>
                       <Table.Cell>
                         <span className="siamparkagreements:tabular-nums">
-                          {contractMonthlyTotal(record) === undefined ? '—' : formatMoney(contractMonthlyTotal(record) ?? 0)}
+                          {contractMonthlyTotal(record) === undefined
+                            ? '—'
+                            : formatMoney(contractMonthlyTotal(record) ?? 0)}
                         </span>
                       </Table.Cell>
                       <Table.Cell>
