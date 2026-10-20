@@ -340,5 +340,9 @@
     "title": "Nový majetek",
     "submit": "Založit majetek"
   },
-  "created": "Majetek založen"
+  "created": "Majetek založen",
+  "table": {
+    "range": "{{start}}–{{end}} z {{total}}",
+    "pageSize": "Řádků na stránku"
+  }
 }

@@ -340,5 +340,9 @@
     "title": "New asset",
     "submit": "Create asset"
   },
-  "created": "Asset created"
+  "created": "Asset created",
+  "table": {
+    "range": "{{start}}–{{end}} of {{total}}",
+    "pageSize": "Rows per page"
+  }
 }

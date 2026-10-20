@@ -2,7 +2,7 @@
 // Siampark provoz — Majetek a odpisy (S02 evidence majetku, revize, inventury + S03 odpisové plány).
 // OWNED BY THE `assets` LANE (ops-assets). Data: governed records read (agenda `assets`); every change is one
 // command through the apply-command Action (shared/commands/assets.ts), then the agenda is reloaded.
-import { PageHeader, SidePanel, StatCard, StatRow, foldSearchText, formatMoney, formatNumber } from '@app/admin-ui';
+import { PageHeader, SidePanel, dataTableRowLabels, paginationTranslations, StatCard, StatRow, foldSearchText, formatMoney, formatNumber } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -393,10 +393,14 @@ const AssetsView = () => {
               getRowLabel={(row) => row.original.name}
               loading={false}
               onRowClick={(row) => setOpenId(row.original.id)}
-              pageSizeOptions={[25, 50, 100]}
+              pageSizeOptions={[50, 100, 200]}
+              paginationProps={{ translations: paginationTranslations }}
               size="sm"
               tableLayout="fixed"
               translations={{
+                ...dataTableRowLabels,
+                pageSizeLabel: k('table.pageSize'),
+                rangeLabel: ({ end, start, total }) => k('table.range', { end, start, total }),
                 emptyDescription:
                   statusFilter === 'disposed'
                     ? k('states.noDisposed')
