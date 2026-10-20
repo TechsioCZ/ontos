@@ -13,8 +13,16 @@ export const principalKindOf = (authMethod: TrustedPrincipalContext['authMethod'
 
 /** Commands reserved for human users; non-human principals (API keys, system jobs) are rejected. */
 export { nonHumanForbiddenCrmCommands as nonHumanForbiddenCommands } from '../commands/index.ts';
-import { nonHumanForbiddenCrmCommands as nonHumanForbiddenCommands } from '../commands/index.ts';
-const forbidsCommand = (commandTag: string): boolean => nonHumanForbiddenCommands.has(commandTag);
+import {
+  nonHumanAllowedCrmCommands,
+  nonHumanForbiddenCrmCommands as nonHumanForbiddenCommands,
+} from '../commands/index.ts';
+/**
+ * AI level C (ai-level-c lane): API keys (AI agents) may run only the allow-listed proposal command; every other
+ * CRM change needs a person. The forbidden list stays as the explicit human-only marker.
+ */
+const forbidsCommand = (commandTag: string): boolean =>
+  nonHumanForbiddenCommands.has(commandTag) || !nonHumanAllowedCrmCommands.has(commandTag);
 
 export const assertCommandAllowed = (
   principalKind: PrincipalKind,
@@ -25,7 +33,7 @@ export const assertCommandAllowed = (
     : Effect.fail(
         new CrmPermissionDenied({
           code: 'crm_permission_denied',
-          reason: `Crm command ${commandTag} is reserved for human users`,
+          reason: `Příkaz ${commandTag} smí v CRM provést jen člověk; AI agent může změny pouze navrhnout (AiProposeChanges).`,
         }),
       );
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * AI agent levels A and B (specs AGENT.md): separate non-human principals with their own backend grants and
+ * AI agent levels A, B and C (specs AGENT.md): separate non-human principals with their own backend grants and
  * managed API keys, one pair per demo company. LOCAL ONLY, idempotent.
  *
  *   node scripts/demo/ai-profiles.mts             # principals + grants + API keys (keys only when the shell is up)
@@ -14,7 +14,10 @@
  * Level B: the same reads + `siampark.work` write (tasks only): executor grants for `siampark.work.*` Actions and
  *          `siampark.work.write_all`. Every other module stays read-only, so pipeline/tagging/order writes fail.
  *
- * Keys land in `app/.env.demo.local` as `ONTOS_AGENT_<A|B>_<COMPANY>_API_KEY` (COMPANY = OBCHOD, HANAK).
+ * Level C: (Hanák CRM only) the same reads + `demo.crm` apply-command/write_all; the CRM command guard restricts the
+ *          key to `AiProposeChanges`, so changes are proposals approved by a person on /crm/schvalovani-ai.
+ *
+ * Keys land in `app/.env.demo.local` as `ONTOS_AGENT_<A|B|C>_<COMPANY>_API_KEY` (COMPANY = OBCHOD, HANAK; C: HANAK).
  * The MCP server picks one with `ONTOS_AGENT_PROFILE=A|B` and `ONTOS_AGENT_COMPANY=obchod|hanak`.
  */
 import { randomUUID } from 'node:crypto';
@@ -54,7 +57,7 @@ import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } fro
 import type { DemoResetChildEnvironment } from '../siampark/reset-configuration.mts';
 import { demoId, demoTenantId } from './fixture-ids.mts';
 
-export type AiProfileLevel = 'A' | 'B';
+export type AiProfileLevel = 'A' | 'B' | 'C';
 type Access = 'read' | 'write';
 
 interface AiCompany {
@@ -100,6 +103,17 @@ export const aiCompanies: readonly AiCompany[] = [
 
 /** The only module level B may write. */
 export const AI_TASKS_MODULE = 'siampark.work';
+/**
+ * Level C (Hanák CRM only): executor grant for `demo.crm.apply-command` + `demo.crm.write_all`. The CRM command guard
+ * lets an API key run ONLY `AiProposeChanges` there, so every change lands as a proposal on /crm/schvalovani-ai
+ * (every item requires a human decision). Everything outside demo.crm stays read-only.
+ */
+export const AI_PROPOSALS_MODULE = 'demo.crm';
+const writableModuleOf = (level: AiProfileLevel): string | undefined =>
+  level === 'B' ? AI_TASKS_MODULE : level === 'C' ? AI_PROPOSALS_MODULE : undefined;
+/** Level C exists only where its proposal workflow exists (the CRM vertical). */
+const levelsOf = (company: AiCompany): readonly AiProfileLevel[] =>
+  company.key === 'hanak' ? ['A', 'B', 'C'] : ['A', 'B'];
 
 /** Modules gated by generated `<module>.read_all` / `.write_all` context permissions (see permissions.mts). */
 const contextPermissionModules: ReadonlySet<string> = new Set([
@@ -125,10 +139,14 @@ export interface AiPrincipal {
   readonly principalId: string;
 }
 
-const levelLabel = { A: 'A · jen čtení', B: 'B · čtení + úkoly' } as const satisfies Record<AiProfileLevel, string>;
+const levelLabel = {
+  A: 'A · jen čtení',
+  B: 'B · čtení + úkoly',
+  C: 'C · návrhy změn CRM',
+} as const satisfies Record<AiProfileLevel, string>;
 
 export const aiPrincipals: readonly AiPrincipal[] = aiCompanies.flatMap((company) =>
-  (['A', 'B'] as const).map((level) => ({
+  levelsOf(company).map((level) => ({
     apiKeyName: `ai-agent-${level.toLowerCase()}-${company.key}`,
     company,
     displayName: `AI agent ${levelLabel[level]} (${company.label})`,
@@ -179,7 +197,7 @@ export const aiPrincipalRelationships = (
   add('tenant', demoTenantId, 'member', 'principal', principalId);
   add('legal_entity', legal, 'member', 'principal', principalId);
   for (const moduleId of ['core.shell', ...principal.company.reads]) {
-    const access: Access = principal.level === 'B' && moduleId === AI_TASKS_MODULE ? 'write' : 'read';
+    const access: Access = writableModuleOf(principal.level) === moduleId ? 'write' : 'read';
     add('module_access', moduleAccess(moduleId), 'legal_entity', 'legal_entity', legal);
     add('module_access', moduleAccess(moduleId), 'accessor', 'principal', principalId);
     if (contextPermissionModules.has(moduleId)) {
@@ -194,6 +212,9 @@ export const aiPrincipalRelationships = (
       // Read-only party relations; never counterparty_manager / party_identity_manager.
       add('tenant', demoTenantId, 'party_identity_reader', 'principal', principalId);
       add('legal_entity', legal, 'counterparty_reader', 'principal', principalId);
+    }
+    if (principal.level === 'C' && moduleId === AI_PROPOSALS_MODULE) {
+      grantContextPermission(moduleId, 'demo.crm.assign');
     }
     if (access === 'write') {
       for (const { actionKey, provisioning } of actions.filter((action) =>

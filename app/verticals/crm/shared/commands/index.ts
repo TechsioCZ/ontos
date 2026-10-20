@@ -3,6 +3,7 @@
 import { Effect, Schema } from 'effect';
 import type { CommandChange, CommandContext, CrmCommandFailure } from './context.ts';
 import type { CrmState } from '../domain/state.ts';
+import { AiChangesCommandSchema, aiChangesCommandSchemas, applyAiChangesCommand } from './ai-changes.ts';
 import { ClientsCommandSchema, applyClientsCommand, clientsCommandSchemas } from './clients.ts';
 import { ImportsCommandSchema, applyImportsCommand, importsCommandSchemas } from './imports.ts';
 import { VisitsCommandSchema, applyVisitsCommand, visitsCommandSchemas } from './visits.ts';
@@ -11,15 +12,25 @@ export const CrmCommandSchema = Schema.Union([
   ...clientsCommandSchemas,
   ...visitsCommandSchemas,
   ...importsCommandSchemas,
+  ...aiChangesCommandSchemas,
 ]);
 export type CrmCommand = typeof CrmCommandSchema.Type;
 
 const isClientsCommand = Schema.is(ClientsCommandSchema);
 const isVisitsCommand = Schema.is(VisitsCommandSchema);
 const isImportsCommand = Schema.is(ImportsCommandSchema);
+const isAiChangesCommand = Schema.is(AiChangesCommandSchema);
 
 /** Commands a non-human principal (API key, agent bot) may not run. Lanes may extend via their own lists. */
-export const nonHumanForbiddenCrmCommands: ReadonlySet<string> = new Set(['ArchiveClient', 'AssignClient']);
+export const nonHumanForbiddenCrmCommands: ReadonlySet<string> = new Set([
+  'ArchiveClient',
+  'AssignClient',
+  // AI level C: only people decide on and revert AI proposals.
+  'AiDecideChanges',
+  'AiRevertBatch',
+]);
+/** AI level C: an API key may run ONLY these commands in demo.crm (everything else is a proposal). */
+export { nonHumanAllowedCrmCommands } from './ai-changes.ts';
 
 export const dispatchCrmCommand = (
   state: CrmState,
@@ -34,6 +45,9 @@ export const dispatchCrmCommand = (
   }
   if (isImportsCommand(command)) {
     return applyImportsCommand(state, command, context);
+  }
+  if (isAiChangesCommand(command)) {
+    return applyAiChangesCommand(state, command, context);
   }
   return Effect.die(new Error(`Unrouted CRM command ${String((command as { readonly _tag?: unknown })._tag)}`));
 };

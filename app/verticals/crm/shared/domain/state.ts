@@ -2,12 +2,15 @@
 // Each area owns its slice schema in ./<area>.ts; this file only composes them.
 import { Schema } from 'effect';
 import type { CrmViewer } from './access.ts';
+import { AiChangesSliceSchema, projectAiChangesSlice } from './ai-changes.ts';
 import { ClientsSliceSchema, initialClientsSlice, projectClientsSlice, visibleClientIds } from './clients.ts';
 import { ImportsSliceSchema, initialImportsSlice, projectImportsSlice } from './imports.ts';
 import { SalespersonSchema } from './team.ts';
 import { VisitsSliceSchema, initialVisitsSlice, projectVisitsSlice } from './visits.ts';
 
 export const CrmStateSchema = Schema.Struct({
+  /** AI level C proposals, decisions and revert log (ai-level-c lane); absent in older documents. */
+  aiChanges: Schema.optionalKey(AiChangesSliceSchema),
   clients: ClientsSliceSchema,
   imports: ImportsSliceSchema,
   salespeople: Schema.Array(SalespersonSchema),
@@ -26,6 +29,7 @@ export const initialCrmState: CrmState = {
 export const withDefaultSlices = (raw: unknown): unknown => {
   const value = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
   return {
+    ...(value['aiChanges'] === undefined ? {} : { aiChanges: value['aiChanges'] }),
     clients: value['clients'] ?? initialClientsSlice,
     imports: value['imports'] ?? initialImportsSlice,
     salespeople: value['salespeople'] ?? [],
@@ -37,6 +41,7 @@ export const withDefaultSlices = (raw: unknown): unknown => {
 export const projectCrmState = (state: CrmState, viewer: CrmViewer): CrmState => {
   const visible = visibleClientIds(state.clients, viewer);
   return {
+    aiChanges: projectAiChangesSlice(state.aiChanges, viewer),
     clients: projectClientsSlice(state.clients, visible),
     imports: projectImportsSlice(state.imports, visible, viewer),
     salespeople: state.salespeople,
