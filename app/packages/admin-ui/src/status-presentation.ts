@@ -39,11 +39,11 @@ const vocabulary = {
     WON: { label: 'Vyhraná', variant: 'success' },
   },
   order: {
-    CANCELLED: { label: 'Zrušená', variant: 'outline' },
-    CONFIRMED: { label: 'Potvrzená', variant: 'info' },
+    CANCELLED: { label: 'Stornovaná', variant: 'outline' },
+    CONFIRMED: { label: 'Zpracovává se', variant: 'info' },
     DELIVERED: { label: 'Dokončená', variant: 'success' },
     NEW: { label: 'Nová', variant: 'warning' },
-    PACKING: { label: 'Balí se', variant: 'info' },
+    PACKING: { label: 'Připravená k předání', variant: 'info' },
     SHIPPED: { label: 'Předáno dopravci', variant: 'info' },
   },
   payment: {

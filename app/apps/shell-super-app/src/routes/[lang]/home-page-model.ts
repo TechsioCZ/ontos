@@ -240,7 +240,12 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       {
         homeContribution:
           session.state === 'authenticated' && compositionRevision !== undefined
-            ? loadHomeContribution(request, compositionRevision, options)
+            ? loadHomeContribution(
+                request,
+                compositionRevision,
+                options,
+                new Set(navigation.items.map(({ moduleId }) => String(moduleId))),
+              )
             : Effect.succeedNone,
         legalEntities,
         navigation: Effect.succeed(navigation),

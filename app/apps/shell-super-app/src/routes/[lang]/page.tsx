@@ -7,6 +7,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { AuthenticatedDashboardLayout } from '../shell-frame';
 import { UltramodernRouteHead } from '../ultramodern-route-head';
 import { useShellControls } from '../use-shell-controls.ts';
+import { HomeWelcome } from './home-welcome.tsx';
 import { ResolvedTarget } from './modules/[moduleId]/page.tsx';
 import type { HomePageModel } from './home-page-model.ts';
 
@@ -86,22 +87,15 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
                 model={{ routeParams: {}, shell: model, state: 'resolved', target: contribution.target }}
               />
             )),
-            // Roles without the sales dashboard (CRM and e-shop companies) get a welcome card instead of a denial.
+            // Roles without a module Home component get the shell welcome page: company, where to start, their areas.
             Match.when({ state: 'forbidden' }, () => (
-              <div className="flex max-w-2xl flex-col gap-200 rounded-lg border border-border-primary bg-base p-300">
-                <span className="text-fg-secondary text-xs uppercase tracking-wide">
-                  {t('shell.dashboard.home.welcomeKicker')}
-                </span>
-                <h2 className="font-semibold text-fg-primary text-xl">
-                  {t('shell.dashboard.home.welcomeTitle', { name: model.identity.displayName })}
-                </h2>
-                {companyName === undefined ? null : (
-                  <p className="text-fg-primary">
-                    {t('shell.dashboard.home.welcomeCompany', { company: companyName })}
-                  </p>
-                )}
-                <p className="text-fg-secondary text-sm">{t('shell.dashboard.home.welcomeHint')}</p>
-              </div>
+              <HomeWelcome
+                companyName={companyName}
+                displayName={model.identity.displayName}
+                legalEntityId={model.selectedLegalEntityId}
+                navigation={model.navigation.items}
+                unavailableDeployments={model.navigation.unavailableDeployments}
+              />
             )),
             Match.when({ state: 'unavailable' }, () => (
               <StatusText aria-live="polite" showIcon status="error">

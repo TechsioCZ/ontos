@@ -405,7 +405,7 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
   },
 ];
 
-interface ShellNavigationLink {
+export interface ShellNavigationLink {
   readonly current: boolean;
   readonly enabled: boolean;
   readonly href: string | null;
@@ -419,14 +419,14 @@ interface ShellNavigationLink {
   readonly state: DashboardNavigationItem['state'];
 }
 
-interface ShellNavigationGroup {
+export interface ShellNavigationGroup {
   readonly icon: IconType;
   readonly key: string;
   readonly label: string;
   readonly links: readonly ShellNavigationLink[];
 }
 
-interface ShellNavigationModel {
+export interface ShellNavigationModel {
   readonly current: { readonly group: ShellNavigationGroup; readonly link: ShellNavigationLink } | undefined;
   readonly groups: readonly ShellNavigationGroup[];
   readonly home: ShellNavigationLink;
@@ -439,7 +439,7 @@ type Translate = (key: string) => string;
  * Links preload as soon as they scroll into view: the route loader answers the Shell reads from the browser cache
  * and starts the destination's remote page and remembered module reads, so a click renders the page at once.
  */
-const ShellRouteLink = ({
+export const ShellRouteLink = ({
   href: _unusedHref,
   ...props
 }: ComponentProps<typeof LocalizedLink> & { readonly href?: string | undefined }) => (
@@ -468,7 +468,7 @@ type MatchedNavigationLink = Omit<ShellNavigationLink, 'current'> & {
   readonly moduleMatch: boolean;
 };
 
-const buildShellNavigation = (
+export const buildShellNavigation = (
   props: Pick<
     AuthenticatedDashboardLayoutProps,
     'currentEntrypointKey' | 'currentModuleId' | 'homeCurrent' | 'navigation' | 'unavailableDeployments'

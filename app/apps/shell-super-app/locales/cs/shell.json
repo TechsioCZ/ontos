@@ -32,7 +32,24 @@
         "welcomeKicker": "Pracovní prostor",
         "welcomeTitle": "Vítejte, {{name}}",
         "welcomeCompany": "Pracujete ve společnosti {{company}}",
-        "welcomeHint": "Agendy, ke kterým máte přístup, najdete v levém menu."
+        "welcomeHint": "Agendy, ke kterým máte přístup, najdete v levém menu.",
+        "start": "Začít: {{destination}}",
+        "areas": "Vaše agendy",
+        "noAreas": "Tento účet zatím nemá přiřazenou žádnou agendu. Požádejte správce o přidělení role.",
+        "company": {
+          "trading": "Velkoobchod s e-shopem: zákazníci, příležitosti, objednávky, sklad a faktury na jednom místě.",
+          "siampark": "Správa areálu: nemovitosti, nájmy, smlouvy, provoz, energie a finance pod jednou střechou.",
+          "crm": "Obchodní tým velkoobchodu: klienti, plán oslovení, návštěvy, importy objednávek a přehled prodejů.",
+          "eshop": "E-shop s kávou, čajem a potřebami pro přípravu: produkty, varianty, objednávky a expedice."
+        },
+        "groupHints": {
+          "crm": "Klienti, návštěvy a prodeje obchodního týmu",
+          "sales": "Zákazníci, obchody a doklady",
+          "operations": "Každodenní práce týmu",
+          "siamparkOps": "Provoz, majetek a energie areálu",
+          "insights": "Čísla a trendy",
+          "settings": "Správa firmy a přístupů"
+        }
       },
       "legalEntity": {
         "accessBlocked": "Pro tento účet není dostupný žádný právní subjekt.",
