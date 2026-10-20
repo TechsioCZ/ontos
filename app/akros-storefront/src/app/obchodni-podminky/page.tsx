@@ -7,18 +7,18 @@ export default function TermsPage() {
   return (
     <SimpleContentPage
       title="Obchodní podmínky"
-      lead="Zkrácené informace pro demonstrační storefront AKROS."
+      lead="Zkrácené informace pro prezentační e-shop AKROS."
       sections={[
         {
           title: "Objednávka a cena",
           paragraphs: [
-            "Tento prototyp nevytváří skutečné objednávky ani platební závazky. Uvedené ceny a dostupnost slouží pouze k prezentaci uživatelského rozhraní.",
+            "DEMO objednávka se uloží do odděleného prezentačního prostředí. Nevzniká platební závazek, nic neplatíte a zboží nebude odesláno ani doručeno. Ceny a dostupnost přebíráme z OntOS.",
           ],
         },
         {
           title: "Odstoupení a reklamace",
           paragraphs: [
-            "Ukázkový formulář a kontaktní údaje nic neodesílají. Produkční pravidla budou doplněna až při napojení reálného backendu.",
+            "Ukázkový formulář nic neodesílá. Úplná pravidla pro skutečné objednávky, odstoupení a reklamace budou doplněna při napojení na skutečný objednávkový systém.",
           ],
         },
       ]}

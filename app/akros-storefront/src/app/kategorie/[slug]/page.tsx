@@ -16,6 +16,7 @@ import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { cs } from "@/i18n/cs";
 import { getCatalog } from "@/ontos/catalog-server";
+import { categoryDescription } from "@/lib/category-presentation";
 
 interface CategoryPageProps {
   params: Promise<{ slug: string }>;
@@ -55,6 +56,7 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
   const requestedPage = Number.parseInt(String(query.page ?? "1"), 10);
   const category = getCategoryBySlug(slug);
   if (!category) notFound();
+  const description = categoryDescription(category.description);
 
   const childCategories = getChildCategories(category.id);
   const hasVisualChildCategories =
@@ -93,7 +95,7 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
       >
         <div className="akros-category-heading">
           <h1 id="category-title">{category.name}</h1>
-          {category.description && <p>{category.description}</p>}
+          {description && <p>{description}</p>}
         </div>
         {hasVisualChildCategories && <CategoryGrid categories={childCategories} />}
       </section>
