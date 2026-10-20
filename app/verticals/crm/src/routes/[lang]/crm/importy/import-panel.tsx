@@ -13,7 +13,7 @@ import { importOrders } from '../../../../../shared/imports/engine.ts';
 import { ordersCsvSamples } from '../../../../../shared/imports/samples.ts';
 import type { CrmCommandOutcome } from '../../../../crm/records.ts';
 import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
-import { RESIZE_LABEL, outcomeMeta } from './order-model.ts';
+import { RESIZE_LABEL, importRowsLabel, outcomeMeta } from './order-model.ts';
 
 const MAX_BYTES = 350_000;
 
@@ -117,7 +117,7 @@ export const ImportPanel = ({
             onClick={confirm}
             variant="primary"
           >
-            {counts === undefined ? 'Importovat' : `Importovat ${formatNumber(counts.rowCount)} řádků`}
+            {counts === undefined ? 'Importovat' : importRowsLabel(counts.rowCount)}
           </Button>
         </>
       }
@@ -257,7 +257,7 @@ export const ImportPanel = ({
                 )}
                 {(preview.batch.unpaired ?? 0) > 0 && (
                   <span className="text-sm">
-                    {`${String(preview.batch.unpaired)} nových objednávek nemá schválenou vazbu na klienta – skončí ve frontě k napárování.`}
+                    {`Nové objednávky bez schválené vazby na klienta: ${String(preview.batch.unpaired)}. Po importu budou ve frontě k napárování.`}
                   </span>
                 )}
                 <RowResults results={preview.batch.results ?? []} />

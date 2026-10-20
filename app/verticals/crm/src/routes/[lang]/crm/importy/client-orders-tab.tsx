@@ -1,11 +1,12 @@
 // Client-card "Objednávky" tab. OWNER: crm-imports. Props contract: ClientCardTabProps (crm-clients).
 // Shows the orders paired to the client (C04): number, source, date, amount + currency, raw source state; a click
 // expands the state history and lines. Facts only – no derived "repeat customer" labels (C07 is parked).
-import { EmptyState, formatDateTime } from '@app/admin-ui';
+import { EmptyState, formatDate, formatDateTime } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Fragment, useState } from 'react';
 import type { ImportedOrder } from '../../../../../shared/domain/imports.ts';
 import { needsReview } from '../../../../../shared/domain/imports.ts';
+import { clientSalesFacts } from '../../../../../shared/domain/reports.ts';
 import type { ClientCardTabProps } from '../klienti/card-tab-props.ts';
 import { NOT_PROVIDED, formatAmount, orderDate, orderTitle } from './order-model.ts';
 import { RawStatusBadge } from './order-panels.tsx';
@@ -60,33 +61,29 @@ export const ClientOrdersTab = ({ client, records }: ClientCardTabProps) => {
       />
     );
   }
-  const counted = orders.filter((order) => order.duplicateOf === undefined);
-  const totals = new Map<string, number>();
-  for (const order of counted) {
-    if (order.amount !== undefined && order.currency !== undefined) {
-      totals.set(order.currency, (totals.get(order.currency) ?? 0) + Number(order.amount));
-    }
-  }
-  const last = counted[0];
+  // Share the report's exact-decimal arithmetic and confirmed-binding rules (C04/C05).
+  const facts = clientSalesFacts(records.state, client.id);
   return (
     <div className="flex flex-col gap-200">
       <div className="grid grid-cols-2 gap-150 sm:grid-cols-3">
         <div className="flex flex-col gap-50 rounded-lg border border-border-primary p-150">
           <span className="text-fg-secondary text-xs">Evidované objednávky</span>
-          <span className="font-semibold text-lg tabular-nums">{counted.length}</span>
+          <span className="font-semibold text-lg tabular-nums">{facts.orderCount}</span>
         </div>
         <div className="flex flex-col gap-50 rounded-lg border border-border-primary p-150">
           <span className="text-fg-secondary text-xs">Poslední objednávka</span>
-          <span className="font-semibold text-sm">{last === undefined ? NOT_PROVIDED : orderDate(last)}</span>
+          <span className="font-semibold text-sm">
+            {facts.lastOrderAt === undefined ? NOT_PROVIDED : formatDate(facts.lastOrderAt)}
+          </span>
         </div>
         <div className="flex flex-col gap-50 rounded-lg border border-border-primary p-150">
           <span className="text-fg-secondary text-xs">Hodnota evidovaných objednávek</span>
-          {totals.size === 0 ? (
+          {facts.totals.length === 0 ? (
             <span className="text-fg-secondary text-sm">{NOT_PROVIDED}</span>
           ) : (
-            [...totals.entries()].map(([currency, total]) => (
+            facts.totals.map(({ amount, currency }) => (
               <span className="font-semibold text-sm tabular-nums" key={currency}>
-                {formatAmount(total.toFixed(2), currency)}
+                {formatAmount(amount, currency)}
               </span>
             ))
           )}
@@ -138,7 +135,9 @@ export const ClientOrdersTab = ({ client, records }: ClientCardTabProps) => {
                     </td>
                     <td className="px-150 py-100">{order.source}</td>
                     <td className="px-150 py-100">{orderDate(order)}</td>
-                    <td className={`px-150 py-100 text-right tabular-nums ${order.amount === undefined ? 'text-fg-secondary' : ''}`}>
+                    <td
+                      className={`px-150 py-100 text-right tabular-nums ${order.amount === undefined ? 'text-fg-secondary' : ''}`}
+                    >
                       {formatAmount(order.amount, order.currency)}
                     </td>
                     <td className="px-150 py-100">

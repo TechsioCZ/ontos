@@ -8,6 +8,12 @@ import { isOpenDuplicate, needsReview, openReviewEvents } from '../../../../../s
 export const RESIZE_LABEL = 'Změnit šířku panelu (šipky vlevo a vpravo)';
 export const NOT_PROVIDED = 'údaj neposkytnut';
 
+/** Czech row count used on the import confirmation, including one-row status changes. */
+export const importRowsLabel = (count: number): string => {
+  const word = count === 1 ? 'řádek' : count >= 2 && count <= 4 ? 'řádky' : 'řádků';
+  return `Importovat ${String(count)} ${word}`;
+};
+
 /** Fixed demo personas without a salesperson record (principal ids from scripts/demo/fixture-ids.mts). */
 const knownPrincipals: Readonly<Record<string, string>> = {
   '443f7f2a-47ac-5494-982b-366b0ecefd88': 'Jan Novák',
@@ -45,7 +51,8 @@ export const formatAmount = (amount: string | undefined, currency: string | unde
 };
 
 export const orderTitle = (order: ImportedOrder) => order.number ?? order.externalId;
-export const orderDate = (order: ImportedOrder) => (order.orderedAt === undefined ? NOT_PROVIDED : formatDate(order.orderedAt));
+export const orderDate = (order: ImportedOrder) =>
+  order.orderedAt === undefined ? NOT_PROVIDED : formatDate(order.orderedAt);
 export const lastChange = (order: ImportedOrder) => formatDateTime(order.lastEventAt ?? order.receivedAt);
 
 export type OrderQueueState = 'paired' | 'unpaired' | 'uncertain';
@@ -81,11 +88,14 @@ export const reviewSummary = (order: ImportedOrder): string | undefined => {
     return order.reviewReason ?? 'Možná duplicita z jiného zdroje';
   }
   const [open] = openReviewEvents(order);
-  return open === undefined ? undefined : `Stav „${open.event.rawStatus}“: ${open.event.reviewReason ?? 'sporné pořadí'}`;
+  return open === undefined
+    ? undefined
+    : `Stav „${open.event.rawStatus}“: ${open.event.reviewReason ?? 'sporné pořadí'}`;
 };
 
 export const reviewCount = (orders: readonly ImportedOrder[]) => orders.filter(needsReview).length;
-export const sourcesOf = (orders: readonly ImportedOrder[]) => [...new Set(orders.map((order) => order.source))].toSorted();
+export const sourcesOf = (orders: readonly ImportedOrder[]) =>
+  [...new Set(orders.map((order) => order.source))].toSorted();
 
 export const orderSearchText = (records: RecordsResponse, order: ImportedOrder) =>
   [
