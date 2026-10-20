@@ -286,7 +286,7 @@ const ClientsList = ({
         {manager && (
           <div className="w-full sm:w-52">
             <SelectTemplate
-              aria-label="Obchodník"
+              label="Obchodník"
               items={[
                 { label: 'Všichni obchodníci', value: ALL },
                 ...records.state.salespeople.map((person) => ({ label: person.name, value: person.id })),
@@ -301,7 +301,7 @@ const ClientsList = ({
         )}
         <div className="w-full sm:w-52">
           <SelectTemplate
-            aria-label="Segment"
+            label="Segment"
             items={[
               { label: 'Všechny segmenty', value: ALL },
               ...clientSegments.map((key) => ({ label: segmentLabels[key], value: key })),
@@ -314,7 +314,7 @@ const ClientsList = ({
         </div>
         <div className="w-full sm:w-44">
           <SelectTemplate
-            aria-label="Stav"
+            label="Stav"
             items={[
               { label: 'Aktivní', value: 'active' },
               { label: 'Archivovaní', value: 'archived' },
