@@ -111,7 +111,8 @@ export const issuePersonalKey = async (email: string, password: string, name: st
   }
   const issued: unknown = JSON.parse(text);
   if (!isApiKeyResponse(issued)) {
-    throw new Error(`Vydání klíče ${name}: neočekávaná odpověď HTTP ${created.status} ${text.slice(0, 200)}`);
+    // Do not echo the body: a 2xx body may carry the key secret.
+    throw new Error(`Vydání klíče ${name}: neočekávaná odpověď HTTP ${created.status} (chybí authBindingId nebo secret)`);
   }
   const { authBindingId, secret } = issued;
 
