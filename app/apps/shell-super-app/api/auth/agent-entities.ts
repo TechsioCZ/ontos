@@ -229,15 +229,26 @@ const changeAgent = <R>(
       if (problem !== null) {
         return yield* new ConnectionsInvalid({ reason: problem });
       }
-      const result = yield* run({
-        description: cleanDescription(request.description),
-        displayName: request.displayName.trim(),
-        modulesJson: modulesJsonOf(request.modules),
-        operation: 'create-agent',
-        ownerPrincipalId: request.ownerPrincipalId,
-        principalId,
-        writePolicy: request.writePolicy,
-      });
+      // A retry of a committed create (ActionAlreadyCommitted) finishes the same agent's grants and operators again.
+      const result = yield* runtime
+        .runAction({
+          payload: {
+            description: cleanDescription(request.description),
+            displayName: request.displayName.trim(),
+            modulesJson: modulesJsonOf(request.modules),
+            operation: 'create-agent',
+            ownerPrincipalId: request.ownerPrincipalId,
+            principalId,
+            writePolicy: request.writePolicy,
+          },
+          principal: caller.principal,
+          registration: manageDemoAccountAction,
+          transport,
+        })
+        .pipe(
+          Effect.catchTag('ActionAlreadyCommitted', () => Effect.succeed({ principalId })),
+          Effect.mapError(fromActionError),
+        );
       const written = yield* grants
         .replaceAgentGrants({
           desired: agentGrantRelationships({

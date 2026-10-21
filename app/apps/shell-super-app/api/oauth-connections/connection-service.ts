@@ -1,7 +1,8 @@
 /**
  * Live state of MCP connection grants: every connector exchange and every "Připojené aplikace" read re-checks the
  * grant against OntOS (user, acting principal, binding, company membership, operator relation). A failed check
- * revokes the grant (where the design says so); a passing check is cached for at most 30 s. Pure checks live in
+ * revokes the grant (where the design says so). Nothing is cached, so a change of the person, the agent, its grants or
+ * the connection applies to the very next request. Pure checks live in
  * `evaluateLiveChecks`; the database, SpiceDB and catalog reads live in the effects below.
  */
 import { ContextAccess, openDemoAccountGrants, openPrincipalOperators } from '@app/core-runtime';
@@ -15,9 +16,8 @@ import {
   type ConnectionSummary,
   type ConnectionWritePolicy,
   ConnectionModulesRequestSchema,
-  OAUTH_LIVE_CHECK_TTL_SECONDS,
 } from '@app/shared-contracts/oauth-connections';
-import { Clock, DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 
 import { moduleAccessSets } from '../agent-platform/approval-logic.ts';
 import { loadAgentProfiles } from '../auth/agent-store.ts';
@@ -153,23 +153,11 @@ export interface LiveConnection {
   readonly grant: GrantRow;
 }
 
-const liveCache = new Map<string, { readonly expiresAt: number; readonly value: LiveConnection }>();
-
-/** Drops the cached live check of a grant (after any change to it). */
-export const forgetLiveConnection = (grantId: string): void => {
-  liveCache.delete(grantId);
-};
-
 /**
- * Live check and description of an active grant, cached for at most `OAUTH_LIVE_CHECK_TTL_SECONDS`. A failed check
- * is never cached; it revokes the grant when the verdict says so and then fails with `ConnectionUnauthorized`.
+ * Live check and description of an active grant, on every call. A failed check revokes the grant when the verdict
+ * says so and then fails with `ConnectionUnauthorized`.
  */
 export const loadLiveConnection = Effect.fn('OAuthConnectionService.loadLiveConnection')(function* (grantId: string) {
-  const now = yield* Clock.currentTimeMillis;
-  const cached = liveCache.get(grantId);
-  if (cached !== undefined && now < cached.expiresAt) {
-    return cached.value;
-  }
   const grant = yield* findGrant(grantId);
   if (grant === undefined) {
     return yield* new ConnectionUnauthorized({ code: 'grant_inactive' });
@@ -265,12 +253,11 @@ export const loadLiveConnection = Effect.fn('OAuthConnectionService.loadLiveConn
     writePolicy: effective.writePolicy,
   };
   const live: LiveConnection = { description, grant };
-  liveCache.set(grantId, { expiresAt: now + OAUTH_LIVE_CHECK_TTL_SECONDS * 1000, value: live });
   return live;
 });
 
 /**
- * Revokes (or denies a draft of) a grant: status, binding, Better Auth tokens, live-check cache and audit row.
+ * Revokes (or denies a draft of) a grant: status, binding, Better Auth tokens and audit row.
  * Grants that are already revoked, superseded or denied are returned unchanged.
  */
 export const revokeConnection = Effect.fn('OAuthConnectionService.revokeConnection')(function* (input: {
@@ -322,7 +309,6 @@ export const finishRevocation = Effect.fn('OAuthConnectionService.finishRevocati
   readonly reason: ConnectionRevokeReason;
 }) {
   yield* (yield* OAuthFlow).deleteGrantTokens(input.grant.grantId);
-  forgetLiveConnection(input.grant.grantId);
   yield* recordConnectionAudit({
     authBindingId: null,
     authMethod: input.actorPrincipalId === null ? 'system' : 'session',
@@ -372,7 +358,6 @@ export const updateConnection = Effect.fn('OAuthConnectionService.updateConnecti
   if (updated === undefined) {
     return yield* new ConnectionInvalid({ code: 'grant_not_found' });
   }
-  forgetLiveConnection(input.grantId);
   yield* recordConnectionAudit({
     authBindingId: null,
     authMethod: 'session',

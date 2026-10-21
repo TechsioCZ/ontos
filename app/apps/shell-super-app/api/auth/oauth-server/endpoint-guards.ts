@@ -13,8 +13,12 @@ import { eq } from 'drizzle-orm';
 import { jsonb, pgSchema, text, uuid } from 'drizzle-orm/pg-core';
 import { Clock, Effect } from 'effect';
 
-import { forgetLiveConnection } from '../../oauth-connections/connection-service.ts';
-import { findGrant, findSessionGrant, setGrantBindingStatus, setGrantStatus } from '../../oauth-connections/grant-store.ts';
+import {
+  findGrant,
+  findSessionGrant,
+  setGrantBindingStatus,
+  setGrantStatus,
+} from '../../oauth-connections/grant-store.ts';
 import { AuthDatabase } from '../db/client.ts';
 import { oauthAccessToken, oauthConsent, oauthRefreshToken } from '../db/schema.ts';
 import type { OAuthEndpointGuards, RefreshTokenVerdict } from './policy.ts';
@@ -82,10 +86,13 @@ const revokeReusedGrant = Effect.fn('OAuthEndpointGuards.revokeReusedGrant')(fun
   if (grant.status === 'active') {
     yield* setGrantStatus({ grantId, revokedByPrincipalId: null, revokeReason: null, status: 'revoked' });
     if (grant.authBindingId !== null) {
-      yield* setGrantBindingStatus({ authBindingId: grant.authBindingId, status: 'disabled', tenantId: grant.tenantId });
+      yield* setGrantBindingStatus({
+        authBindingId: grant.authBindingId,
+        status: 'disabled',
+        tenantId: grant.tenantId,
+      });
     }
   }
-  forgetLiveConnection(grantId);
   yield* executor.insert(coreAuditEvents).values({
     auditProfile: 'sensitive',
     authBindingId: grant.authBindingId,

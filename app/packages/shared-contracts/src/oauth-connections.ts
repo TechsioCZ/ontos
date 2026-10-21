@@ -50,8 +50,6 @@ export const OAUTH_CONNECTOR_KEY_HEADER = 'x-ontos-connector-key' as const;
 export const OAUTH_GRANT_CONTEXT_PREFIX = 'oauth-grant:' as const;
 /** Drafts older than this are deleted and can no longer be approved. */
 export const OAUTH_DRAFT_TTL_SECONDS = 30 * 60;
-/** Live checks of an active grant are cached at most this long. */
-export const OAUTH_LIVE_CHECK_TTL_SECONDS = 30;
 
 const Id = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
 /** The signed OAuth query string Better Auth appended to /cs/pripojit (without the leading `?`). */
