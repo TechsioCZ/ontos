@@ -14,11 +14,13 @@ import { failureFeedback } from '../../../../../shared/actions/apply-command.ts'
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import {
+  createCustomer,
   executeCounterpartyRead,
   executePartyDetail,
   listCustomers,
   loadPartiesClient,
 } from '@app/party-registry/api/client';
+import { PropertyEquipment } from '@app/siampark-ops/ui/record-discussion';
 import { executeRecords as executePropertyRecords } from '@app/siampark-property/clients/records';
 import { executeRecords as executeAgreementsRecords } from '@app/siampark-agreements/clients/records';
 import { executeRecords as executeFinanceRecords } from '@app/siampark-billing-finance/clients/records';
@@ -58,11 +60,16 @@ import csResource from '../../../../../locales/cs/siampark-occupancy.json';
 import enResource from '../../../../../locales/en/siampark-occupancy.json';
 import '../../../index.css';
 import { TenantDirectory, TenantDossierCard } from './tenant-dossier.tsx';
+import type { DossierChanges, NewCounterpartyInput } from './tenant-dossier.tsx';
+import { CounterpartyDossierView } from './counterparty-dossier.tsx';
+import { NoticeCard, OccupancyHistoryCard, RegistrationSheetCard } from './stay-documents.tsx';
+import type { NoticeContext } from './notice-templates.ts';
 import { OccupancyCalendar } from './occupancy-calendar.tsx';
 import './occupancy-form.css';
 
 const RecordsSearchSchema = Schema.Struct({
   resourceId: Schema.optional(OccupancyRefSchema.fields.resourceId),
+  counterpartyId: Schema.optional(OccupancyRefSchema.fields.resourceId),
   create: Schema.optional(Schema.Literal('lease')),
   unitId: Schema.optional(OccupancyRefSchema.fields.resourceId),
 });
@@ -132,6 +139,7 @@ const useRecordsPage = () => {
     ? Schema.decodeOption(RecordsSearchSchema)(rawSearch)
     : Option.none();
   const linkedResourceId = Option.getOrUndefined(search)?.resourceId;
+  const linkedCounterpartyId = Option.getOrUndefined(search)?.counterpartyId;
   const cancellation = useRef<AbortController | null>(null);
   const run = <A, E>(effect: Effect.Effect<A, E>) => {
     const controller = cancellation.current ?? new AbortController();
@@ -161,6 +169,10 @@ const useRecordsPage = () => {
   const [editingId, setEditingId] = useState('');
   const [kindFilter, setKindFilter] = useState<'ALL' | 'LONG_TERM_LEASE' | 'SHORT_STAY'>('ALL');
   const [tenantDirectory, setTenantDirectory] = useState<readonly TenantDirectoryEntry[]>([]);
+  const [directoryLoaded, setDirectoryLoaded] = useState(false);
+  const [guestNames, setGuestNames] = useState<Readonly<Record<string, string>>>({});
+  const [collision, setCollision] = useState<{ readonly text: string; readonly href: string }>();
+  const [createError, setCreateError] = useState<string>();
   const [related, setRelated] = useState<LeaseRelated>({ invoices: undefined, tasks: undefined });
   const [rentMonthly, setRentMonthly] = useState('');
   const [rentService, setRentService] = useState('');
@@ -187,6 +199,8 @@ const useRecordsPage = () => {
     setStartDate(DEFAULT_START_DATE);
     setEndDate(DEFAULT_END_DATE);
     setTenantDirectory([]);
+    setDirectoryLoaded(false);
+    setGuestNames({});
     setRelated({ invoices: undefined, tasks: undefined });
     setRentEditorOpen(false);
   };
@@ -247,6 +261,33 @@ const useRecordsPage = () => {
         // The tenant column and card are optional: a role without the customer list still sees its leases.
         listCustomers({ includeArchived: true, limit: 500 }).pipe(
           Effect.match({ onFailure: () => undefined, onSuccess: (items) => setTenantDirectory(items) }),
+          Effect.ensuring(Effect.sync(() => setDirectoryLoaded(true))),
+        ),
+      ),
+      Effect.tap((value) =>
+        // Guest names of short stays for the list column; a guest the role cannot read stays unnamed.
+        Effect.forEach(
+          [
+            ...new Map(
+              value.records.occupancies.flatMap((record) =>
+                record.guestPartyRef === null ? [] : [[record.guestPartyRef.resourceId, record.guestPartyRef] as const],
+              ),
+            ).values(),
+          ],
+          (partyRef) =>
+            executePartyDetail({ partyRef }, 'siampark-occupancy.guest-names').pipe(
+              Effect.map((detail) => [partyRef.resourceId, Option.getOrUndefined(detail.party.displayName)] as const),
+              Effect.orElseSucceed(() => [partyRef.resourceId, undefined] as const),
+            ),
+          { concurrency: 4 },
+        ).pipe(
+          Effect.tap((entries) =>
+            Effect.sync(() =>
+              setGuestNames(
+                Object.fromEntries(entries.flatMap(([id, name]) => (name === undefined ? [] : [[id, name]]))),
+              ),
+            ),
+          ),
         ),
       ),
       Effect.tap((value) => {
@@ -287,10 +328,46 @@ const useRecordsPage = () => {
       cancellation.current?.abort();
     };
   }, []);
+  /** S10-01: names the confirmed stay or lease that blocks the second confirmation of the same unit. */
+  const collisionFor = (command: OccupancyCommand) => {
+    if (snapshot === undefined || (command._tag !== 'Confirm' && command._tag !== 'Activate')) return undefined;
+    const record = snapshot.occupancies.find(
+      (item) => item.occupancyRef.resourceId === command.occupancyRef.resourceId,
+    );
+    if (record === undefined) return undefined;
+    const other = snapshot.occupancies.find(
+      (item) =>
+        item.occupancyRef.resourceId !== record.occupancyRef.resourceId &&
+        item.unitRef.resourceId === record.unitRef.resourceId &&
+        (item.state === 'CONFIRMED' || item.state === 'ACTIVE') &&
+        (item.endDate === null || record.startDate < item.endDate) &&
+        (record.endDate === null || item.startDate < record.endDate),
+    );
+    if (other === undefined) return undefined;
+    const party =
+      other.customerCounterpartyRef === null
+        ? other.guestPartyRef === null
+          ? undefined
+          : guestNames[other.guestPartyRef.resourceId]
+        : (tenantDirectory.find((item) => item.counterpartyRef.resourceId === other.customerCounterpartyRef?.resourceId)
+            ?.displayName ?? undefined);
+    const unit = properties?.units.find((item) => item.unitRef.resourceId === other.unitRef.resourceId)?.name;
+    return {
+      href: `/${language}/siampark/occupancy?resourceId=${other.occupancyRef.resourceId}`,
+      text: `Termínová kolize: jednotka ${unit ?? ''} je v období ${formatDate(other.startDate)} – ${
+        other.endDate === null ? 'bez konce' : formatDate(other.endDate)
+      } již ${other.state === 'ACTIVE' ? 'obsazena' : 'potvrzeně rezervována'} (${
+        other.kind === 'LONG_TERM_LEASE' ? 'nájem' : 'pobyt'
+      }${party === undefined ? '' : ` – ${party}`}). ${
+        command._tag === 'Confirm' ? 'Potvrzení' : 'Zahájení'
+      } bylo odmítnuto, tento záznam zůstává ve stavu ${t(`siampark-occupancy.demo.stateLabels.${record.state}`)}.`,
+    };
+  };
   const runCommand = (command: OccupancyCommand) => {
     if (snapshot === undefined) {
       return;
     }
+    setCollision(undefined);
     setFeedback('saving');
     run(
       Effect.all(
@@ -326,8 +403,88 @@ const useRecordsPage = () => {
           return Effect.void;
         }),
         Effect.match({
-          onFailure: reportFailure,
+          // A refused command keeps the loaded records on screen; only reads clear them.
+          onFailure: (failure) => {
+            const next = failureFeedback(failure);
+            setCollision(next === 'conflict' ? collisionFor(command) : undefined);
+            setFeedback(next);
+          },
           onSuccess: () => setFeedback('ready'),
+        }),
+      ),
+    );
+  };
+  const updateCounterpartyDossier = (counterpartyId: string) => (changes: DossierChanges) => {
+    const entry = tenantDirectory.find((item) => item.counterpartyRef.resourceId === counterpartyId);
+    if (entry !== undefined)
+      runCommand({ _tag: 'UpdateCounterpartyDossier', counterpartyRef: entry.counterpartyRef, ...changes });
+  };
+  /** S01-01: a firm or person becomes a counterparty of this company with its first timeline note. */
+  const createCounterparty = (input: NewCounterpartyInput) => {
+    if (snapshot === undefined) return;
+    setCreateError(undefined);
+    setFeedback('saving');
+    run(
+      createCustomer({
+        partyType: input.partyType,
+        displayName: input.displayName.trim(),
+        ...(input.partyType === 'ORGANIZATION' && input.companyId.trim() !== ''
+          ? { companyId: input.companyId.trim() }
+          : {}),
+        email: input.email.trim(),
+        phone: input.phone.trim(),
+        evidenceReference: 'Siampark – evidence nájemců a zájemců',
+      }).pipe(
+        Effect.flatMap((created) =>
+          Effect.all(
+            {
+              idempotencyKey: newUuid,
+              referenceCredentials: makeReferenceGatewayCredentials(['party-registry']),
+            },
+            { concurrency: 2 },
+          ).pipe(
+            Effect.flatMap(({ idempotencyKey, referenceCredentials }) =>
+              executeApplyCommand(
+                {
+                  command: {
+                    _tag: 'UpdateCounterpartyDossier',
+                    counterpartyRef: created.counterpartyRef,
+                    activity: {
+                      kind: 'NOTE',
+                      summary:
+                        input.note.trim() === ''
+                          ? `${input.partyType === 'PERSON' ? 'Osoba' : 'Firma'} založena jako protistrana Siampark.`
+                          : input.note.trim(),
+                    },
+                  },
+                  expectedRevision: snapshot.revision,
+                },
+                'siampark-occupancy.counterparty-create',
+                { idempotencyKey, referenceCredentials },
+              ),
+            ),
+            Effect.as(created),
+          ),
+        ),
+        Effect.match({
+          onFailure: (failure) => {
+            const status = 'status' in failure && typeof failure.status === 'number' ? failure.status : undefined;
+            setCreateError(
+              status === 403
+                ? 'Pro zakládání protistran nemáte oprávnění.'
+                : failure._tag === 'CustomerCreateAmbiguous'
+                  ? 'Protistrana se shoduje s více existujícími záznamy. Vyřešte shodu v registru zákazníků.'
+                  : 'Protistranu se nepodařilo uložit. Zkontrolujte údaje a zkuste to znovu.',
+            );
+            setFeedback(status === 403 ? 'forbidden' : 'ready');
+          },
+          onSuccess: (created) => {
+            const url = new URL(window.location.href);
+            url.search = '';
+            url.searchParams.set('counterpartyId', created.counterpartyRef.resourceId);
+            url.hash = 'tenant';
+            window.location.assign(url);
+          },
         }),
       ),
     );
@@ -615,6 +772,11 @@ const useRecordsPage = () => {
     record?.customerCounterpartyRef === null || record === undefined
       ? undefined
       : tenantDirectory.find((item) => item.counterpartyRef.resourceId === record.customerCounterpartyRef?.resourceId);
+  /** Tenant of a lease or guest of a stay, for list rows. */
+  const partyNameOf = (record: Occupancy) =>
+    record.guestPartyRef === null ? tenantOf(record)?.displayName : guestNames[record.guestPartyRef.resourceId];
+  // Owner decides; older owner builds without the flag keep the previous behaviour.
+  const canWrite = snapshot?.canWrite !== false;
   const unitOf = (record: Occupancy) =>
     properties?.units.find((item) => item.unitRef.resourceId === record.unitRef.resourceId);
   const propertyOf = (record: Occupancy) => {
@@ -626,6 +788,15 @@ const useRecordsPage = () => {
     activate,
     agreements,
     busy,
+    canWrite,
+    collision,
+    createCounterparty,
+    createError,
+    directoryLoaded,
+    linkedCounterpartyId,
+    partyNameOf,
+    tenantDirectory,
+    updateCounterpartyDossier,
     openRentEditor,
     propertyOf,
     related,
@@ -742,8 +913,19 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
   const invoices = loadedList(state.related.invoices);
   const isLease = selected.kind === 'LONG_TERM_LEASE';
   const canEditRent =
-    isLease && (selected.state === 'DRAFT' || selected.state === 'CONFIRMED' || selected.state === 'ACTIVE');
+    state.canWrite &&
+    isLease &&
+    (selected.state === 'DRAFT' || selected.state === 'CONFIRMED' || selected.state === 'ACTIVE');
   const firstInvoice = invoices[0];
+  const partyName = (isLease ? tenant?.displayName : undefined) ?? customerName ?? customerLabel;
+  const noticeContext: NoticeContext = {
+    partyName,
+    propertyAddress: property?.address ?? '',
+    propertyLabel: property?.name ?? '',
+    record: selected,
+    unitLabel: unitName(selected.unitRef.resourceId),
+  };
+  const occupancyId = selected.occupancyRef.resourceId;
   return (
     <>
       <div>
@@ -774,7 +956,22 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
         }
         title={`${unitName(selected.unitRef.resourceId)}${tenant?.displayName == null ? '' : ` · ${tenant.displayName}`}`}
       />
-      {feedback !== 'ready' && <output aria-live="polite">{t(`siampark-occupancy.demo.feedback.${feedback}`)}</output>}
+      {feedback !== 'ready' && (
+        <output aria-live="polite" className="sp-occupancy-feedback">
+          {state.collision === undefined ? t(`siampark-occupancy.demo.feedback.${feedback}`) : state.collision.text}
+          {state.collision !== undefined && (
+            <>
+              {' '}
+              <a href={state.collision.href}>Otevřít kolidující záznam →</a>
+            </>
+          )}
+        </output>
+      )}
+      {!state.canWrite && (
+        <p className="siamparkoccupancy:text-sm siamparkoccupancy:text-(--color-fg-secondary)">
+          Máte oprávnění tento záznam pouze číst. Změny provádí vedení, provoz nebo obchod.
+        </p>
+      )}
       {isLease && (
         <LeaseStoryNav
           steps={[
@@ -899,7 +1096,13 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
           {isLease && snapshot !== undefined && (
             <TenantDossierCard
               busy={busy}
+              canWrite={state.canWrite}
               counterpartyName={tenant?.displayName ?? customerLabel}
+              leaseHref={
+                selected.customerCounterpartyRef === null
+                  ? undefined
+                  : `/${language}/siampark/occupancy?counterpartyId=${selected.customerCounterpartyRef.resourceId}#tenant`
+              }
               contractHref={
                 contract === undefined
                   ? undefined
@@ -912,10 +1115,10 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
                 (item) => item.counterpartyId === selected.customerCounterpartyRef?.resourceId,
               )}
               key={`tenant:${snapshot.revision}`}
-              language={language}
               newContactId={newUuid}
-              onCommand={state.runCommand}
-              record={selected}
+              onUpdate={(changes) =>
+                state.runCommand({ _tag: 'UpdateTenantDossier', occupancyRef: selected.occupancyRef, ...changes })
+              }
             />
           )}
           {customerNameFeedback !== undefined && (
@@ -926,6 +1129,30 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
           )}
           {isLease && <InvoicesCard invoices={state.related.invoices} language={language} t={t} />}
           <TasksCard language={language} t={t} tasks={state.related.tasks} />
+          {snapshot !== undefined && (
+            <RegistrationSheetCard
+              busy={busy}
+              canWrite={state.canWrite}
+              context={noticeContext}
+              key={`sheet:${snapshot.revision}`}
+              newId={newUuid}
+              onCommand={runCommand}
+              sheets={(snapshot.registrationSheets ?? []).filter((sheet) => sheet.occupancyId === occupancyId)}
+            />
+          )}
+          {snapshot !== undefined && (
+            <NoticeCard
+              busy={busy}
+              canWrite={state.canWrite}
+              context={noticeContext}
+              defaultEmail={tenant?.email ?? ''}
+              defaultPhone={tenant?.phone ?? ''}
+              key={`notice:${snapshot.revision}`}
+              newId={newUuid}
+              notices={(snapshot.preparedNotices ?? []).filter((notice) => notice.occupancyId === occupancyId)}
+              onCommand={runCommand}
+            />
+          )}
           {selected.note !== null && (
             <SectionCard title={t('siampark-occupancy.detail.note')}>
               <p className="siamparkoccupancy:whitespace-pre-wrap siamparkoccupancy:text-sm">{selected.note}</p>
@@ -968,7 +1195,10 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
                 {t(`siampark-occupancy.demo.stateLabels.${selected.state}`)}
               </Badge>
             </div>
-            <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:gap-2">
+            <div
+              className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:gap-2"
+              hidden={!state.canWrite}
+            >
               {selected.state === 'DRAFT' && (
                 <Button disabled={busy} onClick={editDraft} size="sm" theme="outlined" variant="secondary">
                   {t(LABEL_EDIT_DRAFT)}
@@ -1024,6 +1254,20 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
           </SectionCard>
           {isLease && <ContractCard contract={contract} language={language} t={t} />}
           <UnitCard language={language} property={property} t={t} unit={unit} />
+          {property !== undefined && (
+            <div className="siamparkoccupancy:min-w-0 siamparkoccupancy:rounded-lg siamparkoccupancy:border siamparkoccupancy:border-(--color-border-muted) siamparkoccupancy:bg-(--color-surface) siamparkoccupancy:p-4">
+              <PropertyEquipment
+                language={language}
+                propertyId={property.propertyRef.resourceId}
+                unitId={selected.unitRef.resourceId}
+              />
+            </div>
+          )}
+          {snapshot !== undefined && (
+            <OccupancyHistoryCard
+              entries={(snapshot.occupancyHistory ?? []).filter((entry) => entry.occupancyId === occupancyId)}
+            />
+          )}
         </div>
       </div>
       <RentTermsForm state={state} />
@@ -1380,38 +1624,54 @@ const RecordsPageContent = () => {
     <>
       <UltramodernRouteHead />
       <section className="siamparkoccupancy:w-full siamparkoccupancy:min-w-0 siamparkoccupancy:max-w-none siamparkoccupancy:space-y-6 siamparkoccupancy:p-0 siamparkoccupancy:text-(--color-page-fg)">
-        {state.linkedResourceId === undefined ? (
+        {state.linkedCounterpartyId !== undefined && state.linkedResourceId === undefined ? (
+          <CounterpartyDossierView
+            busy={busy}
+            canWrite={state.canWrite}
+            counterpartyId={state.linkedCounterpartyId}
+            directoryLoaded={state.directoryLoaded}
+            entry={state.tenantDirectory.find((item) => item.counterpartyRef.resourceId === state.linkedCounterpartyId)}
+            feedbackText={feedback === 'ready' ? undefined : t(`siampark-occupancy.demo.feedback.${feedback}`)}
+            language={state.language}
+            newContactId={newUuid}
+            onUpdate={state.updateCounterpartyDossier(state.linkedCounterpartyId)}
+            snapshot={snapshot}
+            unitName={unitName}
+          />
+        ) : state.linkedResourceId === undefined ? (
           <>
             <PageHeader
               actions={
-                <>
-                  <Button
-                    disabled={busy || snapshot === undefined}
-                    onClick={() => state.newDraft('stay')}
-                    size="sm"
-                    theme="outlined"
-                    variant="secondary"
-                  >
-                    {t('siampark-occupancy.demo.newBooking')}
-                  </Button>
-                  <Button
-                    disabled={busy || snapshot === undefined}
-                    onClick={() => state.newDraft('booking')}
-                    size="sm"
-                    theme="borderless"
-                    variant="secondary"
-                  >
-                    Simulace importu
-                  </Button>
-                  <Button
-                    disabled={busy || snapshot === undefined}
-                    onClick={() => state.newDraft()}
-                    size="sm"
-                    variant="primary"
-                  >
-                    {t('siampark-occupancy.demo.newLease')}
-                  </Button>
-                </>
+                state.canWrite && (
+                  <>
+                    <Button
+                      disabled={busy || snapshot === undefined}
+                      onClick={() => state.newDraft('stay')}
+                      size="sm"
+                      theme="outlined"
+                      variant="secondary"
+                    >
+                      {t('siampark-occupancy.demo.newBooking')}
+                    </Button>
+                    <Button
+                      disabled={busy || snapshot === undefined}
+                      onClick={() => state.newDraft('booking')}
+                      size="sm"
+                      theme="borderless"
+                      variant="secondary"
+                    >
+                      Simulace importu
+                    </Button>
+                    <Button
+                      disabled={busy || snapshot === undefined}
+                      onClick={() => state.newDraft()}
+                      size="sm"
+                      variant="primary"
+                    >
+                      {t('siampark-occupancy.demo.newLease')}
+                    </Button>
+                  </>
+                )
               }
               description={t('siampark-occupancy.pages.records.description')}
               meta={
@@ -1450,7 +1710,7 @@ const RecordsPageContent = () => {
             )}
             <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:gap-2">
               <LinkButton href="#tenants" size="sm" theme="outlined" variant="secondary">
-                Nájemci a kontaktní osoby ↓
+                Nájemci, zájemci a kontaktní osoby ↓
               </LinkButton>
               <LinkButton href={`/${state.language}/siampark/overview`} size="sm" theme="outlined" variant="secondary">
                 Kalendář a přehled nemovitostí →
@@ -1504,7 +1764,7 @@ const RecordsPageContent = () => {
                           {state.propertyOf(record)?.name ?? ''}
                         </span>
                       </Table.Cell>
-                      <Table.Cell>{state.tenantOf(record)?.displayName ?? '—'}</Table.Cell>
+                      <Table.Cell>{state.partyNameOf(record) ?? '—'}</Table.Cell>
                       <Table.Cell>
                         {formatDate(record.startDate)} –{' '}
                         {record.endDate === null ? t('siampark-occupancy.demo.openEnd') : formatDate(record.endDate)}
@@ -1554,9 +1814,13 @@ const RecordsPageContent = () => {
             </div>
             {snapshot !== undefined && (
               <TenantDirectory
+                busy={busy}
+                canCreate={state.canWrite}
+                createError={state.createError}
+                directory={state.tenantDirectory}
                 language={state.language}
+                onCreate={state.createCounterparty}
                 snapshot={snapshot}
-                tenantOf={state.tenantOf}
                 unitName={unitName}
               />
             )}

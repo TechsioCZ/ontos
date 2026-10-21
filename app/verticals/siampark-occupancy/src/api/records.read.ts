@@ -7,13 +7,45 @@ import {
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
 } from '@app/core-runtime';
+import { ActionPermission } from '@app/core-runtime/actions/runtime-wiring';
+import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { Effect } from 'effect';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { persistenceService, filterOccupancyRecords } from '../services/persistence.service.ts';
 
 const OWNER_MODULE_KEY = 'siampark.occupancy';
 
-type Services = Effect.Success<ReturnType<typeof persistenceService>>;
+type Services = Effect.Success<ReturnType<typeof persistenceService>> & { readonly canWrite: boolean };
+
+/** Same Core decision the gateway applies to `apply-command`, so the UI only offers permitted actions. */
+const occupancyWriteCapability = (scope: Pick<OperationalScope, 'principalId' | 'correlationId'>) =>
+  ActionPermission.pipe(
+    Effect.flatMap((permission) =>
+      permission.checkActionPermission({
+        actionKey: 'siampark.occupancy.apply-command',
+        correlationId: scope.correlationId,
+        principalId: scope.principalId,
+      }),
+    ),
+    Effect.map((decision) => decision === 'allowed'),
+    // A failed capability probe only hides buttons; the Action itself stays authorized by Core.
+    Effect.orElseSucceed(() => false),
+  );
+
+const makeRecordsServices: ReadServiceFactory<Services, ActionPermission> = (transaction, scope) =>
+  Effect.all({ persistence: persistenceService(transaction, scope), canWrite: occupancyWriteCapability(scope) }).pipe(
+    Effect.map(({ persistence, canWrite }) => ({ ...persistence, canWrite })),
+    Effect.mapError((cause) =>
+      Object.defineProperty(
+        new OperationContextUnavailable({
+          code: 'operation_context_unavailable',
+          reason: 'Owner persistence is temporarily unavailable',
+        }),
+        'cause',
+        { configurable: false, enumerable: false, value: cause, writable: false },
+      ),
+    ),
+  );
 
 const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
@@ -62,21 +94,9 @@ export const recordsRead = defineRead(
                 reason: 'Record is not present in the authorized scope',
               }),
             )
-          : Effect.succeed({ evidence: { resultCount }, result });
+          : Effect.succeed({ evidence: { resultCount }, result: { ...result, canWrite: context.services.canWrite } });
       }),
     ),
-  (transaction, scope) =>
-    persistenceService(transaction, scope).pipe(
-      Effect.mapError((cause) =>
-        Object.defineProperty(
-          new OperationContextUnavailable({
-            code: 'operation_context_unavailable',
-            reason: 'Owner persistence is temporarily unavailable',
-          }),
-          'cause',
-          { configurable: false, enumerable: false, value: cause, writable: false },
-        ),
-      ),
-    ),
+  makeRecordsServices,
   () => ({ kind: 'module', moduleId: OWNER_MODULE_KEY }),
 );

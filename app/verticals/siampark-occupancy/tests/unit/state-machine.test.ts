@@ -5,6 +5,8 @@ import { Effect, Exit, Schema } from 'effect';
 import { OccupancySchema, OccupancyStateSchema, TenantCaseDetailsSchema } from '../../shared/apis/records.ts';
 import type { Occupancy, OccupancyState } from '../../shared/apis/records.ts';
 import {
+  filterOccupancyRecords,
+  occupancyHasConflict,
   occupancyPeriodsOverlap,
   transitionOccupancy,
   unavailableOccupancyValidators,
@@ -597,3 +599,135 @@ it.effect('manually reserves a stay with people and note without creating integr
     expect(cancelled.snapshot.occupancies[0]?.state).toBe('CANCELLED');
   }),
 );
+
+describe('Counterparty dossier, audit, registration sheet and notices', () => {
+  const actor = { ...scope, principalId: '77777777-7777-4777-8777-777777777777' };
+  const prospect = { ...customerCounterpartyRef, resourceId: '88888888-8888-4888-8888-888888888888' };
+  it.effect('S01: a prospect without a lease gets contacts and a timeline that unfiltered reads return', () =>
+    Effect.gen(function* prospectDossier() {
+      const noted = yield* transitionOccupancy(
+        empty,
+        {
+          _tag: 'UpdateCounterpartyDossier',
+          counterpartyRef: prospect,
+          activity: { kind: 'NOTE', summary: 'První kontakt.' },
+        },
+        actor,
+        validators,
+      );
+      expect(noted.resourceRef).toBeNull();
+      const contacts = yield* transitionOccupancy(
+        noted.snapshot,
+        {
+          _tag: 'UpdateCounterpartyDossier',
+          counterpartyRef: prospect,
+          contacts: [
+            { id: '99999999-9999-4999-8999-999999999991', name: 'Eva Bílá', role: 'Jednatelka', email: '', phone: '' },
+            { id: '99999999-9999-4999-8999-999999999992', name: 'Petr Bílý', role: 'Provoz', email: '', phone: '' },
+          ],
+          caseState: 'IN_PROGRESS',
+        },
+        actor,
+        validators,
+      );
+      const dossier = filterOccupancyRecords(contacts.snapshot, 2, {}).tenantDossiers?.[0];
+      expect(dossier?.contacts.map((contact) => contact.name)).toEqual(['Eva Bílá', 'Petr Bílý']);
+      expect(dossier?.history.map((entry) => entry.kind)).toEqual(['NOTE', 'CONTACTS', 'CASE']);
+      expect(dossier?.history.every((entry) => entry.authorPrincipalId === actor.principalId)).toBe(true);
+      yield* rejected(
+        transitionOccupancy(
+          empty,
+          { _tag: 'UpdateCounterpartyDossier', counterpartyRef: prospect, activity: { kind: 'NOTE', summary: 'x' } },
+          actor,
+          {
+            ...validators,
+            counterparty: (ref) =>
+              Effect.succeed({ activeCustomer: true, archived: false, counterpartyRef: ref, legalEntityId: tenantId }),
+          },
+        ),
+      );
+    }),
+  );
+  it.effect('S10-02: cancellation is audited with author and time and frees the period', () =>
+    Effect.gen(function* auditedCancel() {
+      const created = yield* transitionOccupancy(empty, { _tag: 'CreateDraft', record: draft }, actor, validators);
+      const confirmed = yield* transitionOccupancy(
+        created.snapshot,
+        { _tag: 'Confirm', occupancyRef },
+        actor,
+        validators,
+      );
+      const cancelled = yield* transitionOccupancy(
+        confirmed.snapshot,
+        { _tag: 'Cancel', occupancyRef },
+        actor,
+        validators,
+      );
+      const history = filterOccupancyRecords(cancelled.snapshot, 3, {
+        resourceId: occupancyRef.resourceId,
+      }).occupancyHistory;
+      expect(history?.map((entry) => entry.kind)).toEqual(['CREATED', 'CONFIRMED', 'CANCELLED']);
+      expect(history?.[2]?.summary).toContain('Potvrzeno → Zrušeno');
+      expect(history?.[2]?.authorPrincipalId).toBe(actor.principalId);
+      expect(
+        occupancyHasConflict(cancelled.snapshot, {
+          ...draft,
+          occupancyRef: { ...occupancyRef, resourceId: '12121212-1212-4121-8121-121212121212' },
+        }),
+      ).toBe(false);
+    }),
+  );
+  it.effect(
+    'S10: registration sheet copies the record and notices are stored, never for drafts or bad recipients',
+    () =>
+      Effect.gen(function* sheetAndNotice() {
+        const created = yield* transitionOccupancy(empty, { _tag: 'CreateDraft', record: draft }, actor, validators);
+        const sheet = {
+          _tag: 'CreateRegistrationSheet',
+          occupancyRef,
+          sheetId: 'abababab-abab-4bab-8bab-abababababab',
+          occupants: [
+            { name: 'Eva Bílá', birthDate: null, nationality: 'Česká republika', identityDocument: '', address: '' },
+          ],
+          purpose: 'Bydlení – nájem',
+          note: '',
+        } as const;
+        yield* rejected(transitionOccupancy(created.snapshot, sheet, actor, validators));
+        const confirmed = yield* transitionOccupancy(
+          created.snapshot,
+          { _tag: 'Confirm', occupancyRef },
+          actor,
+          validators,
+        );
+        const withSheet = yield* transitionOccupancy(confirmed.snapshot, sheet, actor, validators);
+        expect(withSheet.snapshot.registrationSheets?.[0]).toMatchObject({
+          number: expect.stringMatching(/^EL-\d{4}-001$/u),
+          startDate: draft.startDate,
+          endDate: draft.endDate,
+          unitId: unitRef.resourceId,
+        });
+        yield* rejected(transitionOccupancy(withSheet.snapshot, sheet, actor, validators));
+        const notice = {
+          _tag: 'PrepareNotice',
+          occupancyRef,
+          noticeId: 'cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd',
+          channel: 'EMAIL',
+          templateKey: 'lease-handover',
+          recipient: 'eva@pekarna-bila.example',
+          subject: 'Předání jednotky',
+          body: 'Dobrý den, navrhněte termín předání.',
+        } as const;
+        yield* rejected(
+          transitionOccupancy(withSheet.snapshot, { ...notice, recipient: 'není e-mail' }, actor, validators),
+        );
+        const prepared = yield* transitionOccupancy(withSheet.snapshot, notice, actor, validators);
+        expect(prepared.snapshot.preparedNotices).toHaveLength(1);
+        expect(prepared.snapshot.occupancyHistory?.map((entry) => entry.kind)).toEqual([
+          'CREATED',
+          'CONFIRMED',
+          'REGISTRATION_SHEET',
+          'NOTICE',
+        ]);
+      }),
+  );
+});

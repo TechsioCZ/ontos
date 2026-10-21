@@ -93,8 +93,74 @@ export const TenantDossierSchema = Schema.Struct({
 });
 export type TenantDossier = typeof TenantDossierSchema.Type;
 export type TenantContact = typeof TenantContactSchema.Type;
+/** Audit of a stay or lease: who changed its state or documents and when (S10-02). */
+export const OccupancyHistoryEntrySchema = Schema.Struct({
+  occupancyId: Schema.String.check(Schema.isUUID()),
+  kind: Schema.Literals([
+    'CREATED',
+    'UPDATED',
+    'RENT_TERMS',
+    'CONFIRMED',
+    'ACTIVATED',
+    'COMPLETED',
+    'CANCELLED',
+    'IMPORTED',
+    'REGISTRATION_SHEET',
+    'NOTICE',
+  ]),
+  summary: TextSchema,
+  occurredAt: Schema.String,
+  authorPrincipalId: Schema.String,
+});
+export type OccupancyHistoryEntry = typeof OccupancyHistoryEntrySchema.Type;
+const ShortTextSchema = Schema.Trim.check(Schema.isMaxLength(200));
+/** One person staying in the unit, as written on the registration sheet (evidenční list). */
+export const RegistrationOccupantSchema = Schema.Struct({
+  name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  birthDate: Schema.NullOr(DemoDateSchema),
+  nationality: ShortTextSchema,
+  identityDocument: ShortTextSchema,
+  address: Schema.Trim.check(Schema.isMaxLength(300)),
+});
+export type RegistrationOccupant = typeof RegistrationOccupantSchema.Type;
+/**
+ * Registration sheet (evidenční list) of a stay or lease. Dates, unit and people count are copied by the owner
+ * from the record at the time of creation, so later changes of the reservation do not rewrite the sheet.
+ */
+export const RegistrationSheetSchema = Schema.Struct({
+  sheetId: Schema.String.check(Schema.isUUID()),
+  number: Schema.String,
+  occupancyId: Schema.String.check(Schema.isUUID()),
+  unitId: Schema.String.check(Schema.isUUID()),
+  startDate: DemoDateSchema,
+  endDate: Schema.NullOr(DemoDateSchema),
+  peopleCount: Schema.NullOr(Schema.Int),
+  occupants: Schema.Array(RegistrationOccupantSchema).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+  purpose: Schema.Trim.check(Schema.isMaxLength(200)),
+  note: Schema.Trim.check(Schema.isMaxLength(500)),
+  createdAt: Schema.String,
+  authorPrincipalId: Schema.String,
+});
+export type RegistrationSheet = typeof RegistrationSheetSchema.Type;
+export const NoticeChannelSchema = Schema.Literals(['EMAIL', 'SMS']);
+/** Notification text prepared from a template. Preparing never sends anything; sending needs a provider. */
+export const PreparedNoticeSchema = Schema.Struct({
+  noticeId: Schema.String.check(Schema.isUUID()),
+  occupancyId: Schema.String.check(Schema.isUUID()),
+  channel: NoticeChannelSchema,
+  templateKey: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(60)),
+  recipient: Schema.Trim.check(Schema.isMaxLength(200)),
+  subject: Schema.Trim.check(Schema.isMaxLength(200)),
+  body: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(2000)),
+  preparedAt: Schema.String,
+  authorPrincipalId: Schema.String,
+});
+export type PreparedNotice = typeof PreparedNoticeSchema.Type;
 export const OccupancyStateSchema = Schema.Struct({
   tenantDossiers: Schema.optionalKey(Schema.Array(TenantDossierSchema)),
+  occupancyHistory: Schema.optionalKey(Schema.Array(OccupancyHistoryEntrySchema)),
+  registrationSheets: Schema.optionalKey(Schema.Array(RegistrationSheetSchema)),
+  preparedNotices: Schema.optionalKey(Schema.Array(PreparedNoticeSchema)),
   bookingObservations: Schema.Array(BookingObservationSchema),
   occupancies: Schema.Array(OccupancySchema),
 });
@@ -112,6 +178,8 @@ export const RecordsRequestSchema = Schema.Struct({
 export type RecordsRequest = typeof RecordsRequestSchema.Type;
 export const RecordsResponseSchema = Schema.Struct({
   ...OccupancyStateSchema.fields,
+  /** Whether the caller may run occupancy commands; the UI hides write actions otherwise. */
+  canWrite: Schema.optionalKey(Schema.Boolean),
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });
 export type RecordsResponse = typeof RecordsResponseSchema.Type;

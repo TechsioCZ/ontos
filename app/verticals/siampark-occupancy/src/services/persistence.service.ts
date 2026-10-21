@@ -23,7 +23,13 @@ import {
 } from '../../shared/actions/apply-command.ts';
 import type { OccupancyCommand, OccupancyError } from '../../shared/actions/apply-command.ts';
 import { OccupancyStateSchema } from '../../shared/apis/records.ts';
-import type { Occupancy, OccupancyState, RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
+import type {
+  Occupancy,
+  OccupancyHistoryEntry,
+  OccupancyState,
+  RecordsRequest,
+  RecordsResponse,
+} from '../../shared/apis/records.ts';
 import type { OccupancyRef } from '../../shared/resources/occupancy.ts';
 import { occupancyState } from '../database/schema.ts';
 
@@ -264,7 +270,177 @@ const importBooking = Effect.fn('Occupancy.importBooking')(function* importBooki
     },
   } satisfies OccupancyTransition;
 });
+type DossierChanges = Pick<
+  Extract<OccupancyCommand, { readonly _tag: 'UpdateTenantDossier' }>,
+  'activity' | 'archived' | 'caseDetails' | 'caseState' | 'contacts'
+>;
+const caseStateLabels = {
+  NEW: 'Nový',
+  IN_PROGRESS: 'Řešený',
+  CONFIRMED: 'Potvrzený',
+  CLOSED: 'Uzavřený',
+  CANCELLED: 'Zrušený',
+} as const;
+/** Contacts, communication timeline and business case of one counterparty, shared by all its leases. */
+const updateDossier = Effect.fn('Occupancy.updateDossier')(function* updateDossier(
+  state: OccupancyState,
+  counterpartyId: string,
+  command: DossierChanges,
+  principalId: string,
+) {
+  const previous = state.tenantDossiers?.find((item) => item.counterpartyId === counterpartyId) ?? {
+    counterpartyId,
+    contacts: [],
+    caseState: 'NEW' as const,
+    archived: false,
+    history: [],
+  };
+  if (
+    command.contacts !== undefined &&
+    new Set(command.contacts.map((item) => item.id)).size !== command.contacts.length
+  )
+    return yield* rejected('duplicate_contact_id');
+  const occurredAt = DateTime.formatIso(yield* DateTime.now);
+  const event = (kind: 'CALL' | 'EMAIL' | 'MEETING' | 'NOTE' | 'CONTACTS' | 'CASE' | 'ARCHIVE', summary: string) => ({
+    kind,
+    summary,
+    occurredAt,
+    authorPrincipalId: principalId,
+  });
+  const history = [...previous.history];
+  if (command.contacts !== undefined)
+    history.push(event('CONTACTS', `Kontaktní osoby aktualizovány (${command.contacts.length}).`));
+  if (command.caseState !== undefined && command.caseState !== previous.caseState)
+    history.push(
+      event('CASE', `Stav případu: ${caseStateLabels[previous.caseState]} → ${caseStateLabels[command.caseState]}.`),
+    );
+  if (command.caseDetails !== undefined)
+    history.push(event('CASE', `Údaje případu aktualizovány: ${command.caseDetails.subject.slice(0, 300)}.`));
+  if (command.archived !== undefined && command.archived !== previous.archived)
+    history.push(
+      event(
+        'ARCHIVE',
+        command.archived
+          ? 'Evidence protistrany archivována. Smlouvy, nájmy i historie zůstávají zachovány.'
+          : 'Evidence protistrany obnovena z archivu.',
+      ),
+    );
+  if (command.activity !== undefined) history.push(event(command.activity.kind, command.activity.summary));
+  if (history.length === previous.history.length) return yield* rejected('tenant_dossier_requires_change');
+  const updated = {
+    ...previous,
+    contacts: command.contacts ?? previous.contacts,
+    caseState: command.caseState ?? previous.caseState,
+    ...(command.caseDetails === undefined ? {} : { caseDetails: command.caseDetails }),
+    archived: command.archived ?? previous.archived,
+    history,
+  };
+  return {
+    ...state,
+    tenantDossiers: [...(state.tenantDossiers ?? []).filter((item) => item.counterpartyId !== counterpartyId), updated],
+  } satisfies OccupancyState;
+});
+const dossierChanges = (command: DossierChanges): DossierChanges => ({
+  ...(command.contacts === undefined ? {} : { contacts: command.contacts }),
+  ...(command.caseState === undefined ? {} : { caseState: command.caseState }),
+  ...(command.caseDetails === undefined ? {} : { caseDetails: command.caseDetails }),
+  ...(command.archived === undefined ? {} : { archived: command.archived }),
+  ...(command.activity === undefined ? {} : { activity: command.activity }),
+});
+const stateLabels = {
+  DRAFT: 'Koncept',
+  CONFIRMED: 'Potvrzeno',
+  ACTIVE: 'Aktivní',
+  COMPLETED: 'Ukončeno',
+  CANCELLED: 'Zrušeno',
+} as const;
+const czechDate = (value: string) => {
+  const [year, month, day] = value.split('-');
+  return `${Number(day)}. ${Number(month)}. ${year}`;
+};
+const periodLabel = (record: Pick<Occupancy, 'endDate' | 'startDate'>) =>
+  `${czechDate(record.startDate)} – ${record.endDate === null ? 'bez konce' : czechDate(record.endDate)}`;
+/** One audit line for a lifecycle command; `undefined` for commands that write their own entry or none. */
+const historyFor = (
+  before: OccupancyState,
+  after: OccupancyTransition,
+  command: OccupancyCommand,
+):
+  | { readonly occupancyId: string; readonly kind: OccupancyHistoryEntry['kind']; readonly summary: string }
+  | undefined => {
+  const id = after.resourceRef?.resourceId;
+  const record = after.snapshot.occupancies.find((item) => item.occupancyRef.resourceId === id);
+  const previous = before.occupancies.find((item) => item.occupancyRef.resourceId === id);
+  if (id === undefined || record === undefined) return undefined;
+  const transition = previous === undefined ? '' : `${stateLabels[previous.state]} → ${stateLabels[record.state]}`;
+  return Match.value(command).pipe(
+    Match.tag('CreateDraft', () => ({
+      occupancyId: id,
+      kind: 'CREATED' as const,
+      summary: `Založen koncept na období ${periodLabel(record)}.`,
+    })),
+    Match.tag('UpdateDraft', () => ({
+      occupancyId: id,
+      kind: 'UPDATED' as const,
+      summary: `Upraveno období na ${periodLabel(record)}.`,
+    })),
+    Match.tag('SetRentTerms', ({ rentTerms }) => ({
+      occupancyId: id,
+      kind: 'RENT_TERMS' as const,
+      summary: `Sjednané nájemné ${(rentTerms.monthlyRentMinor / 100).toLocaleString('cs-CZ')} Kč a zálohy ${(
+        rentTerms.serviceChargesMinor / 100
+      ).toLocaleString('cs-CZ')} Kč měsíčně, splatnost ${rentTerms.paymentDay}. den.`,
+    })),
+    Match.tag('Confirm', () => ({ occupancyId: id, kind: 'CONFIRMED' as const, summary: `Stav: ${transition}.` })),
+    Match.tag('Activate', () => ({ occupancyId: id, kind: 'ACTIVATED' as const, summary: `Stav: ${transition}.` })),
+    Match.tag('Complete', () => ({ occupancyId: id, kind: 'COMPLETED' as const, summary: `Stav: ${transition}.` })),
+    Match.tag('Cancel', () => ({
+      occupancyId: id,
+      kind: 'CANCELLED' as const,
+      summary: `Stav: ${transition}. Období ${periodLabel(record)} se v kalendáři uvolnilo.`,
+    })),
+    Match.tag('ImportBooking', 'RetryBooking', () => ({
+      occupancyId: id,
+      kind: 'IMPORTED' as const,
+      summary: `Rezervace importována (simulace) na období ${periodLabel(record)}.`,
+    })),
+    Match.orElse(() => undefined),
+  );
+};
+const appendHistory = (
+  snapshot: OccupancyState,
+  entry: Omit<OccupancyHistoryEntry, 'authorPrincipalId' | 'occurredAt'>,
+  scope: OccupancyGuardScope,
+  occurredAt: string,
+): OccupancyState => ({
+  ...snapshot,
+  occupancyHistory: [
+    ...(snapshot.occupancyHistory ?? []),
+    { ...entry, occurredAt, authorPrincipalId: scope.principalId ?? 'unknown' },
+  ],
+});
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
+const phonePattern = /^\+?[0-9 ]{9,20}$/u;
 export const transitionOccupancy = (
+  state: OccupancyState,
+  command: OccupancyCommand,
+  scope: OccupancyGuardScope,
+  validators: OccupancyValidators,
+): Effect.Effect<OccupancyTransition, OccupancyError> =>
+  transitionOccupancyState(state, command, scope, validators).pipe(
+    Effect.flatMap((transition) => {
+      const entry = historyFor(state, transition, command);
+      return entry === undefined
+        ? Effect.succeed(transition)
+        : DateTime.now.pipe(
+            Effect.map((now) => ({
+              ...transition,
+              snapshot: appendHistory(transition.snapshot, entry, scope, DateTime.formatIso(now)),
+            })),
+          );
+    }),
+  );
+const transitionOccupancyState = (
   state: OccupancyState,
   command: OccupancyCommand,
   scope: OccupancyGuardScope,
@@ -280,66 +456,120 @@ export const transitionOccupancy = (
         const counterpartyId = record.customerCounterpartyRef?.resourceId;
         if (counterpartyId === undefined || scope.principalId === undefined)
           return yield* rejected('tenant_dossier_requires_customer_and_actor');
-        const previous = state.tenantDossiers?.find((item) => item.counterpartyId === counterpartyId) ?? {
-          counterpartyId,
-          contacts: [],
-          caseState: 'NEW' as const,
-          archived: false,
-          history: [],
-        };
+        const snapshot = yield* updateDossier(state, counterpartyId, dossierChanges(command), scope.principalId);
+        return { resourceRef: record.occupancyRef, snapshot };
+      }),
+    ),
+    Match.tag(
+      'UpdateCounterpartyDossier',
+      Effect.fn('Occupancy.UpdateCounterpartyDossier')(function* updateCounterpartyDossier(
+        command: Extract<OccupancyCommand, { readonly _tag: 'UpdateCounterpartyDossier' }>,
+      ) {
+        if (command.counterpartyRef.tenantId !== scope.tenantId) return yield* rejected('scope_mismatch');
+        if (scope.principalId === undefined) return yield* rejected('tenant_dossier_requires_customer_and_actor');
+        const counterparty = yield* validators.counterparty(command.counterpartyRef);
         if (
-          command.contacts !== undefined &&
-          new Set(command.contacts.map((item) => item.id)).size !== command.contacts.length
+          !refMatches(counterparty.counterpartyRef, command.counterpartyRef) ||
+          counterparty.legalEntityId !== scope.legalEntityId
         )
-          return yield* rejected('duplicate_contact_id');
-        const principalId = scope.principalId;
-        const occurredAt = DateTime.formatIso(yield* DateTime.now);
-        const event = (
-          kind: 'CALL' | 'EMAIL' | 'MEETING' | 'NOTE' | 'CONTACTS' | 'CASE' | 'ARCHIVE',
-          summary: string,
-        ) => ({ kind, summary, occurredAt, authorPrincipalId: principalId });
-        const history = [...previous.history];
-        if (command.contacts !== undefined)
-          history.push(event('CONTACTS', `Kontaktní osoby aktualizovány (${command.contacts.length}).`));
-        const states = {
-          NEW: 'Nový',
-          IN_PROGRESS: 'Řešený',
-          CONFIRMED: 'Potvrzený',
-          CLOSED: 'Uzavřený',
-          CANCELLED: 'Zrušený',
-        };
-        if (command.caseState !== undefined && command.caseState !== previous.caseState)
-          history.push(event('CASE', `Stav případu: ${states[previous.caseState]} → ${states[command.caseState]}.`));
-        if (command.caseDetails !== undefined)
-          history.push(event('CASE', `Údaje případu aktualizovány: ${command.caseDetails.subject.slice(0, 300)}.`));
-        if (command.archived !== undefined && command.archived !== previous.archived)
-          history.push(
-            event(
-              'ARCHIVE',
-              command.archived
-                ? 'Evidence nájemce archivována. Smlouvy a nájmy zůstávají zachovány.'
-                : 'Evidence nájemce obnovena z archivu.',
-            ),
-          );
-        if (command.activity !== undefined) history.push(event(command.activity.kind, command.activity.summary));
-        if (history.length === previous.history.length) return yield* rejected('tenant_dossier_requires_change');
-        const updated = {
-          ...previous,
-          contacts: command.contacts ?? previous.contacts,
-          caseState: command.caseState ?? previous.caseState,
-          ...(command.caseDetails === undefined ? {} : { caseDetails: command.caseDetails }),
-          archived: command.archived ?? previous.archived,
-          history,
+          return yield* rejected('counterparty_not_usable');
+        const snapshot = yield* updateDossier(
+          state,
+          command.counterpartyRef.resourceId,
+          dossierChanges(command),
+          scope.principalId,
+        );
+        return { resourceRef: null, snapshot };
+      }),
+    ),
+    Match.tag(
+      'CreateRegistrationSheet',
+      Effect.fn('Occupancy.CreateRegistrationSheet')(function* createRegistrationSheet(
+        command: Extract<OccupancyCommand, { readonly _tag: 'CreateRegistrationSheet' }>,
+      ) {
+        const record = yield* findOccupancy(state, command.occupancyRef, scope);
+        if (record.state === 'DRAFT' || record.state === 'CANCELLED')
+          return yield* conflict('registration_sheet_requires_confirmed_occupancy');
+        const sheets = state.registrationSheets ?? [];
+        if (sheets.some((sheet) => sheet.sheetId === command.sheetId))
+          return yield* conflict('registration_sheet_already_exists');
+        const now = yield* DateTime.now;
+        const createdAt = DateTime.formatIso(now);
+        const year = createdAt.slice(0, 4);
+        const sequence = sheets.filter((sheet) => sheet.number.startsWith(`EL-${year}-`)).length + 1;
+        const number = `EL-${year}-${String(sequence).padStart(3, '0')}`;
+        const sheet = {
+          sheetId: command.sheetId,
+          number,
+          occupancyId: record.occupancyRef.resourceId,
+          unitId: record.unitRef.resourceId,
+          startDate: record.startDate,
+          endDate: record.endDate,
+          peopleCount: record.peopleCount,
+          occupants: command.occupants,
+          purpose: command.purpose,
+          note: command.note,
+          createdAt,
+          authorPrincipalId: scope.principalId ?? 'unknown',
         };
         return {
           resourceRef: record.occupancyRef,
-          snapshot: {
-            ...state,
-            tenantDossiers: [
-              ...(state.tenantDossiers ?? []).filter((item) => item.counterpartyId !== counterpartyId),
-              updated,
-            ],
-          },
+          snapshot: appendHistory(
+            { ...state, registrationSheets: [...sheets, sheet] },
+            {
+              occupancyId: record.occupancyRef.resourceId,
+              kind: 'REGISTRATION_SHEET',
+              summary: `Založen evidenční list ${number} (${command.occupants.length} ${
+                command.occupants.length === 1 ? 'osoba' : command.occupants.length < 5 ? 'osoby' : 'osob'
+              }).`,
+            },
+            scope,
+            createdAt,
+          ),
+        };
+      }),
+    ),
+    Match.tag(
+      'PrepareNotice',
+      Effect.fn('Occupancy.PrepareNotice')(function* prepareNotice(
+        command: Extract<OccupancyCommand, { readonly _tag: 'PrepareNotice' }>,
+      ) {
+        const record = yield* findOccupancy(state, command.occupancyRef, scope);
+        const notices = state.preparedNotices ?? [];
+        if (notices.some((notice) => notice.noticeId === command.noticeId))
+          return yield* conflict('notice_already_prepared');
+        if (
+          command.recipient.length > 0 &&
+          !(command.channel === 'EMAIL' ? emailPattern : phonePattern).test(command.recipient)
+        )
+          return yield* rejected('invalid_notice_recipient');
+        if (command.channel === 'SMS' && command.body.length > 480) return yield* rejected('sms_text_too_long');
+        const preparedAt = DateTime.formatIso(yield* DateTime.now);
+        const notice = {
+          noticeId: command.noticeId,
+          occupancyId: record.occupancyRef.resourceId,
+          channel: command.channel,
+          templateKey: command.templateKey,
+          recipient: command.recipient,
+          subject: command.channel === 'SMS' ? '' : command.subject,
+          body: command.body,
+          preparedAt,
+          authorPrincipalId: scope.principalId ?? 'unknown',
+        };
+        return {
+          resourceRef: record.occupancyRef,
+          snapshot: appendHistory(
+            { ...state, preparedNotices: [...notices, notice] },
+            {
+              occupancyId: record.occupancyRef.resourceId,
+              kind: 'NOTICE',
+              summary: `Připraven text ${command.channel === 'SMS' ? 'SMS' : 'e-mailu'}${
+                command.recipient.length > 0 ? ` pro ${command.recipient}` : ''
+              } (neodesláno).`,
+            },
+            scope,
+            preparedAt,
+          ),
         };
       }),
     ),
@@ -517,6 +747,14 @@ export const filterOccupancyRecords = (
       (input.fromDate === undefined || record.endDate === null || record.endDate > input.fromDate) &&
       (input.toDate === undefined || record.startDate < input.toDate),
   );
+  const unfiltered =
+    input.resourceId === undefined &&
+    input.unitRef === undefined &&
+    input.kind === undefined &&
+    input.state === undefined &&
+    input.fromDate === undefined &&
+    input.toDate === undefined;
+  const visibleIds = new Set(occupancies.map((record) => record.occupancyRef.resourceId));
   return {
     bookingObservations:
       input.resourceId === undefined &&
@@ -534,9 +772,15 @@ export const filterOccupancyRecords = (
                   observation.occupancyRef !== null && refMatches(record.occupancyRef, observation.occupancyRef),
               ),
           ),
-    tenantDossiers: (state.tenantDossiers ?? []).filter((dossier) =>
-      occupancies.some((record) => record.customerCounterpartyRef?.resourceId === dossier.counterpartyId),
+    // Unfiltered reads list every counterparty dossier, including prospects without a lease (S01).
+    tenantDossiers: (state.tenantDossiers ?? []).filter(
+      (dossier) =>
+        unfiltered ||
+        occupancies.some((record) => record.customerCounterpartyRef?.resourceId === dossier.counterpartyId),
     ),
+    occupancyHistory: (state.occupancyHistory ?? []).filter((entry) => visibleIds.has(entry.occupancyId)),
+    registrationSheets: (state.registrationSheets ?? []).filter((sheet) => visibleIds.has(sheet.occupancyId)),
+    preparedNotices: (state.preparedNotices ?? []).filter((notice) => visibleIds.has(notice.occupancyId)),
     occupancies,
     revision,
   };

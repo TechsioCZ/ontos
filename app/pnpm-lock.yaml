@@ -3315,6 +3315,9 @@ importers:
       '@app/siampark-billing-finance':
         specifier: workspace:*
         version: link:../siampark-billing-finance
+      '@app/siampark-ops':
+        specifier: workspace:*
+        version: link:../siampark-ops
       '@app/siampark-property':
         specifier: workspace:*
         version: link:../siampark-property

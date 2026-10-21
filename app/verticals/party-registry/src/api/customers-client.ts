@@ -58,6 +58,8 @@ export interface CreateCustomerInput {
   readonly email?: string;
   /** Free-text reference to what proves the customer relationship (order, contract, CRM record). */
   readonly evidenceReference?: string;
+  /** Defaults to ORGANIZATION; a PERSON customer carries no IČO/DIČ. */
+  readonly partyType?: 'ORGANIZATION' | 'PERSON';
   readonly phone?: string;
   /** DIČ, e.g. `CZ12345678`. */
   readonly vatId?: string;
@@ -193,7 +195,11 @@ export const createCustomer = Effect.fn('CustomersClient.createCustomer')(functi
   const now = yield* DateTime.now;
   const evidenceReference = Option.getOrElse(nonEmpty(input.evidenceReference), () => `customer-form:${id}`);
   const displayName = input.displayName.trim();
-  const existing = existingCustomerWithCompanyId(yield* listCustomers(), input.companyId);
+  const partyType = input.partyType ?? 'ORGANIZATION';
+  const person = partyType === 'PERSON';
+  const existing = person
+    ? Option.none<CustomerListItem>()
+    : existingCustomerWithCompanyId(yield* listCustomers(), input.companyId);
   if (Option.isSome(existing)) {
     return {
       counterpartyRef: existing.value.counterpartyRef,
@@ -207,17 +213,21 @@ export const createCustomer = Effect.fn('CustomersClient.createCustomer')(functi
       candidate: {
         displayName,
         evidenceRefs: [evidenceReference],
-        officialIdentifiers: officialIdentifiers(input),
-        partyType: 'ORGANIZATION',
+        officialIdentifiers: person ? [] : officialIdentifiers(input),
+        partyType,
         provenance: { method: 'MANUAL_ENTRY', source: CUSTOMER_PROVENANCE_SOURCE },
         subjectEvidence: [
           {
             basis: 'DIRECT_INTERACTION',
             evidenceRef: evidenceReference,
             kind: 'ACTOR_ATTESTATION',
-            observedSubject: 'ORGANIZATION',
-            statement: `Customer organization ${displayName} entered by an authorized user`,
-            subjectKey: partySubjectKeyFromString(Option.getOrElse(nonEmpty(input.companyId), () => displayName)),
+            observedSubject: partyType,
+            statement: `Customer ${person ? 'person' : 'organization'} ${displayName} entered by an authorized user`,
+            subjectKey: partySubjectKeyFromString(
+              person
+                ? Option.getOrElse(nonEmpty(input.email), () => displayName)
+                : Option.getOrElse(nonEmpty(input.companyId), () => displayName),
+            ),
           },
         ],
         validFrom: now,
