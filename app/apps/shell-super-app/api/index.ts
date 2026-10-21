@@ -171,6 +171,18 @@ import { CapturedShellCompositionCatalog } from './modules/captured-shell-catalo
 import { ShellGovernedReads, createShellGovernedReadsLayer } from './modules/shell-governed-reads.ts';
 import type { ShellScopedModuleStateFactory } from './modules/shell-governed-reads.ts';
 import { OAuthConnectionHooksLive } from './oauth-connections/better-auth-hooks.ts';
+import { companyDirectoryLive } from './oauth-connections-admin/company-directory-live.ts';
+import { mcpResourceUrl } from './oauth-connections-admin/config.ts';
+import { grantAdminPortLive } from './oauth-connections-admin/grant-port-live.ts';
+import {
+  agentConnectionsOverview,
+  listForAdmin,
+  listMine,
+  replaceAgentOperators,
+  revokeConnection,
+  updateConnection,
+} from './oauth-connections-admin/handlers.ts';
+import type { ConnectionsAdminError, ConnectionsCaller } from './oauth-connections-admin/ports.ts';
 import {
   attachShellMedia,
   ShellProviderUnavailableError,
@@ -1997,6 +2009,139 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
     ),
 );
 
+// "Připojené aplikace" management (lane mcp-connections-ui): session callers; grants via connection-grants services.
+const connectionsAdminFailure = (error: ConnectionsAdminError) => {
+  switch (error._tag) {
+    case 'ConnectionsForbidden':
+      return failIdentityProblem(
+        problemDetails(
+          'ShellTargetForbiddenProblem',
+          error.reason,
+          403,
+          'Module target forbidden',
+          'https://ontos.dev/problems/module-target-forbidden',
+        ),
+      );
+    case 'ConnectionsInvalid':
+      return failIdentityProblem(
+        problemDetails(
+          'ShellPolicyUnprocessableProblem',
+          error.reason,
+          422,
+          'Policy violation',
+          'https://ontos.dev/problems/policy-violation',
+        ),
+      );
+    case 'ConnectionsNotFound':
+      return failIdentityProblem(
+        problemDetails(
+          'ShellTargetNotFoundProblem',
+          error.reason,
+          404,
+          'Target not found',
+          'https://ontos.dev/problems/target-not-found',
+        ),
+      );
+    default:
+      return failIdentityProblem(shellCapabilityUnavailableProblem());
+  }
+};
+
+const connectionsCaller = Effect.fn('shell.connectionsAdmin.caller')(function* connectionsCaller(
+  request: RequestWithHeaders,
+  withAdminRight: boolean,
+) {
+  const caller = yield* agentPlatformSessionCaller(request);
+  const isCompanyAdmin = withAdminRight
+    ? yield* demoAccountCapability(caller).pipe(
+        Effect.map((capability) => capability.canManage),
+        Effect.orElseSucceed(() => false),
+      )
+    : false;
+  const result: ConnectionsCaller = {
+    isCompanyAdmin,
+    legalEntityId: caller.principal.legalEntityId,
+    legalName: caller.legalName,
+    principalId: caller.principal.principalId,
+    tenantId: caller.principal.tenantId,
+  };
+  return result;
+});
+
+const connectionsAdminDeps = Effect.map(mcpResourceUrl, (mcpUrl) => ({
+  directory: companyDirectoryLive,
+  grants: grantAdminPortLive,
+  mcpUrl,
+}));
+
+const connectionsAdminDefect = (request: RequestWithHeaders) =>
+  recoverUnexpectedDefect(request, 'Unexpected connections admin defect', () =>
+    failIdentityProblem(shellInternalProblem()),
+  );
+
+const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
+  ShellAuthenticationApi,
+  'oauthConnectionsAdmin',
+  (handlers) =>
+    handlers
+      .handle('listMyConnections', ({ request }) =>
+        Effect.gen(function* listMyConnectionsHandler() {
+          const caller = yield* connectionsCaller(request, false);
+          const deps = yield* connectionsAdminDeps;
+          const response = yield* listMine(caller, deps).pipe(Effect.catch(connectionsAdminFailure));
+          yield* noStore;
+          return response;
+        }).pipe(connectionsAdminDefect(request)),
+      )
+      .handle('listCompanyConnections', ({ payload, request }) =>
+        Effect.gen(function* listCompanyConnectionsHandler() {
+          const caller = yield* connectionsCaller(request, true);
+          const deps = yield* connectionsAdminDeps;
+          const response = yield* listForAdmin(caller, deps, payload).pipe(Effect.catch(connectionsAdminFailure));
+          yield* noStore;
+          return response;
+        }).pipe(connectionsAdminDefect(request)),
+      )
+      .handle('updateConnectionAccess', ({ payload, request }) =>
+        Effect.gen(function* updateConnectionAccessHandler() {
+          const caller = yield* connectionsCaller(request, false);
+          const deps = yield* connectionsAdminDeps;
+          const response = yield* updateConnection(caller, deps, payload).pipe(Effect.catch(connectionsAdminFailure));
+          yield* noStore;
+          return response;
+        }).pipe(connectionsAdminDefect(request)),
+      )
+      .handle('revokeConnection', ({ payload, request }) =>
+        Effect.gen(function* revokeConnectionHandler() {
+          const caller = yield* connectionsCaller(request, true);
+          const deps = yield* connectionsAdminDeps;
+          const response = yield* revokeConnection(caller, deps, payload).pipe(Effect.catch(connectionsAdminFailure));
+          yield* noStore;
+          return response;
+        }).pipe(connectionsAdminDefect(request)),
+      )
+      .handle('listAgentConnections', ({ request }) =>
+        Effect.gen(function* listAgentConnectionsHandler() {
+          const caller = yield* connectionsCaller(request, true);
+          const deps = yield* connectionsAdminDeps;
+          const response = yield* agentConnectionsOverview(caller, deps).pipe(Effect.catch(connectionsAdminFailure));
+          yield* noStore;
+          return response;
+        }).pipe(connectionsAdminDefect(request)),
+      )
+      .handle('replaceAgentOperators', ({ payload, request }) =>
+        Effect.gen(function* replaceAgentOperatorsHandler() {
+          const caller = yield* connectionsCaller(request, true);
+          const deps = yield* connectionsAdminDeps;
+          const response = yield* replaceAgentOperators(caller, deps, payload).pipe(
+            Effect.catch(connectionsAdminFailure),
+          );
+          yield* noStore;
+          return response;
+        }).pipe(connectionsAdminDefect(request)),
+      ),
+);
+
 const corePersistenceLive = CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive));
 const defaultContextAccessLive = Layer.mergeAll(ContextAccessLive, StaffAuthenticationNamespaceRegistryLive);
 const authPersistenceLive = AuthPersistenceLive.pipe(Layer.provide(AuthConfigLive));
@@ -2256,6 +2401,7 @@ export const makeShellAuthenticationApiRuntime = (
     coreReadLegalEntityDetailGroupLive,
     // @ontos-codesmith-core-read-server-layers:end
     externalIdentityGroupLive,
+    oauthConnectionsAdminGroupLive,
     // The agent platform calls module APIs in-process (approve/revert as the person), so it needs the active composition.
     agentPlatformGroupLive.pipe(Layer.provide(activeApplicationCompositionLive)),
   ).pipe(

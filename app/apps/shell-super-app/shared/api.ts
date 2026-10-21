@@ -13,6 +13,17 @@ import {
   AgentRevertRequestSchema,
   AgentRevertResponseSchema,
 } from '@app/shared-contracts/agent-proposals';
+import {
+  AgentConnectionsOverviewSchema,
+  AgentOperatorsRequestSchema,
+  AgentOperatorsResponseSchema,
+  ConnectionAdminListRequestSchema,
+  ConnectionAdminListResponseSchema,
+  ConnectionListResponseSchema,
+  ConnectionMutationResponseSchema,
+  ConnectionRevokeRequestSchema,
+  ConnectionUpdateRequestSchema,
+} from '@app/shared-contracts/agent-access';
 // @ontos-codesmith-core-read-contract-imports:start
 
 // @ontos-core-read legal-entity-detail
@@ -1030,6 +1041,52 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           error: identityErrors,
           payload: AgentActivityRequestSchema,
           success: AgentActivityResponseSchema,
+        }),
+      ),
+  )
+  // "Připojené aplikace" management (lane mcp-connections-ui); paths equal CONNECTION_MANAGEMENT_PATHS.
+  .add(
+    HttpApiGroup.make('oauthConnectionsAdmin')
+      .add(
+        HttpApiEndpoint.post('listMyConnections', '/auth/oauth-connections/mine', {
+          error: identityErrors,
+          payload: Schema.Struct({}),
+          success: ConnectionListResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listCompanyConnections', '/auth/oauth-connections/admin-list', {
+          error: identityErrors,
+          payload: ConnectionAdminListRequestSchema,
+          success: ConnectionAdminListResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('updateConnectionAccess', '/auth/oauth-connections/update', {
+          error: identityErrors,
+          payload: ConnectionUpdateRequestSchema,
+          success: ConnectionMutationResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('revokeConnection', '/auth/oauth-connections/revoke', {
+          error: identityErrors,
+          payload: ConnectionRevokeRequestSchema,
+          success: ConnectionMutationResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listAgentConnections', '/auth/identity/agent-entities/connections', {
+          error: identityErrors,
+          payload: Schema.Struct({}),
+          success: AgentConnectionsOverviewSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('replaceAgentOperators', '/auth/identity/agent-entities/operators', {
+          error: identityErrors,
+          payload: AgentOperatorsRequestSchema,
+          success: AgentOperatorsResponseSchema,
         }),
       ),
   )
