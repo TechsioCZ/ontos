@@ -142,18 +142,35 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
               src={product.imageSrc}
               width={1000}
             />
-            {product.secondaryImageSrc && (
+            {product.additionalImageSrcs?.length ? (
               <div className="akros-product-detail__thumbnails">
-                <Image
-                  alt={`Technický nákres: ${product.name}`}
-                  className="akros-product-detail__image akros-product-detail__image--thumbnail"
-                  height={244}
-                  loading="lazy"
-                  sizes="148px"
-                  src={product.secondaryImageSrc}
-                  width={296}
-                />
+                {product.additionalImageSrcs.map((src, index) => (
+                  <Image
+                    alt={`${product.name} – obrázek ${index + 2}`}
+                    className="akros-product-detail__image akros-product-detail__image--thumbnail"
+                    height={244}
+                    key={src}
+                    loading="lazy"
+                    sizes="148px"
+                    src={src}
+                    width={296}
+                  />
+                ))}
               </div>
+            ) : (
+              product.secondaryImageSrc && (
+                <div className="akros-product-detail__thumbnails">
+                  <Image
+                    alt={`Technický nákres: ${product.name}`}
+                    className="akros-product-detail__image akros-product-detail__image--thumbnail"
+                    height={244}
+                    loading="lazy"
+                    sizes="148px"
+                    src={product.secondaryImageSrc}
+                    width={296}
+                  />
+                </div>
+              )
             )}
           </div>
 

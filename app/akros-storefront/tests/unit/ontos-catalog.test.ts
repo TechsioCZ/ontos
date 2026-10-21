@@ -145,6 +145,27 @@ describe("OntOS source-of-truth boundary", () => {
       secondaryImageSrc: undefined,
     });
   });
+  it("projects every OntOS gallery image in staff order, not only the first two", () => {
+    const p = {
+      ...live(),
+      gallery: [
+        "https://www.akros.cz/data/product/c.jpg",
+        "https://www.akros.cz/data/product/a.jpg",
+        "https://www.akros.cz/data/product/b.jpg",
+        "https://www.akros.cz/data/product/10091200.jpg",
+        "https://www.akros.cz/data/product/a.jpg",
+      ],
+    };
+    expect(project({ products: [p] }).catalog.products[0]).toMatchObject({
+      imageSrc: "https://www.akros.cz/data/product/c.jpg",
+      secondaryImageSrc: "https://www.akros.cz/data/product/a.jpg",
+      additionalImageSrcs: [
+        "https://www.akros.cz/data/product/a.jpg",
+        "https://www.akros.cz/data/product/b.jpg",
+        "https://www.akros.cz/data/product/10091200.jpg",
+      ],
+    });
+  });
   it("never backfills an absent owner price or stock from JSON", () => {
     for (const field of ["grossPriceMinor", "priceMinor", "stockOnHand"]) {
       const p = live();

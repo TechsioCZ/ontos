@@ -173,6 +173,7 @@ export function project(body: Raw): CatalogSnapshot {
       imageSrc: primaryImage,
       imageAlt: text(p.imageAlt, text(p.name)),
       secondaryImageSrc: gallery.find((src) => src !== primaryImage),
+      additionalImageSrcs: [...new Set(gallery.filter((src) => src !== primaryImage))],
       featuredPosition: number(p.featuredPosition) ?? null,
       ...flags(p),
       detail: {

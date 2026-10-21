@@ -18,6 +18,7 @@ import { grossUnitPriceMinor, isRealVariant } from '../../../../../shared/domain
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import { useCommandFailure } from './product-forms.tsx';
+import { moveImage } from './product-images.ts';
 
 /** The customer storefront (apps/eshop-storefront) serves product images and pages. */
 export const STOREFRONT_ORIGIN = 'http://localhost:3060';
@@ -614,6 +615,7 @@ export const EshopPanel = ({
   const failure = useCommandFailure();
   const [images, setImages] = useState<readonly string[]>(() => product.images ?? []);
   const [newImage, setNewImage] = useState('');
+  const newImageInvalid = newImage.trim() !== '' && !/^(?:\/(?!\/)|https:\/\/)\S+$/u.test(newImage.trim());
   const [slug, setSlug] = useState(product.slug ?? '');
   const [published, setPublished] = useState(product.published !== false);
   const [stockTracked, setStockTracked] = useState(product.stockTracked !== false);
@@ -727,6 +729,9 @@ export const EshopPanel = ({
         </SectionCard>
       )}
       <SectionCard title={`Obrázky (${images.length})`}>
+        <p className="mb-150 text-fg-secondary text-sm">
+          První obrázek je hlavní. E-shop po uložení a obnovení stránky ukáže všechny obrázky v tomto pořadí.
+        </p>
         {images.length === 0 ? (
           <div className="flex h-32 items-center justify-center rounded-md border border-border-primary border-dashed text-fg-secondary text-sm">
             Produkt nemá obrázek — e-shop zobrazí zástupný obrázek „bez obrázku“.
@@ -750,23 +755,58 @@ export const EshopPanel = ({
                     />
                   )}
                 </div>
-                <div className="flex items-center justify-between gap-100">
-                  <span className="truncate text-fg-secondary text-xs" title={image}>
-                    {index === 0 ? 'Hlavní · ' : ''}
-                    {image}
-                  </span>
-                  {canWrite && (
+                <span className="truncate text-fg-secondary text-xs" title={image}>
+                  {index === 0 ? 'Hlavní · ' : ''}
+                  {image}
+                </span>
+                {canWrite && (
+                  <div className="flex flex-wrap items-center gap-50">
+                    {index > 0 && (
+                      <Button
+                        aria-label={`Nastavit obrázek ${index + 1} jako hlavní`}
+                        icon="icon-[mdi--star-outline]"
+                        onClick={() => setImages(moveImage(images, index, 0))}
+                        size="sm"
+                        theme="borderless"
+                        title="Nastavit jako hlavní"
+                        type="button"
+                        variant="secondary"
+                      />
+                    )}
+                    <Button
+                      aria-label={`Posunout obrázek ${index + 1} dopředu`}
+                      disabled={index === 0}
+                      icon="icon-[mdi--arrow-left]"
+                      onClick={() => setImages(moveImage(images, index, index - 1))}
+                      size="sm"
+                      theme="borderless"
+                      title="Posunout dopředu"
+                      type="button"
+                      variant="secondary"
+                    />
+                    <Button
+                      aria-label={`Posunout obrázek ${index + 1} dozadu`}
+                      disabled={index === images.length - 1}
+                      icon="icon-[mdi--arrow-right]"
+                      onClick={() => setImages(moveImage(images, index, index + 1))}
+                      size="sm"
+                      theme="borderless"
+                      title="Posunout dozadu"
+                      type="button"
+                      variant="secondary"
+                    />
                     <Button
                       aria-label={`Odebrat obrázek ${index + 1}`}
                       icon="icon-[mdi--delete-outline]"
                       onClick={() => setImages(images.filter((_, position) => position !== index))}
                       size="sm"
                       theme="borderless"
+                      title="Odebrat"
                       type="button"
                       variant="secondary"
                     />
-                  )}
-                </div>
+                  </div>
+                )}
               </li>
             ))}
           </ul>
@@ -781,9 +821,15 @@ export const EshopPanel = ({
               placeholder={`/img/${product.slug ?? 'produkt'}.svg`}
               size="sm"
               value={newImage}
+              {...(newImageInvalid
+                ? {
+                    helpText: 'Zadejte cestu začínající „/“ nebo adresu začínající „https://“.',
+                    validateStatus: 'error' as const,
+                  }
+                : {})}
             />
             <Button
-              disabled={newImage.trim() === '' || images.length >= 20}
+              disabled={newImage.trim() === '' || newImageInvalid || images.length >= 20}
               icon="icon-[mdi--image-plus-outline]"
               onClick={() => {
                 setImages([...images, newImage.trim()]);

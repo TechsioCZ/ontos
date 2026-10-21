@@ -75,6 +75,8 @@ export interface CatalogProduct {
   imageSrc: string;
   imageAlt: string;
   secondaryImageSrc?: string;
+  /** Every gallery image after the main one, in the order staff set in OntOS (OntOS mode only). */
+  additionalImageSrcs?: string[];
   featuredPosition: number | null;
   isAction: boolean;
   isRecommended: boolean;
@@ -111,7 +113,13 @@ export type CatalogProductSummaryStock =
 
 export type CatalogProductSummary = Omit<
   CatalogProduct,
-  "detail" | "minimumQuantity" | "packageQuantity" | "secondaryImageSrc" | "stockCount" | "unit"
+  | "additionalImageSrcs"
+  | "detail"
+  | "minimumQuantity"
+  | "packageQuantity"
+  | "secondaryImageSrc"
+  | "stockCount"
+  | "unit"
 > & {
   priceExcludingVatMinor?: number;
   hasVariants: boolean;
