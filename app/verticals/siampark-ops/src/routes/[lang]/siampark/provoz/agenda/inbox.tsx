@@ -375,9 +375,9 @@ export const SettingsPanel = ({
               <Switch checked={email} disabled={!canWrite} onCheckedChange={setEmail}>
                 {t(`${k}.settings.email`)}
               </Switch>
-              <span className="siamparkops:flex siamparkops:flex-wrap siamparkops:items-center siamparkops:gap-2 siamparkops:text-xs" data-testid="email-provider" style={muted}>
+              <span className="siamparkops:flex siamparkops:flex-col siamparkops:items-start siamparkops:gap-1 siamparkops:text-xs" data-testid="email-provider" style={muted}>
                 {providerPill}
-                <span className="siamparkops:min-w-0 siamparkops:flex-1">{providerText}</span>
+                <span>{providerText}</span>
               </span>
             </div>
             {email && (
