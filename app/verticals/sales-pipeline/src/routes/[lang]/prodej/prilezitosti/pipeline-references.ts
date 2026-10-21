@@ -33,6 +33,8 @@ export type LoadState<T> =
 export interface CustomerOption {
   readonly archived: boolean;
   readonly companyId: string | null;
+  /** The customer's counterparty in this company; contracts and invoices reference it. */
+  readonly counterpartyId: string;
   readonly id: PartyId;
   readonly name: string | null;
 }
@@ -64,6 +66,7 @@ const toCustomerOption = (item: CustomerListItem): Option.Option<CustomerOption>
   Option.map(Schema.decodeOption(PartyIdSchema)(item.partyId), (id) => ({
     archived: item.status === 'ARCHIVED',
     companyId: item.companyId,
+    counterpartyId: item.counterpartyId,
     id,
     name: item.displayName,
   }));

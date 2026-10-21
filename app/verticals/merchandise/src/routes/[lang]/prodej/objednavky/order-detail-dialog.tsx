@@ -180,7 +180,7 @@ export const OrderDetailDialog = ({
     const labelKey = actionLabelKey(status);
     return labelKey === null ? status : t(labelKey);
   };
-  const opportunityHref = `/${language}/prodej/prilezitosti`;
+  const opportunityHref = `/${language}/prodej/prilezitosti${order.opportunityId === undefined ? '' : `?opportunityId=${encodeURIComponent(order.opportunityId)}`}`;
   const gross = order.pricesIncludeVat === true;
   const linesGross = order.lines.reduce((total, line) => total + lineGrossMinor(line, order.pricesIncludeVat), 0);
 

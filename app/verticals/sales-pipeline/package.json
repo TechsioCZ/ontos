@@ -40,6 +40,8 @@
     "@app/party-registry": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
+    "@app/siampark-agreements": "workspace:*",
+    "@app/siampark-work": "workspace:*",
     "@app/tagging": "workspace:*",
     "@app/workforce": "workspace:*",
     "@effect/opentelemetry": "4.0.0-rc.117",

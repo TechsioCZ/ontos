@@ -7,6 +7,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
+import type { DataTableRowAction } from '@techsio/ui-kit/organisms/data-table';
 import { Effect, Match, Option, Schema } from 'effect';
 import type { Dispatch, SetStateAction } from 'react';
 import { useReducer, useState } from 'react';
@@ -23,6 +24,7 @@ import type { BulkByTagResult } from './pipeline-bulk-by-tag.tsx';
 import type { FormCommand } from './pipeline-dialogs.tsx';
 import type { DialogState, Target } from './pipeline-dialog-host.tsx';
 import { PipelineDialogHost, ownerCommand, requestedCount, stageCommand } from './pipeline-dialog-host.tsx';
+import { PipelineDetailPanel } from './pipeline-detail-panel.tsx';
 import { PipelineFilters, PipelineStats } from './pipeline-filters.tsx';
 import { applyPipelineCommand } from './pipeline-api.ts';
 import type { PipelineCommand } from './pipeline-api.ts';
@@ -128,6 +130,7 @@ interface PipelineTableProps {
   readonly onClearFilters: () => void;
   readonly onCreate: () => void;
   readonly onArchive: (opportunity: Opportunity) => void;
+  readonly onOpen: (opportunity: Opportunity) => void;
   readonly onEdit: (opportunity: Opportunity) => void;
   readonly onOwner: (opportunity: Opportunity) => void;
   readonly onRetry: () => void;
@@ -149,6 +152,7 @@ const PipelineTable = ({
   onCreate,
   onArchive,
   onEdit,
+  onOpen,
   onOwner,
   onRetry,
   onSelection,
@@ -158,6 +162,46 @@ const PipelineTable = ({
 }: PipelineTableProps) => {
   const { t } = useModernI18n();
   const [columnVisibility, setColumnVisibility] = useState<Record<string, boolean>>(defaultColumnVisibility);
+  const writeActions: DataTableRowAction<Opportunity>[] = canWrite
+    ? [
+        {
+          icon: 'icon-[mdi--pencil-outline]',
+          disabled: (row) => !isOpenStage(row.original.stage),
+          id: 'edit',
+          label: t(`${K}.actions.edit`),
+          onAction: (row) => onEdit(row.original),
+        },
+        {
+          icon: 'icon-[mdi--swap-horizontal]',
+          id: 'stage',
+          label: t(`${K}.actions.changeStage`),
+          onAction: (row) => onStage(row.original),
+        },
+        {
+          icon: 'icon-[mdi--account-arrow-right-outline]',
+          disabled: (row) => !isOpenStage(row.original.stage),
+          id: 'owner',
+          label: t(`${K}.actions.assignOwner`),
+          onAction: (row) => onOwner(row.original),
+        },
+        {
+          icon: 'icon-[mdi--archive-outline]',
+          id: 'archive',
+          label: t(`${K}.actions.archive`),
+          disabled: (row) => isOpenStage(row.original.stage),
+          onAction: (row) => onArchive(row.original),
+        },
+      ]
+    : [];
+  const rowActions: DataTableRowAction<Opportunity>[] = [
+    {
+      icon: 'icon-[mdi--open-in-new]',
+      id: 'detail',
+      label: 'Otevřít detail',
+      onAction: (row) => onOpen(row.original),
+    },
+    ...writeActions,
+  ];
   return (
     <DataTable
       // The row-selection column must stay first, so it is pinned ahead of the title.
@@ -177,6 +221,7 @@ const PipelineTable = ({
       loadingRowCount={10}
       maxHeight="calc(100dvh - 22rem)"
       onColumnVisibilityChange={setColumnVisibility}
+      onRowClick={(row) => onOpen(row.original)}
       onRowSelectionChange={onSelection}
       pageSizeOptions={[50, 100, 200]}
       paginationProps={buildPaginationProps(t)}
@@ -192,39 +237,7 @@ const PipelineTable = ({
           onRetry={onRetry}
         />
       )}
-      rowActions={
-        canWrite
-          ? [
-              {
-                icon: 'icon-[mdi--pencil-outline]',
-                disabled: (row) => !isOpenStage(row.original.stage),
-                id: 'edit',
-                label: t(`${K}.actions.edit`),
-                onAction: (row) => onEdit(row.original),
-              },
-              {
-                icon: 'icon-[mdi--swap-horizontal]',
-                id: 'stage',
-                label: t(`${K}.actions.changeStage`),
-                onAction: (row) => onStage(row.original),
-              },
-              {
-                icon: 'icon-[mdi--account-arrow-right-outline]',
-                disabled: (row) => !isOpenStage(row.original.stage),
-                id: 'owner',
-                label: t(`${K}.actions.assignOwner`),
-                onAction: (row) => onOwner(row.original),
-              },
-              {
-                icon: 'icon-[mdi--archive-outline]',
-                id: 'archive',
-                label: t(`${K}.actions.archive`),
-                disabled: (row) => isOpenStage(row.original.stage),
-                onAction: (row) => onArchive(row.original),
-              },
-            ]
-          : []
-      }
+      rowActions={rowActions}
       rowSelection={selection}
       size="sm"
       stickyHeader
@@ -288,9 +301,11 @@ const reduceViewFilters = (current: PipelineViewFilters, patch: Partial<Pipeline
 });
 
 const RecordsPageContent = ({
+  initialOpportunityId,
   initialPartyId,
   invalidFilter,
 }: {
+  readonly initialOpportunityId: string | undefined;
   readonly initialPartyId: PartyId | undefined;
   readonly invalidFilter: boolean;
 }) => {
@@ -312,6 +327,7 @@ const RecordsPageContent = ({
   const setUnassignedOnly = (next: boolean) => updateFilters({ unassignedOnly: next });
   const [selection, setSelection] = useState<Selection>({});
   const [dialog, setDialog] = useState<DialogState>();
+  const [detailId, setDetailId] = useState<string | undefined>(initialOpportunityId);
   const [busy, setBusy] = useState(false);
   const [dialogError, setDialogError] = useState<string>();
 
@@ -556,12 +572,28 @@ const RecordsPageContent = ({
         onClearFilters={clearFilters}
         onCreate={openCreate}
         onEdit={(opportunity) => openDialog({ kind: 'form', opportunity })}
+        onOpen={(opportunity) => setDetailId(opportunity.id)}
         onOwner={(opportunity) => openOwner({ mode: 'row', opportunity })}
         onRetry={reload}
         onSelection={setSelection}
         onStage={(opportunity) => openStage({ mode: 'row', opportunity })}
         rows={rows}
         selection={selection}
+      />
+
+      <PipelineDetailPanel
+        canWrite={canWrite}
+        lookups={lookups}
+        onClose={() => setDetailId(undefined)}
+        onEdit={(opportunity) => {
+          setDetailId(undefined);
+          openDialog({ kind: 'form', opportunity });
+        }}
+        onStage={(opportunity) => {
+          setDetailId(undefined);
+          openStage({ mode: 'row', opportunity });
+        }}
+        opportunity={detailId === undefined ? undefined : items.find((item) => item.id === detailId)}
       />
 
       <PipelineDialogHost
@@ -584,7 +616,10 @@ const RecordsPageContent = ({
   );
 };
 
-const customerSearchSchema = Schema.Struct({ partyId: Schema.optional(PartyIdSchema) });
+const customerSearchSchema = Schema.Struct({
+  opportunityId: Schema.optional(Schema.String),
+  partyId: Schema.optional(PartyIdSchema),
+});
 
 export const RecordsPage = () => {
   const location = useRouterState({ select: (state) => state.location.href });
@@ -592,7 +627,7 @@ export const RecordsPage = () => {
     select: (state) => {
       const rawSearch: unknown = state.location.search;
       return Schema.decodeUnknownOption(Schema.toEncoded(customerSearchSchema))(rawSearch).pipe(
-        Option.map((value) => ({ partyId: value.partyId ?? null })),
+        Option.map((value) => ({ opportunityId: value.opportunityId, partyId: value.partyId ?? null })),
         Option.getOrElse(() => null),
       );
     },
@@ -609,6 +644,7 @@ export const RecordsPage = () => {
       supportedLanguages={['en', 'cs']}
     >
       <RecordsPageContent
+        initialOpportunityId={search?.opportunityId}
         initialPartyId={Option.getOrUndefined(requested)?.partyId}
         invalidFilter={Option.isNone(requested)}
         key={location}

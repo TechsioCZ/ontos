@@ -93,7 +93,10 @@ const OrdersPageContent = () => {
   const [statusFilter, setStatusFilter] = useState<OrderStatus | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
-  const [detailId, setDetailId] = useState<string | null>(null);
+  // `?orderId=` (e.g. from an opportunity's related orders) opens that order's detail.
+  const [detailId, setDetailId] = useState<string | null>(() =>
+    globalThis.location === undefined ? null : new URL(globalThis.location.href).searchParams.get('orderId'),
+  );
   const [pendingCancel, setPendingCancel] = useState<readonly Order[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);

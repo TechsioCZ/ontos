@@ -2853,6 +2853,12 @@ importers:
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
+      '@app/siampark-agreements':
+        specifier: workspace:*
+        version: link:../siampark-agreements
+      '@app/siampark-work':
+        specifier: workspace:*
+        version: link:../siampark-work
       '@app/tagging':
         specifier: workspace:*
         version: link:../tagging
