@@ -12,7 +12,6 @@ import { UnitRefSchema } from '@app/siampark-property/resources/unit';
 import {
   AccountingExportFormatSchema,
   AccountingIssuerFields,
-  ExportCounterpartySchema,
   BudgetKindSchema,
   CalendarMonthSchema,
   FinanceLongTextSchema,
@@ -137,14 +136,10 @@ export const FinanceCommandSchema = Schema.Union([
     transferFormat: Schema.optionalKey(FinanceTextSchema),
   }),
   Schema.TaggedStruct('CreateAccountingExport', {
+    /** Readable author shown in the history; the file itself names the authenticated principal. */
     actorLabel,
-    /** Display names of registry counterparties keyed by invoice id, as the user saw them. */
-    counterpartyNames: Schema.optionalKey(Schema.Record(Schema.String, FinanceTextSchema)),
-    /** Registry identity of each counterparty keyed by invoice id, as the user saw it (POHODA partnerIdentity). */
-    counterparties: Schema.optionalKey(Schema.Record(Schema.String, ExportCounterpartySchema)),
     format: AccountingExportFormatSchema,
-    /** Legal name of the selected company from the trusted shell session (POHODA myIdentity). */
-    issuerName: Schema.optionalKey(FinanceTextSchema),
+    // Issuer name and partner identities are resolved by the server (Core legal entity, party registry).
     invoiceResourceIds: Schema.Array(FinanceTextSchema).check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
   }),
   Schema.TaggedStruct('ConfirmAccountingExport', {

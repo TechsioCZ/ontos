@@ -2,7 +2,12 @@
 import { createHash } from 'node:crypto';
 import { DateTime, Effect, Match } from 'effect';
 import type { FinanceCommand, FinanceError } from '../../shared/actions/apply-command.ts';
-import { FinanceConflict, FinanceNotFound, FinanceRejected } from '../../shared/actions/apply-command.ts';
+import {
+  FinanceConflict,
+  FinanceNotFound,
+  FinanceReferenceUnavailable,
+  FinanceRejected,
+} from '../../shared/actions/apply-command.ts';
 import { DEMO_BUSINESS_DATE } from '../../shared/apis/records.ts';
 import type {
   AccountingObservation,
@@ -29,7 +34,22 @@ export interface FinanceScope {
   readonly legalEntityId: string;
   readonly tenantId: string;
 }
+/** Registry identity of one counterparty as the party registry holds it for the trusted legal entity. */
+export interface ExportPartnerReference extends ExportPartnerIdentity {
+  readonly displayName?: string;
+}
+/**
+ * Identities an accounting export writes into the handover file, resolved by the server from trusted owners:
+ * the issuer name from Core's legal entity of the request scope, partners from the party registry.
+ */
+export interface ExportReferences {
+  readonly issuerName: string;
+  /** Keyed by both the counterparty id and the party id, so an invoice resolves whichever one it stores. */
+  readonly partners: ReadonlyMap<string, ExportPartnerReference>;
+}
 export interface FinanceValidators {
+  /** Absent in hosts that cannot reach Core and the party registry (outbox worker); exports then fail closed. */
+  readonly exportReferences?: Effect.Effect<ExportReferences, FinanceError>;
   readonly invoice: (invoice: Invoice) => Effect.Effect<void, FinanceError>;
 }
 /** File content the action stores next to the state; the state itself only keeps document metadata. */
@@ -849,33 +869,50 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
   command: CommandOf<'CreateAccountingExport'>,
   context: FinanceTransitionContext,
 ): Effect.fn.Return<FinanceTransition, FinanceError> {
-  const { input, state } = context;
+  const { input, state, validators } = context;
   const ids = [...new Set(command.invoiceResourceIds)];
   const selected = ids.map((id) => state.invoices.find((invoice) => invoice.ref.resourceId === id));
   if (selected.some((invoice) => invoice === undefined || invoice.businessState !== 'CONFIRMED')) {
     return yield* rejected('export_requires_confirmed_invoices');
   }
+  // Every identity in the file comes from a trusted owner, never from the browser: a handover without its issuer
+  // or with unverified partner data is refused instead of being written half-filled.
+  if (validators.exportReferences === undefined) {
+    return yield* new FinanceReferenceUnavailable({
+      code: 'finance_reference_unavailable',
+      reason: 'export_references_unavailable',
+    });
+  }
+  const references = yield* validators.exportReferences;
   const exports = state.accountingExports ?? [];
   const version = exports.length + 1;
   const batchNumber = `UP-${DateTime.formatIsoDateUtc(input.now).slice(0, 4)}-${String(version).padStart(3, '0')}`;
-  const createdBy = command.actorLabel ?? input.principalId ?? 'neznámý uživatel';
-  // Issuer = the selected legal entity: its name from the trusted shell session, its identity from the setup.
+  // The file names the authenticated principal; the readable label stays a display hint in the history only.
+  const createdBy = input.principalId === undefined ? 'neznámý uživatel' : `uživatel OntOS ${input.principalId}`;
+  // Issuer = the selected legal entity: its name from Core, its accounting identity from the setup.
   const setup = state.accountingSetup ?? {};
   const issuer: ExportIssuer = {
     ...(setup.issuerCity === undefined ? {} : { city: setup.issuerCity }),
     ...(setup.issuerIco === undefined ? {} : { ico: setup.issuerIco }),
-    ...(command.issuerName === undefined ? {} : { name: command.issuerName }),
+    name: references.issuerName,
     ...(setup.issuerStreet === undefined ? {} : { street: setup.issuerStreet }),
     ...(setup.issuerVatId === undefined ? {} : { vatId: setup.issuerVatId }),
     ...(setup.issuerZip === undefined ? {} : { zip: setup.issuerZip }),
   };
+  // Hand-typed suppliers have no registry party; their IČO is the snapshot stored on the invoice.
+  const registryPartner = (invoice: Invoice) =>
+    invoice.counterpartyRef.resourceId === MANUAL_COUNTERPARTY_ID
+      ? undefined
+      : (references.partners.get(invoice.partyId ?? invoice.counterpartyRef.resourceId) ??
+        references.partners.get(invoice.counterpartyRef.resourceId));
   const partnerOf = (invoice: Invoice): ExportPartnerIdentity => {
-    const seen = command.counterparties?.[invoice.ref.resourceId];
-    const ico = seen?.ico ?? invoice.counterpartyCompanyId;
+    const registry = registryPartner(invoice);
+    // The IČO captured on the document wins over today's registry value.
+    const ico = invoice.counterpartyCompanyId ?? registry?.ico;
     return {
-      ...(seen?.city === undefined ? {} : { city: seen.city }),
+      ...(registry?.city === undefined ? {} : { city: registry.city }),
       ...(ico === undefined ? {} : { ico }),
-      ...(seen?.vatId === undefined ? {} : { vatId: seen.vatId }),
+      ...(registry?.vatId === undefined ? {} : { vatId: registry.vatId }),
     };
   };
   const content = buildAccountingExport(
@@ -886,9 +923,7 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
         : [
             {
               counterpartyName:
-                invoice.counterpartyName ??
-                command.counterpartyNames?.[invoice.ref.resourceId] ??
-                invoice.counterpartyRef.resourceId,
+                invoice.counterpartyName ?? registryPartner(invoice)?.displayName ?? invoice.counterpartyRef.resourceId,
               // Stable shell route: authentication, company scope and finance permissions are checked on opening.
               documentLink: `http://localhost:3020/cs/siampark/finance?resourceId=${encodeURIComponent(invoice.ref.resourceId)}`,
               invoice,
@@ -912,7 +947,7 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
         id: input.resourceId,
         invoiceResourceIds: ids,
         ...(setup.issuerIco === undefined ? {} : { issuerIco: setup.issuerIco }),
-        ...(command.issuerName === undefined ? {} : { issuerName: command.issuerName }),
+        issuerName: references.issuerName,
         schemaVersion: 'ontos-finance-export/1',
         sha256: createHash('sha256').update(content, 'utf8').digest('hex'),
         status: 'HANDED_OVER',

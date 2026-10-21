@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'effect-rstest';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
-import { ActionPermissionCheckError, OperationContextUnavailable } from '@app/core-runtime';
+import { ActionPermissionCheckError, OperationContextUnavailable, ReadRuntime } from '@app/core-runtime';
 import { ActionPermission } from '@app/core-runtime/actions/runtime-wiring';
 import { financeWriteCapability } from '../../src/api/records.read.ts';
 import { DateTime, Effect, Exit, Layer, Schema } from 'effect';
@@ -222,76 +222,74 @@ describe('Finance owner transitions', () => {
       });
     }),
   );
-  it.effect(
-    'creates and updates only drafts and rejects unavailable/foreign references',
-    () =>
-      Effect.gen(function* financeCase4() {
-        const create: FinanceCommand = {
-          _tag: 'CreateInvoiceDraft',
-          counterpartyRef,
-          currency: 'CZK',
-          direction: 'INCOMING',
-          documentNumber: 'SUP-NEW',
-          dueDate: '2026-10-15',
-          issueDate: '2026-10-05',
-          note: 'Preserve the supplier note',
-          totalMinor: 420_000,
-        };
-        const draft = yield* run(state, create);
-        expect(draft.invoice!.businessState).toBe('DRAFT');
-        expect(draft.invoice!.accountingSyncState).toBe('NOT_SYNCED');
-        const updated = yield* run(draft.state, {
-          ...create,
-          _tag: 'UpdateInvoiceDraft',
-          invoiceRef: draft.invoice!.ref,
-          propertyRef,
-        });
-        const editFields = yield* Schema.decodeEffect(Schema.Struct(InvoiceDraftFields))(updated.invoice!);
-        const edited = yield* run(updated.state, {
-          ...editFields,
-          _tag: 'UpdateInvoiceDraft',
-          documentNumber: 'SUP-EDITED',
-          dueDate: '2026-10-20',
-          invoiceRef: updated.invoice!.ref,
-          issueDate: '2026-10-06',
-          totalMinor: 425_000,
-        });
-        expect(edited.invoice).toMatchObject({
-          accountingSyncState: 'NOT_SYNCED',
-          businessState: 'DRAFT',
-          counterpartyRef,
-          currency: 'CZK',
-          direction: 'INCOMING',
-          documentNumber: 'SUP-EDITED',
-          dueDate: '2026-10-20',
-          issueDate: '2026-10-06',
-          note: 'Preserve the supplier note',
-          paymentState: 'UNPAID',
-          propertyRef,
-          totalMinor: 425_000,
-        });
-        const confirmed = yield* run(edited.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice!.ref });
-        expect(confirmed.invoice!.businessState).toBe('CONFIRMED');
-        yield* fails(confirmed.state, {
-          ...create,
-          _tag: 'UpdateInvoiceDraft',
-          invoiceRef: draft.invoice!.ref,
-          propertyRef,
-        });
-        yield* fails(state, {
-          ...create,
-          counterpartyRef: { ...counterpartyRef, tenantId: 'b0000000-0000-4000-8000-000000000001' },
-        });
-        yield* fails(state, { ...create, dueDate: '2026-10-04' });
-        const unavailable: FinanceValidators = {
-          invoice: () =>
-            Effect.fail(new FinanceRejected({ code: 'finance_rejected', reason: 'counterparty_not_usable' })),
-        };
-        expect(Exit.isFailure(yield* Effect.exit(transitionFinance(state, create, scope, unavailable, input)))).toBe(
-          true,
-        );
-        yield* fails(state, { _tag: 'VoidInvoice', invoiceRef: { ...ref, resourceId: 'missing' } });
-      }),
+  it.effect('creates and updates only drafts and rejects unavailable/foreign references', () =>
+    Effect.gen(function* financeCase4() {
+      const create: FinanceCommand = {
+        _tag: 'CreateInvoiceDraft',
+        counterpartyRef,
+        currency: 'CZK',
+        direction: 'INCOMING',
+        documentNumber: 'SUP-NEW',
+        dueDate: '2026-10-15',
+        issueDate: '2026-10-05',
+        note: 'Preserve the supplier note',
+        totalMinor: 420_000,
+      };
+      const draft = yield* run(state, create);
+      expect(draft.invoice!.businessState).toBe('DRAFT');
+      expect(draft.invoice!.accountingSyncState).toBe('NOT_SYNCED');
+      const updated = yield* run(draft.state, {
+        ...create,
+        _tag: 'UpdateInvoiceDraft',
+        invoiceRef: draft.invoice!.ref,
+        propertyRef,
+      });
+      const editFields = yield* Schema.decodeEffect(Schema.Struct(InvoiceDraftFields))(updated.invoice!);
+      const edited = yield* run(updated.state, {
+        ...editFields,
+        _tag: 'UpdateInvoiceDraft',
+        documentNumber: 'SUP-EDITED',
+        dueDate: '2026-10-20',
+        invoiceRef: updated.invoice!.ref,
+        issueDate: '2026-10-06',
+        totalMinor: 425_000,
+      });
+      expect(edited.invoice).toMatchObject({
+        accountingSyncState: 'NOT_SYNCED',
+        businessState: 'DRAFT',
+        counterpartyRef,
+        currency: 'CZK',
+        direction: 'INCOMING',
+        documentNumber: 'SUP-EDITED',
+        dueDate: '2026-10-20',
+        issueDate: '2026-10-06',
+        note: 'Preserve the supplier note',
+        paymentState: 'UNPAID',
+        propertyRef,
+        totalMinor: 425_000,
+      });
+      const confirmed = yield* run(edited.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice!.ref });
+      expect(confirmed.invoice!.businessState).toBe('CONFIRMED');
+      yield* fails(confirmed.state, {
+        ...create,
+        _tag: 'UpdateInvoiceDraft',
+        invoiceRef: draft.invoice!.ref,
+        propertyRef,
+      });
+      yield* fails(state, {
+        ...create,
+        counterpartyRef: { ...counterpartyRef, tenantId: 'b0000000-0000-4000-8000-000000000001' },
+      });
+      yield* fails(state, { ...create, dueDate: '2026-10-04' });
+      const unavailable: FinanceValidators = {
+        invoice: () =>
+          Effect.fail(new FinanceRejected({ code: 'finance_rejected', reason: 'counterparty_not_usable' })),
+      };
+      expect(Exit.isFailure(yield* Effect.exit(transitionFinance(state, create, scope, unavailable, input)))).toBe(
+        true,
+      );
+      yield* fails(state, { _tag: 'VoidInvoice', invoiceRef: { ...ref, resourceId: 'missing' } });
+    }),
   );
   it.effect('requires explicit request state and protects paid or synchronized invoices from voiding', () =>
     Effect.gen(function* financeCase5() {
@@ -450,6 +448,7 @@ const paymentTestDependencies = Layer.mergeAll(
     HttpServerRequest.HttpServerRequest,
     HttpServerRequest.fromWeb(new Request('http://localhost:4115/finance-action-test')),
   ),
+  Layer.succeed(ReadRuntime, { runRead: () => Effect.die('A payment observation must not read Core identity') }),
 );
 
 it.layer(paymentTestDependencies)('Finance Action lifecycle', (suite) => {

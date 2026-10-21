@@ -14,13 +14,12 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { DateTime } from 'effect';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { AccountingExport, AccountingExportFormat, Invoice } from '../../../../../shared/apis/records.ts';
 import { downloadText, outcomeMessage } from './finance-ui.tsx';
 import type { FinanceViewModel } from './finance-ui.tsx';
 import { customerOf } from './invoice-view.ts';
-import { issuerForDocument, useInvoiceIssuer } from './use-invoice-issuer.ts';
-import { financeBrowserRuntime } from '../../../../runtime/browser.ts';
+import { useInvoiceIssuer } from './use-invoice-issuer.ts';
 
 const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
 
@@ -68,14 +67,17 @@ const present = (value: string | null | undefined): value is string =>
 
 const statusBadge = (entry: AccountingExport) =>
   entry.status === 'HANDED_OVER' ? (
-    <Badge size="sm" variant="info">
+    <Badge className="whitespace-nowrap" size="sm" variant="info">
       Předáno – čeká na potvrzení účetní
     </Badge>
   ) : (
-    <Badge size="sm" variant="success">
+    <Badge className="whitespace-nowrap" size="sm" variant="success">
       Potvrdila účetní
     </Badge>
   );
+
+/** Readable author label (display hint) next to the authenticated principal the server stored. */
+const authorText = (entry: AccountingExport) => entry.actorLabel ?? 'neznámý uživatel';
 
 /** S08: accounting registry (with ČEKÁ NA VSTUP), versioned handover packages and their history. */
 export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
@@ -94,6 +96,8 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
   const [message, setMessage] = useState<{ readonly kind: 'error' | 'success'; readonly text: string }>();
   const [confirmTarget, setConfirmTarget] = useState<AccountingExport>();
   const [evidence, setEvidence] = useState('');
+  // Blocks a second click in the same render tick, before vm.busy reaches this component.
+  const creating = useRef(false);
   const missing = SETUP_FIELDS.filter(([key]) => setup[key] === undefined);
   const candidates = confirmed.filter((invoice) => !onlyNew || !handedOver.has(invoice.ref.resourceId));
   const withoutVatBreakdown = confirmed.filter(
@@ -148,41 +152,25 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
   };
 
   const createExport = async () => {
+    if (creating.current) {
+      return;
+    }
+    creating.current = true;
     const ids = [...selected];
-    // Await the trusted session read if it has not finished yet, so a quick click never drops the issuer.
-    const issuer = issuerName ?? (await financeBrowserRuntime.runPromise(issuerForDocument));
-    const outcome = await vm.execute(
-      {
-        _tag: 'CreateAccountingExport',
-        ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
-        counterpartyNames: Object.fromEntries(
-          ids.flatMap((id) => {
-            const invoice = confirmed.find((entry) => entry.ref.resourceId === id);
-            const name = invoice === undefined ? undefined : nameOf(invoice);
-            return name === undefined || name === '—' ? [] : [[id, name]];
-          }),
-        ),
-        counterparties: Object.fromEntries(
-          ids.flatMap((id) => {
-            const invoice = confirmed.find((entry) => entry.ref.resourceId === id);
-            const customer = invoice === undefined ? undefined : customerOf(vm.references.customerById, invoice);
-            if (customer === undefined) {
-              return [];
-            }
-            const identity = {
-              ...(present(customer.city) ? { city: customer.city } : {}),
-              ...(present(customer.companyId) ? { ico: customer.companyId } : {}),
-              ...(present(customer.vatId) ? { vatId: customer.vatId } : {}),
-            };
-            return Object.keys(identity).length === 0 ? [] : [[id, identity]];
-          }),
-        ),
-        format,
-        ...(issuer === undefined ? {} : { issuerName: issuer }),
-        invoiceResourceIds: ids,
-      },
-      `Předávací balíček vytvořen (${ids.length} dokladů)`,
-    );
+    // Issuer name and partner IČO/DIČ are resolved by the server from Core and the party registry.
+    const outcome = await vm
+      .execute(
+        {
+          _tag: 'CreateAccountingExport',
+          ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
+          format,
+          invoiceResourceIds: ids,
+        },
+        `Předávací balíček vytvořen (${ids.length} dokladů)`,
+      )
+      .finally(() => {
+        creating.current = false;
+      });
     if (outcome.ok) {
       setSelected(new Set());
       setMessage({
@@ -190,7 +178,13 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
         text: `Balíček s ${ids.length} doklady je uložen v historii a připraven ke stažení.`,
       });
     } else {
-      setMessage({ kind: 'error', text: outcomeMessage(vm, outcome) });
+      setMessage({
+        kind: 'error',
+        text:
+          outcome.feedback === 'unavailable'
+            ? 'Balíček nevznikl: vystavitele nebo údaje partnerů z adresáře se teď nepodařilo ověřit. Nic se neuložilo, zkuste to prosím znovu.'
+            : outcomeMessage(vm, outcome),
+      });
     }
   };
 
@@ -308,7 +302,7 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
               <dl className="grid grid-cols-1 gap-x-400 gap-y-150 text-sm md:grid-cols-2 xl:grid-cols-3">
                 <div className="flex flex-col gap-50">
                   <dt className="text-fg-secondary text-xs">Název (vybraná firma)</dt>
-                  <dd>{issuerName ?? 'Údaj neposkytnut'}</dd>
+                  <dd>{issuerName ?? 'Ověří se z vybrané firmy při vytvoření balíčku'}</dd>
                 </div>
                 {ISSUER_FIELDS.map(([key, label]) => (
                   <div className="flex flex-col gap-50" key={key}>
@@ -509,7 +503,7 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                             {entry.issuerIco === undefined ? ' · IČO nevyplněno' : ` · IČO ${entry.issuerIco}`}
                           </span>
                         )}
-                        {!entry.content.includes('/cs/siampark/finance?resourceId=') && (
+                        {entry.content !== '' && !entry.content.includes('/cs/siampark/finance?resourceId=') && (
                           <span className="text-fg-secondary text-xs">
                             Historická verze bez webových odkazů. Použijte novější balíček; původní soubor i otisk
                             zůstávají zachovány.
@@ -542,7 +536,12 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                     </Table.Cell>
                     <Table.Cell>
                       <span className="flex flex-col">
-                        <span>{entry.actorLabel ?? 'neznámý uživatel'}</span>
+                        <span>{authorText(entry)}</span>
+                        {entry.actorPrincipalId !== undefined && (
+                          <span className="text-fg-secondary text-xs">
+                            ověřený účet {entry.actorPrincipalId.slice(0, 8)}…
+                          </span>
+                        )}
                         <span className="text-fg-secondary text-xs">{at(entry.createdAt)}</span>
                       </span>
                     </Table.Cell>
@@ -562,16 +561,20 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                     </Table.Cell>
                     <Table.Cell align="end">
                       <span className="flex justify-end gap-50">
-                        <Button
-                          className="whitespace-nowrap"
-                          icon="icon-[mdi--download]"
-                          onClick={() => downloadText(entry.content, MIME[entry.format], entry.fileName)}
-                          size="sm"
-                          theme="borderless"
-                          variant="secondary"
-                        >
-                          Stáhnout
-                        </Button>
+                        {entry.content === '' ? (
+                          <span className="text-fg-secondary text-xs">Soubor jen pro finance a účetní</span>
+                        ) : (
+                          <Button
+                            className="whitespace-nowrap"
+                            icon="icon-[mdi--download]"
+                            onClick={() => downloadText(entry.content, MIME[entry.format], entry.fileName)}
+                            size="sm"
+                            theme="borderless"
+                            variant="secondary"
+                          >
+                            Stáhnout
+                          </Button>
+                        )}
                         {vm.canWrite && entry.status === 'HANDED_OVER' && (
                           <Button
                             className="whitespace-nowrap"

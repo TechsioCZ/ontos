@@ -50,6 +50,18 @@ export const financeWriteCapability = Effect.fn('Finance.writeCapability')(funct
   return decision === 'allowed';
 });
 
+/** Keeps the export history (who, when, hash) but blanks the file body for read-only principals. */
+export const withoutExportFiles = <Result extends ReturnType<typeof projectFinanceRecords>>(result: Result): Result =>
+  result.state.accountingExports === undefined
+    ? result
+    : {
+        ...result,
+        state: {
+          ...result.state,
+          accountingExports: result.state.accountingExports.map((entry) => ({ ...entry, content: '' })),
+        },
+      };
+
 const makeRecordsServices: ReadServiceFactory<Services, ActionPermission> = Effect.fn('Finance.makeRecordsServices')(
   function* makeServices(transaction, scope) {
     const persistence = yield* persistenceService(transaction, scope);
@@ -94,10 +106,12 @@ export const recordsRead = defineRead(
               id: metadata.id,
               mimeType: metadata.mimeType,
             };
+      // Handover files carry partner IČO/DIČ and amounts: only principals who may run finance commands get them.
+      const visible = context.services.canWrite ? result : withoutExportFiles(result);
       return {
         evidence: { resultCount: result.state.invoices.length + result.state.financialPlanEntries.length },
         result: {
-          ...result,
+          ...visible,
           ...(document === undefined ? {} : { document }),
           canWrite: context.services.canWrite,
         },

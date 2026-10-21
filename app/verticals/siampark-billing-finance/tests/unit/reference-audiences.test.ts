@@ -86,6 +86,16 @@ describe('Finance reference credentials', () => {
     expect(commandReferenceAudiences(command, [propertyInvoice])).toEqual(['party-registry', 'siampark-property']);
     expect(commandReferenceAudiences(command, [])).toEqual(['party-registry']);
   });
+
+  it('lets the server read export partners from the party registry itself', () => {
+    const command = {
+      _tag: 'CreateAccountingExport',
+      format: 'POHODA_XML',
+      invoiceResourceIds: ['a'],
+    } as const satisfies FinanceCommand;
+
+    expect(commandReferenceAudiences(command, [])).toEqual(['party-registry']);
+  });
 });
 
 describe('Counterparty role validity', () => {

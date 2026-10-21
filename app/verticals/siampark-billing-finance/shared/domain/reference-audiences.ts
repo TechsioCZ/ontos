@@ -46,6 +46,8 @@ export const commandReferenceAudiences = (
       }
       return isManualCounterparty(template.counterpartyRef.resourceId) ? [] : invoiceReferenceAudiences(template);
     }),
+    // S08: the server reads partner IČO/DIČ/city for the handover file from the party registry itself.
+    Match.tag('CreateAccountingExport', () => ['party-registry']),
     Match.tag(
       'AttachDocument',
       'SetInvoiceDetails',
@@ -54,7 +56,6 @@ export const commandReferenceAudiences = (
       'CreateRecurringTemplate',
       'SetRecurringTemplateActive',
       'UpdateAccountingSetup',
-      'CreateAccountingExport',
       'ConfirmAccountingExport',
       'UpsertBudgetLine',
       'DeleteBudgetLine',

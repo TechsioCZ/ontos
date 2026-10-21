@@ -1,6 +1,10 @@
+import { ReadRuntime, legalEntityDetailRead } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
-import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/api/client';
+import {
+  executeCounterpartyReadWithAuthorization,
+  executeCustomerListWithAuthorization,
+} from '@app/party-registry/api/client';
 import { executeRecordsWithAuthorization as readAgreements } from '@app/siampark-agreements/clients/records';
 import { executeRecordsWithAuthorization as readOccupancies } from '@app/siampark-occupancy/clients/records';
 import { executeRecordsWithAuthorization as readProperty } from '@app/siampark-property/clients/records';
@@ -10,18 +14,20 @@ import { FinanceReferenceUnavailable, FinanceRejected } from '../../shared/actio
 import type { Invoice } from '../../shared/apis/records.ts';
 import { hasUsableRole } from '../../shared/domain/reference-audiences.ts';
 import { matchesFinanceRef } from './persistence.service.ts';
-import type { FinanceValidators } from './persistence.service.ts';
+import type { ExportPartnerReference, FinanceValidators } from './persistence.service.ts';
 
 type ReferenceFailure = Effect.Error<
   | ReturnType<typeof makeReferenceGatewayCredentialSource>
   | ReturnType<Effect.Success<ReturnType<typeof makeReferenceGatewayCredentialSource>>['issue']>
   | ReturnType<typeof executeCounterpartyReadWithAuthorization>
+  | ReturnType<typeof executeCustomerListWithAuthorization>
   | ReturnType<typeof readAgreements>
   | ReturnType<typeof readOccupancies>
   | ReturnType<typeof readProperty>
   | ReturnType<typeof readWork>
 >;
-const unavailable = (cause?: ReferenceFailure) =>
+/** Core Read failures (legal entity of the export issuer) are tagged errors as well. */
+const unavailable = (cause?: ReferenceFailure | { readonly _tag: string }) =>
   Object.defineProperty(
     new FinanceReferenceUnavailable({
       code: 'finance_reference_unavailable',
@@ -39,6 +45,40 @@ export const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(fu
   }
   const { legalEntityId } = scope;
   const source = yield* makeReferenceGatewayCredentialSource(scope).pipe(Effect.mapError(unavailable));
+  const readRuntime = yield* ReadRuntime;
+  /** S08: the issuer name comes from Core's legal entity of the trusted scope, partners from the party registry. */
+  const exportReferences = Effect.gen(function* exportReferences() {
+    const issuer = yield* readRuntime.runRead({
+      input: {
+        legalEntityRef: {
+          moduleId: 'core.identity',
+          resourceId: legalEntityId,
+          resourceType: 'core.identity.legal-entity',
+          tenantId: scope.tenantId,
+        },
+      },
+      principal: scope,
+      registration: legalEntityDetailRead,
+      transport: { correlationId: scope.correlationId },
+    });
+    const target = yield* source.issue('party-registry');
+    const customers = yield* executeCustomerListWithAuthorization({}, target.authorization, scope.correlationId, {
+      baseUrl: target.apiBaseUrl,
+      compositionRevision: target.compositionRevision,
+    });
+    const partners = new Map<string, ExportPartnerReference>();
+    for (const customer of customers.items) {
+      const partner: ExportPartnerReference = {
+        ...(customer.city === null ? {} : { city: customer.city }),
+        ...(customer.displayName === null ? {} : { displayName: customer.displayName }),
+        ...(customer.companyId === null ? {} : { ico: customer.companyId }),
+        ...(customer.vatId === null ? {} : { vatId: customer.vatId }),
+      };
+      partners.set(customer.counterpartyId, partner);
+      partners.set(customer.partyId, partner);
+    }
+    return { issuerName: issuer.legalName, partners };
+  }).pipe(Effect.mapError(unavailable), Effect.withSpan('Finance.exportReferences'));
   const validateCounterparty = Effect.fn('Finance.validateCounterparty')(function* validateCounterparty(
     invoice: Invoice,
   ) {
@@ -194,6 +234,7 @@ export const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(fu
     return yield* Effect.void;
   });
   return {
+    exportReferences,
     invoice: Effect.fn('Finance.authorizedInvoiceReferences')(function* invoiceReferences(invoice: Invoice) {
       yield* validateCounterparty(invoice);
       yield* validateProperty(invoice);

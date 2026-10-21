@@ -15,7 +15,10 @@ import type { FinanceValidators } from '../../src/services/persistence.service.t
 const tenantId = 'a0000000-0000-4000-8000-000000000001';
 const scope = { legalEntityId: 'a0000000-0000-4000-8000-000000000002', tenantId };
 const now = DateTime.makeUnsafe('2026-10-20T08:00:00Z');
-const validators: FinanceValidators = { invoice: () => Effect.void };
+const validators: FinanceValidators = {
+  exportReferences: Effect.succeed({ issuerName: 'Siampark', partners: new Map() }),
+  invoice: () => Effect.void,
+};
 const counterpartyRef = {
   moduleId: 'party.registry' as const,
   resourceId: 'a0000000-0000-4000-8000-000000000012',

@@ -2,13 +2,17 @@ import { describe, expect, it } from 'effect-rstest';
 import { DateTime, Effect } from 'effect';
 import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
 import type { FinanceState, Invoice } from '../../shared/apis/records.ts';
-import { transitionFinance } from '../../src/services/persistence.service.ts';
+import { withoutExportFiles } from '../../src/api/records.read.ts';
+import { projectFinanceRecords, transitionFinance } from '../../src/services/persistence.service.ts';
 import type { FinanceValidators } from '../../src/services/persistence.service.ts';
 
 const tenantId = 'a0000000-0000-4000-8000-000000000001';
 const scope = { legalEntityId: 'a0000000-0000-4000-8000-000000000002', tenantId };
 const now = DateTime.makeUnsafe('2026-10-20T08:00:00Z');
-const validators: FinanceValidators = { invoice: () => Effect.void };
+const trusted: FinanceValidators = {
+  exportReferences: Effect.succeed({ issuerName: 'Siampark', partners: new Map() }),
+  invoice: () => Effect.void,
+};
 const counterpartyRef = {
   moduleId: 'party.registry' as const,
   resourceId: 'a0000000-0000-4000-8000-000000000012',
@@ -45,7 +49,7 @@ const empty: FinanceState = {
   paymentObservations: [],
 };
 let counter = 0;
-const run = (state: FinanceState, command: FinanceCommand) => {
+const run = (state: FinanceState, command: FinanceCommand, validators: FinanceValidators = trusted) => {
   counter += 1;
   return transitionFinance(state, command, scope, validators, {
     attemptId: `attempt-${counter}`,
@@ -73,7 +77,7 @@ describe('S08 export issuer identity', () => {
     }),
   );
 
-  it.effect('snapshots the selected company name and the setup IČO on the export record', () =>
+  it.effect('snapshots the Core legal entity name and the setup IČO on the export record', () =>
     Effect.gen(function* snapshot() {
       const state: FinanceState = {
         ...empty,
@@ -82,27 +86,43 @@ describe('S08 export issuer identity', () => {
       };
       const result = yield* run(state, {
         _tag: 'CreateAccountingExport',
+        actorLabel: 'Účetní (ucetni@demo.ontos)',
         format: 'CSV',
         invoiceResourceIds: ['a', 'b'],
-        issuerName: 'Siampark',
       });
       const created = result.state.accountingExports?.[0];
       expect(created?.issuerName).toBe('Siampark');
       expect(created?.issuerIco).toBe('12345678');
       expect(created?.invoiceResourceIds).toEqual(['a', 'b']);
+      expect(created?.actorPrincipalId).toBe('principal-1');
     }),
   );
 
-  it.effect('leaves the issuer snapshot empty when neither name nor IČO is known', () =>
+  it.effect('refuses the export when the issuer cannot be resolved from Core', () =>
     Effect.gen(function* noIssuer() {
-      const result = yield* run({ ...empty, invoices: [invoice('a')] }, {
-        _tag: 'CreateAccountingExport',
-        format: 'JSON',
-        invoiceResourceIds: ['a'],
-      });
-      const created = result.state.accountingExports?.[0];
-      expect(created?.issuerName).toBeUndefined();
-      expect(created?.issuerIco).toBeUndefined();
+      const failure = yield* Effect.flip(
+        run(
+          { ...empty, invoices: [invoice('a')] },
+          { _tag: 'CreateAccountingExport', format: 'POHODA_XML', invoiceResourceIds: ['a'] },
+          { invoice: () => Effect.void },
+        ),
+      );
+      expect(failure._tag).toBe('FinanceReferenceUnavailable');
+      expect('reason' in failure ? failure.reason : undefined).toBe('export_references_unavailable');
+    }),
+  );
+
+  it.effect('read-only principals see the handover history without the file body', () =>
+    Effect.gen(function* readOnly() {
+      const created = yield* run(
+        { ...empty, invoices: [invoice('a')] },
+        { _tag: 'CreateAccountingExport', format: 'POHODA_XML', invoiceResourceIds: ['a'] },
+      );
+      const visible = withoutExportFiles(projectFinanceRecords(created.state, 1, {}));
+      const entry = visible.state.accountingExports?.[0];
+      expect(entry?.content).toBe('');
+      expect(entry?.sha256).toBe(created.state.accountingExports?.[0]?.sha256);
+      expect(entry?.batchNumber).toBe('UP-2026-001');
     }),
   );
 });

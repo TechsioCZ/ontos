@@ -231,13 +231,6 @@ export const AccountingIssuerFields = {
   issuerVatId: Schema.optionalKey(IssuerVatIdSchema),
   issuerZip: Schema.optionalKey(FinanceTextSchema),
 };
-/** Counterparty identity the user saw in the party registry, sent with an export (POHODA partnerIdentity). */
-export const ExportCounterpartySchema = Schema.Struct({
-  city: Schema.optionalKey(FinanceTextSchema),
-  ico: Schema.optionalKey(IssuerIcoSchema),
-  vatId: Schema.optionalKey(IssuerVatIdSchema),
-});
-export type ExportCounterparty = typeof ExportCounterpartySchema.Type;
 export const AccountingSetupSchema = Schema.Struct({
   ...AccountingIssuerFields,
   accountant: Schema.optionalKey(FinanceTextSchema),
