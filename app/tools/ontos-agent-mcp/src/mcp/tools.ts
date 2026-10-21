@@ -268,8 +268,9 @@ export const buildConnectionTools = async (
     }
     const trimmed = (reason ?? '').trim();
     const reasonText = trimmed.length >= 3 ? trimmed : `Změna navržená přes ${d.client.name}`;
+    // The approvals contract rejects empty strings (ShortText/LongText minLength 1).
     return proposeBatch(
-      reason ?? title,
+      trimmed === '' ? title : trimmed,
       [{ entry, input: payload, reason: reasonText, summary: title, targetLabel: title }],
       key,
     );
@@ -512,17 +513,17 @@ export const buildConnectionTools = async (
           if (!('entry' in checked)) {
             return checked.error;
           }
-          const reason = (stringArg(change, 'reason') ?? '').trim();
           const title = entryTitleCs(checked.entry, labelOf(checked.entry.moduleId));
+          const reason = (stringArg(change, 'reason') ?? '').trim() || `Změna navržená přes ${d.client.name}`;
           items.push({
             entry: checked.entry,
             input: objectArg(change, 'input') ?? {},
             reason,
-            summary: stringArg(change, 'summary') ?? title,
-            targetLabel: stringArg(change, 'targetLabel') ?? title,
+            summary: stringArg(change, 'summary')?.trim() || title,
+            targetLabel: stringArg(change, 'targetLabel')?.trim() || title,
           });
         }
-        return proposeBatch(instruction, items, randomUUID());
+        return proposeBatch(instruction.trim() === '' ? 'Dávka změn' : instruction, items, randomUUID());
       },
     ),
   };

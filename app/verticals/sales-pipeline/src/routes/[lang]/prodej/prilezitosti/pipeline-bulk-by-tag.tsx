@@ -1,4 +1,4 @@
-import { SidePanel, StatusBadge } from '@app/admin-ui';
+import { SidePanel, StatusBadge, surfaceTileClassName } from '@app/admin-ui';
 import { TagFilter } from '@app/tagging/components/tag-controls';
 import type { TagId } from '@app/tagging/contracts/records';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -133,7 +133,7 @@ const BulkByTagPreview = ({
       )}
       {noticeKey !== undefined && <p className="text-fg-secondary text-sm">{t(noticeKey)}</p>}
       {counted && preview.length > 0 && (
-        <ul className="flex max-h-72 flex-col gap-50 overflow-y-auto rounded-md border border-border-primary p-100">
+        <ul className={`${surfaceTileClassName} flex max-h-72 flex-col gap-50 overflow-y-auto p-100`}>
           {preview.map((opportunity) => (
             <li className="flex items-center justify-between gap-150 px-50 py-50 text-sm" key={opportunity.id}>
               <span className="flex min-w-0 flex-col">

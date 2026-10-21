@@ -96,7 +96,8 @@ export const obchodGuide: DemoGuide = {
       id: 'ai',
       steps: [
         {
-          click: 'Otevřete Nastavení › Aktivita agentů, ve filtru Agent vyberte AI agenta A a ve filtru Výsledek „Odmítnuto oprávněním“.',
+          click:
+            'Otevřete Nastavení › Aktivita agentů, ve filtru Agent vyberte AI agenta A a ve filtru Výsledek „Odmítnuto oprávněním“.',
           id: 'obchod-ai-a',
           persona: vedeni,
           say: 'Úroveň A smí jen číst. Když se pokusí zapsat, backend ji odmítne a pokus zůstane v auditu.',
@@ -121,7 +122,8 @@ export const obchodGuide: DemoGuide = {
           title: 'Co AI v ukázce je a není',
         },
         {
-          click: 'Otevřete Nastavení › Ke schválení a ukažte čekající dávku AI agenta C: nový úkol a změnu ceny produktu.',
+          click:
+            'Otevřete Nastavení › Ke schválení a ukažte čekající dávku AI agenta C: nový úkol a změnu ceny produktu.',
           id: 'obchod-ai-c',
           persona: vedeni,
           say: 'Jedno místo pro návrhy AI ze všech modulů. Schválením se změna provede vaším jménem a s vašimi oprávněními a celou dávku lze vrátit tlačítkem Vrátit vše.',
@@ -131,6 +133,56 @@ export const obchodGuide: DemoGuide = {
       ],
       summary: 'Úroveň A jen čte, úroveň B smí navíc založit úkol a úroveň C navrhuje změny ke schválení.',
       title: 'AI agent A / B / C',
+    },
+    {
+      id: 'pripojeni-ai',
+      steps: [
+        {
+          click: 'Menu účtu › Můj profil › Připojené aplikace › Jak připojit › Kopírovat adresu.',
+          id: 'obchod-mcp-adresa',
+          persona: obchodnik,
+          say: 'Do ChatGPT nebo Claude se vkládá jen adresa serveru, žádný klíč ani token. Přihlášení a souhlas proběhnou v OntOS.',
+          target: { kind: 'app', path: '/profil' },
+          title: 'Jedna adresa pro ChatGPT i Claude',
+        },
+        {
+          click:
+            'V Claude Code: claude mcp add --transport http ontos <adresa>, pak /mcp › Authenticate. Přihlaste se a na obrazovce Připojit zvolte firmu, Za mě a Navrhovat změny ke schválení.',
+          id: 'obchod-mcp-souhlas',
+          persona: obchodnik,
+          say: 'Člověk sám zvolí firmu, za koho aplikace jedná, k jakým modulům má přístup a jestli změny jen navrhuje ke schválení.',
+          target: { kind: 'app', path: '/profil' },
+          title: 'Souhlas v češtině',
+        },
+        {
+          click: 'U připojení Upravit přístup: zúžit moduly nebo přepnout na Jen čtení. Potom Odpojit.',
+          id: 'obchod-mcp-upravit',
+          persona: obchodnik,
+          say: 'Přístup jde kdykoli zúžit nebo odebrat bez nového přihlášení. Aplikace ztratí přístup do 30 sekund.',
+          target: { kind: 'app', path: '/profil' },
+          title: 'Upravit nebo odpojit',
+        },
+        {
+          click:
+            'Nastavení › Lidé a role › Agenti a jejich připojení › Kdo smí agenta připojit: vyberte člověka a Uložit.',
+          id: 'obchod-mcp-agent',
+          persona: vedeni,
+          say: 'Agenta připojí jen člověk, kterému to správce povolí. Změny se zapíšou jako agent s poznámkou, kdo ho připojil.',
+          target: { kind: 'app', path: '/sprava/lide' },
+          title: 'Kdo smí připojit agenta',
+        },
+        {
+          click: 'Nastavení › Připojené aplikace: dlaždice, filtry a u připojení Odpojit s důvodem.',
+          id: 'obchod-mcp-prehled',
+          persona: vedeni,
+          say: 'Správce vidí všechna připojení ve firmě a jedním kliknutím je odpojí. Odpojení i důvod se zapíšou do auditu.',
+          target: { kind: 'app', path: '/sprava/pripojene-aplikace' },
+          title: 'Přehled připojení pro správce',
+        },
+      ],
+      summary:
+        'ChatGPT nebo Claude se připojí jednou adresou, přihlášením do OntOS a souhlasem, bez kopírování tokenů.',
+      title: 'Připojení ChatGPT / Claude',
     },
   ],
   companyName: 'Obchodní firma',

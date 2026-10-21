@@ -1,4 +1,4 @@
-import { formatMoney, formatNumber } from '@app/admin-ui';
+import { formatMoney, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
@@ -71,7 +71,7 @@ const LineRow = ({ entry, onQuantity, onRemove }: LineRowProps) => {
   const { invalidAmount, invalidQuantity, line } = entry;
   const quantityInvalid = invalidQuantity !== undefined && invalidAmount !== true;
   return (
-    <li className="flex flex-col gap-100 rounded-md border border-border-primary p-150">
+    <li className={`${surfaceTileClassName} flex flex-col gap-100 p-150`}>
       <div className="flex items-center gap-150">
         <div className="flex min-w-0 flex-1 flex-col gap-50">
           <span className="truncate font-medium text-sm">{line.productName}</span>

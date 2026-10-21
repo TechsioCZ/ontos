@@ -21,6 +21,7 @@ import {
   hasModuleAiApprovals,
   presentableDemoNavigation,
   withAgentPlatformNavigation,
+  withConnectedAppsNavigation,
 } from '../shell-demo-presentation.ts';
 import { loadHomeContribution } from './home-contribution-model.ts';
 import type { HomeContribution } from './home-contribution-model.ts';
@@ -254,7 +255,10 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
         session.identity.legalEntityId,
       );
       navigation = {
-        items: withAgentPlatformNavigation(presentable, canManagePeople || hasModuleAiApprovals(presentable)),
+        items: withConnectedAppsNavigation(
+          withAgentPlatformNavigation(presentable, canManagePeople || hasModuleAiApprovals(presentable)),
+          canManagePeople,
+        ),
         state: 'available',
         unavailableDeployments: composition.unavailableDeployments,
       };

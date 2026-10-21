@@ -1,6 +1,6 @@
 // Register of customer inputs R01–R08 (CRM.md §6): what is missing, who asked and when, what it blocks, evidence and
 // state; a delivered sample keeps its schema version and approval date. Správce / vedoucí edit, everybody reads.
-import { SidePanel, dialogCloseLabel, formatDate, formatDateTime } from '@app/admin-ui';
+import { SidePanel, dialogCloseLabel, formatDate, formatDateTime, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
@@ -176,7 +176,7 @@ const InputCard = ({
 }) => {
   const [editing, setEditing] = useState(false);
   return (
-    <li className="flex flex-col gap-150 rounded-lg border border-border-primary p-200">
+    <li className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
       <div className="flex flex-wrap items-start justify-between gap-100">
         <h3 className="font-semibold text-sm">
           {definition.id} · {definition.title}

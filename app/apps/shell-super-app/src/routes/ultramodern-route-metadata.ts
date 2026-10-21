@@ -6,9 +6,11 @@ import { routeMeta as route3 } from './[lang]/resources/[moduleId]/[resourceType
 import { routeMeta as route4 } from './[lang]/route.meta';
 import { routeMeta as route5 } from './[lang]/search/route.meta';
 import { routeMeta as route6 } from './[lang]/profile/route.meta';
+import { routeMeta as route7 } from './[lang]/pripojit/route.meta';
+import { routeMeta as route8 } from './[lang]/pripojit/souhlas/route.meta';
 
 export const ultramodernRouteNamespace = route0.namespace;
-export const ultramodernRouteMetadata = [route0, route1, route2, route3, route4, route5, route6] as const;
+export const ultramodernRouteMetadata = [route0, route1, route2, route3, route4, route5, route6, route7, route8] as const;
 export const ultramodernLocalisedUrls = Object.fromEntries(
   ultramodernRouteMetadata
     .filter((route: { canonicalPath: string }) => route.canonicalPath !== '/')

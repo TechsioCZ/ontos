@@ -9,6 +9,7 @@ import {
   StatRow,
   formatDateTime,
   formatNumber,
+  surfaceTileClassName,
 } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -297,7 +298,7 @@ const PairPanel = ({
     title={`Napárovat ${orderTitle(order)}`}
   >
     <div className="flex flex-col gap-200">
-      <div className="flex flex-col gap-50 rounded-lg border border-border-primary p-150 text-sm">
+      <div className={`${surfaceTileClassName} flex flex-col gap-50 p-150 text-sm`}>
         <span className="text-fg-secondary text-xs">Zákazník podle zdroje</span>
         <span className="font-medium">{order.customerName ?? 'název neposkytnut'}</span>
         <span className="text-fg-secondary">

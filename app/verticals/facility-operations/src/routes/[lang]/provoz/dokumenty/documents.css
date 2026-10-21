@@ -62,15 +62,14 @@
     align-items: flex-start;
     gap: 0.75rem;
     width: 100%;
-    border: 1px solid var(--color-border-primary, #d4d4d8);
     border-radius: 0.75rem;
     padding: 1rem;
-    background: var(--color-surface, #fff);
+    background: var(--color-surface);
     text-align: left;
   }
 
   .facility-documents-card:hover {
-    background: var(--color-highlight, #f4f4f5);
+    background: var(--color-overlay);
   }
 
   .facility-documents-card:focus-visible {

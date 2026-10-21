@@ -21,3 +21,23 @@
   --color-form-control-bg-hover: var(--color-base);
   --color-form-control-bg-focus: var(--color-base);
 }
+
+/*
+ * Calm surfaces: one outlined level. Tables keep light row dividers but lose their outer box and grey fill, tabs and
+ * accordions sit on the page colour, dialogs and side panels are white, and every divider is one light hairline.
+ */
+:root.light[data-theme='akros'] {
+  --border-width-data-table: 0px;
+  --color-table-bg: var(--color-base);
+  --color-table-header-bg: transparent;
+  --color-table-footer-bg: transparent;
+  --color-table-border: color-mix(in oklab, var(--color-border-primary) 60%, transparent);
+  --color-tabs-bg: transparent;
+  --color-tabs-list-bg: transparent;
+  --color-tabs-border-base: color-mix(in oklab, var(--color-border-primary) 60%, transparent);
+  --color-accordion-bg: transparent;
+  --color-accordion-title-bg: transparent;
+  --color-accordion-content-bg: transparent;
+  --color-dialog-content-bg: var(--color-base);
+  --color-drawer-surface: var(--color-base);
+}

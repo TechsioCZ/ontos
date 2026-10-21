@@ -1,4 +1,4 @@
-import { DetailList, SectionCard, formatDate, formatMoney } from '@app/admin-ui';
+import { DetailList, SectionCard, formatDate, formatMoney, surfaceTileClassName } from '@app/admin-ui';
 import type { listCustomers } from '@app/party-registry/api/client';
 import type { executeRecords as readAgreements } from '@app/legal-agreements/clients/records';
 import type { Invoice } from '@app/finance-billing/contracts/records';
@@ -10,7 +10,7 @@ import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import type { Effect } from 'effect';
 import type { ReactNode } from 'react';
 
-import type { Occupancy, RentTerms } from '../../../../shared/apis/records.ts';
+import type { Occupancy, RentTerms } from '../../../../../shared/apis/records.ts';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 export type TenantDirectoryEntry = Effect.Success<ReturnType<typeof listCustomers>>[number];
@@ -29,7 +29,7 @@ export interface LeaseRelated {
 const P = 'property-leasing';
 const mutedClass = 'propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)';
 const rowClass =
-  'propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:justify-between propertyleasing:gap-3 propertyleasing:rounded-lg propertyleasing:border propertyleasing:border-(--color-border-muted) propertyleasing:p-3 propertyleasing:text-sm';
+  `${surfaceTileClassName} propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:justify-between propertyleasing:gap-3 propertyleasing:p-3 propertyleasing:text-sm`;
 
 const isLoadedList = <A,>(value: readonly A[] | 'unavailable' | undefined): value is readonly A[] =>
   value !== undefined && value !== 'unavailable';
@@ -89,7 +89,7 @@ export interface StoryStep {
 export const LeaseStoryNav = ({ steps, t }: { readonly steps: readonly StoryStep[]; readonly t: Translate }) => (
   <nav
     aria-label={t(`${P}.story.title`)}
-    className="propertyleasing:overflow-x-auto propertyleasing:rounded-lg propertyleasing:border propertyleasing:border-(--color-border-muted) propertyleasing:bg-(--color-surface) propertyleasing:p-3"
+    className={`${surfaceTileClassName} propertyleasing:overflow-x-auto propertyleasing:p-3`}
   >
     <ol className="propertyleasing:flex propertyleasing:min-w-max propertyleasing:items-stretch propertyleasing:gap-2">
       {steps.map((step, index) => {
@@ -105,8 +105,8 @@ export const LeaseStoryNav = ({ steps, t }: { readonly steps: readonly StoryStep
         );
         const tone =
           step.current === true
-            ? 'propertyleasing:border-2 propertyleasing:border-(--color-fg-secondary) propertyleasing:bg-(--color-surface-subtle)'
-            : 'propertyleasing:border-(--color-border-muted)';
+            ? 'propertyleasing:border-2 propertyleasing:border-(--color-fg-secondary) bg-base'
+            : 'propertyleasing:border-transparent bg-base';
         return (
           <li
             className="propertyleasing:flex propertyleasing:items-center propertyleasing:gap-2"
@@ -121,7 +121,7 @@ export const LeaseStoryNav = ({ steps, t }: { readonly steps: readonly StoryStep
               </div>
             ) : (
               <a
-                className={`propertyleasing:rounded-md propertyleasing:border propertyleasing:px-3 propertyleasing:py-2 propertyleasing:no-underline propertyleasing:hover:bg-(--color-surface-subtle) ${tone}`}
+                className={`propertyleasing:rounded-md propertyleasing:border propertyleasing:px-3 propertyleasing:py-2 propertyleasing:no-underline hover:bg-surface ${tone}`}
                 href={step.href}
               >
                 {body}

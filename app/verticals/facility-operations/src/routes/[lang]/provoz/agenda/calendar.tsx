@@ -417,8 +417,8 @@ const WeekGrid = ({
             data-date={date}
             key={date}
             style={{
-              background: '#ffffff',
-              border: `1px solid ${isToday ? toneColors('primary').accent : 'var(--color-border-primary, #e5e7eb)'}`,
+              background: 'var(--color-surface)',
+              border: `1px solid ${isToday ? toneColors('primary').accent : 'transparent'}`,
               boxShadow: isToday ? `0 0 0 2px ${toneColors('primary').ring}` : 'none',
             }}
           >
@@ -481,7 +481,7 @@ const ListView = ({
                   data-key={row.key}
                   key={row.key}
                   onClick={() => onOpen(row)}
-                  style={{ background: '#ffffff', border: '1px solid var(--color-border-primary, #e5e7eb)', color: 'inherit', font: 'inherit' }}
+                  style={{ background: 'var(--color-surface)', border: 0, color: 'inherit', font: 'inherit' }}
                   type="button"
                 >
                   <Pill tone={categoryTone[row.category]}>{t(`${k}.category.${row.category}`)}</Pill>

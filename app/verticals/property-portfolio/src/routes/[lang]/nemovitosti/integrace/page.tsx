@@ -74,7 +74,7 @@ const IntegrationsPageContent = () => {
         aria-labelledby={headingId}
         className="propertyportfolio:w-full propertyportfolio:min-w-0 propertyportfolio:max-w-none propertyportfolio:space-y-6 propertyportfolio:p-0 propertyportfolio:text-(--color-page-fg)"
       >
-        <header className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:items-start propertyportfolio:justify-between propertyportfolio:gap-4 propertyportfolio:border-b propertyportfolio:border-(--color-border-muted) propertyportfolio:pb-5">
+        <header className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:items-start propertyportfolio:justify-between propertyportfolio:gap-4 propertyportfolio:pb-5">
           <div className="propertyportfolio:min-w-0 propertyportfolio:space-y-2">
             <h1
               className="propertyportfolio:text-3xl propertyportfolio:font-semibold propertyportfolio:tracking-tight"
@@ -100,14 +100,14 @@ const IntegrationsPageContent = () => {
           <div className="propertyportfolio:space-y-6">
             <section
               aria-label={t(`${key}.accounting`)}
-              className="propertyportfolio:min-w-0 propertyportfolio:space-y-4 propertyportfolio:rounded-lg propertyportfolio:border propertyportfolio:border-(--color-border-muted) propertyportfolio:bg-(--color-surface) propertyportfolio:p-5"
+              className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 propertyportfolio:min-w-0 propertyportfolio:space-y-4 propertyportfolio:p-5"
             >
               <h2 className="propertyportfolio:text-lg propertyportfolio:font-semibold">{t(`${key}.accounting`)}</h2>
 
               <div className="propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto propertyportfolio:rounded-lg propertyportfolio:bg-(--color-surface)">
                 <Table className="propertyportfolio:w-full" size="sm" variant="outline">
                   <Table.Caption>{t(`${key}.accounting`)}</Table.Caption>
-                  <Table.Header className="propertyportfolio:bg-(--color-surface-subtle)">
+                  <Table.Header>
                     <Table.Row>
                       {['correlation', 'attempt', 'attemptedAt', 'state', 'summary'].map((column) => (
                         <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
@@ -155,7 +155,7 @@ const IntegrationsPageContent = () => {
             </section>
             <section
               aria-label={t(`${key}.booking`)}
-              className="propertyportfolio:min-w-0 propertyportfolio:space-y-4 propertyportfolio:rounded-lg propertyportfolio:border propertyportfolio:border-(--color-border-muted) propertyportfolio:bg-(--color-surface) propertyportfolio:p-5"
+              className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 propertyportfolio:min-w-0 propertyportfolio:space-y-4 propertyportfolio:p-5"
             >
               <h2 className="propertyportfolio:text-lg propertyportfolio:font-semibold">{t(`${key}.booking`)}</h2>
               {records.booking.bookingObservations.length === 0 && (
@@ -166,7 +166,7 @@ const IntegrationsPageContent = () => {
               <div className="propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto propertyportfolio:rounded-lg propertyportfolio:bg-(--color-surface)">
                 <Table className="propertyportfolio:w-full" size="sm" variant="outline">
                   <Table.Caption>{t(`${key}.booking`)}</Table.Caption>
-                  <Table.Header className="propertyportfolio:bg-(--color-surface-subtle)">
+                  <Table.Header>
                     <Table.Row>
                       {['correlation', 'attempt', 'attemptedAt', 'state', 'summary'].map((column) => (
                         <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
@@ -215,7 +215,7 @@ const IntegrationsPageContent = () => {
             </section>
             <section
               aria-label={t(`${key}.signature`)}
-              className="propertyportfolio:min-w-0 propertyportfolio:space-y-4 propertyportfolio:rounded-lg propertyportfolio:border propertyportfolio:border-(--color-border-muted) propertyportfolio:bg-(--color-surface) propertyportfolio:p-5"
+              className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 propertyportfolio:min-w-0 propertyportfolio:space-y-4 propertyportfolio:p-5"
             >
               <h2 className="propertyportfolio:text-lg propertyportfolio:font-semibold">{t(`${key}.signature`)}</h2>
               {records.signature.signatureObservations.length === 0 && (
@@ -226,7 +226,7 @@ const IntegrationsPageContent = () => {
               <div className="propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto propertyportfolio:rounded-lg propertyportfolio:bg-(--color-surface)">
                 <Table className="propertyportfolio:w-full" size="sm" variant="outline">
                   <Table.Caption>{t(`${key}.signature`)}</Table.Caption>
-                  <Table.Header className="propertyportfolio:bg-(--color-surface-subtle)">
+                  <Table.Header>
                     <Table.Row>
                       {['correlation', 'attempt', 'attemptedAt', 'state', 'summary'].map((column) => (
                         <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
@@ -265,7 +265,7 @@ const IntegrationsPageContent = () => {
             </section>
             <section
               aria-label={t(`${key}.email`)}
-              className="propertyportfolio:min-w-0 propertyportfolio:space-y-4 propertyportfolio:rounded-lg propertyportfolio:border propertyportfolio:border-(--color-border-muted) propertyportfolio:bg-(--color-surface) propertyportfolio:p-5"
+              className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 propertyportfolio:min-w-0 propertyportfolio:space-y-4 propertyportfolio:p-5"
             >
               <h2 className="propertyportfolio:text-lg propertyportfolio:font-semibold">{t(`${key}.email`)}</h2>
               {records.notification.emailObservations.length === 0 && (
@@ -276,7 +276,7 @@ const IntegrationsPageContent = () => {
               <div className="propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto propertyportfolio:rounded-lg propertyportfolio:bg-(--color-surface)">
                 <Table className="propertyportfolio:w-full" size="sm" variant="outline">
                   <Table.Caption>{t(`${key}.email`)}</Table.Caption>
-                  <Table.Header className="propertyportfolio:bg-(--color-surface-subtle)">
+                  <Table.Header>
                     <Table.Row>
                       {['correlation', 'attempt', 'attemptedAt', 'state', 'summary'].map((column) => (
                         <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
@@ -315,7 +315,7 @@ const IntegrationsPageContent = () => {
             </section>
           </div>
         )}
-        <section className="propertyportfolio:space-y-2 propertyportfolio:rounded-lg propertyportfolio:bg-(--color-surface-subtle) propertyportfolio:p-5">
+        <section className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base propertyportfolio:space-y-2 propertyportfolio:p-5">
           <h2 className="propertyportfolio:text-lg propertyportfolio:font-semibold">{t(`${key}.other`)}</h2>
           <p className="propertyportfolio:text-sm propertyportfolio:text-(--color-fg-secondary)">{t(`${key}.payroll`)}</p>
         </section>

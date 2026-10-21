@@ -175,7 +175,7 @@ export const SubjectChip = ({ subject, onRemove, removeLabel }: {
 }) => {
   const kindLabel = useKindLabel();
   return (
-    <span className="inline-flex max-w-full items-center gap-50 rounded-full border border-border-primary bg-surface px-150 py-50 text-xs">
+    <span className="inline-flex max-w-full items-center gap-50 rounded-full bg-surface px-150 py-50 text-xs">
       <span className="text-fg-secondary">{kindLabel(subject.kind)}</span>
       <span className="truncate font-medium">{subject.label}</span>
       {onRemove !== undefined && (

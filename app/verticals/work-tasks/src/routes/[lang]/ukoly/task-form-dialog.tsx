@@ -1,4 +1,4 @@
-import { SidePanel, comboboxTranslations, datePickerTranslations, dialogCloseLabel } from '@app/admin-ui';
+import { SidePanel, comboboxTranslations, datePickerTranslations, dialogCloseLabel, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import type { Employee } from '@app/workforce/contracts/records';
 import { CalendarDate } from '@internationalized/date';
@@ -818,7 +818,7 @@ export const TaskFormDialog = ({
                 <p className="text-sm text-fg-secondary">{t(`${key}.noComments`)}</p>
               )}
               {(task.comments ?? []).map((entry) => (
-                <div key={entry.id} className="rounded-lg border border-border-primary p-150">
+                <div key={entry.id} className={`${surfaceTileClassName} p-150`}>
                   <p className="text-sm text-fg-secondary">
                     {entry.authorDisplayName ??
                       employees.find(

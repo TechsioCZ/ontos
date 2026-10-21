@@ -1,3 +1,4 @@
+// @effect-diagnostics globalFetch:off preferSchemaOverJson:off -- Browser boundary: before sign-in the login page asks Better Auth for the public name of the OAuth client that requests access. expires: 2027-03-31.
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate, useRouter } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -18,6 +19,8 @@ import { forgetRecordedPageReads } from '../../browser-request-cache.ts';
 import { signInReason, signInReturnPath } from '../../sign-in-return.ts';
 import type { SignInReason } from '../../sign-in-return.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
+import { clientNameFrom, OAUTH_PRELOGIN_PATH, readOAuthLoginRequest } from './oauth-handoff.ts';
+import type { OAuthLoginRequest } from './oauth-handoff.ts';
 
 interface LoginValidation {
   loginMissing: boolean;
@@ -66,12 +69,37 @@ const LoginPage = () => {
   // A protected page opened without signing in arrives with only the page to return to: "not signed in".
   // Read after mount: the server render has no browser URL, so both renders start without the notice.
   const [reason, setReason] = useState<SignInReason | 'sign_in_required'>();
+  const [oauthRequest, setOAuthRequest] = useState<OAuthLoginRequest>();
+  const [oauthClientName, setOAuthClientName] = useState<string>();
   useEffect(() => {
     const { href } = window.location;
     setReason(
       signInReason(href) ?? (signInReturnPath(href, language) === undefined ? undefined : 'sign_in_required'),
     );
+    setOAuthRequest(readOAuthLoginRequest(href));
   }, [language]);
+  useEffect(() => {
+    if (oauthRequest === undefined) {
+      return;
+    }
+    let active = true;
+    void fetch(OAUTH_PRELOGIN_PATH, {
+      body: JSON.stringify({ client_id: oauthRequest.clientId, oauth_query: oauthRequest.signedQuery }),
+      credentials: 'same-origin',
+      headers: { 'content-type': 'application/json' },
+      method: 'POST',
+    })
+      .then((response): Promise<unknown> | undefined => (response.ok ? response.json() : undefined))
+      .then((body: unknown) => {
+        if (active) {
+          setOAuthClientName(clientNameFrom(body));
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [oauthRequest]);
   const handleNavigationFailure = (error: Cause.TimeoutError | Cause.UnknownError) =>
     Effect.sync(() => {
       void error;
@@ -137,31 +165,37 @@ const LoginPage = () => {
               passwordRef.current?.focus();
             }),
           onSuccess: () =>
-            Effect.andThen(
-              forgetRecordedPageReads,
-              Effect.tryPromise(() => {
-                // Signed in: what remains is loading the next page, which can take a few seconds.
-                setAttempt('opening');
-                return router.invalidate({ sync: true });
-              }).pipe(
-                Effect.andThen(
+            oauthRequest === undefined
+              ? Effect.andThen(
+                  forgetRecordedPageReads,
                   Effect.tryPromise(() => {
-                    // Cached pages hold anonymous loader data; an invalidated cached page would render that stale
-                    // data while it reloads in the background, so the signed-in user would briefly see the
-                    // logged-out view. Without a cache entry the next page loads before it renders.
-                    router.clearCache();
-                    // A protected deep link sent the visitor here; return there instead of the home page.
-                    const returnPath = signInReturnPath(window.location.href, language);
-                    return navigate(returnPath === undefined ? { to: `/${language}/` } : { href: returnPath });
-                  }),
-                ),
-                Effect.timeout('10 seconds'),
-                Effect.matchEffect({
-                  onFailure: handleNavigationFailure,
-                  onSuccess: Effect.succeed,
+                    // Signed in: what remains is loading the next page, which can take a few seconds.
+                    setAttempt('opening');
+                    return router.invalidate({ sync: true });
+                  }).pipe(
+                    Effect.andThen(
+                      Effect.tryPromise(() => {
+                        // Cached pages hold anonymous loader data; an invalidated cached page would render that stale
+                        // data while it reloads in the background, so the signed-in user would briefly see the
+                        // logged-out view. Without a cache entry the next page loads before it renders.
+                        router.clearCache();
+                        // A protected deep link sent the visitor here; return there instead of the home page.
+                        const returnPath = signInReturnPath(window.location.href, language);
+                        return navigate(returnPath === undefined ? { to: `/${language}/` } : { href: returnPath });
+                      }),
+                    ),
+                    Effect.timeout('10 seconds'),
+                    Effect.matchEffect({
+                      onFailure: handleNavigationFailure,
+                      onSuccess: Effect.succeed,
+                    }),
+                  ),
+                )
+              : // OAuth connect flow: back to the authorization server; no company picker and no shell page in between.
+                Effect.sync(() => {
+                  setAttempt('opening');
+                  globalThis.location.assign(oauthRequest.authorizeUrl);
                 }),
-              ),
-            ),
         }),
         Effect.ensuring(Effect.sync(() => setAttempt('idle'))),
       ),
@@ -172,7 +206,7 @@ const LoginPage = () => {
     <>
       <UltramodernRouteHead />
       <main className="flex min-h-dvh items-center justify-center bg-surface px-200 py-400 text-fg-primary">
-        <section className="flex w-full max-w-md flex-col gap-200 rounded-lg border border-border-primary bg-base p-300 md:p-400">
+        <section className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 flex w-full max-w-md flex-col gap-200 p-300 md:p-400">
           <div className="flex items-center gap-150">
             <span className="flex size-icon-control-lg items-center justify-center rounded-md bg-primary">
               <Icon icon="icon-[mdi--hexagon-multiple-outline]" size="md" />
@@ -183,6 +217,24 @@ const LoginPage = () => {
             </Badge>
           </div>
           <p className="text-fg-secondary text-sm">{t('shell.login.welcome')}</p>
+          {oauthRequest === undefined ? null : (
+            <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm" data-testid="oauth-login-banner" role="status">
+              <p>
+                <strong>
+                  {oauthClientName ?? (oauthRequest.clientHost === '' ? t('shell.login.oauth.unknownClient') : oauthRequest.clientHost)}
+                </strong>{' '}
+                {oauthClientName !== undefined && oauthRequest.clientHost !== ''
+                  ? t('shell.login.oauth.request', { host: oauthRequest.clientHost })
+                  : t('shell.login.oauth.requestNoHost')}
+              </p>
+              <p>{t('shell.login.oauth.continue')}</p>
+              {oauthRequest.knownClient ? null : (
+                <p className="text-fg-secondary">
+                  {t('shell.login.oauth.unverified', { client: oauthClientName ?? oauthRequest.clientId })}
+                </p>
+              )}
+            </div>
+          )}
           {/* Once signed in the URL has moved on, so the title and fields step aside while the next page loads.
               They are hidden, not unmounted, so their refs survive a failed navigation; the submit button stays. */}
           <div>
@@ -220,13 +272,13 @@ const LoginPage = () => {
                 />
               </div>
               {reason === undefined || submissionError !== undefined ? null : (
-                <div className="rounded-md border border-border-primary bg-surface p-200 text-sm" role="status">
+                <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm" role="status">
                   <p className="font-semibold">{t(`shell.login.notice.${reason}.title`)}</p>
                   <p>{t(`shell.login.notice.${reason}.body`)}</p>
                 </div>
               )}
               {submissionError === undefined ? null : (
-                <div className="rounded-md border border-border-primary bg-surface p-200 text-sm" role="alert">
+                <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm" role="alert">
                   <p className="font-semibold">{t(errorTitleKey)}</p>
                   <p>{t(submissionError)}</p>
                 </div>

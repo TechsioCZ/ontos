@@ -156,7 +156,7 @@
     "@app/privacy": "workspace:*",
     "@authzed/authzed-node": "1.6.1",
     "@effect/sql-pg": "4.0.0-rc.117",
-    "better-auth": "1.7.6",
+    "better-auth": "1.7.12",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "@app/property-portfolio": "workspace:*",
     "@app/property-leasing": "workspace:*",

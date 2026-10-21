@@ -24,6 +24,8 @@ import { loader as loader_4 } from "../../routes/[lang]/search/page.data";
 import component_5 from "../../routes/[lang]/search/page";
 import { loader as loader_5 } from "../../routes/[lang]/profile/page.data";
 import component_7 from "../../routes/[lang]/profile/page";
+import component_8 from "../../routes/[lang]/pripojit/page";
+import component_9 from "../../routes/[lang]/pripojit/souhlas/page";
 import component_6 from "../../routes/layout";
 
 export const rootRoute = createRootRouteWithContext<ModernRouterContext>()({
@@ -109,7 +111,25 @@ const route__lang__profile_page = createRoute({
   }),
 });
 
-export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__$, route__lang__login_page, route__lang__modules__moduleId__page, route__lang__resources__moduleId___resourceType___resourceId__page, route__lang__search_page, route__lang__profile_page]);
+const route__lang__pripojit_page = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "$lang/pripojit",
+  component: component_8,
+  staticData: createRouteStaticData({
+    modernRouteId: "(lang)/pripojit/page",
+  }),
+});
+
+const route__lang__pripojit__souhlas_page = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "$lang/pripojit/souhlas",
+  component: component_9,
+  staticData: createRouteStaticData({
+    modernRouteId: "(lang)/pripojit/souhlas/page",
+  }),
+});
+
+export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__$, route__lang__login_page, route__lang__modules__moduleId__page, route__lang__resources__moduleId___resourceType___resourceId__page, route__lang__search_page, route__lang__profile_page, route__lang__pripojit_page, route__lang__pripojit__souhlas_page]);
 
 export const router = createRouter({
   ...modernTanstackRouterFastDefaults,

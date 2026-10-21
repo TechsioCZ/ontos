@@ -6,7 +6,7 @@ import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { DateTime } from 'effect';
 import type { Effect } from 'effect';
 
-import type { RecordsResponse } from '../../../../shared/apis/records';
+import type { RecordsResponse } from '../../../../../shared/apis/records';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 type Occupancies = Effect.Success<ReturnType<typeof readOccupancy>>;
@@ -17,9 +17,9 @@ const K = 'property-portfolio.pages.records.unitStory';
 
 export type LeaseBlock = 'building' | 'outOfService' | 'retired';
 const cardClass =
-  'propertyportfolio:min-w-0 propertyportfolio:space-y-3 propertyportfolio:rounded-lg propertyportfolio:border propertyportfolio:border-(--color-border-muted) propertyportfolio:bg-(--color-surface) propertyportfolio:p-4';
+  'ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base propertyportfolio:min-w-0 propertyportfolio:space-y-3 propertyportfolio:p-4';
 const rowClass =
-  'propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:items-center propertyportfolio:justify-between propertyportfolio:gap-2 propertyportfolio:rounded-md propertyportfolio:bg-(--color-surface-subtle) propertyportfolio:p-3 propertyportfolio:text-sm';
+  'propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:items-center propertyportfolio:justify-between propertyportfolio:gap-2 propertyportfolio:py-3 propertyportfolio:text-sm border-b border-border-primary/60 last:border-b-0';
 const mutedClass = 'propertyportfolio:text-sm propertyportfolio:text-(--color-fg-secondary)';
 const occupancyBadge = {
   ACTIVE: 'success',

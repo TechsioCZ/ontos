@@ -4,7 +4,7 @@
 // and counterparty (CreateInvoiceDraft), so a later quote edit never changes an issued invoice.
 import { listCustomers } from '@app/party-registry/api/client';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
-import { DetailList, EmptyState, SectionCard, SidePanel, formatDate } from '@app/admin-ui';
+import { DetailList, EmptyState, SectionCard, SidePanel, formatDate, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -376,7 +376,7 @@ export const SalesQuoteFormPanel = ({
             value={validUntil}
           />
         </div>
-        <fieldset className="flex flex-col gap-150 rounded-lg border border-border-primary p-200">
+        <fieldset className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
           <legend className="px-50 font-semibold text-sm">{k('sales.fields.lines')}</legend>
           {lines.map((line, index) => (
             <div className="flex flex-col gap-100 border-border-secondary border-b pb-150" key={index}>

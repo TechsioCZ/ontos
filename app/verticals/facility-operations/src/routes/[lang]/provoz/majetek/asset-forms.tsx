@@ -39,6 +39,7 @@ import {
 import type { Option } from './form-kit.tsx';
 import { locationItems, owningPropertyId, usePropertyTree } from './property-tree.ts';
 import type { PropertyTree } from './property-tree.ts';
+import { surfaceTileClassName } from '@app/admin-ui';
 
 export interface FormProps {
   readonly formId: string;
@@ -924,7 +925,7 @@ export const InventoryCreateForm = ({ formId, onSubmit, state }: FormProps & { r
         <TextField id="inventory-date" label={k('fields.date')} onChange={setDate} required type="date" value={date} />
       </FormGrid>
       <AreaField id="inventory-note" label={k('fields.note')} onChange={setNote} value={note} />
-      <div className="rounded-md border border-border-primary bg-surface-secondary p-150 text-sm">
+      <div className={`${surfaceTileClassName} p-150 text-sm`}>
         <p className="font-medium">{k('inventory.candidates', { count: candidates.length })}</p>
         <ul className="mt-100 flex max-h-[14rem] flex-col gap-50 overflow-auto text-fg-secondary">
           {candidates.map((asset) => (

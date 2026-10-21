@@ -1,5 +1,5 @@
 import type { ProductRecord } from '@app/merchandise/contracts/records';
-import { formatMoney, matchesSearch, comboboxTranslations } from '@app/admin-ui';
+import { formatMoney, matchesSearch, comboboxTranslations, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
@@ -91,7 +91,7 @@ export const InvoiceLineEditor = ({
     // copy of the first line.
     <fieldset
       aria-label={t(`${ns}.form.lineGroup`, { position })}
-      className="m-0 flex min-w-0 flex-col gap-100 rounded-md border border-border-primary p-150"
+      className={`${surfaceTileClassName} m-0 flex min-w-0 flex-col gap-100 p-150`}
     >
       <div className="finance-invoice-line-identity grid items-end gap-150">
         <div className="min-w-0">

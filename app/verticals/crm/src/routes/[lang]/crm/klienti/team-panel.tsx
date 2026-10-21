@@ -1,7 +1,7 @@
 // Obchodníci (CRM.md §8, C00): správce / vedoucí see the CRM salespeople, register company accounts with the
 // Obchodník role as salespeople and retire them. Accounts themselves (sign-in, role, deactivation) are managed in
 // Nastavení › Lidé a role; the list of accounts comes from that page's shell endpoint (company administrators only).
-import { SidePanel, dialogCloseLabel, formatDate, formatNumber } from '@app/admin-ui';
+import { SidePanel, dialogCloseLabel, formatDate, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -110,7 +110,7 @@ export const TeamPanel = ({
             const owned = clientCount(person.id);
             return (
               <li
-                className="flex flex-wrap items-center justify-between gap-100 rounded-lg border border-border-primary p-150"
+                className={`${surfaceTileClassName} flex flex-wrap items-center justify-between gap-100 p-150`}
                 key={person.id}
               >
                 <span className="flex min-w-0 flex-col">

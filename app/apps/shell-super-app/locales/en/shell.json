@@ -101,6 +101,7 @@
           "salesAiApprovals": "AI changes for approval",
           "agentApprovals": "Approvals",
           "agentActivity": "Agent activity",
+          "connectedApps": "Connected apps",
           "crmReports": "Sales overview",
           "opsOverview": "Operations overview",
           "opsAgenda": "My agenda",
@@ -171,6 +172,13 @@
       "seo": {
         "description": "Sign in to the OntOS workspace."
       },
+      "oauth": {
+        "continue": "Sign in to continue.",
+        "request": "({{host}}) is requesting access to your OntOS account.",
+        "requestNoHost": "is requesting access to your OntOS account.",
+        "unknownClient": "An application",
+        "unverified": "The application presents itself as {{client}}. Make sure you started this connection yourself."
+      },
       "submit": "Login",
       "title": "Login",
       "toast": {
@@ -195,6 +203,85 @@
           "title": "You are not signed in",
           "body": "The page you are opening requires signing in. You will return to it after signing in."
         }
+      }
+    },
+    "connect": {
+      "pageTitle": "Connect an application",
+      "seoDescription": "Connect an application to OntOS",
+      "title": "Connect {{client}} to OntOS",
+      "clientFallback": "the application",
+      "loading": "Loading connection options…",
+      "badge": {
+        "verified": "Verified application",
+        "loopback": "Runs on this computer"
+      },
+      "company": {
+        "title": "Company",
+        "question": "Which company will the application work in?",
+        "none": "You do not have access to any company."
+      },
+      "acting": {
+        "title": "On whose behalf it will act",
+        "me": "As me ({{name}})",
+        "meHint": "The application will see and do only what you may.",
+        "agent": "As agent {{name}}",
+        "agentHint": "Changes are logged as the agent, noting that you connected it."
+      },
+      "access": {
+        "title": "What it can access",
+        "allMe": "Everything I may use",
+        "allAgent": "Everything the agent may use",
+        "pick": "Choose modules",
+        "read": "Read",
+        "write": "Write",
+        "pickRequired": "Choose at least one module."
+      },
+      "policy": {
+        "title": "How it will write",
+        "read_only": "Read only",
+        "approval": "Propose changes for approval (recommended)",
+        "approvalHint": "A person approves every change first in Administration › Approvals.",
+        "direct": "Make changes directly",
+        "directHint": "Changes take effect immediately, as if you made them.",
+        "agentApprovalOnly": "The agent may only propose changes (agent settings).",
+        "agentReadOnly": "The agent may only read (agent settings)."
+      },
+      "continue": "Continue",
+      "cancel": "Cancel",
+      "error": {
+        "expired": "The connection link has expired. Start connecting again in {{client}}.",
+        "signedOut": "Your sign-in has expired. Start connecting again in {{client}}.",
+        "forbidden": "This connection setting is not allowed.",
+        "failed": "Connecting failed. Please try again."
+      },
+      "consent": {
+        "pageTitle": "Connection consent",
+        "seoDescription": "Consent to connect an application to OntOS",
+        "title": "Allow {{client}} access?",
+        "loading": "Loading the connection summary…",
+        "companyLabel": "Company",
+        "actingLabel": "Acts as",
+        "actingAgent": "(agent), connected by {{name}}",
+        "actingMe": "(you)",
+        "readLabel": "Read",
+        "writeModulesLabel": "Write",
+        "allMe": "Everything you may use",
+        "allAgent": "Everything the agent may use",
+        "policyLabel": "Writing",
+        "policyValue": {
+          "read_only": "read only",
+          "approval": "for approval",
+          "direct": "directly"
+        },
+        "policyHint": {
+          "read_only": "the application changes nothing",
+          "approval": "changes wait for approval in Administration › Approvals",
+          "direct": "changes take effect immediately"
+        },
+        "validity": "Access lasts until you disconnect it in My profile › Connected applications. The company administrator can disconnect it too.",
+        "redirectBefore": "After you allow access we will send you back to",
+        "allow": "Allow access",
+        "deny": "Deny."
       }
     },
     "modules": {

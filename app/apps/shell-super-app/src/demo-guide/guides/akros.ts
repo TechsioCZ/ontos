@@ -139,6 +139,47 @@ export const akrosGuide: DemoGuide = {
       summary: 'Každý krok má autora a čas; po ukázce vše vrátíme řízenou akcí.',
       title: 'Historie a úklid',
     },
+    {
+      id: 'pripojeni-ai',
+      steps: [
+        {
+          click: 'Menu účtu › Můj profil › Připojené aplikace › Jak připojit › Kopírovat adresu.',
+          id: 'akros-mcp-adresa',
+          persona: expedice,
+          say: 'Do ChatGPT nebo Claude se vkládá jen adresa serveru, žádný klíč ani token. Přihlášení a souhlas proběhnou v OntOS.',
+          target: { kind: 'app', path: '/profil' },
+          title: 'Jedna adresa pro ChatGPT i Claude',
+        },
+        {
+          click:
+            'V Claude Code: claude mcp add --transport http ontos <adresa>, pak /mcp › Authenticate. Přihlaste se a na obrazovce Připojit zvolte firmu, Za mě a Navrhovat změny ke schválení.',
+          id: 'akros-mcp-souhlas',
+          persona: expedice,
+          say: 'Člověk sám zvolí firmu, za koho aplikace jedná, k jakým modulům má přístup a jestli změny jen navrhuje ke schválení.',
+          target: { kind: 'app', path: '/profil' },
+          title: 'Souhlas v češtině',
+        },
+        {
+          click: 'U připojení Upravit přístup: zúžit moduly nebo přepnout na Jen čtení. Potom Odpojit.',
+          id: 'akros-mcp-upravit',
+          persona: expedice,
+          say: 'Přístup jde kdykoli zúžit nebo odebrat bez nového přihlášení. Aplikace ztratí přístup do 30 sekund.',
+          target: { kind: 'app', path: '/profil' },
+          title: 'Upravit nebo odpojit',
+        },
+        {
+          click: 'Nastavení › Připojené aplikace: dlaždice, filtry a u připojení Odpojit s důvodem.',
+          id: 'akros-mcp-prehled',
+          persona: eshop,
+          say: 'Správce vidí všechna připojení ve firmě a jedním kliknutím je odpojí. Odpojení i důvod se zapíšou do auditu.',
+          target: { kind: 'app', path: '/sprava/pripojene-aplikace' },
+          title: 'Přehled připojení pro správce',
+        },
+      ],
+      summary:
+        'ChatGPT nebo Claude se připojí jednou adresou, přihlášením do OntOS a souhlasem, bez kopírování tokenů.',
+      title: 'Připojení ChatGPT / Claude',
+    },
   ],
   boundaries: {
     live: [

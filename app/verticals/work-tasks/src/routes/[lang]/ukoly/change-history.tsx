@@ -1,5 +1,6 @@
 import { DateTime } from 'effect';
-import type { HistoryEntry } from '../../../../shared/apis/records.ts';
+import type { HistoryEntry } from '../../../../../shared/apis/records.ts';
+import { surfaceTileClassName } from '@app/admin-ui';
 
 const actionLabels: Record<HistoryEntry['action'], string> = {
   archived: 'Skryto ze seznamu',
@@ -48,7 +49,7 @@ export const ChangeHistory = ({
       <ol className="flex flex-col gap-100">
         {newestFirst.map((entry, index) => (
           <li
-            className="flex flex-col gap-50 rounded-lg border border-border-primary p-150"
+            className={`${surfaceTileClassName} flex flex-col gap-50 p-150`}
             key={`${DateTime.toEpochMillis(entry.at)}-${index}`}
           >
             <p className="text-sm">

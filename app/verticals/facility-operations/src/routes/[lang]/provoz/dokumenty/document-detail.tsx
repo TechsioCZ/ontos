@@ -1,7 +1,7 @@
 // @effect-diagnostics asyncFunction:off
 // Document detail side panel (S12): metadata, contract terms, links, amendments, preview, version history with
 // authorised download, new version upload, manual signature record and the comment thread (S14).
-import { DetailList, SectionCard, SidePanel } from '@app/admin-ui';
+import { DetailList, SectionCard, SidePanel, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -175,7 +175,7 @@ const SignatureForm = ({
   };
 
   return (
-    <div className="flex flex-col gap-150 rounded-lg border border-border-primary p-150">
+    <div className={`${surfaceTileClassName} flex flex-col gap-150 p-150`}>
       {error !== undefined && (
         <StatusText showIcon status="error">
           {error === 'required' ? t('facility-operations.common.required') : t(`facility-operations.common.errors.${error}`)}

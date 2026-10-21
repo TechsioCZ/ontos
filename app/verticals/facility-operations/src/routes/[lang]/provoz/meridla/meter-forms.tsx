@@ -474,10 +474,8 @@ export const ReadingForm = ({
       )}
       {meter !== undefined && problem === undefined && preview !== undefined && (
         <div
-          className={`rounded-md border p-150 text-sm ${
-            preview.kind === 'ok' && preview.anomaly
-              ? 'border-danger bg-danger-light'
-              : 'border-border-primary bg-surface-subtle'
+          className={`rounded-lg p-150 text-sm ${
+            preview.kind === 'ok' && preview.anomaly ? 'bg-bg-danger-subtle' : 'bg-surface'
           }`}
           data-testid="reading-preview"
         >

@@ -2,7 +2,7 @@
 // @effect-diagnostics newPromise:off
 // @effect-diagnostics globalTimers:off
 // @effect-diagnostics globalDate:off
-import { dialogCloseLabel, formatDate, formatDateTime, formatMoney, SectionCard } from '@app/admin-ui';
+import { dialogCloseLabel, formatDate, formatDateTime, formatMoney, SectionCard, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -537,7 +537,7 @@ export const InvoiceReminders = ({
     >
       <div className="flex flex-col gap-150 print:hidden">
         {editing && (
-          <div className="flex flex-col gap-150 rounded-md border border-border-primary p-200">
+          <div className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
             {provider.kind === 'loading' ? (
               <StatusText showIcon size="sm" status="default">
                 Zjišťuji, zda je nastaven e-mailový poskytovatel…

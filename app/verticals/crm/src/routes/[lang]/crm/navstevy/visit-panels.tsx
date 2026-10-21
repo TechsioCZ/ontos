@@ -1,5 +1,5 @@
 // AREA: visits — owned by the crm-visits lane. Side panels: record a visit, correct it (with history), detail.
-import { DetailList, SidePanel, comboboxTranslations } from '@app/admin-ui';
+import { DetailList, SidePanel, comboboxTranslations, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -193,7 +193,7 @@ export const VisitFields = ({
         value={draft.note}
       />
       {showNextStep && (
-        <div className="flex flex-col gap-150 rounded-md border border-border-primary p-200">
+        <div className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
           <span className="font-medium text-sm">Další krok (volitelně)</span>
           <FormInput
             size="sm"
@@ -589,7 +589,7 @@ export const VisitDetailPanel = ({
             <ol className="flex flex-col gap-150">
               {visit.corrections.toReversed().map((correction, index) => (
                 <li
-                  className="flex flex-col gap-50 rounded-md border border-border-primary p-150 text-sm"
+                  className={`${surfaceTileClassName} flex flex-col gap-50 p-150 text-sm`}
                   key={`${correction.at}-${correction.field}-${String(index)}`}
                 >
                   <span className="text-fg-secondary text-xs">

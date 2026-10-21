@@ -58,3 +58,18 @@ it('has an AI agent chapter for Hanák and Obchodní firma', () => {
   expect(demoGuideFor(legalEntities.hanak)?.chapters.some((chapter) => chapter.id === 'ai')).toBe(true);
   expect(demoGuideFor(legalEntities.obchod)?.chapters.some((chapter) => chapter.id === 'ai')).toBe(true);
 });
+
+it('has a Připojení ChatGPT / Claude chapter for every company', () => {
+  for (const legalEntityId of Object.values(legalEntities)) {
+    const chapter = demoGuideFor(legalEntityId)?.chapters.find((item) => item.id === 'pripojeni-ai');
+    expect(chapter).toBeDefined();
+    expect(chapter?.steps.length ?? 0).toBeGreaterThanOrEqual(3);
+    expect(
+      chapter?.steps.some((step) => step.target.kind === 'app' && step.target.path === '/sprava/pripojene-aplikace'),
+    ).toBe(true);
+  }
+  for (const legalEntityId of [legalEntities.obchod, legalEntities.hanak]) {
+    const chapter = demoGuideFor(legalEntityId)?.chapters.find((item) => item.id === 'pripojeni-ai');
+    expect(chapter?.steps.some((step) => step.target.kind === 'app' && step.target.path === '/sprava/lide')).toBe(true);
+  }
+});

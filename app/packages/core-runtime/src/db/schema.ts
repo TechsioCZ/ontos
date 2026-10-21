@@ -58,7 +58,7 @@ export const ACTION_INVOCATION_STATUSES = [
 
 export type ActionInvocationStatus = (typeof ACTION_INVOCATION_STATUSES)[number];
 
-export const ACTION_AUTH_METHODS = ['session', 'api_key', 'system', 'support_impersonation'] as const;
+export const ACTION_AUTH_METHODS = ['session', 'api_key', 'system', 'support_impersonation', 'oauth_connection'] as const;
 
 export type ActionAuthMethod = (typeof ACTION_AUTH_METHODS)[number];
 
@@ -68,7 +68,7 @@ export type PrincipalKind = (typeof PRINCIPAL_KINDS)[number];
 export const PRINCIPAL_STATUSES = ['active', 'disabled', 'archived'] as const;
 export type PrincipalStatus = (typeof PRINCIPAL_STATUSES)[number];
 
-export const BINDING_SUBJECT_TYPES = ['user', 'api_key'] as const;
+export const BINDING_SUBJECT_TYPES = ['user', 'api_key', 'oauth_grant'] as const;
 export type BindingSubjectType = (typeof BINDING_SUBJECT_TYPES)[number];
 
 export const BINDING_STATUSES = ['pending', 'active', 'disabled', 'revoked'] as const;
@@ -259,7 +259,7 @@ export const principalAuthBindings = coreSchema.table(
       'core_auth_bindings_namespace_ck',
       sql`length(btrim(${table.authenticationNamespaceId})) between 1 and 200 and ${table.authenticationNamespaceId} = btrim(${table.authenticationNamespaceId})`,
     ),
-    check('core_auth_bindings_subject_type_ck', sql`${table.subjectType} in ('user', 'api_key')`),
+    check('core_auth_bindings_subject_type_ck', sql`${table.subjectType} in ('user', 'api_key', 'oauth_grant')`),
     check('core_auth_bindings_subject_id_ck', sql`length(${table.providerSubjectId}) between 1 and 500`),
     check('core_auth_bindings_status_ck', sql`${table.status} in ('pending', 'active', 'revoked', 'disabled')`),
     check('core_auth_bindings_revision_ck', sql`${table.bindingRevision} >= 1`),
@@ -368,7 +368,7 @@ export const actionInvocations = coreSchema.table(
     ...authContextForeignKeys('core_action_invocations', table),
     check(
       'core_action_invocations_auth_method_ck',
-      sql`${table.authMethod} is null or ${table.authMethod} in ('session', 'api_key', 'system', 'support_impersonation')`,
+      sql`${table.authMethod} is null or ${table.authMethod} in ('session', 'api_key', 'system', 'support_impersonation', 'oauth_connection')`,
     ),
     check(
       'core_action_invocations_status_ck',
@@ -1062,6 +1062,54 @@ export const agentProposals = coreSchema.table(
   ],
 );
 
+/** MCP OAuth connection grants (lane mcp-connection-grants). Written only by the shell grant store
+ * (apps/shell-super-app/api/oauth-connections/grant-store.ts); Core only sees the derived `oauth_grant` binding. */
+export const oauthConnectionGrants = coreSchema.table(
+  'oauth_connection_grants',
+  {
+    grantId: uuid('grant_id').defaultRandom().primaryKey(),
+    tenantId: uuid('tenant_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    userId: text('user_id').notNull(),
+    userPrincipalId: uuid('user_principal_id').notNull(),
+    actingPrincipalId: uuid('acting_principal_id').notNull(),
+    actingKind: text('acting_kind').notNull(),
+    clientId: text('client_id').notNull(),
+    clientName: text('client_name').notNull(),
+    clientHost: text('client_host').notNull(),
+    clientKind: text('client_kind').notNull(),
+    clientLogoUri: text('client_logo_uri'),
+    modulesJson: jsonb('modules_json').$type<unknown>().notNull(),
+    writePolicy: text('write_policy').notNull(),
+    profileId: uuid('profile_id').notNull(),
+    authBindingId: uuid('auth_binding_id'),
+    consentId: text('consent_id'),
+    sessionId: text('session_id'),
+    status: text('status').notNull().default('draft'),
+    createdAt: createdAt(),
+    consentedAt: timestamp('consented_at', { withTimezone: true }),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    revokedByPrincipalId: uuid('revoked_by_principal_id'),
+    revokeReason: text('revoke_reason'),
+  },
+  (table) => [
+    index('core_oauth_grants_company_status_idx').on(table.tenantId, table.legalEntityId, table.status),
+    index('core_oauth_grants_user_status_idx').on(table.userId, table.status),
+    index('core_oauth_grants_acting_status_idx').on(table.actingPrincipalId, table.status),
+    index('core_oauth_grants_client_idx').on(table.clientId),
+    index('core_oauth_grants_session_idx').on(table.sessionId),
+    check('core_oauth_grants_status_ck', sql`${table.status} in ('draft', 'active', 'denied', 'revoked', 'superseded')`),
+    check('core_oauth_grants_acting_kind_ck', sql`${table.actingKind} in ('human', 'agent')`),
+    check('core_oauth_grants_client_kind_ck', sql`${table.clientKind} in ('cimd', 'loopback')`),
+    check('core_oauth_grants_write_policy_ck', sql`${table.writePolicy} in ('read_only', 'approval', 'direct')`),
+    check(
+      'core_oauth_grants_revoke_reason_ck',
+      sql`${table.revokeReason} is null or ${table.revokeReason} in ('user', 'admin', 'superseded', 'operator_removed', 'agent_disabled', 'user_disabled', 'password_changed')`,
+    ),
+  ],
+);
+
 export const coreDatabaseSchema = {
   applicationCompositionAuthority,
   applicationCompositionDurableWork,
@@ -1074,6 +1122,7 @@ export const coreDatabaseSchema = {
   legalEntities,
   mediaAssets,
   mediaLinks,
+  oauthConnectionGrants,
   outboxAttempts,
   outboxDeliveries,
   outboxMessages,

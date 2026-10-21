@@ -1,5 +1,5 @@
 // One series per chart: counts or one currency, never mixed currencies or filter-dependent series colors.
-import { EmptyState, SectionCard, formatNumber } from '@app/admin-ui';
+import { EmptyState, SectionCard, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { Component, useState } from 'react';
@@ -132,7 +132,7 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
           )}
         </SectionCard>
       </div>
-      <details className="rounded-lg border border-border-primary bg-surface p-200">
+      <details className={`${surfaceTileClassName} p-200`}>
         <summary className="cursor-pointer font-medium text-sm">
           Zobrazit datovou tabulku grafů (měsíce, stavy, měny)
         </summary>

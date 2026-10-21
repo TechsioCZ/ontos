@@ -100,6 +100,14 @@ export const resolveTenantModuleStateChangeSource = (
         }),
       ),
     ),
+    Match.when('oauth_connection', () =>
+      Effect.fail(
+        new TenantModuleStateUnsupportedChangeSourceError({
+          code: 'tenant_module_state_change_source_unsupported',
+          reason: 'This authentication method cannot change tenant module state',
+        }),
+      ),
+    ),
     Match.exhaustive,
   );
 

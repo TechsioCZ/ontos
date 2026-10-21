@@ -14,6 +14,8 @@ declare module '@modern-js/plugin-i18n/runtime' {
     '/$': { '_splat'?: string };
     '/login': Record<string, never>;
     '/profile': Record<string, never>;
+    '/pripojit': Record<string, never>;
+    '/pripojit/souhlas': Record<string, never>;
     '/modules/$moduleId': { "moduleId": string };
     '/resources/$moduleId/$resourceType/$resourceId': { "moduleId": string; "resourceType": string; "resourceId": string };
     '/search': Record<string, never>;

@@ -246,7 +246,7 @@ const StepCard = ({
   const checkboxId = `demo-guide-check-${step.id}`;
   return (
     <li
-      className={`grid gap-150 rounded-lg border p-200 ${isNext ? 'border-primary bg-primary-light' : 'border-border-primary bg-base'}`}
+      className={`grid gap-150 rounded-lg p-200 ${isNext ? 'bg-primary-light' : 'bg-surface'}`}
       id={`demo-guide-step-${step.id}`}
     >
       <div className="flex items-start gap-150">

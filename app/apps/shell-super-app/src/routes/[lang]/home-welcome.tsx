@@ -80,7 +80,7 @@ export const HomeWelcome = ({
 
   return (
     <div className="grid w-full max-w-5xl gap-300">
-      <section className="flex flex-col gap-250 rounded-lg border border-border-primary bg-base p-300 md:flex-row md:items-center">
+      <section className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base flex flex-col gap-250 p-300 md:flex-row md:items-center">
         <span className="flex size-icon-control-lg shrink-0 items-center justify-center rounded-md bg-primary text-fg-primary">
           <Icon icon={profile?.icon ?? 'icon-[mdi--hexagon-multiple-outline]'} size="md" />
         </span>
@@ -125,7 +125,7 @@ export const HomeWelcome = ({
           <div className="grid gap-200 md:grid-cols-2 xl:grid-cols-3">
             {groups.map((group) => (
               <article
-                className="flex flex-col gap-150 rounded-lg border border-border-primary bg-base p-250"
+                className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 flex flex-col gap-150 p-250"
                 key={group.key}
               >
                 <header className="flex items-start gap-150">

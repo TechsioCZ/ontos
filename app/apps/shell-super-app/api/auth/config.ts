@@ -3,6 +3,10 @@ import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from
 
 import { loadConfigurationProvider } from './configuration-provider.ts';
 
+/** MCP resource server identifier (JWT `aud`), ONTOS-MCP-AUTH-DESIGN.md §1. */
+export const DEFAULT_MCP_RESOURCE_URL = 'http://localhost:3090/mcp';
+const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(['localhost', '127.0.0.1', '[::1]']);
+
 const AuthConfigError = Schema.TaggedError<unknown>()('AuthConfigError', {
   reason: Schema.String,
 });
@@ -17,6 +21,7 @@ const EnvironmentKeySchema = Schema.Literals([
   'BETTER_AUTH_URL',
   'DATABASE_URL',
   'NODE_ENV',
+  'ONTOS_MCP_RESOURCE_URL',
 ]);
 type EnvironmentKey = typeof EnvironmentKeySchema.Type;
 type Environment = Readonly<Partial<Record<EnvironmentKey, string>>>;
@@ -25,6 +30,8 @@ type DecodedConfigString = Schema.Schema.Type<typeof Schema.String>;
 export interface AuthConfigValue {
   readonly baseUrl: string;
   readonly connectionString: DecodedConfigString;
+  /** Exact MCP resource URL (no trailing slash, query or fragment; https except on loopback). Optional so hand-built test configurations stay valid; parseAuthConfig always sets it. */
+  readonly mcpResourceUrl?: string;
   readonly secret: DecodedConfigString;
   readonly secureCookies: boolean;
   readonly supportUserIds: readonly string[];
@@ -59,6 +66,9 @@ const PostgreSqlUrlSchema = Schema.URLFromString.check(
 const authConfigSource = Config.all({
   baseUrl: Config.schema(HttpUrlSchema, 'BETTER_AUTH_URL'),
   databaseUrl: Config.Redacted('DATABASE_URL'),
+  mcpResourceUrl: Config.schema(Schema.Trim, 'ONTOS_MCP_RESOURCE_URL').pipe(
+    Config.withDefault(DEFAULT_MCP_RESOURCE_URL),
+  ),
   nodeEnvironment: Config.String('NODE_ENV').pipe(Config.withDefault('')),
   secret: Config.Redacted('BETTER_AUTH_SECRET'),
   supportUserIds: Config.schema(Schema.Trim, 'BETTER_AUTH_SUPPORT_USER_IDS').pipe(Config.withDefault('')),
@@ -69,6 +79,21 @@ const parseHttpOrigin = (value: string): Effect.Effect<string, AuthConfigFailure
   Schema.decodeEffect(HttpUrlSchema)(value).pipe(
     Effect.catchTag('SchemaError', () => Effect.fail(malformedConfiguration())),
     Effect.map((url) => url.origin),
+  );
+
+const parseMcpResourceUrl = (value: string): Effect.Effect<string, AuthConfigFailure> =>
+  Schema.decodeEffect(HttpUrlSchema)(value).pipe(
+    Effect.catchTag('SchemaError', () => Effect.fail(malformedConfiguration())),
+    Effect.flatMap((url) =>
+      value.endsWith('/') ||
+      value.includes('?') ||
+      value.includes('#') ||
+      url.username !== '' ||
+      url.password !== '' ||
+      (url.protocol !== 'https:' && !LOOPBACK_HOSTNAMES.has(url.hostname))
+        ? Effect.fail(malformedConfiguration())
+        : Effect.succeed(value),
+    ),
   );
 
 const parseAuthConfigFromProvider = Effect.fn('AuthConfig.parseAuthConfigFromProvider')(function* parseConfiguration(
@@ -85,6 +110,9 @@ const parseAuthConfigFromProvider = Effect.fn('AuthConfig.parseAuthConfigFromPro
   if (secret.length < 32) {
     return yield* malformedConfiguration();
   }
+  const mcpResourceUrl = yield* parseMcpResourceUrl(
+    source.mcpResourceUrl === '' ? DEFAULT_MCP_RESOURCE_URL : source.mcpResourceUrl,
+  );
 
   const baseUrl = source.baseUrl.origin;
   const configuredTrustedOrigins = source.trustedOrigins
@@ -106,6 +134,7 @@ const parseAuthConfigFromProvider = Effect.fn('AuthConfig.parseAuthConfigFromPro
   return {
     baseUrl,
     connectionString,
+    mcpResourceUrl,
     secret,
     secureCookies: source.baseUrl.protocol === 'https:' || source.nodeEnvironment === 'production',
     supportUserIds,

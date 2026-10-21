@@ -8,10 +8,12 @@ import {
   comboboxTranslations,
   formatDate,
   formatMoney,
+  surfaceCardClassName,
+  surfaceTileClassName,
 } from '@app/admin-ui';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
-import { failureFeedback } from '../../../../shared/actions/apply-command.ts';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { failureFeedback } from '../../../../../shared/actions/apply-command.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import {
   createCustomer,
@@ -27,7 +29,7 @@ import { executeRecords as executeFinanceRecords } from '@app/finance-billing/cl
 import { executeRecords as executeWorkRecords } from '@app/work-tasks/clients/records';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { OccupancyRefSchema } from '../../../../shared/resources/occupancy.ts';
+import { OccupancyRefSchema } from '../../../../../shared/resources/occupancy.ts';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
@@ -36,8 +38,8 @@ import { Table } from '@techsio/ui-kit/organisms/table';
 import { Crypto, DateTime, Effect, Option, PlatformError, Schema } from 'effect';
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
 
-import type { OccupancyCommand, Feedback } from '../../../../shared/actions/apply-command.ts';
-import type { Occupancy, RecordsResponse, RentTerms } from '../../../../shared/apis/records.ts';
+import type { OccupancyCommand, Feedback } from '../../../../../shared/actions/apply-command.ts';
+import type { Occupancy, RecordsResponse, RentTerms } from '../../../../../shared/apis/records.ts';
 import {
   ContractCard,
   InvoicesCard,
@@ -53,12 +55,12 @@ import {
   parseCrowns,
 } from './lease-story.tsx';
 import type { LeaseRelated, TenantDirectoryEntry } from './lease-story.tsx';
-import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
-import { executeRecords } from '../../../api/records-client.ts';
-import { UltramodernRouteHead } from '../../ultramodern-route-head';
-import csResource from '../../../../locales/cs/property-leasing.json';
-import enResource from '../../../../locales/en/property-leasing.json';
-import '../../index.css';
+import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
+import { executeRecords } from '../../../../api/records-client.ts';
+import { UltramodernRouteHead } from '../../../ultramodern-route-head';
+import csResource from '../../../../../locales/cs/property-leasing.json';
+import enResource from '../../../../../locales/en/property-leasing.json';
+import '../../../index.css';
 import { TenantDirectory, TenantDossierCard } from './tenant-dossier.tsx';
 import type { DossierChanges, NewCounterpartyInput } from './tenant-dossier.tsx';
 import { CounterpartyDossierView } from './counterparty-dossier.tsx';
@@ -1194,7 +1196,7 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
                 value.occupancyRef?.resourceId === selected.occupancyRef.resourceId
                   ? [
                       <p
-                        className="propertyleasing:space-y-2 propertyleasing:break-words propertyleasing:rounded-lg propertyleasing:bg-(--color-surface-subtle) propertyleasing:p-4 propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)"
+                        className={`${surfaceTileClassName} propertyleasing:space-y-2 propertyleasing:break-words propertyleasing:p-4 propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)`}
                         key={value.observationId}
                       >
                         {t(`property-leasing.demo.bookingStates.${value.state}`)} · {value.correlation} ·{' '}
@@ -1281,7 +1283,7 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
           {isLease && <ContractCard contract={contract} language={language} t={t} />}
           <UnitCard language={language} property={property} t={t} unit={unit} />
           {property !== undefined && (
-            <div className="propertyleasing:min-w-0 propertyleasing:rounded-lg propertyleasing:border propertyleasing:border-(--color-border-muted) propertyleasing:bg-(--color-surface) propertyleasing:p-4">
+            <div className={`${surfaceCardClassName} propertyleasing:min-w-0 propertyleasing:p-4`}>
               <PropertyEquipment
                 language={language}
                 propertyId={property.propertyRef.resourceId}
@@ -1749,7 +1751,7 @@ const RecordsPageContent = () => {
                 Kalendář a přehled nemovitostí →
               </LinkButton>
             </div>
-            <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:justify-between propertyleasing:gap-4 propertyleasing:border-b propertyleasing:border-(--color-border-muted) propertyleasing:pb-4">
+            <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:items-center propertyleasing:justify-between propertyleasing:gap-4 propertyleasing:pb-4">
               <div className="propertyleasing:flex propertyleasing:flex-wrap propertyleasing:gap-2">
                 {(['ALL', 'LONG_TERM_LEASE', 'SHORT_STAY'] as const).map((kind) => (
                   <Button
@@ -1781,7 +1783,7 @@ const RecordsPageContent = () => {
               </div>
             </div>
             {snapshot !== undefined && visible.length === 0 && (
-              <p className="propertyleasing:rounded-lg propertyleasing:bg-(--color-surface-subtle) propertyleasing:p-5 propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
+              <p className={`${surfaceTileClassName} propertyleasing:p-5 propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)`}>
                 {t('property-leasing.demo.empty')}
               </p>
             )}
@@ -1869,13 +1871,13 @@ const RecordsPageContent = () => {
                 unitName={unitName}
               />
             )}
-            <section className="propertyleasing:space-y-4 propertyleasing:rounded-lg propertyleasing:border propertyleasing:border-(--color-border-muted) propertyleasing:bg-(--color-surface) propertyleasing:p-5">
+            <section className={`${surfaceCardClassName} propertyleasing:space-y-4 propertyleasing:p-5`}>
               <h2 className="propertyleasing:text-lg propertyleasing:font-semibold">
                 {t('property-leasing.demo.bookingObservations')}
               </h2>
               {snapshot?.bookingObservations.map((value) => (
                 <p
-                  className="propertyleasing:space-y-2 propertyleasing:break-words propertyleasing:rounded-lg propertyleasing:bg-(--color-surface-subtle) propertyleasing:p-4 propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)"
+                  className={`${surfaceTileClassName} propertyleasing:space-y-2 propertyleasing:break-words propertyleasing:p-4 propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)`}
                   key={value.observationId}
                 >
                   <Badge variant="info">{t(LABEL_SIMULATED)}</Badge> {value.correlation} ·{' '}

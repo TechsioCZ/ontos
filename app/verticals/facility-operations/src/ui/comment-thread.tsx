@@ -17,6 +17,7 @@ import { sameSubject } from '../../shared/domain/documents.ts';
 import { formatWhen, isoOf, PrincipalAvatar, principalEmail, usePrincipalLabel } from './documents-kit.tsx';
 import { useAgendaRecords } from './use-agenda.ts';
 import type { FailureReason } from './use-agenda.ts';
+import { surfaceTileClassName } from '@app/admin-ui';
 
 const k = 'facility-operations.documents.comments';
 const NO_ATTACHMENT = '__none__';
@@ -331,7 +332,7 @@ export const CommentThread = ({
         </ol>
       )}
       {canWrite ? (
-        <div className="flex flex-col gap-100 rounded-lg border border-border-primary bg-surface p-150">
+        <div className={`${surfaceTileClassName} flex flex-col gap-100 p-150`}>
           {error !== undefined && (
             <StatusText showIcon status="error">
               {t(`facility-operations.common.errors.${error}`)}

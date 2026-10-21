@@ -17,7 +17,7 @@ const GuideCard = ({ guide }: { readonly guide: DemoGuide }) => {
   return (
     <section
       aria-label="Průvodce ukázkou"
-      className="flex w-full max-w-5xl flex-wrap items-center gap-250 rounded-lg border border-primary bg-primary-light p-300"
+      className="flex w-full max-w-5xl flex-wrap items-center gap-250 rounded-lg bg-primary-light p-300"
     >
       <span className="flex size-icon-control-lg shrink-0 items-center justify-center rounded-md bg-primary text-fg-primary">
         <Icon icon="icon-[mdi--presentation-play]" size="md" />

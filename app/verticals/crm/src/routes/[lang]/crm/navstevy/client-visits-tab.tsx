@@ -1,7 +1,7 @@
 // Client-card "Návštěvy" tab. OWNER: crm-visits. Contract: export name + ClientCardTabProps (klienti/card-tab-props.ts).
 // The card itself is a SidePanel, so everything here is inline (no stacked dialogs): summary facts, inline
 // "record visit" and "plan contact" forms, open plan items, and the client's timeline with correction history.
-import { EmptyState, formatNumber } from '@app/admin-ui';
+import { EmptyState, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -46,7 +46,7 @@ const InlineVisitDetail = ({
   records,
   visit,
 }: { readonly onClose: () => void } & Pick<ClientCardTabProps, 'records'> & { readonly visit: Visit }) => (
-  <div className="flex flex-col gap-150 rounded-lg border border-border-primary bg-surface p-200">
+  <div className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
     <div className="flex items-start justify-between gap-150">
       <div className="flex flex-col gap-50">
         <span className="font-semibold text-sm">{visit.result}</span>
@@ -162,7 +162,7 @@ export const ClientVisitsTab = ({ busy, client, records, submit }: ClientCardTab
 
   return (
     <div className="flex flex-col gap-250">
-      <div className="grid grid-cols-2 gap-200 rounded-lg border border-border-primary p-200">
+      <div className={`${surfaceTileClassName} grid grid-cols-2 gap-200 p-200`}>
         <Fact label="Poslední kontakt">
           {last === undefined ? (
             <span className="text-fg-secondary">bez zapsaného kontaktu</span>
@@ -216,7 +216,7 @@ export const ClientVisitsTab = ({ busy, client, records, submit }: ClientCardTab
 
       {mode !== 'none' && (
         <form
-          className="flex flex-col gap-200 rounded-lg border border-border-primary bg-surface p-250"
+          className={`${surfaceTileClassName} flex flex-col gap-200 p-250`}
           onSubmit={(event) => {
             event.preventDefault();
             if (mode === 'visit') {
@@ -311,7 +311,7 @@ export const ClientVisitsTab = ({ busy, client, records, submit }: ClientCardTab
           <ul className="flex flex-col gap-100">
             {openPlan.map((item) => (
               <li
-                className="flex flex-wrap items-center gap-150 rounded-md border border-border-primary px-200 py-150 text-sm"
+                className={`${surfaceTileClassName} flex flex-wrap items-center gap-150 px-200 py-150 text-sm`}
                 key={item.id}
               >
                 <span aria-hidden="true" className="icon-[mdi--calendar-clock] size-200 text-fg-secondary" />

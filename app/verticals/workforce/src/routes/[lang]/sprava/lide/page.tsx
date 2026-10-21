@@ -14,6 +14,7 @@ import {
   formatDateTime,
   formatNumber,
   paginationTranslations,
+  surfaceTileClassName,
 } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -39,6 +40,7 @@ import type {
 import { isCrmSalesRole, syncCrmSalesperson } from '../../../../api/crm-salesperson-sync.ts';
 import type { SalespersonAccount, SalespersonSync } from '../../../../api/crm-salesperson-sync.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { AgentConnectionsSection } from './agent-connections-section.tsx';
 import csResource from '../../../../../locales/cs/workforce.json';
 import enResource from '../../../../../locales/en/workforce.json';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
@@ -391,7 +393,7 @@ const CreateAccountPanel = ({
             {isCrmSalesRole(roleKey) && <> {t(`${key}.crm.roleHint`)}</>}
           </p>
         )}
-        <div className="rounded-md border border-border-primary bg-surface-secondary p-150 text-fg-secondary text-sm">
+        <div className={`${surfaceTileClassName} p-150 text-fg-secondary text-sm`}>
           {t(`${key}.form.password`)}
         </div>
       </form>
@@ -534,7 +536,7 @@ const PersonPanel = ({
         </details>
         {person.editable ? (
           <>
-            <section className="flex flex-col gap-150 rounded-lg border border-border-primary p-200">
+            <section className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
               <h3 className="font-semibold text-sm">{t(`${key}.panel.roleSection`)}</h3>
               {person.otherCompanies.length > 0 && (
                 <p className="text-fg-secondary text-xs">{t(`${key}.panel.sharedHint`)}</p>
@@ -569,7 +571,7 @@ const PersonPanel = ({
               </div>
             </section>
 
-            <section className="flex flex-col gap-150 rounded-lg border border-border-primary p-200">
+            <section className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
               <h3 className="font-semibold text-sm">{t(`${key}.panel.statusSection`)}</h3>
               <p className="text-fg-secondary text-xs">
                 {t(active ? `${key}.panel.disableHint` : `${key}.panel.enableHint`)}
@@ -634,7 +636,7 @@ const RolesCard = ({ data }: { readonly data: PeopleOverview }) => {
         {data.roles.map((role) => {
           const count = data.accounts.filter((person) => person.roleKey === role.key).length;
           return (
-            <li className="flex flex-col gap-50 rounded-md border border-border-primary p-150" key={role.key}>
+            <li className={`${surfaceTileClassName} flex flex-col gap-50 p-150`} key={role.key}>
               <span className="flex flex-wrap items-center gap-100">
                 <span className="font-medium text-sm">{role.label}</span>
                 {role.administrator && (
@@ -842,6 +844,10 @@ const PeoplePageContent = () => {
             </SectionCard>
             <RolesCard data={data} />
           </div>
+        )}
+
+        {data !== undefined && (
+          <AgentConnectionsSection onNotify={(title) => toaster.create({ title, type: 'success' })} />
         )}
       </div>
 

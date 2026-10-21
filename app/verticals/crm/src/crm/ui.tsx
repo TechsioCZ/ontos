@@ -1,5 +1,5 @@
 // Shared CRM UI helpers (owned by crm-scaffold): load-state gate, scope note, Czech table labels.
-import { EmptyState, PageHeader, dataTableRowLabels, paginationTranslations } from '@app/admin-ui';
+import { EmptyState, PageHeader, dataTableRowLabels, paginationTranslations, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -31,7 +31,7 @@ export const CrmStateGate = ({
         {loadingTitle !== undefined && (
           <div
             aria-hidden="true"
-            className="flex flex-col gap-150 rounded-lg border border-border-primary bg-surface p-250"
+            className={`${surfaceTileClassName} flex flex-col gap-150 p-250`}
           >
             {[0, 1, 2, 3, 4].map((row) => (
               <div className="crm-loading-skeleton-row" key={row} />
@@ -70,7 +70,7 @@ export const CrmScopeNote = ({ records }: { readonly records: RecordsResponse })
       ? 'crm.common.scopeNone'
       : 'crm.common.scopeAssigned';
   return (
-    <p className="inline-flex w-fit items-center gap-100 rounded-full border border-border-primary bg-surface px-150 py-50 text-fg-secondary text-xs">
+    <p className="inline-flex w-fit items-center gap-100 rounded-full bg-surface px-150 py-50 text-fg-secondary text-xs">
       <span
         aria-hidden
         className={all ? 'icon-[mdi--account-group-outline] size-200' : 'icon-[mdi--shield-account-outline] size-200'}

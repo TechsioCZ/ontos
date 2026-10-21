@@ -2,7 +2,7 @@
 // Files uploaded in Finance (invoice PDFs, scans) shown read-through in the shared documents register and on a party
 // dossier. Finance stays the owner: the list and the bytes come from Finance's governed read with the person's own
 // credential, so only people who may read Finance see them, and only for their current company.
-import { formatDateTime } from '@app/admin-ui';
+import { dividedListClassName, formatDateTime } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
@@ -129,7 +129,7 @@ export const FinanceFilesList = ({
   readonly rows: readonly FinanceFileRow[];
 }) => (
   <ul
-    className="flex flex-col divide-y divide-border-primary rounded-lg border border-border-primary bg-surface"
+    className={`flex flex-col ${dividedListClassName}`}
     data-testid="finance-files"
   >
     {rows.map(({ file, invoice }) => (

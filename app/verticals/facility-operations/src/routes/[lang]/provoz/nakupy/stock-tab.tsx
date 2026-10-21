@@ -8,6 +8,7 @@ import {
   foldSearchText,
   formatDate,
   formatDateTime,
+  surfaceTileClassName,
 } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -412,7 +413,7 @@ export const ItemPanel = ({ canWrite, itemId, me, onClose, onOpenOrder, run, sta
               <span className="text-fg-secondary text-xs">{k('plan.plannedIssues')}</span>
               {planned.map((entry) => (
                 <div
-                  className="flex flex-wrap items-center justify-between gap-150 rounded-md border border-border-primary p-150 text-sm"
+                  className={`${surfaceTileClassName} flex flex-wrap items-center justify-between gap-150 p-150 text-sm`}
                   key={entry.id}
                 >
                   <div className="flex min-w-0 flex-col gap-50">

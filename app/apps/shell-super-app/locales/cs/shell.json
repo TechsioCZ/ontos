@@ -101,6 +101,7 @@
           "salesAiApprovals": "AI změny ke schválení",
           "agentApprovals": "Ke schválení",
           "agentActivity": "Aktivita agentů",
+          "connectedApps": "Připojené aplikace",
           "crmReports": "Přehled prodejů",
           "opsOverview": "Přehled provozu",
           "opsAgenda": "Moje agenda",
@@ -171,6 +172,13 @@
       "seo": {
         "description": "Přihlaste se do pracovního prostoru OntOS."
       },
+      "oauth": {
+        "continue": "Přihlaste se, abyste mohli pokračovat.",
+        "request": "({{host}}) žádá o přístup k vašemu účtu v OntOS.",
+        "requestNoHost": "žádá o přístup k vašemu účtu v OntOS.",
+        "unknownClient": "Aplikace",
+        "unverified": "Aplikace se představuje jako {{client}}. Ověřte, že připojení zahajujete vy."
+      },
       "submit": "Přihlásit se",
       "title": "Přihlášení",
       "toast": {
@@ -195,6 +203,85 @@
           "title": "Nejste přihlášeni",
           "body": "Stránka, kterou otevíráte, vyžaduje přihlášení. Po přihlášení se na ni vrátíte."
         }
+      }
+    },
+    "connect": {
+      "pageTitle": "Připojit aplikaci",
+      "seoDescription": "Připojení aplikace k OntOS",
+      "title": "Připojit {{client}} k OntOS",
+      "clientFallback": "aplikaci",
+      "loading": "Načítám možnosti připojení…",
+      "badge": {
+        "verified": "Ověřená aplikace",
+        "loopback": "Běží na tomto počítači"
+      },
+      "company": {
+        "title": "Firma",
+        "question": "Ve které firmě bude aplikace pracovat?",
+        "none": "K žádné firmě nemáte přístup."
+      },
+      "acting": {
+        "title": "Za koho bude jednat",
+        "me": "Za mě ({{name}})",
+        "meHint": "Aplikace uvidí a udělá jen to, co smíte vy.",
+        "agent": "Za agenta {{name}}",
+        "agentHint": "V deníku se změny zapíšou jako agent, s poznámkou, že jste ho připojil(a) vy."
+      },
+      "access": {
+        "title": "K čemu bude mít přístup",
+        "allMe": "Vše, co smím",
+        "allAgent": "Vše, co agent smí",
+        "pick": "Vybrat moduly",
+        "read": "Čtení",
+        "write": "Zápis",
+        "pickRequired": "Vyberte alespoň jeden modul."
+      },
+      "policy": {
+        "title": "Jak bude zapisovat",
+        "read_only": "Jen čtení",
+        "approval": "Navrhovat změny ke schválení (doporučeno)",
+        "approvalHint": "Každou změnu nejdřív schválí člověk v Správa › Ke schválení.",
+        "direct": "Provádět změny přímo",
+        "directHint": "Změny se projeví hned, jako byste je udělal(a) vy.",
+        "agentApprovalOnly": "Agent smí jen navrhovat změny (nastavení agenta).",
+        "agentReadOnly": "Agent smí jen číst (nastavení agenta)."
+      },
+      "continue": "Pokračovat",
+      "cancel": "Zrušit",
+      "error": {
+        "expired": "Odkaz pro připojení vypršel. Začněte připojení znovu v {{client}}.",
+        "signedOut": "Vaše přihlášení vypršelo. Začněte připojení znovu v {{client}}.",
+        "forbidden": "Toto nastavení připojení není povoleno.",
+        "failed": "Připojení se nepodařilo. Zkuste to prosím znovu."
+      },
+      "consent": {
+        "pageTitle": "Souhlas s připojením",
+        "seoDescription": "Souhlas s připojením aplikace k OntOS",
+        "title": "Povolit {{client}} přístup?",
+        "loading": "Načítám souhrn připojení…",
+        "companyLabel": "Firma",
+        "actingLabel": "Jedná jako",
+        "actingAgent": "(agent), připojil(a) {{name}}",
+        "actingMe": "(vy)",
+        "readLabel": "Čtení",
+        "writeModulesLabel": "Zápis",
+        "allMe": "Vše, co smíte",
+        "allAgent": "Vše, co agent smí",
+        "policyLabel": "Zápis",
+        "policyValue": {
+          "read_only": "jen čtení",
+          "approval": "ke schválení",
+          "direct": "přímo"
+        },
+        "policyHint": {
+          "read_only": "aplikace nic nezmění",
+          "approval": "změny čekají na schválení v Správa › Ke schválení",
+          "direct": "změny se projeví hned"
+        },
+        "validity": "Přístup platí, dokud ho neodpojíte v Můj profil › Připojené aplikace. Správce firmy ho může také odpojit.",
+        "redirectBefore": "Po povolení vás přesměrujeme zpět na",
+        "allow": "Povolit přístup",
+        "deny": "Zamítnout"
       }
     },
     "modules": {

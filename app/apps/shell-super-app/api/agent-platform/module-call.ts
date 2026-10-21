@@ -39,6 +39,14 @@ export const recordsQueryFor = (appId: string): Readonly<Record<string, unknown>
 
 /** Czech message from an RFC 9457 style problem body, with a generic fallback. */
 export const problemMessage = (body: unknown, status: number): string => {
+  // Generic framework problems are English; people deciding on the platform page get Czech text instead.
+  const generic = isRecord(body) && typeof body['detail'] === 'string' && /^[\u0020-\u007E]*$/u.test(body['detail']);
+  if (generic && status === 409) {
+    return 'Záznam se od návrhu změnil nebo už byl vyřízen. Obnovte seznam; zastaralý návrh zamítněte.';
+  }
+  if (generic && status === 403) {
+    return 'K této změně nemáte v modulu oprávnění.';
+  }
   if (isRecord(body)) {
     const detail = body['detail'];
     if (typeof detail === 'string' && detail.length > 0) return detail;

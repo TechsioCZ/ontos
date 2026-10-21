@@ -334,6 +334,50 @@
         "disabled": "Deaktivované účty",
         "all": "Všechny účty"
       }
+    },
+    "agents": {
+      "connections": {
+        "title": "Agenti a jejich připojení",
+        "description": "Agenta připojí k ChatGPT nebo Claude jen člověk, kterému to tady povolíte. Připojení pak jedná jako agent a jen v jeho oprávněních.",
+        "loading": "Načítám agenty…",
+        "noAgents": "Firma zatím nemá žádného agenta.",
+        "noAgentsHint": "Agenty zakládá správce; ukázkové agenty vytváří příprava dema.",
+        "retry": "Zkusit znovu",
+        "policy": {
+          "read_only": "Jen čtení",
+          "approval": "Ke schválení",
+          "direct": "Přímo"
+        },
+        "status": {
+          "active": "Aktivní",
+          "disabled": "Pozastavený",
+          "archived": "Archivovaný"
+        },
+        "operators": {
+          "title": "Kdo smí agenta připojit",
+          "hint": "Vybrat lze jen lidi z firmy {{company}}.",
+          "empty": "Agenta zatím nesmí připojit nikdo.",
+          "save": "Uložit",
+          "saving": "Ukládám…",
+          "saved": "Seznam lidí pro {{name}} je uložený",
+          "revoked": "Odpojená připojení: {{count}}"
+        },
+        "list": {
+          "title": "Připojení agenta",
+          "empty": "Agent zatím není připojený k žádné aplikaci.",
+          "connectedBy": "připojil(a) {{name}}",
+          "lastUsed": "Naposledy použito {{date}}",
+          "neverUsed": "Zatím nepoužito",
+          "revoke": "Odpojit",
+          "dialogTitle": "Odpojit {{client}}?",
+          "dialogDescription": "Aplikace ztratí přístup za agenta do 30 sekund. Důvod se zapíše do auditu.",
+          "reason": "Důvod odpojení",
+          "reasonRequired": "Uveďte důvod.",
+          "confirm": "Odpojit",
+          "cancel": "Zrušit",
+          "revoked": "{{client}} je odpojený"
+        }
+      }
     }
   }
 }

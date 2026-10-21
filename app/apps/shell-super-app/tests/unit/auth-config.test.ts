@@ -49,3 +49,40 @@ it.effect('keeps gateway signing configuration independent from Better Auth conf
     expect(Schema.is(GatewayIssuerConfigError)(gatewayError)).toBe(true);
   }),
 );
+
+it.effect('defaults the MCP resource to the local resource server', () =>
+  Effect.gen(function* defaultsMcpResource() {
+    const configuration = yield* parseAuthConfig(validEnvironment);
+    expect(configuration.mcpResourceUrl).toBe('http://localhost:3090/mcp');
+  }),
+);
+
+it.effect('accepts an https or loopback MCP resource', () =>
+  Effect.gen(function* acceptsMcpResource() {
+    const [httpsConfiguration, loopbackConfiguration] = yield* Effect.all([
+      parseAuthConfig({ ...validEnvironment, ONTOS_MCP_RESOURCE_URL: 'https://mcp.example.test/mcp' }),
+      parseAuthConfig({ ...validEnvironment, ONTOS_MCP_RESOURCE_URL: 'http://127.0.0.1:3090/mcp' }),
+    ]);
+    expect(httpsConfiguration.mcpResourceUrl).toBe('https://mcp.example.test/mcp');
+    expect(loopbackConfiguration.mcpResourceUrl).toBe('http://127.0.0.1:3090/mcp');
+  }),
+);
+
+it.effect('rejects a malformed MCP resource', () =>
+  Effect.gen(function* rejectsMcpResource() {
+    const errors = yield* Effect.all(
+      [
+        'http://mcp.example.test/mcp',
+        'http://localhost:3090/mcp/',
+        'https://mcp.example.test/mcp?x=1',
+        'not a url',
+      ].map((ONTOS_MCP_RESOURCE_URL) =>
+        Effect.flip(parseAuthConfig({ ...validEnvironment, ONTOS_MCP_RESOURCE_URL })),
+      ),
+      { concurrency: 'unbounded' },
+    );
+    for (const error of errors) {
+      expect(Predicate.isTagged(error, 'AuthConfigError')).toBe(true);
+    }
+  }),
+);

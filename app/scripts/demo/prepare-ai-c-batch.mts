@@ -12,6 +12,7 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { isDeepStrictEqual } from 'node:util';
 import assert from 'node:assert/strict';
 
 const appRoot = new URL('../..', import.meta.url);
@@ -54,7 +55,10 @@ const post = async (path: string, body: unknown, headers: Record<string, string>
 };
 
 // The sales lead reads the approval queue the same way the page does.
-const signIn = await post('/shell-super-app-api/auth/sign-in', { email: 'vedouci@hanak.demo', password: 'password1234' });
+const signIn = await post('/shell-super-app-api/auth/sign-in', {
+  email: 'vedouci@hanak.demo',
+  password: 'password1234',
+});
 assert.equal(signIn.status, 200, JSON.stringify(signIn.body));
 const switched = await post('/shell-super-app-api/auth/legal-entity/switch', { legalEntityId }, { cookie: cookies() });
 assert.equal(switched.status, 200, JSON.stringify(switched.body));
@@ -66,6 +70,8 @@ interface AiBatch {
 }
 interface AiChange {
   readonly batchId: string;
+  readonly id: string;
+  readonly proposedSnapshots?: readonly { readonly before?: unknown; readonly id: string; readonly kind: string }[];
   readonly status: string;
 }
 interface CrmClient {
@@ -108,11 +114,51 @@ const waitingBatch = (records: CrmRecords): AiBatch | undefined =>
     );
   });
 
-const before = await read();
+/** True when a record the batch would change was edited after the proposal; approving it would fail. */
+const isStale = (records: CrmRecords, batch: AiBatch): boolean =>
+  records.state.aiChanges.changes
+    .filter((change) => change.batchId === batch.id)
+    .some((change) =>
+      (change.proposedSnapshots ?? []).some((snapshot) => {
+        const clients = records.state.clients as { readonly contacts?: readonly { readonly id: string }[] };
+        const entities: readonly { readonly id: string }[] | undefined =
+          snapshot.kind === 'client'
+            ? records.state.clients.items
+            : snapshot.kind === 'contact'
+              ? clients.contacts
+              : undefined;
+        if (entities === undefined) return false;
+        return !isDeepStrictEqual(
+          entities.find((entity) => entity.id === snapshot.id),
+          snapshot.before,
+        );
+      }),
+    );
+
+let before = await read();
 const existing = waitingBatch(before);
-if (existing !== undefined) {
+if (existing !== undefined && !isStale(before, existing)) {
   console.log(`Dávka už čeká na schválení (${existing.id}); nic nového nevzniklo.`);
   process.exit(0);
+}
+if (existing !== undefined) {
+  // The client changed since the proposal, so approval would fail; reject it on the platform page API and propose anew.
+  const changeKeys = before.state.aiChanges.changes
+    .filter((change) => change.batchId === existing.id && change.status === 'pending')
+    .map((change) => `legacy:crm:${change.id}`);
+  const rejected = await post(
+    '/shell-super-app-api/agent-platform/decide',
+    {
+      batchKey: `legacy:crm:${existing.id}`,
+      decision: 'reject',
+      itemKeys: changeKeys,
+      note: 'Zastaralý návrh: klient se mezitím změnil.',
+    },
+    { cookie: cookies() },
+  );
+  assert.equal(rejected.status, 200, JSON.stringify(rejected.body));
+  console.log(`Zastaralá dávka ${existing.id} zamítnuta; připravuji novou.`);
+  before = await read();
 }
 const client = before.state.clients.items.find((entry) => entry.name === clientName && entry.status === 'active');
 assert.ok(client, `Klient ${clientName} v CRM Hanák chybí`);

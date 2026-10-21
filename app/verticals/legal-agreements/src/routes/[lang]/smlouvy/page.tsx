@@ -1,5 +1,13 @@
 import { RecordDiscussion } from '@app/facility-operations/ui/record-discussion';
-import { DetailList, PageHeader, SectionCard, SidePanel, formatDate, formatMoney } from '@app/admin-ui';
+import {
+  DetailList,
+  PageHeader,
+  SectionCard,
+  SidePanel,
+  formatDate,
+  formatMoney,
+  surfaceTileClassName,
+} from '@app/admin-ui';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
@@ -10,10 +18,10 @@ import { Select } from '@techsio/ui-kit/molecules/select';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { useRecordsPage } from './use-agreements-records.ts';
 import { ContractLinksCard, ContractTermsCard, ContractTermsForm, contractMonthlyTotal } from './contract-terms.tsx';
-import { UltramodernRouteHead } from '../../ultramodern-route-head';
-import csResource from '../../../../locales/cs/legal-agreements.json';
-import enResource from '../../../../locales/en/legal-agreements.json';
-import '../../index.css';
+import { UltramodernRouteHead } from '../../../ultramodern-route-head';
+import csResource from '../../../../../locales/cs/legal-agreements.json';
+import enResource from '../../../../../locales/en/legal-agreements.json';
+import '../../../index.css';
 
 /**
  * A signed document is either a reachable file (shown as a link) or a paper original recorded only by its
@@ -149,7 +157,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
             )}
             {state.detailView.documents.map((record) => (
               <p
-                className="legalagreements:flex legalagreements:flex-wrap legalagreements:items-center legalagreements:gap-3 legalagreements:rounded-lg legalagreements:border legalagreements:border-(--color-border-muted) legalagreements:p-4 legalagreements:text-sm"
+                className={`${surfaceTileClassName} legalagreements:flex legalagreements:flex-wrap legalagreements:items-center legalagreements:gap-3 legalagreements:p-4 legalagreements:text-sm`}
                 key={record.documentRef.resourceId}
               >
                 {record.title} · {record.fileName} ·{' '}
@@ -212,7 +220,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
 
           {state.detailView.signatureObservations.map((record) => (
             <p
-              className="legalagreements:space-y-2 legalagreements:break-words legalagreements:rounded-lg legalagreements:bg-(--color-surface-subtle) legalagreements:p-4 legalagreements:text-sm legalagreements:text-(--color-fg-secondary)"
+              className={`${surfaceTileClassName} legalagreements:space-y-2 legalagreements:break-words legalagreements:p-4 legalagreements:text-sm legalagreements:text-(--color-fg-secondary)`}
               key={record.observationId}
             >
               <Badge variant="info">{t('legal-agreements.demo.simulated')}</Badge> {record.correlation} ·{' '}
@@ -562,7 +570,7 @@ const RecordsPageContent = () => {
               }
               title={t('legal-agreements.pages.records.title')}
             />
-            <div className="legalagreements:flex legalagreements:flex-wrap legalagreements:items-center legalagreements:justify-between legalagreements:gap-4 legalagreements:border-b legalagreements:border-(--color-border-muted) legalagreements:pb-4">
+            <div className="legalagreements:flex legalagreements:flex-wrap legalagreements:items-center legalagreements:justify-between legalagreements:gap-4 legalagreements:pb-4">
               <div className="legalagreements:flex legalagreements:flex-wrap legalagreements:gap-2">
                 <Button
                   aria-pressed={!expiringOnly}
@@ -588,7 +596,7 @@ const RecordsPageContent = () => {
               </Button>
             </div>
             {snapshot !== undefined && visible.length === 0 && (
-              <p className="legalagreements:rounded-lg legalagreements:bg-(--color-surface-subtle) legalagreements:p-5 legalagreements:text-sm legalagreements:text-(--color-fg-secondary)">
+              <p className={`${surfaceTileClassName} legalagreements:p-5 legalagreements:text-sm legalagreements:text-(--color-fg-secondary)`}>
                 {t('legal-agreements.demo.empty')}
               </p>
             )}

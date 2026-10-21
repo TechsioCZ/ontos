@@ -33,6 +33,7 @@ const agentPlatformItem = (href: string, label: string, order: number): ShellNav
 
 const agentApprovalsItem = agentPlatformItem('/sprava/ke-schvaleni', 'Ke schválení', 9000);
 const agentActivityItem = agentPlatformItem('/sprava/aktivita-agentu', 'Aktivita agentů', 9001);
+const connectedAppsItem = agentPlatformItem('/sprava/pripojene-aplikace', 'Připojené aplikace', 9002);
 
 /** True when the person can open an in-module AI approval page, whose batches the platform layer also shows. */
 export const hasModuleAiApprovals = (navigation: readonly ShellNavigationItem[]): boolean =>
@@ -46,6 +47,12 @@ export const withAgentPlatformNavigation = (
   items: readonly ShellNavigationItem[],
   show: boolean,
 ): readonly ShellNavigationItem[] => (show ? [...items, agentApprovalsItem, agentActivityItem] : items);
+
+/** Nastavení › Připojené aplikace: company administrators only (the endpoint enforces it too). */
+export const withConnectedAppsNavigation = (
+  items: readonly ShellNavigationItem[],
+  show: boolean,
+): readonly ShellNavigationItem[] => (show ? [...items, connectedAppsItem] : items);
 
 /** Hide unfinished destinations; authority for people administration remains the server's governed list. */
 export const presentableDemoNavigation = (

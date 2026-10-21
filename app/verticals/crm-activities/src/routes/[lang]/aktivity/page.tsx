@@ -1,7 +1,7 @@
-import { ActivityRefSchema } from '../../../../shared/resources/activity.ts';
+import { ActivityRefSchema } from '../../../../../shared/resources/activity.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import type { Types } from 'effect';
-import type { ActivityCommand } from '../../../../shared/actions/apply-command.ts';
+import type { ActivityCommand } from '../../../../../shared/actions/apply-command.ts';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -11,17 +11,17 @@ import { Select } from '@techsio/ui-kit/molecules/select';
 import { DateTime, Effect, Match, Option, Random, Schema } from 'effect';
 import { useState } from 'react';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { loadCounterpartiesClient, executeCounterpartyRead } from '@app/party-registry/api/client';
 import { executeRecords as executeWorkRecords } from '@app/work-tasks/clients/records';
-import { executeRecords } from '../../../api/records-client.ts';
-import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
-import type { Activity, RecordsResponse } from '../../../../shared/apis/records.ts';
+import { executeRecords } from '../../../../api/records-client.ts';
+import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
+import type { Activity, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { UltramodernRouteHead } from '../../ultramodern-route-head';
-import csResource from '../../../../locales/cs/crm-activities.json';
-import enResource from '../../../../locales/en/crm-activities.json';
-import '../../index.css';
+import { UltramodernRouteHead } from '../../../ultramodern-route-head';
+import csResource from '../../../../../locales/cs/crm-activities.json';
+import enResource from '../../../../../locales/en/crm-activities.json';
+import '../../../index.css';
 
 const searchSchema = Schema.Struct({
   resourceId: Schema.optional(ActivityRefSchema.fields.resourceId.check(Schema.isUUID())),
@@ -302,7 +302,7 @@ const RecordsPageContent = () => {
         </output>
         {records !== undefined && (
           <>
-            <div className="crmactivities:overflow-x-auto crmactivities:rounded-lg crmactivities:border crmactivities:border-(--color-border-muted) crmactivities:bg-(--color-surface)">
+            <div className="crmactivities:overflow-x-auto">
               <Table size="sm" variant="outline">
                 <Table.Caption>{t(`${key}.timeline`)}</Table.Caption>
                 <Table.Header>
@@ -388,7 +388,7 @@ const RecordsPageContent = () => {
               {card !== undefined && (
                 <article
                   aria-label={t(`${key}.contact`)}
-                  className="crmactivities:min-w-0 crmactivities:space-y-5 crmactivities:rounded-lg crmactivities:border crmactivities:border-(--color-border-muted) crmactivities:bg-(--color-surface) crmactivities:p-5"
+                  className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 crmactivities:min-w-0 crmactivities:space-y-5 crmactivities:p-5"
                 >
                   <div className="crmactivities:space-y-1">
                     <p className="crmactivities:text-sm crmactivities:text-(--color-fg-secondary)">
@@ -398,7 +398,7 @@ const RecordsPageContent = () => {
                       {card.party.displayName ?? t(`${key}.unnamed`)}
                     </h2>
                   </div>
-                  <dl className="crmactivities:grid crmactivities:gap-4 crmactivities:rounded-lg crmactivities:bg-(--color-surface-subtle) crmactivities:p-4 crmactivities:text-sm">
+                  <dl className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base crmactivities:grid crmactivities:gap-4 crmactivities:p-4 crmactivities:text-sm">
                     <div className="crmactivities:space-y-1">
                       <dt className="crmactivities:text-(--color-fg-secondary)">{t(`${key}.partyType`)}</dt>
                       <dd>{card.party.partyType}</dd>
@@ -418,7 +418,7 @@ const RecordsPageContent = () => {
               )}
               {records.canWrite && (
                 <form
-                  className={`crmactivities:min-w-0 crmactivities:space-y-5 crmactivities:rounded-lg crmactivities:border crmactivities:border-(--color-border-muted) crmactivities:bg-(--color-surface) crmactivities:p-5 ${card === undefined ? 'crmactivities:lg:col-span-2' : ''}`}
+                  className={`ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 crmactivities:min-w-0 crmactivities:space-y-5 crmactivities:p-5 ${card === undefined ? 'crmactivities:lg:col-span-2' : ''}`}
                   onSubmit={(event) => {
                     event.preventDefault();
                     save();
@@ -428,7 +428,7 @@ const RecordsPageContent = () => {
                     {t(`${key}.record`)}
                   </h2>
                   <div className="crmactivities:grid crmactivities:items-start crmactivities:gap-4 crmactivities:md:grid-cols-2">
-                    <div className="crmactivities:space-y-4 crmactivities:rounded-lg crmactivities:bg-(--color-surface-subtle) crmactivities:p-4">
+                    <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base crmactivities:space-y-4 crmactivities:p-4">
                       <div className="crmactivities:flex crmactivities:flex-wrap crmactivities:items-end crmactivities:gap-3">
                         <div className="crmactivities:min-w-0 crmactivities:flex-1">
                           <FormInput
@@ -471,7 +471,7 @@ const RecordsPageContent = () => {
                         </Select.Positioner>
                       </Select>
                     </div>
-                    <div className="crmactivities:space-y-4 crmactivities:rounded-lg crmactivities:bg-(--color-surface-subtle) crmactivities:p-4">
+                    <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base crmactivities:space-y-4 crmactivities:p-4">
                       <Button
                         disabled={pending}
                         onClick={loadTasks}
@@ -509,7 +509,7 @@ const RecordsPageContent = () => {
                     required
                     value={summary}
                   />
-                  <div className="crmactivities:flex crmactivities:flex-wrap crmactivities:gap-2 crmactivities:border-t crmactivities:border-(--color-border-muted) crmactivities:pt-4">
+                  <div className="crmactivities:flex crmactivities:flex-wrap crmactivities:gap-2 crmactivities:border-t border-border-primary/60 crmactivities:pt-4">
                     <Button
                       disabled={pending || summary.trim() === '' || counterpartyId.length === 0}
                       size="sm"

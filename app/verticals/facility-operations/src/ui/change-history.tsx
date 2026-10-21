@@ -2,7 +2,7 @@
 // Entries are written by the server in the same transaction as the change (shared/domain/change-log.ts).
 //   <ChangeHistory entityId={document.id} refreshKey={envelope.revision} />
 // @effect-diagnostics asyncFunction:off
-import { formatDate, formatDateTime } from '@app/admin-ui';
+import { formatDate, formatDateTime, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { DateTime } from 'effect';
@@ -170,7 +170,7 @@ export const ChangeHistory = ({
       {visible.length > 0 && (
         <ol className="flex flex-col gap-150">
           {visible.map((entry, index) => (
-            <li className="rounded-md border border-border-secondary p-150" key={`${DateTime.formatIso(entry.at)}-${index}`}>
+            <li className={`${surfaceTileClassName} p-150`} key={`${DateTime.formatIso(entry.at)}-${index}`}>
               <div className="flex flex-wrap items-baseline gap-x-150 gap-y-50 text-xs">
                 <span className="font-semibold text-fg-primary">{t(`${k}.${entry.kind}`)}</span>
                 <span className="text-fg-secondary">

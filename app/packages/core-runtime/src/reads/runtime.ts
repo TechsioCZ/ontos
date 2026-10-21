@@ -8,6 +8,7 @@ import {
   isTrustedSupportRecoveryPrincipalContext,
   readVerifiedGatewayCompositionRevision,
 } from '../auth/system-principal-context-provenance.ts';
+import { CONNECTION_SCOPE_REASON_CODE, isConnectionReadAllowed } from '../auth/oauth-connection-scope.ts';
 import { CoreDatabase } from '../db/client.ts';
 import { trustedTransactionTime } from '../operations/transaction-time.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
@@ -1318,6 +1319,35 @@ const readRuntimeFromDependencies = <
         return yield* new ReadPermissionUnavailable({
           code: 'read_permission_unavailable',
           reason: 'Read authorization is temporarily unavailable',
+        });
+      }
+      if (!isConnectionReadAllowed(principal, input.registration.descriptor.owningModuleKey)) {
+        yield* persistReadEvidence(
+          executor,
+          withOptionalProperty(
+            {
+              accessKind: input.registration.descriptor.accessKind,
+              captureMode: input.registration.descriptor.evidencePolicy.captureMode,
+              outcome: 'denied',
+              outcomeCode: CONNECTION_SCOPE_REASON_CODE,
+              outcomeStage: 'authz',
+              policyKey: input.registration.descriptor.evidencePolicy.policyKey,
+            },
+            queryHash !== undefined,
+            'queryHash',
+            queryHash,
+            {
+              readKey: input.registration.descriptor.readKey,
+              resultCount: 0,
+              scope,
+              servingModuleKey: input.registration.descriptor.owningModuleKey,
+              ...permissionTargetMetadata,
+            },
+          ),
+        );
+        return yield* new ReadPermissionDenied({
+          code: 'read_permission_denied',
+          reason: 'The connected application may not read this module',
         });
       }
 

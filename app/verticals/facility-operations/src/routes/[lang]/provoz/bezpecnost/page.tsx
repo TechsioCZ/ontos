@@ -1,7 +1,7 @@
 // @effect-diagnostics asyncFunction:off
 // Facility operations — S11 Evidence bezpečnostních zařízení. OWNED BY THE `security` LANE.
 // Restricted agenda: the server returns no state without facility.operations.read_all (external persona → forbidden).
-import { EmptyState, PageHeader, StatCard, StatRow, formatDate } from '@app/admin-ui';
+import { EmptyState, PageHeader, StatCard, StatRow, formatDate, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -12,12 +12,12 @@ import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { useEffect, useState } from 'react';
-import { isInspectionOverdue } from '../../../../../shared/commands/security.ts';
-import { isOpenIncident, securityDeviceStates, securityDeviceTypes } from '../../../../../shared/domain/security.ts';
-import type { SecurityDevice, SecurityIncident, SecurityState } from '../../../../../shared/domain/security.ts';
-import { AgendaFrame, AgendaGate } from '../../../../ui/agenda-frame.tsx';
-import { useAgendaRecords } from '../../../../ui/use-agenda.ts';
-import { UltramodernRouteHead } from '../../../ultramodern-route-head';
+import { isInspectionOverdue } from '../../../../../../shared/commands/security.ts';
+import { isOpenIncident, securityDeviceStates, securityDeviceTypes } from '../../../../../../shared/domain/security.ts';
+import type { SecurityDevice, SecurityIncident, SecurityState } from '../../../../../../shared/domain/security.ts';
+import { AgendaFrame, AgendaGate } from '../../../../../ui/agenda-frame.tsx';
+import { useAgendaRecords } from '../../../../../ui/use-agenda.ts';
+import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
 import { DeviceDetailPanel } from './device-detail.tsx';
 import { DeviceFormPanel, InspectionPanel, ReportFaultPanel, ResolvePanel } from './device-forms.tsx';
 import {
@@ -289,7 +289,7 @@ const SecurityView = () => {
         title={k('title')}
       />
       <AgendaGate onRetry={() => void ops.reload()} readable={envelope !== undefined} status={ops.status}>
-        <div className="flex flex-wrap items-center gap-100 rounded-lg border border-border-primary bg-surface px-200 py-150 text-sm">
+        <div className={`${surfaceTileClassName} flex flex-wrap items-center gap-100 px-200 py-150 text-sm`}>
           <span aria-hidden className="icon-[mdi--shield-check-outline] size-5 text-fg-secondary" />
           <Badge size="sm" variant="info">
             {k('evidenceOnly')}

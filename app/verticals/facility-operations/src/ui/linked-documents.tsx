@@ -21,6 +21,7 @@ import {
 } from './documents-kit.tsx';
 import { canPreview, DownloadButton, FilePreviewDialog } from './file-preview.tsx';
 import { MAX_UPLOAD_BYTES, uploadFile, useAgendaRecords } from './use-agenda.ts';
+import { dividedListClassName } from '@app/admin-ui';
 
 const k = 'facility-operations.documents';
 
@@ -114,7 +115,7 @@ export const LinkedDocuments = ({
       {documents.length === 0 ? (
         <p className="text-fg-secondary text-sm">{t(`${k}.linked.empty`)}</p>
       ) : (
-        <ul className="flex flex-col divide-y divide-border-primary rounded-lg border border-border-primary bg-surface">
+        <ul className={`flex flex-col ${dividedListClassName}`}>
           {documents.map((document) => {
             const version = currentVersion(document);
             return (

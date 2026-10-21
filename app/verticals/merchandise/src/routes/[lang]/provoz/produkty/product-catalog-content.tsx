@@ -4,7 +4,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { formatDateTime, SectionCard } from '@app/admin-ui';
+import { formatDateTime, SectionCard, surfaceTileClassName } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import { useMemo, useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
@@ -155,7 +155,7 @@ export const CatalogContentPanel = ({
               />
             ) : null}
             {matches.length > 0 ? (
-              <ul className="flex max-h-64 flex-col gap-50 overflow-y-auto rounded-md border border-border-primary p-100">
+              <ul className={`${surfaceTileClassName} flex max-h-64 flex-col gap-50 overflow-y-auto p-100`}>
                 {matches.map((category) => (
                   <li key={category.id}>
                     <Button

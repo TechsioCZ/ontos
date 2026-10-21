@@ -9,7 +9,7 @@ import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { formatDateTime, formatMoney, SectionCard } from '@app/admin-ui';
+import { formatDateTime, formatMoney, SectionCard, surfaceTileClassName } from '@app/admin-ui';
 import { DateTime } from 'effect';
 import { useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
@@ -740,7 +740,7 @@ export const EshopPanel = ({
           <ul className="grid grid-cols-2 gap-200 sm:grid-cols-4">
             {images.map((image, index) => (
               <li className="flex flex-col gap-100" key={`${image}-${index}`}>
-                <div className="flex aspect-square items-center justify-center overflow-hidden rounded-md border border-border-primary bg-surface-subtle">
+                <div className={`${surfaceTileClassName} flex aspect-square items-center justify-center overflow-hidden`}>
                   {broken.has(image) ? (
                     <span className="p-100 text-center text-fg-secondary text-xs">
                       Náhled se nenačetl (e-shop neběží?)

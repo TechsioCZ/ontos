@@ -75,7 +75,7 @@ const ChangeCard = ({
             {line.label}
           </span>
           <span className="ai-review-before" role="cell">
-            {line.before ?? 'Neuvedeno'}
+            {line.before ?? '—'}
           </span>
           <span className="ai-review-after" role="cell">
             {line.after ?? 'Vymazáno'}
@@ -93,7 +93,7 @@ const ChangeCard = ({
     )}
     {item.decidedAt !== undefined && (
       <p className="text-fg-secondary text-xs">
-        {`${agentItemStatusLabel[item.status]} · ${item.decidedByName ?? 'Neznámý uživatel'} · ${formatAgentTime(item.decidedAt)}`}
+        {`${item.status === 'rejected' ? 'Zamítnuto' : 'Schváleno'} · ${item.decidedByName ?? 'Neznámý uživatel'} · ${formatAgentTime(item.decidedAt)}`}
       </p>
     )}
     {item.status === 'applied' && item.revertUnavailableReason !== undefined && (
@@ -166,7 +166,7 @@ const BatchCard = ({
                 </Badge>
               ))}
               {modulePage !== undefined && (
-                <LinkButton as={LocalizedLink} size="sm" to={modulePage.path} variant="secondary">
+                <LinkButton as={LocalizedLink} size="sm" theme="outlined" to={modulePage.path} variant="primary">
                   {modulePage.label}
                 </LinkButton>
               )}
@@ -178,6 +178,7 @@ const BatchCard = ({
           <>
             <FormInput
               id={`note-${batch.key}`}
+              size="sm"
               label="Poznámka k rozhodnutí (nepovinná)"
               value={note}
               onChange={(event) => setNote(event.target.value)}
@@ -270,6 +271,9 @@ export const ApprovalsPanel = () => {
   const [moduleFilter, setModuleFilter] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  /** Batches decided or reverted on this visit stay in „Čeká na schválení“ so the result and Vrátit vše stay visible. */
+  const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
+  const touch = (batchKey: string) => setTouched((previous) => new Set([...previous, batchKey]));
 
   const refresh = useCallback(() => {
     setQueue((previous) => (previous.status === 'ready' ? previous : { status: 'loading' }));
@@ -294,6 +298,7 @@ export const ApprovalsPanel = () => {
 
   const onDecide = (batch: AgentQueueBatch, keys: readonly string[], decision: Decision, note: string) => {
     setBusy(true);
+    touch(batch.key);
     void decideAgentItems({
       batchKey: batch.key,
       decision,
@@ -324,6 +329,7 @@ export const ApprovalsPanel = () => {
 
   const onRevert = (batch: AgentQueueBatch, note: string) => {
     setBusy(true);
+    touch(batch.key);
     void revertAgentBatch({ batchKey: batch.key, ...(note === '' ? {} : { note }) }).then((result) => {
       finish(result.status === 'ok' ? result.value.message : 'Dávku se nepodařilo vrátit. Zkuste to prosím znovu.');
     });
@@ -351,7 +357,7 @@ export const ApprovalsPanel = () => {
   const moduleLabels = Array.from(new Set(response.batches.flatMap((batch) => batch.moduleLabels)));
   const visibleBatches = response.batches.filter(
     (batch) =>
-      (filter === 'all' || batch.items.some((item) => item.status === 'pending')) &&
+      (filter === 'all' || touched.has(batch.key) || batch.items.some((item) => item.status === 'pending')) &&
       (moduleFilter === '' || batch.moduleLabels.includes(moduleFilter)),
   );
 
@@ -409,7 +415,7 @@ export const ApprovalsPanel = () => {
         </label>
       </div>
       {message !== '' && (
-        <StatusText aria-live="polite" status="default">
+        <StatusText aria-live="polite" size="sm" status="default">
           {message}
         </StatusText>
       )}
@@ -428,7 +434,7 @@ export const ApprovalsPanel = () => {
         ))
       )}
       <div>
-        <LinkButton as={LocalizedLink} to="/sprava/aktivita-agentu" variant="secondary">
+        <LinkButton as={LocalizedLink} size="sm" theme="outlined" to="/sprava/aktivita-agentu" variant="primary">
           Zobrazit aktivitu agentů
         </LinkButton>
       </div>

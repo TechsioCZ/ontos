@@ -11,6 +11,7 @@ import {
   formatDateTime,
   formatNumber,
   matchesSearch,
+  surfaceTileClassName,
 } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
@@ -252,7 +253,7 @@ const BatchPanel = ({
           ]}
         />
         {batch.errors.length > 0 && (
-          <div className="flex flex-col gap-100 rounded-lg border border-border-danger bg-bg-danger-subtle p-150">
+          <div className="flex flex-col gap-100 rounded-lg bg-bg-danger-subtle p-150">
             <span className="font-medium text-sm">{`Chybné řádky (${String(batch.errors.length)}) – ostatní řádky se uložily`}</span>
             <ul className="flex flex-col gap-50 text-sm">
               {batch.errors.map((error) => (
@@ -303,7 +304,7 @@ const TemplateTab = ({
         Šablona obsahuje nezávislý fiktivní příklad, nikoli objednávku z evidence firmy. Až dodá WR tým finální šablonu,
         mapování sloupců se upraví – pravidla níže zůstanou.
       </p>
-      <div className="overflow-auto rounded-lg border border-border-primary">
+      <div className="overflow-auto">
         <table className="w-full text-sm">
           <thead className="bg-surface text-fg-secondary text-xs">
             <tr>
@@ -359,7 +360,7 @@ const TemplateTab = ({
         )}
         {canImport &&
           samples.map((sample, index) => (
-            <div className="flex flex-col gap-100 rounded-lg border border-border-primary p-200" key={sample.key}>
+            <div className={`${surfaceTileClassName} flex flex-col gap-100 p-200`} key={sample.key}>
               <div className="flex items-center gap-100">
                 <Badge size="sm" variant="secondary">
                   {String(index + 1)}

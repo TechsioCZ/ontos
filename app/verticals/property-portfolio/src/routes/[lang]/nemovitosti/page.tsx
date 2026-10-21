@@ -1,5 +1,5 @@
 import { PropertyEquipment, RecordDiscussion } from '@app/facility-operations/ui/record-discussion';
-import { UnitRefSchema } from '../../../../shared/resources/unit.ts';
+import { UnitRefSchema } from '../../../../../shared/resources/unit.ts';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -16,13 +16,13 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { usePropertyEditor } from './use-property-editor.ts';
 import './property-editor.css';
 import { UnitStory, pragueToday } from './unit-story.tsx';
-import { executeRecords } from '../../../api/records-client';
-import type { RecordsResponse } from '../../../../shared/apis/records';
-import { browserRuntime } from '../../../runtime/browser-effect-runtime';
-import { UltramodernRouteHead } from '../../ultramodern-route-head';
-import csResource from '../../../../locales/cs/property-portfolio.json';
-import enResource from '../../../../locales/en/property-portfolio.json';
-import '../../index.css';
+import { executeRecords } from '../../../../api/records-client';
+import type { RecordsResponse } from '../../../../../shared/apis/records';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime';
+import { UltramodernRouteHead } from '../../../ultramodern-route-head';
+import csResource from '../../../../../locales/cs/property-portfolio.json';
+import enResource from '../../../../../locales/en/property-portfolio.json';
+import '../../../index.css';
 
 const currencyFormatters = {
   cs: new Intl.NumberFormat('cs-CZ', { currency: 'CZK', style: 'currency' }),
@@ -400,12 +400,12 @@ const usePropertyRecords = () => {
 };
 const secondaryTextClass = 'propertyportfolio:text-sm propertyportfolio:text-(--color-fg-secondary)';
 const detailCardClass =
-  'propertyportfolio:min-w-0 propertyportfolio:space-y-4 propertyportfolio:rounded-lg propertyportfolio:border propertyportfolio:border-(--color-border-muted) propertyportfolio:bg-(--color-surface) propertyportfolio:p-5';
+  'ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 propertyportfolio:min-w-0 propertyportfolio:space-y-4 propertyportfolio:p-5';
 const relatedCardClass =
-  'propertyportfolio:min-w-0 propertyportfolio:space-y-3 propertyportfolio:rounded-lg propertyportfolio:bg-(--color-surface-subtle) propertyportfolio:p-4';
+  'ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base propertyportfolio:min-w-0 propertyportfolio:space-y-3 propertyportfolio:p-4';
 const detailHeadingClass = 'propertyportfolio:text-sm propertyportfolio:font-semibold';
 const tableWrapperClass =
-  'propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto propertyportfolio:rounded-lg propertyportfolio:bg-(--color-surface)';
+  'propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto';
 const messageClass = 'propertyportfolio:block propertyportfolio:text-sm propertyportfolio:text-(--color-fg-secondary)';
 const archivedAtFormat = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeZone: 'Europe/Prague' });
 const formatArchivedAt = (value: string) => archivedAtFormat.format(DateTime.toEpochMillis(DateTime.makeUnsafe(value)));
@@ -463,7 +463,7 @@ const RecordsPageContent = () => {
         aria-labelledby="records-heading"
         className="propertyportfolio:w-full propertyportfolio:min-w-0 propertyportfolio:max-w-none propertyportfolio:space-y-6 propertyportfolio:p-0 propertyportfolio:text-(--color-page-fg)"
       >
-        <header className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:items-start propertyportfolio:justify-between propertyportfolio:gap-4 propertyportfolio:border-b propertyportfolio:border-(--color-border-muted) propertyportfolio:pb-5">
+        <header className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:items-start propertyportfolio:justify-between propertyportfolio:gap-4 propertyportfolio:pb-5">
           <div className="propertyportfolio:min-w-0 propertyportfolio:space-y-2">
             <h1
               className="propertyportfolio:text-3xl propertyportfolio:font-semibold propertyportfolio:tracking-tight"

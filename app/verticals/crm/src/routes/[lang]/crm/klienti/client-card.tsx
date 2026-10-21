@@ -1,7 +1,7 @@
 // Client card (C01/C02/C04/C05 facts) in a SidePanel over the clients list. Header with key facts and the owner,
 // then tabs Kontakty / Návštěvy / Objednávky / Historie. Návštěvy and Objednávky are rendered by the visits and
 // imports lanes through the ClientCardTabProps contract (./card-tab-props.ts).
-import { EmptyState, SidePanel, dialogCloseLabel, formatDate, formatNumber } from '@app/admin-ui';
+import { EmptyState, SidePanel, dialogCloseLabel, formatDate, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
@@ -235,7 +235,7 @@ const CardBody = ({
             ))}
         </div>
 
-        <dl className="grid grid-cols-1 gap-200 rounded-lg border border-border-primary bg-surface p-200 sm:grid-cols-2 lg:grid-cols-3">
+        <dl className={`${surfaceTileClassName} grid grid-cols-1 gap-200 p-200 sm:grid-cols-2 lg:grid-cols-3`}>
           <Fact icon="icon-[mdi--account-tie-outline]" label="Obchodník">
             <SalespersonChip name={owner} />
           </Fact>

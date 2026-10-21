@@ -1,7 +1,7 @@
 // @effect-diagnostics asyncFunction:off
 // Create / edit / amendment form for the documents agenda (S12). Upload goes through the governed FileUpload command
 // first; the returned file snapshot becomes version 1 of the new document.
-import { SidePanel } from '@app/admin-ui';
+import { SidePanel, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -10,26 +10,26 @@ import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { useEffect, useState } from 'react';
-import type { OpsCommand } from '../../../../../shared/agendas.ts';
+import type { OpsCommand } from '../../../../../../shared/agendas.ts';
 import type {
   ContractStatus,
   ContractTerms,
   DocumentRecord,
   SubjectRef,
-} from '../../../../../shared/domain/documents.ts';
-import { documentLinks, sameSubject } from '../../../../../shared/domain/documents.ts';
+} from '../../../../../../shared/domain/documents.ts';
+import { documentLinks, sameSubject } from '../../../../../../shared/domain/documents.ts';
 import {
   documentCategories,
   FileTypeIcon,
   formatBytes,
   SubjectChip,
   useCategoryLabel,
-} from '../../../../ui/documents-kit.tsx';
-import { usePropertyOptions } from '../../../../ui/property-options.ts';
-import { useContactOptions, useInvoiceOptions } from '../../../../ui/party-invoice-options.ts';
-import type { TaskOptionsState } from '../../../../ui/task-options.ts';
-import type { CommandOutcome, FailureReason } from '../../../../ui/use-agenda.ts';
-import { MAX_UPLOAD_BYTES, uploadFile } from '../../../../ui/use-agenda.ts';
+} from '../../../../../ui/documents-kit.tsx';
+import { usePropertyOptions } from '../../../../../ui/property-options.ts';
+import { useContactOptions, useInvoiceOptions } from '../../../../../ui/party-invoice-options.ts';
+import type { TaskOptionsState } from '../../../../../ui/task-options.ts';
+import type { CommandOutcome, FailureReason } from '../../../../../ui/use-agenda.ts';
+import { MAX_UPLOAD_BYTES, uploadFile } from '../../../../../ui/use-agenda.ts';
 
 const k = 'facility-operations.documents';
 const NONE = '__none__';
@@ -392,7 +392,7 @@ export const DocumentFormPanel = ({
           value={description}
         />
 
-        <fieldset className="facility-document-fieldset flex flex-col gap-150 rounded-lg border border-border-primary p-200">
+        <fieldset className={`${surfaceTileClassName} facility-document-fieldset flex flex-col gap-150 p-200`}>
           <legend className="px-50 font-semibold text-sm">{t(`${k}.fields.links`)}</legend>
           <p className="text-fg-secondary text-xs">{t(`${k}.create.linksHelp`)}</p>
           {links.length > 0 && (
@@ -510,7 +510,7 @@ export const DocumentFormPanel = ({
         </fieldset>
 
         {isContractCategory(category) && (
-          <fieldset className="facility-document-fieldset flex flex-col gap-150 rounded-lg border border-border-primary p-200">
+          <fieldset className={`${surfaceTileClassName} facility-document-fieldset flex flex-col gap-150 p-200`}>
             <legend className="px-50 font-semibold text-sm">{t(`${k}.contract.section`)}</legend>
             {category === 'amendment' && (
               <Select

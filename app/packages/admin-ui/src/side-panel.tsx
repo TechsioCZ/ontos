@@ -4,6 +4,7 @@ import { Schema } from 'effect';
 import { useEffect, useId, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { isPanelEscape, panelContentId, readEscapeSnapshot } from './side-panel-escape.ts';
+import { sidePanelSurfaceClassName } from './ui-kit-classes.ts';
 import { useSidePanelResize } from './use-side-panel-resize.ts';
 
 const sidePanelSizeSchema = Schema.Literals(['sm', 'md', 'lg', 'xl']);
@@ -77,8 +78,9 @@ const useEscapeFallback = (open: boolean, contentId: string, onOpenChange: (open
 /**
  * Right-hand side panel for create, edit and quick-view forms. Wraps ui-kit `Dialog` with
  * `placement="right"`, never renders the stray default "Open" trigger, labels its close button in
- * Czech, sizes the title like a SectionCard heading, and closes on Escape
- * whenever no listbox, calendar, menu or nested dialog is open above it.
+ * Czech, sizes the title like a SectionCard heading, flattens SectionCards inside it (the panel
+ * edge is the one outline), and closes on Escape whenever no listbox, calendar, menu or nested
+ * dialog is open above it.
  */
 export const SidePanel = ({
   actions,
@@ -101,7 +103,7 @@ export const SidePanel = ({
 
   return (
     <Dialog
-      className={`min-w-0 sm:min-w-(--container-dialog-sm) ${className ?? ''}`}
+      className={`min-w-0 sm:min-w-(--container-dialog-sm) ${sidePanelSurfaceClassName} ${className ?? ''}`}
       {...(finalFocusEl === undefined ? {} : { finalFocusEl })}
       {...(initialFocusEl === undefined ? {} : { initialFocusEl })}
       actions={actions}
