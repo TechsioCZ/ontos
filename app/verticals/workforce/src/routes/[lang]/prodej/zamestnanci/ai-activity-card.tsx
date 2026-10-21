@@ -19,7 +19,7 @@ type Feed =
   | { readonly status: 'unavailable' }
   | { readonly entries: readonly AiActivityEntry[]; readonly status: 'ready' };
 
-type BadgeVariant = 'danger' | 'info' | 'outline' | 'secondary' | 'success' | 'warning';
+type BadgeVariant = 'danger' | 'info' | 'outline' | 'primary' | 'success' | 'warning';
 
 const outcomeVariant: Readonly<Record<string, BadgeVariant>> = {
   allowed: 'info',
@@ -33,7 +33,7 @@ const moduleOf = (entry: AiActivityEntry): string =>
   entry.targetModuleKey ?? entry.actionKey?.replace(/\.[a-z0-9-]+$/u, '') ?? '';
 
 type Level = 'A' | 'B' | 'C';
-const levelVariant: Readonly<Record<Level, BadgeVariant>> = { A: 'info', B: 'warning', C: 'secondary' };
+const levelVariant: Readonly<Record<Level, BadgeVariant>> = { A: 'info', B: 'warning', C: 'primary' };
 
 const levelOf = (entry: AiActivityEntry): Level | undefined => {
   const match = /AI agent (?<level>[ABC])\b/u.exec(entry.actorDisplayName);
