@@ -65,7 +65,7 @@ const RowActions = ({
   readonly onEdit: (c: ConnectionSummary) => void;
   readonly onRevoke: (c: ConnectionSummary) => void;
 }) => (
-  <div className="flex flex-wrap justify-end gap-100">
+  <div className="flex flex-wrap justify-end gap-100 [&_button]:whitespace-nowrap">
     <Button onClick={() => onEdit(connection)} size="sm" theme="outlined" variant="secondary">
       Upravit přístup
     </Button>

@@ -90,7 +90,7 @@ export const AgentConnectionsSection = ({ onNotify }: AgentConnectionsSectionPro
           state.overview.agents.map((agent) => (
             <AgentCard
               agent={agent}
-              company={state.overview.company.legalName}
+              company={state.overview.company.legalName.replace(/\.$/u, '')}
               key={agent.principalId}
               members={state.overview.members}
               onChanged={fetchOverview}
@@ -189,6 +189,7 @@ const OperatorsBlock = ({ agent, company, members, onChanged, onNotify }: AgentC
             key={member.principalId}
             label={member.displayName}
             onCheckedChange={(checked) => toggle(member.principalId, checked)}
+            size="sm"
           />
         ))}
       </div>
