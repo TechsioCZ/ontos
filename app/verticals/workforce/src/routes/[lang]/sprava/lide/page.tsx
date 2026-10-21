@@ -40,7 +40,7 @@ import type {
 import { isCrmSalesRole, syncCrmSalesperson } from '../../../../api/crm-salesperson-sync.ts';
 import type { SalespersonAccount, SalespersonSync } from '../../../../api/crm-salesperson-sync.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { AgentConnectionsSection } from './agent-connections-section.tsx';
+import { AgentEntitiesSection } from './agent-entities-section.tsx';
 import csResource from '../../../../../locales/cs/workforce.json';
 import enResource from '../../../../../locales/en/workforce.json';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
@@ -393,9 +393,7 @@ const CreateAccountPanel = ({
             {isCrmSalesRole(roleKey) && <> {t(`${key}.crm.roleHint`)}</>}
           </p>
         )}
-        <div className={`${surfaceTileClassName} p-150 text-fg-secondary text-sm`}>
-          {t(`${key}.form.password`)}
-        </div>
+        <div className={`${surfaceTileClassName} p-150 text-fg-secondary text-sm`}>{t(`${key}.form.password`)}</div>
       </form>
     </SidePanel>
   );
@@ -847,7 +845,9 @@ const PeoplePageContent = () => {
         )}
 
         {data !== undefined && (
-          <AgentConnectionsSection onNotify={(title) => toaster.create({ title, type: 'success' })} />
+          <AgentEntitiesSection
+            onNotify={(title, description) => toaster.create({ description, title, type: 'success' })}
+          />
         )}
       </div>
 

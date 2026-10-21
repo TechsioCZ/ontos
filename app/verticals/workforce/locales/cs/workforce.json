@@ -337,12 +337,6 @@
     },
     "agents": {
       "connections": {
-        "title": "Agenti a jejich připojení",
-        "description": "Agenta připojí k ChatGPT nebo Claude jen člověk, kterému to tady povolíte. Připojení pak jedná jako agent a jen v jeho oprávněních.",
-        "loading": "Načítám agenty…",
-        "noAgents": "Firma zatím nemá žádného agenta.",
-        "noAgentsHint": "Agenty zakládá správce; ukázkové agenty vytváří příprava dema.",
-        "retry": "Zkusit znovu",
         "policy": {
           "read_only": "Jen čtení",
           "approval": "Ke schválení",
@@ -425,6 +419,61 @@
         "toast": {
           "created": "Agent {{name}} je vytvořený",
           "saved": "Změny agenta {{name}} jsou uložené"
+        }
+      },
+      "section": {
+        "title": "Agentní entity",
+        "description": "Agent je samostatná identita firmy s vlastními oprávněními. K ChatGPT nebo Claude se připojuje přes OntOS volbou „Za agenta“; žádné klíče ani tokeny se tu nevydávají.",
+        "create": "Nový agent",
+        "loading": "Načítám agenty…",
+        "retry": "Zkusit znovu",
+        "empty": "Firma zatím nemá žádného agenta.",
+        "emptyHint": "Vytvořte agenta tlačítkem Nový agent a nastavte mu oprávnění.",
+        "owner": "Odpovídá: {{name}}",
+        "noOwner": "Odpovídá: nikdo",
+        "reads": "Čte: {{modules}}",
+        "writes": "Zapisuje přímo: {{modules}}",
+        "proposes": "Navrhuje ke schválení: {{modules}}",
+        "noWrites": "Nic nezapisuje",
+        "disabledNotice": "Agent je deaktivovaný. Jeho připojení byla odpojena; po aktivaci ho je potřeba připojit znovu.",
+        "edit": "Upravit",
+        "deactivate": "Deaktivovat",
+        "activate": "Aktivovat",
+        "delete": "Smazat",
+        "dialog": {
+          "deactivateTitle": "Deaktivovat agenta {{name}}?",
+          "deactivateDescription": "Agent okamžitě ztratí přístup a všechna jeho připojení se odpojí. Důvod se zapíše do auditu.",
+          "deactivateReason": "Důvod deaktivace",
+          "deactivateConfirm": "Deaktivovat",
+          "activateTitle": "Aktivovat agenta {{name}}?",
+          "activateDescription": "Agent znovu dostane svá oprávnění. Připojit ho bude potřeba znovu.",
+          "activateConfirm": "Aktivovat",
+          "deleteTitle": "Smazat agenta {{name}}?",
+          "deleteDescription": "Agent přijde o všechna oprávnění, připojení i seznam lidí, kteří ho smí připojit, a zmizí ze seznamu. Záznamy v auditu zůstanou.",
+          "deleteReason": "Důvod smazání",
+          "deleteConfirm": "Smazat agenta",
+          "cancel": "Zrušit",
+          "reasonRequired": "Uveďte důvod."
+        },
+        "toast": {
+          "deactivated": "Agent {{name}} je deaktivovaný",
+          "activated": "Agent {{name}} je znovu aktivní",
+          "deleted": "Agent {{name}} je smazaný",
+          "revoked": "Odpojená připojení: {{count}}"
+        },
+        "audit": {
+          "title": "Historie změn agentů",
+          "empty": "Zatím žádné změny.",
+          "created": "vytvořil(a) agenta {{target}}",
+          "configured": "upravil(a) agenta {{target}}",
+          "deactivated": "deaktivoval(a) agenta {{target}}",
+          "activated": "aktivoval(a) agenta {{target}}",
+          "deleted": "smazal(a) agenta {{target}}",
+          "operators": "změnil(a), kdo smí připojit agenta {{target}}",
+          "denied": "zamítnutý pokus o změnu agenta",
+          "reason": "Důvod: {{reason}}",
+          "system": "Systém",
+          "unknownAgent": "agenta"
         }
       }
     }

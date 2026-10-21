@@ -337,12 +337,6 @@
     },
     "agents": {
       "connections": {
-        "title": "Agents and their connections",
-        "description": "Only a person you allow here can connect the agent to ChatGPT or Claude. The connection then acts as the agent, within the agent's permissions.",
-        "loading": "Loading agents…",
-        "noAgents": "This company has no agents yet.",
-        "noAgentsHint": "Agents are created by the administrator; the demo setup creates sample agents.",
-        "retry": "Try again",
         "policy": {
           "read_only": "Read only",
           "approval": "Needs approval",
@@ -425,6 +419,61 @@
         "toast": {
           "created": "Agent {{name}} was created",
           "saved": "Changes to agent {{name}} were saved"
+        }
+      },
+      "section": {
+        "title": "Agent entities",
+        "description": "An agent is a separate identity of the company with its own permissions. It connects to ChatGPT or Claude through OntOS by choosing “As the agent”; no keys or tokens are issued here.",
+        "create": "New agent",
+        "loading": "Loading agents…",
+        "retry": "Try again",
+        "empty": "The company has no agent yet.",
+        "emptyHint": "Create an agent with New agent and set its permissions.",
+        "owner": "Responsible: {{name}}",
+        "noOwner": "Responsible: nobody",
+        "reads": "Reads: {{modules}}",
+        "writes": "Writes directly: {{modules}}",
+        "proposes": "Proposes for approval: {{modules}}",
+        "noWrites": "Writes nothing",
+        "disabledNotice": "The agent is deactivated. Its connections were revoked; after activation it has to be connected again.",
+        "edit": "Edit",
+        "deactivate": "Deactivate",
+        "activate": "Activate",
+        "delete": "Delete",
+        "dialog": {
+          "deactivateTitle": "Deactivate agent {{name}}?",
+          "deactivateDescription": "The agent loses access immediately and all its connections are revoked. The reason is written to the audit trail.",
+          "deactivateReason": "Reason for deactivation",
+          "deactivateConfirm": "Deactivate",
+          "activateTitle": "Activate agent {{name}}?",
+          "activateDescription": "The agent gets its permissions back. It has to be connected again.",
+          "activateConfirm": "Activate",
+          "deleteTitle": "Delete agent {{name}}?",
+          "deleteDescription": "The agent loses all permissions, connections and the list of people who may connect it, and leaves the list. Audit records stay.",
+          "deleteReason": "Reason for deletion",
+          "deleteConfirm": "Delete agent",
+          "cancel": "Cancel",
+          "reasonRequired": "Enter a reason."
+        },
+        "toast": {
+          "deactivated": "Agent {{name}} was deactivated",
+          "activated": "Agent {{name}} is active again",
+          "deleted": "Agent {{name}} was deleted",
+          "revoked": "Revoked connections: {{count}}"
+        },
+        "audit": {
+          "title": "Agent change history",
+          "empty": "No changes yet.",
+          "created": "created agent {{target}}",
+          "configured": "edited agent {{target}}",
+          "deactivated": "deactivated agent {{target}}",
+          "activated": "activated agent {{target}}",
+          "deleted": "deleted agent {{target}}",
+          "operators": "changed who may connect agent {{target}}",
+          "denied": "denied attempt to change an agent",
+          "reason": "Reason: {{reason}}",
+          "system": "System",
+          "unknownAgent": "agent"
         }
       }
     }

@@ -8,7 +8,6 @@ import { Effect, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import {
   AGENT_ACCESS_PATHS,
-  AgentConnectionsOverviewSchema,
   AgentEntityOverviewSchema,
   AgentOperatorsResponseSchema,
   CONNECTION_MANAGEMENT_PATHS,
@@ -16,7 +15,6 @@ import {
   ManageAgentEntityResponseSchema,
 } from '@app/shared-contracts/agent-access';
 import type {
-  AgentConnectionsOverview,
   AgentEntityOverview,
   AgentOperatorsRequest,
   AgentOperatorsResponse,
@@ -81,7 +79,6 @@ const failed = (reason: AgentFailure, detail: string | null = null) => ({
 
 const decodeOverview = Schema.decodeUnknownEffect(AgentEntityOverviewSchema);
 const decodeManageResponse = Schema.decodeUnknownEffect(ManageAgentEntityResponseSchema);
-const decodeConnections = Schema.decodeUnknownEffect(AgentConnectionsOverviewSchema);
 const decodeOperators = Schema.decodeUnknownEffect(AgentOperatorsResponseSchema);
 const decodeMutation = Schema.decodeUnknownEffect(ConnectionMutationResponseSchema);
 
@@ -110,20 +107,6 @@ export const runAgentCommand = (
     const value = yield* decodeManageResponse(answer.json);
     return { status: 'ok' as const, value };
   }).pipe(Effect.orElseSucceed(() => failed('error')));
-
-/** Agents of the selected company with their operators and active connections. */
-export const loadAgentConnections: Effect.Effect<
-  AgentOutcome<AgentConnectionsOverview>,
-  never,
-  HttpClient.HttpClient
-> = Effect.gen(function* loadAgentConnectionsCall() {
-  const answer = yield* post(CONNECTION_MANAGEMENT_PATHS.agentConnections, {});
-  if (answer.status === 'failed') {
-    return failed(answer.reason, answer.detail);
-  }
-  const value = yield* decodeConnections(answer.json);
-  return { status: 'ok' as const, value };
-}).pipe(Effect.orElseSucceed(() => failed('error')));
 
 /** Replaces the complete operator set of one agent; the shell answers how many connections were revoked with it. */
 export const saveAgentOperators = (
