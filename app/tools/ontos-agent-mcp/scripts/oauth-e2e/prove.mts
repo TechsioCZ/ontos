@@ -78,23 +78,20 @@ function readModules(value: Json): Array<{ moduleId: string; write: boolean }> {
   });
 }
 
-/** Proof tasks a previous, interrupted v2 run left open (title prefix, not yet cancelled or done). */
-function openProofTasks(value: unknown, found: Json[] = []): Json[] {
+/** Proof tasks still shown in task lists: open ones (an interrupted v2 run) and cancelled ones not yet hidden. */
+function visibleProofTasks(value: unknown, found: { ref: Json; open: boolean }[] = []): { ref: Json; open: boolean }[] {
   if (Array.isArray(value)) {
-    value.forEach((item) => openProofTasks(item, found));
+    value.forEach((item) => visibleProofTasks(item, found));
   } else if (typeof value === 'object' && value !== null) {
     const record = asRecord(value);
     const title = asString(record.title);
     const ref = asRecord(record.ref);
-    if (
-      title?.startsWith(PROOF_TASK_PREFIX) === true &&
-      ref.resourceType === 'work.tasks.task' &&
-      record.state !== 'CANCELLED' &&
-      record.state !== 'DONE'
-    ) {
-      found.push(ref);
+    if (title?.startsWith(PROOF_TASK_PREFIX) === true && ref.resourceType === 'work.tasks.task') {
+      if (record.archivedAt === undefined || record.archivedAt === null) {
+        found.push({ open: record.state !== 'CANCELLED' && record.state !== 'DONE', ref });
+      }
     } else {
-      Object.values(record).forEach((item) => openProofTasks(item, found));
+      Object.values(record).forEach((item) => visibleProofTasks(item, found));
     }
   }
   return found;
@@ -346,29 +343,39 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
         });
       }
     } else {
-      // A run interrupted between create and cancel leaves its task open; cancel such leftovers first.
-      await rec.step(k, 'úklid: staré důkazní úkoly zrušeny', async () => {
+      // Earlier runs: cancel tasks an interrupted run left open, and hide cancelled proof tasks from task lists.
+      await rec.step(k, 'úklid: staré důkazní úkoly zrušeny a skryty', async () => {
         const listed = await callJson(client, 'ontos_read', { id: 'work.tasks/read/records', limit: 500 });
         if (listed.isError) {
           return { pass: false, detail: 'čtení úkolů selhalo' };
         }
-        const leftovers = openProofTasks(listed.value);
-        let cancelled = 0;
-        for (const [index, taskRef] of leftovers.entries()) {
-          const outcome = await callJson(client, 'ontos_execute', {
-            id: 'work.tasks/command/ChangeTaskState',
-            input: { state: 'CANCELLED', taskRef },
-            idempotencyKey: `${runId}-v2-leftover-${index}`,
+        const leftovers = visibleProofTasks(listed.value);
+        let done = 0;
+        for (const [index, task] of leftovers.entries()) {
+          const cancelled = task.open
+            ? await callJson(client, 'ontos_execute', {
+                id: 'work.tasks/command/ChangeTaskState',
+                input: { state: 'CANCELLED', taskRef: task.ref },
+                idempotencyKey: `${runId}-v2-leftover-${index}`,
+              })
+            : undefined;
+          if (cancelled !== undefined && (cancelled.isError || asRecord(cancelled.value).status !== 'executed')) {
+            continue;
+          }
+          const hidden = await callJson(client, 'ontos_execute', {
+            id: 'work.tasks/command/SetTaskArchived',
+            input: { archived: true, taskRef: task.ref },
+            idempotencyKey: `${runId}-v2-leftover-hide-${index}`,
           });
-          if (!outcome.isError && asRecord(outcome.value).status === 'executed') {
-            cancelled += 1;
+          if (!hidden.isError && asRecord(hidden.value).status === 'executed') {
+            done += 1;
           }
         }
-        return { pass: cancelled === leftovers.length, detail: `zrušeno ${cancelled}/${leftovers.length}` };
+        return { pass: done === leftovers.length, detail: `uklizeno ${done}/${leftovers.length}` };
       });
 
       // Direct era: the write executes at once; the task is cancelled again so the board stays clean.
-      await rec.step(k, 'zápis přímo: úkol vytvořen a zrušen', async () => {
+      await rec.step(k, 'zápis přímo: úkol vytvořen, zrušen a skryt', async () => {
         const created = await callJson(client, 'ontos_execute', {
           id: 'work.tasks/command/CreateTask',
           input: { title: `${PROOF_TASK_PREFIX} ${runId}` },
@@ -387,9 +394,15 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
           idempotencyKey: `${runId}-v2-cancel`,
         });
         const cancelledStatus = asRecord(cancelled.value).status;
+        // Cancelled stays in the journal; hiding it keeps the demo task lists clean.
+        const hidden = await callJson(client, 'ontos_execute', {
+          id: 'work.tasks/command/SetTaskArchived',
+          input: { archived: true, taskRef },
+          idempotencyKey: `${runId}-v2-hide`,
+        });
         return {
-          pass: !cancelled.isError && cancelledStatus === 'executed',
-          detail: `úkol ${taskId} vytvořen a zrušen (status ${String(cancelledStatus)})`,
+          pass: !cancelled.isError && cancelledStatus === 'executed' && !hidden.isError,
+          detail: `úkol ${taskId} vytvořen, zrušen a skryt (status ${String(cancelledStatus)}, skrytí ${hidden.isError ? 'selhalo' : 'OK'})`,
         };
       });
     }
