@@ -11,6 +11,9 @@ export const E2E = {
 
 export const PERSONA = 'management@siampark.demo';
 
+/** Company administrator of Obchodní firma; operator of its seeded AI agents (variant 2 acts as agent B). */
+export const AGENT_OPERATOR_PERSONA = 'obchod@demo.ontos';
+
 /** Client ID Metadata Document; its redirect allows http://localhost/callback (port-agnostic). */
 export const CIMD_CLIENT_ID = 'https://claude.ai/oauth/claude-code-client-metadata';
 

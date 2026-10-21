@@ -1,21 +1,22 @@
 // Real OAuth end-to-end proof of the OntOS MCP server (lane mcp-mcp-rs).
 // Needs the shell AS on localhost:3020 and the MCP resource server on localhost:3090.
 // Run via app/scripts/demo/prove-mcp-oauth.mts. Never writes the coordination board.
-import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { decodeJwt } from 'jose';
 import type { Client } from '@modelcontextprotocol/client';
-import { E2E, PERSONA, CIMD_CLIENT_ID, GRANT_CLAIM, sleep } from './env.mts';
+import { E2E, PERSONA, AGENT_OPERATOR_PERSONA, CIMD_CLIENT_ID, GRANT_CLAIM, sleep } from './env.mts';
 import { Recorder } from './report.mts';
 import { startLoopbackCallback } from './loopback.mts';
 import type { LoopbackCallback } from './loopback.mts';
 import { E2eOAuthProvider } from './provider.mts';
 import { runOAuthFlow, rotateRefreshToken, refreshIsRejected } from './flow.mts';
 import { connectMcp, callJson, rawMcpStatus, MODERN_PROTOCOL_VERSION } from './mcp.mts';
-import { openSharedTab, ensureLoggedIn, approveConnection, sessionPost } from './browser.mts';
+import { openSharedTab, approveConnection, sessionPost } from './browser.mts';
 import type { ActAs, E2eTab } from './browser.mts';
 
-const AGENT_NAME = 'Asistent provozu (MCP důkaz)';
+// Seeded agent (scripts/demo/ai-profiles.mts level B, operator = company administrator via mcp-agent-operators.mts):
+// direct writes on work.tasks only, every other module read-only.
+const AGENT_NAME = 'AI agent B · čtení + úkoly (Obchodní firma)';
 const OUT_OF_GRANT_CANDIDATES = [
   'demo.crm/command/UpdateClient',
   'demo.merchandise/command/ChangePrice',
@@ -76,13 +77,6 @@ function readModules(value: Json): Array<{ moduleId: string; write: boolean }> {
   });
 }
 
-function findAgentPrincipal(json: unknown): string | undefined {
-  const hit = asArray(asRecord(json).agents)
-    .map(asRecord)
-    .find((agent) => agent.displayName === AGENT_NAME && agent.status === 'active');
-  return asString(hit?.principalId);
-}
-
 async function listToolNames(client: Client): Promise<string[]> {
   const listed = await client.listTools();
   return listed.tools.map((tool) => tool.name);
@@ -107,6 +101,7 @@ async function waitForInvalidToken(token: string): Promise<{ ok: boolean; second
 interface VariantDef {
   readonly key: 'v1' | 'v2';
   readonly label: string;
+  readonly persona: string;
   readonly actAs: ActAs;
   readonly writeMode: 'approval' | 'direct';
 }
@@ -120,10 +115,17 @@ interface VariantSummary {
 
 const VARIANTS: readonly VariantDef[] = [
   // The AS is CIMD-only (no dynamic client registration), so both variants use the Claude Code CIMD document.
-  { key: 'v1', label: 'CIMD Claude Code · Za mě · ke schválení', actAs: { kind: 'me' }, writeMode: 'approval' },
+  {
+    key: 'v1',
+    label: 'CIMD Claude Code · Za mě · ke schválení',
+    persona: PERSONA,
+    actAs: { kind: 'me' },
+    writeMode: 'approval',
+  },
   {
     key: 'v2',
     label: 'CIMD Claude Code · Za agenta · přímo',
+    persona: AGENT_OPERATOR_PERSONA,
     actAs: { kind: 'agent', agentName: AGENT_NAME },
     writeMode: 'direct',
   },
@@ -131,8 +133,6 @@ const VARIANTS: readonly VariantDef[] = [
 
 const rec = new Recorder();
 const variants: VariantSummary[] = [];
-// Set from v1's whoami (acting.principalId); v2 uses it as the agent operator.
-let mePrincipalId: string | undefined = undefined;
 
 async function preflight(): Promise<void> {
   const mcpOrigin = new URL(E2E.mcpUrl).origin;
@@ -190,63 +190,6 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
   let loopback: LoopbackCallback | undefined = undefined;
 
   try {
-    if (def.actAs.kind === 'agent') {
-      await rec.step(k, 'agent připraven', async () => {
-        await ensureLoggedIn(tab.page, E2E.shellUrl, PERSONA, E2E.password);
-        const listed = await sessionPost(
-          tab.page,
-          E2E.shellUrl,
-          '/shell-super-app-api/auth/identity/agent-entities/list',
-          {},
-        );
-        const existing = findAgentPrincipal(listed.json);
-        let agentPrincipalId: string | undefined = existing;
-        let detail = existing === undefined ? '' : 'existující agent';
-        if (agentPrincipalId === undefined) {
-          const created = await sessionPost(
-            tab.page,
-            E2E.shellUrl,
-            '/shell-super-app-api/auth/identity/agent-entities',
-            {
-              operation: 'create',
-              displayName: AGENT_NAME,
-              modules: [
-                { moduleId: 'work.tasks', access: 'write' },
-                { moduleId: 'finance.billing', access: 'read' },
-                { moduleId: 'property.leasing', access: 'read' },
-              ],
-              writePolicy: 'direct',
-            },
-            { 'idempotency-key': randomUUID() },
-          );
-          agentPrincipalId = asString(asRecord(created.json).principalId);
-          if (created.status !== 200 || agentPrincipalId === undefined) {
-            return { pass: false, detail: `vytvoření agenta: status ${created.status}` };
-          }
-          detail = 'agent vytvořen';
-        }
-        const principal: string = agentPrincipalId;
-        if (mePrincipalId === undefined) {
-          detail += '; operátor: tvůrce je výchozí';
-        } else {
-          const operators = await sessionPost(
-            tab.page,
-            E2E.shellUrl,
-            '/shell-super-app-api/auth/identity/agent-entities/operators',
-            { agentPrincipalId: principal, operatorPrincipalIds: [mePrincipalId] },
-          );
-          if (operators.status === 404) {
-            detail += '; operators 404 (endpoint nenasazen, tvůrce je výchozí operátor)';
-          } else if (operators.status >= 200 && operators.status < 300) {
-            detail += '; operátor přidán';
-          } else {
-            return { pass: false, detail: `operators: status ${operators.status}` };
-          }
-        }
-        return { pass: true, detail };
-      });
-    }
-
     const lb = await startLoopbackCallback();
     loopback = lb;
     const provider = new E2eOAuthProvider({
@@ -256,7 +199,7 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
       onRedirect: (url: URL) =>
         approveConnection(tab.page, url.toString(), {
           actAs: def.actAs,
-          email: PERSONA,
+          email: def.persona,
           password: E2E.password,
           shotPrefix: k,
           shotsDir: E2E.shotsDir,
@@ -322,9 +265,6 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
       };
     });
     summary.profileId = whoami?.profileId ? whoami.profileId : null;
-    if (def.key === 'v1' && whoami?.principalId !== undefined) {
-      mePrincipalId = whoami.principalId;
-    }
     const writable = whoami?.writable ?? [];
 
     await rec.step(k, 'čtení', async () => {
