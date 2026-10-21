@@ -34,14 +34,16 @@ export const validateResetEnvironment = Effect.fn('SiamparkDemo.validateLocalCon
     if (!loopbackHosts.has(pair.admin.host) || !loopbackHosts.has(pair.runtime.host)) {
       return yield* new DemoResetConfigurationError({ reason: 'Both PostgreSQL endpoints must be local' });
     }
+    // The stage demo seed reaches stage's `db` through loopback forwarders and names it explicitly.
+    const demoDatabase = process.env['ONTOS_DEMO_DATABASE_NAME'] ?? 'siampark_demo';
     if (
-      pair.admin.database !== 'siampark_demo' ||
-      pair.runtime.database !== 'siampark_demo' ||
+      pair.admin.database !== demoDatabase ||
+      pair.runtime.database !== demoDatabase ||
       pair.admin.host !== pair.runtime.host ||
       pair.admin.port !== pair.runtime.port
     ) {
       return yield* new DemoResetConfigurationError({
-        reason: 'Both PostgreSQL identities must target the same local siampark_demo database',
+        reason: `Both PostgreSQL identities must target the same local ${demoDatabase} database`,
       });
     }
     const certificate = yield* Schema.decodeEffect(requiredText)(environment.SPICEDB_CA_CERT);
