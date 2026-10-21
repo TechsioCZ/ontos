@@ -189,6 +189,83 @@ export const ambiguousCaseDecision = (detail: {
     ? 'create'
     : 'review';
 
+/** A CRM client as the intake reads it: identity fields, status and the stored registry link. */
+export type IntakeCrmClient = IntakeClient & {
+  readonly partyRef?: { readonly counterpartyId?: string | undefined; readonly partyId: string } | undefined;
+  readonly status: string;
+};
+
+/**
+ * Gives every target its registry identity, one client after another. A link made earlier in the same batch is
+ * carried forward: later targets see it as a linked CRM client and its Party as taken, and a later target with the
+ * same IČO reuses that identity directly (two clients entered together are the same organization, CRM.md l.210),
+ * even before the registry customer list shows the new customer. One client's refused registry step must not leave
+ * the remaining clients without identity: it counts as waiting for review.
+ */
+export const linkClientsInBatch = Effect.fn('Crm.partyIntake.linkBatch')(function* linkClientsInBatch<E, R>(
+  items: readonly IntakeCrmClient[],
+  targets: readonly IntakeCrmClient[],
+  initialRevision: number,
+  steps: {
+    readonly identify: (
+      client: IntakeCrmClient,
+      taken: ReadonlySet<string>,
+      crmClients: readonly IntakeCrmClient[],
+    ) => Effect.Effect<Option.Option<VerifiedParty>, E, R>;
+    readonly link: (clientId: string, party: VerifiedParty, expectedRevision: number) => Effect.Effect<number, E, R>;
+  },
+) {
+  let working = [...items];
+  const taken = new Set(
+    items.flatMap((client) =>
+      client.partyRef === undefined
+        ? []
+        : [client.partyRef.partyId, ...(client.partyRef.counterpartyId === undefined ? [] : [client.partyRef.counterpartyId])],
+    ),
+  );
+  const linkedByIco = new Map<string, VerifiedParty>();
+  let revision = initialRevision;
+  const outcome = { linked: 0, review: 0 };
+  for (const client of targets) {
+    const ico = normalizedIco(client.regNo);
+    const sameBatchParty = ico === '' ? undefined : linkedByIco.get(ico);
+    const linked = yield* (
+      sameBatchParty === undefined ? steps.identify(client, taken, working) : Effect.succeedSome(sameBatchParty)
+    ).pipe(
+      Effect.flatMap((verified) =>
+        Option.isNone(verified)
+          ? Effect.succeed(Option.none<{ readonly party: VerifiedParty; readonly revision: number }>())
+          : steps.link(client.id, verified.value, revision).pipe(
+              Effect.map((next) => Option.some({ party: verified.value, revision: next })),
+            ),
+      ),
+      Effect.catch((error) =>
+        Effect.logWarning('CRM Party Registry intake skipped a client', client.id, error).pipe(
+          Effect.as(Option.none<{ readonly party: VerifiedParty; readonly revision: number }>()),
+        ),
+      ),
+    );
+    if (Option.isNone(linked)) {
+      outcome.review += 1;
+      continue;
+    }
+    const { party } = linked.value;
+    revision = linked.value.revision;
+    taken.add(party.counterpartyId);
+    taken.add(party.partyId);
+    if (ico !== '') {
+      linkedByIco.set(ico, party);
+    }
+    working = working.map((entry) =>
+      entry.id === client.id
+        ? { ...entry, partyRef: { counterpartyId: party.counterpartyId, partyId: party.partyId } }
+        : entry,
+    );
+    outcome.linked += 1;
+  }
+  return outcome;
+});
+
 const GatewayContextSchema = Schema.Struct({
   apiBaseUrl: Schema.String,
   compositionRevision: Schema.String,
@@ -529,46 +606,12 @@ export const makePartyIntake = (scope: {
     const targets = items
       .filter((client) => client.partyRef === undefined && (client.status === 'active' || clientIds.includes(client.id)))
       .slice(0, BATCH);
-    const taken = new Set(
-      items.flatMap((client) =>
-        client.partyRef === undefined
-          ? []
-          : [client.partyRef.partyId, ...(client.partyRef.counterpartyId === undefined ? [] : [client.partyRef.counterpartyId])],
-      ),
-    );
-    let revision = records.revision;
-    const outcome = { linked: 0, review: 0 };
-    for (const client of targets) {
-      const operationKey = `crm-intake:${correlationId}:${client.id}`.slice(0, 180);
-      // One client's refused registry step must not leave the remaining clients without identity.
-      const linkedRevision = yield* identify(client, taken, operationKey, items).pipe(
-        Effect.flatMap((verified) =>
-          Option.isNone(verified)
-            ? Effect.succeed(Option.none<number>())
-            : linkClient(client.id, verified.value, revision, operationKey).pipe(
-                Effect.tap(() =>
-                  Effect.sync(() => {
-                    taken.add(verified.value.counterpartyId);
-                    taken.add(verified.value.partyId);
-                  }),
-                ),
-                Effect.asSome,
-              ),
-        ),
-        Effect.catch((error) =>
-          Effect.logWarning('CRM Party Registry intake skipped a client', client.id, error).pipe(
-            Effect.as(Option.none<number>()),
-          ),
-        ),
-      );
-      if (Option.isNone(linkedRevision)) {
-        outcome.review += 1;
-        continue;
-      }
-      revision = linkedRevision.value;
-      outcome.linked += 1;
-    }
-    return outcome;
+    return yield* linkClientsInBatch(items, targets, records.revision, {
+      identify: (client, taken, crmClients) =>
+        identify(client, taken, `crm-intake:${correlationId}:${client.id}`.slice(0, 180), crmClients),
+      link: (clientId, party, expectedRevision) =>
+        linkClient(clientId, party, expectedRevision, `crm-intake:${correlationId}:${clientId}`.slice(0, 180)),
+    });
   }, Effect.provide(FetchHttpClient.layer));
 
   return { identify, reconcile };

@@ -1,6 +1,6 @@
 // CRM.md §3/§4 + C04: the server-side Party Registry intake targets and the external-id correlation.
 import { describe, expect, it } from '@rstest/core';
-import { Effect, Exit } from 'effect';
+import { Effect, Exit, Option } from 'effect';
 import { correlateCustomerLinks, uncorrelatedCustomerLinks } from '../../shared/commands/clients.ts';
 import type { VerifiedParty } from '../../shared/commands/context.ts';
 import type { CrmCommand } from '../../shared/commands/index.ts';
@@ -8,7 +8,14 @@ import { dispatchCrmCommand } from '../../shared/commands/index.ts';
 import type { CrmViewer } from '../../shared/domain/access.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
 import { initialCrmState } from '../../shared/domain/state.ts';
-import { ambiguousCaseDecision, matchingRegistryCustomer, sameIcoClientCustomer, validIco } from '../../src/services/party-intake.ts';
+import type { IntakeCrmClient } from '../../src/services/party-intake.ts';
+import {
+  ambiguousCaseDecision,
+  linkClientsInBatch,
+  matchingRegistryCustomer,
+  sameIcoClientCustomer,
+  validIco,
+} from '../../src/services/party-intake.ts';
 
 const at = '2026-10-21T08:00:00.000Z';
 const client = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -205,6 +212,90 @@ describe('Party Registry intake (CRM.md §3, C04)', () => {
           ),
         ).toBe(true);
       }
+    });
+  });
+  describe('one approval batch with the same organization twice (CRM-A-02)', () => {
+    const fresh = (id: string, regNo: string | undefined): IntakeCrmClient => ({
+      id,
+      kind: 'organization',
+      name: 'Pekárna Novák s.r.o.',
+      status: 'active',
+      ...(regNo === undefined ? {} : { regNo }),
+    });
+    /** A registry that creates a new Party per identify call and never lists it yet (projection lag). */
+    const fakeSteps = () => {
+      const created: string[] = [];
+      const links: { clientId: string; partyId: string; revision: number }[] = [];
+      const seen: { taken: string[]; crmClients: readonly IntakeCrmClient[] }[] = [];
+      return {
+        created,
+        links,
+        seen,
+        steps: {
+          identify: (client: IntakeCrmClient, taken: ReadonlySet<string>, crmClients: readonly IntakeCrmClient[]) =>
+            Effect.sync(() => {
+              seen.push({ crmClients, taken: [...taken] });
+              const sameIco = sameIcoClientCustomer(
+                client,
+                crmClients,
+                created.map((partyId) => ({ companyId: null, counterpartyId: `cp-${partyId}`, displayName: client.name, partyId, status: 'ACTIVE' })),
+              );
+              if (sameIco !== undefined) {
+                return Option.some({ counterpartyId: sameIco.counterpartyId, partyId: sameIco.partyId });
+              }
+              const partyId = `party-${created.length + 1}`;
+              created.push(partyId);
+              return Option.some({ counterpartyId: `cp-${partyId}`, partyId });
+            }),
+          link: (clientId: string, party: VerifiedParty, expectedRevision: number) =>
+            Effect.sync(() => {
+              links.push({ clientId, partyId: party.partyId, revision: expectedRevision });
+              return expectedRevision + 1;
+            }),
+        },
+      };
+    };
+
+    it('the second client with the same IČO reuses the Party linked earlier in the batch', () => {
+      const a = fresh('a1', '9000 0101');
+      const b = fresh('b1', '90000101');
+      const fake = fakeSteps();
+      const outcome = Effect.runSync(linkClientsInBatch([a, b], [a, b], 7, fake.steps));
+      expect(outcome).toEqual({ linked: 2, review: 0 });
+      expect(fake.created).toEqual(['party-1']);
+      expect(fake.links).toEqual([
+        { clientId: 'a1', partyId: 'party-1', revision: 7 },
+        { clientId: 'b1', partyId: 'party-1', revision: 8 },
+      ]);
+    });
+
+    it('later identify calls see earlier links as linked clients and taken Parties', () => {
+      const a = fresh('a2', undefined);
+      const b = fresh('b2', undefined);
+      const fake = fakeSteps();
+      const outcome = Effect.runSync(linkClientsInBatch([a, b], [a, b], 1, fake.steps));
+      // Without IČO the same name is no evidence: two Parties (CRM.md l.210).
+      expect(outcome).toEqual({ linked: 2, review: 0 });
+      expect(fake.created).toEqual(['party-1', 'party-2']);
+      expect(fake.seen[1]?.taken).toEqual(['cp-party-1', 'party-1']);
+      expect(fake.seen[1]?.crmClients.find((entry) => entry.id === 'a2')?.partyRef).toEqual({
+        counterpartyId: 'cp-party-1',
+        partyId: 'party-1',
+      });
+    });
+
+    it('a failed link is not carried forward and does not stop the batch', () => {
+      const a = fresh('a3', '90000101');
+      const b = fresh('b3', '90000101');
+      const fake = fakeSteps();
+      const steps = {
+        ...fake.steps,
+        link: (clientId: string, party: VerifiedParty, expectedRevision: number) =>
+          clientId === 'a3' ? Effect.fail('refused' as const) : fake.steps.link(clientId, party, expectedRevision),
+      };
+      const outcome = Effect.runSync(linkClientsInBatch([a, b], [a, b], 1, steps));
+      expect(outcome).toEqual({ linked: 1, review: 1 });
+      expect(fake.links).toEqual([{ clientId: 'b3', partyId: 'party-2', revision: 1 }]);
     });
   });
 });
