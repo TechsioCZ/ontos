@@ -110,6 +110,7 @@
           "salesAiApprovals": "AI changes for approval",
           "agentApprovals": "Approvals",
           "agentActivity": "Agent activity",
+          "connectedApps": "Connected apps",
           "crmReports": "Sales overview",
           "opsOverview": "Operations overview",
           "opsAgenda": "My agenda",

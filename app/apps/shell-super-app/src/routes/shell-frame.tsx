@@ -429,6 +429,13 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
         key: 'agentActivity',
         moduleId: 'shell-super-app',
       },
+      {
+        entrypoints: ['shell-super-app.page.connected-apps'],
+        hrefs: ['/sprava/pripojene-aplikace'],
+        icon: 'icon-[mdi--connection]',
+        key: 'connectedApps',
+        moduleId: 'shell-super-app',
+      },
     ],
     key: 'settings',
   },

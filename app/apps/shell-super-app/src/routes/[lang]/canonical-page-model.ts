@@ -5,6 +5,11 @@ import { Effect } from 'effect';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { agentPlatformPageByPath, loadAgentPlatformPageModel } from '../agent-platform/agent-platform-page-model.ts';
 import type { AgentPlatformPageModel } from '../agent-platform/agent-platform-page-model.ts';
+import {
+  CONNECTIONS_ADMIN_PATH,
+  loadConnectionsAdminPageModel,
+} from './sprava/pripojene-aplikace/connections-admin-page-model.ts';
+import type { ConnectionsAdminPageModel } from './sprava/pripojene-aplikace/connections-admin-page-model.ts';
 import { loadModulePageModel, preloadModuleTarget } from './modules/[moduleId]/module-page-model.ts';
 import type { ModuleTargetPageModel } from './modules/[moduleId]/module-page-model.ts';
 import { routeMeta } from './route.meta.ts';
@@ -30,7 +35,9 @@ const canonicalPathAliases: ReadonlyMap<string, string> = new Map([['/provoz/uko
 export const loader = ({
   params,
   request,
-}: CanonicalPageLoaderArguments): Promise<ModuleTargetPageModel | AgentPlatformPageModel | NotFoundError> => {
+}: CanonicalPageLoaderArguments): Promise<
+  ModuleTargetPageModel | AgentPlatformPageModel | ConnectionsAdminPageModel | NotFoundError
+> => {
   const canonicalPath = canonicalPathFromRequest(request, params.lang);
   if (canonicalPath === undefined) {
     return Promise.resolve().then(() => notFound({ throw: true }));
@@ -42,6 +49,9 @@ export const loader = ({
   const platformPage = agentPlatformPageByPath.get(canonicalPath);
   if (platformPage !== undefined) {
     return loadAgentPlatformPageModel(request, platformPage);
+  }
+  if (canonicalPath === CONNECTIONS_ADMIN_PATH) {
+    return loadConnectionsAdminPageModel(request);
   }
   return browserRuntime
     .runPromise(
