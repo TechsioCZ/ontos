@@ -45,7 +45,11 @@ import type {
 import type { StorefrontIssue, StorefrontOrderResult } from '../../shared/actions/apply-command.ts';
 import { fullOrderTotals, lineGrossMinor, nextOrderNumber, orderTotals } from '../../shared/domain/order-totals.ts';
 import { merchandiseStates } from '../database/schema.ts';
-import { AKROS_LEGAL_ENTITY_ID, staffCommandAllowed } from '../../shared/actions/command-guard.ts';
+import {
+  AKROS_LEGAL_ENTITY_ID,
+  connectionAllowsWrite,
+  staffCommandAllowed,
+} from '../../shared/actions/command-guard.ts';
 import { loadAkrosBaseline } from './akros-demo-reset.ts';
 import { applyMerchandiseAiCommand, isMerchandiseAiCommand } from './ai-changes.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
@@ -1634,7 +1638,12 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           reason: 'Merchandise changes require write permission',
         });
       }
-      if (scope.authMethod === 'session' || scope.authMethod === 'support_impersonation') {
+      // People (also through an MCP connection, and agents acting through one) follow the AKROS staff split.
+      if (
+        scope.authMethod === 'session' ||
+        scope.authMethod === 'support_impersonation' ||
+        scope.authMethod === 'oauth_connection'
+      ) {
         if (!staffCommandAllowed(legalEntityId, yield* administrator(), command._tag)) {
           return yield* new MerchandisePermissionDenied({
             code: 'merchandise_permission_denied',
@@ -1748,7 +1757,8 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           ? []
           : orders.filter((order) => order.clientRequestId === view.orderClientRequestId)
         : orders.filter((order) => view.orderStatus === undefined || order.status === view.orderStatus);
-      const canWrite = yield* contextGrant('write_all');
+      // A read-only or approval-only MCP connection cannot change the catalog directly.
+      const canWrite = (yield* contextGrant('write_all')) && connectionAllowsWrite(scope, 'demo.merchandise');
       const isAdministrator = storefront ? false : yield* administrator();
       const aiChanges =
         !storefront && snapshot.state.aiChanges !== undefined && (canWrite || (yield* contextGrant('read_all')))

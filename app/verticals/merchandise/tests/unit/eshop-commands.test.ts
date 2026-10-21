@@ -237,10 +237,10 @@ it.effect('ChangePrice on a variant appends its own price history', () =>
 it.effect('the storefront API key may only place guest orders in the e-shop company', () =>
   Effect.gen(function* guard() {
     const eshop = '71000000-0000-4000-8000-000000000023';
-    yield* assertStorefrontScope('non_human', eshop, 'PlaceStorefrontOrder');
-    const denied = yield* Effect.flip(assertStorefrontScope('non_human', eshop, 'CreateProduct'));
+    yield* assertStorefrontScope('api_key', eshop, 'PlaceStorefrontOrder');
+    const denied = yield* Effect.flip(assertStorefrontScope('api_key', eshop, 'CreateProduct'));
     expect(denied._tag).toBe('MerchandisePermissionDenied');
-    yield* assertStorefrontScope('human', eshop, 'EditOrder');
+    yield* assertStorefrontScope('session', eshop, 'EditOrder');
   }),
 );
 

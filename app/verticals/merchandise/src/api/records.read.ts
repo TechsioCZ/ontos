@@ -15,7 +15,7 @@ import type {
 import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import { persistenceService } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
-import { principalKindOf, storefrontReadRequest } from '../../shared/actions/command-guard.ts';
+import { AKROS_LEGAL_ENTITY_ID, storefrontReadRequest } from '../../shared/actions/command-guard.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
@@ -84,11 +84,11 @@ export const recordsRead = defineRead(
     ReadPermissionDenied | ReadHandlerUnavailable,
     Effect.Services<ReturnType<typeof persistenceService>>
   > => {
-    if (context.scope.legalEntityId === '71000000-0000-4000-8000-000000000024' && principalKindOf(context.scope.authMethod) !== 'human' && (input.view?.storefront !== true || input.view.orderClientRequestId !== undefined || input.view.orderStatus !== undefined)) {
+    if (context.scope.authMethod === 'api_key' && context.scope.legalEntityId === AKROS_LEGAL_ENTITY_ID && (input.view?.storefront !== true || input.view.orderClientRequestId !== undefined || input.view.orderStatus !== undefined)) {
       return Effect.fail(new ReadPermissionDenied({ code: 'read_permission_denied', reason: 'The AKROS service key may only read the public storefront catalog' }));
     }
     return context.services
-      .records(storefrontReadRequest(principalKindOf(context.scope.authMethod), context.scope.legalEntityId, input))
+      .records(storefrontReadRequest(context.scope.authMethod, context.scope.legalEntityId, input))
       .pipe(
         Effect.mapError(readFailure),
         Effect.map((result) => ({ evidence: { resultCount: result.products.length }, result })),

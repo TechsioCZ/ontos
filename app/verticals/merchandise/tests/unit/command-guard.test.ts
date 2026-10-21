@@ -1,9 +1,12 @@
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
+  AKROS_LEGAL_ENTITY_ID,
   assertCommandAllowed,
   assertStorefrontScope,
+  connectionAllowsWrite,
   ESHOP_LEGAL_ENTITY_ID,
+  isStorefrontServiceKey,
   principalKindOf,
   storefrontReadRequest,
   withCommandGuard,
@@ -14,23 +17,23 @@ const deniedCommands = ['BulkUpdateProducts', 'ChangePrice', 'EditOrder'] as con
 
 it('forces e-shop API keys into the public view even if the flag is omitted or false', () => {
   const request = { view: { orderClientRequestId: 'guest-request', storefront: false } };
-  expect(storefrontReadRequest('non_human', ESHOP_LEGAL_ENTITY_ID, {})).toEqual({ view: { storefront: true } });
-  expect(storefrontReadRequest('non_human', ESHOP_LEGAL_ENTITY_ID, request)).toEqual({
+  expect(storefrontReadRequest('api_key', ESHOP_LEGAL_ENTITY_ID, {})).toEqual({ view: { storefront: true } });
+  expect(storefrontReadRequest('api_key', ESHOP_LEGAL_ENTITY_ID, request)).toEqual({
     view: { orderClientRequestId: 'guest-request', storefront: true },
   });
-  expect(storefrontReadRequest('human', ESHOP_LEGAL_ENTITY_ID, request)).toBe(request);
-  expect(storefrontReadRequest('non_human', 'other-company', request)).toBe(request);
+  expect(storefrontReadRequest('session', ESHOP_LEGAL_ENTITY_ID, request)).toBe(request);
+  expect(storefrontReadRequest('api_key', 'other-company', request)).toBe(request);
 });
 
 it.effect('only allows guest order placement for the storefront company key', () =>
   Effect.gen(function* storefrontCommands() {
-    yield* assertStorefrontScope('non_human', ESHOP_LEGAL_ENTITY_ID, 'PlaceStorefrontOrder');
+    yield* assertStorefrontScope('api_key', ESHOP_LEGAL_ENTITY_ID, 'PlaceStorefrontOrder');
     for (const tag of ['EditOrder', 'ChangeOrderStatus', 'UpdateProduct', 'CreateOrder']) {
-      const failure = yield* assertStorefrontScope('non_human', ESHOP_LEGAL_ENTITY_ID, tag).pipe(Effect.flip);
+      const failure = yield* assertStorefrontScope('api_key', ESHOP_LEGAL_ENTITY_ID, tag).pipe(Effect.flip);
       expect(isRejection(failure)).toBe(true);
-      yield* assertStorefrontScope('human', ESHOP_LEGAL_ENTITY_ID, tag);
+      yield* assertStorefrontScope('session', ESHOP_LEGAL_ENTITY_ID, tag);
     }
-    yield* assertStorefrontScope('non_human', 'other-company', 'CreateOrder');
+    yield* assertStorefrontScope('api_key', 'other-company', 'CreateOrder');
   }),
 );
 const isRejection = Schema.is(MerchandisePermissionDenied);
@@ -82,3 +85,34 @@ it.effect('guards the wrapped handler before it runs', () =>
     expect(ran).toBe(true);
   }),
 );
+
+it('treats an MCP connection as its person, and a connection for an agent as non-human', () => {
+  expect(principalKindOf('oauth_connection')).toBe('human');
+  expect(principalKindOf('oauth_connection', '72000000-0000-4000-8000-000000000021')).toBe('non_human');
+  expect(principalKindOf('oauth_connection', undefined, 'AiDecideChanges')).toBe('non_human');
+  expect(principalKindOf('oauth_connection', undefined, 'ChangePrice')).toBe('human');
+});
+
+it('limits only the storefront API key to the public catalog', () => {
+  const request = { view: {} };
+  expect(storefrontReadRequest('oauth_connection', AKROS_LEGAL_ENTITY_ID, request)).toBe(request);
+  expect(storefrontReadRequest('api_key', AKROS_LEGAL_ENTITY_ID, {})).toEqual({ view: { storefront: true } });
+  expect(isStorefrontServiceKey('oauth_connection', AKROS_LEGAL_ENTITY_ID)).toBe(false);
+  expect(isStorefrontServiceKey('api_key', AKROS_LEGAL_ENTITY_ID)).toBe(true);
+});
+
+it('reports write ability only for a direct connection with module write', () => {
+  expect(connectionAllowsWrite({ authMethod: 'session' }, 'demo.merchandise')).toBe(true);
+  expect(
+    connectionAllowsWrite(
+      { authMethod: 'oauth_connection', connection: { clientId: 'c', clientName: 'Claude', grantId: '11111111-1111-4111-8111-111111111111', modules: 'all', writePolicy: 'read_only' } },
+      'demo.merchandise',
+    ),
+  ).toBe(false);
+  expect(
+    connectionAllowsWrite(
+      { authMethod: 'oauth_connection', connection: { clientId: 'c', clientName: 'Claude', grantId: '11111111-1111-4111-8111-111111111111', modules: [{ access: 'write', moduleId: 'demo.merchandise' }], writePolicy: 'direct' } },
+      'demo.merchandise',
+    ),
+  ).toBe(true);
+});

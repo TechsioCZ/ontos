@@ -91,9 +91,9 @@ it.effect('returns the exact current gross tier and snapshots the tier on placem
 );
 it.effect('AKROS API keys may only place storefront orders', () =>
   Effect.gen(function* () {
-    yield* assertStorefrontScope('non_human', AKROS_LEGAL_ENTITY_ID, 'PlaceStorefrontOrder');
+    yield* assertStorefrontScope('api_key', AKROS_LEGAL_ENTITY_ID, 'PlaceStorefrontOrder');
     for (const tag of ['ChangePrice', 'UpdateProduct', 'CreateOrder', 'ChangeOrderStatus']) {
-      const denied = yield* assertStorefrontScope('non_human', AKROS_LEGAL_ENTITY_ID, tag).pipe(Effect.flip);
+      const denied = yield* assertStorefrontScope('api_key', AKROS_LEGAL_ENTITY_ID, tag).pipe(Effect.flip);
       expect(denied._tag).toBe('MerchandisePermissionDenied');
     }
   }),
