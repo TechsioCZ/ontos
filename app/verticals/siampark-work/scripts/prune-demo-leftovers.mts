@@ -6,8 +6,9 @@
  *   node --env-file=.env verticals/siampark-work/scripts/prune-demo-leftovers.mts --apply   # removes them
  *
  * Only CANCELLED tasks are touched, in every company:
- *   - AI level B proof tasks (`pnpm demo:prove:ai`, auditors): every run leaves one cancelled task. The newest one
- *     stays, because the presenter guide opens it to show what agent B created.
+ *   - AI level B proof tasks (`pnpm demo:prove:ai`, auditors): every run leaves one cancelled task, which the proof
+ *     hides from the lists (SetTaskArchived). The newest one stays stored, so its direct link still shows what agent B
+ *     created.
  *   - QA tasks whose title ends in a random five-character suffix such as `YZ1B8`.
  *   - Tasks with an implausible due date (before 2000, e.g. a typed year 0026).
  * Each company row is rewritten in one UPDATE that bumps its revision, so open clients get a revision conflict and

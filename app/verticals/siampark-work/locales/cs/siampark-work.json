@@ -78,7 +78,13 @@
             "none": "Bez termínu"
           },
           "all": "Všechny",
-          "clear": "Zrušit filtry"
+          "clear": "Zrušit filtry",
+          "object": "Objekt",
+          "allObjects": "Všechny objekty",
+          "dueFrom": "Termín od",
+          "dueTo": "Termín do",
+          "showHidden": "Zobrazit skryté úkoly",
+          "rangeInverted": "Termín od je pozdější než Termín do, takže žádný úkol nevyhovuje."
         },
         "pagination": {
           "label": "Stránkování",
@@ -174,7 +180,7 @@
         "openContract": "Otevřít smlouvu",
         "noContext": "Bez vazby",
         "savedContext": "Uložená vazba",
-        "contextUnavailable": "Vazby se nepodařilo načíst. Stávající údaje zůstávají zachované; zavřete a znovu otevřete úkol.",
+        "contextUnavailable": "Vazby na nemovitosti a smlouvy se teď nepodařilo načíst. Uložené vazby zůstávají zachované.",
         "leaseContract": "Nájemní smlouva",
         "otherContract": "Ostatní smlouva",
         "relatedRecords": "Související záznamy",
@@ -185,7 +191,14 @@
         "teamMember": "Člen týmu",
         "newComment": "Nový komentář",
         "addComment": "Přidat komentář",
-        "readOnly": "Tento úkol můžete pouze prohlížet."
+        "readOnly": "Tento úkol můžete pouze prohlížet.",
+        "archive": "Skrýt ze seznamu",
+        "unarchive": "Vrátit do seznamu",
+        "archivedNotice": "Úkol je skrytý ze seznamu úkolů. Otevře se přímým odkazem nebo po zapnutí volby Zobrazit skryté úkoly.",
+        "archivedToast": "Úkol je skrytý ze seznamu.",
+        "restoredToast": "Úkol je zpět v seznamu.",
+        "archiveHint": "Hotový nebo zrušený úkol můžete skrýt ze seznamu; zůstane dohledatelný i s historií.",
+        "contextRetry": "Zkusit znovu"
       }
     },
     "selectPlaceholder": "Vyberte…",

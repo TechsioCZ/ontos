@@ -11,8 +11,9 @@
  *     backend (not the hidden tool) refuses the write: HTTP 403 + a denied Core audit event.
  * Writes performed: one task created by B (+ idempotent replay), then cancelled through the same governed Action.
  * Cleanup also cancels older open tasks carrying this proof's exact title/description signature; history is retained.
- * Finally the cancelled proof tasks of earlier runs are pruned from the task list (Core audit stays), so Úkoly keeps
- * only the newest one the presenter guide opens instead of one more cancelled task per run.
+ * Every cancelled proof task is then hidden from the task lists by B through the governed SetTaskArchived Action (its
+ * direct link /cs/siampark/work?resourceId=… still opens it with its history), and the cancelled proof tasks of earlier
+ * runs are pruned from the stored list (Core audit stays), so no proof task clutters Úkoly.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -518,16 +519,46 @@ try {
         `ÚKLID: důkazový úkol ${task.id} zrušen agentem B přes governed Action; historie zachována.\n`,
       );
     }
+    // Hide every cancelled proof task from the lists through the governed Action (B owns these tasks).
+    const listedRecords = await readRecordsAs(levelB, 'siampark-work');
+    const proofItems = (
+      (listedRecords.body.items ?? []) as {
+        ref: { resourceId: string };
+        title: string;
+        description?: string;
+        state: string;
+        archivedAt?: string;
+      }[]
+    ).filter(
+      (task) =>
+        task.title.startsWith('AI: zavolat zákazníkovi kvůli nabídce (') &&
+        task.description?.startsWith('Vytvořil AI agent úrovně B (důkaz ') === true &&
+        task.state === 'CANCELLED' &&
+        task.archivedAt === undefined,
+    );
+    for (const task of proofItems) {
+      const hidden = await applyCommandAs(levelB, 'siampark-work', {
+        _tag: 'SetTaskArchived',
+        archived: true,
+        taskRef: task.ref,
+      });
+      if (hidden.status !== 200) throw new Error(`Skrytí ${task.ref.resourceId}: ${describe(hidden)}`);
+      process.stdout.write(
+        `ÚKLID: důkazový úkol skryt ze seznamu přes governed Action; detail: ${shellUrl}/cs/siampark/work?resourceId=${task.ref.resourceId}\n`,
+      );
+    }
     const verified = await mcpB.call('list_tasks');
     if (verified.isError) throw new Error(String(verified.value));
-    const after = (verified.value as { items?: { id: string; state: string }[] }).items ?? [];
-    const clean = leftovers.every((task) => after.some((item) => item.id === task.id && item.state === 'CANCELLED'));
+    const after = (verified.value as { items?: { id: string; state: string; title: string }[] }).items ?? [];
+    const clean =
+      leftovers.every((task) => after.every((item) => item.id !== task.id || item.state === 'CANCELLED')) &&
+      !after.some((item) => item.title.startsWith('AI: zavolat zákazníkovi kvůli nabídce ('));
     record(
       'Úklid',
       'Důkazové úkoly zrušeny přes Action',
       'Proof tasks cancelled via Action',
-      'žádný otevřený důkazový úkol',
-      `${leftovers.length} zrušeno; historie zachována`,
+      'žádný důkazový úkol v seznamu',
+      `${leftovers.length} zrušeno, ${proofItems.length} skryto; historie zachována`,
       clean,
     );
   } catch (error) {
@@ -544,7 +575,7 @@ try {
   }
 }
 
-// Keep Úkoly presentable: only the newest cancelled proof task stays listed; Core audit keeps every run.
+// Keep the stored list small: older cancelled proof tasks are pruned (the newest stays, hidden); Core audit keeps all.
 const pruned = spawnSync(
   process.execPath,
   ['--no-warnings', '--env-file=.env', 'verticals/siampark-work/scripts/prune-demo-leftovers.mts', '--apply'],
@@ -554,7 +585,7 @@ record(
   'Úklid',
   'Starší důkazové úkoly odebrány ze seznamu',
   'Older proof tasks pruned from the list',
-  'zůstane jen nejnovější',
+  'zůstane jen nejnovější (skrytý)',
   pruned.status === 0
     ? (pruned.stdout.trim().split('\n').at(-1) ?? 'OK')
     : `RUČNÍ ÚKLID NUTNÝ: ${pruned.stderr.trim().slice(0, 200)}`,

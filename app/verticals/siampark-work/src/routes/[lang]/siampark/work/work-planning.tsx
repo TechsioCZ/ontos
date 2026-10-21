@@ -11,6 +11,7 @@ import type { WorkCommand } from '../../../../../shared/actions/apply-command.ts
 import { PlanningCommandSchema } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse, WorkProject } from '../../../../../shared/apis/records.ts';
 import { formatDueDate, isOpenTask, selectOption, todayIsoDate } from './tasks-model.ts';
+import { ChangeHistory } from './change-history.tsx';
 
 const states = { PLANNED: 'Plánovaný', ACTIVE: 'Aktivní', PAUSED: 'Pozastavený', DONE: 'Dokončený' } as const;
 type Draft = {
@@ -33,17 +34,37 @@ const initial = (project: WorkProject | undefined): Draft => ({
   milestones: (project?.milestones ?? []).map((milestone) => ({ ...milestone })),
 });
 
+const projectFieldLabels: Record<string, string> = {
+  milestones: 'Milníky',
+  plannedEnd: 'Plánovaný konec',
+  plannedStart: 'Plánovaný začátek',
+  responsibleEmployeeId: 'Odpovědná osoba',
+  state: 'Stav',
+  title: 'Název projektu',
+};
+
 const ProjectEditor = ({
   project,
   employees,
   apply,
+  actorName,
   close,
 }: {
   readonly project: WorkProject | undefined;
   readonly employees: readonly Employee[];
   readonly apply: Apply;
+  readonly actorName: (principalId: string) => string;
   readonly close: () => void;
 }) => {
+  const historyValue = (field: string, value: string | undefined): string => {
+    if (value === undefined) return '—';
+    if (field === 'state') return Object.entries(states).find(([state]) => state === value)?.[1] ?? value;
+    if (field === 'plannedStart' || field === 'plannedEnd') return formatDueDate(value);
+    if (field === 'responsibleEmployeeId')
+      return employees.find((person) => person.id === value)?.fullName ?? 'zaměstnanec mimo seznam';
+    if (field === 'milestones') return value.replace(/(\d{4}-\d{2}-\d{2})/g, (date) => formatDueDate(date));
+    return value;
+  };
   const [draft, setDraft] = useState(() => initial(project));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -211,6 +232,16 @@ const ProjectEditor = ({
         <p className="text-sm text-fg-secondary">
           Úkoly přiřadíte v jejich detailu. Změny projektu zůstávají uložené po obnovení stránky.
         </p>
+        {project !== undefined && (
+          <ChangeHistory
+            actorName={actorName}
+            createdAt={project.createdAt}
+            entries={project.history}
+            fieldLabel={(field) => projectFieldLabels[field] ?? field}
+            formatValue={historyValue}
+            updatedAt={project.updatedAt}
+          />
+        )}
       </div>
     </SidePanel>
   );
@@ -220,11 +251,13 @@ export const WorkPlanning = ({
   records,
   employees,
   apply,
+  actorName,
   openTask,
 }: {
   readonly records: RecordsResponse;
   readonly employees: readonly Employee[];
   readonly apply: Apply;
+  readonly actorName: (principalId: string) => string;
   readonly openTask: (task: RecordsResponse['items'][number]) => void;
 }) => {
   const [editor, setEditor] = useState<{ project: WorkProject | undefined }>();
@@ -373,6 +406,7 @@ export const WorkPlanning = ({
           project={editor.project}
           employees={employees}
           apply={apply}
+          actorName={actorName}
           close={() => setEditor(undefined)}
         />
       )}

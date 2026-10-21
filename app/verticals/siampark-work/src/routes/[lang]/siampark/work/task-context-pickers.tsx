@@ -3,7 +3,8 @@ import { executeRecords as agreementRecords } from '@app/siampark-agreements/cli
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Effect, Random } from 'effect';
+import { Button } from '@techsio/ui-kit/atoms/button';
+import { Effect, Random, Schedule } from 'effect';
 import { useEffect, useState } from 'react';
 import type { ContextRef, LookupAccess } from '../../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -34,13 +35,18 @@ export const TaskContextPickers = ({
   const [contracts, setContracts] = useState<readonly ContextOption[]>([]);
   const [propertyState, setPropertyState] = useState<'loading' | 'ready' | 'failed'>('loading');
   const [contractState, setContractState] = useState<'loading' | 'ready' | 'failed'>('loading');
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
+    setPropertyState('loading');
+    setContractState('loading');
     const correlation = Random.nextInt.pipe(Effect.map((id) => `work-context:${id}`));
     const propertyFiber =
       lookupAccess?.properties === 'allowed'
         ? browserRuntime.runFork(
             correlation.pipe(
               Effect.flatMap((id) => propertyRecords({}, id)),
+              // The first open of a panel often races the gateway warming up; a short retry hides that blip.
+              Effect.retry({ schedule: Schedule.spaced('800 millis'), times: 3 }),
               Effect.match({
                 onFailure: () => setPropertyState('failed'),
                 onSuccess: (records) => {
@@ -65,6 +71,7 @@ export const TaskContextPickers = ({
         ? browserRuntime.runFork(
             correlation.pipe(
               Effect.flatMap((id) => agreementRecords({}, id)),
+              Effect.retry({ schedule: Schedule.spaced('800 millis'), times: 3 }),
               Effect.match({
                 onFailure: () => setContractState('failed'),
                 onSuccess: (records) => {
@@ -84,7 +91,7 @@ export const TaskContextPickers = ({
       propertyFiber?.interruptUnsafe();
       contractFiber?.interruptUnsafe();
     };
-  }, [lookupAccess?.properties, lookupAccess?.contracts]);
+  }, [lookupAccess?.properties, lookupAccess?.contracts, attempt]);
   const propertyId = refs.find((ref) => ref.resourceType === 'siampark.property.property')?.resourceId;
   const fields = [
     {
@@ -163,7 +170,12 @@ export const TaskContextPickers = ({
           );
         })}
       {(propertyState === 'failed' || contractState === 'failed') && (
-        <StatusText status="warning">{t(`${key}.contextUnavailable`)}</StatusText>
+        <div className="flex flex-wrap items-center gap-150">
+          <StatusText status="warning">{t(`${key}.contextUnavailable`)}</StatusText>
+          <Button onClick={() => setAttempt((value) => value + 1)} size="sm" theme="outlined" variant="secondary">
+            {t(`${key}.contextRetry`)}
+          </Button>
+        </div>
       )}
     </section>
   );

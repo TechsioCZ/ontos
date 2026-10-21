@@ -34,6 +34,7 @@ import type { TaskRef } from '../../shared/resources/task.ts';
 import { legalTransitions } from '../../shared/actions/task-transitions.ts';
 import { workStates } from '../database/schema.ts';
 import { taskLookupAccess } from './task-lookup-access.ts';
+import { withHistory } from './work-history.ts';
 
 const workModuleId = 'siampark.work' as const;
 const workChangedReason = 'Work changed; refresh before another operation' as const;
@@ -180,14 +181,14 @@ export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWor
   const refs = Match.value(command).pipe(
     Match.tag('CreateTask', ({ contextRefs = [] }) => contextRefs),
     Match.tag('UpdateTask', ({ taskRef, contextRefs = [] }) => [taskRef, ...contextRefs]),
-    Match.tag('AssignTask', 'ChangeTaskState', ({ taskRef }) => [taskRef]),
+    Match.tag('AssignTask', 'ChangeTaskState', 'SetTaskArchived', ({ taskRef }) => [taskRef]),
     Match.exhaustive,
   );
   const owner = Match.value(command).pipe(
     Match.tag('CreateTask', 'UpdateTask', 'AssignTask', ({ ownerPrincipalRef }) =>
       Option.fromUndefinedOr(ownerPrincipalRef),
     ),
-    Match.tag('ChangeTaskState', () => Option.none()),
+    Match.tag('ChangeTaskState', 'SetTaskArchived', () => Option.none()),
     Match.exhaustive,
   );
   if (
@@ -246,6 +247,7 @@ export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWor
       'UpdateTask',
       'AssignTask',
       'ChangeTaskState',
+      'SetTaskArchived',
       Effect.fn('Work.updateTask')(function* updateTask(
         value: Exclude<SingleWorkCommand, { readonly _tag: 'CreateTask' }>,
       ) {
@@ -257,6 +259,18 @@ export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWor
             code: 'work_not_found',
             reason: 'Task does not exist in the authorized scope',
           });
+        }
+        if (value._tag === 'SetTaskArchived') {
+          // Only a closed task leaves the lists: open work must stay visible to whoever is responsible for it.
+          if (taskStatusGroup(existing.state) !== 'DONE') {
+            return yield* new WorkLifecycleConflict({
+              code: 'work_lifecycle_conflict',
+              reason: 'Only a completed or cancelled Task can be hidden from the lists',
+            });
+          }
+          return value.archived
+            ? { ...existing, archivedAt: existing.archivedAt ?? input.now, updatedAt: input.now }
+            : { ...Struct.omit(existing, ['archivedAt']), updatedAt: input.now };
         }
         if (taskStatusGroup(existing.state) === 'DONE') {
           return yield* new WorkLifecycleConflict({
@@ -513,6 +527,7 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
       }
       return employee;
     });
+    const actor = { principalId: scope.principalId, tenantId: scope.tenantId };
     const whereScope = and(eq(workStates.tenantId, scope.tenantId), eq(workStates.legalEntityId, legalEntityId));
     const load = Effect.fn('Work.load')(function* load() {
       const rows = yield* transaction.select().from(workStates).where(whereScope).limit(1);
@@ -648,7 +663,7 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
           }),
         };
       }
-      const revision = yield* save(expectedRevision, updatedState);
+      const revision = yield* save(expectedRevision, withHistory(snapshot.state, updatedState, actor, now));
       return { results: change.results, revision };
     });
     const apply = Effect.fn('Work.apply')(function* apply(
@@ -736,11 +751,14 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
           createdAt: existing?.createdAt ?? now,
           updatedAt: now,
         };
-        const revision = yield* save(expectedRevision, {
-          ...snapshot.state,
-          projects: [...projects.filter((item) => item.id !== project.id), project],
-        });
-        return { revision, project };
+        const recorded = withHistory(
+          snapshot.state,
+          { ...snapshot.state, projects: [...projects.filter((item) => item.id !== project.id), project] },
+          actor,
+          now,
+        );
+        const revision = yield* save(expectedRevision, recorded);
+        return { revision, project: recorded.projects?.find((item) => item.id === project.id) ?? project };
       }
       if (!(yield* contextGrant(scope, 'write_all'))) {
         if (Predicate.isTagged('CreateTask')(command)) {
@@ -808,9 +826,10 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
               : { ...withoutOwner, ownerPrincipalRef: employee.principalRef };
         }
       }
-      const owner = Predicate.isTagged('ChangeTaskState')(verifiedCommand)
-        ? undefined
-        : verifiedCommand.ownerPrincipalRef;
+      const owner =
+        Predicate.isTagged('ChangeTaskState')(verifiedCommand) || Predicate.isTagged('SetTaskArchived')(verifiedCommand)
+          ? undefined
+          : verifiedCommand.ownerPrincipalRef;
       if (owner !== undefined) {
         if (owner.tenantId !== scope.tenantId) {
           return yield* new WorkScopeMismatch({
@@ -838,8 +857,12 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
         resourceId,
         tenantId: scope.tenantId,
       });
-      const revision = yield* save(expectedRevision, change.state);
-      return { revision, task: change.task };
+      const recorded = withHistory(snapshot.state, change.state, actor, now);
+      const revision = yield* save(expectedRevision, recorded);
+      return {
+        revision,
+        task: recorded.tasks.find((item) => item.ref.resourceId === change.task.ref.resourceId) ?? change.task,
+      };
     });
     const records = Effect.fn('Work.records')(function* records(request: RecordsRequest) {
       const snapshot = yield* load();
@@ -853,6 +876,8 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
       const items = visible.filter(
         (task) =>
           (request.resourceId === undefined || task.ref.resourceId === request.resourceId) &&
+          // Hidden tasks stay out of lists; a direct link (one resourceId) still opens them.
+          (task.archivedAt === undefined || request.resourceId !== undefined || request.includeArchived === true) &&
           (request.state === undefined || task.state === request.state) &&
           (request.ownerPrincipalId === undefined ||
             task.ownerPrincipalRef?.principalId === request.ownerPrincipalId) &&

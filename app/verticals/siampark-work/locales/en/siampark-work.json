@@ -78,7 +78,13 @@
             "none": "No due date"
           },
           "all": "All",
-          "clear": "Clear filters"
+          "clear": "Clear filters",
+          "object": "Property or unit",
+          "allObjects": "All properties",
+          "dueFrom": "Due from",
+          "dueTo": "Due to",
+          "showHidden": "Show hidden tasks",
+          "rangeInverted": "Due from is later than due to, so no task matches."
         },
         "pagination": {
           "label": "Pagination",
@@ -174,7 +180,7 @@
         "openContract": "Open contract",
         "noContext": "No link",
         "savedContext": "Saved link",
-        "contextUnavailable": "Links could not be loaded. Existing values are preserved; close and reopen the task.",
+        "contextUnavailable": "Links to properties and contracts could not be loaded right now. Saved links are kept.",
         "leaseContract": "Lease contract",
         "otherContract": "Other contract",
         "relatedRecords": "Related records",
@@ -185,7 +191,14 @@
         "teamMember": "Team member",
         "newComment": "New comment",
         "addComment": "Add comment",
-        "readOnly": "You can only view this task."
+        "readOnly": "You can only view this task.",
+        "archive": "Hide from list",
+        "unarchive": "Show in list again",
+        "archivedNotice": "This task is hidden from the task list. It opens from a direct link or with Show hidden tasks.",
+        "archivedToast": "The task is hidden from the list.",
+        "restoredToast": "The task is back in the list.",
+        "archiveHint": "A completed or cancelled task can be hidden from the list; it stays findable with its history.",
+        "contextRetry": "Try again"
       }
     },
     "selectPlaceholder": "Select…",

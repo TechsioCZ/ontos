@@ -1,6 +1,7 @@
 import { EmptyState, PageHeader, StatCard, StatRow, Toaster, dataTableRowLabels } from '@app/admin-ui';
 import { listCustomers } from '@app/party-registry/api/client';
 import { listOpportunities } from '@app/sales-pipeline/clients/records';
+import { executeRecords as propertyRecords } from '@app/siampark-property/clients/records';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { listEmployees } from '@app/workforce/clients/records';
 import type { Employee } from '@app/workforce/contracts/records';
@@ -9,7 +10,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
-import { Effect, Match, Option, Random, Schema } from 'effect';
+import { Effect, Match, Option, Random, Schedule, Schema } from 'effect';
 import type { Types } from 'effect';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -52,7 +53,7 @@ import {
   withSavedTask,
   writeStoredTaskView,
 } from './tasks-model.ts';
-import type { CustomerOption, OpportunityOption, TaskFilters, TaskTab } from './tasks-model.ts';
+import type { CustomerOption, ObjectOption, OpportunityOption, TaskFilters, TaskTab } from './tasks-model.ts';
 import csResource from '../../../../../locales/cs/siampark-work.json';
 import enResource from '../../../../../locales/en/siampark-work.json';
 import '../../../index.css';
@@ -135,10 +136,19 @@ interface EmployeeSetters {
 }
 
 // Module-scope loaders take the state setters as arguments, so the mount effect needs no dependencies.
-const loadRecords = ({ setLoadState, setRecords }: RecordsSetters, partyId?: typeof PartyIdSchema.Type) => {
+const recordsRequest = (partyId: typeof PartyIdSchema.Type | undefined, includeArchived: boolean) => ({
+  ...(partyId === undefined ? {} : { partyId }),
+  ...(includeArchived ? { includeArchived } : {}),
+});
+
+const loadRecords = (
+  { setLoadState, setRecords }: RecordsSetters,
+  partyId: typeof PartyIdSchema.Type | undefined,
+  includeArchived: boolean,
+) => {
   browserRuntime.runFork(
     requestId.pipe(
-      Effect.flatMap((id) => executeRecords(partyId === undefined ? {} : { partyId }, id)),
+      Effect.flatMap((id) => executeRecords(recordsRequest(partyId, includeArchived), id)),
       Effect.match({
         onFailure: (error) =>
           setLoadState(
@@ -241,6 +251,37 @@ const loadOpportunityNames = ({ setOpportunities, setReferenceFailed, settle }: 
   );
 };
 
+/** Properties and units for the Objekt filter and the history names. Units sort under their property. */
+const loadObjects = (setObjects: (objects: readonly ObjectOption[] | undefined) => void) => {
+  browserRuntime.runFork(
+    requestId.pipe(
+      Effect.flatMap((id) => propertyRecords({}, id)),
+      Effect.retry({ schedule: Schedule.spaced('800 millis'), times: 3 }),
+      Effect.matchEffect({
+        onFailure: (error) =>
+          Effect.logWarning('Property list unavailable.', error).pipe(
+            Effect.andThen(Effect.sync(() => setObjects(undefined))),
+          ),
+        onSuccess: (records) =>
+          Effect.sync(() =>
+            setObjects(
+              records.properties.flatMap((property) => [
+                { id: property.propertyRef.resourceId, label: `${property.code} · ${property.name}` },
+                ...records.units
+                  .filter((unit) => unit.propertyRef.resourceId === property.propertyRef.resourceId)
+                  .map((unit) => ({
+                    id: unit.unitRef.resourceId,
+                    label: `${property.code} / ${unit.code} · ${unit.name}`,
+                    propertyId: property.propertyRef.resourceId,
+                  })),
+              ]),
+            ),
+          ),
+      }),
+    ),
+  );
+};
+
 const EmptyActionButton = ({ label, onClick }: { readonly label: string; readonly onClick: () => void }) => (
   <Button onClick={onClick} size="sm" theme="outlined" variant="secondary">
     {label}
@@ -326,6 +367,8 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
   const [opportunities, setOpportunities] = useState<readonly OpportunityOption[]>([]);
   const [referenceFailed, setReferenceFailed] = useState(false);
   const [lookups, setLookups] = useState<LookupState>({ customers: false, employees: false, opportunities: false });
+  const [objects, setObjects] = useState<readonly ObjectOption[]>();
+  const [showHidden, setShowHidden] = useState(false);
   const { filters: storedFilters, setFilters, setTab, tab } = useTaskView(partyId, invalidFilter);
   // A saved filter from a broader role cannot silently hide rows when its directory is no longer available.
   const filters = records?.lookupAccess?.employees === 'allowed' ? storedFilters : { ...storedFilters, assignee: ALL };
@@ -366,8 +409,8 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     if (invalidFilter) {
       return;
     }
-    loadRecords({ setLoadState, setRecords }, partyId);
-  }, [invalidFilter, partyId]);
+    loadRecords({ setLoadState, setRecords }, partyId, showHidden);
+  }, [invalidFilter, partyId, showHidden]);
 
   const lookupAccess = records?.lookupAccess;
   useEffect(() => {
@@ -393,6 +436,8 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
       settle('opportunities');
     }
     setReferenceFailed(lookupAccess?.customers === 'unavailable' || lookupAccess?.opportunities === 'unavailable');
+    if (lookupAccess?.properties === 'allowed') loadObjects(setObjects);
+    else setObjects(undefined);
   }, [lookupAccess, records === undefined]);
 
   const linkedTaskOpened = useRef(false);
@@ -400,14 +445,30 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     const id = new URL(globalThis.location.href).searchParams.get('resourceId');
     if (id === null || records === undefined || linkedTaskOpened.current) return;
     linkedTaskOpened.current = true;
-    const linked = records.items.find((task) => task.ref.resourceId === id);
-    if (linked === undefined) {
-      setActionError(t(`${key}.forbidden`));
+    const openLinked = (linked: Task) => {
+      setTab('all');
+      setFilters(initialTaskFilters);
+      openEditor({ mode: 'edit', task: linked });
+    };
+    const listed = records.items.find((task) => task.ref.resourceId === id);
+    if (listed !== undefined) {
+      openLinked(listed);
       return;
     }
-    setTab('all');
-    setFilters(initialTaskFilters);
-    openEditor({ mode: 'edit', task: linked });
+    // A task hidden from the list still opens from its direct link.
+    browserRuntime.runFork(
+      requestId.pipe(
+        Effect.flatMap((correlation) => executeRecords({ resourceId: id }, correlation)),
+        Effect.match({
+          onFailure: () => setActionError(t(`${key}.forbidden`)),
+          onSuccess: (result) => {
+            const linked = result.items.find((task) => task.ref.resourceId === id);
+            if (linked === undefined) setActionError(t(`${key}.forbidden`));
+            else openLinked(linked);
+          },
+        }),
+      ),
+    );
   }, [records, t]);
   const today = todayIsoDate();
   const employeeNames = new Map<string, string>(employees.map((employee) => [employee.id, employee.fullName]));
@@ -420,6 +481,13 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     opportunities.map((opportunity) => [opportunity.id, opportunity.title] as const),
   );
   const canWrite = records?.canWrite === true;
+  const unitProperty = new Map<string, string>(
+    (objects ?? []).flatMap((item) => (item.propertyId === undefined ? [] : [[item.id, item.propertyId] as const])),
+  );
+  const contextLabels = new Map<string, string>((objects ?? []).map((item) => [item.id, item.label] as const));
+  const actorName = (principalId: string) =>
+    employees.find((employee) => employee.principalRef?.principalId === principalId)?.fullName ??
+    (principalId === records?.actorPrincipalRef.principalId ? 'Vy' : 'Účet mimo seznam zaměstnanců (např. AI agent)');
   const mineEmployeeId =
     records === undefined ? undefined : employeeIdOf(records.actorPrincipalRef.principalId, employees);
   // "Mine" narrows by the employee linked to this login; until the employees settle the table stays in its loading
@@ -436,6 +504,7 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
           minePrincipalId: records.actorPrincipalRef.principalId,
           tab,
           today,
+          unitProperty,
         });
   // The header shows the role only, so the "mine" tab names the employee it narrows to.
   const mineName = mineEmployeeId === undefined ? undefined : employeeNames.get(mineEmployeeId);
@@ -453,7 +522,10 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     filters.assignee !== ALL ||
     filters.due !== ALL ||
     filters.priority !== ALL ||
-    filters.state !== ALL;
+    filters.state !== ALL ||
+    filters.object !== ALL ||
+    filters.dueFrom !== '' ||
+    filters.dueTo !== '';
 
   const showFreshRecords = (fresh: RecordsResponse) => setRecords((current) => newerTaskList(current, fresh));
   const showSavedTask = (saved: Task, revision: number) => {
@@ -465,7 +537,7 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     );
   };
   const reloadRecords = requestId.pipe(
-    Effect.flatMap((id) => executeRecords(partyId === undefined ? {} : { partyId }, id)),
+    Effect.flatMap((id) => executeRecords(recordsRequest(partyId, showHidden), id)),
     Effect.tap((fresh) => Effect.sync(() => showFreshRecords(fresh))),
   );
 
@@ -706,7 +778,7 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
 
   const handleReload = () => {
     setLoadState('loading');
-    loadRecords({ setLoadState, setRecords }, partyId);
+    loadRecords({ setLoadState, setRecords }, partyId, showHidden);
   };
 
   const handleOpenCreate = () => {
@@ -750,6 +822,26 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     handlePlanning: (command: WorkCommand, onDone: (outcome: CommandOutcome) => void) => {
       if (records !== undefined) runCommand(command, records.revision, onDone);
     },
+    handleArchive: (archived: boolean) => {
+      if (editor?.mode !== 'edit' || records === undefined) return;
+      setSaving(true);
+      setFormError(undefined);
+      runCommand({ _tag: 'SetTaskArchived', archived, taskRef: editor.task.ref }, records.revision, (outcome) => {
+        setSaving(false);
+        if (outcome.ok) {
+          toaster.create({
+            duration: SUCCESS_TOAST_DURATION_MS,
+            title: t(archived ? `${key}.archivedToast` : `${key}.restoredToast`),
+            type: 'success',
+          });
+        } else setFormError(outcome.message);
+      });
+    },
+    actorName,
+    contextLabels,
+    objects,
+    showHidden,
+    setShowHidden,
     handleComment: (text: string) => {
       if (editor?.mode !== 'edit' || records === undefined) return;
       setSaving(true);
@@ -840,6 +932,7 @@ const TasksPageContent = ({
           records={records}
           employees={model.employees}
           apply={model.handlePlanning}
+          actorName={model.actorName}
           openTask={model.handleOpenEdit}
         />
       )}
@@ -888,8 +981,11 @@ const TasksPageContent = ({
         employees={model.employees}
         canAssign={model.lookupAccess?.employees === 'allowed'}
         filters={model.filters}
+        objects={model.objects}
         onChange={model.handleFiltersChange}
         onClear={model.handleClearFilters}
+        onShowHiddenChange={model.canWrite ? model.setShowHidden : undefined}
+        showHidden={model.showHidden}
       />
 
       {model.canWrite && (
@@ -1033,6 +1129,9 @@ const TasksPageContent = ({
           onSubmit={model.handleSave}
           readOnly={!model.canWrite}
           onComment={model.handleComment}
+          onArchive={model.canWrite ? model.handleArchive : undefined}
+          actorName={model.actorName}
+          contextLabels={model.contextLabels}
           projects={records?.projects ?? []}
           opportunities={model.opportunities}
           opportunitiesLoading={!model.lookups.opportunities}

@@ -16,6 +16,11 @@ export interface TaskFilters {
   /** `all`, `none` (unassigned) or an employee id. */
   readonly assignee: string;
   readonly due: DueFilter;
+  /** Termín od / do as ISO dates; '' leaves that end of the range open. */
+  readonly dueFrom: string;
+  readonly dueTo: string;
+  /** `all` or the resourceId of a property or unit (Objekt). */
+  readonly object: string;
   readonly priority: 'all' | Task['priority'];
   readonly search: string;
   readonly state: 'all' | Task['state'];
@@ -24,10 +29,30 @@ export interface TaskFilters {
 export const initialTaskFilters: TaskFilters = {
   assignee: 'all',
   due: 'all',
+  dueFrom: '',
+  dueTo: '',
+  object: 'all',
   priority: 'all',
   search: '',
   state: 'all',
 };
+
+/** A property or unit offered by the Objekt filter. Units name their property, so a property also finds them. */
+export interface ObjectOption {
+  readonly id: string;
+  readonly label: string;
+  readonly propertyId?: string;
+}
+
+/** The task is linked to the chosen object, or to a unit of the chosen property. */
+export const matchesObject = (task: Task, object: string, unitProperty: ReadonlyMap<string, string>) =>
+  object === 'all' ||
+  task.contextRefs.some((ref) => ref.resourceId === object || unitProperty.get(ref.resourceId) === object);
+
+/** Termín within the inclusive range. A bound excludes tasks without a due date. */
+export const matchesDueRange = (task: Task, from: string, to: string) =>
+  (from === '' && to === '') ||
+  (task.dueDate !== undefined && (from === '' || task.dueDate >= from) && (to === '' || task.dueDate <= to));
 
 /** Workflow order for the State column and the bulk state menu. */
 export const TASK_STATE_ORDER = [
@@ -215,7 +240,9 @@ export const filterTasks = (
     minePrincipalId,
     tab,
     today = todayIsoDate(),
+    unitProperty = noNames,
   }: {
+    readonly unitProperty?: ReadonlyMap<string, string>;
     readonly customerNames?: ReadonlyMap<string, string>;
     readonly employeeNames?: ReadonlyMap<string, string>;
     readonly filters: TaskFilters;
@@ -234,6 +261,8 @@ export const filterTasks = (
       (needle === '' || matchesSearch(task, needle, { customerNames, employeeNames })) &&
       matchesAssignee(task, filters.assignee) &&
       matchesDueFilter(task, filters.due, today) &&
+      matchesDueRange(task, filters.dueFrom, filters.dueTo) &&
+      matchesObject(task, filters.object, unitProperty) &&
       (filters.priority === 'all' || task.priority === filters.priority) &&
       (filters.state === 'all' || task.state === filters.state),
   );
@@ -246,6 +275,9 @@ export const filterTasks = (
 const StoredTaskFiltersSchema = Schema.Struct({
   assignee: Schema.String,
   due: DueFilterSchema,
+  dueFrom: Schema.optionalKey(Schema.String),
+  dueTo: Schema.optionalKey(Schema.String),
+  object: Schema.optionalKey(Schema.String),
   priority: Schema.Union([Schema.Literal('all'), TaskPrioritySchema]),
   search: Schema.String,
   state: Schema.Union([Schema.Literal('all'), TaskStateSchema]),
@@ -273,8 +305,11 @@ export const storedTaskViewSnapshot = (): string | null => {
   }
 };
 
-export const taskViewFromSnapshot = (raw: string | null): StoredTaskView | undefined =>
-  raw === null ? undefined : Option.getOrUndefined(Schema.decodeOption(StoredTaskViewSchema)(raw));
+export const taskViewFromSnapshot = (raw: string | null): StoredTaskView | undefined => {
+  const stored = raw === null ? undefined : Option.getOrUndefined(Schema.decodeOption(StoredTaskViewSchema)(raw));
+  // A view saved before the Objekt and Termín od/do filters existed keeps them open.
+  return stored === undefined ? undefined : { ...stored, filters: { ...initialTaskFilters, ...stored.filters } };
+};
 
 const taskViewChangedEvent = 'siampark-work:task-view-changed';
 

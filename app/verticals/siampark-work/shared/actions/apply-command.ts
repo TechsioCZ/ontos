@@ -69,6 +69,8 @@ export const SingleWorkCommandSchema = Schema.Union([
   }),
   Schema.TaggedStruct('AssignTask', { ownerPrincipalRef: PrincipalRefSchema, taskRef: TaskRefSchema }),
   Schema.TaggedStruct('ChangeTaskState', { state: TaskStateSchema, taskRef: TaskRefSchema }),
+  // Hides a completed or cancelled task from task lists (archived: true) or lists it again (false).
+  Schema.TaggedStruct('SetTaskArchived', { archived: Schema.Boolean, taskRef: TaskRefSchema }),
 ]);
 // Bulk commands apply each id independently: invalid ids are skipped and reported in `results`.
 export const BulkWorkCommandSchema = Schema.Union([
@@ -81,10 +83,10 @@ export const BulkWorkCommandSchema = Schema.Union([
 ]);
 export const PlanningCommandSchema = Schema.Union([
   Schema.TaggedStruct('CreateProject', {
-    ...Schema.Struct(Struct.omit(ProjectSchema.fields, ['id', 'createdAt', 'updatedAt'])).fields,
+    ...Schema.Struct(Struct.omit(ProjectSchema.fields, ['id', 'createdAt', 'history', 'updatedAt'])).fields,
   }),
   Schema.TaggedStruct('UpdateProject', {
-    ...Schema.Struct(Struct.omit(ProjectSchema.fields, ['createdAt', 'updatedAt'])).fields,
+    ...Schema.Struct(Struct.omit(ProjectSchema.fields, ['createdAt', 'history', 'updatedAt'])).fields,
   }),
   Schema.TaggedStruct('AddTaskComment', {
     taskRef: TaskRefSchema,

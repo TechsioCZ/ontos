@@ -105,10 +105,10 @@ export const obchodGuide: DemoGuide = {
         },
         {
           click:
-            'Karta Všechny → do Hledat úkol napište „AI: zavolat zákazníkovi kvůli nabídce“ → otevřete nejnovější úkol ve stavu Zrušený.',
+            'Karta Všechny → zapněte Zobrazit skryté úkoly → do Hledat úkol napište „AI: zavolat zákazníkovi kvůli nabídce“ → otevřete nejnovější úkol ve stavu Zrušený a ukažte jeho Historii změn.',
           id: 'obchod-ai-b',
           persona: vedeni,
-          say: 'Úroveň B smí navíc založit úkol pro zaměstnance a nic jiného. Každá zkouška přes MCP založila jeden důkazový úkol, který byl zrušen řízenou akcí; historie zůstala.',
+          say: 'Úroveň B smí navíc založit úkol pro zaměstnance a nic jiného. Každá zkouška přes MCP založila jeden důkazový úkol, který byl řízenou akcí zrušen a skryt ze seznamu; historie zůstala.',
           target: { kind: 'app', path: '/siampark/work' },
           title: 'Úroveň B založí úkol',
         },

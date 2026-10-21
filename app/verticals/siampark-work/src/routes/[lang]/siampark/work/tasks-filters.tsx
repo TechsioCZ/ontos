@@ -8,7 +8,7 @@ import { Schema } from 'effect';
 import { TaskPrioritySchema, TaskStateSchema } from '../../../../../shared/apis/records.ts';
 import type { TaskState } from '../../../../../shared/apis/records.ts';
 import { DueFilterSchema, TASK_STATE_ORDER, selectOption } from './tasks-model.ts';
-import type { TaskFilters } from './tasks-model.ts';
+import type { ObjectOption, TaskFilters } from './tasks-model.ts';
 
 const SELECT_PLACEHOLDER = 'siampark-work.selectPlaceholder';
 
@@ -30,117 +30,189 @@ export const TaskFilterBar = ({
   employees,
   canAssign,
   filters,
+  objects,
   onChange,
   onClear,
+  onShowHiddenChange,
+  showHidden,
 }: {
   readonly active: boolean;
   readonly employees: readonly Employee[];
   readonly canAssign: boolean;
   readonly filters: TaskFilters;
+  /** Properties and units for the Objekt filter; undefined when the property directory is not available. */
+  readonly objects: readonly ObjectOption[] | undefined;
   readonly onChange: (next: TaskFilters) => void;
   readonly onClear: () => void;
+  readonly onShowHiddenChange?: ((next: boolean) => void) | undefined;
+  readonly showHidden: boolean;
 }) => {
   const { t } = useModernI18n();
+  const rangeInverted = filters.dueFrom !== '' && filters.dueTo !== '' && filters.dueFrom > filters.dueTo;
   return (
-    <div className="flex flex-wrap items-end gap-150">
-      <div className="w-64 min-w-0">
-        <FormInput
-          id="task-search"
-          label={t(`${key}.filters.search`)}
-          onChange={(event) => onChange({ ...filters, search: event.target.value })}
-          size="sm"
-          value={filters.search}
-        />
-      </div>
-      {canAssign && (
+    <>
+      <div className="flex flex-wrap items-end gap-150">
+        <div className="w-64 min-w-0">
+          <FormInput
+            id="task-search"
+            label={t(`${key}.filters.search`)}
+            onChange={(event) => onChange({ ...filters, search: event.target.value })}
+            size="sm"
+            value={filters.search}
+          />
+        </div>
+        {canAssign && (
+          <div className="w-48 min-w-0">
+            <Select
+              items={[
+                selectOption(t(`${key}.filters.allAssignees`), ALL),
+                selectOption(t(`${key}.unassigned`), NONE),
+                ...employeeItems(employees),
+              ]}
+              label={t(`${key}.filters.assignee`)}
+              labelProps={filterLabelProps}
+              onValueChange={({ value }) => {
+                const [next] = value;
+                if (next !== undefined) {
+                  onChange({ ...filters, assignee: next });
+                }
+              }}
+              placeholder={t(SELECT_PLACEHOLDER)}
+              size="sm"
+              value={[filters.assignee]}
+            />
+          </div>
+        )}
         <div className="w-48 min-w-0">
           <Select
             items={[
-              selectOption(t(`${key}.filters.allAssignees`), ALL),
-              selectOption(t(`${key}.unassigned`), NONE),
-              ...employeeItems(employees),
+              selectOption(t(`${key}.filters.all`), ALL),
+              ...DUE_OPTIONS.map((value) => selectOption(t(`${key}.filters.dueOptions.${value}`), value)),
             ]}
-            label={t(`${key}.filters.assignee`)}
+            label={t(`${key}.filters.due`)}
             labelProps={filterLabelProps}
             onValueChange={({ value }) => {
               const [next] = value;
-              if (next !== undefined) {
-                onChange({ ...filters, assignee: next });
+              if (Schema.is(DueFilterSchema)(next)) {
+                onChange({ ...filters, due: next });
               }
             }}
             placeholder={t(SELECT_PLACEHOLDER)}
             size="sm"
-            value={[filters.assignee]}
+            value={[filters.due]}
           />
         </div>
+        <div className="w-48 min-w-0">
+          <Select
+            items={[
+              selectOption(t(`${key}.filters.all`), ALL),
+              ...TASK_STATE_ORDER.map((value) => selectOption(t(`${key}.states.${value}`), value)),
+            ]}
+            label={t(`${key}.filters.state`)}
+            labelProps={filterLabelProps}
+            onValueChange={({ value }) => {
+              const [next] = value;
+              if (next === ALL) {
+                onChange({ ...filters, state: ALL });
+              } else if (Schema.is(TaskStateSchema)(next)) {
+                onChange({ ...filters, state: next });
+              }
+            }}
+            placeholder={t(SELECT_PLACEHOLDER)}
+            size="sm"
+            value={[filters.state]}
+          />
+        </div>
+        <div className="w-48 min-w-0">
+          <Select
+            items={[
+              selectOption(t(`${key}.filters.all`), ALL),
+              ...PRIORITY_OPTIONS.map((value) => selectOption(t(`${key}.priorities.${value}`), value)),
+            ]}
+            label={t(`${key}.filters.priority`)}
+            labelProps={filterLabelProps}
+            onValueChange={({ value }) => {
+              const [next] = value;
+              if (next === ALL) {
+                onChange({ ...filters, priority: ALL });
+              } else if (Schema.is(TaskPrioritySchema)(next)) {
+                onChange({ ...filters, priority: next });
+              }
+            }}
+            placeholder={t(SELECT_PLACEHOLDER)}
+            size="sm"
+            value={[filters.priority]}
+          />
+        </div>
+        {objects !== undefined && (
+          <div className="w-64 min-w-0">
+            <Select
+              items={[
+                selectOption(t(`${key}.filters.allObjects`), ALL),
+                ...objects.map((item) => selectOption(item.label, item.id)),
+                // A saved view can name an object the directory no longer lists; keep it selectable to clear it.
+                ...(filters.object === ALL || objects.some((item) => item.id === filters.object)
+                  ? []
+                  : [selectOption(t(`${key}.savedContext`), filters.object)]),
+              ]}
+              label={t(`${key}.filters.object`)}
+              labelProps={filterLabelProps}
+              onValueChange={({ value }) => {
+                const [next] = value;
+                if (next !== undefined) {
+                  onChange({ ...filters, object: next });
+                }
+              }}
+              placeholder={t(SELECT_PLACEHOLDER)}
+              size="sm"
+              value={[filters.object]}
+            />
+          </div>
+        )}
+        <div className="w-40 min-w-0">
+          <FormInput
+            id="task-due-from"
+            label={t(`${key}.filters.dueFrom`)}
+            max={filters.dueTo === '' ? undefined : filters.dueTo}
+            onChange={(event) => onChange({ ...filters, dueFrom: event.target.value })}
+            size="sm"
+            type="date"
+            value={filters.dueFrom}
+          />
+        </div>
+        <div className="w-40 min-w-0">
+          <FormInput
+            id="task-due-to"
+            label={t(`${key}.filters.dueTo`)}
+            min={filters.dueFrom === '' ? undefined : filters.dueFrom}
+            onChange={(event) => onChange({ ...filters, dueTo: event.target.value })}
+            size="sm"
+            type="date"
+            value={filters.dueTo}
+          />
+        </div>
+        {onShowHiddenChange !== undefined && (
+          <label className="flex items-center gap-100 pb-100 text-sm">
+            <input
+              checked={showHidden}
+              onChange={(event) => onShowHiddenChange(event.target.checked)}
+              type="checkbox"
+            />
+            {t(`${key}.filters.showHidden`)}
+          </label>
+        )}
+        {active && (
+          <Button onClick={onClear} size="sm" theme="outlined" variant="secondary">
+            {t(`${key}.filters.clear`)}
+          </Button>
+        )}
+      </div>
+      {rangeInverted && (
+        <p className="text-sm text-fg-error" role="status">
+          {t(`${key}.filters.rangeInverted`)}
+        </p>
       )}
-      <div className="w-48 min-w-0">
-        <Select
-          items={[
-            selectOption(t(`${key}.filters.all`), ALL),
-            ...DUE_OPTIONS.map((value) => selectOption(t(`${key}.filters.dueOptions.${value}`), value)),
-          ]}
-          label={t(`${key}.filters.due`)}
-          labelProps={filterLabelProps}
-          onValueChange={({ value }) => {
-            const [next] = value;
-            if (Schema.is(DueFilterSchema)(next)) {
-              onChange({ ...filters, due: next });
-            }
-          }}
-          placeholder={t(SELECT_PLACEHOLDER)}
-          size="sm"
-          value={[filters.due]}
-        />
-      </div>
-      <div className="w-48 min-w-0">
-        <Select
-          items={[
-            selectOption(t(`${key}.filters.all`), ALL),
-            ...TASK_STATE_ORDER.map((value) => selectOption(t(`${key}.states.${value}`), value)),
-          ]}
-          label={t(`${key}.filters.state`)}
-          labelProps={filterLabelProps}
-          onValueChange={({ value }) => {
-            const [next] = value;
-            if (next === ALL) {
-              onChange({ ...filters, state: ALL });
-            } else if (Schema.is(TaskStateSchema)(next)) {
-              onChange({ ...filters, state: next });
-            }
-          }}
-          placeholder={t(SELECT_PLACEHOLDER)}
-          size="sm"
-          value={[filters.state]}
-        />
-      </div>
-      <div className="w-48 min-w-0">
-        <Select
-          items={[
-            selectOption(t(`${key}.filters.all`), ALL),
-            ...PRIORITY_OPTIONS.map((value) => selectOption(t(`${key}.priorities.${value}`), value)),
-          ]}
-          label={t(`${key}.filters.priority`)}
-          labelProps={filterLabelProps}
-          onValueChange={({ value }) => {
-            const [next] = value;
-            if (next === ALL) {
-              onChange({ ...filters, priority: ALL });
-            } else if (Schema.is(TaskPrioritySchema)(next)) {
-              onChange({ ...filters, priority: next });
-            }
-          }}
-          placeholder={t(SELECT_PLACEHOLDER)}
-          size="sm"
-          value={[filters.priority]}
-        />
-      </div>
-      {active && (
-        <Button onClick={onClear} size="sm" theme="outlined" variant="secondary">
-          {t(`${key}.filters.clear`)}
-        </Button>
-      )}
-    </div>
+    </>
   );
 };
 

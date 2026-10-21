@@ -20,10 +20,17 @@ import {
   TaskPrioritySchema,
 } from '../../../../../shared/apis/records.ts';
 import { TaskContextPickers } from './task-context-pickers.tsx';
+import { ChangeHistory } from './change-history.tsx';
 import type { ContextRef, LookupAccess, Task, WorkProject } from '../../../../../shared/apis/records.ts';
 import { isClosedTaskState } from '../../../../../shared/actions/task-transitions.ts';
 import { isPlausibleDueDate } from '../../../../../shared/actions/apply-command.ts';
-import { customerOptionItems, opportunityOptionItems, selectOption, taskContextHref } from './tasks-model.ts';
+import {
+  customerOptionItems,
+  formatDueDate,
+  opportunityOptionItems,
+  selectOption,
+  taskContextHref,
+} from './tasks-model.ts';
 import type { CustomerOption, OpportunityOption } from './tasks-model.ts';
 
 const NONE = 'none';
@@ -312,6 +319,9 @@ const ReferencePickers = ({
       {lookupAccess?.customers === 'allowed' && (
         <div onFocus={() => setCustomerOpen(true)}>
           <Combobox
+            // The kit fills the input text from the item list when it mounts. A panel opened by a link before the
+            // list arrived kept an empty input, so the field remounts once the names are there.
+            key={customersLoading ? 'party-loading' : 'party-ready'}
             clearable={!isEdit}
             disabled={disabled}
             filterBehavior="external"
@@ -350,6 +360,7 @@ const ReferencePickers = ({
       {lookupAccess?.opportunities === 'allowed' && (
         <div onFocus={() => setOpportunityOpen(true)}>
           <Combobox
+            key={opportunitiesLoading ? 'opportunity-loading' : 'opportunity-ready'}
             clearable={!isEdit}
             disabled={disabled}
             filterBehavior="external"
@@ -388,6 +399,9 @@ export const TaskFormDialog = ({
   projects = [],
   readOnly = false,
   onComment,
+  onArchive,
+  contextLabels = new Map(),
+  actorName,
   opportunities,
   opportunitiesLoading,
   task,
@@ -403,6 +417,11 @@ export const TaskFormDialog = ({
   readonly projects?: readonly WorkProject[];
   readonly readOnly?: boolean;
   readonly onComment?: (text: string) => void;
+  /** Hides a closed task from the lists (true) or lists it again (false); absent without write access. */
+  readonly onArchive?: ((archived: boolean) => void) | undefined;
+  /** Names of properties, units and contracts by resourceId, for the change history. */
+  readonly contextLabels?: ReadonlyMap<string, string>;
+  readonly actorName: (principalId: string) => string;
   readonly opportunities: readonly OpportunityOption[];
   readonly opportunitiesLoading: boolean;
   /** `undefined` creates a task. Mount this component only while it is open. */
@@ -503,6 +522,60 @@ export const TaskFormDialog = ({
     ...employees.map((employee) => selectOption(employee.fullName, employee.id)),
   ];
   const isEdit = task !== undefined;
+  const contextFallback = (type: string) =>
+    type === 'siampark.agreements.contract'
+      ? 'smlouva'
+      : type === 'siampark.property.unit'
+        ? 'jednotka'
+        : type === 'siampark.property.asset'
+          ? 'majetek'
+          : 'nemovitost';
+  const fieldLabels: Record<string, string> = {
+    assigneeEmployeeId: t(`${key}.assignee`),
+    contextRefs: 'Objekt a smlouva',
+    description: t(`${key}.description`),
+    dueDate: t(`${key}.dueDate`),
+    opportunityId: t(`${key}.opportunity`),
+    partyId: t(`${key}.party`),
+    plannedHours: t(`${key}.plannedHours`),
+    priority: t(`${key}.priority`),
+    projectId: t(`${key}.project`),
+    state: 'Stav',
+    title: t(`${key}.taskTitle`),
+  };
+  const historyValue = (field: string, value: string | undefined): string => {
+    if (value === undefined) return '—';
+    switch (field) {
+      case 'state':
+        return t(`${key}.states.${value}`);
+      case 'priority':
+        return t(`${key}.priorities.${value}`);
+      case 'dueDate':
+        return formatDueDate(value);
+      case 'assigneeEmployeeId':
+        return employees.find((employee) => employee.id === value)?.fullName ?? 'zaměstnanec mimo seznam';
+      case 'partyId':
+        return customers.find((customer) => customer.partyId === value)?.displayName ?? 'zákazník bez přístupu';
+      case 'opportunityId':
+        return opportunities.find((opportunity) => opportunity.id === value)?.title ?? 'příležitost bez přístupu';
+      case 'projectId':
+        return projects.find((project) => project.id === value)?.title ?? 'projekt';
+      case 'plannedHours':
+        return `${new Intl.NumberFormat('cs-CZ').format(Number(value))} h`;
+      case 'contextRefs':
+        return value
+          .split(',')
+          .map((entry) => {
+            const [type = '', id = ''] = entry.split(':');
+            return contextLabels.get(id) ?? contextFallback(type);
+          })
+          .join(', ');
+      case 'description':
+        return value.length > 140 ? `${value.slice(0, 140)}…` : value;
+      default:
+        return value;
+    }
+  };
   const assigneeMessage = message('assigneeId');
   const dueDateMessage = message('dueDate');
   const titleMessage = message('title');
@@ -549,6 +622,23 @@ export const TaskFormDialog = ({
             </StatusText>
           )}
           {locked && <StatusText status="warning">{t(readOnly ? `${key}.readOnly` : `${key}.closedTask`)}</StatusText>}
+          {task?.archivedAt !== undefined && <StatusText status="default">{t(`${key}.archivedNotice`)}</StatusText>}
+          {task !== undefined && isClosedTaskState(task.state) && onArchive !== undefined && (
+            <div className="flex flex-wrap items-center gap-150">
+              <Button
+                disabled={busy}
+                onClick={() => onArchive(task.archivedAt === undefined)}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
+                {t(task.archivedAt === undefined ? `${key}.archive` : `${key}.unarchive`)}
+              </Button>
+              {task.archivedAt === undefined && (
+                <span className="text-sm text-fg-secondary">{t(`${key}.archiveHint`)}</span>
+              )}
+            </div>
+          )}
           <FormInput
             autoComplete="off"
             disabled={fieldsDisabled}
@@ -767,6 +857,16 @@ export const TaskFormDialog = ({
                 </>
               )}
             </section>
+          )}
+          {task !== undefined && (
+            <ChangeHistory
+              actorName={actorName}
+              createdAt={task.createdAt}
+              entries={task.history}
+              fieldLabel={(field) => fieldLabels[field] ?? field}
+              formatValue={historyValue}
+              updatedAt={task.updatedAt}
+            />
           )}
         </div>
       </SidePanel>

@@ -28,6 +28,21 @@ export const PlannedHoursSchema = Schema.Finite.check(
 );
 export const ProjectIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 export const ProjectStateSchema = Schema.Literals(['PLANNED', 'ACTIVE', 'PAUSED', 'DONE']);
+/** One changed field of a task or project: raw saved values, so the editor can name ids with its own lookups. */
+export const ChangeSchema = Schema.Struct({
+  field: Schema.String,
+  before: Schema.optionalKey(Schema.String),
+  after: Schema.optionalKey(Schema.String),
+});
+export type Change = typeof ChangeSchema.Type;
+/** Who changed what and when. Written by the server for every governed command that changes a field. */
+export const HistoryEntrySchema = Schema.Struct({
+  action: Schema.Literals(['created', 'updated', 'archived', 'restored']),
+  actorPrincipalRef: PrincipalRefSchema,
+  at: Schema.DateTimeUtcFromString,
+  changes: Schema.Array(ChangeSchema),
+});
+export type HistoryEntry = typeof HistoryEntrySchema.Type;
 export const ProjectSchema = Schema.Struct({
   id: ProjectIdSchema,
   title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
@@ -43,6 +58,7 @@ export const ProjectSchema = Schema.Struct({
     }),
   ).check(Schema.isMaxLength(50)),
   createdAt: Schema.DateTimeUtcFromString,
+  history: Schema.optionalKey(Schema.Array(HistoryEntrySchema)),
   updatedAt: Schema.DateTimeUtcFromString,
 });
 export type WorkProject = typeof ProjectSchema.Type;
@@ -54,6 +70,8 @@ export const TaskCommentSchema = Schema.Struct({
   text: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(2000)),
 });
 export const TaskSchema = Schema.Struct({
+  /** Hidden from task lists (still opened by a direct link); only a completed or cancelled task can be hidden. */
+  archivedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   comments: Schema.optionalKey(Schema.Array(TaskCommentSchema)),
   plannedHours: Schema.optionalKey(PlannedHoursSchema),
   projectId: Schema.optionalKey(ProjectIdSchema),
@@ -63,6 +81,7 @@ export const TaskSchema = Schema.Struct({
   createdAt: Schema.DateTimeUtcFromString,
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
   dueDate: Schema.optionalKey(CalendarDateSchema),
+  history: Schema.optionalKey(Schema.Array(HistoryEntrySchema)),
   opportunityId: Schema.optionalKey(OpportunityIdSchema),
   ownerPrincipalRef: Schema.optionalKey(PrincipalRefSchema),
   partyId: Schema.optionalKey(PartyIdSchema),
@@ -96,6 +115,8 @@ export type WorkState = typeof WorkStateSchema.Type;
 export const RecordsRequestSchema = Schema.Struct({
   assigneeEmployeeId: Schema.optionalKey(EmployeeIdSchema),
   contextResourceId: Schema.optionalKey(PropertyRefSchema.fields.resourceId),
+  /** Also list hidden (archived) tasks. A request for one resourceId always includes it. */
+  includeArchived: Schema.optionalKey(Schema.Boolean),
   opportunityId: Schema.optionalKey(OpportunityIdSchema),
   ownerPrincipalId: Schema.optionalKey(PrincipalRefSchema.fields.principalId),
   partyId: Schema.optionalKey(PartyIdSchema),
