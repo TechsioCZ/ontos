@@ -15,6 +15,11 @@ Open <http://localhost:3000>.
 The six-part UI-kit refactor, its progress and component adoption inventories are tracked in
 [UI-KIT-REFACTOR.md](./UI-KIT-REFACTOR.md).
 
+The next feature implementation plan maps the 17 demo-shop requests to GitHub issues,
+acceptance criteria, dependencies and unresolved integration decisions in
+[IMPLEMENTATION-PLAN.md](./IMPLEMENTATION-PLAN.md). Executable task statuses live in
+the linked `plans/akros-*.plan.md` files; the completed UI-kit refactor is a separate milestone.
+
 With the storefront running, `npm run test:browser` runs all browser suites. `npm run check`
 remains the formatter/linter/type/unit-test/production-build gate; run the browser checks after
 the build. `npm run test:audit` checks 31 routes at 19 widths from 320 to 2560px, including
@@ -55,6 +60,12 @@ between 640 and 1000 px, and mobile cards below 640 px. The intermediate list gr
 name/SKU, availability/price and purchase controls without changing order rules. Filter
 groups grow within the available space; price and submit stay together. Price endpoint
 width comes from a token supplied with the longest formatted bound's character count.
+Whole-package buttons use the compact Figma layout (128 × 38 px on desktop, 48 px high in
+the list/card layouts). The intermediate purchase width follows the quantity, gap and button
+tokens, leaving room for complete SKUs. Variant layout checks also cover two real 18-character
+codes at six widths and check that codes stay on one line without clipping.
+On desktop, purchase columns follow the combined widths of the two control groups, with a
+small gap between each quantity and its button. The name column takes the remaining space.
 
 ## Theme tokens
 
