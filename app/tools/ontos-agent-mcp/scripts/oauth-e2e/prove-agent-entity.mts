@@ -91,30 +91,11 @@ function sortByModule<T extends { moduleId: string }>(items: T[]): T[] {
   return [...items].sort((a, b) => (a.moduleId < b.moduleId ? -1 : a.moduleId > b.moduleId ? 1 : 0));
 }
 
-/** Finds the record with the given principalId anywhere in a JSON response. */
+/** Finds the agent with the given principalId in an `AgentEntityOverview` answer (`agents`). */
 function findByPrincipal(value: unknown, principalId: string): Json | undefined {
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const hit = findByPrincipal(item, principalId);
-      if (hit !== undefined) {
-        return hit;
-      }
-    }
-    return undefined;
-  }
-  if (typeof value === 'object' && value !== null) {
-    const record = asRecord(value);
-    if (record.principalId === principalId) {
-      return record;
-    }
-    for (const item of Object.values(record)) {
-      const hit = findByPrincipal(item, principalId);
-      if (hit !== undefined) {
-        return hit;
-      }
-    }
-  }
-  return undefined;
+  return asArray(asRecord(value).agents)
+    .map(asRecord)
+    .find((agent) => agent.principalId === principalId);
 }
 
 function hasId(list: unknown, id: string): boolean {
