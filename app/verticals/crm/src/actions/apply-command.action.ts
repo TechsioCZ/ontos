@@ -54,7 +54,7 @@ export const applyCommandAction = defineAction(
   // CRM.md §3: the Party Registry intake principal (an API key) may store the identity links it verified; every
   // other non-human principal stays restricted by the command guard.
   (payload, context) =>
-    payload.command._tag === 'LinkClientParty' && principalKindOf(context.scope.authMethod) === 'non_human'
+    payload.command._tag === 'LinkClientParty' && principalKindOf(context.scope.authMethod, context.scope.delegatedByPrincipalId, payload.command._tag) === 'non_human'
       ? isCrmIntakePrincipal(context.scope.principalId).pipe(
           Effect.flatMap((intake) =>
             intake ? handleApplyCommand(payload, context) : guardedApplyCommand(payload, context),

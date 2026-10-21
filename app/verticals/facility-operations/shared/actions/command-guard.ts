@@ -7,9 +7,25 @@ import { FacilityOperationsPermissionDenied } from '../errors/facility-operation
 export const PrincipalKindSchema = Schema.Literals(['human', 'non_human']);
 export type PrincipalKind = typeof PrincipalKindSchema.Type;
 
-/** Interactive sessions (also support impersonation) are human; API keys and system jobs are not. */
-export const principalKindOf = (authMethod: TrustedPrincipalContext['authMethod']): PrincipalKind =>
-  authMethod === 'session' || authMethod === 'support_impersonation' ? 'human' : 'non_human';
+/** Approving or reverting AI changes stays with people in the app: a connected MCP client never runs these. */
+const AI_DECISION_COMMANDS: ReadonlySet<string> = new Set(['AiDecideChanges', 'AiRevertBatch']);
+
+/**
+ * Interactive sessions, support impersonation and an MCP connection acting as the person itself are human. A
+ * connection acting for an AI agent (`delegatedByPrincipalId` set), API keys and system jobs are not.
+ */
+export const principalKindOf = (
+  authMethod: TrustedPrincipalContext['authMethod'],
+  delegatedByPrincipalId?: string,
+  commandTag?: string,
+): PrincipalKind =>
+  authMethod === 'session' ||
+  authMethod === 'support_impersonation' ||
+  (authMethod === 'oauth_connection' &&
+    delegatedByPrincipalId === undefined &&
+    !AI_DECISION_COMMANDS.has(commandTag ?? ''))
+    ? 'human'
+    : 'non_human';
 
 /** Commands reserved for human users; non-human principals (API keys, system jobs) are rejected. */
 export const nonHumanForbiddenCommands: ReadonlySet<string> = new Set([
@@ -37,7 +53,7 @@ export const assertCommandAllowed = (
 export const withCommandGuard =
   <
     Payload extends { readonly command: { readonly _tag: string } },
-    Context extends { readonly scope: Pick<TrustedPrincipalContext, 'authMethod'> },
+    Context extends { readonly scope: Pick<TrustedPrincipalContext, 'authMethod' | 'delegatedByPrincipalId'> },
     Success,
     Failure,
     Requirements,
@@ -45,6 +61,6 @@ export const withCommandGuard =
     handler: (payload: Payload, context: Context) => Effect.Effect<Success, Failure, Requirements>,
   ) =>
   (payload: Payload, context: Context): Effect.Effect<Success, Failure | FacilityOperationsPermissionDenied, Requirements> =>
-    assertCommandAllowed(principalKindOf(context.scope.authMethod), payload.command._tag).pipe(
+    assertCommandAllowed(principalKindOf(context.scope.authMethod, context.scope.delegatedByPrincipalId, payload.command._tag), payload.command._tag).pipe(
       Effect.flatMap(() => handler(payload, context)),
     );

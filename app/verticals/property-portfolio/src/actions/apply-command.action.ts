@@ -22,10 +22,15 @@ const handleApplyCommand = Effect.fn('Property.Action.applyCommand')(function* h
 ) {
   const { command } = payload;
   if (isStaffOnlyPropertyCommand(command)) {
-    // Archiving hides records from every register: interactive staff sessions only, never API keys or jobs.
+    // Archiving hides records from every register: people only (staff sessions, support impersonation, or an MCP
+    // connection acting as the person itself). Never API keys, jobs or agents.
     // The invocation itself is audited by the runtime (auditProfile standard); the record keeps who, when and why.
-    const { authMethod } = context.scope;
-    if (authMethod !== 'session' && authMethod !== 'support_impersonation') {
+    const { authMethod, delegatedByPrincipalId } = context.scope;
+    const person =
+      authMethod === 'session' ||
+      authMethod === 'support_impersonation' ||
+      (authMethod === 'oauth_connection' && delegatedByPrincipalId === undefined);
+    if (!person) {
       return yield* new PropertyIneligible({
         code: 'property_ineligible',
         reason: `Property command ${command._tag} is reserved for staff users`,
