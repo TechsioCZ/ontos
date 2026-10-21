@@ -21,11 +21,14 @@ import { useCommandFailure } from './product-forms.tsx';
 
 /** The customer storefront (apps/eshop-storefront) serves product images and pages. */
 export const STOREFRONT_ORIGIN = 'http://localhost:3060';
+/** Kai Uwe's AKROS storefront serves its own relative assets under /akros/ (e.g. the image placeholder). */
+const AKROS_STOREFRONT_ORIGIN = 'http://localhost:3070';
 
-export const imageUrl = (reference: string): string =>
-  /^https?:\/\//u.test(reference)
-    ? reference
-    : `${STOREFRONT_ORIGIN}${reference.startsWith('/') ? '' : '/'}${reference}`;
+export const imageUrl = (reference: string): string => {
+  if (/^https?:\/\//u.test(reference)) return reference;
+  const path = reference.startsWith('/') ? reference : `/${reference}`;
+  return `${path.startsWith('/akros/') ? AKROS_STOREFRONT_ORIGIN : STOREFRONT_ORIGIN}${path}`;
+};
 
 const availabilityPresentation: Readonly<
   Record<Availability, { readonly label: string; readonly variant: 'danger' | 'outline' | 'success' | 'warning' }>
@@ -607,7 +610,7 @@ export const EshopPanel = ({ canWrite, onCommitted, onReload, product, revision 
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [broken, setBroken] = useState<ReadonlySet<string>>(new Set());
-  const storefrontHref = `${product.sourceGroupId === undefined ? STOREFRONT_ORIGIN : 'http://localhost:3070'}/produkt/${product.slug ?? product.id}`;
+  const storefrontHref = `${product.sourceGroupId === undefined ? STOREFRONT_ORIGIN : AKROS_STOREFRONT_ORIGIN}/produkt/${product.slug ?? product.id}`;
   const slugInvalid = slug.trim() !== '' && !/^[a-z0-9-]{1,120}$/u.test(slug.trim());
 
   const save = () => {
