@@ -107,7 +107,6 @@ async function waitForInvalidToken(token: string): Promise<{ ok: boolean; second
 interface VariantDef {
   readonly key: 'v1' | 'v2';
   readonly label: string;
-  readonly cimd: boolean;
   readonly actAs: ActAs;
   readonly writeMode: 'approval' | 'direct';
 }
@@ -120,11 +119,11 @@ interface VariantSummary {
 }
 
 const VARIANTS: readonly VariantDef[] = [
-  { key: 'v1', label: 'DCR · Za mě · ke schválení', cimd: false, actAs: { kind: 'me' }, writeMode: 'approval' },
+  // The AS is CIMD-only (no dynamic client registration), so both variants use the Claude Code CIMD document.
+  { key: 'v1', label: 'CIMD Claude Code · Za mě · ke schválení', actAs: { kind: 'me' }, writeMode: 'approval' },
   {
     key: 'v2',
     label: 'CIMD Claude Code · Za agenta · přímo',
-    cimd: true,
     actAs: { kind: 'agent', agentName: AGENT_NAME },
     writeMode: 'direct',
   },
@@ -191,7 +190,7 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
   let loopback: LoopbackCallback | undefined = undefined;
 
   try {
-    if (def.cimd) {
+    if (def.actAs.kind === 'agent') {
       await rec.step(k, 'agent připraven', async () => {
         await ensureLoggedIn(tab.page, E2E.shellUrl, PERSONA, E2E.password);
         const listed = await sessionPost(
@@ -251,8 +250,8 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
     const lb = await startLoopbackCallback();
     loopback = lb;
     const provider = new E2eOAuthProvider({
-      clientName: def.cimd ? 'Claude Code' : 'OntOS E2E (DCR)',
-      clientMetadataUrl: def.cimd ? CIMD_CLIENT_ID : undefined,
+      clientName: 'Claude Code',
+      clientMetadataUrl: CIMD_CLIENT_ID,
       redirectUrl: lb.redirectUrl,
       onRedirect: (url: URL) =>
         approveConnection(tab.page, url.toString(), {
