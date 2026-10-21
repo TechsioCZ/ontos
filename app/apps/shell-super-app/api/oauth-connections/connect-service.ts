@@ -28,17 +28,15 @@ import {
 } from '@app/shared-contracts/oauth-connections';
 import { Clock, Effect, Schema } from 'effect';
 
-import { loadActingAuthority, revokeConnection } from './connection-service.ts';
+import { finishRevocation, loadActingAuthority } from './connection-service.ts';
 import { effectiveAuthority, isModulesRequestWithin, isPolicyWithin, minWritePolicy } from './effective-authority.ts';
 import { ConnectionForbidden, ConnectionInvalid, ConnectionUnavailable } from './errors.ts';
 import {
-  activateGrant,
+  approveDraftGrant,
   findGrant,
   findPreviousProfileId,
   findSessionGrant,
   insertDraftGrant,
-  insertGrantBinding,
-  listActiveGrantsForKey,
   listAgentPrincipals,
   loadLegalNames,
   loadPrincipals,
@@ -259,6 +257,11 @@ export const createDraft = Effect.fn('OAuthConnectService.createDraft')(function
       legalEntityId: request.legalEntityId,
       userId: session.userId,
     })) ?? randomUUID();
+  // Picked modules without any write box can change nothing, so the draft (and consent) says read-only.
+  const writePolicy =
+    request.modules !== 'all' && !request.modules.some((grant) => grant.access === 'write')
+      ? 'read_only'
+      : request.writePolicy;
   const row = yield* insertDraftGrant({
     actingKind,
     actingPrincipalId,
@@ -274,7 +277,7 @@ export const createDraft = Effect.fn('OAuthConnectService.createDraft')(function
     tenantId: session.tenantId,
     userId: session.userId,
     userPrincipalId: session.principalId,
-    writePolicy: request.writePolicy,
+    writePolicy,
   });
   return { grantId: row.grantId } satisfies ConnectDraftResponse;
 });
@@ -285,6 +288,9 @@ export const draftSummary = Effect.fn('OAuthConnectService.draftSummary')(functi
 ) {
   const verified = yield* (yield* OAuthFlow).verifyQuery(request.oauthQuery);
   const grant = yield* findSessionGrant({ sessionId: session.sessionId, userId: session.userId });
+  if (grant?.status === 'active' && grant.clientId === verified.clientId) {
+    return yield* new ConnectionInvalid({ code: 'connection_active' });
+  }
   if (grant === undefined || grant.status !== 'draft' || grant.clientId !== verified.clientId) {
     return yield* new ConnectionInvalid({ code: 'draft_not_found' });
   }
@@ -349,27 +355,16 @@ export const approve = Effect.fn('OAuthConnectService.approve')(function* (
   if (grant === undefined || !isOwnFreshDraft(grant, session, verified.clientId, now)) {
     return yield* new ConnectionInvalid({ code: 'draft_not_found' });
   }
-  const previous = yield* listActiveGrantsForKey({
-    actingPrincipalId: grant.actingPrincipalId,
-    clientId: grant.clientId,
-    legalEntityId: grant.legalEntityId,
-    userId: grant.userId,
-  });
-  yield* Effect.forEach(
-    previous,
-    (old) =>
-      revokeConnection({ actorPrincipalId: session.principalId, grantId: old.grantId, note: null, reason: 'superseded' }),
-    { discard: true },
-  );
-  const authBindingId = yield* insertGrantBinding({
-    grantId: grant.grantId,
-    principalId: grant.actingPrincipalId,
-    tenantId: grant.tenantId,
-  });
-  const active = yield* activateGrant({ authBindingId, grantId: grant.grantId });
-  if (active === undefined) {
+  const approved = yield* approveDraftGrant({ actorPrincipalId: session.principalId, grant });
+  if (approved === undefined) {
     return yield* new ConnectionInvalid({ code: 'draft_not_found' });
   }
+  const { active, superseded } = approved;
+  yield* Effect.forEach(
+    superseded,
+    (old) => finishRevocation({ actorPrincipalId: session.principalId, grant: old, note: null, reason: 'superseded' }),
+    { discard: true },
+  );
   const agent = grant.actingKind === 'agent';
   yield* recordConnectionAudit({
     authBindingId: session.authBindingId ?? null,

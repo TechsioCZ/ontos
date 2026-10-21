@@ -139,8 +139,7 @@ const toGrantRow = (row: DbGrant): GrantRow => ({
   legalEntityId: row.legalEntityId,
   modules: Option.getOrElse(Schema.decodeUnknownOption(ConnectionModulesRequestSchema)(row.modulesJson), () => []),
   profileId: row.profileId,
-  revokeReason:
-    row.revokeReason !== null && isOneOf(REVOKE_REASONS, row.revokeReason) ? row.revokeReason : null,
+  revokeReason: row.revokeReason !== null && isOneOf(REVOKE_REASONS, row.revokeReason) ? row.revokeReason : null,
   revokedAt: row.revokedAt,
   revokedByPrincipalId: row.revokedByPrincipalId,
   sessionId: row.sessionId,
@@ -240,9 +239,7 @@ export const findSessionGrant = Effect.fn('OAuthGrantStore.findSessionGrant')(fu
   return firstGrant(rows);
 });
 
-export const findPreviousProfileId = Effect.fn('OAuthGrantStore.findPreviousProfileId')(function* (
-  input: GrantKey,
-) {
+export const findPreviousProfileId = Effect.fn('OAuthGrantStore.findPreviousProfileId')(function* (input: GrantKey) {
   const { executor } = yield* AuthDatabase;
   const rows = yield* executor
     .select({ profileId: grants.profileId })
@@ -254,35 +251,77 @@ export const findPreviousProfileId = Effect.fn('OAuthGrantStore.findPreviousProf
   return rows[0]?.profileId;
 });
 
-export const listActiveGrantsForKey = Effect.fn('OAuthGrantStore.listActiveGrantsForKey')(function* (
-  input: GrantKey,
-) {
-  const { executor } = yield* AuthDatabase;
-  const rows = yield* executor
-    .select()
-    .from(grants)
-    .where(and(...sameKey(input), eq(grants.status, 'active')))
-    .orderBy(desc(grants.createdAt))
-    .pipe(Effect.mapError(unavailable));
-  return rows.map(toGrantRow);
-});
-
-/** Moves a draft to active and binds it to its auth binding. Only drafts can be activated. */
-export const activateGrant = Effect.fn('OAuthGrantStore.activateGrant')(function* (input: {
-  readonly authBindingId: string;
-  readonly grantId: string;
+/**
+ * Activates a draft in one transaction under a per-key advisory lock, so at most one grant per (user, company,
+ * acting principal, client) is active: moves the draft to active, supersedes the other active grants of the same
+ * key, disables their bindings and creates the draft's `oauth_grant` binding. Returns undefined when the row is no
+ * longer a draft (another approval of the same draft won); the caller finishes the superseded grants' side effects.
+ */
+export const approveDraftGrant = Effect.fn('OAuthGrantStore.approveDraftGrant')(function* (input: {
+  readonly actorPrincipalId: string;
+  readonly grant: GrantRow;
 }) {
-  if (!GRANT_ID_PATTERN.test(input.grantId)) {
+  const { grant } = input;
+  if (!GRANT_ID_PATTERN.test(grant.grantId)) {
     return undefined;
   }
+  const lockKey = `oauth-connection-grant:${grant.tenantId}:${grant.userId}:${grant.legalEntityId}:${grant.actingPrincipalId}:${grant.clientId}`;
   const { executor } = yield* AuthDatabase;
-  const rows = yield* executor
-    .update(grants)
-    .set({ authBindingId: input.authBindingId, consentedAt: sql`now()`, status: 'active' })
-    .where(and(eq(grants.grantId, input.grantId), eq(grants.status, 'draft')))
-    .returning()
+  return yield* executor
+    .transaction((transaction) =>
+      Effect.gen(function* approveInTransaction() {
+        yield* transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+        const authBindingId = randomUUID();
+        const active = firstGrant(
+          yield* transaction
+            .update(grants)
+            .set({ authBindingId, consentedAt: sql`now()`, status: 'active' })
+            .where(and(eq(grants.grantId, grant.grantId), eq(grants.status, 'draft')))
+            .returning(),
+        );
+        if (active === undefined) {
+          return undefined;
+        }
+        const superseded = (yield* transaction
+          .update(grants)
+          .set({
+            revokeReason: 'superseded',
+            revokedAt: sql`now()`,
+            revokedByPrincipalId: input.actorPrincipalId,
+            status: 'superseded',
+          })
+          .where(and(...sameKey(grant), eq(grants.status, 'active'), ne(grants.grantId, grant.grantId)))
+          .returning()).map(toGrantRow);
+        const supersededBindingIds = superseded.flatMap((old) =>
+          old.authBindingId === null ? [] : [old.authBindingId],
+        );
+        if (supersededBindingIds.length > 0) {
+          yield* transaction
+            .update(bindings)
+            .set({ bindingRevision: sql`${bindings.bindingRevision} + 1`, status: 'disabled', updatedAt: sql`now()` })
+            .where(
+              and(
+                inArray(bindings.principalAuthBindingId, supersededBindingIds),
+                eq(bindings.tenantId, grant.tenantId),
+              ),
+            );
+        }
+        yield* transaction.insert(bindings).values({
+          authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+          bindingRevision: 1,
+          principalAuthBindingId: authBindingId,
+          principalId: grant.actingPrincipalId,
+          provider: 'better_auth',
+          providerSubjectId: grant.grantId,
+          status: 'active',
+          subjectType: 'oauth_grant',
+          tenantId: grant.tenantId,
+          updatedAt: sql`now()`,
+        });
+        return { active, superseded };
+      }),
+    )
     .pipe(Effect.mapError(unavailable));
-  return firstGrant(rows);
 });
 
 export const setGrantStatus = Effect.fn('OAuthGrantStore.setGrantStatus')(function* (input: {
@@ -381,32 +420,6 @@ export const listGrants = Effect.fn('OAuthGrantStore.listGrants')(function* (fil
   return rows.map(toGrantRow);
 });
 
-/** Creates the `oauth_grant` auth binding of a grant and returns its id. */
-export const insertGrantBinding = Effect.fn('OAuthGrantStore.insertGrantBinding')(function* (input: {
-  readonly grantId: string;
-  readonly principalId: string;
-  readonly tenantId: string;
-}) {
-  const { executor } = yield* AuthDatabase;
-  const principalAuthBindingId = randomUUID();
-  yield* executor
-    .insert(bindings)
-    .values({
-      authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
-      bindingRevision: 1,
-      principalAuthBindingId,
-      principalId: input.principalId,
-      provider: 'better_auth',
-      providerSubjectId: input.grantId,
-      status: 'active',
-      subjectType: 'oauth_grant',
-      tenantId: input.tenantId,
-      updatedAt: sql`now()`,
-    })
-    .pipe(Effect.mapError(unavailable));
-  return principalAuthBindingId;
-});
-
 export const setGrantBindingStatus = Effect.fn('OAuthGrantStore.setGrantBindingStatus')(function* (input: {
   readonly authBindingId: string;
   readonly status: 'active' | 'disabled';
@@ -421,9 +434,7 @@ export const setGrantBindingStatus = Effect.fn('OAuthGrantStore.setGrantBindingS
       status: input.status,
       updatedAt: sql`now()`,
     })
-    .where(
-      and(eq(bindings.principalAuthBindingId, input.authBindingId), eq(bindings.tenantId, input.tenantId)),
-    )
+    .where(and(eq(bindings.principalAuthBindingId, input.authBindingId), eq(bindings.tenantId, input.tenantId)))
     .pipe(Effect.mapError(unavailable));
 });
 
@@ -435,9 +446,7 @@ export const loadBindingStatus = Effect.fn('OAuthGrantStore.loadBindingStatus')(
   const rows = yield* executor
     .select({ status: bindings.status })
     .from(bindings)
-    .where(
-      and(eq(bindings.principalAuthBindingId, input.authBindingId), eq(bindings.tenantId, input.tenantId)),
-    )
+    .where(and(eq(bindings.principalAuthBindingId, input.authBindingId), eq(bindings.tenantId, input.tenantId)))
     .limit(1)
     .pipe(Effect.mapError(unavailable));
   return rows[0]?.status;

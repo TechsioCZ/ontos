@@ -1,7 +1,8 @@
 /**
  * Errors of the OAuth connection grant (lane mcp-connection-grants). HTTP mapping used by connect-http.ts and
  * connector-http.ts: Unavailable 503, Unauthorized 401 (connector: `WWW-Authenticate: Bearer error="invalid_token"`),
- * Forbidden 403, Invalid 400 (`oauth_query_invalid`) or 404 (`draft_not_found`, `grant_not_found`).
+ * Forbidden 403, Invalid 400 (`oauth_query_invalid`, `modules_invalid`) or 404 (`draft_not_found`, `grant_not_found`,
+ * `connection_active`).
  */
 import { Data } from 'effect';
 
@@ -32,7 +33,15 @@ export class ConnectionForbidden extends Data.TaggedError('ConnectionForbidden')
   readonly reason: string;
 }> {}
 
-/** Expired/forged signed OAuth query, unknown draft or grant, or a malformed module list. */
+/**
+ * Expired/forged signed OAuth query, unknown draft or grant, a malformed module list, or `connection_active` (this
+ * session already approved the connection, e.g. Back or reload after Povolit přístup).
+ */
 export class ConnectionInvalid extends Data.TaggedError('ConnectionInvalid')<{
-  readonly code: 'draft_not_found' | 'grant_not_found' | 'modules_invalid' | 'oauth_query_invalid';
+  readonly code:
+    | 'connection_active'
+    | 'draft_not_found'
+    | 'grant_not_found'
+    | 'modules_invalid'
+    | 'oauth_query_invalid';
 }> {}

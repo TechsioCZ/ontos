@@ -90,7 +90,7 @@ const ConsentPage = () => {
             <p className="text-fg-secondary text-sm">{t('shell.connect.consent.loading')}</p>
           ) : null}
           {loadNotice === undefined ? null : (
-            <StatusText aria-live="polite" showIcon status="error">
+            <StatusText aria-live="polite" showIcon status={loadNotice === 'connected' ? 'success' : 'error'}>
               {t(failureKey(loadNotice), { client: clientName })}
             </StatusText>
           )}

@@ -243,6 +243,8 @@
         "pick": "Choose modules",
         "read": "Read",
         "write": "Write",
+        "writeUnavailable": "You have no write permission here.",
+        "writeUnavailableAgent": "The agent has no write permission here.",
         "pickRequired": "Choose at least one module."
       },
       "policy": {
@@ -261,6 +263,7 @@
         "expired": "The connection link has expired. Start connecting again in {{client}}.",
         "signedOut": "Your sign-in has expired. Start connecting again in {{client}}.",
         "forbidden": "This connection setting is not allowed.",
+        "connected": "The connection is done. You can close this window.",
         "failed": "Connecting failed. Please try again."
       },
       "consent": {
@@ -273,10 +276,10 @@
         "actingAgent": "(agent), connected by {{name}}",
         "actingMe": "(you)",
         "readLabel": "Read",
-        "writeModulesLabel": "Write",
+        "writeModulesLabel": "Write to modules",
         "allMe": "Everything you may use",
         "allAgent": "Everything the agent may use",
-        "policyLabel": "Writing",
+        "policyLabel": "Write mode",
         "policyValue": {
           "read_only": "read only",
           "approval": "for approval",

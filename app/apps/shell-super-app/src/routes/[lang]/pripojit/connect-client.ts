@@ -29,7 +29,10 @@ const failed = (reason: ConnectFailure): Failed => ({ reason, status: 'failed' }
 const isFailed = <A extends { readonly status: string }>(answer: A | Failed): answer is Failed =>
   answer.status === 'failed';
 
-const failureOf = (status: number): ConnectFailure => {
+const failureOf = (status: number, code: unknown): ConnectFailure => {
+  if (status === 404 && code === 'connection_active') {
+    return 'connected';
+  }
   if (status === 401) {
     return 'signedOut';
   }
@@ -52,7 +55,13 @@ const sendJson = (path: string, body: unknown): Promise<Answer> =>
   })
     .then((response): Promise<Answer> => {
       if (!response.ok) {
-        return Promise.resolve(failed(failureOf(response.status)));
+        return response
+          .json()
+          .catch((): unknown => undefined)
+          .then((problem: unknown): Answer => {
+            const code = typeof problem === 'object' && problem !== null ? Reflect.get(problem, 'code') : undefined;
+            return failed(failureOf(response.status, code));
+          });
       }
       return response
         .json()

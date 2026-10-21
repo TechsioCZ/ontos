@@ -307,19 +307,32 @@ export const revokeConnection = Effect.fn('OAuthConnectionService.revokeConnecti
   if (grant.authBindingId !== null) {
     yield* setGrantBindingStatus({ authBindingId: grant.authBindingId, status: 'disabled', tenantId: grant.tenantId });
   }
-  yield* (yield* OAuthFlow).deleteGrantTokens(input.grantId);
-  forgetLiveConnection(input.grantId);
+  yield* finishRevocation({ actorPrincipalId: input.actorPrincipalId, grant, note: input.note, reason: input.reason });
+  return updated;
+});
+
+/**
+ * Side effects after a grant left `active` (its row and binding are already updated): drops its OAuth tokens and
+ * consent, forgets the cached live check and writes `oauth.connection.revoked`.
+ */
+export const finishRevocation = Effect.fn('OAuthConnectionService.finishRevocation')(function* (input: {
+  readonly actorPrincipalId: string | null;
+  readonly grant: GrantRow;
+  readonly note: string | null;
+  readonly reason: ConnectionRevokeReason;
+}) {
+  yield* (yield* OAuthFlow).deleteGrantTokens(input.grant.grantId);
+  forgetLiveConnection(input.grant.grantId);
   yield* recordConnectionAudit({
     authBindingId: null,
     authMethod: input.actorPrincipalId === null ? 'system' : 'session',
     eventType: 'oauth.connection.revoked',
     evidence: { note: input.note, reason: input.reason, revokedByPrincipalId: input.actorPrincipalId },
-    grant,
+    grant: input.grant,
     outcome: 'succeeded',
     outcomeCode: input.reason,
     principalId: input.actorPrincipalId,
   });
-  return updated;
 });
 
 /** Changes the module ceiling and write policy of an active grant; both must stay within the actor's authority. */

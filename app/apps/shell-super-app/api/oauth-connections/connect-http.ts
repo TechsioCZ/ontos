@@ -13,6 +13,8 @@ import { AuthenticationService } from '../auth/service.ts';
 import { type ConnectSession, approve, connectOptions, createDraft, deny, draftSummary } from './connect-service.ts';
 import { ConnectionForbidden, ConnectionUnauthorized, ConnectionUnavailable } from './errors.ts';
 import type { ConnectionInvalid } from './errors.ts';
+import { isSameOriginRequest } from './request-origin.ts';
+import { loadOAuthServerConfig } from './server-config.ts';
 
 type RequestHeaders = Readonly<Record<string, string | undefined>>;
 interface RequestWithHeaders {
@@ -48,11 +50,14 @@ const toProblem = (error: ConnectError): Effect.Effect<OAuthConnectProblem> =>
   Match.value(error).pipe(
     Match.tag('ConnectionInvalid', (invalid) =>
       Effect.succeed<OAuthConnectProblem>(
-        invalid.code === 'draft_not_found' || invalid.code === 'grant_not_found'
+        invalid.code === 'draft_not_found' || invalid.code === 'grant_not_found' || invalid.code === 'connection_active'
           ? {
               _tag: 'OAuthConnectNotFoundProblem',
               code: invalid.code,
-              detail: 'Žádost o připojení vypršela nebo neexistuje. Spusťte připojení znovu z aplikace.',
+              detail:
+                invalid.code === 'connection_active'
+                  ? 'Připojení je hotové. Toto okno můžete zavřít.'
+                  : 'Žádost o připojení vypršela nebo neexistuje. Spusťte připojení znovu z aplikace.',
               status: 404,
               title: 'OAuth connect draft not found',
               type: 'https://ontos.dev/problems/oauth-connect-not-found',
@@ -150,6 +155,14 @@ const run = <Value, Requirements>(
 ) =>
   Effect.gen(function* runConnect() {
     yield* noStore;
+    const config = yield* loadOAuthServerConfig;
+    const issuerOrigin = URL.canParse(config.issuer) ? new URL(config.issuer).origin : '';
+    if (!isSameOriginRequest(request.headers, issuerOrigin)) {
+      return yield* new ConnectionForbidden({
+        code: 'access_blocked',
+        reason: 'Žádost nepřišla z OntOS. Spusťte připojení znovu z aplikace.',
+      });
+    }
     const session = yield* connectSession(request);
     return yield* handler(session);
   }).pipe(Effect.catch((error) => Effect.flatMap(toProblem(error), Effect.fail)));
@@ -158,9 +171,7 @@ export const oauthConnectGroupLive = HttpApiBuilder.group(ShellAuthenticationApi
   handlers
     .handle('connectOptions', ({ payload, request }) => run(request, (session) => connectOptions(session, payload)))
     .handle('connectDraft', ({ payload, request }) => run(request, (session) => createDraft(session, payload)))
-    .handle('connectDraftSummary', ({ payload, request }) =>
-      run(request, (session) => draftSummary(session, payload)),
-    )
+    .handle('connectDraftSummary', ({ payload, request }) => run(request, (session) => draftSummary(session, payload)))
     .handle('connectApprove', ({ payload, request }) => run(request, (session) => approve(session, payload)))
     .handle('connectDeny', ({ payload, request }) => run(request, (session) => deny(session, payload))),
 );

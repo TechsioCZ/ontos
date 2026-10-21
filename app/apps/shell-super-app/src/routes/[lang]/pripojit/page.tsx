@@ -30,8 +30,9 @@ type Module = ConnectCompanyOption['modules'][number];
 
 const POLICIES: readonly AgentWritePolicy[] = ['read_only', 'approval', 'direct'];
 
-const allReadPicks = (modules: readonly Module[]): Picks =>
-  new Map(modules.map((module): [string, Pick] => [module.moduleId, { read: true, write: false }]));
+/** Module picking starts from the full offer: read everywhere, write wherever the acting principal may write. */
+const offeredPicks = (modules: readonly Module[]): Picks =>
+  new Map(modules.map((module): [string, Pick] => [module.moduleId, { read: true, write: module.write }]));
 
 /** A read-only policy cannot send write access, whatever the write boxes still show. */
 const requestPicks = (picks: Picks, policy: AgentWritePolicy): Picks =>
@@ -81,7 +82,7 @@ const ConnectPage = () => {
       setCompanyId(company?.legalEntityId);
       setActing(preselectedAgent?.principalId ?? ME);
       setPolicy(defaultPolicy(preselectedAgent?.writePolicy ?? 'direct'));
-      setPicks(allReadPicks(preselectedAgent?.modules ?? company?.modules ?? []));
+      setPicks(offeredPicks(preselectedAgent?.modules ?? company?.modules ?? []));
     });
     return () => {
       active = false;
@@ -100,7 +101,7 @@ const ConnectPage = () => {
       nextActing === ME ? undefined : nextCompany?.agents.find((candidate) => candidate.principalId === nextActing);
     setActing(nextActing);
     setPolicy(defaultPolicy(nextAgent?.writePolicy ?? 'direct'));
-    setPicks(allReadPicks(nextAgent?.modules ?? nextCompany?.modules ?? []));
+    setPicks(offeredPicks(nextAgent?.modules ?? nextCompany?.modules ?? []));
     setNotice(undefined);
   };
 
@@ -115,7 +116,7 @@ const ConnectPage = () => {
   const chooseMode = (nextMode: Mode) => {
     setMode(nextMode);
     if (nextMode === 'pick') {
-      setPicks(allReadPicks(offered));
+      setPicks(offeredPicks(offered));
     }
   };
 
@@ -309,14 +310,26 @@ const ConnectPage = () => {
                       <ul className="grid gap-100">
                         {offered.map((module) => {
                           const pick = picks.get(module.moduleId) ?? NO_PICK;
+                          const writeBlocked = !module.write || policy === 'read_only';
                           return (
                             <li
                               className="flex flex-wrap items-center justify-between gap-150 rounded border border-border-primary px-150 py-100"
                               key={module.moduleId}
                             >
-                              <span className="min-w-0 break-words">{module.label}</span>
+                              <span className="grid min-w-0 gap-050">
+                                <span className="break-words">{module.label}</span>
+                                {module.write ? null : (
+                                  <span className="text-fg-secondary text-sm">
+                                    {t(
+                                      agent === undefined
+                                        ? 'shell.connect.access.writeUnavailable'
+                                        : 'shell.connect.access.writeUnavailableAgent',
+                                    )}
+                                  </span>
+                                )}
+                              </span>
                               <span className="flex flex-wrap gap-200">
-                                <label className="flex items-center gap-050">
+                                <label className="flex items-center gap-100">
                                   <input
                                     checked={pick.read}
                                     className="accent-primary"
@@ -330,11 +343,11 @@ const ConnectPage = () => {
                                   />
                                   {t('shell.connect.access.read')}
                                 </label>
-                                <label className="flex items-center gap-050">
+                                <label className="flex items-center gap-100">
                                   <input
-                                    checked={pick.write}
+                                    checked={pick.write && !writeBlocked}
                                     className="accent-primary"
-                                    disabled={!module.write || policy === 'read_only' || !pick.read}
+                                    disabled={writeBlocked || !pick.read}
                                     onChange={(event) =>
                                       setModulePick(module.moduleId, { read: pick.read, write: event.target.checked })
                                     }

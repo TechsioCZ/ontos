@@ -46,13 +46,10 @@ test('read_only policy turns every write off', () => {
 });
 
 test('agentLiveRights intersects SpiceDB access with the agent profile', () => {
-  const rights = agentLiveRights(
-    { read: new Set(['work.tasks']), write: new Set(['work.tasks']) },
-    [
-      { access: 'write', moduleId: 'work.tasks' },
-      { access: 'read', moduleId: 'demo.crm' },
-    ],
-  );
+  const rights = agentLiveRights({ read: new Set(['work.tasks']), write: new Set(['work.tasks']) }, [
+    { access: 'write', moduleId: 'work.tasks' },
+    { access: 'read', moduleId: 'demo.crm' },
+  ]);
   expect([...rights.read]).toEqual(['work.tasks']);
   expect([...rights.write]).toEqual(['work.tasks']);
 });
@@ -62,4 +59,8 @@ test('isModulesRequestWithin rejects write beyond offered write and accepts all'
   expect(isModulesRequestWithin([{ access: 'write', moduleId: 'work.tasks' }], offered)).toBe(false);
   expect(isModulesRequestWithin([{ access: 'read', moduleId: 'work.tasks' }], offered)).toBe(true);
   expect(isModulesRequestWithin('all', offered)).toBe(true);
+});
+
+test('isModulesRequestWithin rejects an empty module list', () => {
+  expect(isModulesRequestWithin([], offeredModules(live, 'direct'))).toBe(false);
 });

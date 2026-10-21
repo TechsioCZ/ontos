@@ -243,6 +243,8 @@
         "pick": "Vybrat moduly",
         "read": "Čtení",
         "write": "Zápis",
+        "writeUnavailable": "K zápisu nemáte oprávnění.",
+        "writeUnavailableAgent": "Agent nemá oprávnění k zápisu.",
         "pickRequired": "Vyberte alespoň jeden modul."
       },
       "policy": {
@@ -261,6 +263,7 @@
         "expired": "Odkaz pro připojení vypršel. Začněte připojení znovu v {{client}}.",
         "signedOut": "Vaše přihlášení vypršelo. Začněte připojení znovu v {{client}}.",
         "forbidden": "Toto nastavení připojení není povoleno.",
+        "connected": "Připojení je hotové. Toto okno můžete zavřít.",
         "failed": "Připojení se nepodařilo. Zkuste to prosím znovu."
       },
       "consent": {
@@ -273,10 +276,10 @@
         "actingAgent": "(agent), připojil(a) {{name}}",
         "actingMe": "(vy)",
         "readLabel": "Čtení",
-        "writeModulesLabel": "Zápis",
+        "writeModulesLabel": "Zápis do modulů",
         "allMe": "Vše, co smíte",
         "allAgent": "Vše, co agent smí",
-        "policyLabel": "Zápis",
+        "policyLabel": "Způsob zápisu",
         "policyValue": {
           "read_only": "jen čtení",
           "approval": "ke schválení",

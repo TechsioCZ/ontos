@@ -1,10 +1,18 @@
 // Effective authority for an agent connection pure module: no database or SpiceDB imports.
 import type { AgentModuleGrant } from '@app/shared-contracts/agent-access';
-import type { ConnectionModule, ConnectionModulesRequest, ConnectionWritePolicy } from '@app/shared-contracts/oauth-connections';
+import type {
+  ConnectionModule,
+  ConnectionModulesRequest,
+  ConnectionWritePolicy,
+} from '@app/shared-contracts/oauth-connections';
 
 import { moduleLabel } from '../auth/agent-store-model.ts';
 
-export const WRITE_POLICY_RANK: Readonly<Record<ConnectionWritePolicy, number>> = { approval: 1, direct: 2, read_only: 0 };
+export const WRITE_POLICY_RANK: Readonly<Record<ConnectionWritePolicy, number>> = {
+  approval: 1,
+  direct: 2,
+  read_only: 0,
+};
 export const minWritePolicy = (a: ConnectionWritePolicy, b: ConnectionWritePolicy): ConnectionWritePolicy =>
   WRITE_POLICY_RANK[a] <= WRITE_POLICY_RANK[b] ? a : b;
 export const isPolicyWithin = (requested: ConnectionWritePolicy, cap: ConnectionWritePolicy): boolean =>
@@ -65,12 +73,16 @@ export const effectiveAuthority = (input: {
 export const offeredModules = (live: LiveRights, policyCap: ConnectionWritePolicy): readonly ConnectionModule[] =>
   effectiveAuthority({ live, policyCap, requested: 'all', requestedPolicy: policyCap }).modules;
 
-export const isModulesRequestWithin = (requested: ConnectionModulesRequest, offered: readonly ConnectionModule[]): boolean =>
+export const isModulesRequestWithin = (
+  requested: ConnectionModulesRequest,
+  offered: readonly ConnectionModule[],
+): boolean =>
   requested === 'all' ||
-  requested.every((grant) => {
-    const module = offered.find((entry) => entry.moduleId === grant.moduleId);
-    return module !== undefined && (grant.access === 'read' || module.write);
-  });
+  (requested.length > 0 &&
+    requested.every((grant) => {
+      const module = offered.find((entry) => entry.moduleId === grant.moduleId);
+      return module !== undefined && (grant.access === 'read' || module.write);
+    }));
 
 export const contextModulesOf = (modules: readonly ConnectionModule[]): readonly AgentModuleGrant[] =>
   modules.map((module) => ({ access: module.write ? 'write' : 'read', moduleId: module.moduleId }));
