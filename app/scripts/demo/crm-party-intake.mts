@@ -12,15 +12,22 @@
  *   - member of every company that runs the CRM (Siampark 0021, Velkoobchod Hanák 0022);
  *   - party.registry module access + counterparty_manager/reader and party_identity_manager/reader/reviewer;
  *   - executor grants for exactly create-party, resolve-duplicate-candidate-create, counterparty-customer-onboard
- *     and add-contact-point. No other module, no archive/merge/update of Parties.
+ *     and add-contact-point. No archive/merge/update of Parties;
+ *   - demo.crm read_all/write_all + apply-command, of which the CRM command guard allows it only LinkClientParty
+ *     (the CRM re-reads the Counterparty it forwards before storing the link).
  *
- * The managed key lands in `app/.env.demo.local` as ONTOS_CRM_PARTY_INTAKE_API_KEY; the CRM server reads it there
- * (or from its environment) on each intake, so no CRM restart is needed after (re)issuing it.
+ * The managed key lands in `app/.env.demo.local` as ONTOS_CRM_PARTY_INTAKE_API_KEY (with the principal id as
+ * ONTOS_CRM_PARTY_INTAKE_PRINCIPAL_ID); the CRM server reads both there (or from its environment) on each intake, so
+ * no CRM restart is needed after (re)issuing the key.
  */
 import { randomUUID } from 'node:crypto';
 
 import { NodeServices } from '@effect/platform-node';
-import { toLegalEntityAccessObjectId, toModuleAccessObjectId } from '@app/core-runtime';
+import {
+  toContextPermissionAccessObjectId,
+  toLegalEntityAccessObjectId,
+  toModuleAccessObjectId,
+} from '@app/core-runtime';
 import { toSpiceDbActionObjectId } from '@app/core-runtime/actions/runtime-wiring';
 import { eq } from 'drizzle-orm';
 import { Config, ConfigProvider, Console, Effect, Exit, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
@@ -48,13 +55,18 @@ export const crmPartyIntakePrincipal = {
 /** Companies whose CRM writes clients into the registry. */
 export const crmIntakeLegalEntityIds: readonly string[] = [rentalDemoLegalEntityId, crmDemoLegalEntityId];
 
-/** The only registry Actions the intake runs. */
+/**
+ * The only Actions the intake runs: four registry Actions and the CRM apply-command, where the CRM command guard
+ * lets this principal run `LinkClientParty` only (it reads the clients through demo.crm.read_all).
+ */
 export const crmIntakeActionKeys: readonly string[] = [
   'party.registry.create-party',
   'party.registry.resolve-duplicate-candidate-create',
   'party.registry.counterparty-customer-onboard',
   'party.registry.add-contact-point',
+  'demo.crm.apply-command',
 ];
+const crmIntakePermissions = ['demo.crm.read_all', 'demo.crm.write_all'] as const;
 
 interface DiscoveredAction {
   readonly actionKey: string;
@@ -82,10 +94,16 @@ export const crmIntakeRelationships = (actions: readonly DiscoveredAction[]): re
     add('legal_entity', legal, 'member', 'principal', principalId);
     add('legal_entity', legal, 'counterparty_manager', 'principal', principalId);
     add('legal_entity', legal, 'counterparty_reader', 'principal', principalId);
-    for (const moduleId of ['core.shell', 'party.registry']) {
+    for (const moduleId of ['core.shell', 'party.registry', 'demo.crm']) {
       const moduleAccess = toModuleAccessObjectId(demoTenantId, legalEntityId, moduleId) ?? '';
       add('module_access', moduleAccess, 'legal_entity', 'legal_entity', legal);
       add('module_access', moduleAccess, 'accessor', 'principal', principalId);
+    }
+    for (const permission of crmIntakePermissions) {
+      const objectId =
+        toContextPermissionAccessObjectId(demoTenantId, legalEntityId, { moduleId: 'demo.crm', permission }) ?? '';
+      add('context_permission', objectId, 'tenant', 'tenant', demoTenantId);
+      add('context_permission', objectId, 'grantee', 'principal', principalId);
     }
   }
   for (const { actionKey, provisioning } of actions.filter((action) => crmIntakeActionKeys.includes(action.actionKey))) {
@@ -141,7 +159,15 @@ const ensureKey = Effect.fn('CrmPartyIntake.key')(function* ensureKey(root: stri
   const envFile = path.join(root, ENV_FILE);
   const text = (yield* fs.exists(envFile)) ? yield* fs.readFileString(envFile) : '';
   const lines = text.split('\n').filter((line) => line !== '');
-  const previous = lines.find((line) => line.startsWith(`${crmPartyIntakePrincipal.envVar}=`))?.split('=')[1];
+  const previous = lines
+    .find((line) => line.startsWith(`${crmPartyIntakePrincipal.envVar}=`))
+    ?.slice(crmPartyIntakePrincipal.envVar.length + 1);
+  const principalLine = `ONTOS_CRM_PARTY_INTAKE_PRINCIPAL_ID=${crmPartyIntakePrincipal.principalId}`;
+  if (!lines.includes(principalLine)) {
+    const kept = lines.filter((line) => !line.startsWith('ONTOS_CRM_PARTY_INTAKE_PRINCIPAL_ID='));
+    yield* fs.writeFileString(envFile, [...kept, principalLine, ''].join('\n'), { mode: 0o600 });
+    lines.splice(0, lines.length, ...kept, principalLine);
+  }
   if (previous !== undefined && previous.length > 0) {
     const probe = yield* post(
       `${shellUrl}/shell-super-app-api/auth/api-key/gateway-context`,

@@ -4,9 +4,10 @@
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { HttpServerRequest } from 'effect/unstable/http';
-import { Redacted, Schema } from 'effect';
+import { Option, Redacted, Schema } from 'effect';
 import { crmApi } from '../shared/api.ts';
 import { applyCommandAction } from '../src/actions/apply-command.action.ts';
+import { makePartyIntake } from '../src/services/party-intake.ts';
 import { bindActionHttpRunner } from './action-http-runner.ts';
 import {
   applyCommandActionProblem,
@@ -33,7 +34,7 @@ const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeA
   const decoded = yield* Schema.decodeEffect(applyCommandAction.descriptor.payloadSchema)(payload).pipe(
     Effect.mapError(applyCommandActionProblem.invalid),
   );
-  return yield* runActionHttp({
+  const result = yield* runActionHttp({
     endpointHeaders,
     internalProblem: applyCommandActionProblem.internal,
     invalidCorrelationProblem: applyCommandActionProblem.invalid,
@@ -45,7 +46,50 @@ const execute = Effect.fn('ApplyCommandActionServer.execute')(function* executeA
       'x-correlation-id': correlationId,
     },
   });
+  // CRM.md §3: after the command COMMITTED, clients it made active get their Party Registry identity through the
+  // governed intake principal (outside this command's transaction). A failure leaves the client unlinked for the
+  // správce's "Propojit s Party Registry"; the committed command itself stays successful.
+  const command = decoded.command;
+  if (identityCommands.has(command._tag) && !(command._tag === 'CreateClient' && command.partyRef !== undefined)) {
+    const legalEntityId = legalEntityOfAssertion(request.headers['authorization']);
+    const compositionRevision = request.headers['x-ontos-composition-revision'];
+    if (legalEntityId !== undefined && compositionRevision !== undefined) {
+      yield* makePartyIntake({
+        compositionRevision,
+        correlationId: correlationId ?? `crm-intake-${result.revision}`,
+        legalEntityId,
+      })
+        .reconcile(command._tag === 'SyncClientParties' || command._tag === 'RestoreClient' ? result.entityIds : [])
+        .pipe(
+          Effect.uninterruptible,
+          Effect.tapError((error) => Effect.logWarning('CRM Party Registry intake failed', error)),
+          Effect.ignore,
+        );
+    }
+  }
+  return result;
 });
+
+/** Commands after which a client may be active without a Party Registry identity. */
+const identityCommands: ReadonlySet<string> = new Set([
+  'AiDecideChanges',
+  'CreateClient',
+  'RestoreClient',
+  'SyncClientParties',
+]);
+
+const AssertionClaimsSchema = Schema.fromJsonString(
+  Schema.Struct({ principal: Schema.Struct({ legalEntityId: Schema.optionalKey(Schema.String) }) }),
+);
+/** Company of the (already verified and redeemed) gateway assertion of this request. */
+const legalEntityOfAssertion = (authorization: string | undefined) => {
+  const payload = authorization?.split('.')[1];
+  if (payload === undefined) {
+    return undefined;
+  }
+  const decoded = Schema.decodeOption(AssertionClaimsSchema)(Buffer.from(payload, 'base64url').toString('utf8'));
+  return Option.isSome(decoded) ? decoded.value.principal.legalEntityId : undefined;
+};
 
 export const applyCommandActionApiLive = HttpApiBuilder.group(crmApi, 'applyCommandAction', (handlers) =>
   handlers.handle('execute', ({ payload, request }) => execute(payload, request)),

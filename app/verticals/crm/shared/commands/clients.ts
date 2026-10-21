@@ -17,7 +17,7 @@ import { ClientKindSchema, PartyLinkInputSchema } from '../domain/clients.ts';
 import { EntityIdSchema, LongTextSchema, ShortTextSchema } from '../domain/common.ts';
 import { canReadClient } from '../domain/access.ts';
 import type { CrmState } from '../domain/state.ts';
-import type { CommandContext, Reducer, VerifiedParty } from './context.ts';
+import type { CommandContext, Reducer } from './context.ts';
 import {
   conflict,
   definedOnly,
@@ -180,36 +180,6 @@ export const uncorrelatedCustomerLinks = (state: CrmState) =>
     return ref?.counterpartyId !== undefined && link.counterpartyId !== ref.counterpartyId;
   }).length;
 
-/**
- * Clients the server-side Party Registry intake must identify after a command: `SyncClientParties` names them
- * (entityIds); any other command - Nový klient, restore, an approved AI proposal - is checked for clients that became
- * active by it and have no registry identity yet.
- */
-export const identityTargets = (
-  before: CrmState,
-  after: CrmState,
-  command: { readonly _tag: string },
-  entityIds: readonly string[],
-): readonly Client[] => {
-  if (command._tag === 'SyncClientParties') {
-    return after.clients.items.filter((client) => entityIds.includes(client.id) && client.partyRef === undefined);
-  }
-  const previous = new Map(before.clients.items.map((client) => [client.id, client.status] as const));
-  return after.clients.items.filter(
-    (client) => client.status === 'active' && client.partyRef === undefined && previous.get(client.id) !== 'active',
-  );
-};
-
-/** Counterparty and Party ids already held by a CRM client (one Party is one CRM client). */
-export const linkedIdentityIds = (state: CrmState): ReadonlySet<string> =>
-  new Set(
-    state.clients.items.flatMap((client) =>
-      client.partyRef === undefined
-        ? []
-        : [client.partyRef.partyId, ...(client.partyRef.counterpartyId === undefined ? [] : [client.partyRef.counterpartyId])],
-    ),
-  );
-
 const event = (
   context: CommandContext,
   suffix: string,
@@ -291,32 +261,6 @@ const withPartyRef = (
   return withClients(linked, {}, [
     event(context, eventSuffix, client.id, 'party_linked', { subject: partyRef.registryName ?? client.name }),
   ]);
-};
-
-/**
- * Links a client to the identity the server-side Party Registry intake verified (no browser claim involved).
- * Refuses a Party another CRM client already holds.
- */
-export const linkVerifiedParty = (
-  state: CrmState,
-  clientId: string,
-  verified: VerifiedParty,
-  context: CommandContext,
-  eventSuffix: string,
-): CrmState => {
-  const client = state.clients.items.find((entry) => entry.id === clientId);
-  const taken = linkedIdentityIds(state);
-  if (client === undefined || client.partyRef !== undefined || taken.has(verified.counterpartyId) || taken.has(verified.partyId)) {
-    return state;
-  }
-  const partyRef: PartyRef = {
-    ...definedOnly({ registryName: verified.displayName }),
-    counterpartyId: verified.counterpartyId,
-    linkedAt: context.now,
-    linkedBy: context.viewer.principalId,
-    partyId: verified.partyId,
-  };
-  return withPartyRef(state, client, partyRef, context, eventSuffix);
 };
 
 export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, context) =>

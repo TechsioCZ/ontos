@@ -1,13 +1,8 @@
 // CRM.md §3/§4 + C04: the server-side Party Registry intake targets and the external-id correlation.
 import { describe, expect, it } from '@rstest/core';
 import { Effect, Exit } from 'effect';
-import {
-  correlateCustomerLinks,
-  identityTargets,
-  linkVerifiedParty,
-  linkedIdentityIds,
-  uncorrelatedCustomerLinks,
-} from '../../shared/commands/clients.ts';
+import { correlateCustomerLinks, uncorrelatedCustomerLinks } from '../../shared/commands/clients.ts';
+import type { VerifiedParty } from '../../shared/commands/context.ts';
 import type { CrmCommand } from '../../shared/commands/index.ts';
 import { dispatchCrmCommand } from '../../shared/commands/index.ts';
 import type { CrmViewer } from '../../shared/domain/access.ts';
@@ -61,47 +56,60 @@ const repA: CrmViewer = {
   writeAll: false,
   writeAssigned: true,
 };
-const context = (viewer: CrmViewer) => ({ invocationId: 'inv1', now: at, viewer });
-const run = (state: CrmState, command: CrmCommand, viewer: CrmViewer) =>
-  Effect.runSyncExit(dispatchCrmCommand(state, command, context(viewer)));
+const run = (
+  state: CrmState,
+  command: CrmCommand,
+  viewer: CrmViewer,
+  verifiedParties?: ReadonlyMap<string, VerifiedParty>,
+) =>
+  Effect.runSyncExit(
+    dispatchCrmCommand(state, command, {
+      invocationId: 'inv1',
+      now: at,
+      viewer,
+      ...(verifiedParties === undefined ? {} : { verifiedParties }),
+    }),
+  );
+const intake: CrmViewer = { ...lead, assign: false, principalId: 'p-intake' };
 
-describe('Party Registry intake targets (CRM.md §3)', () => {
-  it('a salesperson\'s new client without partyRef is an intake target', () => {
-    const exit = run(base, { _tag: 'CreateClient', kind: 'organization', name: 'Bistro U Magnólie s.r.o.' }, repA);
-    expect(Exit.isSuccess(exit)).toBe(true);
-    if (Exit.isSuccess(exit)) {
-      const targets = identityTargets(base, exit.value.state, { _tag: 'CreateClient' }, exit.value.entityIds);
-      expect(targets.map((entry) => entry.name)).toEqual(['Bistro U Magnólie s.r.o.']);
-    }
-  });
-
-  it('a restored unlinked client is a target, an edit of an active client is not', () => {
-    const restored = run(base, { _tag: 'RestoreClient', id: 'z' }, lead);
-    expect(Exit.isSuccess(restored) && identityTargets(base, restored.value.state, { _tag: 'RestoreClient' }, []).map((c) => c.id)).toEqual(['z']);
-    const edited = run(base, { _tag: 'UpdateClient', id: 'y', patch: { phone: '+420 600 000 000' } }, repA);
-    expect(Exit.isSuccess(edited) && identityTargets(base, edited.value.state, { _tag: 'UpdateClient' }, [])).toEqual([]);
-  });
-
-  it('SyncClientParties is for vedení only and targets every active unlinked client', () => {
+describe('Party Registry intake (CRM.md §3, C04)', () => {
+  it('SyncClientParties is for vedení only and names every active client without identity', () => {
     expect(Exit.isFailure(run(base, { _tag: 'SyncClientParties' }, repA))).toBe(true);
     const exit = run(base, { _tag: 'SyncClientParties' }, lead);
-    expect(Exit.isSuccess(exit)).toBe(true);
-    if (Exit.isSuccess(exit)) {
-      expect(exit.value.entityIds).toEqual(['y']);
-      expect(identityTargets(base, exit.value.state, { _tag: 'SyncClientParties' }, exit.value.entityIds).map((c) => c.id)).toEqual(['y']);
-    }
+    expect(Exit.isSuccess(exit) && exit.value.entityIds).toEqual(['y']);
+    // Explicit ids include archived clients (e.g. a client created before the intake existed).
+    const listed = run(base, { _tag: 'SyncClientParties', clientIds: ['z'] }, lead);
+    expect(Exit.isSuccess(listed) && listed.value.entityIds).toEqual(['z']);
   });
 
-  it('links the verified identity, records it and correlates the external customer ids (C04)', () => {
-    const next = linkVerifiedParty(base, 'y', { counterpartyId: 'cp-y', displayName: 'Firma y', partyId: 'party-y' }, context(repA), 'party-intake-0');
-    const y = next.clients.items.find((entry) => entry.id === 'y');
-    expect(y?.partyRef).toMatchObject({ counterpartyId: 'cp-y', linkedBy: 'p-a', partyId: 'party-y' });
-    expect(next.clients.events?.at(-1)?.kind).toBe('party_linked');
-    expect(next.imports.customerLinks.map((link) => link.counterpartyId)).toEqual(['cp-x', 'cp-y']);
-    expect(uncorrelatedCustomerLinks(next)).toBe(0);
-    // A Party another CRM client already holds is never linked twice.
-    expect(linkVerifiedParty(base, 'y', { counterpartyId: 'cp-x', partyId: 'party-x' }, context(repA), 's')).toBe(base);
-    expect(linkedIdentityIds(base).has('cp-x')).toBe(true);
+  it('the intake link stores the verified identity, records it and correlates external customer ids', () => {
+    const verified = new Map([['cp-y', { counterpartyId: 'cp-y', displayName: 'Firma y', partyId: 'party-y' }]]);
+    const exit = run(
+      base,
+      { _tag: 'LinkClientParty', clientId: 'y', partyRef: { counterpartyId: 'cp-y', partyId: 'party-y' } },
+      intake,
+      verified,
+    );
+    expect(Exit.isSuccess(exit)).toBe(true);
+    if (Exit.isSuccess(exit)) {
+      const next = exit.value.state;
+      expect(next.clients.items.find((entry) => entry.id === 'y')?.partyRef).toMatchObject({
+        counterpartyId: 'cp-y',
+        linkedBy: 'p-intake',
+        partyId: 'party-y',
+      });
+      expect(next.clients.events?.at(-1)?.kind).toBe('party_linked');
+      // Every linked client's approved external ids now carry its Counterparty (also x's older one).
+      expect(next.imports.customerLinks.map((link) => link.counterpartyId)).toEqual(['cp-x', 'cp-y']);
+      expect(uncorrelatedCustomerLinks(next)).toBe(0);
+    }
+    // A Party another CRM client already holds is refused.
+    const taken = new Map([['cp-x', { counterpartyId: 'cp-x', partyId: 'party-x' }]]);
+    expect(
+      Exit.isFailure(
+        run(base, { _tag: 'LinkClientParty', clientId: 'y', partyRef: { counterpartyId: 'cp-x', partyId: 'party-x' } }, intake, taken),
+      ),
+    ).toBe(true);
   });
 
   it('migrates existing approved correlations of linked clients', () => {
