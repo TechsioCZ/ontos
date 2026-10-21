@@ -8,7 +8,11 @@ import type {
   ConnectionGrantStatus,
   ConnectionSummary as ServiceConnectionSummary,
 } from '@app/shared-contracts/oauth-connections';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { jsonb, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { Effect } from 'effect';
+
+import { AuthDatabase } from '../auth/db/client.ts';
 
 import {
   getConnectionSummary,
@@ -23,6 +27,47 @@ import { ConnectionsUnavailable } from './ports.ts';
 import type { GrantAdminPort, GrantListFilter } from './ports.ts';
 
 const unavailable = (cause: unknown) => new ConnectionsUnavailable({ cause });
+
+/** Read-only view of `core.audit_events`, used for the free-text reason of `oauth.connection.revoked`. */
+const auditEvents = pgSchema('core').table('audit_events', {
+  eventType: text('event_type').notNull(),
+  evidenceJson: jsonb('evidence_json').$type<Readonly<Record<string, unknown>>>().notNull(),
+  occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+  tenantId: uuid('tenant_id').notNull(),
+});
+
+/** Administrator notes of revoked grants (newest audit row per grant wins). */
+const revokeNotesOf = Effect.fn('GrantAdminPortLive.revokeNotesOf')(function* (rows: readonly GrantRow[]) {
+  const revoked = rows.filter((row) => row.status === 'revoked');
+  const notes = new Map<string, string>();
+  const tenantId = revoked[0]?.tenantId;
+  if (tenantId === undefined) {
+    return notes;
+  }
+  const { executor } = yield* AuthDatabase;
+  const grantIdOf = sql<string>`${auditEvents.evidenceJson} ->> 'grantId'`;
+  const found = yield* executor
+    .select({ evidence: auditEvents.evidenceJson, grantId: grantIdOf })
+    .from(auditEvents)
+    .where(
+      and(
+        eq(auditEvents.tenantId, tenantId),
+        eq(auditEvents.eventType, 'oauth.connection.revoked'),
+        inArray(
+          grantIdOf,
+          revoked.map((row) => row.grantId),
+        ),
+      ),
+    )
+    .orderBy(desc(auditEvents.occurredAt));
+  for (const item of found) {
+    const note = item.evidence['note'];
+    if (!notes.has(item.grantId) && typeof note === 'string' && note.trim() !== '') {
+      notes.set(item.grantId, note.trim());
+    }
+  }
+  return notes;
+});
 
 const isListed = (status: ConnectionGrantStatus): status is ConnectionStatus => status !== 'draft';
 
@@ -55,6 +100,7 @@ const toAdminSummary = (
   summary: ServiceConnectionSummary,
   row: GrantRow,
   limits: ConnectionLimits,
+  revokeNote: string | null,
 ): ConnectionSummary | undefined => {
   const status = summary.status;
   if (!isListed(status)) {
@@ -67,6 +113,7 @@ const toAdminSummary = (
     createdAt: summary.createdAt,
     delegatedBy: summary.delegatedBy,
     grantId: summary.grantId,
+    granted: { modules: row.modules === 'all' ? [] : [...row.modules], writePolicy: row.writePolicy },
     lastUsedAt: summary.lastUsedAt,
     legalEntityId: summary.legalEntityId,
     legalName: summary.legalName,
@@ -74,6 +121,7 @@ const toAdminSummary = (
     modules: summary.modules,
     profileId: summary.profileId,
     revokedAt: row.revokedAt === null ? null : row.revokedAt.toISOString(),
+    revokeNote,
     revokeReason: row.revokeReason,
     status,
     tenantId: summary.tenantId,
@@ -89,10 +137,14 @@ const joinSummaries = Effect.fn('GrantAdminPortLive.joinSummaries')(function* (
   const rowsById = new Map(rows.map((row) => [row.grantId, row]));
   const listed = rows.filter((row) => isListed(row.status));
   const limits = yield* limitsOf(listed);
+  const notes = yield* revokeNotesOf(listed);
   return summaries.flatMap((summary) => {
     const row = rowsById.get(summary.grantId);
     const rowLimits = row === undefined ? undefined : limits.get(actingKey(row));
-    const result = row === undefined || rowLimits === undefined ? undefined : toAdminSummary(summary, row, rowLimits);
+    const result =
+      row === undefined || rowLimits === undefined
+        ? undefined
+        : toAdminSummary(summary, row, rowLimits, notes.get(row.grantId) ?? null);
     return result === undefined ? [] : [result];
   });
 });

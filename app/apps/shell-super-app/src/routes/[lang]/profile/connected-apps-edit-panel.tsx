@@ -12,8 +12,11 @@ import {
   draftProblem,
   draftToRequest,
   failureText,
+  isStale,
+  moduleChoices,
   policyChoices,
   setModuleChoice,
+  widenHint,
 } from './connected-apps-model.ts';
 import type { EditDraft, ModuleChoice } from './connected-apps-model.ts';
 
@@ -22,10 +25,13 @@ export const ConnectedAppsEditPanel = ({
   connection,
   onClose,
   onSaved,
+  onStale,
 }: {
   readonly connection: ConnectionSummary;
   readonly onClose: () => void;
   readonly onSaved: (name: string) => void;
+  /** The connection is no longer active (revoked elsewhere): the list reloads with this Czech notice. */
+  readonly onStale: (notice: string) => void;
 }) => {
   const [draft, setDraft] = useState<EditDraft>(() => draftFromConnection(connection));
   const [busy, setBusy] = useState(false);
@@ -33,6 +39,7 @@ export const ConnectedAppsEditPanel = ({
   const problem = draftProblem(draft);
   const name = connection.client.name;
   const policies = policyChoices(connection);
+  const modules = moduleChoices(connection);
 
   const setChoice = (moduleId: string, choice: ModuleChoice) => {
     setDraft((current) => setModuleChoice(current, moduleId, choice));
@@ -49,6 +56,11 @@ export const ConnectedAppsEditPanel = ({
       .then((outcome) => {
         if (outcome.status === 'ok') {
           onSaved(name);
+          onClose();
+          return;
+        }
+        if (isStale(outcome.reason)) {
+          onStale(failureText(outcome.reason, outcome.detail));
           onClose();
           return;
         }
@@ -89,12 +101,16 @@ export const ConnectedAppsEditPanel = ({
           <label className="flex items-start gap-150">
             <input
               checked={draft.allModules}
+              disabled={!connection.allModules}
               name="connected-app-scope"
               onChange={() => setDraft((current) => ({ ...current, allModules: true }))}
               type="radio"
             />
-            <span className="text-sm">
-              {connection.acting.kind === 'human' ? 'Vše, co smíte' : 'Vše, co agent smí'}
+            <span className="grid min-w-0 gap-50">
+              <span className="text-sm">
+                {connection.acting.kind === 'human' ? 'Vše, co smíte' : 'Vše, co agent smí'}
+              </span>
+              {connection.allModules ? null : <span className="text-fg-secondary text-xs">{widenHint}</span>}
             </span>
           </label>
           <label className="flex items-start gap-150">
@@ -108,23 +124,23 @@ export const ConnectedAppsEditPanel = ({
           </label>
           {draft.allModules ? null : (
             <div className="grid gap-150">
-              {connection.limits.modules.map((limit) => {
-                const choice = draft.modules[limit.moduleId] ?? 'none';
+              {modules.map((module) => {
+                const choice = draft.modules[module.moduleId] ?? 'none';
                 return (
-                  <div key={limit.moduleId} className="grid gap-100 rounded-md border border-border-primary p-150">
-                    <p className="font-medium text-sm">{limit.label}</p>
+                  <div key={module.moduleId} className="grid gap-100 rounded-md border border-border-primary p-150">
+                    <p className="font-medium text-sm">{module.label}</p>
                     <div className="flex flex-wrap gap-300">
                       <FormCheckbox
                         checked={choice !== 'none'}
-                        disabled={!limit.read}
+                        disabled={!module.canRead}
                         label="Čtení"
-                        onCheckedChange={(checked) => setChoice(limit.moduleId, checked ? 'read' : 'none')}
+                        onCheckedChange={(checked) => setChoice(module.moduleId, checked ? 'read' : 'none')}
                       />
                       <FormCheckbox
                         checked={choice === 'write'}
-                        disabled={!limit.write}
+                        disabled={!module.canWrite}
                         label="Zápis"
-                        onCheckedChange={(checked) => setChoice(limit.moduleId, checked ? 'write' : 'read')}
+                        onCheckedChange={(checked) => setChoice(module.moduleId, checked ? 'write' : 'read')}
                       />
                     </div>
                   </div>

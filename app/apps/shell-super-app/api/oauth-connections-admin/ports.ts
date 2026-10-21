@@ -29,6 +29,8 @@ export interface ConnectionsCaller {
 export class ConnectionsForbidden extends Data.TaggedError('ConnectionsForbidden')<{ readonly reason: string }> {}
 /** Czech `reason` becomes the problem detail (HTTP 422). */
 export class ConnectionsInvalid extends Data.TaggedError('ConnectionsInvalid')<{ readonly reason: string }> {}
+/** The connection is no longer active (revoked elsewhere, superseded); Czech `reason`, HTTP 409. Clients reload. */
+export class ConnectionsGone extends Data.TaggedError('ConnectionsGone')<{ readonly reason: string }> {}
 /** Czech `reason` becomes the problem detail (HTTP 404). */
 export class ConnectionsNotFound extends Data.TaggedError('ConnectionsNotFound')<{ readonly reason: string }> {}
 /** Storage or SpiceDB failure (HTTP 503). */
@@ -36,6 +38,7 @@ export class ConnectionsUnavailable extends Data.TaggedError('ConnectionsUnavail
 
 export type ConnectionsAdminError =
   | ConnectionsForbidden
+  | ConnectionsGone
   | ConnectionsInvalid
   | ConnectionsNotFound
   | ConnectionsUnavailable;

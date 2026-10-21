@@ -10,11 +10,12 @@ import type {
   ConnectionRevokeRequest,
   ConnectionUpdateRequest,
 } from '@app/shared-contracts/agent-access';
-import { CONNECTION_STATUSES } from '@app/shared-contracts/agent-access';
+import { CONNECTION_REVOKE_REASON_MAX, CONNECTION_STATUSES } from '@app/shared-contracts/agent-access';
 import { Effect } from 'effect';
 
 import {
   ConnectionsForbidden,
+  ConnectionsGone,
   ConnectionsInvalid,
   ConnectionsNotFound,
   type ConnectionsAdminDeps,
@@ -41,6 +42,10 @@ export const listForAdmin = <R>(
   Effect.gen(function* listForAdmin() {
     if (!caller.isCompanyAdmin) {
       return yield* new ConnectionsForbidden({ reason: 'Připojené aplikace celé firmy vidí jen správce firmy.' });
+    }
+    const { status } = request.filter;
+    if (status !== undefined && !(CONNECTION_STATUSES as readonly string[]).includes(status)) {
+      return yield* new ConnectionsInvalid({ reason: `Neznámý stav připojení „${status.slice(0, 40)}“.` });
     }
     const all = yield* deps.grants.list({
       legalEntityId: caller.legalEntityId,
@@ -69,9 +74,9 @@ export const updateConnection = <R>(
       return yield* new ConnectionsForbidden({ reason: 'Přístup může upravit jen ten, kdo aplikaci připojil.' });
     }
     if (connection.status !== 'active') {
-      return yield* new ConnectionsInvalid({ reason: 'Odpojené připojení už nelze upravit.' });
+      return yield* new ConnectionsGone({ reason: 'Připojení už není aktivní, takže ho nelze upravit.' });
     }
-    const problem = wideningProblem(request, connection.limits);
+    const problem = wideningProblem(request, connection);
     if (problem !== undefined) {
       return yield* new ConnectionsInvalid({ reason: problem });
     }
@@ -94,10 +99,12 @@ export const revokeConnection = <R>(
     if (connection === undefined || connection.tenantId !== caller.tenantId) {
       return yield* new ConnectionsNotFound({ reason: 'Připojení neexistuje.' });
     }
-    if (connection.status !== 'active') {
-      return yield* new ConnectionsInvalid({ reason: 'Připojení už je odpojené.' });
-    }
     const reasonText = request.reason?.trim() ?? '';
+    if (reasonText.length > CONNECTION_REVOKE_REASON_MAX) {
+      return yield* new ConnectionsInvalid({
+        reason: `Důvod může mít nejvýš ${CONNECTION_REVOKE_REASON_MAX} znaků.`,
+      });
+    }
     let reasonCode: RevokeReasonCode;
     if (connection.user.principalId === caller.principalId) {
       reasonCode = 'user';
@@ -110,6 +117,9 @@ export const revokeConnection = <R>(
       return yield* new ConnectionsForbidden({
         reason: 'Připojení může odpojit jen ten, kdo ho vytvořil, nebo správce firmy, ve které platí.',
       });
+    }
+    if (connection.status !== 'active') {
+      return yield* new ConnectionsGone({ reason: 'Připojení už je odpojené.' });
     }
     yield* deps.grants.revoke({
       actorPrincipalId: caller.principalId,

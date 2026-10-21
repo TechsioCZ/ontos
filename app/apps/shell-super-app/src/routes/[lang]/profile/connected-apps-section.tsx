@@ -15,6 +15,7 @@ import {
   clientKindLabel,
   failureText,
   formatWhen,
+  isStale,
   writePolicyBadge,
   writePolicyLabel,
 } from './connected-apps-model.ts';
@@ -86,10 +87,12 @@ const RevokeDialog = ({
   connection,
   onCancel,
   onRevoked,
+  onStale,
 }: {
   readonly connection: ConnectionSummary;
   readonly onCancel: () => void;
   readonly onRevoked: (name: string) => void;
+  readonly onStale: (notice: string) => void;
 }) => {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | undefined>(undefined);
@@ -101,6 +104,10 @@ const RevokeDialog = ({
     void browserRuntime.runPromise(revokeConnection({ grantId: connection.grantId })).then((outcome) => {
       if (outcome.status === 'ok') {
         onRevoked(name);
+        return;
+      }
+      if (isStale(outcome.reason)) {
+        onStale(failureText(outcome.reason, outcome.detail));
         return;
       }
       setBusy(false);
@@ -145,7 +152,9 @@ const RevokeDialog = ({
 /** "Připojené aplikace" of the signed-in person: their AI connections, narrowing access, and disconnecting. */
 export const ConnectedAppsSection = () => {
   const [view, setView] = useState<ListView>({ status: 'loading' });
-  const [notice, setNotice] = useState<string | undefined>(undefined);
+  const [notice, setNotice] = useState<{ readonly text: string; readonly tone: 'success' | 'warning' } | undefined>(
+    undefined,
+  );
   const [editing, setEditing] = useState<ConnectionSummary | undefined>(undefined);
   const [revoking, setRevoking] = useState<ConnectionSummary | undefined>(undefined);
 
@@ -168,7 +177,7 @@ export const ConnectedAppsSection = () => {
   const connections = connectionsView?.connections ?? [];
 
   return (
-    <section className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 grid w-full min-w-0 max-w-5xl gap-200 p-300">
+    <section className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 grid w-full min-w-0 max-w-6xl gap-200 p-300">
       <div className="grid min-w-0 gap-100">
         <h2 className="font-semibold text-lg">Připojené aplikace</h2>
         <p className="text-fg-secondary text-sm">
@@ -178,8 +187,8 @@ export const ConnectedAppsSection = () => {
       </div>
 
       {notice === undefined ? null : (
-        <StatusText showIcon status="success">
-          {notice}
+        <StatusText aria-live="polite" showIcon status={notice.tone}>
+          {notice.text}
         </StatusText>
       )}
 
@@ -202,7 +211,7 @@ export const ConnectedAppsSection = () => {
           <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-border-primary/60 border-b text-left text-fg-secondary text-xs">
+                <tr className="whitespace-nowrap border-border-primary/60 border-b text-left text-fg-secondary text-xs">
                   <th className="py-100 pr-150 font-medium" scope="col">
                     Aplikace
                   </th>
@@ -240,13 +249,13 @@ export const ConnectedAppsSection = () => {
                       <ActingText connection={c} />
                     </td>
                     <td className="py-150 pr-150">{accessSummary(c)}</td>
-                    <td className="py-150 pr-150">
+                    <td className="whitespace-nowrap py-150 pr-150">
                       <Badge size="sm" variant={writePolicyBadge[c.writePolicy]}>
                         {writePolicyLabel[c.writePolicy]}
                       </Badge>
                     </td>
-                    <td className="py-150 pr-150">{formatWhen(c.createdAt)}</td>
-                    <td className="py-150 pr-150">{formatWhen(c.lastUsedAt)}</td>
+                    <td className="whitespace-nowrap py-150 pr-150">{formatWhen(c.createdAt)}</td>
+                    <td className="whitespace-nowrap py-150 pr-150">{formatWhen(c.lastUsedAt)}</td>
                     <td className="py-150">
                       <RowActions connection={c} onEdit={setEditing} onRevoke={setRevoking} />
                     </td>
@@ -286,7 +295,11 @@ export const ConnectedAppsSection = () => {
           connection={editing}
           onClose={() => setEditing(undefined)}
           onSaved={(name) => {
-            setNotice(`Přístup pro ${name} je upravený.`);
+            setNotice({ text: `Přístup pro ${name} je upravený.`, tone: 'success' });
+            void reload();
+          }}
+          onStale={(text) => {
+            setNotice({ text: `${text} Seznam je znovu načtený.`, tone: 'warning' });
             void reload();
           }}
         />
@@ -298,7 +311,12 @@ export const ConnectedAppsSection = () => {
           onCancel={() => setRevoking(undefined)}
           onRevoked={(name) => {
             setRevoking(undefined);
-            setNotice(`Aplikace ${name} je odpojená.`);
+            setNotice({ text: `Aplikace ${name} je odpojená.`, tone: 'success' });
+            void reload();
+          }}
+          onStale={(text) => {
+            setRevoking(undefined);
+            setNotice({ text: `${text} Seznam je znovu načtený.`, tone: 'warning' });
             void reload();
           }}
         />

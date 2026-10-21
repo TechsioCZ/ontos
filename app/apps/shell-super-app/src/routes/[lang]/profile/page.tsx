@@ -36,7 +36,7 @@ const ProfilePage = () => {
   return (
     <ShellContentLayout controls={controls} shell={model.shell} title={t('shell.profile.title')}>
       <div className="grid w-full min-w-0 gap-300">
-        <section className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 grid max-w-5xl gap-100 p-300">
+        <section className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 grid max-w-6xl gap-100 p-300">
           <h2 className="font-semibold text-lg">{t('shell.profile.identity')}</h2>
           <p className="text-sm">{model.shell.identity.displayName}</p>
         </section>

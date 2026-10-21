@@ -1,6 +1,5 @@
 import type {
   AgentWritePolicy,
-  CompanyAgent,
   ConnectionLimits,
   ConnectionSummary,
   PrincipalRef,
@@ -9,6 +8,7 @@ import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type {
+  CompanyAgent,
   CompanyDirectoryPort,
   ConnectionsAdminDeps,
   ConnectionsCaller,
@@ -42,6 +42,13 @@ const summary = (overrides: Partial<ConnectionSummary> = {}): ConnectionSummary 
   createdAt: '2026-10-01T10:00:00.000Z',
   delegatedBy: { displayName: 'Jana Nováková', principalId: 'person-1' },
   grantId: 'g1',
+  granted: {
+    modules: [
+      { access: 'write', moduleId: 'warehouse' },
+      { access: 'read', moduleId: 'finance' },
+    ],
+    writePolicy: 'approval',
+  },
   lastUsedAt: null,
   legalEntityId: companyA.legalEntityId,
   legalName: companyA.legalName,
@@ -49,6 +56,7 @@ const summary = (overrides: Partial<ConnectionSummary> = {}): ConnectionSummary 
   modules: [],
   profileId: 'profile-1',
   revokedAt: null,
+  revokeNote: null,
   revokeReason: null,
   status: 'active',
   tenantId,
@@ -249,18 +257,67 @@ it.effect('refuses to update a connection of another person', () =>
   }),
 );
 
-it.effect('narrows to all modules when allModules is chosen', () =>
-  Effect.gen(function* narrowingTest() {
-    const { calls, deps } = makeDeps(fixture());
+it.effect('keeps "Vše" when the connection was approved for everything', () =>
+  Effect.gen(function* allModulesKeptTest() {
+    const state = fixture();
+    state.connections[0] = summary({ allModules: true, granted: { modules: [], writePolicy: 'approval' } });
+    const { calls, deps } = makeDeps(state);
     const response = yield* updateConnection(
       caller({}),
       deps,
-      narrowing({ allModules: true, modules: [], writePolicy: 'approval' }),
+      narrowing({ allModules: true, modules: [], writePolicy: 'read_only' }),
     );
     expect(response).toEqual({ grantId: 'g1', status: 'active' });
     expect(calls.updates.length).toBe(1);
     expect(calls.updates[0]?.modules).toBe('all');
-    expect(calls.updates[0]?.writePolicy).toBe('approval');
+    expect(calls.updates[0]?.writePolicy).toBe('read_only');
+  }),
+);
+
+it.effect('refuses to widen a connection beyond what was approved, even within live rights', () =>
+  Effect.gen(function* wideningTest() {
+    const state = fixture();
+    state.connections[0] = summary({
+      granted: { modules: [{ access: 'read', moduleId: 'warehouse' }], writePolicy: 'read_only' },
+    });
+    const { calls, deps } = makeDeps(state);
+    const attempts = [
+      narrowing({ writePolicy: 'approval' }),
+      narrowing({ allModules: true, modules: [] }),
+      narrowing({ modules: [{ access: 'write', moduleId: 'warehouse' }] }),
+      narrowing({ modules: [{ access: 'read', moduleId: 'finance' }] }),
+    ];
+    for (const attempt of attempts) {
+      const error = yield* Effect.flip(updateConnection(caller({}), deps, attempt));
+      expect(error._tag).toBe('ConnectionsInvalid');
+    }
+    expect(calls.updates.length).toBe(0);
+    yield* updateConnection(caller({}), deps, narrowing());
+    expect(calls.updates.length).toBe(1);
+  }),
+);
+
+it.effect('answers a stale update or revoke with ConnectionsGone', () =>
+  Effect.gen(function* staleTest() {
+    const { calls, deps } = makeDeps(fixture());
+    const update = yield* Effect.flip(updateConnection(caller({}), deps, narrowing({ grantId: 'g2' })));
+    expect(update._tag).toBe('ConnectionsGone');
+    const revoke = yield* Effect.flip(revokeConnection(caller({}), deps, { grantId: 'g2' }));
+    expect(revoke._tag).toBe('ConnectionsGone');
+    expect(calls.updates.length + calls.revokes.length).toBe(0);
+  }),
+);
+
+it.effect('rejects an over-long revoke reason and an unknown status filter with Czech messages', () =>
+  Effect.gen(function* validationTest() {
+    const { calls, deps } = makeDeps(fixture());
+    const long = yield* Effect.flip(revokeConnection(caller({}), deps, { grantId: 'g1', reason: 'x'.repeat(501) }));
+    expect(long._tag).toBe('ConnectionsInvalid');
+    expect(calls.revokes.length).toBe(0);
+    const status = yield* Effect.flip(
+      listForAdmin(caller({ isCompanyAdmin: true }), deps, { filter: { status: 'draft' } }),
+    );
+    expect(status._tag).toBe('ConnectionsInvalid');
   }),
 );
 

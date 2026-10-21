@@ -19,6 +19,9 @@ const limits: ConnectionLimits = {
   ],
 };
 
+/** A connection approved for everything with direct writes, so only the live limits constrain it. */
+const approvedAll = { allModules: true, granted: { modules: [], writePolicy: 'direct' as const }, limits };
+
 const summary = (overrides: Partial<ConnectionSummary> = {}): ConnectionSummary => ({
   acting: { displayName: 'Agent Sklad', kind: 'agent', principalId: 'agent-1' },
   allModules: false,
@@ -26,6 +29,7 @@ const summary = (overrides: Partial<ConnectionSummary> = {}): ConnectionSummary 
   createdAt: '2026-10-01T10:00:00.000Z',
   delegatedBy: null,
   grantId: 'grant-1',
+  granted: { modules: [], writePolicy: 'direct' },
   lastUsedAt: null,
   legalEntityId: 'company-a',
   legalName: 'Firma A',
@@ -33,6 +37,7 @@ const summary = (overrides: Partial<ConnectionSummary> = {}): ConnectionSummary 
   modules: [],
   profileId: 'profile-1',
   revokedAt: null,
+  revokeNote: null,
   revokeReason: null,
   status: 'active',
   tenantId: 'tenant-1',
@@ -52,13 +57,13 @@ it('rejects allModules combined with explicit modules', () => {
   expect(
     wideningProblem(
       { allModules: true, modules: [{ access: 'read', moduleId: 'warehouse' }], writePolicy: 'approval' },
-      limits,
+      approvedAll,
     ),
   ).toBe('Při volbě „Vše“ nevybírejte jednotlivé moduly.');
 });
 
 it('rejects an empty module list without allModules', () => {
-  expect(wideningProblem({ allModules: false, modules: [], writePolicy: 'approval' }, limits)).toBe(
+  expect(wideningProblem({ allModules: false, modules: [], writePolicy: 'approval' }, approvedAll)).toBe(
     'Vyberte alespoň jeden modul.',
   );
 });
@@ -67,7 +72,7 @@ it('rejects a module that is not in the limits', () => {
   expect(
     wideningProblem(
       { allModules: false, modules: [{ access: 'read', moduleId: 'hr' }], writePolicy: 'read_only' },
-      limits,
+      approvedAll,
     ),
   ).toBe('Modul hr nemáte k dispozici.');
 });
@@ -76,7 +81,7 @@ it('rejects a write on a module the caller may only read', () => {
   expect(
     wideningProblem(
       { allModules: false, modules: [{ access: 'write', moduleId: 'finance' }], writePolicy: 'read_only' },
-      limits,
+      approvedAll,
     ),
   ).toBe('Do modulu Účetnictví nesmíte zapisovat.');
 });
@@ -92,7 +97,7 @@ it('rejects a module listed twice', () => {
         ],
         writePolicy: 'read_only',
       },
-      limits,
+      approvedAll,
     ),
   ).toBe('Každý modul vyberte jen jednou.');
 });
@@ -101,7 +106,7 @@ it('rejects a write policy above the maximum', () => {
   expect(
     wideningProblem(
       { allModules: false, modules: [{ access: 'read', moduleId: 'warehouse' }], writePolicy: 'direct' },
-      limits,
+      approvedAll,
     ),
   ).toBe('Nejvýš můžete zvolit režim „Ke schválení“.');
 });
@@ -110,7 +115,41 @@ it('accepts a valid narrowing', () => {
   expect(
     wideningProblem(
       { allModules: false, modules: [{ access: 'read', moduleId: 'finance' }], writePolicy: 'read_only' },
-      limits,
+      approvedAll,
+    ),
+  ).toBe(undefined);
+});
+
+it('refuses to widen beyond the approved grant', () => {
+  const approved = {
+    allModules: false,
+    granted: { modules: [{ access: 'read' as const, moduleId: 'warehouse' }], writePolicy: 'read_only' as const },
+    limits,
+  };
+  const widen = 'Přístup můžete jen zúžit. Pro větší přístup aplikaci odpojte a připojte znovu.';
+  expect(wideningProblem({ allModules: true, modules: [], writePolicy: 'read_only' }, approved)).toBe(widen);
+  expect(
+    wideningProblem(
+      { allModules: false, modules: [{ access: 'read', moduleId: 'warehouse' }], writePolicy: 'approval' },
+      approved,
+    ),
+  ).toBe(widen);
+  expect(
+    wideningProblem(
+      { allModules: false, modules: [{ access: 'write', moduleId: 'warehouse' }], writePolicy: 'read_only' },
+      approved,
+    ),
+  ).toBe(widen);
+  expect(
+    wideningProblem(
+      { allModules: false, modules: [{ access: 'read', moduleId: 'finance' }], writePolicy: 'read_only' },
+      approved,
+    ),
+  ).toBe(widen);
+  expect(
+    wideningProblem(
+      { allModules: false, modules: [{ access: 'read', moduleId: 'warehouse' }], writePolicy: 'read_only' },
+      approved,
     ),
   ).toBe(undefined);
 });

@@ -177,6 +177,8 @@ import type { ShellScopedModuleStateFactory } from './modules/shell-governed-rea
 import { OAuthConnectionHooksLive } from './oauth-connections/better-auth-hooks.ts';
 import { companyDirectoryLive } from './oauth-connections-admin/company-directory-live.ts';
 import { mcpResourceUrl } from './oauth-connections-admin/config.ts';
+import { isSameOriginRequest } from './oauth-connections/request-origin.ts';
+import { loadOAuthServerConfig } from './oauth-connections/server-config.ts';
 import { grantAdminPortLive } from './oauth-connections-admin/grant-port-live.ts';
 import {
   agentConnectionsOverview,
@@ -2070,6 +2072,16 @@ const connectionsAdminFailure = (error: ConnectionsAdminError) => {
           'https://ontos.dev/problems/policy-violation',
         ),
       );
+    case 'ConnectionsGone':
+      return failIdentityProblem(
+        problemDetails(
+          'ShellPolicyConflictProblem',
+          error.reason,
+          409,
+          'Policy conflict',
+          'https://ontos.dev/problems/policy-conflict',
+        ),
+      );
     case 'ConnectionsNotFound':
       return failIdentityProblem(
         problemDetails(
@@ -2104,6 +2116,25 @@ const connectionsCaller = Effect.fn('shell.connectionsAdmin.caller')(function* c
     tenantId: caller.principal.tenantId,
   };
   return result;
+});
+
+/** CSRF defense in depth for the session mutations: refuse a cross-site `Origin` (design §3.4, like connect POSTs). */
+const requireShellOrigin = Effect.fn('shell.connectionsAdmin.requireShellOrigin')(function* requireShellOrigin(
+  request: RequestWithHeaders,
+) {
+  const config = yield* loadOAuthServerConfig;
+  const issuerOrigin = URL.canParse(config.issuer) ? new URL(config.issuer).origin : '';
+  if (!isSameOriginRequest(request.headers, issuerOrigin)) {
+    return yield* failIdentityProblem(
+      problemDetails(
+        'ShellTargetForbiddenProblem',
+        'Žádost nepřišla z OntOS. Otevřete Připojené aplikace v OntOS a zkuste to znovu.',
+        403,
+        'Module target forbidden',
+        'https://ontos.dev/problems/module-target-forbidden',
+      ),
+    );
+  }
 });
 
 const connectionsAdminDeps = Effect.map(mcpResourceUrl, (mcpUrl) => ({
@@ -2143,6 +2174,7 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
       .handle('updateConnectionAccess', ({ payload, request }) =>
         Effect.gen(function* updateConnectionAccessHandler() {
           yield* noStore;
+          yield* requireShellOrigin(request);
           const caller = yield* connectionsCaller(request, false);
           const deps = yield* connectionsAdminDeps;
           const response = yield* updateConnection(caller, deps, payload).pipe(Effect.catch(connectionsAdminFailure));
@@ -2152,6 +2184,7 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
       .handle('revokeConnection', ({ payload, request }) =>
         Effect.gen(function* revokeConnectionHandler() {
           yield* noStore;
+          yield* requireShellOrigin(request);
           const caller = yield* connectionsCaller(request, true);
           const deps = yield* connectionsAdminDeps;
           const response = yield* revokeConnection(caller, deps, payload).pipe(Effect.catch(connectionsAdminFailure));
@@ -2170,6 +2203,7 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
       .handle('replaceAgentOperators', ({ payload, request }) =>
         Effect.gen(function* replaceAgentOperatorsHandler() {
           yield* noStore;
+          yield* requireShellOrigin(request);
           const caller = yield* connectionsCaller(request, true);
           const deps = yield* connectionsAdminDeps;
           const response = yield* replaceAgentOperators(caller, deps, payload).pipe(

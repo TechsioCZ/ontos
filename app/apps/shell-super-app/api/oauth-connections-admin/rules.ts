@@ -6,7 +6,6 @@ import type {
   AgentWritePolicy,
   ConnectionAdminFilter,
   ConnectionAdminListResponse,
-  ConnectionLimits,
   ConnectionSummary,
   ConnectionUpdateRequest,
 } from '@app/shared-contracts/agent-access';
@@ -22,11 +21,19 @@ export const writePolicyLabel: Readonly<Record<AgentWritePolicy, string>> = {
   read_only: 'Jen čtení',
 };
 
-/** First problem with a requested narrowing, as a Czech message; undefined when the update is allowed. */
+/** Czech answer to an attempted widening. */
+export const WIDEN_HINT = 'Přístup můžete jen zúžit. Pro větší přístup aplikaci odpojte a připojte znovu.';
+
+/**
+ * First problem with a requested change, as a Czech message; undefined when the update is allowed. An update may
+ * only NARROW: it must stay within what the connection was approved for (`granted`, design §7.2 "only narrow, no
+ * re-auth") and within the acting principal's live rights (`limits`).
+ */
 export const wideningProblem = (
   request: Pick<ConnectionUpdateRequest, 'allModules' | 'modules' | 'writePolicy'>,
-  limits: ConnectionLimits,
+  connection: Pick<ConnectionSummary, 'allModules' | 'granted' | 'limits'>,
 ): string | undefined => {
+  const { granted, limits } = connection;
   if (request.allModules && request.modules.length > 0) {
     return 'Při volbě „Vše“ nevybírejte jednotlivé moduly.';
   }
@@ -37,6 +44,9 @@ export const wideningProblem = (
   if (new Set(moduleIds).size !== moduleIds.length) {
     return 'Každý modul vyberte jen jednou.';
   }
+  if (request.allModules && !connection.allModules) {
+    return WIDEN_HINT;
+  }
   for (const module of request.modules) {
     const limit = limits.modules.find((item) => item.moduleId === module.moduleId);
     if (limit === undefined || !limit.read) {
@@ -45,6 +55,15 @@ export const wideningProblem = (
     if (module.access === 'write' && !limit.write) {
       return `Do modulu ${limit.label} nesmíte zapisovat.`;
     }
+    if (!connection.allModules) {
+      const approved = granted.modules.find((item) => item.moduleId === module.moduleId);
+      if (approved === undefined || (module.access === 'write' && approved.access !== 'write')) {
+        return WIDEN_HINT;
+      }
+    }
+  }
+  if (policyRank(request.writePolicy) > policyRank(granted.writePolicy)) {
+    return WIDEN_HINT;
   }
   if (policyRank(request.writePolicy) > policyRank(limits.maxWritePolicy)) {
     return `Nejvýš můžete zvolit režim „${writePolicyLabel[limits.maxWritePolicy]}“.`;

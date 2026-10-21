@@ -107,11 +107,23 @@ export const ConnectionSummarySchema = Schema.Struct({
   legalEntityId: Schema.String,
   legalName: Schema.String,
   limits: ConnectionLimitsSchema,
+  /**
+   * What the connection may use at most, as approved on the consent screen and narrowed since. "Upravit přístup"
+   * may only stay within it (and within `limits`); widening needs a new connection with a new consent.
+   */
+  granted: Schema.Struct({
+    /** Empty when `allModules` is true. */
+    modules: Schema.Array(AgentModuleGrantSchema),
+    writePolicy: AgentWritePolicySchema,
+  }),
   /** Effective modules: the grant intersected with the acting principal's live rights. */
   modules: Schema.Array(ConnectionModuleSchema),
   profileId: Schema.String,
   revokedAt: Schema.NullOr(Schema.String),
+  /** Revocation code (`user`, `admin`, `superseded`, `operator_removed`, …); null while active. */
   revokeReason: Schema.NullOr(Schema.String),
+  /** Free-text reason an administrator gave when revoking (from the `oauth.connection.revoked` audit row). */
+  revokeNote: Schema.NullOr(Schema.String),
   status: ConnectionStatusSchema,
   tenantId: Schema.String,
   /** Person who approved the connection. */
@@ -131,7 +143,8 @@ export type ConnectionListResponse = typeof ConnectionListResponseSchema.Type;
 export const ConnectionAdminFilterSchema = Schema.Struct({
   actingPrincipalId: Schema.optionalKey(Schema.String),
   clientId: Schema.optionalKey(Schema.String),
-  status: Schema.optionalKey(ConnectionStatusSchema),
+  /** A `ConnectionStatus`; any other value is answered with a Czech 422 problem, not a bare 400. */
+  status: Schema.optionalKey(Schema.String),
   userPrincipalId: Schema.optionalKey(Schema.String),
 });
 export type ConnectionAdminFilter = typeof ConnectionAdminFilterSchema.Type;
@@ -163,10 +176,15 @@ export const ConnectionUpdateRequestSchema = Schema.Struct({
 });
 export type ConnectionUpdateRequest = typeof ConnectionUpdateRequestSchema.Type;
 
+export const CONNECTION_REVOKE_REASON_MAX = 500;
+
 export const ConnectionRevokeRequestSchema = Schema.Struct({
   grantId: Schema.String,
-  /** Required when an administrator revokes someone else's connection; optional for the owner. */
-  reason: Schema.optionalKey(Text(500)),
+  /**
+   * Required when an administrator revokes someone else's connection; optional for the owner. At most
+   * `CONNECTION_REVOKE_REASON_MAX` characters, checked by the handler so a longer one gets a Czech 422 problem.
+   */
+  reason: Schema.optionalKey(Schema.String),
 });
 export type ConnectionRevokeRequest = typeof ConnectionRevokeRequestSchema.Type;
 

@@ -17,8 +17,10 @@ import type { ConnectionsFailure } from '../../profile/connected-apps-client.ts'
 import {
   accessSummary,
   actingAdminLabel,
+  endedDetail,
   failureText,
   formatWhen,
+  isStale,
   statusBadge,
   statusLabel,
   writePolicyBadge,
@@ -51,10 +53,27 @@ const tiles = (stats: ConnectionAdminListResponse['stats']) => [
   { label: 'S přímým zápisem', value: stats.directWrite },
 ];
 
-const selectClass = 'rounded-md border border-border-primary bg-base p-100';
+const selectClass = 'w-full min-w-0 max-w-full truncate rounded-md border border-border-primary bg-base p-100';
+const labelClass = 'grid min-w-0 gap-50 text-sm';
+
+/** The list opens on active connections; history (Odpojené, Nahrazené, …) is one filter away. */
+const DEFAULT_FILTER: ConnectionAdminFilter = { status: 'active' };
+
+const EndedDetail = ({ connection }: { readonly connection: ConnectionSummary }) => {
+  const detail = endedDetail(connection);
+  if (detail === undefined) {
+    return null;
+  }
+  return (
+    <span className="grid gap-50 text-fg-secondary text-xs">
+      <span>{detail.when === '' ? detail.label : `${detail.label} · ${detail.when}`}</span>
+      {detail.note === null ? null : <span className="whitespace-normal">Důvod: {detail.note}</span>}
+    </span>
+  );
+};
 
 export const ConnectionsAdminPanel = () => {
-  const [filter, setFilter] = useState<ConnectionAdminFilter>({});
+  const [filter, setFilter] = useState<ConnectionAdminFilter>(DEFAULT_FILTER);
   const [state, setState] = useState<PanelState>({ status: 'loading' });
   const [version, setVersion] = useState(0);
   const [notice, setNotice] = useState('');
@@ -105,6 +124,12 @@ export const ConnectionsAdminPanel = () => {
         setVersion((count) => count + 1);
         return;
       }
+      if (isStale(outcome.reason)) {
+        setNotice(`${failureText(outcome.reason, outcome.detail)} Seznam je znovu načtený.`);
+        closeRevoke();
+        setVersion((count) => count + 1);
+        return;
+      }
       setRevokeError(failureText(outcome.reason, outcome.detail));
     });
   };
@@ -126,10 +151,13 @@ export const ConnectionsAdminPanel = () => {
   }
 
   const { company, connections, filterOptions, stats } = state.response;
-  const emptyText =
-    Object.keys(filter).length === 0
-      ? 'Ve firmě zatím nikdo nepřipojil žádnou aplikaci.'
-      : 'Filtru neodpovídá žádné připojení.';
+  const filterKeys = Object.keys(filter);
+  let emptyText = 'Filtru neodpovídá žádné připojení.';
+  if (filterKeys.length === 0) {
+    emptyText = 'Ve firmě zatím nikdo nepřipojil žádnou aplikaci.';
+  } else if (filterKeys.length === 1 && filter.status === 'active') {
+    emptyText = 'Ve firmě teď není připojená žádná aplikace. Starší připojení najdete ve filtru Stav.';
+  }
 
   return (
     <div className="flex min-w-0 flex-col gap-250">
@@ -156,7 +184,7 @@ export const ConnectionsAdminPanel = () => {
       </div>
 
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2 lg:grid-cols-4">
-        <label className="grid gap-50 text-sm">
+        <label className={labelClass}>
           Osoba
           <select
             className={selectClass}
@@ -171,7 +199,7 @@ export const ConnectionsAdminPanel = () => {
             ))}
           </select>
         </label>
-        <label className="grid gap-50 text-sm">
+        <label className={labelClass}>
           Agent
           <select
             className={selectClass}
@@ -186,7 +214,7 @@ export const ConnectionsAdminPanel = () => {
             ))}
           </select>
         </label>
-        <label className="grid gap-50 text-sm">
+        <label className={labelClass}>
           Aplikace
           <select className={selectClass} onChange={onFilterChange('clientId')} value={filter.clientId ?? ''}>
             <option value="">Všechny</option>
@@ -197,7 +225,7 @@ export const ConnectionsAdminPanel = () => {
             ))}
           </select>
         </label>
-        <label className="grid gap-50 text-sm">
+        <label className={labelClass}>
           Stav
           <select className={selectClass} onChange={onFilterChange('status')} value={filter.status ?? ''}>
             <option value="">Všechny</option>
@@ -217,7 +245,7 @@ export const ConnectionsAdminPanel = () => {
           <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-fg-secondary">
+                <tr className="whitespace-nowrap text-left text-fg-secondary">
                   <th className="p-100 font-semibold">Aplikace</th>
                   <th className="p-100 font-semibold">Osoba</th>
                   <th className="p-100 font-semibold">Jedná jako</th>
@@ -242,11 +270,16 @@ export const ConnectionsAdminPanel = () => {
                     <td className="whitespace-nowrap p-100">
                       <Badge variant={writePolicyBadge[c.writePolicy]}>{writePolicyLabel[c.writePolicy]}</Badge>
                     </td>
-                    <td className="whitespace-nowrap p-100">
-                      <Badge variant={statusBadge[c.status]}>{statusLabel[c.status]}</Badge>
+                    <td className="p-100">
+                      <span className="grid gap-50">
+                        <span className="whitespace-nowrap">
+                          <Badge variant={statusBadge[c.status]}>{statusLabel[c.status]}</Badge>
+                        </span>
+                        <EndedDetail connection={c} />
+                      </span>
                     </td>
-                    <td className="p-100">{formatWhen(c.createdAt)}</td>
-                    <td className="p-100">{formatWhen(c.lastUsedAt)}</td>
+                    <td className="whitespace-nowrap p-100">{formatWhen(c.createdAt)}</td>
+                    <td className="whitespace-nowrap p-100">{formatWhen(c.lastUsedAt)}</td>
                     <td className="p-100">
                       {c.status === 'active' ? (
                         <Button onClick={() => setTarget(c)} size="sm" variant="danger">
@@ -271,12 +304,15 @@ export const ConnectionsAdminPanel = () => {
                   <p>Osoba: {c.user.displayName}</p>
                   <p>Jedná jako: {actingAdminLabel(c)}</p>
                   <p>Přístup: {accessSummary(c)}</p>
-                  <p>
-                    <Badge variant={writePolicyBadge[c.writePolicy]}>{writePolicyLabel[c.writePolicy]}</Badge>
+                  <p className="flex flex-wrap items-center gap-100">
+                    Zápis: <Badge variant={writePolicyBadge[c.writePolicy]}>{writePolicyLabel[c.writePolicy]}</Badge>
                   </p>
-                  <p>
-                    <Badge variant={statusBadge[c.status]}>{statusLabel[c.status]}</Badge>
-                  </p>
+                  <div className="grid gap-50">
+                    <p className="flex flex-wrap items-center gap-100">
+                      Stav: <Badge variant={statusBadge[c.status]}>{statusLabel[c.status]}</Badge>
+                    </p>
+                    <EndedDetail connection={c} />
+                  </div>
                   <p>Připojeno: {formatWhen(c.createdAt)}</p>
                   <p>Naposledy použito: {formatWhen(c.lastUsedAt)}</p>
                   {c.status === 'active' ? (
@@ -304,7 +340,7 @@ export const ConnectionsAdminPanel = () => {
         }
         closeLabel="Zavřít dialog"
         customTrigger
-        description="Aplikace ztratí přístup do 30 sekund. Uveďte důvod, zapíše se do auditu."
+        description="Aplikace ztratí přístup do 30 sekund. Uveďte důvod: zapíše se do auditu a ukáže se u připojení ve filtru Odpojené."
         onOpenChange={({ open }) => {
           if (!open) {
             closeRevoke();
@@ -313,13 +349,13 @@ export const ConnectionsAdminPanel = () => {
         open={target !== undefined}
         role="alertdialog"
         size="sm"
-        title={target === undefined ? '' : `Odpojit ${target.client.name} pro ${target.user.displayName}?`}
+        title={target === undefined ? '' : `Odpojit ${target.client.name} (${target.user.displayName})?`}
       >
         <div className="grid gap-150">
-          <label className="grid gap-50 text-sm">
+          <label className={labelClass}>
             Důvod odpojení
             <textarea
-              className={selectClass}
+              className="w-full rounded-md border border-border-primary bg-base p-100"
               maxLength={500}
               onChange={(event) => setReason(event.target.value)}
               rows={3}

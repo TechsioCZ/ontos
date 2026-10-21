@@ -42,6 +42,31 @@ export const statusBadge: Record<ConnectionStatus, 'outline' | 'success'> = {
   superseded: 'outline',
 };
 
+const revokeReasonLabel: Readonly<Record<string, string>> = {
+  admin: 'Odpojil(a) správce firmy',
+  agent_disabled: 'Agent byl vypnut',
+  operator_removed: 'Osoba už nesmí agenta připojit',
+  password_changed: 'Po změně hesla',
+  superseded: 'Nahrazeno novým připojením',
+  user: 'Odpojil(a) uživatel',
+  user_disabled: 'Účet uživatele byl deaktivován',
+};
+
+/** Why and when a connection stopped (admin list); undefined while active. */
+export const endedDetail = (
+  c: ConnectionSummary,
+): { readonly label: string; readonly note: string | null; readonly when: string } | undefined => {
+  if (c.status === 'active') {
+    return undefined;
+  }
+  const fallback = c.status === 'denied' ? 'Souhlas byl zamítnut' : 'Bez uvedeného důvodu';
+  return {
+    label: (c.revokeReason === null ? undefined : revokeReasonLabel[c.revokeReason]) ?? fallback,
+    note: c.revokeNote,
+    when: c.revokedAt === null ? '' : formatWhen(c.revokedAt),
+  };
+};
+
 /** Who acts through the connection, as the person sees it in their own list. */
 export const actingLabel = (c: ConnectionSummary): string =>
   c.acting.kind === 'human' ? 'Já' : `Agent ${c.acting.displayName}`;
@@ -86,6 +111,9 @@ export const failureText = (reason: ConnectionsFailure, detail: string | null): 
   }
   return failureMessages[reason];
 };
+
+/** Answers meaning the row is stale: the connection was revoked or replaced meanwhile, so the list reloads. */
+export const isStale = (reason: ConnectionsFailure): boolean => reason === 'conflict' || reason === 'notFound';
 
 export type ModuleChoice = 'none' | 'read' | 'write';
 
@@ -133,7 +161,19 @@ const policyPresentation: Record<AgentWritePolicy, { readonly label: string; rea
   read_only: { description: '', label: 'Jen čtení' },
 };
 
-const policyDisabledReason = (c: ConnectionSummary): string => {
+/** Highest write policy the panel may offer: the approved one, never above the live rights. */
+const policyCeiling = (c: ConnectionSummary): AgentWritePolicy =>
+  policyRank[c.granted.writePolicy] < policyRank[c.limits.maxWritePolicy]
+    ? c.granted.writePolicy
+    : c.limits.maxWritePolicy;
+
+/** Why something above the approved access is greyed out. */
+export const widenHint = 'Víc jste při připojení nepovolil(a). Pro větší přístup aplikaci odpojte a připojte znovu.';
+
+const policyDisabledReason = (c: ConnectionSummary, value: AgentWritePolicy): string => {
+  if (policyRank[value] > policyRank[c.granted.writePolicy]) {
+    return widenHint;
+  }
   if (c.acting.kind === 'human') {
     return 'Víc vaše oprávnění nedovolují.';
   }
@@ -153,14 +193,43 @@ export const policyChoices = (
   readonly disabledReason: string | null;
 }[] =>
   policyOrder.map((value) => {
-    const disabled = policyRank[value] > policyRank[c.limits.maxWritePolicy];
+    const disabled = policyRank[value] > policyRank[policyCeiling(c)];
     return {
       description: policyPresentation[value].description,
       disabled,
-      disabledReason: disabled ? policyDisabledReason(c) : null,
+      disabledReason: disabled ? policyDisabledReason(c, value) : null,
       label: policyPresentation[value].label,
       value,
     };
+  });
+
+/**
+ * Modules the panel offers, each with what may still be ticked: within the approved grant (all live modules when it
+ * was approved for everything) and within the live rights.
+ */
+export const moduleChoices = (
+  c: ConnectionSummary,
+): readonly {
+  readonly label: string;
+  readonly moduleId: string;
+  readonly canRead: boolean;
+  readonly canWrite: boolean;
+}[] =>
+  c.limits.modules.flatMap((limit) => {
+    const approved = c.allModules
+      ? { access: 'write' as const }
+      : c.granted.modules.find((module) => module.moduleId === limit.moduleId);
+    if (approved === undefined) {
+      return [];
+    }
+    return [
+      {
+        canRead: limit.read,
+        canWrite: limit.write && approved.access === 'write',
+        label: limit.label,
+        moduleId: limit.moduleId,
+      },
+    ];
   });
 
 export const draftProblem = (draft: EditDraft): string | undefined => {
