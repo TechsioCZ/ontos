@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 
-type Receipt = { event: string; status: string; sentAt: string | null };
+type Receipt = { event: string; eventLabel?: string | null; status: string; sentAt: string | null };
 type State =
   | { kind: "loading" }
   | { kind: "unavailable" }
@@ -20,6 +20,11 @@ const statusLabels: Record<string, string> = {
   FAILED: "Odeslání selhalo",
   UNKNOWN: "Odeslání nelze potvrdit",
 };
+/** The dispatcher labels pickup orders „Připraveno k vyzvednutí“ instead of „Předáno dopravci“. */
+const receiptLabel = (d: Receipt) =>
+  d.event === "SHIPPED" && d.eventLabel === "Připraveno k vyzvednutí"
+    ? "Připraveno k vyzvednutí"
+    : (eventLabels[d.event] ?? d.event);
 const formatTime = (iso: string) =>
   new Intl.DateTimeFormat("cs-CZ", {
     dateStyle: "medium",
@@ -35,7 +40,7 @@ export function OrderEmailStatus({ email, orderNumber }: { email: string; orderN
     const load = async () => {
       try {
         const response = await fetch(
-          `/api/ontos/order-emails?orderNumber=${encodeURIComponent(orderNumber)}`,
+          `/api/ontos/order-emails?${new URLSearchParams({ email, orderNumber }).toString()}`,
           { cache: "no-store" },
         );
         if (!response.ok) throw new Error(String(response.status));
@@ -58,7 +63,7 @@ export function OrderEmailStatus({ email, orderNumber }: { email: string; orderN
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [orderNumber]);
+  }, [email, orderNumber]);
   return (
     <section
       aria-labelledby="order-emails-title"
@@ -79,7 +84,7 @@ export function OrderEmailStatus({ email, orderNumber }: { email: string; orderN
         <ul className="grid gap-1">
           {state.deliveries.map((d) => (
             <li key={d.event} className="flex flex-wrap justify-between gap-2">
-              <span>{eventLabels[d.event] ?? d.event}</span>
+              <span>{receiptLabel(d)}</span>
               <strong>
                 {d.status === "SENT" && d.sentAt
                   ? `${statusLabels.SENT} · ${formatTime(d.sentAt)}`

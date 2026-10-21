@@ -5,12 +5,10 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/ontos/config", () => ({ isOntos: () => true }));
 
 const fetchMock = vi.fn();
-function get(orderNumber: string) {
-  return GET(
-    new Request(
-      `http://localhost:3070/api/ontos/order-emails?orderNumber=${encodeURIComponent(orderNumber)}`,
-    ),
-  );
+function get(orderNumber: string, email: string | null = "pavel@zakaznik.example") {
+  const query = new URLSearchParams({ orderNumber });
+  if (email !== null) query.set("email", email);
+  return GET(new Request(`http://localhost:3070/api/ontos/order-emails?${query.toString()}`));
 }
 
 afterEach(() => {
@@ -26,6 +24,7 @@ describe("order e-mail status route", () => {
         deliveries: [
           {
             event: "ORDER_CREATED",
+            eventLabel: "Přijetí objednávky",
             status: "SENT",
             sentAt: "2026-10-21T08:41:00.000Z",
             subjectId: "x",
@@ -37,10 +36,17 @@ describe("order e-mail status route", () => {
     const response = await get("OBJ-2026-0026");
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      deliveries: [{ event: "ORDER_CREATED", status: "SENT", sentAt: "2026-10-21T08:41:00.000Z" }],
+      deliveries: [
+        {
+          event: "ORDER_CREATED",
+          eventLabel: "Přijetí objednávky",
+          status: "SENT",
+          sentAt: "2026-10-21T08:41:00.000Z",
+        },
+      ],
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:3096/v1/deliveries?source=akros-order&subjectNumber=OBJ-2026-0026",
+      "http://127.0.0.1:3096/v1/deliveries?source=akros-order&subjectNumber=OBJ-2026-0026&recipient=pavel%40zakaznik.example",
       expect.anything(),
     );
   });
@@ -49,6 +55,15 @@ describe("order e-mail status route", () => {
     vi.stubGlobal("fetch", fetchMock);
     const response = await get("x");
     expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("requires the buyer's e-mail so order numbers cannot be enumerated", async () => {
+    vi.stubGlobal("fetch", fetchMock);
+    for (const email of [null, "", "neni-email"]) {
+      const response = await get("OBJ-2026-0026", email);
+      expect(response.status).toBe(400);
+    }
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
