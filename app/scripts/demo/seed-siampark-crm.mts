@@ -40,7 +40,7 @@ const salespeople = [
     active: true,
     email: 'external@siampark.demo',
     id: demoId('crm.salesperson', 'siampark-externi'),
-    name: 'Martin Krejčí (externí obchodník)',
+    name: 'Martin Krejčí',
     phone: '+420 724 518 330',
     principalId: externalPrincipal,
   },

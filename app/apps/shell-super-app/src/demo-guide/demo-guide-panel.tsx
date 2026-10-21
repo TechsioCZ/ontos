@@ -409,6 +409,20 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
           >
             <div className="h-full rounded-full bg-primary" style={{ width: `${percent}%` }} />
           </div>
+          {guide.boundaries === undefined ? null : (
+            <Button
+              className="justify-self-start"
+              icon="icon-[mdi--information-outline]"
+              onClick={() => {
+                document.getElementById('demo-guide-boundaries')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              }}
+              size="sm"
+              theme="borderless"
+              variant="secondary"
+            >
+              Co je živé, co simulace a co není hotové
+            </Button>
+          )}
           {summary.total > 0 && summary.nextStepId === undefined ? (
             <p className="flex items-center gap-100 text-fg-primary text-sm">
               <Icon icon="icon-[mdi--check-circle-outline]" size="sm" />

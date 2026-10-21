@@ -144,7 +144,7 @@ export const siamparkGuide: DemoGuide = {
       id: 'externista',
       steps: [
         {
-          click: 'Otevřete Kavárnu Na Nábřeží s.r.o. a ukažte řádek Obchodník: Martin Krejčí (externí obchodník).',
+          click: 'Otevřete Kavárnu Na Nábřeží s.r.o. a ukažte Obchodník: Martin Krejčí, externí obchodník, kterému Vedení kontakt svěřilo.',
           id: 'siampark-vedeni-sveruje',
           persona: management,
           say: 'Vedení vidí všechny zájemce o pronájem a vybrané svěří externímu obchodníkovi. Svěření je záznam s autorem a důvodem.',
