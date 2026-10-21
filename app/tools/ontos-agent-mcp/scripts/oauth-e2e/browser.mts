@@ -92,8 +92,9 @@ export async function approveConnection(
   if (opts.actAs.kind === 'agent' || (await acting.count()) > 0) {
     await acting.click();
   }
-  // Exact: "Jen čtení" is also a substring of agent names such as "AI agent A · jen čtení".
-  await page.getByText(WRITE_MODE_LABEL[opts.writeMode], { exact: true }).first().click();
+  // "Jen čtení" is also part of agent names ("AI agent A · jen čtení"), so it must match exactly; the other labels
+  // carry suffixes such as "(doporučeno)" and match as substrings.
+  await page.getByText(WRITE_MODE_LABEL[opts.writeMode], { exact: opts.writeMode === 'read_only' }).first().click();
   await page.screenshot({ path: `${opts.shotsDir}/${opts.shotPrefix}-1-pripojit.png`, fullPage: true });
   await page.getByRole('button', { name: 'Pokračovat' }).click();
   await page.waitForURL((u) => u.pathname.startsWith('/cs/pripojit/souhlas'), { timeout: 30_000 });
