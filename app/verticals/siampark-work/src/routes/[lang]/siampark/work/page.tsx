@@ -102,6 +102,19 @@ type CommandOutcome =
     }
   | { readonly message: string; readonly ok: false };
 
+/**
+ * A read that fails while the gateway is busy (several lists load at once on the first visit) is tried twice more
+ * before the page reports it. A forbidden answer is final.
+ */
+const retryTransient = <A, E extends { readonly _tag: string }, R>(effect: Effect.Effect<A, E, R>) =>
+  effect.pipe(
+    Effect.retry({
+      schedule: Schedule.spaced('800 millis'),
+      times: 2,
+      while: (error: E) => !error._tag.includes('Forbidden'),
+    }),
+  );
+
 const requestId = Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
   Effect.map(([first, second]) => `siampark-work:${first}:${second}`),
 );
@@ -149,6 +162,7 @@ const loadRecords = (
   browserRuntime.runFork(
     requestId.pipe(
       Effect.flatMap((id) => executeRecords(recordsRequest(partyId, includeArchived), id)),
+      retryTransient,
       Effect.match({
         onFailure: (error) =>
           setLoadState(
@@ -169,6 +183,7 @@ const loadRecords = (
 const loadEmployees = ({ setEmployees, setEmployeesFailed, settle }: EmployeeSetters) => {
   browserRuntime.runFork(
     listEmployees().pipe(
+      retryTransient,
       Effect.matchEffect({
         onFailure: (error) =>
           Effect.logWarning('Employee list unavailable.', error).pipe(
@@ -201,6 +216,7 @@ interface ReferenceSetters {
 const loadCustomerNames = ({ setCustomers, setReferenceFailed, settle }: ReferenceSetters) => {
   browserRuntime.runFork(
     listCustomers().pipe(
+      retryTransient,
       Effect.matchEffect({
         onFailure: (error) =>
           Effect.logWarning('Customer list unavailable.', error).pipe(
@@ -230,6 +246,7 @@ const loadOpportunityNames = ({ setOpportunities, setReferenceFailed, settle }: 
   browserRuntime.runFork(
     requestId.pipe(
       Effect.flatMap((id) => listOpportunities({}, id)),
+      retryTransient,
       Effect.matchEffect({
         onFailure: (error) =>
           Effect.logWarning('Opportunity list unavailable.', error).pipe(
