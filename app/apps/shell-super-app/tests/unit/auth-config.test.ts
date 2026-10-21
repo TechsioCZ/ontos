@@ -49,12 +49,14 @@ it.effect('keeps gateway signing configuration independent from Better Auth conf
     expect(Schema.is(GatewayIssuerConfigError)(gatewayError)).toBe(true);
   }),
 );
+
 it.effect('defaults the MCP resource to the local resource server', () =>
   Effect.gen(function* defaultsMcpResource() {
     const configuration = yield* parseAuthConfig(validEnvironment);
     expect(configuration.mcpResourceUrl).toBe('http://localhost:3090/mcp');
   }),
 );
+
 it.effect('accepts an https or loopback MCP resource', () =>
   Effect.gen(function* acceptsMcpResource() {
     const [httpsConfiguration, loopbackConfiguration] = yield* Effect.all([
@@ -65,6 +67,7 @@ it.effect('accepts an https or loopback MCP resource', () =>
     expect(loopbackConfiguration.mcpResourceUrl).toBe('http://127.0.0.1:3090/mcp');
   }),
 );
+
 it.effect('rejects a malformed MCP resource', () =>
   Effect.gen(function* rejectsMcpResource() {
     const errors = yield* Effect.all(

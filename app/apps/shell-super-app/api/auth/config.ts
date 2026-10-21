@@ -96,7 +96,7 @@ const parseMcpResourceUrl = (value: string): Effect.Effect<string, AuthConfigFai
     ),
   );
 
-const parseAuthConfigFromProvider =Effect.fn('AuthConfig.parseAuthConfigFromProvider')(function* parseConfiguration(
+const parseAuthConfigFromProvider = Effect.fn('AuthConfig.parseAuthConfigFromProvider')(function* parseConfiguration(
   provider: ConfigProvider.ConfigProvider,
 ) {
   const source = yield* authConfigSource
