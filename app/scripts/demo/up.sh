@@ -6,6 +6,7 @@
 #   DEMO_REBUILD=1 scripts/demo/up.sh  # force native rebuild of every selected app
 #   DEMO_RESET=0 scripts/demo/up.sh    # keep database data (SpiceDB grants are still re-written)
 # Real e-mail: Mailpit (SMTP 127.0.0.1:1025, UI http://localhost:8025) + scripts/demo/email-dispatcher (receipts :3096).
+# MCP for Claude/ChatGPT: tools/ontos-agent-mcp on :3090 (restart from committed code: scripts/demo/rebuild-one.sh ontos-agent-mcp).
 #
 # Re-running stops the previous demo processes first. Logs: app/.scratch/demo-logs/*.log.
 set -euo pipefail
@@ -28,6 +29,7 @@ STUB_DIR="$SCRATCH/demo-bin"
 COMPOSITION_PORT="${DEMO_COMPOSITION_PORT:-3041}"
 SHELL_PORT=3020
 STOREFRONT_PORT=3060
+MCP_PORT=3090
 BUILD_JOBS="${DEMO_BUILD_JOBS:-2}"
 [[ "$BUILD_JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "DEMO_BUILD_JOBS must be a positive integer" >&2; exit 1; }
 DOCKER=(docker --context orbstack)
@@ -218,6 +220,7 @@ assert_free "$SHELL_PORT" shell-super-app
 assert_free "$STOREFRONT_PORT" eshop-storefront
 assert_free "$COMPOSITION_PORT" composition
 assert_free "${EMAIL_DISPATCHER_PORT:-3096}" email-dispatcher
+assert_free "$MCP_PORT" ontos-agent-mcp
 for id in "${VERTICALS[@]}"; do assert_free "$(port_of "$id")" "$id"; done
 
 say "starting shell-super-app on :$SHELL_PORT and ${#VERTICALS[@]} verticals"
@@ -246,6 +249,11 @@ say "starting the e-mail dispatcher (SMTP ${SMTP_HOST:-127.0.0.1}:${SMTP_PORT:-1
 start email-dispatcher "${WITH_ENV[@]}" node scripts/demo/email-dispatcher/main.mts
 wait_http "http://127.0.0.1:${EMAIL_DISPATCHER_PORT:-3096}/healthz" 60 email-dispatcher
 
+# MCP resource server (OAuth through the shell). down.sh stops it through its pid file.
+say "starting the MCP resource server on :$MCP_PORT"
+start ontos-agent-mcp "${WITH_ENV[@]}" pnpm --dir tools/ontos-agent-mcp start:http
+wait_http "http://127.0.0.1:$MCP_PORT/healthz" 60 ontos-agent-mcp
+
 curl -fsS -o /dev/null --max-time 10 "http://localhost:$SHELL_PORT/" || say "WARN shell root did not answer 2xx"
 
 # 6. Sales-demo accounts, role grants and the agent-bot API key (needs the running shell; idempotent).
@@ -257,6 +265,8 @@ step demo-seed-work-people "${WITH_ENV[@]}" node scripts/demo/seed-work-people.m
 step company-membership-hygiene "${WITH_ENV[@]}" node scripts/demo/company-membership-hygiene.mts
 # reset-permissions deliberately logs AI errors without failing; this explicit step makes a cold start honest.
 step ai-profiles pnpm_ demo:ai-profiles
+# SpiceDB is in-memory: re-add the company administrators as operators of the seeded agents (MCP „Za agenta“).
+step mcp-agent-operators "${WITH_ENV[@]}" node scripts/demo/mcp-agent-operators.mts
 # CRM.md §3: key of the CRM's Party Registry intake principal (read by the crm server per intake, no restart).
 step crm-party-intake pnpm_ demo:crm-party-intake
 # Rental data uses public reads/Actions, so it must run AFTER composition, company setup and grants.
@@ -287,5 +297,6 @@ cat <<EOF
 [demo] Verticals: ${VERTICALS[*]}
 [demo] Login: management@siampark.demo / password1234  (also operations@, finance@, external@)
 [demo] Sales demo: obchod@ / obchodnik@ / ucetni@ / sklad@demo.ontos, password1234; bot key in app/.env.demo.local
+[demo] MCP (Claude/ChatGPT): http://localhost:$MCP_PORT/mcp   restart: scripts/demo/rebuild-one.sh ontos-agent-mcp
 [demo] Logs: $LOG_DIR   Stop: scripts/demo/down.sh [--containers]
 EOF

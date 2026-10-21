@@ -4,8 +4,10 @@
 #   scripts/demo/rebuild-one.sh merchandise            # build + restart one vertical
 #   scripts/demo/rebuild-one.sh crm facility-operations        # new verticals are added to the served set
 #   scripts/demo/rebuild-one.sh shell-super-app
+#   scripts/demo/rebuild-one.sh ontos-agent-mcp        # restart the MCP resource server (:3090) from committed code
 #
-# Builds are serialised through two lock slots so parallel agents do not saturate the machine. The
+# Builds are serialised through two lock slots so parallel agents do not saturate the machine. Each app has
+# its own lock: a second caller for the SAME app waits until the first build and restart finish. The
 # composition publisher is restarted whenever the served vertical set changes (or DEMO_RESTART_COMPOSITION=1).
 set -euo pipefail
 
@@ -58,7 +60,7 @@ die() {
   printf '\033[31m[rebuild] %s\033[0m\n' "$*" >&2
   exit 1
 }
-[ $# -gt 0 ] || die "usage: rebuild-one.sh <vertical-id|shell-super-app>... | --composition-only"
+[ $# -gt 0 ] || die "usage: rebuild-one.sh <vertical-id|shell-super-app>... | ontos-agent-mcp | --composition-only"
 COMPOSITION_ONLY=0
 if [ "$1" = --composition-only ]; then
   COMPOSITION_ONLY=1
@@ -120,6 +122,55 @@ stop_pid() {
   rm -f "$file"
 }
 
+# Per-app locks (STATUS 2026-10-21: two concurrent shell-super-app builds overwrote each other's dist/ and took
+# :3020 down). Locks are held until this script exits, so build AND restart of one app never interleave.
+HELD_LOCKS=()
+slot=""
+release_locks() {
+  local lock
+  for lock in ${HELD_LOCKS[@]+"${HELD_LOCKS[@]}"}; do rm -rf "$lock"; done
+  HELD_LOCKS=()
+  if [ -n "$slot" ]; then rm -rf "$slot"; fi
+  slot=""
+}
+trap release_locks EXIT
+acquire_app_lock() { # acquire_app_lock <app-id>
+  local lock="$LOCK_ROOT/app-$1" owner waited=0
+  until mkdir "$lock" 2>/dev/null; do
+    owner="$(cat "$lock/pid" 2>/dev/null || true)"
+    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+      rm -rf "$lock"
+      continue
+    fi
+    # A lock without a pid older than a minute was left by a killed caller.
+    if [ -z "$owner" ] && [ -n "$(find "$lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
+      rm -rf "$lock"
+      continue
+    fi
+    [ "$waited" = 1 ] || say "waiting for another rebuild of $1 (pid ${owner:-?}) to finish"
+    waited=1
+    sleep 3
+  done
+  echo $$ >"$lock/pid"
+  HELD_LOCKS+=("$lock")
+}
+
+# The MCP resource server is plain Node (no build step): restart it from this committed runtime tree.
+if [ "$#" -eq 1 ] && [ "$1" = ontos-agent-mcp ]; then
+  acquire_app_lock ontos-agent-mcp
+  stop_pid ontos-agent-mcp
+  if lsof -nP -iTCP:3090 -sTCP:LISTEN >/dev/null 2>&1; then
+    die "port 3090 is still held by a process up.sh did not start: $(lsof -nP -iTCP:3090 -sTCP:LISTEN | tail -1); stop it once by hand"
+  fi
+  set -m
+  ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="http://127.0.0.1:$COMPOSITION_PORT/active" \
+    nohup "${WITH_ENV[@]}" pnpm --dir tools/ontos-agent-mcp start:http >"$LOG_DIR/ontos-agent-mcp.log" 2>&1 </dev/null &
+  echo $! >"$PID_DIR/ontos-agent-mcp.pid"
+  wait_http "http://127.0.0.1:3090/healthz" 60 ontos-agent-mcp
+  say "restarted ontos-agent-mcp"
+  exit 0
+fi
+
 # Served vertical set: persisted by previous rebuilds, else up.sh's default list.
 if [ -f "$VERTICALS_FILE" ]; then
   read -r -a SERVED <"$VERTICALS_FILE"
@@ -137,8 +188,9 @@ for id in "$@"; do
 done
 
 if [ "$COMPOSITION_ONLY" = 1 ]; then set -- ; fi
+# One lock per requested app, taken in sorted order so two callers never deadlock.
+for id in $(printf '%s\n' "$@" | sort -u); do acquire_app_lock "$id"; done
 # Acquire one of two build slots.
-slot=""
 until [ -n "$slot" ]; do
   for s in 1 2; do
     if mkdir "$LOCK_ROOT/slot-$s" 2>/dev/null; then
@@ -151,7 +203,6 @@ until [ -n "$slot" ]; do
   done
   [ -n "$slot" ] || sleep 5
 done
-trap 'rm -rf "$slot"' EXIT
 
 for id in "$@"; do
   script="$(build_script "$id")" || die "unexpected build script shape for $id"
@@ -168,7 +219,7 @@ for id in "$@"; do
   touch "$STAMP_DIR/$id.stamp"
 done
 rm -rf "$slot"
-trap - EXIT
+slot=""
 
 printf '%s\n' "${SERVED[*]}" >"$VERTICALS_FILE"
 CSV="$(IFS=,; echo "${SERVED[*]}")"
@@ -194,6 +245,8 @@ for id in "$@"; do
 done
 
 # A rebuilt app gets a new build marker, so the composition must be republished either way.
+# Two callers must not restart the composition publisher at the same time.
+acquire_app_lock composition
 stop_pid composition
 # Demo only: after downtime the previous composition lease has expired and the publisher refuses to drain it.
 docker --context orbstack exec ontos-demo-db psql -q -U "${POSTGRES_USER:-ontos_admin}" -d "${POSTGRES_DB:-siampark_demo}" \
