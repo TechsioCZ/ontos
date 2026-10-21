@@ -29,6 +29,10 @@ const categories = [
   category('din933', 'root', 'DIN 933', 'din-933'),
   category('a2-912', 'din912', 'A 2', 'din-912-a2'),
   category('a2-933', 'din933', 'A 2', 'din-933-a2'),
+  category('cert', null, 'DIN 912 s certifikátem', 'din-912-s-certifikatem'),
+  category('cert-a2', 'cert', 'A 2 certifikát', 'din-912-cert-a2'),
+  category('din6912', 'root', 'DIN 6912', 'din-6912'),
+  category('a2-6912', 'din6912', 'A 2', 'din-6912-a2'),
 ];
 const trails = new Map([
   ['root', 'Šrouby'],
@@ -36,14 +40,24 @@ const trails = new Map([
   ['din933', 'Šrouby › DIN 933'],
   ['a2-912', 'Šrouby › DIN 912 › A 2'],
   ['a2-933', 'Šrouby › DIN 933 › A 2'],
+  ['cert', 'DIN 912 s certifikátem'],
+  ['cert-a2', 'DIN 912 s certifikátem › A 2 certifikát'],
+  ['din6912', 'Šrouby › DIN 6912'],
+  ['a2-6912', 'Šrouby › DIN 6912 › A 2'],
 ]);
 
 it('finds an ambiguous leaf category by its parent path, diacritics-insensitive', () => {
-  expect(searchCategories(categories, trails, 'din 912 a 2').map((entry) => entry.id)).toEqual(['a2-912']);
+  expect(searchCategories(categories, trails, 'din 912 a 2').map((entry) => entry.id)).toEqual([
+    'a2-912',
+    'cert-a2',
+    'a2-6912',
+    'cert',
+  ]);
   expect(searchCategories(categories, trails, 'srouby › din 933 › a 2').map((entry) => entry.id)).toEqual([
     'a2-933',
   ]);
-  expect(searchCategories(categories, trails, 'a 2').map((entry) => entry.id).slice(0, 2)).toEqual([
+  expect(searchCategories(categories, trails, 'a 2').map((entry) => entry.id).slice(0, 3)).toEqual([
+    'a2-6912',
     'a2-912',
     'a2-933',
   ]);
