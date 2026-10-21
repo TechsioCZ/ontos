@@ -7,6 +7,7 @@ import {
   comboboxTranslations,
   datePickerSegmentsClassName,
   datePickerTranslations,
+  surfaceTileClassName,
 } from '@app/admin-ui';
 import { CalendarDate as IntlCalendarDate } from '@internationalized/date';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -188,7 +189,7 @@ const IssueDateField = ({ error, label, onChange, value }: IssueDateFieldProps) 
 const ResumedDraftNotice = ({ onRestart }: { readonly onRestart: () => void }) => {
   const { t } = useModernI18n();
   return (
-    <div className="flex items-center justify-between gap-150 rounded-md border border-border-primary p-150">
+    <div className={`${surfaceTileClassName} flex items-center justify-between gap-150 p-150`}>
       <StatusText icon="icon-[mdi--history]" showIcon size="sm">
         {t(`${ns}.form.draftKept`)}
       </StatusText>

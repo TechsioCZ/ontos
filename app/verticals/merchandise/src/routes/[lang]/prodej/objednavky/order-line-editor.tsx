@@ -3,7 +3,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
-import { formatMoney, formatNumber, comboboxTranslations } from '@app/admin-ui';
+import { formatMoney, formatNumber, comboboxTranslations, surfaceTileClassName } from '@app/admin-ui';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductId, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
 import { WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
@@ -62,7 +62,7 @@ export const OrderLineEditor = ({ canRemove, error, line, onChange, onRemove, pr
         ];
 
   return (
-    <div className="flex flex-col gap-100 rounded-md border border-border-primary p-150">
+    <div className={`${surfaceTileClassName} flex flex-col gap-100 p-150`}>
       <div className="grid grid-cols-[minmax(0,1fr)_7rem_auto] items-end gap-150">
         <div className="min-w-0">
           {/* Not clearable: ui-kit names the clear control "Clear value" in English; picking another product replaces it. */}

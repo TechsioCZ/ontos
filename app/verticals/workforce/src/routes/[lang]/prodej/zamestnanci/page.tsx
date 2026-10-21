@@ -10,6 +10,7 @@ import {
   Toaster,
   dataTableRowLabels,
   paginationTranslations,
+  surfaceTileClassName,
 } from '@app/admin-ui';
 import { BulkTagDialog, TagCell, TagFilter, useTagsOfKind } from '@app/tagging/components/tag-controls';
 import type { TagCatalog, TagsStatus } from '@app/tagging/components/tag-controls';
@@ -198,7 +199,7 @@ const accessRows = [
 const PermissionsCard = () => {
   const { t } = useModernI18n();
   return (
-    <Accordion className="rounded-lg border border-border-primary bg-surface" collapsible multiple={false}>
+    <Accordion className={surfaceTileClassName} collapsible multiple={false}>
       <Accordion.Item value="permissions">
         <Accordion.Header aria-level={2}>
           <Accordion.Title>{t(`${key}.permissions.title`)}</Accordion.Title>

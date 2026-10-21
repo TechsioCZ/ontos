@@ -7,7 +7,7 @@ import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { comboboxTranslations, formatMoney, SectionCard } from '@app/admin-ui';
+import { comboboxTranslations, formatMoney, SectionCard, surfaceTileClassName } from '@app/admin-ui';
 import { Effect } from 'effect';
 import { useState } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
@@ -620,7 +620,7 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
         value={draft.reason}
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-150 rounded-md border border-border-primary p-200">
+      <div className={`${surfaceTileClassName} flex flex-wrap items-center justify-between gap-150 p-200`}>
         <div className="flex flex-col">
           <span className="text-fg-secondary text-sm">Náhled celkové částky s DPH (přepočte server)</span>
           <span className="font-semibold text-lg tabular-nums">

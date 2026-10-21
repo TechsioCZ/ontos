@@ -29,7 +29,7 @@ export const ProductBulkBar = ({
     return null;
   }
   return (
-    <div className="flex flex-wrap items-center gap-150 rounded-md border border-border-primary bg-overlay p-150">
+    <div className="flex flex-wrap items-center gap-150 rounded-lg bg-overlay p-150">
       <span className="font-medium text-sm tabular-nums">
         {t('merchandise.pages.products.bulk.selected', { total: count })}
       </span>

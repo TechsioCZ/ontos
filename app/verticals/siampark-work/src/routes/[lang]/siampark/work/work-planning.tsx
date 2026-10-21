@@ -1,4 +1,4 @@
-import { EmptyState, SectionCard, SidePanel } from '@app/admin-ui';
+import { EmptyState, SectionCard, SidePanel, surfaceTileClassName } from '@app/admin-ui';
 import type { Employee } from '@app/workforce/contracts/records';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -177,7 +177,7 @@ const ProjectEditor = ({
           <p className="text-sm text-fg-secondary">Milníky zatím nejsou naplánované.</p>
         )}
         {draft.milestones.map((milestone, index) => (
-          <div key={index} className="flex flex-col gap-100 rounded-lg border border-border-primary p-150">
+          <div key={index} className={`${surfaceTileClassName} flex flex-col gap-100 p-150`}>
             <FormInput
               label="Název milníku"
               value={milestone.title}
@@ -302,7 +302,7 @@ export const WorkPlanning = ({
           projects.map((project) => {
             const tasks = records.items.filter((task) => task.projectId === project.id);
             return (
-              <article key={project.id} className="flex flex-col gap-150 rounded-lg border border-border-primary p-200">
+              <article key={project.id} className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
                 <div className="flex flex-wrap items-start justify-between gap-150">
                   <div>
                     <h3 className="font-semibold">{project.title}</h3>

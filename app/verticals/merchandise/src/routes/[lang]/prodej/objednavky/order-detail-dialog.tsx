@@ -4,7 +4,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { DetailList, formatDateTime, formatMoney, SectionCard, SidePanel, StatusBadge } from '@app/admin-ui';
+import { DetailList, formatDateTime, formatMoney, SectionCard, SidePanel, StatusBadge, surfaceTileClassName } from '@app/admin-ui';
 import { DateTime, Effect } from 'effect';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
@@ -291,7 +291,7 @@ export const OrderDetailDialog = ({
             )}
           </div>
           {order.demo === true && (
-            <p className="rounded-md border border-border-primary p-150 text-fg-secondary text-sm">
+            <p className={`${surfaceTileClassName} p-150 text-fg-secondary text-sm`}>
               <span className="font-semibold text-fg-primary">DEMO: </span>
               {DEMO_NOTICE} Změny stavu neodesílají zásilku ani výzvu k platbě.
             </p>

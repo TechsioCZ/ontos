@@ -122,7 +122,7 @@ export const AiActivityCard = () => {
         <EmptyState description={t(`${key}.emptyDescription`)} title={t(`${key}.empty`)} />
       )}
       {feed.status === 'ready' && entries.length > 0 && (
-        <div className="max-h-[28rem] overflow-auto rounded-md border border-border-primary">
+        <div className="max-h-[28rem] overflow-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead className="sticky top-0 bg-surface">
               <tr className="border-border-primary border-b">
