@@ -334,45 +334,6 @@
         "disabled": "Deaktivované účty",
         "all": "Všechny účty"
       }
-    },
-    "agents": {
-      "tokens": {
-        "title": "MCP přístup",
-        "description": "Token je přístupový klíč, kterým se agent připojí k OntOS přes MCP. Funguje jen v této firmě a jen v rozsahu oprávnění agenta.",
-        "inactive": "Neaktivní agent nemůže token používat ani dostat nový. Nejprve ho znovu aktivujte.",
-        "empty": "Agent zatím nemá žádný token.",
-        "issue": "Vydat nový token",
-        "issuing": "Vydávám…",
-        "created": "Vytvořen {{date}}",
-        "lastUsed": "Naposledy použit {{date}}",
-        "neverUsed": "Zatím nepoužit",
-        "active": "Aktivní",
-        "disabled": "Pozastavený",
-        "rotate": "Vyměnit",
-        "revoke": "Zrušit",
-        "reason": "Důvod",
-        "reasonRequired": "Uveďte důvod.",
-        "confirmRotate": "Vyměnit token",
-        "confirmRevoke": "Zrušit token",
-        "cancel": "Zpět",
-        "rotateHint": "Starý token přestane fungovat hned po vydání nového.",
-        "revokeHint": "Zrušený token přestane fungovat při příštím požadavku. Akci nelze vrátit.",
-        "once": "Token se zobrazí jen teď. Zkopírujte si ho, po zavření ho už neuvidíte.",
-        "secretLabel": "Token",
-        "copy": "Kopírovat",
-        "copied": "Zkopírováno",
-        "copyFailed": "Kopírování se nepodařilo, označte text ručně.",
-        "chatgptTitle": "ChatGPT (vlastní MCP konektor)",
-        "chatgptUrl": "Adresa MCP serveru",
-        "chatgptHeader": "Hlavička Authorization",
-        "chatgptNote": "ChatGPT se připojuje z internetu, potřebuje proto veřejnou HTTPS adresu (např. přes tunel). Na lokálním demu použijte Claude Desktop nebo Claude Code.",
-        "claudeDesktopTitle": "Claude Desktop (claude_desktop_config.json)",
-        "claudeCodeTitle": "Claude Code (příkaz v terminálu)",
-        "done": "Hotovo, token mám uložený",
-        "toastIssued": "Token pro {{name}} je vydaný",
-        "toastRotated": "Token pro {{name}} je vyměněný",
-        "toastRevoked": "Token pro {{name}} je zrušený"
-      }
     }
   }
 }

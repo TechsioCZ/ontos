@@ -9,14 +9,11 @@ import {
   AGENT_ACCESS_PATHS,
   AgentEntityOverviewSchema,
   ManageAgentEntityResponseSchema,
-  McpTokenIssueResponseSchema,
 } from '@app/shared-contracts/agent-access';
 import type {
   AgentEntityOverview,
-  AgentTokenRequest,
   ManageAgentEntityRequest,
   ManageAgentEntityResponse,
-  McpTokenIssueResponse,
 } from '@app/shared-contracts/agent-access';
 import type { PeopleFailure, PeopleOutcome } from './people-admin-client.ts';
 
@@ -62,7 +59,6 @@ const failed = (reason: AgentFailure): { readonly reason: AgentFailure; readonly
 
 const decodeOverview = Schema.decodeUnknownEffect(AgentEntityOverviewSchema);
 const decodeManageResponse = Schema.decodeUnknownEffect(ManageAgentEntityResponseSchema);
-const decodeTokenResponse = Schema.decodeUnknownEffect(McpTokenIssueResponseSchema);
 
 export const loadAgentEntities: Effect.Effect<
   AgentOutcome<AgentEntityOverview>,
@@ -87,18 +83,5 @@ export const runAgentCommand = (
       return failed(answer.reason);
     }
     const value = yield* decodeManageResponse(answer.json);
-    return { status: 'ok' as const, value };
-  }).pipe(Effect.orElseSucceed(() => failed('error')));
-
-export const runAgentTokenCommand = (
-  command: AgentTokenRequest,
-  idempotencyKey: string,
-): Effect.Effect<AgentOutcome<McpTokenIssueResponse>, never, HttpClient.HttpClient> =>
-  Effect.gen(function* runAgentToken() {
-    const answer = yield* post(AGENT_ACCESS_PATHS.token, command, idempotencyKey);
-    if (answer.status === 'failed') {
-      return failed(answer.reason);
-    }
-    const value = yield* decodeTokenResponse(answer.json);
     return { status: 'ok' as const, value };
   }).pipe(Effect.orElseSucceed(() => failed('error')));

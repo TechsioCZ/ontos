@@ -299,47 +299,9 @@
     "profile": {
       "title": "Můj profil",
       "menu": "Můj profil",
-      "seoDescription": "Profil přihlášeného účtu a osobní MCP přístup.",
+      "seoDescription": "Profil přihlášeného účtu a připojené aplikace (ChatGPT, Claude).",
       "identity": "Přihlášený účet",
-      "loading": "Načítám…",
-      "mcp": {
-        "title": "Osobní MCP přístup",
-        "description": "Osobní token propojí AI asistenta (ChatGPT, Claude) s OntOS. Asistent jedná přesně jako vy – vidí a mění jen to, co smíte vy – a jen ve firmě {{company}}.",
-        "otherCompanies": "Token platí jen pro firmu vybranou nahoře. Pro jinou firmu ji přepněte a vytvořte samostatný token.",
-        "empty": "Pro tuto firmu zatím nemáte žádný osobní token.",
-        "issue": "Vytvořit osobní token",
-        "issuing": "Vytvářím…",
-        "created": "Vytvořen {{date}}",
-        "lastUsed": "Naposledy použit {{date}}",
-        "neverUsed": "Zatím nepoužit",
-        "active": "Aktivní",
-        "disabled": "Pozastavený",
-        "revoke": "Zrušit",
-        "reason": "Důvod zrušení",
-        "reasonRequired": "Uveďte důvod.",
-        "confirmRevoke": "Zrušit token",
-        "cancel": "Zpět",
-        "revokeHint": "Zrušený token přestane fungovat při příštím požadavku.",
-        "once": "Token se zobrazí jen teď. Zkopírujte si ho, po zavření ho už neuvidíte.",
-        "secretLabel": "Token",
-        "copy": "Kopírovat",
-        "copied": "Zkopírováno",
-        "copyFailed": "Kopírování se nepodařilo, označte text ručně.",
-        "chatgptTitle": "ChatGPT (vlastní MCP konektor)",
-        "chatgptUrl": "Adresa MCP serveru",
-        "chatgptHeader": "Hlavička Authorization",
-        "chatgptNote": "ChatGPT se připojuje z internetu, potřebuje proto veřejnou HTTPS adresu (např. přes tunel). Na lokálním demu použijte Claude Desktop nebo Claude Code.",
-        "claudeDesktopTitle": "Claude Desktop (claude_desktop_config.json)",
-        "claudeCodeTitle": "Claude Code (příkaz v terminálu)",
-        "done": "Hotovo, token mám uložený"
-      },
-      "errors": {
-        "signedOut": "Přihlášení vypršelo. Přihlaste se znovu.",
-        "forbidden": "Tuto akci nemůžete provést.",
-        "invalid": "Údaje nejsou platné.",
-        "conflict": "Mezitím se něco změnilo. Načtěte stránku znovu.",
-        "error": "Služba je nedostupná. Zkuste to znovu."
-      }
+      "loading": "Načítám…"
     }
   }
 }
