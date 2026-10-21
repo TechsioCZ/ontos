@@ -436,16 +436,20 @@ const emptyCounterparty: NewCounterpartyInput = {
 const NewCounterpartyForm = ({
   busy,
   error,
+  existingHref,
   onCancel,
   onCreate,
 }: {
   readonly busy: boolean;
   readonly error: string | undefined;
+  /** Dossier link of a registry customer with the same name, so the user opens it instead of duplicating. */
+  readonly existingHref: (name: string) => string | undefined;
   readonly onCancel: () => void;
   readonly onCreate: (input: NewCounterpartyInput) => void;
 }) => {
   const [input, setInput] = useState<NewCounterpartyInput>(emptyCounterparty);
   const [submitted, setSubmitted] = useState(false);
+  const [duplicateHref, setDuplicateHref] = useState<string>();
   const errors = submitted ? validateNewCounterparty(input) : {};
   const set = (field: keyof NewCounterpartyInput, value: string) => setInput({ ...input, [field]: value });
   const person = input.partyType === 'PERSON';
@@ -456,7 +460,9 @@ const NewCounterpartyForm = ({
       onSubmit={(event) => {
         event.preventDefault();
         setSubmitted(true);
-        if (Object.keys(validateNewCounterparty(input)).length === 0) onCreate(input);
+        const existing = existingHref(input.displayName);
+        setDuplicateHref(existing);
+        if (existing === undefined && Object.keys(validateNewCounterparty(input)).length === 0) onCreate(input);
       }}
     >
       <h3>Nová protistrana</h3>
@@ -530,7 +536,13 @@ const NewCounterpartyForm = ({
         value={input.note}
         {...(errors.note === undefined ? {} : { validateStatus: 'error', helpText: errors.note })}
       />
-      {error !== undefined && (
+      {duplicateHref !== undefined && (
+        <p className="sp-tenant-muted" role="alert">
+          {person ? 'Osoba' : 'Firma'} „{input.displayName.trim()}“ už v registru této společnosti je.{' '}
+          <a href={duplicateHref}>Otevřít její evidenci a doplnit kontakty →</a>
+        </p>
+      )}
+      {error !== undefined && duplicateHref === undefined && (
         <p className="sp-tenant-muted" role="alert">
           {error}
         </p>
@@ -573,13 +585,14 @@ export const TenantDirectory = ({
     snapshot.occupancies.filter((record) => record.customerCounterpartyRef?.resourceId === counterpartyId);
   const dossierOf = (counterpartyId: string) =>
     snapshot.tenantDossiers?.find((item) => item.counterpartyId === counterpartyId);
-  // Tenants and prospects: every customer with a lease or with a dossier (contacts, notes, case).
-  const relevant = directory.filter(
-    (entry) =>
-      leasesOf(entry.counterpartyRef.resourceId).length > 0 ||
-      dossierOf(entry.counterpartyRef.resourceId) !== undefined,
-  );
-  const visible = relevant.filter((entry) => {
+  // Every counterparty of the company: tenants, prospects with a dossier and firms entered in the registry.
+  const dossierHref = (id: string) => `/${language}/siampark/occupancy?counterpartyId=${id}#tenant`;
+  const existingHref = (name: string) => {
+    const wanted = fold(name.trim());
+    const match = directory.find((entry) => entry.status === 'ACTIVE' && fold(entry.displayName ?? '') === wanted);
+    return wanted === '' || match === undefined ? undefined : dossierHref(match.counterpartyRef.resourceId);
+  };
+  const visible = directory.filter((entry) => {
     const dossier = dossierOf(entry.counterpartyRef.resourceId);
     return (
       (archived || (dossier?.archived !== true && entry.status !== 'ARCHIVED')) &&
@@ -612,13 +625,14 @@ export const TenantDirectory = ({
         title="Nájemci, zájemci a kontaktní osoby"
       >
         <p className="sp-tenant-muted">
-          Najděte firmu nebo osobu podle názvu, IČO, e-mailu, telefonu nebo jména kontaktní osoby. Zájemce bez nájmu
-          založíte tlačítkem Nová protistrana.
+          Najděte firmu nebo osobu podle názvu, IČO, e-mailu, telefonu nebo jména kontaktní osoby. Seznam obsahuje
+          nájemce i firmy z registru zákazníků; nového zájemce založíte tlačítkem Nová protistrana.
         </p>
         {creating && (
           <NewCounterpartyForm
             busy={busy}
             error={createError}
+            existingHref={existingHref}
             onCancel={() => setCreating(false)}
             onCreate={onCreate}
           />
@@ -639,11 +653,7 @@ export const TenantDirectory = ({
             const dossier = dossierOf(id);
             const leases = leasesOf(id);
             return (
-              <a
-                className="sp-tenant-contact"
-                href={`/${language}/siampark/occupancy?counterpartyId=${id}#tenant`}
-                key={id}
-              >
+              <a className="sp-tenant-contact" href={dossierHref(id)} key={id}>
                 <div className="sp-tenant-heading">
                   <strong>{entry.displayName ?? 'Protistrana'}</strong>
                   <Badge size="sm" variant={dossier?.archived === true ? 'outline' : 'info'}>
@@ -652,7 +662,9 @@ export const TenantDirectory = ({
                 </div>
                 <span className="sp-tenant-muted">
                   {leases.length === 0
-                    ? 'Zájemce bez nájmu'
+                    ? dossier === undefined
+                      ? 'Zákazník z registru · zatím bez evidence'
+                      : 'Zájemce bez nájmu'
                     : [...new Set(leases.map((record) => unitName(record.unitRef.resourceId)))].join(', ')}{' '}
                   · {contactCountLabel(dossier?.contacts.length ?? 0)}
                 </span>

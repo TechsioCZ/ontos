@@ -767,7 +767,14 @@ const useRecordsPage = () => {
   };
   const unitName = (resourceId: string) =>
     properties?.units.find((record) => record.unitRef.resourceId === resourceId)?.name ?? resourceId;
-  const visible = snapshot?.occupancies.filter((record) => kindFilter === 'ALL' || record.kind === kindFilter) ?? [];
+  const [showCancelled, setShowCancelled] = useState(false);
+  const cancelledCount = snapshot?.occupancies.filter((record) => record.state === 'CANCELLED').length ?? 0;
+  // Cancelled stays and leases keep their audit but do not crowd the working list unless asked for.
+  const visible =
+    snapshot?.occupancies.filter(
+      (record) =>
+        (kindFilter === 'ALL' || record.kind === kindFilter) && (showCancelled || record.state !== 'CANCELLED'),
+    ) ?? [];
   const tenantOf = (record: Occupancy | undefined) =>
     record?.customerCounterpartyRef === null || record === undefined
       ? undefined
@@ -789,6 +796,9 @@ const useRecordsPage = () => {
     agreements,
     busy,
     canWrite,
+    cancelledCount,
+    showCancelled,
+    setShowCancelled,
     collision,
     createCounterparty,
     createError,
@@ -926,6 +936,9 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
     unitLabel: unitName(selected.unitRef.resourceId),
   };
   const occupancyId = selected.occupancyRef.resourceId;
+  const tenantDossier = snapshot?.tenantDossiers?.find(
+    (item) => item.counterpartyId === selected.customerCounterpartyRef?.resourceId,
+  );
   return (
     <>
       <div>
@@ -1145,8 +1158,12 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
               busy={busy}
               canWrite={state.canWrite}
               context={noticeContext}
-              defaultEmail={tenant?.email ?? ''}
-              defaultPhone={tenant?.phone ?? ''}
+              defaultEmail={
+                tenant?.email ?? tenantDossier?.contacts.find((contact) => contact.email !== '')?.email ?? ''
+              }
+              defaultPhone={
+                tenant?.phone ?? tenantDossier?.contacts.find((contact) => contact.phone !== '')?.phone ?? ''
+              }
               key={`notice:${snapshot.revision}`}
               newId={newUuid}
               notices={(snapshot.preparedNotices ?? []).filter((notice) => notice.occupancyId === occupancyId)}
@@ -1731,9 +1748,21 @@ const RecordsPageContent = () => {
                   </Button>
                 ))}
               </div>
-              <Button disabled={busy} onClick={refresh} size="sm" theme="outlined" variant="secondary">
-                {t('siampark-occupancy.demo.refresh')}
-              </Button>
+              <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:items-center siamparkoccupancy:gap-3">
+                {state.cancelledCount > 0 && (
+                  <label className="siamparkoccupancy:text-sm siamparkoccupancy:text-(--color-fg-secondary)">
+                    <input
+                      checked={state.showCancelled}
+                      onChange={(event) => state.setShowCancelled(event.target.checked)}
+                      type="checkbox"
+                    />{' '}
+                    Zobrazit zrušené ({state.cancelledCount})
+                  </label>
+                )}
+                <Button disabled={busy} onClick={refresh} size="sm" theme="outlined" variant="secondary">
+                  {t('siampark-occupancy.demo.refresh')}
+                </Button>
+              </div>
             </div>
             {snapshot !== undefined && visible.length === 0 && (
               <p className="siamparkoccupancy:rounded-lg siamparkoccupancy:bg-(--color-surface-subtle) siamparkoccupancy:p-5 siamparkoccupancy:text-sm siamparkoccupancy:text-(--color-fg-secondary)">

@@ -348,10 +348,10 @@ const dossierChanges = (command: DossierChanges): DossierChanges => ({
   ...(command.activity === undefined ? {} : { activity: command.activity }),
 });
 const stateLabels = {
-  DRAFT: 'Koncept',
+  DRAFT: 'Návrh',
   CONFIRMED: 'Potvrzeno',
   ACTIVE: 'Aktivní',
-  COMPLETED: 'Ukončeno',
+  COMPLETED: 'Dokončeno',
   CANCELLED: 'Zrušeno',
 } as const;
 const czechDate = (value: string) => {
@@ -377,7 +377,7 @@ const historyFor = (
     Match.tag('CreateDraft', () => ({
       occupancyId: id,
       kind: 'CREATED' as const,
-      summary: `Založen koncept na období ${periodLabel(record)}.`,
+      summary: `Založen návrh na období ${periodLabel(record)}.`,
     })),
     Match.tag('UpdateDraft', () => ({
       occupancyId: id,

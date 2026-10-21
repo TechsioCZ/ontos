@@ -101,7 +101,6 @@ const printSheet = (sheet: RegistrationSheet, context: NoticeContext) => {
     }),
   );
   globalThis.open(url, '_blank', 'noopener');
-  globalThis.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 };
 
 /** S10: registration sheet created from the reservation or lease, with the people actually staying. */
@@ -129,7 +128,10 @@ export const RegistrationSheetCard = ({
       emptyOccupant(index === 0 && record.kind === 'SHORT_STAY' ? context.partyName : ''),
     ),
   );
-  const [purpose, setPurpose] = useState<string>(record.kind === 'SHORT_STAY' ? 'Rekreace' : 'Bydlení – nájem');
+  const [purpose, setPurpose] = useState<string>(() => {
+    if (record.kind === 'SHORT_STAY') return 'Rekreace';
+    return context.unitLabel.startsWith('Byt') ? 'Bydlení – nájem' : 'Podnikání – nájem';
+  });
   const [note, setNote] = useState('');
   const allowed = record.state !== 'DRAFT' && record.state !== 'CANCELLED';
   const nameError = (occupant: RegistrationOccupant) =>

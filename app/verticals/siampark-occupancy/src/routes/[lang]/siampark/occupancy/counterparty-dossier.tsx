@@ -8,10 +8,10 @@ import { TenantDossierCard } from './tenant-dossier.tsx';
 import type { DossierChanges } from './tenant-dossier.tsx';
 
 const stateLabels = {
-  DRAFT: 'Koncept',
+  DRAFT: 'Návrh',
   CONFIRMED: 'Potvrzeno',
   ACTIVE: 'Aktivní',
-  COMPLETED: 'Ukončeno',
+  COMPLETED: 'Dokončeno',
   CANCELLED: 'Zrušeno',
 } as const;
 
