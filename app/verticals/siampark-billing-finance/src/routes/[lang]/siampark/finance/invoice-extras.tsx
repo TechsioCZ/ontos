@@ -26,6 +26,10 @@ import {
 } from './finance-ui.tsx';
 import type { FinanceViewModel } from './finance-ui.tsx';
 import { ReminderEmailStatus, useReminderEmailReceipts } from './reminder-email-receipts.tsx';
+import { useInvoiceIssuer } from './use-invoice-issuer.ts';
+
+/** Same bound as FinanceLongTextSchema in shared/apis/records.ts (trimmed reminder text, at most 4000 characters). */
+const REMINDER_TEXT_MAX = 4000;
 
 /** Stored instants are Effect DateTime values; the shared formatter takes ISO strings. */
 const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
@@ -433,6 +437,10 @@ export const InvoiceReminders = ({
   const [recipient, setRecipient] = useState('');
   const [text, setText] = useState('');
   const [message, setMessage] = useState<{ readonly kind: 'error' | 'success'; readonly text: string }>();
+  const issuerName = useInvoiceIssuer();
+  // The contract trims the text; an untrimmed value (e.g. a trailing space or newline) fails to encode in the browser.
+  const textLength = text.trim().length;
+  const textTooLong = textLength > REMINDER_TEXT_MAX;
 
   const start = () => {
     setText(
@@ -451,13 +459,23 @@ export const InvoiceReminders = ({
       setMessage({ kind: 'error', text: 'Zadejte platnou e-mailovou adresu příjemce.' });
       return;
     }
+    if (textLength === 0 || textLength > REMINDER_TEXT_MAX) {
+      setMessage({
+        kind: 'error',
+        text:
+          textLength === 0
+            ? 'Text upomínky nesmí být prázdný.'
+            : `Text upomínky je příliš dlouhý (${textLength} znaků, nejvýše ${REMINDER_TEXT_MAX}). Zkraťte ho.`,
+      });
+      return;
+    }
     const outcome = await vm.execute(
       {
         _tag: 'RecordReminder',
         ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
         invoiceRef: invoice.ref,
         recipient: recipient.trim(),
-        text,
+        text: text.trim(),
       },
       'Upomínka uložena a předána k odeslání e-mailem.',
     );
@@ -485,7 +503,8 @@ export const InvoiceReminders = ({
           <div className="flex flex-col gap-150 rounded-md border border-border-primary p-200">
             <StatusText showIcon size="sm" status="default">
               Po uložení se upomínka skutečně odešle e-mailem přes nakonfigurovaný SMTP server (v ukázce ji zachytí
-              Mailpit). Stav odeslání se zobrazí v seznamu upomínek.
+              Mailpit) jménem {issuerName === undefined ? 'vybrané společnosti' : `společnosti ${issuerName}`}. Stav
+              odeslání se zobrazí v seznamu upomínek.
             </StatusText>
             {message !== undefined && (
               <StatusText showIcon size="sm" status={message.kind}>
@@ -502,10 +521,16 @@ export const InvoiceReminders = ({
               value={recipient}
             />
             <FormTextarea
+              helpText={
+                textTooLong
+                  ? `${textLength} / ${REMINDER_TEXT_MAX} znaků – text je příliš dlouhý, zkraťte ho o ${textLength - REMINDER_TEXT_MAX}.`
+                  : `${textLength} / ${REMINDER_TEXT_MAX} znaků`
+              }
               id="reminder-text"
               label="Text upomínky"
               onChange={(event) => setText(event.target.value)}
               rows={9}
+              validateStatus={textTooLong ? 'error' : 'default'}
               value={text}
             />
             <div className="flex flex-wrap gap-100">
@@ -526,7 +551,7 @@ export const InvoiceReminders = ({
                 Kopírovat text
               </Button>
               <Button
-                disabled={vm.busy}
+                disabled={vm.busy || textTooLong}
                 icon="icon-[mdi--send-outline]"
                 onClick={() => void send()}
                 size="sm"

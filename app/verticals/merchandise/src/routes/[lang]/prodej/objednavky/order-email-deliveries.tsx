@@ -20,7 +20,11 @@ const useOrderEmailDeliveries = (orderId: string): OrderEmailState => {
     const load = async () => {
       try {
         const params = new URLSearchParams({ source: 'akros-order', subjectId: orderId });
-        const response = await fetch(`${dispatcherBaseUrl()}/v1/deliveries?${params.toString()}`, { cache: 'no-store' });
+        // The dispatcher verifies the OntOS session cookie and returns only this company's receipts.
+        const response = await fetch(`${dispatcherBaseUrl()}/v1/deliveries?${params.toString()}`, {
+          cache: 'no-store',
+          credentials: 'include',
+        });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const body = (await response.json()) as { readonly deliveries: readonly EmailDeliveryView[] };
         if (!cancelled) setState({ deliveries: body.deliveries, kind: 'ready' });
@@ -30,7 +34,10 @@ const useOrderEmailDeliveries = (orderId: string): OrderEmailState => {
     };
     void load();
     const timer = window.setInterval(() => void load(), 4000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [orderId]);
   return state;
 };
@@ -46,15 +53,15 @@ export const OrderEmailDeliveries = ({ orderId }: { readonly orderId: string }) 
       {state.kind === 'ready' && state.deliveries.length === 0 && (
         <p className="text-fg-secondary text-sm">
           K této objednávce zatím nebyl odeslán žádný e-mail. Potvrzení přijetí a změny stavu (Potvrzená, Předáno
-          dopravci, Dokončená, Stornovaná) se zákazníkovi odesílají automaticky; u objednávek vytvořených před
-          spuštěním e-mailové služby se e-maily neodesílají.
+          dopravci nebo Připraveno k vyzvednutí, Dokončená, Stornovaná) se zákazníkovi odesílají automaticky; u
+          objednávek vytvořených před spuštěním e-mailové služby se e-maily neodesílají.
         </p>
       )}
       {state.kind === 'ready' && state.deliveries.length > 0 && (
         <ul className="flex flex-col divide-y divide-border-primary text-sm">
           {state.deliveries.map((delivery) => (
             <li className="flex flex-wrap items-center gap-150 py-100" key={delivery.event}>
-              <span className="font-medium">{emailEventLabels[delivery.event]}</span>
+              <span className="font-medium">{delivery.eventLabel ?? emailEventLabels[delivery.event]}</span>
               <Badge size="sm" variant={emailStatusVariant[delivery.status]}>
                 {deliveryLabel(delivery, (iso) => formatDateTime(iso))}
               </Badge>

@@ -26,7 +26,11 @@ export const useReminderEmailReceipts = (reminderIds: readonly string[]): Remind
       try {
         const params = new URLSearchParams({ source: 'siampark-reminder' });
         for (const id of key.split(',')) params.append('subjectId', id);
-        const response = await fetch(`${dispatcherBaseUrl()}/v1/deliveries?${params.toString()}`, { cache: 'no-store' });
+        // The dispatcher verifies the OntOS session cookie and returns only this company's receipts.
+        const response = await fetch(`${dispatcherBaseUrl()}/v1/deliveries?${params.toString()}`, {
+          cache: 'no-store',
+          credentials: 'include',
+        });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const body = (await response.json()) as { readonly deliveries: readonly EmailDeliveryView[] };
         if (!cancelled)
@@ -57,9 +61,18 @@ export const ReminderEmailStatus = ({
 }) => {
   if (receipts.kind === 'loading') return <span className="text-fg-secondary text-xs">Zjišťuji stav e-mailu…</span>;
   if (receipts.kind === 'unavailable')
-    return <Badge size="sm" variant="warning">Stav e-mailu nedostupný – e-mailová služba neběží</Badge>;
+    return (
+      <Badge size="sm" variant="warning">
+        Stav e-mailu nedostupný – e-mailová služba neběží
+      </Badge>
+    );
   const delivery = receipts.byReminderId.get(reminderId);
-  if (delivery === undefined) return <Badge size="sm" variant="secondary">Čeká na odeslání e-mailem</Badge>;
+  if (delivery === undefined)
+    return (
+      <Badge size="sm" variant="secondary">
+        Čeká na odeslání e-mailem
+      </Badge>
+    );
   return (
     <Badge size="sm" variant={emailStatusVariant[delivery.status]}>
       {deliveryLabel(delivery, (iso) => formatDateTime(iso))}
