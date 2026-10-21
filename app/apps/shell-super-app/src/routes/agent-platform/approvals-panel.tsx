@@ -6,9 +6,10 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { agentItemStatusLabel, agentRiskLabel } from '@app/shared-contracts/agent-proposals';
 import type { AgentQueueBatch, AgentQueueItem, AgentQueueResponse } from '@app/shared-contracts/agent-proposals';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { decideAgentItems, formatAgentTime, loadAgentQueue, revertAgentBatch } from './agent-platform-client.ts';
+import { batchKeyFromSearch } from './batch-link.ts';
 
 /** In-module AI approval pages that keep showing their own batches next to this platform page. */
 const moduleApprovalPage: Readonly<Record<string, { readonly label: string; readonly path: string }>> = {
@@ -123,6 +124,10 @@ const ChangeCard = ({
       <StatusText showIcon size="sm" status="warning">
         Tento popis změny napsal agent a platforma ho neumí ověřit. Schválení provede přesně příkaz níže.
       </StatusText>
+    ) : item.diffSource === 'command' ? (
+      <p className="text-fg-secondary text-xs">
+        Hodnoty „Po schválení“ sestavila platforma z uloženého příkazu. Původní hodnoty tento modul platformě neposkytuje.
+      </p>
     ) : (
       item.diffSource === 'platform' && (
         <p className="text-fg-secondary text-xs">
@@ -146,9 +151,9 @@ const ChangeCard = ({
         {`${item.status === 'rejected' ? 'Zamítnuto' : 'Schváleno'} · ${item.decidedByName ?? 'Neznámý uživatel'} · ${formatAgentTime(item.decidedAt)}`}
       </p>
     )}
-    {item.status === 'applied' && item.revertUnavailableReason !== undefined && (
+    {(item.status === 'applied' || item.status === 'pending') && item.revertUnavailableReason !== undefined && (
       <Badge title={item.revertUnavailableReason} variant="outline">
-        Nelze automaticky vrátit
+        {item.status === 'pending' ? 'Po schválení nelze automaticky vrátit' : 'Nelze automaticky vrátit'}
       </Badge>
     )}
     {item.status === 'pending' && item.canDecide && (
@@ -178,11 +183,13 @@ const ChangeCard = ({
 const BatchCard = ({
   batch,
   busy,
+  highlighted,
   onDecide,
   onRevert,
 }: {
   readonly batch: AgentQueueBatch;
   readonly busy: boolean;
+  readonly highlighted: boolean;
   readonly onDecide: (batch: AgentQueueBatch, keys: readonly string[], decision: Decision, note: string) => void;
   readonly onRevert: (batch: AgentQueueBatch, note: string) => void;
 }) => {
@@ -203,7 +210,11 @@ const BatchCard = ({
           ? { label: 'Změny provedeny', variant: 'success' as const }
           : { label: 'Vyřízeno', variant: 'outline' as const };
   return (
-    <section className="ai-review-batch" data-batch-key={batch.key}>
+    <section
+      aria-current={highlighted ? 'true' : undefined}
+      className={highlighted ? 'ai-review-batch ai-review-batch-target' : 'ai-review-batch'}
+      data-batch-key={batch.key}
+    >
       <header className="ai-review-batch-header">
         <div className="ai-review-heading">
           <div>
@@ -341,6 +352,41 @@ export const ApprovalsPanel = () => {
     refresh();
   }, [refresh]);
 
+  /** `?davka=<batchId>` from an MCP review link: show that batch, scroll to it once and highlight it. */
+  const [targetKey, setTargetKey] = useState<string | undefined>(undefined);
+  const scrolledTo = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    setTargetKey(batchKeyFromSearch(window.location.search));
+  }, []);
+  useEffect(() => {
+    if (queue.status !== 'ready' || targetKey === undefined || scrolledTo.current === targetKey) {
+      return;
+    }
+    const index = queue.response.batches.findIndex((batch) => batch.key === targetKey);
+    const target = queue.response.batches[index];
+    if (target === undefined) {
+      return;
+    }
+    if (moduleFilter !== '') {
+      setModuleFilter('');
+      return;
+    }
+    const pendingHere = target.items.some((item) => item.status === 'pending');
+    if (!pendingHere && filter !== 'all') {
+      setFilter('all');
+      return;
+    }
+    if (filter === 'all' && shownCount < index + 1) {
+      setShownCount(index + 1);
+      return;
+    }
+    const element = document.querySelector(`[data-batch-key="${targetKey}"]`);
+    if (element !== null) {
+      scrolledTo.current = targetKey;
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [queue, targetKey, filter, moduleFilter, shownCount]);
+
   const finish = (text: string) => {
     setMessage(text);
     setBusy(false);
@@ -473,6 +519,11 @@ export const ApprovalsPanel = () => {
           {message}
         </StatusText>
       )}
+      {targetKey !== undefined && !response.batches.some((batch) => batch.key === targetKey) && (
+        <StatusText aria-live="polite" showIcon size="sm" status="warning">
+          Dávku z odkazu tu nevidíte. Možná patří jiné firmě, nebo k jejím modulům nemáte přístup.
+        </StatusText>
+      )}
       {visibleBatches.length === 0 ? (
         filter === 'pending' ? (
           <div>
@@ -484,7 +535,14 @@ export const ApprovalsPanel = () => {
         )
       ) : (
         shownBatches.map((batch) => (
-          <BatchCard batch={batch} busy={busy} key={batch.key} onDecide={onDecide} onRevert={onRevert} />
+          <BatchCard
+            batch={batch}
+            busy={busy}
+            highlighted={batch.key === targetKey}
+            key={batch.key}
+            onDecide={onDecide}
+            onRevert={onRevert}
+          />
         ))
       )}
       {hiddenCount > 0 && (
