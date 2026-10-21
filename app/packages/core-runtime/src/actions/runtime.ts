@@ -109,6 +109,7 @@ import {
   OperationContextInvalid,
   OperationContextUnavailable,
 } from '../operations/errors.ts';
+import { connectionScopePolicy } from '../auth/oauth-connection-scope.ts';
 import type { ActionPolicy, ActionPolicyEvaluatorInput } from './policy.ts';
 import { PolicyDenied } from './policy.ts';
 import type {
@@ -1758,9 +1759,14 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           reason: 'A required Action Policy could not be evaluated',
         });
       });
-      const allowedPolicies = yield* Effect.forEach(input.registration.descriptor.policies, evaluateActionPolicy, {
-        concurrency: 1,
-      });
+      // MCP OAuth connections: the grant's write scope is a policy every Action must pass (ONTOS-MCP-AUTH-DESIGN.md §4.3).
+      const connectionPolicies: readonly ActionPolicy<typeof payload, Owner>[] =
+        principal.authMethod === 'oauth_connection' ? [connectionScopePolicy as ActionPolicy<typeof payload, Owner>] : [];
+      const allowedPolicies = yield* Effect.forEach(
+        [...connectionPolicies, ...input.registration.descriptor.policies],
+        evaluateActionPolicy,
+        { concurrency: 1 },
+      );
       return allowedPolicies;
     });
 
