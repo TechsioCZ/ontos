@@ -89,7 +89,7 @@ export const ObjectFields = ({
                 value: entry.ref.resourceId,
               })),
             ]}
-            label="Související objekt (nemovitost)"
+            label="Nemovitost"
             labelProps={labelProps}
             name={`${idPrefix}-property`}
             onValueChange={({ value: next }) => {

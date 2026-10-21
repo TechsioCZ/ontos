@@ -89,7 +89,7 @@
         "revenuePeriod": "Tržby zahrnují potvrzené vydané faktury s datem vystavení od 1. 1. do 31. 12. 2026. Statistiky používají vlastní zvolené období; faktury z roku 2025 proto v tomto součtu nejsou.",
         "outstanding": "Nezaplaceno",
         "overdue": "Po splatnosti",
-        "drafts": "Koncepty"
+        "drafts": "Návrhy"
       },
       "columns": {
         "number": "Číslo",

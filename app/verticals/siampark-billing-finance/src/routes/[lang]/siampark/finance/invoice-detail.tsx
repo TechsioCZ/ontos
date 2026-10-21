@@ -69,19 +69,11 @@ const InvoiceAnchors = ({ invoice, objects }: { readonly invoice: Invoice; reado
     <SectionCard title="Související objekt a vazby">
       <ul className="flex flex-col gap-100 text-sm">
         {invoice.costCenter !== undefined && (
-          <li className="inline-flex items-center gap-50">
-            <span aria-hidden className="icon-[mdi--sitemap-outline] size-4" />
-            Středisko: {invoice.costCenter}
-          </li>
+          <li>Středisko: {invoice.costCenter}</li>
         )}
         {links.map((link) => (
           <li key={link.label}>
-            <a
-              className="inline-flex items-center gap-50 underline"
-              href={link.href}
-              style={{ color: 'var(--color-link)' }}
-            >
-              <span aria-hidden className="icon-[mdi--link-variant] size-4" />
+            <a className="underline" href={link.href} style={{ color: 'var(--color-link)' }}>
               {link.label}
             </a>
           </li>

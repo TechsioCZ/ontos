@@ -66,10 +66,17 @@ export const InvoiceLifecycleCard = ({ invoice, vm }: { readonly invoice: Invoic
             <li className="flex items-start gap-100" key={step}>
               <span
                 aria-hidden
-                className={`mt-[2px] size-4 shrink-0 ${reached(step) ? 'icon-[mdi--check-circle] text-fg-primary' : 'icon-[mdi--circle-outline] text-fg-secondary'}`}
+                className="mt-[5px] size-[10px] shrink-0 rounded-full"
+                style={{
+                  background: reached(step) ? 'var(--color-success)' : 'transparent',
+                  border: `2px solid ${reached(step) ? 'var(--color-success)' : 'var(--color-fg-secondary)'}`,
+                }}
               />
               <span className="flex min-w-0 flex-col">
-                <span className={reached(step) ? 'font-medium' : 'text-fg-secondary'}>{label}</span>
+                <span className={reached(step) ? 'font-medium' : 'text-fg-secondary'}>
+                  {label}
+                  <span className="sr-only">{reached(step) ? ' – hotovo' : ' – zatím ne'}</span>
+                </span>
                 {reached(step) && detail[step] !== undefined && (
                   <span className="break-words text-fg-secondary text-xs">{detail[step]}</span>
                 )}
@@ -209,7 +216,6 @@ export const PriorSettlementCard = ({ invoice, vm }: { readonly invoice: Invoice
                     className="inline-flex items-center gap-50 font-medium underline"
                     href={`?resourceId=${encodeURIComponent(entry.invoiceResourceId)}`}
                   >
-                    <span aria-hidden className="icon-[mdi--link-variant] size-4" />
                     {entry.number}
                   </a>
                   <span className="tabular-nums">− {formatMoney(entry.amountMinor)}</span>
