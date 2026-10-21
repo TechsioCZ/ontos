@@ -542,12 +542,12 @@ const RecordsPageContent = () => {
                 </div>
               </form>
             )}
-            <label className={secondaryTextClass}>
+            <label className={`${secondaryTextClass} sp-property-toggle`}>
               <input checked={showClosed} onChange={(event) => setShowClosed(event.target.checked)} type="checkbox" />{' '}
               Zobrazit i neaktivní a vyřazené nemovitosti a jednotky
             </label>
             {archivedCount > 0 && (
-              <label className={secondaryTextClass}>
+              <label className={`${secondaryTextClass} sp-property-toggle`}>
                 <input
                   checked={showArchived}
                   onChange={(event) => setShowArchived(event.target.checked)}
