@@ -4,6 +4,7 @@ import { Schema } from 'effect';
 import type { CrmViewer } from './access.ts';
 import { AiChangesSliceSchema, projectAiChangesSlice } from './ai-changes.ts';
 import { ClientsSliceSchema, initialClientsSlice, projectClientsSlice, visibleClientIds } from './clients.ts';
+import { CustomerInputsSliceSchema } from './customer-inputs.ts';
 import { ImportsSliceSchema, initialImportsSlice, projectImportsSlice } from './imports.ts';
 import { SalespersonSchema } from './team.ts';
 import { VisitsSliceSchema, initialVisitsSlice, projectVisitsSlice } from './visits.ts';
@@ -12,6 +13,8 @@ export const CrmStateSchema = Schema.Struct({
   /** AI level C proposals, decisions and revert log (ai-level-c lane); absent in older documents. */
   aiChanges: Schema.optionalKey(AiChangesSliceSchema),
   clients: ClientsSliceSchema,
+  /** R01–R08 register of customer inputs (CRM.md §6); absent = every input still requested. */
+  customerInputs: Schema.optionalKey(CustomerInputsSliceSchema),
   imports: ImportsSliceSchema,
   salespeople: Schema.Array(SalespersonSchema),
   visits: VisitsSliceSchema,
@@ -31,6 +34,7 @@ export const withDefaultSlices = (raw: unknown): unknown => {
   return {
     ...(value['aiChanges'] === undefined ? {} : { aiChanges: value['aiChanges'] }),
     clients: value['clients'] ?? initialClientsSlice,
+    ...(value['customerInputs'] === undefined ? {} : { customerInputs: value['customerInputs'] }),
     imports: value['imports'] ?? initialImportsSlice,
     salespeople: value['salespeople'] ?? [],
     visits: value['visits'] ?? initialVisitsSlice,
@@ -43,6 +47,8 @@ export const projectCrmState = (state: CrmState, viewer: CrmViewer): CrmState =>
   return {
     aiChanges: projectAiChangesSlice(state.aiChanges, viewer),
     clients: projectClientsSlice(state.clients, visible),
+    // Not client data: every CRM user sees which customer inputs block what (and the report needs R04).
+    ...(state.customerInputs === undefined ? {} : { customerInputs: state.customerInputs }),
     imports: projectImportsSlice(state.imports, visible, viewer),
     salespeople: state.salespeople,
     visits: projectVisitsSlice(state.visits, visible),

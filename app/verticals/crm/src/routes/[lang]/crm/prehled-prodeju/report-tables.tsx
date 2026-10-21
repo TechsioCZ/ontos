@@ -18,10 +18,13 @@ import {
   ordersCsv,
   toCsv,
   rawStatusesInUse,
+  reportMappingApproved,
+  reportStatusMeaning,
   statusMapping,
   statusMeaningLabels,
   unitsToDecimal,
 } from '../../../../../shared/domain/reports.ts';
+import { customerInputOf, customerInputStatusLabels } from '../../../../../shared/domain/customer-inputs.ts';
 import { crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
 import { orderStatusLabel } from '../../../../crm/order-status-presentation.ts';
 import { downloadCsv, formatDecimalMoney, totalIn } from './report-format.ts';
@@ -32,7 +35,7 @@ export const groupingLabels: Record<GroupingKey, string> = {
   client: 'Klient',
   month: 'Měsíc',
   salesperson: 'Obchodník',
-  status: 'Význam stavu',
+  status: 'Stav',
 };
 
 export const groupsOf = (report: SalesReport, grouping: GroupingKey): readonly ReportGroup[] => {
@@ -344,7 +347,14 @@ const orderColumns = (lang: string): ColumnDef<ReportOrderRow>[] => [
         <Badge size="sm" variant="outline">
           {orderStatusLabel(info.getValue<string>())}
         </Badge>
-        <MeaningBadge meaning={info.row.original.meaning} />
+        {info.row.original.meaning === 'unmapped' &&
+        reportStatusMeaning(info.row.original.order.rawStatus) !== 'unmapped' ? (
+          <Badge size="sm" variant="outline">
+            {`návrh: ${statusMeaningLabels[reportStatusMeaning(info.row.original.order.rawStatus)]} (neschváleno)`}
+          </Badge>
+        ) : (
+          <MeaningBadge meaning={info.row.original.meaning} />
+        )}
         {info.row.original.order.statusHistory.some((event) => event.review === true) && (
           <Badge size="sm" variant="warning">
             Sporná změna stavu
@@ -425,10 +435,45 @@ export const OrdersTable = ({
 // ---------------------------------------------------------------------------------------------------------------
 
 /** The raw -> meaning mapping for the statuses that really occur, plus the metric definition. */
-export const StatusMappingCard = ({ state }: { readonly state: CrmState }) => {
+export const StatusMappingCard = ({
+  onOpenInputs,
+  state,
+}: {
+  readonly onOpenInputs?: () => void;
+  readonly state: CrmState;
+}) => {
   const statuses = rawStatusesInUse(state);
+  const approved = reportMappingApproved(state);
+  const r04 = customerInputOf(state.customerInputs, 'R04');
   return (
-    <SectionCard title={`Význam stavů a definice metrik (demo mapování ${statusMapping.version})`}>
+    <SectionCard
+      title={`Význam stavů a definice metrik (mapování ${statusMapping.version} – ${
+        approved ? `schváleno ${formatDate(r04.sampleApprovedAt)}` : 'návrh, neschváleno'
+      })`}
+    >
+      <div
+        className={`mb-200 flex flex-wrap items-center justify-between gap-150 rounded-lg p-150 text-sm ${
+          approved ? 'bg-surface-secondary' : 'border border-border-primary border-dashed'
+        }`}
+      >
+        <span>
+          <strong>R04 – význam stavů:</strong> {customerInputStatusLabels[r04.status]}.{' '}
+          {approved
+            ? 'Statistiky podle významu (storno, dodáno, uhrazeno) jsou zapnuté pro tuto verzi mapování.'
+            : 'Dokud zákazník mapování neodsouhlasí, přehled filtruje a seskupuje jen podle stavu ze zdroje a nepočítá stornované, dodané ani uhrazené částky.'}
+        </span>
+        {onOpenInputs !== undefined && (
+          <Button
+            icon="icon-[mdi--clipboard-list-outline]"
+            onClick={onOpenInputs}
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
+            Vstupy od zákazníka (R01–R08)
+          </Button>
+        )}
+      </div>
       <div className="grid min-w-0 grid-cols-1 gap-250 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         {statuses.length === 0 ? (
           <p className="text-fg-secondary text-sm">Zatím nebyla importována žádná objednávka — bez dat.</p>
@@ -444,7 +489,7 @@ export const StatusMappingCard = ({ state }: { readonly state: CrmState }) => {
                   Zdroj
                 </th>
                 <th className="py-100 font-medium" scope="col">
-                  Význam pro přehled
+                  {approved ? 'Význam pro přehled' : 'Navržený význam (neschválený)'}
                 </th>
               </tr>
             </thead>
@@ -487,9 +532,9 @@ export const StatusMappingCard = ({ state }: { readonly state: CrmState }) => {
           <div>
             <dt className="font-medium">Význam stavů</dt>
             <dd className="text-fg-secondary">
-              DEMO: mapování slouží pouze k ukázce kategorií, není potvrzené zákazníkem. Stav ze zdroje zůstává vždy
-              viditelný. Stav mimo tabulku je „bez schváleného významu“. Význam všech stavů, storen a vratek musí
-              potvrdit zákazník (R04).
+              {approved
+                ? `Mapování ${statusMapping.version} odsouhlasil zákazník (R04, ${formatDate(r04.sampleApprovedAt)}). Stav ze zdroje zůstává vždy viditelný; stav mimo tabulku je „bez schváleného významu“.`
+                : `Mapování ${statusMapping.version} je jen návrh dodavatele. Statistiky podle významu se zapnou až po odsouhlasení R04 zákazníkem (v registru vstupů s verzí ${statusMapping.version} a datem odsouhlasení). Stav ze zdroje zůstává vždy viditelný.`}
             </dd>
           </div>
         </dl>

@@ -5,7 +5,7 @@ import { Chart } from '@techsio/ui-kit/molecules/chart';
 import { Component, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { SalesReport } from '../../../../../shared/domain/reports.ts';
-import { statusMeaningLabels, statusMeanings } from '../../../../../shared/domain/reports.ts';
+import { normalizeStatus, statusMeaningLabels, statusMeanings } from '../../../../../shared/domain/reports.ts';
 import { formatDecimalMoney, totalIn } from './report-format.ts';
 
 const shortMonths = ['led', 'úno', 'bře', 'dub', 'kvě', 'čvn', 'čvc', 'srp', 'zář', 'říj', 'lis', 'pro'];
@@ -36,10 +36,19 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
       </SectionCard>
     );
   }
-  const meanings = statusMeanings.filter((meaning) => report.rows.some((row) => row.meaning === meaning));
+  // Approved mapping (R04): columns per meaning; otherwise per raw source status (no unapproved categories).
+  const statusKey = (row: SalesReport['rows'][number]) =>
+    report.mappingApproved ? row.meaning : normalizeStatus(row.order.rawStatus);
+  const meanings: readonly { readonly key: string; readonly label: string }[] = report.mappingApproved
+    ? statusMeanings
+        .filter((meaning) => report.rows.some((row) => row.meaning === meaning))
+        .map((meaning) => ({ key: meaning, label: statusMeaningLabels[meaning] }))
+    : [...new Map(report.rows.map((row) => [statusKey(row), row.order.rawStatus] as const)).entries()].map(
+        ([key, raw]) => ({ key, label: `Ze zdroje: ${raw}` }),
+      );
   const counts = new Map<string, number>();
   for (const row of report.rows) {
-    const key = `${row.month}|${row.meaning}`;
+    const key = `${row.month}|${statusKey(row)}`;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }
   const countData = report.byMonth.map((month) => ({ count: month.count, month: shortMonth(month.key) }));
@@ -129,7 +138,7 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
         </summary>
         <div className="overflow-x-auto pt-150">
           <table className="w-full border-collapse text-sm">
-            <caption className="sr-only">Přesná měsíční data obou grafů, stavy podle demo mapování</caption>
+            <caption className="sr-only">Přesná měsíční data obou grafů a stavy objednávek</caption>
             <thead>
               <tr className="border-border-primary border-b text-left">
                 <th className="py-100 pr-200" scope="col">
@@ -139,8 +148,8 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
                   Objednávky
                 </th>
                 {meanings.map((meaning) => (
-                  <th className="py-100 pr-200" key={meaning} scope="col">
-                    {statusMeaningLabels[meaning]}
+                  <th className="py-100 pr-200" key={meaning.key} scope="col">
+                    {meaning.label}
                   </th>
                 ))}
                 {report.currencies.map((entry) => (
@@ -158,8 +167,8 @@ export const ReportCharts = ({ report }: { readonly report: SalesReport }) => {
                   </th>
                   <td className="py-100 pr-200 tabular-nums">{formatNumber(month.count)}</td>
                   {meanings.map((meaning) => (
-                    <td className="py-100 pr-200 tabular-nums" key={meaning}>
-                      {formatNumber(counts.get(`${month.key}|${meaning}`) ?? 0)}
+                    <td className="py-100 pr-200 tabular-nums" key={meaning.key}>
+                      {formatNumber(counts.get(`${month.key}|${meaning.key}`) ?? 0)}
                     </td>
                   ))}
                   {report.currencies.map((entry) => {

@@ -17,14 +17,21 @@ const ordersWord = (count: number) => {
 export const excludedSummary = (report: SalesReport) =>
   report.excluded.map((entry) => `${formatNumber(entry.count)} ${exclusionReasonLabels[entry.reason]}`).join(', ');
 
-/** "21 objednávek · z toho stornované 1 240 Kč · není to tržba" — status categories stay visible beside the sum. */
+/**
+ * "21 objednávek · z toho stornované 1 240 Kč · není to tržba" — the cancelled share only with an approved mapping;
+ * otherwise the sum is explicitly "včetně všech stavů ze zdroje".
+ */
 const valueHint = (report: SalesReport, currency: string, count: number) => {
   const cancelled = report.byStatus
     .find((group) => group.key === 'cancelled')
     ?.totals.find((total) => total.currency === currency);
   const parts = [`${formatNumber(count)} ${ordersWord(count)}`];
-  if (cancelled !== undefined) {
+  // "stornované" is a business meaning: shown only once the customer approved the status mapping (R04).
+  if (report.mappingApproved && cancelled !== undefined) {
     parts.push(`z toho stornované ${formatDecimalMoney(cancelled.amount, currency)}`);
+  }
+  if (!report.mappingApproved) {
+    parts.push('včetně všech stavů ze zdroje');
   }
   parts.push('není to tržba ani zisk');
   return parts.join(' · ');

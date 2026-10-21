@@ -179,9 +179,37 @@ describe('CRM sales report (C05)', () => {
     expect(buildSalesReport(state, { period: { from: '2026-10-01', to: '2026-10-31' } }).count).toBe(2);
     expect(buildSalesReport(state, { salespersonId: 'b' }).rows.map((row) => row.clientId)).toEqual(['y']);
     expect(buildSalesReport(state, { salespersonId: 'none' }).rows.map((row) => row.clientId)).toEqual(['z']);
-    expect(buildSalesReport(state, { status: { kind: 'meaning', meaning: 'cancelled' } }).count).toBe(1);
     expect(buildSalesReport(state, { status: { kind: 'raw', raw: 'stornovana' } }).count).toBe(1);
-    expect(buildSalesReport(state, { status: { kind: 'meaning', meaning: 'open' } }).count).toBe(2);
+    // R04 not approved: no business meanings in statistics, groups follow the raw source status.
+    const unapproved = buildSalesReport(state);
+    expect(unapproved.mappingApproved).toBe(false);
+    expect(buildSalesReport(state, { status: { kind: 'meaning', meaning: 'cancelled' } }).count).toBe(3);
+    expect(unapproved.byStatus.map((group) => group.label)).toEqual(['Ze zdroje: nova', 'Ze zdroje: Stornována']);
+    expect(unapproved.rows.every((row) => row.meaning === 'unmapped')).toBe(true);
+    // Approved for exactly this mapping version: meaning filters and groups apply.
+    const approved: CrmState = {
+      ...state,
+      customerInputs: [
+        {
+          evidence: 'Zápis z jednání 3. 11. 2026',
+          history: [],
+          id: 'R04',
+          requestedAt: '2026-10-19',
+          requestedBy: 'Techsio',
+          sampleApprovedAt: '2026-11-03',
+          sampleVersion: 'stavy-v1',
+          status: 'approved',
+        },
+      ],
+    };
+    expect(buildSalesReport(approved).mappingApproved).toBe(true);
+    expect(buildSalesReport(approved, { status: { kind: 'meaning', meaning: 'cancelled' } }).count).toBe(1);
+    expect(buildSalesReport(approved, { status: { kind: 'meaning', meaning: 'open' } }).count).toBe(2);
+    const otherVersion: CrmState = {
+      ...approved,
+      customerInputs: approved.customerInputs?.map((entry) => ({ ...entry, sampleVersion: 'stavy-v0' })),
+    };
+    expect(buildSalesReport(otherVersion).mappingApproved).toBe(false);
   });
 
   it('orders without amount are counted but not summed', () => {

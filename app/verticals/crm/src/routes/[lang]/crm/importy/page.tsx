@@ -28,6 +28,7 @@ import type { ImportBatch, ImportedOrder } from '../../../../../shared/domain/im
 import { needsReview } from '../../../../../shared/domain/imports.ts';
 import { ORDERS_CSV_FORMAT, ordersCsvColumns, ordersCsvTemplate } from '../../../../../shared/imports/csv.ts';
 import { CrmPage } from '../../../../crm/crm-page.tsx';
+import { CustomerInputsPanel } from '../../../../crm/customer-inputs-panel.tsx';
 import { useCrmRecords } from '../../../../crm/records.ts';
 import { CrmScopeNote, CrmStateGate, crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
 import { ImportPanel, RowResults } from './import-panel.tsx';
@@ -411,6 +412,7 @@ const ImportsContent = () => {
   const [batchId, setBatchId] = useState<string | undefined>();
   const [importDraft, setImportDraft] = useState<ImportDraft | undefined>();
   const [importOpen, setImportOpen] = useState(false);
+  const [inputsOpen, setInputsOpen] = useState(false);
   useEffect(() => setOrderId(orderParam), [orderParam]);
 
   const openImport = (draft?: ImportDraft) => {
@@ -457,6 +459,15 @@ const ImportsContent = () => {
                       variant="secondary"
                     >
                       Šablona CSV
+                    </Button>
+                    <Button
+                      icon="icon-[mdi--clipboard-list-outline]"
+                      onClick={() => setInputsOpen(true)}
+                      size="sm"
+                      theme="outlined"
+                      variant="secondary"
+                    >
+                      Vstupy od zákazníka
                     </Button>
                     <Button icon="icon-[mdi--upload]" onClick={() => openImport()} size="sm" variant="primary">
                       Importovat CSV
@@ -634,6 +645,9 @@ const ImportsContent = () => {
               onClose={() => setBatchId(undefined)}
               records={records}
             />
+            {inputsOpen && (
+              <CustomerInputsPanel busy={busy} onClose={() => setInputsOpen(false)} records={records} submit={submit} />
+            )}
             {canImport && importOpen && (
               <ImportPanel
                 busy={busy}

@@ -245,3 +245,40 @@ describe('contacts export and Party-based customer links', () => {
     expect(linkTargetClientId([{ id: 'plain' }], { ...link, clientId: 'plain', counterpartyId: 'cp-x' })).toBe('plain');
   });
 });
+
+describe('customer inputs register (CRM.md §6)', () => {
+  it('starts with R01–R08 requested; approval needs a sample version and keeps history', () => {
+    const viewer = lead;
+    const approved = run(
+      base,
+      {
+        _tag: 'UpdateCustomerInput',
+        evidence: 'E-mail jednatele 2. 11. 2026',
+        id: 'R04',
+        status: 'approved',
+        note: 'Schváleno na schůzce',
+      },
+      viewer,
+    );
+    expect(Exit.isSuccess(approved)).toBe(true);
+    if (Exit.isSuccess(approved)) {
+      const entry = approved.value.state.customerInputs?.find((input) => input.id === 'R04');
+      expect(entry).toMatchObject({ sampleApprovedAt: '2026-10-21', sampleVersion: 'stavy-v1', status: 'approved' });
+      expect(entry?.history).toHaveLength(1);
+      const withdrawn = ok(
+        approved.value.state,
+        { _tag: 'UpdateCustomerInput', id: 'R04', status: 'received' },
+        viewer,
+      );
+      const after = withdrawn.state.customerInputs?.find((input) => input.id === 'R04');
+      expect(after?.sampleApprovedAt).toBeUndefined();
+      expect(after?.history.map((change) => change.status)).toEqual(['approved', 'received']);
+    }
+    expect(failTag(base, { _tag: 'UpdateCustomerInput', id: 'R05', status: 'approved' }, viewer)).toBe(
+      'CrmReferenceIneligible',
+    );
+    expect(failTag(base, { _tag: 'UpdateCustomerInput', id: 'R01', status: 'received' }, repA)).toBe(
+      'CrmPermissionDenied',
+    );
+  });
+});

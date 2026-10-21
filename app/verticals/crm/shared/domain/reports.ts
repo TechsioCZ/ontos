@@ -12,6 +12,7 @@
 import { DateTime } from 'effect';
 import type { RecordsResponse } from '../apis/records.ts';
 import { canSeeEverything } from './access.ts';
+import { statusMappingApproved } from './customer-inputs.ts';
 import type { ImportedOrder } from './imports.ts';
 import type { CrmState } from './state.ts';
 
@@ -89,6 +90,10 @@ const meaningByRaw: ReadonlyMap<string, StatusMeaning> = new Map(
 
 export const reportStatusMeaning = (rawStatus: string): StatusMeaningOrUnmapped =>
   meaningByRaw.get(normalizeStatus(rawStatus)) ?? 'unmapped';
+
+/** Has the customer approved this mapping version (R04)? Until then statistics use raw statuses only. */
+export const reportMappingApproved = (state: Pick<CrmState, 'customerInputs'>) =>
+  statusMappingApproved(state.customerInputs, statusMapping.version);
 
 // ---------------------------------------------------------------------------------------------------------------
 // Exact decimal money (amounts are DecimalString with up to 4 decimals)
@@ -252,6 +257,11 @@ export interface SkuRow {
 }
 
 export interface SalesReport {
+  /**
+   * R04 approved for the mapping version: meanings (storno / dodáno / uhrazeno) may be used. When false, `byStatus`
+   * groups by the raw source status and every row's meaning is "Bez schváleného významu".
+   */
+  readonly mappingApproved: boolean;
   readonly byClient: readonly ReportGroup[];
   readonly byMonth: readonly ReportGroup[];
   readonly bySalesperson: readonly ReportGroup[];
@@ -283,8 +293,9 @@ const inPeriod = (date: string, period: ReportPeriod | undefined) => {
   return (period?.from === undefined || day >= period.from) && (period?.to === undefined || day <= period.to);
 };
 
-const matchesStatus = (row: ReportOrderRow, status: ReportStatusFilter | undefined) => {
-  if (status === undefined) {
+const matchesStatus = (row: ReportOrderRow, status: ReportStatusFilter | undefined, approved: boolean) => {
+  // A meaning filter needs an approved mapping; without it only raw statuses filter (C05).
+  if (status === undefined || (status.kind === 'meaning' && !approved)) {
     return true;
   }
   return status.kind === 'meaning'
@@ -439,6 +450,7 @@ export const buildSalesReport = (state: CrmState, filters: ReportFilters = {}): 
   const exclusionCounts = new Map<ExclusionReason, number>();
   const rows: ReportOrderRow[] = [];
   const sources = new Set<string>();
+  const approved = reportMappingApproved(state);
 
   for (const order of state.imports.orders) {
     const date = orderDate(order);
@@ -458,7 +470,7 @@ export const buildSalesReport = (state: CrmState, filters: ReportFilters = {}): 
       clientName: client?.name ?? 'Neznámý klient',
       date,
       dateSource: order.orderedAt === undefined ? 'received' : 'ordered',
-      meaning: reportStatusMeaning(order.rawStatus),
+      meaning: approved ? reportStatusMeaning(order.rawStatus) : 'unmapped',
       month: date.slice(0, 7),
       order,
       salespersonId,
@@ -470,7 +482,7 @@ export const buildSalesReport = (state: CrmState, filters: ReportFilters = {}): 
     if (filters.salespersonId !== undefined && (row.salespersonId ?? UNASSIGNED) !== filters.salespersonId) {
       continue;
     }
-    if (!matchesStatus(row, filters.status)) {
+    if (!matchesStatus(row, filters.status, approved)) {
       continue;
     }
     rows.push(row);
@@ -487,12 +499,18 @@ export const buildSalesReport = (state: CrmState, filters: ReportFilters = {}): 
     return count === 0 ? [] : [{ count, reason }];
   });
   const totals = totalsOf(all);
-  const byStatus = groupBy(rows, (row) => ({ key: row.meaning, label: statusMeaningLabels[row.meaning] })).toSorted(
-    (left, right) =>
-      statusMeanings.indexOf(left.key as StatusMeaningOrUnmapped) -
-      statusMeanings.indexOf(right.key as StatusMeaningOrUnmapped),
-  );
+  const byStatus = approved
+    ? groupBy(rows, (row) => ({ key: row.meaning, label: statusMeaningLabels[row.meaning] })).toSorted(
+        (left, right) =>
+          statusMeanings.indexOf(left.key as StatusMeaningOrUnmapped) -
+          statusMeanings.indexOf(right.key as StatusMeaningOrUnmapped),
+      )
+    : groupBy(rows, (row) => ({
+        key: `raw:${normalizeStatus(row.order.rawStatus)}`,
+        label: `Ze zdroje: ${row.order.rawStatus}`,
+      })).toSorted((left, right) => right.count - left.count || left.label.localeCompare(right.label, 'cs'));
   return {
+    mappingApproved: approved,
     byClient: groupBy(rows, (row) => ({ key: row.clientId, label: row.clientName })).toSorted(
       (left, right) => right.count - left.count || left.label.localeCompare(right.label, 'cs'),
     ),

@@ -6,6 +6,11 @@ import type { PartyLinkInput } from '../domain/clients.ts';
 import type { CrmState } from '../domain/state.ts';
 import { AiChangesCommandSchema, aiChangesCommandSchemas, applyAiChangesCommand } from './ai-changes.ts';
 import { ClientsCommandSchema, applyClientsCommand, clientsCommandSchemas } from './clients.ts';
+import {
+  CustomerInputsCommandSchema,
+  applyCustomerInputsCommand,
+  customerInputsCommandSchemas,
+} from './customer-inputs.ts';
 import { ImportsCommandSchema, applyImportsCommand, importsCommandSchemas } from './imports.ts';
 import { TeamCommandSchema, applyTeamCommand, teamCommandSchemas } from './team.ts';
 import { VisitsCommandSchema, applyVisitsCommand, visitsCommandSchemas } from './visits.ts';
@@ -16,6 +21,7 @@ export const CrmCommandSchema = Schema.Union([
   ...importsCommandSchemas,
   ...aiChangesCommandSchemas,
   ...teamCommandSchemas,
+  ...customerInputsCommandSchemas,
 ]);
 export type CrmCommand = typeof CrmCommandSchema.Type;
 
@@ -24,6 +30,7 @@ const isVisitsCommand = Schema.is(VisitsCommandSchema);
 const isImportsCommand = Schema.is(ImportsCommandSchema);
 const isAiChangesCommand = Schema.is(AiChangesCommandSchema);
 const isTeamCommand = Schema.is(TeamCommandSchema);
+const isCustomerInputsCommand = Schema.is(CustomerInputsCommandSchema);
 
 /** Commands a non-human principal (API key, agent bot) may not run. Lanes may extend via their own lists. */
 export const nonHumanForbiddenCrmCommands: ReadonlySet<string> = new Set([
@@ -36,6 +43,7 @@ export const nonHumanForbiddenCrmCommands: ReadonlySet<string> = new Set([
   'LinkClientParty',
   'RegisterSalesperson',
   'SetSalespersonActive',
+  'UpdateCustomerInput',
 ]);
 /** AI level C: an API key may run ONLY these commands in demo.crm (everything else is a proposal). */
 export { nonHumanAllowedCrmCommands } from './ai-changes.ts';
@@ -67,6 +75,9 @@ export const dispatchCrmCommand = (
   }
   if (isTeamCommand(command)) {
     return applyTeamCommand(state, command, context);
+  }
+  if (isCustomerInputsCommand(command)) {
+    return applyCustomerInputsCommand(state, command, context);
   }
   return Effect.die(new Error(`Unrouted CRM command ${String((command as { readonly _tag?: unknown })._tag)}`));
 };

@@ -9,6 +9,7 @@ import {
   normalizeStatus,
   orderDate,
   rawStatusesInUse,
+  reportMappingApproved,
   statusMeaningLabels,
   statusMeanings,
 } from '../../../../../shared/domain/reports.ts';
@@ -144,7 +145,10 @@ export const ReportFilterBar = ({ onChange, periods, query, records, scopeAll }:
   const rawStatuses = rawStatusesInUse(records.state);
   const statusItems = [
     { label: 'Všechny stavy', value: ALL },
-    ...statusMeanings.map((meaning) => ({ label: `Význam: ${statusMeaningLabels[meaning]}`, value: `m:${meaning}` })),
+    // Meanings filter only after the customer approved the mapping (R04); until then raw statuses only (C05).
+    ...(reportMappingApproved(records.state)
+      ? statusMeanings.map((meaning) => ({ label: `Význam: ${statusMeaningLabels[meaning]}`, value: `m:${meaning}` }))
+      : []),
     ...rawStatuses.map((status) => ({
       label: `Ze zdroje: ${orderStatusLabel(status.raw)}`,
       value: `r:${normalizeStatus(status.raw)}`,

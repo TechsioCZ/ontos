@@ -11,6 +11,7 @@ import { canSeeEverything } from '../../../../../shared/domain/access.ts';
 import { buildSalesReport, exclusionReasonLabels } from '../../../../../shared/domain/reports.ts';
 import { CrmPage } from '../../../../crm/crm-page.tsx';
 import { useCrmRecords } from '../../../../crm/records.ts';
+import { CustomerInputsPanel } from '../../../../crm/customer-inputs-panel.tsx';
 import { CrmStateGate } from '../../../../crm/ui.tsx';
 import { ReportCharts } from './report-charts.tsx';
 import type { ReportQuery } from './report-filters.tsx';
@@ -43,7 +44,16 @@ const fileSlug = (value: string) =>
     .replaceAll(/[^a-z0-9]+/gu, '-')
     .replaceAll(/^-|-$/gu, '');
 
-const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
+const ReportView = ({
+  busy,
+  records,
+  submit,
+}: {
+  readonly busy: boolean;
+  readonly records: RecordsResponse;
+  readonly submit: ReturnType<typeof useCrmRecords>['submit'];
+}) => {
+  const [inputsOpen, setInputsOpen] = useState(false);
   const { language } = useModernI18n();
   const lang = language ?? 'cs';
   const [query, setQueryState] = useState<ReportQuery>(readQuery);
@@ -64,7 +74,8 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
     if (grouping === 'salesperson') {
       setQuery({ grouping: 'client', salesperson: key });
     } else if (grouping === 'status') {
-      setQuery({ status: `m:${key}` });
+      // Without an approved mapping (R04) the groups are raw source statuses.
+      setQuery({ status: key.startsWith('raw:') ? `r:${key.slice(4)}` : `m:${key}` });
     } else if (grouping === 'month') {
       setQuery({ grouping: 'client', period: key });
     }
@@ -188,7 +199,10 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
           </div>
         </div>
       )}
-      <StatusMappingCard state={records.state} />
+      <StatusMappingCard onOpenInputs={() => setInputsOpen(true)} state={records.state} />
+      {inputsOpen && (
+        <CustomerInputsPanel busy={busy} onClose={() => setInputsOpen(false)} records={records} submit={submit} />
+      )}
       {query.client !== ALL && (
         <p className="text-fg-secondary text-sm">
           Filtr klienta je aktivní.{' '}
@@ -202,10 +216,10 @@ const ReportView = ({ records }: { readonly records: RecordsResponse }) => {
 };
 
 const ReportsContent = () => {
-  const { load, state } = useCrmRecords();
+  const { busy, load, state, submit } = useCrmRecords();
   return (
     <CrmStateGate loadingTitle="Přehled prodejů" onRetry={load} state={state}>
-      {(records) => <ReportView records={records} />}
+      {(records) => <ReportView busy={busy} records={records} submit={submit} />}
     </CrmStateGate>
   );
 };
