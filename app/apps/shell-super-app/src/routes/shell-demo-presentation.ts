@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 
-import type { SafeTenantIdentity, ShellNavigationItem } from '../../shared/api.ts';
+import type { ShellNavigationItem } from '../../shared/api.ts';
 import { ShellNavigationItemSchema } from '../../shared/api.ts';
 
 /** Legal entity of „Velkoobchod Hanák s.r.o.“, the wholesale CRM company (order imports, pairing, sales reports). */
@@ -84,17 +84,4 @@ export const presentableDemoNavigation = (
         (href === '/prodej/zakaznici' || href === '/zakaznici' || href === '/customers')
       ),
   );
-};
-
-const seededNames: Readonly<Record<string, { readonly original: string; readonly translated: string }>> = {
-  'management@siampark.demo': { original: 'Management', translated: 'Vedení' },
-  'operations@siampark.demo': { original: 'Operations', translated: 'Provoz' },
-  'finance@siampark.demo': { original: 'Finance', translated: 'Účetní' },
-  'external@siampark.demo': { original: 'External Agent', translated: 'Externí obchodník' },
-};
-
-/** Translate only known English fixtures, never overwrite an administrator's chosen personal name. */
-export const demoDisplayName = ({ displayName, email }: Pick<SafeTenantIdentity, 'displayName' | 'email'>): string => {
-  const seeded = seededNames[email];
-  return seeded?.original === displayName ? seeded.translated : displayName;
 };

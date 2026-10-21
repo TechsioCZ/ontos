@@ -17,7 +17,6 @@ import {
   shellComposition,
 } from '../../api/auth-client.ts';
 import {
-  demoDisplayName,
   hasModuleAiApprovals,
   presentableDemoNavigation,
   withAgentPlatformNavigation,
@@ -326,7 +325,7 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
           const contribution = Option.getOrUndefined(contributionOption);
           const baseModel = {
             contextState: session.state,
-            identity: { ...session.identity, displayName: demoDisplayName(session.identity) },
+            identity: session.identity,
             legalEntities: choices,
             navigation: items,
             state: 'authenticated' as const,

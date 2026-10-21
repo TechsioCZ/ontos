@@ -1,7 +1,6 @@
 import { expect, it } from 'effect-rstest';
 import type { ShellNavigationItem } from '../../../shared/api.ts';
 import {
-  demoDisplayName,
   hasModuleAiApprovals,
   presentableDemoNavigation,
   withAgentPlatformNavigation,
@@ -68,16 +67,6 @@ it('keeps wholesale CRM pages only in the wholesale CRM company', () => {
   expect(
     presentableDemoNavigation(crmPages, false, '71000000-0000-4000-8000-000000000021').map(({ href }) => href),
   ).toEqual(['/crm/klienti', '/crm/k-osloveni', '/crm/navstevy']);
-});
-
-it.each([
-  ['management@siampark.demo', 'Management', 'Vedení'],
-  ['operations@siampark.demo', 'Operations', 'Provoz'],
-  ['external@siampark.demo', 'External Agent', 'Externí obchodník'],
-  ['management@siampark.demo', 'Jana Nováková', 'Jana Nováková'],
-  ['other@example.cz', 'Management', 'Management'],
-])('presents the Czech fixture name without overwriting personal names (%s)', (email, displayName, expected) => {
-  expect(demoDisplayName({ displayName, email })).toBe(expected);
 });
 
 it.each([
