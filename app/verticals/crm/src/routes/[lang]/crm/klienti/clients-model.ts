@@ -30,6 +30,8 @@ const knownPrincipals: Record<string, string> = {
   '72000000-0000-4000-8000-000000000021': 'Vedení Siampark',
   '849fdb3c-fab6-5c14-b20a-d885dc27313d': 'Karel Hanák (správce)',
   '8abb7df7-c19d-5d49-836a-2146dbe5064c': 'Lucie Dvořáková (vedoucí obchodu)',
+  // scripts/demo/crm-party-intake.mts: the CRM service account that writes clients into Party Registry.
+  'b0442ea3-0560-5337-9012-406ef4b5e028': 'Systém CRM (zápis do Party Registry)',
 };
 
 /** Display name of whoever ran a command: salesperson, known persona, or a neutral label. */
