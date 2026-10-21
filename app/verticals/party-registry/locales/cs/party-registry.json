@@ -161,7 +161,8 @@
           "relatedLinks": {
             "opportunities": "Příležitosti",
             "tasks": "Úkoly",
-            "invoices": "Faktury"
+            "invoices": "Faktury",
+            "documents": "Dokumenty a spis"
           },
           "endContact": "Ukončit kontakt",
           "endIdentifier": "Ukončit platnost identifikátoru"

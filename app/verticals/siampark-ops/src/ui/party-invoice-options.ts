@@ -1,10 +1,10 @@
 // Contact (party registry) and invoice (finance) references for documents. Read through each owner's PUBLIC governed
 // read, filtered to what the current person may see; the link stores the owner's resource id + a display snapshot.
 import { listCustomers } from '@app/party-registry/api/client';
-import { executeRecords as executeFinanceRecords } from '@app/siampark-billing-finance/clients/records';
 import { Effect } from 'effect';
 import { useEffect, useState } from 'react';
 import type { SubjectRef } from '../../shared/domain/documents.ts';
+import { readFinance } from '../api/finance-reads.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 
 export type OptionsState =
@@ -50,7 +50,7 @@ const loadContacts = () =>
   );
 
 const loadInvoices = () =>
-  executeFinanceRecords({}, 'siampark-ops.document-invoice-options').pipe(
+  readFinance('siampark-ops.document-invoice-options').pipe(
     Effect.map((records) =>
       records.state.invoices
         .filter((invoice) => invoice.businessState !== 'VOIDED')
@@ -58,7 +58,7 @@ const loadInvoices = () =>
           (invoice): SubjectRef => ({
             id: invoice.ref.resourceId,
             kind: 'invoice',
-            label: `${invoice.documentNumber} · ${invoice.counterpartyName}`.slice(0, 300),
+            label: [invoice.number ?? invoice.documentNumber, invoice.counterpartyName].filter((part) => part !== undefined).join(' · ').slice(0, 300),
           }),
         ),
     ),

@@ -159,7 +159,8 @@
           "relatedLinks": {
             "opportunities": "Opportunities",
             "tasks": "Tasks",
-            "invoices": "Invoices"
+            "invoices": "Invoices",
+            "documents": "Documents and dossier"
           },
           "endContact": "End contact",
           "endIdentifier": "End identifier validity"

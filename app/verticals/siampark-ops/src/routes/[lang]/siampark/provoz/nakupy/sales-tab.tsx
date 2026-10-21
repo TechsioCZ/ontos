@@ -3,8 +3,6 @@
 // The customer is a party-registry counterparty; the invoice is created by Finance from a snapshot of the order lines
 // and counterparty (CreateInvoiceDraft), so a later quote edit never changes an issued invoice.
 import { listCustomers } from '@app/party-registry/api/client';
-import { executeApplyCommand } from '@app/siampark-billing-finance/clients/apply-command';
-import { executeRecords as executeFinanceRecords } from '@app/siampark-billing-finance/clients/records';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { DetailList, EmptyState, SectionCard, SidePanel, formatDate } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -28,6 +26,8 @@ import type {
 } from '../../../../../../shared/domain/purchasing.ts';
 import { salesTotals } from '../../../../../../shared/domain/purchasing.ts';
 import { ChangeHistory } from '../../../../../ui/change-history.tsx';
+import { applyFinanceCommand, readFinance } from '../../../../../api/finance-reads.ts';
+import { useIncomingInvoiceLinks } from './finance-links.tsx';
 import { browserRuntime } from '../../../../../runtime/browser-effect-runtime.ts';
 import { addDays } from '../../../../../ui/ops-agenda/deadlines.ts';
 import { dateTimeIso, failureKey, formatAmount, formatStamp, parseAmountMinor, parsePositiveInt, todayIso, usePurchasingT } from './purchasing-model.ts';
@@ -599,9 +599,9 @@ const useIssueInvoice = (run: RunCommand) => {
       Effect.gen(function* issueInvoice() {
         const parts = yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt]);
         const idempotencyKey = `sales-invoice:${order.id}:${parts.join(':')}`;
-        const snapshot = yield* executeFinanceRecords({}, 'siampark-ops.sales-invoice.read');
+        const snapshot = yield* readFinance('siampark-ops.sales-invoice.read');
         const referenceCredentials = yield* makeReferenceGatewayCredentials(['party-registry']);
-        return yield* executeApplyCommand(
+        return yield* applyFinanceCommand(
           {
             command: {
               _tag: 'CreateInvoiceDraft',
@@ -676,6 +676,8 @@ export const SalesOrderPanel = ({
   const { language, t } = useModernI18n();
   const toast = useToast();
   const issueInvoice = useIssueInvoice(run);
+  // Finance decides who may create invoice drafts; read-only Finance roles get no invoice action at all.
+  const finance = useIncomingInvoiceLinks();
   const [busy, setBusy] = useState(false);
   const [action, setAction] = useState<OrderAction>(undefined);
   const [deliveryDate, setDeliveryDate] = useState(todayIso());
@@ -729,7 +731,8 @@ export const SalesOrderPanel = ({
     toast.create({ title: k('sales.messages.invoiced', { number: outcome.number ?? '' }), type: 'success' });
     setAction(undefined);
   };
-  const canInvoice = canWrite && order.status !== 'draft' && order.status !== 'cancelled';
+  const financeWritable = finance.status === 'ready' && finance.canWrite;
+  const canInvoice = canWrite && financeWritable && order.status !== 'draft' && order.status !== 'cancelled';
   return (
     <SidePanel
       closeOnInteractOutside={action === undefined}
@@ -792,6 +795,15 @@ export const SalesOrderPanel = ({
             )}
           </div>
         )}
+        {canWrite &&
+          finance.status === 'ready' &&
+          !finance.canWrite &&
+          order.status !== 'draft' &&
+          order.status !== 'cancelled' && (
+            <p className="text-fg-secondary text-xs" data-testid="sales-invoice-readonly">
+              Fakturu k této objednávce vystaví účetní nebo vedení ve Financích. Vaše role má ve Financích jen čtení.
+            </p>
+          )}
         {action === 'deliver' && (
           <SectionCard title={k('sales.actions.deliver')}>
             <FormInput id="sales-delivery-date" label={k('sales.fields.deliveryDate')} onChange={(event) => setDeliveryDate(event.target.value)} type="date" value={deliveryDate} />
@@ -835,7 +847,7 @@ export const SalesOrderPanel = ({
             </div>
           </SectionCard>
         )}
-        {action === 'invoice' && (
+        {action === 'invoice' && canInvoice && (
           <SectionCard title={k('sales.actions.invoice')}>
             <p className="text-fg-secondary text-sm">{k('sales.form.invoiceIntro', { customer: order.customer.name })}</p>
             <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">

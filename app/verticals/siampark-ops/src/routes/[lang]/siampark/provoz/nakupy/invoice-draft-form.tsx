@@ -1,8 +1,6 @@
 // @effect-diagnostics asyncFunction:off
 // Real Finance draft; supplier and immutable line prices are copied from the purchase order.
 import { SectionCard } from '@app/admin-ui';
-import { executeApplyCommand } from '@app/siampark-billing-finance/clients/apply-command';
-import { executeRecords } from '@app/siampark-billing-finance/clients/records';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
@@ -10,6 +8,7 @@ import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { Effect, Random } from 'effect';
 import { useRef, useState } from 'react';
 import type { PurchaseOrder, Supplier } from '../../../../../../shared/domain/purchasing.ts';
+import { applyFinanceCommand, readFinance } from '../../../../../api/finance-reads.ts';
 import { browserRuntime } from '../../../../../runtime/browser-effect-runtime.ts';
 import { formatAmount, todayIso } from './purchasing-model.ts';
 
@@ -54,8 +53,11 @@ export const InvoiceDraftForm = ({
       Effect.gen(function* createPurchaseInvoice() {
         const parts = yield* Effect.all([Random.nextInt, Random.nextInt, Random.nextInt]);
         const idempotencyKey = `purchase-invoice:${parts.join(':')}`;
-        const snapshot = yield* executeRecords({}, 'siampark-ops.invoice-draft.read');
-        return yield* executeApplyCommand(
+        const snapshot = yield* readFinance('siampark-ops.invoice-draft.read');
+        if (!snapshot.canWrite) {
+          return 'forbidden' as const;
+        }
+        yield* applyFinanceCommand(
           {
             expectedRevision: snapshot.revision,
             command: {
@@ -73,11 +75,17 @@ export const InvoiceDraftForm = ({
           'siampark-ops.invoice-draft.create',
           { idempotencyKey },
         );
-      }).pipe(Effect.match({ onSuccess: () => true, onFailure: () => false })),
+        return 'created' as const;
+      }).pipe(
+        Effect.catchTag('ApplyCommandActionForbiddenProblem', () => Effect.succeed('forbidden' as const)),
+        Effect.match({ onSuccess: (outcome) => outcome, onFailure: () => 'failed' as const }),
+      ),
     );
     submitting.current = false;
     setBusy(false);
-    if (result) onCreated();
+    if (result === 'created') onCreated();
+    else if (result === 'forbidden')
+      setError('Návrh faktury může připravit jen účetní nebo vedení. Vaše role má ve Financích jen čtení.');
     else setError('Návrh se nepodařilo uložit. Obnovte detail objednávky a ověřte, zda již návrh existuje.');
   };
   return (

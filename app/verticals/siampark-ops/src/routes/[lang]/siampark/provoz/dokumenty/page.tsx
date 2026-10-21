@@ -1,6 +1,6 @@
 // Siampark provoz — Dokumenty a smlouvy (S12) + Interní zprávy (S14). OWNED BY THE `documents` LANE (ops-documents).
 // Data: useAgendaRecords(['documents']); commands: shared/commands/documents.ts; files via FileUpload + records read.
-import { EmptyState, PageHeader, SectionCard, StatCard, StatRow } from '@app/admin-ui';
+import { EmptyState, PageHeader, SectionCard, StatCard, StatRow, foldSearchText } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -33,6 +33,8 @@ import { useAgendaRecords } from '../../../../../ui/use-agenda.ts';
 import { exportCsv } from '../../../../../ui/ops-agenda/ui-bits.tsx';
 import { LinkedDocuments } from '../../../../../ui/linked-documents.tsx';
 import { useTaskOptions } from '../../../../../ui/task-options.ts';
+import { FinanceFilesList, financeFileText, financeInvoiceLabel, useFinanceFiles } from '../../../../../ui/finance-files.tsx';
+import type { FinanceFileRow } from '../../../../../ui/finance-files.tsx';
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
 import { DocumentDetailPanel } from './document-detail.tsx';
 import { DocumentFormPanel } from './document-form.tsx';
@@ -69,7 +71,9 @@ const LinksCell = ({ document }: { readonly document: DocumentRecord }) => {
 };
 
 const DocumentsView = () => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
+  const lang = language?.startsWith('en') === true ? 'en' : 'cs';
+  const financeFiles = useFinanceFiles();
   const categoryLabel = useCategoryLabel();
   const principalLabel = usePrincipalLabel();
   const searchStr = useRouterState({ select: (state) => state.location.searchStr });
@@ -108,7 +112,30 @@ const DocumentsView = () => {
   const pragueDay = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Prague' });
   /** Date of the last change (Europe/Prague business date). */
   const changedOn = (document: DocumentRecord) => pragueDay.format(DateTime.toEpochMillis(document.updatedAt));
-  const owners = [...new Set(documents.map(ownerOf))].toSorted((left, right) => left.localeCompare(right, 'cs'));
+  const financeOwnerOf = (row: FinanceFileRow) => row.file.actorLabel ?? 'Finance';
+  const financeAll = financeFiles.status === 'ready' ? financeFiles.rows : [];
+  const owners = [...new Set([...documents.map(ownerOf), ...financeAll.map(financeOwnerOf)])].toSorted((left, right) =>
+    left.localeCompare(right, 'cs'),
+  );
+  const financeChangedOn = (row: FinanceFileRow) => pragueDay.format(Date.parse(row.file.uploadedAt));
+  const financeLinkMatches = (row: FinanceFileRow) => {
+    if (link === ALL) return true;
+    const [kind, ...rest] = link.split(':');
+    const id = rest.join(':');
+    return kind === 'invoice'
+      ? row.invoice?.ref.resourceId === id
+      : kind === 'contact'
+        ? row.invoice?.counterpartyRef.resourceId === id
+        : false;
+  };
+  // Invoice files uploaded in Finance, read through with the person's own Finance permission (read-only here).
+  const financeFiltered = financeAll
+    .filter(() => category === ALL || category === 'invoice')
+    .filter((row) => owner === ALL || financeOwnerOf(row) === owner)
+    .filter(financeLinkMatches)
+    .filter((row) => query.trim() === '' || foldSearchText(financeFileText(row)).includes(foldSearchText(query.trim())))
+    .filter((row) => changedFrom === '' || financeChangedOn(row) >= changedFrom)
+    .filter((row) => changedTo === '' || financeChangedOn(row) <= changedTo);
   const filtered = documents
     .filter((document) => matchesFilter(document, filter))
     .filter((document) => owner === ALL || ownerOf(document) === owner)
@@ -134,16 +161,26 @@ const DocumentsView = () => {
       list: 'Dokumenty a smlouvy',
       log: false,
       revision: envelope?.revision ?? 0,
-      rows: filtered.map((document) => [
-        document.title,
-        categoryLabel(document.category),
-        ownerOf(document),
-        documentLinks(document)
-          .map((entry) => entry.label)
-          .join(', '),
-        document.versions.at(-1)?.file.name ?? '',
-        changedOn(document),
-      ]),
+      rows: [
+        ...filtered.map((document) => [
+          document.title,
+          categoryLabel(document.category),
+          ownerOf(document),
+          documentLinks(document)
+            .map((entry) => entry.label)
+            .join(', '),
+          document.versions.at(-1)?.file.name ?? '',
+          changedOn(document),
+        ]),
+        ...financeFiltered.map((row) => [
+          row.file.fileName,
+          `${categoryLabel('invoice')} (Finance)`,
+          financeOwnerOf(row),
+          [financeInvoiceLabel(row.invoice), row.invoice?.counterpartyName ?? ''].filter((part) => part !== '').join(', '),
+          row.file.fileName,
+          financeChangedOn(row),
+        ]),
+      ],
     });
   const contractDocs = documents.filter(isContractDocument);
   const register = contractRegister(documents);
@@ -159,7 +196,12 @@ const DocumentsView = () => {
         .flatMap(documentLinks)
         .filter(
           (entry) =>
-            entry.kind === 'property' || entry.kind === 'unit' || entry.kind === 'tenant' || entry.kind === 'task',
+            entry.kind === 'property' ||
+            entry.kind === 'unit' ||
+            entry.kind === 'tenant' ||
+            entry.kind === 'contact' ||
+            entry.kind === 'invoice' ||
+            entry.kind === 'task',
         )
         .map((entry) => [`${entry.kind}:${entry.id}`, entry] as const),
     ).entries(),
@@ -289,6 +331,9 @@ const DocumentsView = () => {
           <StatCard label={t(`${k}.stats.activeContracts`)} value={String(activeContracts)} />
           <StatCard label={t(`${k}.stats.expiring`)} value={String(expiringSoon)} />
           <StatCard label={t(`${k}.stats.versions`)} value={String(versionCount)} />
+          {financeFiles.status === 'ready' && (
+            <StatCard label="Soubory faktur ve Financích" value={String(financeAll.length)} />
+          )}
         </StatRow>
 
         <div className="siampark-documents-tabs">
@@ -464,6 +509,28 @@ const DocumentsView = () => {
                 );
               })}
             </div>
+            {financeFiles.status !== 'forbidden' && (
+              <SectionCard title="Soubory faktur z Financí">
+                <p className="-mt-100 text-fg-secondary text-sm">
+                  Doklady a přílohy nahrané k fakturám ve Financích. Zobrazují se jen ke čtení podle vašeho oprávnění
+                  ve Financích; nahrávají a mění se u faktury.
+                </p>
+                {financeFiles.status === 'loading' && (
+                  <p className="text-fg-secondary text-sm">{t('siampark-ops.common.loading')}</p>
+                )}
+                {financeFiles.status === 'unavailable' && (
+                  <p className="text-fg-secondary text-sm">Soubory z Financí jsou teď nedostupné. Zkuste stránku obnovit.</p>
+                )}
+                {financeFiles.status === 'ready' &&
+                  (financeFiltered.length === 0 ? (
+                    <p className="text-fg-secondary text-sm">
+                      {financeAll.length === 0 ? 'Ve Financích zatím nejsou nahrané žádné soubory.' : t(`${k}.filters.noMatch`)}
+                    </p>
+                  ) : (
+                    <FinanceFilesList language={lang} rows={financeFiltered} />
+                  ))}
+              </SectionCard>
+            )}
           </>
         )}
 

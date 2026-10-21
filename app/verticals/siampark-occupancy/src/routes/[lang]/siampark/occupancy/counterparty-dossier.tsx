@@ -1,4 +1,5 @@
 import { DetailList, PageHeader, SectionCard, formatDate } from '@app/admin-ui';
+import { PartyDocuments } from '@app/siampark-ops/ui/record-discussion';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import type { Effect, PlatformError } from 'effect';
@@ -92,6 +93,9 @@ export const CounterpartyDossierView = ({
                 onUpdate={onUpdate}
               />
             )}
+            <SectionCard title="Dokumenty a soubory">
+              <PartyDocuments counterpartyId={counterpartyId} label={name} language={language} />
+            </SectionCard>
           </div>
           <div className="siamparkoccupancy:min-w-0 siamparkoccupancy:space-y-6">
             <SectionCard title="Údaje protistrany">

@@ -20,7 +20,7 @@ import {
   listCustomers,
   loadPartiesClient,
 } from '@app/party-registry/api/client';
-import { PropertyEquipment } from '@app/siampark-ops/ui/record-discussion';
+import { PartyDocuments, PropertyEquipment } from '@app/siampark-ops/ui/record-discussion';
 import { executeRecords as executePropertyRecords } from '@app/siampark-property/clients/records';
 import { executeRecords as executeAgreementsRecords } from '@app/siampark-agreements/clients/records';
 import { executeRecords as executeFinanceRecords } from '@app/siampark-billing-finance/clients/records';
@@ -1141,6 +1141,15 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
             </p>
           )}
           {isLease && <InvoicesCard invoices={state.related.invoices} language={language} t={t} />}
+          {isLease && selected.customerCounterpartyRef !== null && (
+            <SectionCard title="Dokumenty nájemce">
+              <PartyDocuments
+                counterpartyId={selected.customerCounterpartyRef.resourceId}
+                label={tenant?.displayName ?? customerLabel}
+                language={language}
+              />
+            </SectionCard>
+          )}
           <TasksCard language={language} t={t} tasks={state.related.tasks} />
           {snapshot !== undefined && (
             <RegistrationSheetCard

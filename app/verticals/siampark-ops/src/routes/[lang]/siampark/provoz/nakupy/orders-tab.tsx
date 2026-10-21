@@ -299,10 +299,11 @@ export const OrderPanel = ({
             {order.status !== 'draft' &&
               order.status !== 'cancelled' &&
               supplier !== undefined &&
-              sourceInvoices.length === 0 && (
+              sourceInvoices.length === 0 &&
+              financeLinks.status === 'ready' &&
+              financeLinks.canWrite && (
                 <Button
                   icon="icon-[mdi--file-document-plus-outline]"
-                  disabled={financeLinks.status !== 'ready'}
                   onClick={() => setAction('prepare-invoice')}
                   size="sm"
                   theme="outlined"
@@ -335,10 +336,24 @@ export const OrderPanel = ({
               )}
           </div>
         )}
+        {order.status !== 'draft' &&
+          order.status !== 'cancelled' &&
+          supplier !== undefined &&
+          sourceInvoices.length === 0 &&
+          financeLinks.status === 'ready' &&
+          !financeLinks.canWrite && (
+            <p className="text-fg-secondary text-xs" data-testid="invoice-draft-readonly">
+              Návrh přijaté faktury z této objednávky připraví účetní nebo vedení ve Financích. Vaše role má ve
+              Financích jen čtení.
+            </p>
+          )}
         {action === 'receive' && (
           <ReceiveForm onDone={() => setAction(undefined)} order={order} run={run} state={state} />
         )}
-        {action === 'prepare-invoice' && supplier !== undefined && (
+        {action === 'prepare-invoice' &&
+          supplier !== undefined &&
+          financeLinks.status === 'ready' &&
+          financeLinks.canWrite && (
           <InvoiceDraftForm
             order={order}
             supplier={supplier}

@@ -4,7 +4,6 @@
 // per source ("bez oprávnění" / "zdroj nedostupný") and never replaced by zeros. Owned by the ops-agenda lane.
 import { listCustomers } from '@app/party-registry/api/client';
 import { executeRecords as executeAgreements } from '@app/siampark-agreements/clients/records';
-import { executeRecords as executeFinance } from '@app/siampark-billing-finance/clients/records';
 import { executeRecords as executeOccupancy } from '@app/siampark-occupancy/clients/records';
 import { executeRecords as executeProperty } from '@app/siampark-property/clients/records';
 import { executeRecords as executeWork } from '@app/siampark-work/clients/records';
@@ -12,6 +11,7 @@ import { Effect } from 'effect';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RecordsResponse as OpsRecords } from '../../../shared/apis/records.ts';
 import { agendaIds } from '../../../shared/agendas.ts';
+import { readFinance } from '../../api/finance-reads.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { loadRecords } from '../use-agenda.ts';
 import { loadSalesCases } from './sales-source.ts';
@@ -27,7 +27,7 @@ export interface SourceState<Data> {
 
 const loadEffect = () => ({
   agreements: executeAgreements({}, 'ops-agenda.agreements'),
-  finance: executeFinance({}, 'ops-agenda.finance'),
+  finance: readFinance('ops-agenda.finance'),
   occupancy: executeOccupancy({}, 'ops-agenda.occupancy'),
   parties: listCustomers({ includeArchived: false }),
   property: executeProperty({}, 'ops-agenda.property'),

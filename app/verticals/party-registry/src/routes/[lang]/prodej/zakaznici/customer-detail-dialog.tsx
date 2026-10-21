@@ -291,11 +291,16 @@ const CustomerDetailView = ({
                   ['opportunities', '/prodej/prilezitosti'],
                   ['tasks', '/siampark/work'],
                   ['invoices', '/siampark/finance'],
+                  ['documents', '/siampark/occupancy'],
                 ].map(([label, path]) => (
                   <Link
                     aria-disabled={busy}
                     className="text-primary underline"
-                    href={relatedCustomerUrl(language, path ?? '', customer, label === 'invoices')}
+                    href={
+                      label === 'documents'
+                        ? `/${language}${path ?? ''}?counterpartyId=${encodeURIComponent(customer.counterpartyId)}#tenant`
+                        : relatedCustomerUrl(language, path ?? '', customer, label === 'invoices')
+                    }
                     key={label}
                     onClick={(event) => {
                       if (!busy && !dirty) {
