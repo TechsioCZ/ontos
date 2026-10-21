@@ -147,6 +147,7 @@ test('endedDetail explains why a connection stopped and shows the admin note', (
     connection({ revokeNote: 'Odchod z firmy', revokeReason: 'admin', revokedAt: null, status: 'revoked' }),
   );
   expect(ended).toEqual({ label: 'Odpojil(a) správce firmy', note: 'Odchod z firmy', when: '' });
+  expect(endedDetail(connection({ revokeNote: 'user', revokeReason: 'user', status: 'revoked' }))?.note).toBeNull();
   expect(endedDetail(connection({ revokeReason: 'superseded', status: 'superseded' }))?.label).toBe(
     'Nahrazeno novým připojením',
   );

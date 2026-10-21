@@ -125,7 +125,8 @@ export const revokeConnection = <R>(
       actorPrincipalId: caller.principalId,
       grantId: request.grantId,
       reasonCode,
-      reasonText: reasonText === '' ? null : reasonText,
+      // Only an administrator's reason is kept: the owner's own Odpojit has no reason field.
+      reasonText: reasonCode === 'admin' ? reasonText : null,
     });
     return { grantId: request.grantId, status: 'revoked' as const };
   });

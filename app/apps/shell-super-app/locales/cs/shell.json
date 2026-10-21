@@ -251,7 +251,7 @@
         "title": "Jak bude zapisovat",
         "read_only": "Jen čtení",
         "approval": "Navrhovat změny ke schválení (doporučeno)",
-        "approvalHint": "Každou změnu nejdřív schválí člověk v Správa › Ke schválení.",
+        "approvalHint": "Každou změnu nejdřív schválí člověk v Nastavení › Ke schválení.",
         "direct": "Provádět změny přímo",
         "directHint": "Změny se projeví hned, jako byste je udělal(a) vy.",
         "agentApprovalOnly": "Agent smí jen navrhovat změny (nastavení agenta).",
@@ -287,7 +287,7 @@
         },
         "policyHint": {
           "read_only": "aplikace nic nezmění",
-          "approval": "změny čekají na schválení v Správa › Ke schválení",
+          "approval": "změny čekají na schválení v Nastavení › Ke schválení",
           "direct": "změny se projeví hned"
         },
         "validity": "Přístup platí, dokud ho neodpojíte v Můj profil › Připojené aplikace. Správce firmy ho může také odpojit.",

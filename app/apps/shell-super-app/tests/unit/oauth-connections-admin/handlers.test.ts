@@ -364,7 +364,7 @@ it.effect('requires a reason when an admin revokes someone else connection', () 
 it.effect('records a self-service revoke as reason user', () =>
   Effect.gen(function* ownerRevokeTest() {
     const { calls, deps } = makeDeps(fixture());
-    const response = yield* revokeConnection(caller({}), deps, { grantId: 'g1' });
+    const response = yield* revokeConnection(caller({}), deps, { grantId: 'g1', reason: 'user' });
     expect(response).toEqual({ grantId: 'g1', status: 'revoked' });
     expect(calls.revokes[0]?.reasonCode).toBe('user');
     expect(calls.revokes[0]?.reasonText).toBe(null);

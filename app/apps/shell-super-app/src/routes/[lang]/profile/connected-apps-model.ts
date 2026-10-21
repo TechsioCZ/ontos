@@ -62,7 +62,7 @@ export const endedDetail = (
   const fallback = c.status === 'denied' ? 'Souhlas byl zamítnut' : 'Bez uvedeného důvodu';
   return {
     label: (c.revokeReason === null ? undefined : revokeReasonLabel[c.revokeReason]) ?? fallback,
-    note: c.revokeNote,
+    note: c.revokeReason === 'admin' ? c.revokeNote : null,
     when: c.revokedAt === null ? '' : formatWhen(c.revokedAt),
   };
 };
