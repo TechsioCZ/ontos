@@ -17,6 +17,24 @@ type Services = Effect.Success<ReturnType<typeof persistenceService>> & { readon
 
 const financeModuleKey = 'finance.billing';
 
+/** An MCP connection may change the module directly only with write policy 'direct' and module write. */
+export const connectionAllowsWrite = (
+  scope: Partial<Pick<OperationalScope, 'authMethod' | 'connection'>>,
+  moduleKey: string,
+): boolean => {
+  if (scope.authMethod !== 'oauth_connection') {
+    return true;
+  }
+  const { connection } = scope;
+  if (connection === undefined || connection.writePolicy !== 'direct') {
+    return false;
+  }
+  return (
+    connection.modules === 'all' ||
+    connection.modules.some((module) => module.moduleId === moduleKey && module.access === 'write')
+  );
+};
+
 const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'module.access' },
@@ -25,9 +43,14 @@ const recordsEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 
+/** Connection policy ∩ live Action permission. */
 export const financeWriteCapability = Effect.fn('Finance.writeCapability')(function* financeWriteCapability(
-  scope: Pick<OperationalScope, 'principalId' | 'correlationId'>,
+  scope: Pick<OperationalScope, 'principalId' | 'correlationId'> &
+    Partial<Pick<OperationalScope, 'authMethod' | 'connection'>>,
 ) {
+  if (!connectionAllowsWrite(scope, financeModuleKey)) {
+    return false;
+  }
   const permission = yield* ActionPermission;
   const decision = yield* permission
     .checkActionPermission({

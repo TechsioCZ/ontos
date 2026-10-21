@@ -15,6 +15,24 @@ import { persistenceService, filterOccupancyRecords } from '../services/persiste
 
 const OWNER_MODULE_KEY = 'property.leasing';
 
+/** An MCP connection may change the module directly only with write policy 'direct' and module write. */
+export const connectionAllowsWrite = (
+  scope: Partial<Pick<OperationalScope, 'authMethod' | 'connection'>>,
+  moduleKey: string,
+): boolean => {
+  if (scope.authMethod !== 'oauth_connection') {
+    return true;
+  }
+  const { connection } = scope;
+  if (connection === undefined || connection.writePolicy !== 'direct') {
+    return false;
+  }
+  return (
+    connection.modules === 'all' ||
+    connection.modules.some((module) => module.moduleId === moduleKey && module.access === 'write')
+  );
+};
+
 type Services = Effect.Success<ReturnType<typeof persistenceService>> & { readonly canWrite: boolean };
 
 /** Same Core decision the gateway applies to `apply-command`, so the UI only offers permitted actions. */
@@ -33,7 +51,11 @@ const occupancyWriteCapability = (scope: Pick<OperationalScope, 'principalId' | 
   );
 
 const makeRecordsServices: ReadServiceFactory<Services, ActionPermission> = (transaction, scope) =>
-  Effect.all({ persistence: persistenceService(transaction, scope), canWrite: occupancyWriteCapability(scope) }).pipe(
+  // A read-only or approval-only MCP connection never offers direct changes.
+  Effect.all({
+    persistence: persistenceService(transaction, scope),
+    canWrite: connectionAllowsWrite(scope, OWNER_MODULE_KEY) ? occupancyWriteCapability(scope) : Effect.succeed(false),
+  }).pipe(
     Effect.map(({ persistence, canWrite }) => ({ ...persistence, canWrite })),
     Effect.mapError((cause) =>
       Object.defineProperty(

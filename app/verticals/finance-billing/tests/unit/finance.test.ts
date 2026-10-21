@@ -3,6 +3,7 @@ import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime
 import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 import { ActionPermissionCheckError, OperationContextUnavailable, ReadRuntime } from '@app/core-runtime';
 import { ActionPermission } from '@app/core-runtime/actions/runtime-wiring';
+import { OAuthConnectionContextSchema } from '@app/core-runtime/actions/principal-context';
 import { financeWriteCapability } from '../../src/api/records.read.ts';
 import { DateTime, Effect, Exit, Layer, Schema } from 'effect';
 import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
@@ -579,6 +580,38 @@ it.layer(
     Effect.gen(function* unavailableCapability() {
       const failure = yield* Effect.flip(financeWriteCapability(capabilityScope));
       expect(Schema.is(OperationContextUnavailable)(failure)).toBe(true);
+    }),
+  );
+});
+
+const connection = (input: unknown) => Schema.decodeUnknownSync(OAuthConnectionContextSchema)(input);
+
+it.layer(
+  Layer.succeed(ActionPermission, {
+    checkActionPermission: () => Effect.succeed('allowed'),
+  }),
+)('Finance capabilities under an MCP connection', (suite) => {
+  suite.effect('a read-only connection never reports write ability; a direct one with finance write does', () =>
+    Effect.gen(function* connectionCapability() {
+      const base = { clientId: 'client-1', clientName: 'Claude', grantId: '11111111-1111-4111-8111-111111111111' };
+      expect(
+        yield* financeWriteCapability({
+          ...capabilityScope,
+          authMethod: 'oauth_connection',
+          connection: connection({ ...base, modules: 'all', writePolicy: 'read_only' }),
+        } as Parameters<typeof financeWriteCapability>[0]),
+      ).toBe(false);
+      expect(
+        yield* financeWriteCapability({
+          ...capabilityScope,
+          authMethod: 'oauth_connection',
+          connection: connection({
+            ...base,
+            modules: [{ access: 'write', moduleId: 'finance.billing' }],
+            writePolicy: 'direct',
+          }),
+        } as Parameters<typeof financeWriteCapability>[0]),
+      ).toBe(true);
     }),
   );
 });
