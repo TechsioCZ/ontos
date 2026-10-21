@@ -114,6 +114,7 @@ import type { ApiKeyProviderError } from './auth/api-key-service.ts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-namespace-registry.ts';
 import { AuthConfigLive } from './auth/config.ts';
+import { OAuthFlowLive } from './auth/oauth-server/oauth-flow-live.ts';
 import { OAuthServerTransportLive } from './auth/oauth-server/transport.ts';
 import {
   CommerceExternalIdentityContextAccessLive,
@@ -169,6 +170,7 @@ import { ShellCompositionFactoryLive } from './modules/shell-composition.ts';
 import { CapturedShellCompositionCatalog } from './modules/captured-shell-catalog.ts';
 import { ShellGovernedReads, createShellGovernedReadsLayer } from './modules/shell-governed-reads.ts';
 import type { ShellScopedModuleStateFactory } from './modules/shell-governed-reads.ts';
+import { OAuthConnectionHooksLive } from './oauth-connections/better-auth-hooks.ts';
 import {
   attachShellMedia,
   ShellProviderUnavailableError,
@@ -2009,7 +2011,12 @@ const authenticationDependenciesLive = Layer.mergeAll(
   legalEntityContextLive,
   principalResolverLive,
 );
-const authenticationServiceLive = AuthenticationServiceLive.pipe(Layer.provide(authenticationDependenciesLive));
+// The MCP connection grant's Better Auth hooks (consent reference = grant id, access-token grant claim).
+const authenticationServiceLive = AuthenticationServiceLive.pipe(
+  Layer.provide(
+    Layer.merge(authenticationDependenciesLive, OAuthConnectionHooksLive.pipe(Layer.provide(authPersistenceLive))),
+  ),
+);
 const apiKeyServiceLive = ApiKeyServiceLive.pipe(Layer.provide(authPersistenceLive));
 const supportRecoveryPrincipalLive = SupportRecoveryPrincipalContextResolverLive({
   authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
@@ -2233,6 +2240,7 @@ export const makeShellAuthenticationApiRuntime = (
     ShellCryptoLive,
     externalIdentityWorkloadAuthorizationLive,
     externalIdentityDeploymentLayer,
+    OAuthFlowLive.pipe(Layer.provide(authPersistenceLive)),
   );
   const apiHandlersLive = Layer.mergeAll(
     authenticationGroupLive,
