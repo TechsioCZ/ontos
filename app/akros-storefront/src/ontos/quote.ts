@@ -1,5 +1,5 @@
 import "server-only";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { RequestError } from "./http";
 import { purchaseConstraints } from "./purchase-constraints";
 import type { CartState, CartLine } from "@/mock-storefront/cart";
@@ -127,7 +127,8 @@ async function ownerDryRun(cart: CartState, revision: number, deliveryId: unknow
     "merchandise",
     "apply-command",
     { command, expectedRevision: revision },
-    `akros-quote-${digest}`,
+    // A dry run saves nothing, and OntOS refuses a reused key (409 action_already_committed): fresh key per check.
+    `akros-quote-${randomUUID()}`,
   )) as OwnerDryRun;
   const order = result.storefrontOrder;
   if (!order || !["VALID", "REJECTED"].includes(order.outcome ?? ""))

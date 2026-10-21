@@ -141,7 +141,7 @@ export function CartRevalidation() {
       aria-label="Ověření košíku v OntOS"
       data-akros-cart-quote={status}
     >
-      <p className="font-bold uppercase" data-akros-demo-cart-label>
+      <p className="font-bold" data-akros-demo-cart-label>
         {demoCartLabel}
       </p>
       {status === "error" ? (
