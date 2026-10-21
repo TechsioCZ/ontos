@@ -116,6 +116,8 @@ import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-
 import { AuthConfigLive } from './auth/config.ts';
 import { OAuthFlowLive } from './auth/oauth-server/oauth-flow-live.ts';
 import { oauthConnectGroupLive } from './oauth-connections/connect-http.ts';
+import { oauthConnectorGroupLive } from './oauth-connections/connector-http.ts';
+import { authenticateConnectorProposalCaller } from './oauth-connections/connector-service.ts';
 import { OAuthServerTransportLive } from './auth/oauth-server/transport.ts';
 import {
   CommerceExternalIdentityContextAccessLive,
@@ -1953,6 +1955,26 @@ const agentPlatformKeyCaller = Effect.fn('shell.agentPlatform.keyCaller')(functi
   return caller;
 });
 
+const agentPlatformConnectorCaller = (
+  headers: { readonly authorization?: string | undefined; readonly 'x-ontos-connector-key'?: string | undefined },
+  legalEntityId: string,
+  appIds: readonly string[],
+) =>
+  authenticateConnectorProposalCaller(headers, legalEntityId, appIds).pipe(
+    // The connector check reads the OAuth flow port per call; the handler runs inside the composed API runtime.
+    // @effect-diagnostics-next-line strictEffectProvide:off
+    Effect.provide(OAuthFlowLive),
+    Effect.catch((error) =>
+      failIdentityProblem(
+        Predicate.isTagged(error, 'ConnectionForbidden')
+          ? shellTargetForbiddenProblem()
+          : Predicate.isTagged(error, 'ConnectionUnavailable')
+            ? shellCapabilityUnavailableProblem()
+            : shellAuthenticationRequiredProblem(),
+      ),
+    ),
+  );
+
 const agentPlatformDefect = (request: RequestWithHeaders) =>
   recoverUnexpectedDefect(request, 'Unexpected agent platform defect', () =>
     failIdentityProblem(shellInternalProblem()),
@@ -1962,7 +1984,14 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
   handlers
     .handle('submitAgentProposals', ({ headers, payload, request }) =>
       Effect.gen(function* submitAgentProposalsHandler() {
-        const agent = yield* agentPlatformKeyCaller(headers['x-api-key'], payload.legalEntityId);
+        const agent =
+          headers['x-ontos-connector-key'] === undefined
+            ? yield* agentPlatformKeyCaller(headers['x-api-key'], payload.legalEntityId)
+            : yield* agentPlatformConnectorCaller(
+                headers,
+                payload.legalEntityId,
+                payload.proposals.map((proposal) => proposal.appId),
+              );
         const response = yield* submitAgentProposals(agent, payload).pipe(Effect.catch(agentPlatformFailure));
         yield* noStore;
         return response;
@@ -1970,7 +1999,10 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
     )
     .handle('listOwnAgentProposals', ({ headers, payload, request }) =>
       Effect.gen(function* listOwnAgentProposalsHandler() {
-        const agent = yield* agentPlatformKeyCaller(headers['x-api-key'], payload.legalEntityId);
+        const agent =
+          headers['x-ontos-connector-key'] === undefined
+            ? yield* agentPlatformKeyCaller(headers['x-api-key'], payload.legalEntityId)
+            : yield* agentPlatformConnectorCaller(headers, payload.legalEntityId, []);
         const response = yield* listOwnAgentBatches(agent).pipe(Effect.catch(agentPlatformFailure));
         yield* noStore;
         return response;
@@ -2397,6 +2429,7 @@ export const makeShellAuthenticationApiRuntime = (
     resourcesGroupLive,
     gatewayContextGroupLive,
     oauthConnectGroupLive,
+    oauthConnectorGroupLive.pipe(Layer.provide(OAuthFlowLive)),
     // @ontos-codesmith-core-read-server-layers:start
 
     // @ontos-core-read legal-entity-detail
