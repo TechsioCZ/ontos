@@ -100,13 +100,25 @@ const applyLink = (imports: ImportsSlice, link: CustomerLink, context: CommandCo
 const requireClient = (state: CrmState, clientId: string) =>
   state.clients.items.some((client) => client.id === clientId) ? Effect.void : notFound('Klient neexistuje');
 
-const newLink = (context: CommandContext, clientId: string, source: string, externalCustomerId: string): CustomerLink => ({
-  clientId,
-  createdAt: context.now,
-  createdBy: context.viewer.principalId,
-  externalCustomerId,
-  source,
-});
+const newLink = (
+  context: CommandContext,
+  clientId: string,
+  source: string,
+  externalCustomerId: string,
+  state?: CrmState,
+): CustomerLink => {
+  const partyRef = state?.clients.items.find((client) => client.id === clientId)?.partyRef;
+  return {
+    ...(partyRef?.counterpartyId === undefined
+      ? {}
+      : { counterpartyId: partyRef.counterpartyId, partyId: partyRef.partyId }),
+    clientId,
+    createdAt: context.now,
+    createdBy: context.viewer.principalId,
+    externalCustomerId,
+    source,
+  };
+};
 
 export const applyImportsCommand: Reducer<ImportsCommand> = (state, command, context) =>
   Match.value(command).pipe(
@@ -121,7 +133,7 @@ export const applyImportsCommand: Reducer<ImportsCommand> = (state, command, con
         ) {
           return yield* conflict('Toto externí zákaznické ID je již propojeno');
         }
-        const link = newLink(context, value.clientId, value.source, value.externalCustomerId);
+        const link = newLink(context, value.clientId, value.source, value.externalCustomerId, state);
         const linked = applyLink(
           { ...state.imports, customerLinks: [...state.imports.customerLinks, link] },
           link,
@@ -189,8 +201,13 @@ export const applyImportsCommand: Reducer<ImportsCommand> = (state, command, con
             return yield* conflict('Pro toto ID zákazníka už existuje schválená vazba na jiného klienta');
           }
           if (current === undefined) {
-            const link = newLink(context, value.clientId, order.source, order.externalCustomerId);
-            const linked = applyLink({ ...imports, customerLinks: [...imports.customerLinks, link] }, link, context, order.id);
+            const link = newLink(context, value.clientId, order.source, order.externalCustomerId, state);
+            const linked = applyLink(
+              { ...imports, customerLinks: [...imports.customerLinks, link] },
+              link,
+              context,
+              order.id,
+            );
             imports = linked.imports;
             entityIds.push(...linked.paired.map((entry) => entry.orderId));
           }
@@ -246,7 +263,9 @@ export const applyImportsCommand: Reducer<ImportsCommand> = (state, command, con
           index === value.eventIndex ? { ...entry, resolution } : entry,
         );
         const next: ImportedOrder =
-          value.decision === 'apply' ? { ...order, rawStatus: event.rawStatus, statusHistory } : { ...order, statusHistory };
+          value.decision === 'apply'
+            ? { ...order, rawStatus: event.rawStatus, statusHistory }
+            : { ...order, statusHistory };
         return {
           entityIds: [order.id],
           state: withImports(state, { ...state.imports, orders: replaceOrder(state.imports.orders, next) }),
@@ -279,4 +298,3 @@ export const applyImportsCommand: Reducer<ImportsCommand> = (state, command, con
     ),
     Match.exhaustive,
   );
-

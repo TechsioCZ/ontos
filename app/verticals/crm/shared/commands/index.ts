@@ -2,6 +2,7 @@
 // commands to their own shared/commands/<area>.ts arrays, which are spread in here.
 import { Effect, Schema } from 'effect';
 import type { CommandChange, CommandContext, CrmCommandFailure } from './context.ts';
+import type { PartyLinkInput } from '../domain/clients.ts';
 import type { CrmState } from '../domain/state.ts';
 import { AiChangesCommandSchema, aiChangesCommandSchemas, applyAiChangesCommand } from './ai-changes.ts';
 import { ClientsCommandSchema, applyClientsCommand, clientsCommandSchemas } from './clients.ts';
@@ -38,6 +39,14 @@ export const nonHumanForbiddenCrmCommands: ReadonlySet<string> = new Set([
 ]);
 /** AI level C: an API key may run ONLY these commands in demo.crm (everything else is a proposal). */
 export { nonHumanAllowedCrmCommands } from './ai-changes.ts';
+
+/** Party Registry links a command asks to store; each one is verified before the reducer runs (CRM.md §3). */
+export const partyLinksOf = (command: CrmCommand): readonly PartyLinkInput[] => {
+  if (command._tag === 'CreateClient') {
+    return command.partyRef === undefined ? [] : [command.partyRef];
+  }
+  return command._tag === 'LinkClientParty' ? [command.partyRef] : [];
+};
 
 export const dispatchCrmCommand = (
   state: CrmState,

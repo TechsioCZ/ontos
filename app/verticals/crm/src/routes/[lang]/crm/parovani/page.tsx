@@ -1,6 +1,15 @@
 // AREA: imports — owned by the crm-imports lane. C04 Párování objednávek: queue of orders without a confirmed
 // client, orders flagged "vyžaduje kontrolu", approved external customer links and the full pairing history.
-import { EmptyState, PageHeader, SectionCard, SidePanel, StatCard, StatRow, formatDateTime, formatNumber } from '@app/admin-ui';
+import {
+  EmptyState,
+  PageHeader,
+  SectionCard,
+  SidePanel,
+  StatCard,
+  StatRow,
+  formatDateTime,
+  formatNumber,
+} from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -71,7 +80,9 @@ const queueColumns = (records: RecordsResponse): ColumnDef<ImportedOrder>[] => [
   },
   {
     accessorFn: (order) => Number(order.amount ?? 0),
-    cell: (info) => <span className="tabular-nums">{formatAmount(info.row.original.amount, info.row.original.currency)}</span>,
+    cell: (info) => (
+      <span className="tabular-nums">{formatAmount(info.row.original.amount, info.row.original.currency)}</span>
+    ),
     header: 'Částka',
     id: 'amount',
     meta: { align: 'end', type: 'number', width: 130 },
@@ -158,14 +169,16 @@ const historyColumns = (records: RecordsResponse): ColumnDef<PairingChange>[] =>
   },
   {
     accessorFn: (change) => clientLabel(records, change.fromClientId) ?? '',
-    cell: (info) => clientLabel(records, info.row.original.fromClientId) ?? <span className="text-fg-secondary">—</span>,
+    cell: (info) =>
+      clientLabel(records, info.row.original.fromClientId) ?? <span className="text-fg-secondary">—</span>,
     header: 'Původně',
     id: 'from',
     meta: { type: 'string', width: 190 },
   },
   {
     accessorFn: (change) => clientLabel(records, change.toClientId) ?? '',
-    cell: (info) => clientLabel(records, info.row.original.toClientId) ?? <span className="text-fg-secondary">nenapárováno</span>,
+    cell: (info) =>
+      clientLabel(records, info.row.original.toClientId) ?? <span className="text-fg-secondary">nenapárováno</span>,
     header: 'Nově',
     id: 'to',
     meta: { type: 'string', width: 190 },
@@ -199,6 +212,16 @@ const historyColumns = (records: RecordsResponse): ColumnDef<PairingChange>[] =>
   },
 ];
 
+/** Registry name of the Counterparty an approved link correlates to (CRM.md C04), when the client is linked. */
+const partyOfLink = (records: RecordsResponse, link: CustomerLink) => {
+  const client = records.state.clients.items.find(
+    (entry) =>
+      (link.counterpartyId !== undefined && entry.partyRef?.counterpartyId === link.counterpartyId) ||
+      entry.id === link.clientId,
+  );
+  return client?.partyRef?.counterpartyId === undefined ? undefined : (client.partyRef.registryName ?? client.name);
+};
+
 const linkColumns = (records: RecordsResponse): ColumnDef<CustomerLink>[] => [
   { accessorKey: 'source', header: 'Zdroj', meta: { type: 'string', width: 150 } },
   {
@@ -213,6 +236,20 @@ const linkColumns = (records: RecordsResponse): ColumnDef<CustomerLink>[] => [
     header: 'Klient v CRM',
     id: 'client',
     meta: { type: 'string', width: 240 },
+  },
+  {
+    accessorFn: (link) => partyOfLink(records, link) ?? '',
+    cell: (info) => {
+      const party = partyOfLink(records, info.row.original);
+      return party === undefined ? (
+        <span className="text-fg-secondary">jen klient CRM (bez Party)</span>
+      ) : (
+        <span title="Vazba vede na Counterparty v Party Registry">{party}</span>
+      );
+    },
+    header: 'Party Registry',
+    id: 'party',
+    meta: { type: 'string', width: 200 },
   },
   {
     accessorFn: (link) => principalLabel(records, link.createdBy),
@@ -298,7 +335,8 @@ const NewLinkPanel = ({
   const [externalCustomerId, setExternalCustomerId] = useState('');
   const [clientId, setClientId] = useState('');
   const waiting = records.state.imports.orders.filter(
-    (order) => order.pairing !== 'paired' && order.source === source && order.externalCustomerId === externalCustomerId.trim(),
+    (order) =>
+      order.pairing !== 'paired' && order.source === source && order.externalCustomerId === externalCustomerId.trim(),
   ).length;
   const save = () =>
     void submit({ _tag: 'LinkExternalCustomer', clientId, externalCustomerId: externalCustomerId.trim(), source }).then(
@@ -306,7 +344,10 @@ const NewLinkPanel = ({
         toaster.create(
           outcome.ok
             ? {
-                description: outcome.entityIds.length > 1 ? `Napárováno čekajících objednávek: ${String(outcome.entityIds.length - 1)}` : undefined,
+                description:
+                  outcome.entityIds.length > 1
+                    ? `Napárováno čekajících objednávek: ${String(outcome.entityIds.length - 1)}`
+                    : undefined,
                 title: 'Vazba schválena',
                 type: 'success',
               }
@@ -349,7 +390,10 @@ const NewLinkPanel = ({
     >
       <div className="flex flex-col gap-150">
         <SelectTemplate
-          items={(sources.length === 0 ? ['E-shop', 'Účetní systém'] : sources).map((entry) => ({ label: entry, value: entry }))}
+          items={(sources.length === 0 ? ['E-shop', 'Účetní systém'] : sources).map((entry) => ({
+            label: entry,
+            value: entry,
+          }))}
           label="Zdrojový systém"
           name="link-source"
           onValueChange={(details) => setSource(details.value[0] ?? source)}
@@ -427,7 +471,13 @@ const PairingContent = () => {
             <PageHeader
               actions={
                 canPair ? (
-                  <Button icon="icon-[mdi--link-plus]" onClick={() => setLinkOpen(true)} size="sm" theme="outlined" variant="secondary">
+                  <Button
+                    icon="icon-[mdi--link-plus]"
+                    onClick={() => setLinkOpen(true)}
+                    size="sm"
+                    theme="outlined"
+                    variant="secondary"
+                  >
                     Nová schválená vazba
                   </Button>
                 ) : undefined
@@ -436,14 +486,30 @@ const PairingContent = () => {
               title={t('crm.pages.pairing.title')}
             />
             <StatRow>
-              <StatCard hint="bez návrhu klienta" label="Nenapárované" value={formatNumber(queue.length - uncertain.length)} />
-              <StatCard hint="shoda IČO, e-mailu nebo názvu" label="Nejistý klient" value={formatNumber(uncertain.length)} />
-              <StatCard hint="sporné stavy a duplicity zdrojů" label="Vyžaduje kontrolu" value={formatNumber(review.length)} />
-              <StatCard hint="ID zákazníka → klient" label="Schválené vazby" value={formatNumber(customerLinks.length)} />
+              <StatCard
+                hint="bez návrhu klienta"
+                label="Nenapárované"
+                value={formatNumber(queue.length - uncertain.length)}
+              />
+              <StatCard
+                hint="shoda IČO, e-mailu nebo názvu"
+                label="Nejistý klient"
+                value={formatNumber(uncertain.length)}
+              />
+              <StatCard
+                hint="sporné stavy a duplicity zdrojů"
+                label="Vyžaduje kontrolu"
+                value={formatNumber(review.length)}
+              />
+              <StatCard
+                hint="ID zákazníka → klient"
+                label="Schválené vazby"
+                value={formatNumber(customerLinks.length)}
+              />
             </StatRow>
             <p className="max-w-prose text-fg-secondary text-sm">
-              Objednávka se ke klientovi přiřadí automaticky jen přes schválenou vazbu ID zákazníka. Ostatní čekají tady –
-              shoda e-mailu, telefonu nebo názvu je jen návrh a nikdy se nepoužije sama. Nespárované objednávky se
+              Objednávka se ke klientovi přiřadí automaticky jen přes schválenou vazbu ID zákazníka. Ostatní čekají tady
+              – shoda e-mailu, telefonu nebo názvu je jen návrh a nikdy se nepoužije sama. Nespárované objednávky se
               nezapočítávají do potvrzených souhrnů.
             </p>
             <Heading
@@ -452,7 +518,10 @@ const PairingContent = () => {
             />
             {queue.length === 0 && (
               <SectionCard>
-                <EmptyState description="Všechny importované objednávky mají potvrzeného klienta." title="Fronta je prázdná" />
+                <EmptyState
+                  description="Všechny importované objednávky mají potvrzeného klienta."
+                  title="Fronta je prázdná"
+                />
               </SectionCard>
             )}
             {queue.length > 0 && (
@@ -474,7 +543,10 @@ const PairingContent = () => {
             />
             {review.length === 0 && (
               <SectionCard>
-                <EmptyState description="Žádné sporné pořadí stavů ani duplicita mezi zdroji." title="Nic ke kontrole" />
+                <EmptyState
+                  description="Žádné sporné pořadí stavů ani duplicita mezi zdroji."
+                  title="Nic ke kontrole"
+                />
               </SectionCard>
             )}
             {review.length > 0 && (
@@ -545,7 +617,9 @@ const PairingContent = () => {
                 submit={submit}
               />
             )}
-            {linkOpen && <NewLinkPanel busy={busy} onClose={() => setLinkOpen(false)} records={records} submit={submit} />}
+            {linkOpen && (
+              <NewLinkPanel busy={busy} onClose={() => setLinkOpen(false)} records={records} submit={submit} />
+            )}
           </>
         );
       }}

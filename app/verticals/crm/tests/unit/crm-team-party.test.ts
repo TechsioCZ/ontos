@@ -7,7 +7,9 @@ import { dispatchCrmCommand } from '../../shared/commands/index.ts';
 import type { CrmViewer } from '../../shared/domain/access.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
 import { initialCrmState, projectCrmState } from '../../shared/domain/state.ts';
+import { linkTargetClientId } from '../../shared/domain/imports.ts';
 import { salespersonOfPrincipal } from '../../shared/domain/team.ts';
+import { contactsCsv } from '../../src/routes/[lang]/crm/klienti/clients-model.ts';
 import { partyLinksOf, verifiedPartyOf, viewerFor } from '../../src/services/persistence.service.ts';
 
 const at = '2026-10-21T08:00:00.000Z';
@@ -184,5 +186,62 @@ describe('Party Registry links (CRM.md §3)', () => {
     expect(verifiedPartyOf({ ...link, partyId: 'party-2' }, answer, 'le-1', '2026-10-21')).toBe(
       'Party a Counterparty v Party Registry k sobě nepatří',
     );
+  });
+});
+
+describe('contacts export and Party-based customer links', () => {
+  const withContacts: CrmState = {
+    ...base,
+    clients: {
+      ...base.clients,
+      contacts: [
+        {
+          clientId: 'x',
+          createdAt: at,
+          createdBy: 'p',
+          id: 'cx',
+          name: 'Eva Mlynářová',
+          status: 'active',
+          updatedAt: at,
+        },
+        {
+          clientId: 'z',
+          createdAt: at,
+          createdBy: 'p',
+          id: 'cz',
+          name: 'Skrytý Kontakt',
+          status: 'active',
+          updatedAt: at,
+        },
+      ],
+    },
+  };
+
+  it('S15-02: the CSV of a salesperson contains only entrusted clients and their contacts', () => {
+    const projected = projectCrmState(withContacts, repA);
+    const records = { now: at, revision: 1, state: projected, viewer: repA };
+    const csv = contactsCsv(records, projected.clients.items);
+    expect(csv).toContain('Eva Mlynářová');
+    expect(csv).not.toContain('Skrytý Kontakt');
+    expect(csv).not.toContain('Firma z');
+    expect(csv.split('\r\n')).toHaveLength(2);
+  });
+
+  it('an approved external id follows the Counterparty, not a stale client id', () => {
+    const clients = [
+      { id: 'old', partyRef: { counterpartyId: 'cp-9' } },
+      { id: 'new', partyRef: { counterpartyId: 'cp-7' } },
+    ];
+    const link = {
+      clientId: 'old',
+      counterpartyId: 'cp-7',
+      createdAt: at,
+      createdBy: 'p',
+      externalCustomerId: 'E1',
+      source: 'E-shop',
+    };
+    expect(linkTargetClientId(clients, link)).toBe('new');
+    expect(linkTargetClientId(clients, { ...link, counterpartyId: undefined } as never)).toBe('old');
+    expect(linkTargetClientId([{ id: 'plain' }], { ...link, clientId: 'plain', counterpartyId: 'cp-x' })).toBe('plain');
   });
 });

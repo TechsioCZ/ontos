@@ -440,9 +440,21 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
         }
         const partyRef = yield* verifiedPartyRef(state, context, value.partyRef, client.id);
         const next: Client = { ...client, partyRef, updatedAt: context.now };
+        // Approved external customer ids of this client now correlate to its Counterparty (C04).
+        const stamped: CrmState = {
+          ...state,
+          imports: {
+            ...state.imports,
+            customerLinks: state.imports.customerLinks.map((link) =>
+              link.clientId === client.id
+                ? { ...link, counterpartyId: value.partyRef.counterpartyId, partyId: value.partyRef.partyId }
+                : link,
+            ),
+          },
+        };
         return {
           entityIds: [client.id],
-          state: withClients(state, { items: replaceClient(state.clients.items, next) }, [
+          state: withClients(stamped, { items: replaceClient(state.clients.items, next) }, [
             event(context, 'party', client.id, 'party_linked', { subject: partyRef.registryName ?? client.name }),
           ]),
         };

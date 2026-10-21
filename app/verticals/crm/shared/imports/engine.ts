@@ -20,6 +20,7 @@ import type {
   PairingCandidate,
   PairingChange,
 } from '../domain/imports.ts';
+import { linkTargetClientId } from '../domain/imports.ts';
 import { ORDERS_CSV_FORMAT } from './csv.ts';
 import type { ParsedCsv, ParsedOrderRow } from './csv.ts';
 
@@ -156,7 +157,7 @@ export const importOrders = (
       ...definedEntries({
         amount: row.amount,
         candidates: candidates.length > 0 ? candidates : undefined,
-        clientId: link?.clientId,
+        clientId: link === undefined ? undefined : linkTargetClientId(clients.items, link),
         currency: row.currency,
         customerEmail: row.customerEmail,
         customerName: row.customerName,
@@ -185,7 +186,7 @@ export const importOrders = (
         id: meta.newId(`p${row.row}`),
         orderId: id,
         reason: `Schválená vazba zákaznického ID ${link.externalCustomerId} (${link.source})`,
-        toClientId: link.clientId,
+        toClientId: linkTargetClientId(clients.items, link),
         via: 'customer_link',
       });
     }
@@ -198,7 +199,7 @@ export const importOrders = (
           ? candidates.length > 0
             ? 'Nová objednávka, klient nejistý: k ruční kontrole v párování'
             : 'Nová objednávka od neznámého zákazníka: čeká na napárování'
-          : `Nová objednávka, napárováno na ${clientName(link.clientId)}`,
+          : `Nová objednávka, napárováno na ${clientName(linkTargetClientId(clients.items, link))}`,
       orderId: id,
       outcome: 'created' as const,
     };

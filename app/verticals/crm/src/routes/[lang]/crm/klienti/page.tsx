@@ -25,17 +25,22 @@ import {
   cityOf,
   clientMatches,
   clientSegments,
+  contactsCsv,
   kindLabels,
   lastVisitOf,
+  partyLinked,
   primaryContactOf,
   segmentLabel,
   segmentLabels,
 } from './clients-model.ts';
 import { SalespersonChip } from './salesperson-chip.tsx';
+import { TeamPanel } from './team-panel.tsx';
+import { downloadCsv } from '../prehled-prodeju/report-format.ts';
 
 const ALL = 'all';
 const UNASSIGNED = 'none';
 type StatusFilter = 'active' | 'archived' | 'all';
+type RegistryFilter = 'all' | 'linked' | 'unlinked';
 
 const DAY_MS = 86_400_000;
 
@@ -207,6 +212,8 @@ const ClientsList = ({
   const [segment, setSegment] = useState<string>(ALL);
   const [status, setStatus] = useState<StatusFilter>('active');
   const [createOpen, setCreateOpen] = useState(false);
+  const [teamOpen, setTeamOpen] = useState(false);
+  const [registry, setRegistry] = useState<RegistryFilter>('all');
 
   const manager = canSeeEverything(records.viewer);
   const canCreate = records.viewer.writeAll || records.viewer.writeAssigned;
@@ -225,9 +232,12 @@ const ClientsList = ({
           ? row.client.ownerSalespersonId === undefined
           : row.client.ownerSalespersonId === owner)) &&
       (segment === ALL || row.client.segment === segment) &&
+      (registry === 'all' || (registry === 'linked') === partyLinked(row.client)) &&
       clientMatches(records, row.client, search),
   );
-  const filtered = search.trim() !== '' || owner !== ALL || segment !== ALL || status !== 'active';
+  const filtered =
+    search.trim() !== '' || owner !== ALL || segment !== ALL || status !== 'active' || registry !== 'all';
+  const linkedCount = active.filter((row) => partyLinked(row.client)).length;
   const mine = records.viewer.salespersonId;
   const summaries = (
     <>
@@ -259,6 +269,17 @@ const ClientsList = ({
           label="Kontaktováno za 30 dní"
           value={formatNumber(visitedRecently)}
         />
+        {manager && (
+          <StatCard
+            hint={
+              linkedCount === active.length
+                ? 'všichni aktivní klienti mají ověřenou identitu'
+                : `${formatNumber(active.length - linkedCount)} čeká na propojení`
+            }
+            label="Propojeno s Party Registry"
+            value={`${formatNumber(linkedCount)} z ${formatNumber(active.length)}`}
+          />
+        )}
       </StatRow>
       <CrmSalesKpiStrip records={records} />
     </>
@@ -268,11 +289,43 @@ const ClientsList = ({
     <>
       <PageHeader
         actions={
-          canCreate ? (
-            <Button icon="icon-[mdi--plus]" onClick={() => setCreateOpen(true)} size="sm" variant="primary">
-              Nový klient
+          <div className="flex flex-wrap gap-100">
+            <Button
+              disabled={visible.length === 0}
+              icon="icon-[mdi--download]"
+              onClick={() =>
+                downloadCsv(
+                  contactsCsv(
+                    records,
+                    visible.map((row) => row.client),
+                  ),
+                  `kontakty-${records.now.slice(0, 10)}.csv`,
+                )
+              }
+              size="sm"
+              theme="outlined"
+              title="Klienti a kontaktní osoby podle aktuálních filtrů; jen záznamy, které smíte vidět"
+              variant="secondary"
+            >
+              Exportovat kontakty (CSV)
             </Button>
-          ) : undefined
+            {records.viewer.assign && (
+              <Button
+                icon="icon-[mdi--account-group-outline]"
+                onClick={() => setTeamOpen(true)}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
+                Obchodníci
+              </Button>
+            )}
+            {canCreate && (
+              <Button icon="icon-[mdi--plus]" onClick={() => setCreateOpen(true)} size="sm" variant="primary">
+                Nový klient
+              </Button>
+            )}
+          </div>
         }
         description={
           manager
@@ -347,6 +400,27 @@ const ClientsList = ({
             value={[status]}
           />
         </div>
+        {manager && (
+          <div className="w-full sm:w-52">
+            <SelectTemplate
+              label="Party Registry"
+              items={[
+                { label: 'Propojení i nepropojení', value: 'all' },
+                { label: 'Propojení s registrem', value: 'linked' },
+                { label: 'Čeká na propojení', value: 'unlinked' },
+              ]}
+              name="registry"
+              onValueChange={(details) => {
+                const next = details.value[0];
+                if (next === 'all' || next === 'linked' || next === 'unlinked') {
+                  setRegistry(next);
+                }
+              }}
+              size="sm"
+              value={[registry]}
+            />
+          </div>
+        )}
         {filtered && (
           <Button
             icon="icon-[mdi--filter-remove-outline]"
@@ -355,6 +429,7 @@ const ClientsList = ({
               setOwner(ALL);
               setSegment(ALL);
               setStatus('active');
+              setRegistry('all');
             }}
             size="sm"
             theme="borderless"
@@ -431,6 +506,7 @@ const ClientsList = ({
           }}
         />
       </div>
+      {teamOpen && <TeamPanel busy={busy} onClose={() => setTeamOpen(false)} records={records} submit={submit} />}
       {createOpen && (
         <ClientFormDialog
           busy={busy}

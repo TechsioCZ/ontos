@@ -136,15 +136,36 @@ export const ImportedOrderSchema = Schema.Struct({
 });
 export type ImportedOrder = typeof ImportedOrderSchema.Type;
 
-/** Approved correlation external customer id -> client (C04-01). */
+/**
+ * Approved correlation external customer id -> Party Registry Counterparty (C04-01, CRM.md §3). The link names the
+ * Counterparty of the client it was approved for; imports resolve it to whichever CRM client holds that Party
+ * today, `clientId` stays as the fallback for clients not yet linked to the registry.
+ */
 export const CustomerLinkSchema = Schema.Struct({
   clientId: EntityIdSchema,
+  counterpartyId: Schema.optionalKey(EntityIdSchema),
   createdAt: IsoTimeSchema,
   createdBy: PrincipalIdSchema,
   externalCustomerId: ShortTextSchema,
+  partyId: Schema.optionalKey(EntityIdSchema),
   source: ShortTextSchema,
 });
 export type CustomerLink = typeof CustomerLinkSchema.Type;
+
+interface PartyHolder {
+  readonly id: string;
+  readonly partyRef?: { readonly counterpartyId?: string | undefined } | undefined;
+}
+
+/** The CRM client an approved link pairs orders to: the current holder of its Counterparty, else `clientId`. */
+export const linkTargetClientId = (clients: readonly PartyHolder[], link: CustomerLink): string => {
+  const counterpartyId =
+    link.counterpartyId ?? clients.find((client) => client.id === link.clientId)?.partyRef?.counterpartyId;
+  if (counterpartyId === undefined) {
+    return link.clientId;
+  }
+  return clients.find((client) => client.partyRef?.counterpartyId === counterpartyId)?.id ?? link.clientId;
+};
 
 export const PairingChangeSchema = Schema.Struct({
   at: IsoTimeSchema,

@@ -12,7 +12,10 @@ import { useState } from 'react';
 import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { Client } from '../../../../../shared/domain/clients.ts';
+import { Effect } from 'effect';
+import { registerClientInRegistry, registryFailureMessage } from '../../../../crm/party-registry.ts';
 import type { CrmCommandOutcome } from '../../../../crm/records.ts';
+import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { clientSegments, segmentLabels } from './clients-model.ts';
 
 type Kind = Client['kind'];
@@ -104,6 +107,7 @@ export const ClientFormDialog = ({
   const [contacts, setContacts] = useState<readonly ContactDraft[]>(() => (mode === 'create' ? [emptyContact(0)] : []));
   const [touched, setTouched] = useState(false);
   const [failure, setFailure] = useState<string | undefined>(undefined);
+  const [registering, setRegistering] = useState(false);
   const patch = (next: Partial<Draft>) => setDraft((current) => ({ ...current, ...next }));
   const patchContact = (key: number, next: Partial<ContactDraft>) =>
     setContacts((current) => current.map((entry) => (entry.key === key ? { ...entry, ...next } : entry)));
@@ -177,6 +181,45 @@ export const ClientFormDialog = ({
       }
       command = { _tag: 'UpdateClient', id: client.id, patch: changes };
     }
+    // CRM.md §3: a new company is created (or reused by IČO) in Party Registry first and the client stores the
+    // verified PartyRef. Only the vedení may write the registry; a salesperson's client waits for that link.
+    if (command._tag === 'CreateClient' && viewer.writeAll && organization) {
+      const createCommand = command;
+      setRegistering(true);
+      void browserRuntime
+        .runPromise(
+          registerClientInRegistry({
+            kind: draft.kind,
+            name: draft.name.trim(),
+            ...optionalField('address', draft.address),
+            ...optionalField('email', draft.email),
+            ...optionalField('phone', draft.phone),
+            ...optionalField('regNo', draft.regNo),
+            ...optionalField('vatNo', draft.vatNo),
+          }).pipe(
+            Effect.match({
+              onFailure: (reason) => ({ failure: reason, ok: false as const }),
+              onSuccess: (created) => ({ created, ok: true as const }),
+            }),
+          ),
+        )
+        .then((registered) => {
+          setRegistering(false);
+          if (!registered.ok) {
+            toaster.create({
+              description: `${registryFailureMessage[registered.failure]} Klient se uloží bez vazby; propojíte ho na kartě.`,
+              title: 'Party Registry: firmu se nepodařilo založit',
+              type: 'warning',
+            });
+          }
+          finish(registered.ok ? { ...createCommand, partyRef: registered.created.link } : createCommand);
+        });
+      return;
+    }
+    finish(command);
+  };
+
+  const finish = (command: CrmCommand) => {
     void submit(command).then((outcome) => {
       if (!outcome.ok) {
         const message = outcome.message ?? 'Uložení se nezdařilo. Zkuste to prosím znovu.';
@@ -206,7 +249,12 @@ export const ClientFormDialog = ({
           <Button disabled={busy} onClick={onClose} theme="outlined" variant="secondary">
             Zrušit
           </Button>
-          <Button isLoading={busy} loadingText="Ukládám…" onClick={save} variant="primary">
+          <Button
+            isLoading={busy || registering}
+            loadingText={registering ? 'Zakládám v Party Registry…' : 'Ukládám…'}
+            onClick={save}
+            variant="primary"
+          >
             {mode === 'create' ? 'Založit klienta' : 'Uložit změny'}
           </Button>
         </>

@@ -2,6 +2,7 @@
 // only search, sort and label what the signed-in principal already may see.
 import { matchesSearch } from '@app/admin-ui';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
+import { toCsv } from '../../../../../shared/domain/reports.ts';
 import type { Client, ClientEventKind, ContactPerson } from '../../../../../shared/domain/clients.ts';
 import { clientSegments } from '../../../../../shared/domain/clients.ts';
 
@@ -130,3 +131,56 @@ export const fieldLabels: Record<string, string> = {
 /** Builds `?klient=<id>` on the current list URL (drill-down links from other pages use the same param). */
 export const clientHref = (language: string, clientId: string) =>
   `/${language}/crm/klienti?klient=${encodeURIComponent(clientId)}`;
+
+/**
+ * Contacts export (S15-02, C01): one row per active contact person of the given clients, a client without contact
+ * persons gets one row with its own phone / e-mail. Built only from the server-projected records, so a principal
+ * never exports a client (counterparty) it may not see.
+ */
+export const contactsCsv = (records: RecordsResponse, clients: readonly Client[]) => {
+  const owner = (client: Client) =>
+    records.state.salespeople.find((person) => person.id === client.ownerSalespersonId)?.name ?? '';
+  const rows = clients.flatMap((client) => {
+    const base = [
+      client.name,
+      client.kind === 'organization' ? 'Firma' : 'Fyzická osoba',
+      client.regNo,
+      client.status === 'active' ? 'aktivní' : 'archivovaný',
+      owner(client),
+      client.phone,
+      client.email,
+      client.address,
+      partyLinked(client) ? 'propojeno' : 'nepropojeno',
+    ];
+    const contacts = activeContactsOf(records, client.id);
+    return contacts.length === 0
+      ? [[...base, '', '', '', '', '']]
+      : contacts.map((contact) => [
+          ...base,
+          contact.name,
+          contact.role,
+          contact.phone,
+          contact.email,
+          contact.primary === true ? 'ano' : '',
+        ]);
+  });
+  return toCsv(
+    [
+      'Klient',
+      'Typ',
+      'IČO',
+      'Stav',
+      'Obchodník',
+      'Telefon klienta',
+      'E-mail klienta',
+      'Adresa',
+      'Party Registry',
+      'Kontaktní osoba',
+      'Pracovní role',
+      'Telefon osoby',
+      'E-mail osoby',
+      'Hlavní kontakt',
+    ],
+    rows,
+  );
+};

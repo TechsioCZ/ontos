@@ -1,8 +1,10 @@
 // Browser data access for every CRM page (owned by crm-scaffold). One governed records read returns the
 // ACL-projected aggregate; one governed apply-command Action changes it. Pages never filter for security.
+import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import { Effect, Random } from 'effect';
 import { useCallback, useEffect, useState } from 'react';
 import type { CrmCommand } from '../../shared/actions/apply-command.ts';
+import { partyLinksOf } from '../../shared/commands/index.ts';
 import type { RecordsResponse } from '../../shared/apis/records.ts';
 import { executeApplyCommand } from '../api/apply-command-action-client.ts';
 import { executeRecords } from '../api/records-client.ts';
@@ -36,13 +38,22 @@ export const loadCrmRecords = (clientId?: string) =>
     ),
   );
 
-/** Runs one CRM command with a fresh idempotency key against the revision the caller last saw. */
+/**
+ * Runs one CRM command with a fresh idempotency key against the revision the caller last saw. A command that links a
+ * Party Registry identity forwards one single-use registry assertion per link, so the CRM server can read the
+ * Counterparty with the signed-in user's own rights before it stores the PartyRef.
+ */
 export const runCrmCommand = (command: CrmCommand, expectedRevision: number) =>
-  Effect.all([correlation('command'), randomToken]).pipe(
-    Effect.flatMap(([requestCorrelation, idempotencyKey]) =>
-      executeApplyCommand({ command, expectedRevision }, requestCorrelation, { idempotencyKey }),
-    ),
-  );
+  Effect.gen(function* runCommand() {
+    const [requestCorrelation, idempotencyKey] = yield* Effect.all([correlation('command'), randomToken]);
+    const links = partyLinksOf(command);
+    const referenceCredentials =
+      links.length === 0 ? undefined : yield* makeReferenceGatewayCredentials(links.map(() => 'party-registry'));
+    return yield* executeApplyCommand({ command, expectedRevision }, requestCorrelation, {
+      idempotencyKey,
+      ...(referenceCredentials === undefined ? {} : { referenceCredentials }),
+    });
+  });
 
 /** Human-readable reason of a failed command (domain errors carry Czech reasons). */
 export const commandErrorMessage = (error: unknown): string | undefined => {

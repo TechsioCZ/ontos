@@ -19,7 +19,7 @@ import {
 import type { CrmCommand } from '../../shared/actions/apply-command.ts';
 import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import type { VerifiedParty } from '../../shared/commands/context.ts';
-import { dispatchCrmCommand } from '../../shared/commands/index.ts';
+import { dispatchCrmCommand, partyLinksOf } from '../../shared/commands/index.ts';
 import type { PartyLinkInput } from '../../shared/domain/clients.ts';
 import type { CrmPermissionKey, CrmViewer } from '../../shared/domain/access.ts';
 import { canWriteAnything, crmPermissionKeys } from '../../shared/domain/access.ts';
@@ -61,14 +61,6 @@ const registryUnavailable = (cause?: unknown) =>
   );
 
 const partyIneligible = (reason: string) => new CrmReferenceIneligible({ code: 'crm_reference_ineligible', reason });
-
-/** Party Registry links a command asks to store; each one is verified before the reducer runs (CRM.md §3). */
-export const partyLinksOf = (command: CrmCommand): readonly PartyLinkInput[] => {
-  if (command._tag === 'CreateClient') {
-    return command.partyRef === undefined ? [] : [command.partyRef];
-  }
-  return command._tag === 'LinkClientParty' ? [command.partyRef] : [];
-};
 
 const NotVisibleProblem = Schema.Struct({ status: Schema.Literals([403, 404]) });
 const isNotVisible = Schema.is(NotVisibleProblem);
@@ -165,6 +157,8 @@ export const viewerFor = (
   };
   return salesperson === undefined ? base : { ...base, salespersonId: salesperson.id };
 };
+
+export { partyLinksOf } from '../../shared/commands/index.ts';
 
 export const persistenceService = Effect.fn('Crm.persistenceService')(
   function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {

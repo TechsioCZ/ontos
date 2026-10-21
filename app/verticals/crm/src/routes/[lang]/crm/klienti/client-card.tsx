@@ -22,7 +22,8 @@ import { ClientOrdersTab } from '../importy/client-orders-tab.tsx';
 import { ClientVisitsTab } from '../navstevy/client-visits-tab.tsx';
 import { AssignDialog } from './assign-dialog.tsx';
 import { ClientFormDialog } from './client-form-dialog.tsx';
-import { activeContactsOf, kindLabels, segmentLabel } from './clients-model.ts';
+import { activeContactsOf, kindLabels, partyLinked, segmentLabel } from './clients-model.ts';
+import { PartyLinkDialog } from './party-link-dialog.tsx';
 import { ContactsTab } from './contacts-tab.tsx';
 import { HistoryTab } from './history-tab.tsx';
 import { SalespersonChip } from './salesperson-chip.tsx';
@@ -95,6 +96,7 @@ const CardBody = ({
   const [editing, setEditing] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  const [linkingParty, setLinkingParty] = useState(false);
   const writable = canWriteClient(records.viewer, client);
   const archived = client.status === 'archived';
   const contacts = activeContactsOf(records, client.id);
@@ -197,6 +199,17 @@ const CardBody = ({
               {owner === undefined ? 'Přidělit obchodníkovi' : 'Změnit obchodníka'}
             </Button>
           )}
+          {writable && records.viewer.writeAll && !archived && !partyLinked(client) && (
+            <Button
+              icon="icon-[mdi--link-variant]"
+              onClick={() => setLinkingParty(true)}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              Propojit s Party Registry
+            </Button>
+          )}
           {writable &&
             (archived ? (
               <Button
@@ -285,6 +298,22 @@ const CardBody = ({
           <Fact icon="icon-[mdi--web]" label="Web">
             {client.website ?? <Missing />}
           </Fact>
+          <Fact icon="icon-[mdi--database-check-outline]" label="Identita v Party Registry">
+            {partyLinked(client) ? (
+              <span className="flex flex-col">
+                <span>{client.partyRef?.registryName ?? client.name}</span>
+                <span className="text-fg-secondary text-xs">
+                  {`ověřený zákazník${client.partyRef?.linkedAt === undefined ? '' : ` · propojeno ${formatDate(client.partyRef.linkedAt)}`}`}
+                </span>
+              </span>
+            ) : (
+              <Missing>
+                {records.viewer.writeAll
+                  ? 'nepropojeno – propojte tlačítkem výše'
+                  : 'čeká na propojení vedením obchodu'}
+              </Missing>
+            )}
+          </Fact>
         </dl>
         {client.note !== undefined && (
           <div className="flex gap-100 rounded-lg bg-surface-secondary p-200 text-sm">
@@ -315,6 +344,15 @@ const CardBody = ({
           </Tabs.Content>
         </Tabs>
       </div>
+      {linkingParty && (
+        <PartyLinkDialog
+          busy={busy}
+          client={client}
+          onClose={() => setLinkingParty(false)}
+          records={records}
+          run={run}
+        />
+      )}
       {assigning && (
         <AssignDialog busy={busy} client={client} onClose={() => setAssigning(false)} records={records} run={run} />
       )}
