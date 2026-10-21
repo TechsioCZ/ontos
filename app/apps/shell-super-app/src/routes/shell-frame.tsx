@@ -791,8 +791,14 @@ const DashboardAccountMenu = ({
   logoutPending,
   onLogout,
 }: Pick<AuthenticatedDashboardLayoutProps, 'identity' | 'logoutPending' | 'onLogout'>) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const accountItems: MenuItem[] = [
+    {
+      icon: 'icon-[mdi--account-cog-outline]',
+      label: t('shell.profile.menu'),
+      type: 'action',
+      value: 'profile',
+    },
     {
       disabled: logoutPending,
       icon: 'icon-[mdi--logout]',
@@ -818,6 +824,9 @@ const DashboardAccountMenu = ({
       }
       items={accountItems}
       onSelect={({ value: action }) => {
+        if (action === 'profile') {
+          globalThis.location.assign(language === 'en' ? '/en/profile' : '/cs/profil');
+        }
         if (action === 'logout') {
           onLogout();
         }
