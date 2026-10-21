@@ -106,7 +106,10 @@ const ConnectPage = () => {
 
   const chooseCompany = (nextId: string) => {
     setCompanyId(nextId);
-    selectActing(options?.companies.find((candidate) => candidate.legalEntityId === nextId), ME);
+    selectActing(
+      options?.companies.find((candidate) => candidate.legalEntityId === nextId),
+      ME,
+    );
   };
 
   const chooseMode = (nextMode: Mode) => {
@@ -249,7 +252,9 @@ const ConnectPage = () => {
                           type="radio"
                         />
                         <span className="grid gap-050">
-                          <span className="font-semibold">{t('shell.connect.acting.me', { name: options.user.displayName })}</span>
+                          <span className="font-semibold">
+                            {t('shell.connect.acting.me', { name: options.user.displayName })}
+                          </span>
                           <span className="text-fg-secondary text-sm">{t('shell.connect.acting.meHint')}</span>
                         </span>
                       </label>
@@ -286,7 +291,9 @@ const ConnectPage = () => {
                         onChange={() => chooseMode('all')}
                         type="radio"
                       />
-                      <span>{agent === undefined ? t('shell.connect.access.allMe') : t('shell.connect.access.allAgent')}</span>
+                      <span>
+                        {agent === undefined ? t('shell.connect.access.allMe') : t('shell.connect.access.allAgent')}
+                      </span>
                     </label>
                     <label className="flex items-center gap-150 rounded border border-border-primary px-150 py-100">
                       <input
@@ -363,9 +370,13 @@ const ConnectPage = () => {
                             />
                             <span className="grid gap-050">
                               <span className="font-semibold">{t(`shell.connect.policy.${candidate}`)}</span>
-                              {candidate === "read_only" ? null : (
+                              {candidate === 'read_only' ? null : (
                                 <span className="text-fg-secondary text-sm">
-                                  {t(candidate === "approval" ? "shell.connect.policy.approvalHint" : "shell.connect.policy.directHint")}
+                                  {t(
+                                    candidate === 'approval'
+                                      ? 'shell.connect.policy.approvalHint'
+                                      : 'shell.connect.policy.directHint',
+                                  )}
                                 </span>
                               )}
                             </span>
@@ -387,7 +398,14 @@ const ConnectPage = () => {
                     <Button disabled={busy} onClick={submit} size="md" theme="solid" type="button" variant="primary">
                       {t('shell.connect.continue')}
                     </Button>
-                    <Button disabled={busy} onClick={cancel} size="md" type="button" variant="secondary">
+                    <Button
+                      disabled={busy}
+                      onClick={cancel}
+                      size="md"
+                      theme="outlined"
+                      type="button"
+                      variant="secondary"
+                    >
                       {t('shell.connect.cancel')}
                     </Button>
                   </div>

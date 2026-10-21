@@ -166,7 +166,7 @@ const ConsentPage = () => {
                 <Button disabled={busy} onClick={approve} size="md" theme="solid" type="button" variant="primary">
                   {t('shell.connect.consent.allow')}
                 </Button>
-                <Button disabled={busy} onClick={deny} size="md" type="button" variant="secondary">
+                <Button disabled={busy} onClick={deny} size="md" theme="outlined" type="button" variant="secondary">
                   {t('shell.connect.consent.deny')}
                 </Button>
               </div>

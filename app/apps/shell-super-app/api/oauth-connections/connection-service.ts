@@ -4,11 +4,7 @@
  * revokes the grant (where the design says so); a passing check is cached for at most 30 s. Pure checks live in
  * `evaluateLiveChecks`; the database, SpiceDB and catalog reads live in the effects below.
  */
-import {
-  ContextAccess,
-  openDemoAccountGrants,
-  openPrincipalOperators,
-} from '@app/core-runtime';
+import { ContextAccess, openDemoAccountGrants, openPrincipalOperators } from '@app/core-runtime';
 import {
   type ConnectionActingKind,
   type ConnectionDescription,
@@ -121,7 +117,10 @@ const iso = (value: Date): string => DateTime.formatIso(DateTime.fromDateUnsafe(
 const ModulesJson = Schema.fromJsonString(ConnectionModulesRequestSchema);
 const modulesJson = (modules: ConnectionModulesRequest): string => Schema.encodeSync(ModulesJson)(modules);
 
-type PrincipalNames = ReadonlyMap<string, { readonly displayName: string; readonly kind: string; readonly status: string }>;
+type PrincipalNames = ReadonlyMap<
+  string,
+  { readonly displayName: string; readonly kind: string; readonly status: string }
+>;
 
 /** What the acting principal may do right now (SpiceDB rights, narrowed for agents by their profile). */
 export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingAuthority')(function* (input: {
@@ -134,7 +133,12 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
     Effect.flatMap(openDemoAccountGrants, (grants) => grants.relationshipsOf(input.actingPrincipalId)),
   );
   const sets = moduleAccessSets(relationships, input.legalEntityId);
-  const spice: LiveRights = { read: sets.access, write: sets.write };
+  // SpiceDB can still hold rights on modules that are no longer installed; a connection only offers live modules.
+  const installed = new Set<string>((yield* (yield* ShellInstalledModuleCatalog).load).moduleIds);
+  const spice: LiveRights = {
+    read: new Set([...sets.access].filter((moduleId) => installed.has(moduleId))),
+    write: new Set([...sets.write].filter((moduleId) => installed.has(moduleId))),
+  };
   if (input.actingKind === 'human') {
     return { live: spice, offered: offeredModules(spice, 'direct'), policyCap: 'direct' as ConnectionWritePolicy };
   }
@@ -383,10 +387,9 @@ const summariesOf = Effect.fn('OAuthConnectionService.summariesOf')(function* (
   tenantId: string,
   rows: readonly GrantRow[],
 ) {
-  const names: PrincipalNames = yield* loadPrincipals(
-    tenantId,
-    [...new Set(rows.flatMap((row) => [row.userPrincipalId, row.actingPrincipalId]))],
-  );
+  const names: PrincipalNames = yield* loadPrincipals(tenantId, [
+    ...new Set(rows.flatMap((row) => [row.userPrincipalId, row.actingPrincipalId])),
+  ]);
   const legalNames = yield* loadLegalNames(tenantId, [...new Set(rows.map((row) => row.legalEntityId))]);
   return yield* Effect.forEach(
     rows,
@@ -418,10 +421,22 @@ const summaryOf = (
           write: grant.access === 'write',
         }));
   return {
-    acting: { displayName: names.get(row.actingPrincipalId)?.displayName ?? '', kind: row.actingKind, principalId: row.actingPrincipalId },
-    client: { clientId: row.clientId, host: row.clientHost, kind: row.clientKind, logoUri: row.clientLogoUri, name: row.clientName },
+    acting: {
+      displayName: names.get(row.actingPrincipalId)?.displayName ?? '',
+      kind: row.actingKind,
+      principalId: row.actingPrincipalId,
+    },
+    client: {
+      clientId: row.clientId,
+      host: row.clientHost,
+      kind: row.clientKind,
+      logoUri: row.clientLogoUri,
+      name: row.clientName,
+    },
     createdAt: iso(row.createdAt),
-    delegatedBy: agent ? { displayName: names.get(row.userPrincipalId)?.displayName ?? '', principalId: row.userPrincipalId } : null,
+    delegatedBy: agent
+      ? { displayName: names.get(row.userPrincipalId)?.displayName ?? '', principalId: row.userPrincipalId }
+      : null,
     grantId: row.grantId,
     lastUsedAt: row.lastUsedAt === null ? null : iso(row.lastUsedAt),
     legalEntityId: row.legalEntityId,
@@ -445,7 +460,9 @@ export const listConnectionSummaries = Effect.fn('OAuthConnectionService.listCon
 });
 
 /** One summary by grant id; undefined for unknown grants and drafts. */
-export const getConnectionSummary = Effect.fn('OAuthConnectionService.getConnectionSummary')(function* (grantId: string) {
+export const getConnectionSummary = Effect.fn('OAuthConnectionService.getConnectionSummary')(function* (
+  grantId: string,
+) {
   const grant = yield* findGrant(grantId);
   if (grant === undefined || grant.status === 'draft') {
     return undefined;
