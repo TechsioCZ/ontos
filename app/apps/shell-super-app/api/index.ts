@@ -114,6 +114,7 @@ import type { ApiKeyProviderError } from './auth/api-key-service.ts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-namespace-registry.ts';
 import { AuthConfigLive } from './auth/config.ts';
+import { OAuthServerTransportLive } from './auth/oauth-server/transport.ts';
 import {
   CommerceExternalIdentityContextAccessLive,
   CommerceExternalIdentityDeploymentLive,
@@ -2259,7 +2260,11 @@ export const makeShellAuthenticationApiRuntime = (
   return assembleEffectBffRuntime({
     api: ShellAuthenticationApi,
     handlers: apiHandlersLive,
-    transport: ModuleApiTransportLive.pipe(Layer.provide(activeApplicationCompositionLive)),
+    transport: Layer.mergeAll(
+      ModuleApiTransportLive.pipe(Layer.provide(activeApplicationCompositionLive)),
+      // The same authentication layer as the handlers, so one Better Auth instance serves both.
+      OAuthServerTransportLive.pipe(Layer.provide(authenticationLayer), Layer.orDie),
+    ),
   });
 };
 
