@@ -16,6 +16,7 @@
     "./server/external-identity-client": "./src/external-identity-client.ts",
     "./ai-approvals": "./src/ai-approvals.ts",
     "./agent-proposals": "./src/agent-proposals.ts",
+    "./agent-revert": "./src/agent-revert.ts",
     "./agent-access": "./src/agent-access.ts"
   },
   "scripts": {
