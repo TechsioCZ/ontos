@@ -222,6 +222,7 @@
     },
     "recovery": {
       "missing": "Stránka nebyla nalezena",
+      "recordMissing": "Záznam nebyl nalezen",
       "forbidden": "Tato agenda není přístupná",
       "unavailable": "Pracovní prostor je dočasně nedostupný",
       "home": "Zpět na přehled",
@@ -231,7 +232,7 @@
       "forbidden": "K otevření tohoto modulu nemáte oprávnění.",
       "incompatible": "Nasazený vstupní bod modulu není kompatibilní.",
       "loading": "Načítání modulu…",
-      "not_found": "Tento modul není v aktuálním kontextu dostupný.",
+      "not_found": "Tato stránka neexistuje, nebo agenda není ve vybrané firmě dostupná. Zkontrolujte odkaz.",
       "reload_required": "Je dostupná nová verze aplikace. Pro pokračování obnovte stránku.",
       "selection_required": "Před otevřením modulu vyberte právní subjekt.",
       "seoDescription": "Autorizované pracovní prostředí modulu OntOS.",
@@ -278,7 +279,7 @@
         "title": "Média",
         "unavailable": "Autorizace médií je dočasně nedostupná."
       },
-      "not_found": "Tento zdroj nebyl v aktuálním kontextu nalezen.",
+      "not_found": "Záznam v této agendě neexistuje, byl odstraněn, nebo není ve vašem rozsahu oprávnění. Zkontrolujte odkaz.",
       "selection_required": "Před otevřením zdroje vyberte právní subjekt.",
       "seoDescription": "Autorizovaný detail zdroje OntOS.",
       "timeline": {

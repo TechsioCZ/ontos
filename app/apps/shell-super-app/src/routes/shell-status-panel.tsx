@@ -6,16 +6,19 @@ import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 /** Safe, distinct recovery states. Never display a backend error body or a record identifier. */
 export const ShellStatusPanel = ({
   messageKey,
+  missingTitleKey = 'missing',
   status,
 }: {
   /** Explanation under the title; defaults to the module wording for `status`. */
   readonly messageKey?: string;
+  /** Title of the "not found" state; a record page says "Záznam nebyl nalezen" instead of "Stránka…". */
+  readonly missingTitleKey?: 'missing' | 'recordMissing';
   readonly status: string;
 }) => {
   const { t } = useModernI18n();
   const missing = status === 'not_found';
   const forbidden = status === 'forbidden';
-  const titleKey = missing ? 'missing' : forbidden ? 'forbidden' : 'unavailable';
+  const titleKey = missing ? missingTitleKey : forbidden ? 'forbidden' : 'unavailable';
   return (
     <section
       aria-live="polite"

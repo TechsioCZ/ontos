@@ -420,11 +420,11 @@ it.effect('resolves direct targets independently with exhaustive safe outcomes a
     const missing = yield* composition.resolveModuleTarget(context, {
       moduleId: 'missing.module',
     });
-    expect(missing.outcome).toBe('forbidden');
+    expect(missing.outcome).toBe('not_found');
   }),
 );
 
-it.effect('denies unadmitted direct modules and preserves missing page and canonical route outcomes', () =>
+it.effect('reports unknown direct modules, missing pages and canonical routes as not found', () =>
   Effect.gen(function* deniesUnadmittedDirectModules() {
     let stateCalls = 0;
     let permissionCalls = 0;
@@ -444,7 +444,7 @@ it.effect('denies unadmitted direct modules and preserves missing page and canon
         compositionRevision: approvedCatalog.composition.revision,
         moduleId: 'missing.module',
       }),
-    ).toEqual({ outcome: 'forbidden' });
+    ).toEqual({ outcome: 'not_found' });
     expect(
       yield* composition.resolveModuleTarget(context, {
         entrypointKey: 'property.registry.page.missing',

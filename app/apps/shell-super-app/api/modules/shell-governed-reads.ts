@@ -322,7 +322,9 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       inputSchema: ResourceRefSchema,
       legalEntityScope: 'required',
       owningModuleKey: 'core.shell',
-      permissionTarget: 'resource',
+      // The handler decides module access, then record existence and record access, so an unknown record of
+      // an allowed agenda is "not found" while a denied agenda stays "forbidden".
+      permissionTarget: 'legal_entity',
       policies: [],
       readKey: 'core.shell.resource-detail-timeline',
       resultSchema: ShellResourceResponseSchema,
@@ -385,7 +387,7 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
       );
     },
     serviceFactory,
-    (ref) => ({ kind: 'resource', resource: ref }),
+    () => ({ kind: 'legal_entity' }),
   );
   return { composition, moduleTarget, resourceDetail, search } as const;
 });

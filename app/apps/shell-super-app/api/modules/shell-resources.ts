@@ -568,13 +568,15 @@ const accessOutcome = (decisions: readonly ContextAccessResult[], expectedKey: s
   return decision.decision === 'denied' ? ({ outcome: 'forbidden' } as const) : ({ outcome: 'allowed' } as const);
 };
 
+const moduleAccessOutcome = Effect.fn('ShellResourceDetail.moduleAccessOutcome')(function* moduleAccessOutcome(
+  ...[dependencies, context, ref]: ResourceDecisionArguments
+) {
+  return accessOutcome(yield* moduleDecision(dependencies, context, ref.moduleId), ref.moduleId);
+});
+
 const resourceAccessOutcome = Effect.fn('ShellResourceDetail.accessOutcome')(function* resourceAccessOutcome(
   ...[dependencies, context, ref]: ResourceDecisionArguments
 ) {
-  const moduleAccess = accessOutcome(yield* moduleDecision(dependencies, context, ref.moduleId), ref.moduleId);
-  if (moduleAccess.outcome !== 'allowed') {
-    return moduleAccess;
-  }
   return accessOutcome(yield* resourceDecision(dependencies, context, ref), resourceKey(ref));
 });
 
@@ -592,13 +594,20 @@ export const makeShellResourceDetail = (...[dependencies, gateway]: ShellResourc
     if (!catalogResult.ok) {
       return { outcome: 'unavailable' } as const;
     }
+    // Unknown modules and resource types are "not found": module and type names are public catalog facts.
     const contract = catalogResult.value.getByModuleId(ref.moduleId);
     if (contract === undefined) {
-      return { outcome: 'forbidden' } as const;
+      return { outcome: 'not_found' } as const;
     }
     const resourceType = contract.manifest.publicSurface.resourceTypes.find(({ key }) => key === ref.resourceType);
     if (resourceType === undefined) {
       return { outcome: 'not_found' } as const;
+    }
+    // An agenda the principal may not open stays "forbidden" whether or not the record exists, so a denied
+    // principal learns nothing about its records. Only past this point can a record be "not found".
+    const moduleAccess = yield* moduleAccessOutcome(dependencies, context, ref);
+    if (moduleAccess.outcome !== 'allowed') {
+      return moduleAccess;
     }
     const contributions = contract.manifest.publicSurface.shellContributions;
     const detailBinding = contributions.resourceDetails.find(({ resourceType: key }) => key === ref.resourceType);

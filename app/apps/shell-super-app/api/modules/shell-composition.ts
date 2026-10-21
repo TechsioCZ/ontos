@@ -446,13 +446,7 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
     }
     const selected = resolvePageSelection(catalog, input);
     if (selected === null) {
-      if (
-        input.canonicalPath === undefined &&
-        input.moduleId !== undefined &&
-        catalog.getByModuleId(input.moduleId) === undefined
-      ) {
-        return { outcome: 'forbidden' } as const;
-      }
+      // An unknown module, page or path is "not found"; module-level denial is decided below for real targets.
       return { outcome: 'not_found' } as const;
     }
     const { contract, page, routeParameters } = selected;

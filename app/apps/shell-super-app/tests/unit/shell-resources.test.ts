@@ -638,7 +638,7 @@ it.effect('expired composition authority blocks search and resource providers de
   }),
 );
 
-it.effect('resource detail denies an unadmitted module before tenant, permission or provider work', () =>
+it.effect('resource detail reports an unknown module as not found before tenant, permission or provider work', () =>
   Effect.gen(function* resourceDetailDeniesAnUnadmittedModule() {
     const baseline = dependencies();
     let assertionCalls = 0;
@@ -671,7 +671,7 @@ it.effect('resource detail denies an unadmitted module before tenant, permission
         },
       },
     ).resolve(context, requested);
-    expect(result).toEqual({ outcome: 'forbidden' });
+    expect(result).toEqual({ outcome: 'not_found' });
     expect(assertionCalls).toBe(0);
     expect(providerCalls).toBe(0);
   }),

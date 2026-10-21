@@ -222,6 +222,7 @@
     },
     "recovery": {
       "missing": "Page not found",
+      "recordMissing": "Record not found",
       "forbidden": "This area is not accessible",
       "unavailable": "Workspace temporarily unavailable",
       "home": "Back to home",

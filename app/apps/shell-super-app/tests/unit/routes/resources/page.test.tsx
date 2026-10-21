@@ -261,6 +261,10 @@ it.each(closedStates)(
     renderResourcePage({ shell, state });
 
     expect(screen.getByText(closedText)).toBeTruthy();
+    if (state === 'not_found') {
+      // A record page names the missing record, not a missing page.
+      expect(screen.getByRole('heading', { level: 1, name: 'shell.recovery.recordMissing' })).toBeTruthy();
+    }
     expect(screen.queryByRole('button', { name: 'Attach media' })).toBeNull();
     expect(screen.queryByText('Media')).toBeNull();
     expect(screen.queryByText('Timeline')).toBeNull();

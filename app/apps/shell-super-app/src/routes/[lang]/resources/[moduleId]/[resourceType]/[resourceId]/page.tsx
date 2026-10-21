@@ -156,7 +156,11 @@ const ResourcePage = () => {
   const content =
     model.state !== 'ready' ? (
       // Distinct states: forbidden (lock), not found (search), temporarily unavailable (retry).
-      <ShellStatusPanel messageKey={`shell.resource.${model.state}`} status={model.state} />
+      <ShellStatusPanel
+        messageKey={`shell.resource.${model.state}`}
+        missingTitleKey="recordMissing"
+        status={model.state}
+      />
     ) : (
       <ResourceDetails
         mediaState={mediaState}
