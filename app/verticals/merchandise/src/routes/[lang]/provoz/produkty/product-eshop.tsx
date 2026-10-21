@@ -612,9 +612,12 @@ export const EshopPanel = ({ canWrite, onCommitted, onReload, product, revision 
   const [broken, setBroken] = useState<ReadonlySet<string>>(new Set());
   const storefrontHref = `${product.sourceGroupId === undefined ? STOREFRONT_ORIGIN : AKROS_STOREFRONT_ORIGIN}/produkt/${product.slug ?? product.id}`;
   const slugInvalid = slug.trim() !== '' && !/^[a-z0-9-]{1,120}$/u.test(slug.trim());
+  // The slug the server refused because another product uses it; editing the field clears the message.
+  const [takenSlug, setTakenSlug] = useState<string | null>(null);
+  const slugTakenNow = takenSlug !== null && takenSlug === slug.trim();
 
   const save = () => {
-    if (busy || slugInvalid) {
+    if (busy || slugInvalid || slugTakenNow) {
       return;
     }
     setBusy(true);
@@ -634,6 +637,12 @@ export const EshopPanel = ({ canWrite, onCommitted, onReload, product, revision 
       (outcome) => {
         setBusy(false);
         if (!outcome.ok) {
+          // The only business refusal of this save is a slug another product already uses.
+          if (outcome.reason === 'rejected' && slug.trim() !== '' && slug.trim() !== (product.slug ?? '')) {
+            setTakenSlug(slug.trim());
+            setServerError('Adresu produktu už používá jiný produkt. Zvolte jinou adresu, nic se neuložilo.');
+            return;
+          }
           setServerError(failure(outcome.reason, onReload));
           return;
         }
@@ -752,7 +761,9 @@ export const EshopPanel = ({ canWrite, onCommitted, onReload, product, revision 
             value={slug}
             {...(slugInvalid
               ? { helpText: 'Jen malá písmena bez diakritiky, číslice a pomlčky', validateStatus: 'error' as const }
-              : {})}
+              : slugTakenNow
+                ? { helpText: 'Tuto adresu už má jiný produkt', validateStatus: 'error' as const }
+                : {})}
           />
           <Switch
             checked={published}

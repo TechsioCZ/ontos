@@ -24,6 +24,8 @@ import {
 } from './product-forms.tsx';
 
 type ManualReason = Exclude<StockMovementReason, 'ORDER'>;
+type VariantRow = NonNullable<ProductRecord['variantRecords']>[number];
+const variantLabel = (variant: VariantRow) => `${variant.name} (${variant.sku})`;
 const MANUAL_REASONS: readonly ManualReason[] = ['RECEIPT', 'ISSUE', 'ADJUSTMENT'];
 
 const movementVariant = {
@@ -45,9 +47,17 @@ const signedDelta = (reason: ManualReason, quantity: number): number => {
   return Math.round(quantity);
 };
 
-/** Stock ledger rows for one product, newest first. */
-export const MovementsTable = ({ movements }: { readonly movements: readonly StockMovement[] }) => {
+/** Stock ledger rows for one product, newest first. Products with variants show which variant moved. */
+export const MovementsTable = ({
+  movements,
+  variants = [],
+}: {
+  readonly movements: readonly StockMovement[];
+  readonly variants?: readonly VariantRow[] | undefined;
+}) => {
   const k = useProductLabel();
+  const byId = new Map(variants.map((variant) => [variant.id, variant] as const));
+  const showVariant = variants.length > 0;
   const rows = movements.toSorted((left, right) => DateTime.toEpochMillis(right.at) - DateTime.toEpochMillis(left.at));
 
   if (rows.length === 0) {
@@ -59,6 +69,7 @@ export const MovementsTable = ({ movements }: { readonly movements: readonly Sto
         <Table.Row>
           <Table.ColumnHeader>{k('movements.columnDate')}</Table.ColumnHeader>
           <Table.ColumnHeader>{k('movements.columnType')}</Table.ColumnHeader>
+          {showVariant && <Table.ColumnHeader>Varianta</Table.ColumnHeader>}
           <Table.ColumnHeader align="end">{k('movements.columnDelta')}</Table.ColumnHeader>
           <Table.ColumnHeader>{k('movements.columnNote')}</Table.ColumnHeader>
         </Table.Row>
@@ -72,6 +83,16 @@ export const MovementsTable = ({ movements }: { readonly movements: readonly Sto
                 {k(`movementType.${movement.reason}`)}
               </Badge>
             </Table.Cell>
+            {showVariant && (
+              <Table.Cell>
+                {movement.variantId === undefined
+                  ? 'Celý produkt (bez varianty)'
+                  : (() => {
+                      const variant = byId.get(movement.variantId);
+                      return variant === undefined ? movement.variantId : variantLabel(variant);
+                    })()}
+              </Table.Cell>
+            )}
             <Table.Cell align="end" className="tabular-nums">
               {formatDelta(movement.delta)}
             </Table.Cell>
@@ -101,6 +122,8 @@ export interface MovementDraft {
   /** The quantity input's text, kept as typed so "2,5" reaches validation instead of becoming 25. */
   readonly quantityText: string;
   readonly reason: ManualReason;
+  /** Required on a product with variants: the storefront sells variant stock, not the product total. */
+  readonly variantId?: string | undefined;
 }
 
 export const EMPTY_MOVEMENT_DRAFT: MovementDraft = { note: '', quantity: 1, quantityText: '1', reason: 'RECEIPT' };
@@ -109,7 +132,8 @@ export const EMPTY_MOVEMENT_DRAFT: MovementDraft = { note: '', quantity: 1, quan
 export const isMovementDraftDirty = (draft: MovementDraft): boolean =>
   draft.reason !== EMPTY_MOVEMENT_DRAFT.reason ||
   draft.quantity !== EMPTY_MOVEMENT_DRAFT.quantity ||
-  draft.note.trim() !== EMPTY_MOVEMENT_DRAFT.note;
+  draft.note.trim() !== EMPTY_MOVEMENT_DRAFT.note ||
+  draft.variantId !== undefined;
 
 /**
  * Manual stock movement. Výdej is sent as a negative delta; korekce takes the signed value as typed.
@@ -124,6 +148,7 @@ export const MovementForm = ({
   productId,
   revision,
   stockOnHand,
+  variants = [],
 }: {
   readonly draft: MovementDraft;
   readonly onCommitted: (message: string) => void;
@@ -132,10 +157,15 @@ export const MovementForm = ({
   readonly productId: ProductRecord['id'];
   readonly revision: number;
   readonly stockOnHand: number;
+  readonly variants?: readonly VariantRow[] | undefined;
 }) => {
   const k = useProductLabel();
   const failure = useCommandFailure();
-  const { note, quantity, quantityText, reason } = draft;
+  const { note, quantity, quantityText, reason, variantId } = draft;
+  const needsVariant = variants.length > 0;
+  const variant = variants.find((entry) => entry.id === variantId);
+  const variantMissing = needsVariant && variant === undefined;
+  const available = needsVariant ? (variant?.stockOnHand ?? 0) : stockOnHand;
   const setReason = (value: ManualReason) => {
     onDraftChange({ reason: value });
   };
@@ -149,7 +179,7 @@ export const MovementForm = ({
   const savedRevision = useRef(revision);
 
   const isAdjustment = reason === 'ADJUSTMENT';
-  const errorKey = quantityErrorKey(reason, quantity, stockOnHand);
+  const errorKey = quantityErrorKey(reason, quantity, available);
   const noteError = tooLongMessage(k, note, PRODUCT_LIMITS.note);
 
   const submit = () => {
@@ -157,8 +187,9 @@ export const MovementForm = ({
       return;
     }
     setSubmitted(true);
-    if (errorKey !== undefined || noteError !== undefined) {
+    if (variantMissing || errorKey !== undefined || noteError !== undefined) {
       focusFirstInvalid([
+        ['movement-variant', variantMissing],
         ['movement-quantity', errorKey !== undefined],
         ['movement-note', noteError !== undefined],
       ]);
@@ -167,7 +198,13 @@ export const MovementForm = ({
     setBusy(true);
     setServerError(null);
     const trimmed = note.trim();
-    const movement = { _tag: 'RecordStockMovement' as const, delta: signedDelta(reason, quantity), productId, reason };
+    const movement = {
+      _tag: 'RecordStockMovement' as const,
+      delta: signedDelta(reason, quantity),
+      productId,
+      reason,
+      ...(variant === undefined ? {} : { variantId: variant.id }),
+    };
     const expected = Math.max(revision, savedRevision.current);
     runCommand(trimmed === '' ? movement : { ...movement, note: trimmed }, expected, (outcome) => {
       setBusy(false);
@@ -196,6 +233,34 @@ export const MovementForm = ({
           {serverError}
         </StatusText>
       )}
+      {needsVariant && (
+        <div className="flex flex-col gap-100">
+          <SelectTemplate
+            id="movement-variant"
+            items={variants.map((entry) => ({
+              label: `${variantLabel(entry)} – skladem ${entry.stockOnHand}`,
+              value: entry.id,
+            }))}
+            label="Varianta"
+            name="movementVariant"
+            onValueChange={(details) => {
+              const [next] = details.value;
+              onDraftChange({ variantId: variants.some((entry) => entry.id === next) ? next : undefined });
+            }}
+            placeholder="Vyberte variantu"
+            value={variantId === undefined ? [] : [variantId]}
+          />
+          {submitted && variantMissing ? (
+            <StatusText showIcon status="error">
+              Vyberte variantu. E-shop prodává sklad jednotlivých variant.
+            </StatusText>
+          ) : (
+            <p className="text-fg-secondary text-xs">
+              E-shop prodává sklad jednotlivých variant, proto pohyb patří k jedné variantě.
+            </p>
+          )}
+        </div>
+      )}
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
         <SelectTemplate
           items={MANUAL_REASONS.map((value) => ({ label: k(`movementType.${value}`), value }))}
@@ -218,7 +283,7 @@ export const MovementForm = ({
           id="movement-quantity"
           label={k('fields.quantity')}
           locale="cs-CZ"
-          min={isAdjustment ? -stockOnHand : 1}
+          min={isAdjustment ? -available : 1}
           name="movementQuantity"
           onValueChange={(details) => {
             onDraftChange({ quantity: details.valueAsNumber, quantityText: details.value });

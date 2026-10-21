@@ -23,21 +23,51 @@ const customerStatusLabels: Readonly<Record<OrderStatus, string>> = {
   CANCELLED: 'Stornovaná',
   CONFIRMED: 'Zpracovává se',
   DELIVERED: 'Dokončená',
-  NEW: 'Přijatá',
-  PACKING: 'Připravujeme k předání',
+  NEW: 'Nová',
+  PACKING: 'Připravená k předání',
   SHIPPED: 'Předáno dopravci (simulace)',
 };
 const isInStock = (availability: ProductRecord['availability']) =>
   availability === 'IN_STOCK' || availability === 'LOW_STOCK';
 const labelMatches = (record: ProductRecord, label: NonNullable<StorefrontCatalogQuery['label']>) =>
-  label === 'action' ? record.isAction === true
-  : label === 'recommended' ? record.isRecommended === true
-  : label === 'sale' ? record.isSale === true
-  : record.isNew === true;
-const searchTextOf = (record: ProductRecord) =>
-  [record.name, record.sku, record.shortDescription ?? '', ...(record.variantRecords ?? []).flatMap((variant) => [variant.name, variant.sku])]
-    .join(' ')
-    .toLocaleLowerCase('cs');
+  label === 'action'
+    ? record.isAction === true
+    : label === 'recommended'
+      ? record.isRecommended === true
+      : label === 'sale'
+        ? record.isSale === true
+        : record.isNew === true;
+/** Same folding as Kai's mock search: no diacritics, Czech lower case ('šroub' and 'sroub' match). */
+export const normalizeSearchText = (value: string) =>
+  value
+    .normalize('NFD')
+    .replaceAll(/[\u0300-\u036f]/gu, '')
+    .toLocaleLowerCase('cs')
+    .trim();
+const parameterText = (parameters: ProductRecord['parameters']) =>
+  (parameters ?? []).map(({ label, value, unit }) => `${label} ${value} ${unit}`);
+// Records come from the owner's state cache, so the folded text is built once per record object.
+const searchTexts = new WeakMap<ProductRecord, string>();
+const searchTextOf = (record: ProductRecord) => {
+  const cached = searchTexts.get(record);
+  if (cached !== undefined) return cached;
+  const text = normalizeSearchText(
+    [
+      record.name,
+      record.sku,
+      record.shortDescription ?? '',
+      ...parameterText(record.parameters),
+      ...(record.variantRecords ?? []).flatMap((variant) => [
+        variant.name,
+        variant.sku,
+        variant.attributes,
+        ...parameterText(variant.parameters),
+      ]),
+    ].join(' '),
+  );
+  searchTexts.set(record, text);
+  return text;
+};
 const priceOf = (record: ProductRecord) => record.grossPriceMinor ?? Number.MAX_SAFE_INTEGER;
 
 /** Public shape of one product: no raw variants/price history/content history; derived paragraphs + gallery. */
@@ -46,9 +76,11 @@ export const toStorefrontProduct = (record: ProductRecord, fields: 'card' | 'ful
   void _rawVariants;
   void _history;
   const gallery =
-    record.images !== undefined && record.images.length > 0 ? [...record.images]
-    : record.imageSrc === undefined || record.imageSrc === '' ? []
-    : [record.imageSrc];
+    record.images !== undefined && record.images.length > 0
+      ? [...record.images]
+      : record.imageSrc === undefined || record.imageSrc === ''
+        ? []
+        : [record.imageSrc];
   const descriptionParagraphs = (record.description ?? '')
     .split(/\n\s*\n/u)
     .map((part) => part.trim())
@@ -118,8 +150,15 @@ export const storefrontCatalogPage = (input: {
     const label = query.label;
     list = list.filter((record) => labelMatches(record, label));
   }
-  const needle = (query.q ?? '').trim().toLocaleLowerCase('cs');
-  if (needle !== '') list = list.filter((record) => searchTextOf(record).includes(needle));
+  // Every word must occur somewhere in the product text; word order does not matter.
+  const words = normalizeSearchText(query.q ?? '')
+    .split(/\s+/u)
+    .filter((word) => word !== '');
+  if (words.length > 0)
+    list = list.filter((record) => {
+      const text = searchTextOf(record);
+      return words.every((word) => text.includes(word));
+    });
   if (query.minMinor !== undefined) {
     const minMinor = query.minMinor;
     list = list.filter((record) => (record.grossPriceMinor ?? 0) >= minMinor);
@@ -148,9 +187,11 @@ export const storefrontCatalogPage = (input: {
     ...(query.includeCategories === false
       ? {}
       : {
+          // Slim tree: heading and long description only for the requested category (the storefront shows them
+          // nowhere else), which keeps every read about 250 kB lighter with the full AKROS tree.
           categories: categories.map(({ history: _history, ...category }) => {
             void _history;
-            return category;
+            return category.slug === query.categorySlug ? category : { ...category, heading: '', longDescription: '' };
           }),
         }),
   };

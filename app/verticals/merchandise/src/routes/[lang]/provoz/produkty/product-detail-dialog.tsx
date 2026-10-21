@@ -791,7 +791,7 @@ export const ProductDetailView = ({
             <PriceHistory product={product} />
           </Tabs.Content>
           <Tabs.Content className="flex flex-col gap-200 py-200" value="movements">
-            <MovementsTable movements={movements} />
+            <MovementsTable movements={movements} variants={product.variantRecords} />
             {canMoveStock && (
               <MovementForm
                 draft={movementDraft}
@@ -801,6 +801,7 @@ export const ProductDetailView = ({
                 productId={product.id}
                 revision={revision}
                 stockOnHand={product.stockOnHand}
+                variants={product.variantRecords}
               />
             )}
           </Tabs.Content>

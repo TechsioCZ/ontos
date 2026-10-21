@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { demoId } from '../../../scripts/demo/fixture-ids.mts';
 import type { MerchandiseStateSchema } from '../shared/apis/records.ts';
-import { decodeCategoryText } from './akros-merge.ts';
+import { decodeCategoryText, orderCategoryPositions, stripUnbackedDiscount } from './akros-merge.ts';
 import { akrosSampleContacts } from './order-presentation.ts';
 
 type Encoded = typeof MerchandiseStateSchema.Encoded;
@@ -138,10 +138,10 @@ export const buildAkrosEncoded = (): Encoded => {
     isRecommended: product.isRecommended,
     isSale: product.isSale,
     isNew: product.isNew,
-    shortDescription: product.description.slice(0, 500),
+    shortDescription: stripUnbackedDiscount(product.description).slice(0, 500),
     imageSrc: product.imageSrc,
     imageAlt: product.imageAlt.slice(0, 300),
-    description: product.detail.descriptionParagraphs.join('\n\n') || product.description,
+    description: stripUnbackedDiscount(product.detail.descriptionParagraphs.join('\n\n') || product.description),
     images: [product.imageSrc, ...(product.secondaryImageSrc === undefined ? [] : [product.secondaryImageSrc])],
     variants: product.detail.variants.map((variant) => ({
       ...fieldsFor(variant),
@@ -229,18 +229,20 @@ export const buildAkrosEncoded = (): Encoded => {
     products,
     movements,
     orders,
-    categories: categories
-      .map((source) => decodeCategoryText(source))
-      .map((category) => ({
-        ...category,
-        heading: category.heading ?? category.name,
-        description: category.description ?? '',
-        longDescription: category.longDescription ?? '',
-        position: category.position ?? 0,
-        imageSrc: category.imageSrc ?? '',
-        imageAlt: category.imageAlt ?? category.name,
-        hasChildren: category.hasChildren ?? false,
-      })),
+    categories: orderCategoryPositions(
+      categories
+        .map((source) => decodeCategoryText(source))
+        .map((category) => ({
+          ...category,
+          heading: category.heading ?? category.name,
+          description: category.description ?? '',
+          longDescription: category.longDescription ?? '',
+          position: category.position ?? 0,
+          imageSrc: category.imageSrc ?? '',
+          imageAlt: category.imageAlt ?? category.name,
+          hasChildren: category.hasChildren ?? false,
+        })),
+    ),
     homepageFeaturedProductIds: catalog.homepageFeaturedProductIds,
   };
 };

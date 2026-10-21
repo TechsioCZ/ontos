@@ -9,7 +9,15 @@ import {
 import { toProductRecord } from '../../src/services/persistence.service.ts';
 
 const at = '2026-10-19T08:00:00.000Z';
-const base = { active: true, unit: 'ks', vatRate: 21, lowStockThreshold: 0, createdAt: at, updatedAt: at, priceHistory: [] };
+const base = {
+  active: true,
+  unit: 'ks',
+  vatRate: 21,
+  lowStockThreshold: 0,
+  createdAt: at,
+  updatedAt: at,
+  priceHistory: [],
+};
 const state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
   categories: [
     {
@@ -18,8 +26,8 @@ const state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
       name: 'Šrouby',
       slug: 'srouby',
       heading: 'Šrouby',
-      description: '',
-      longDescription: '',
+      description: 'Krátký popis',
+      longDescription: 'Dlouhý popis kořene',
       position: 0,
       imageSrc: '',
       imageAlt: 'Šrouby',
@@ -33,7 +41,7 @@ const state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
       slug: 'metricke',
       heading: 'Metrické',
       description: '',
-      longDescription: '',
+      longDescription: 'Dlouhý popis',
       position: 1,
       imageSrc: '',
       imageAlt: 'Metrické',
@@ -71,7 +79,10 @@ const state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
       updatedAt: at,
       demoCleanup: {
         at,
-        actor: { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' },
+        actor: {
+          principalId: '20000000-0000-4000-8000-000000000002',
+          tenantId: '20000000-0000-4000-8000-000000000001',
+        },
         reason: 'Ukázka skončila',
       },
     },
@@ -89,6 +100,7 @@ const state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
       isRecommended: true,
       description: 'První odstavec\n\nDruhý odstavec',
       images: ['/a.jpg', '/b.jpg'],
+      parameters: [{ label: 'Materiál', value: 'nerez A2', unit: '' }],
       variants: [{ id: 'v1', name: 'M8 × 20', sku: 'P1-M8', attributes: '', priceMinor: 100 }],
     },
     {
@@ -151,6 +163,21 @@ it('searches name, sku and variant text case-insensitively', () => {
   expect(ids({ q: 'm8' })).toEqual(['p1']);
 });
 
+it('ignores diacritics and word order and searches parameters like the mock search', () => {
+  expect(ids({ q: 'sroub' })).toEqual(['p1']);
+  expect(ids({ q: 'ŠROUB' })).toEqual(['p1']);
+  expect(ids({ q: 'zinkovany sroub' })).toEqual(['p1']);
+  expect(ids({ q: 'nerez a2' })).toEqual(['p1']);
+  expect(ids({ q: 'sroub neexistuje' })).toEqual([]);
+});
+
+it('sends heading and long description only for the requested category', () => {
+  const categories = page({ categorySlug: 'metricke' }).categories ?? [];
+  expect(categories.find((category) => category.id === 'c')?.longDescription).toBe('Dlouhý popis');
+  expect(categories.find((category) => category.id === 'r')?.longDescription).toBe('');
+  expect(categories.find((category) => category.id === 'r')?.description).toBe('Krátký popis');
+});
+
 it('pages results while keeping the total', () => {
   const result = page({ pageSize: 2, page: 2 });
   expect(result.products.length).toBe(1);
@@ -180,7 +207,7 @@ it('projects order status only for matching storefront id and clientRequestId', 
     id: 'o1',
     number: 'OBJ-2026-0001',
     status: 'NEW',
-    statusLabel: 'Přijatá',
+    statusLabel: 'Nová',
     updatedAt: state.orders[0]!.updatedAt,
   });
   expect(storefrontOrderStatusOf(state.orders, { orderId: 'o1', clientRequestId: 'wrong-request-id' })).toBeNull();

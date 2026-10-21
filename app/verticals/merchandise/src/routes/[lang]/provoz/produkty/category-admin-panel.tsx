@@ -26,6 +26,10 @@ interface CategoryDraft {
 
 const NO_CATEGORIES: readonly CatalogCategory[] = [];
 
+/** The storefront's own order: position, then Czech name. */
+const byStorefrontOrder = (a: CatalogCategory, b: CatalogCategory) =>
+  a.position - b.position || a.name.localeCompare(b.name, 'cs');
+
 const draftOf = (c: CatalogCategory): CategoryDraft => ({
   name: c.name,
   heading: c.heading,
@@ -73,6 +77,14 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
   const selected = categories.find((c) => c.id === selectedId);
   const parentId = selected?.parentId ?? null;
   const parentName = parentId === null ? undefined : categories.find((c) => c.id === parentId)?.name;
+  // Siblings in storefront order, so the editor can see where a position puts the category.
+  const siblings = useMemo(
+    () =>
+      selected === undefined
+        ? NO_CATEGORIES
+        : categories.filter((c) => c.parentId === parentId && c.id !== selected.id).toSorted(byStorefrontOrder),
+    [categories, parentId, selected],
+  );
 
   const reload = () => {
     setLoaded({ status: 'loading' });
@@ -89,8 +101,10 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
     const needle = search.trim().toLocaleLowerCase('cs');
     const matches =
       needle === ''
-        ? categories.filter((c) => c.parentId === null).toSorted((a, b) => a.position - b.position)
-        : categories.filter((c) => c.name.toLocaleLowerCase('cs').includes(needle) || c.slug.includes(needle));
+        ? categories.filter((c) => c.parentId === null).toSorted(byStorefrontOrder)
+        : categories
+            .filter((c) => c.name.toLocaleLowerCase('cs').includes(needle) || c.slug.includes(needle))
+            .toSorted(byStorefrontOrder);
     return matches.slice(0, 40);
   }, [categories, search]);
 
@@ -175,9 +189,7 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
         title="Kategorie e-shopu"
       >
         <div className="flex flex-col gap-200 py-200">
-          {(loaded.status === 'idle' || loaded.status === 'loading') && (
-            <StatusText>Načítám kategorie…</StatusText>
-          )}
+          {(loaded.status === 'idle' || loaded.status === 'loading') && <StatusText>Načítám kategorie…</StatusText>}
           {loaded.status === 'error' && (
             <>
               <StatusText showIcon status="error">
@@ -216,12 +228,13 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
                         setDraft(draftOf(c));
                         setServerError(null);
                       }}
+                      className="h-auto w-full justify-start whitespace-normal text-left"
                       size="sm"
                       theme="borderless"
                       type="button"
                       variant="secondary"
                     >
-                      {`${c.position}. ${c.name} · /${c.slug}`}
+                      {`${c.name} · /${c.slug} · pořadí ${c.position}`}
                     </Button>
                   </li>
                 ))}
@@ -272,7 +285,7 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
               <FormInput
                 id="category-position"
                 inputMode="numeric"
-                label="Pořadí mezi sourozenci (0 = první)"
+                label="Pořadí mezi sourozenci (menší číslo = výš)"
                 name="position"
                 onChange={(event) => patchDraft({ positionText: event.target.value })}
                 value={draft.positionText}
@@ -280,6 +293,38 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
                   ? { helpText: 'Zadejte celé číslo 0 nebo větší', validateStatus: 'error' as const }
                   : {})}
               />
+              {siblings.length > 0 && (
+                <div className="flex flex-col gap-100">
+                  <p className="text-fg-secondary text-sm">
+                    {`Stejné pořadí řadí podle názvu. Mezi dvě kategorie ji dáte číslem mezi jejich pořadím. Sourozenci: ${siblings
+                      .slice(0, 6)
+                      .map((c) => `${c.name} (${c.position})`)
+                      .join(', ')}${siblings.length > 6 ? ', …' : ''}`}
+                  </p>
+                  <div className="flex flex-wrap gap-100">
+                    <Button
+                      onClick={() =>
+                        patchDraft({ positionText: String(Math.max(0, (siblings[0]?.position ?? 0) - 10)) })
+                      }
+                      size="sm"
+                      theme="outlined"
+                      type="button"
+                      variant="secondary"
+                    >
+                      Na začátek
+                    </Button>
+                    <Button
+                      onClick={() => patchDraft({ positionText: String((siblings.at(-1)?.position ?? 0) + 10) })}
+                      size="sm"
+                      theme="outlined"
+                      type="button"
+                      variant="secondary"
+                    >
+                      Na konec
+                    </Button>
+                  </div>
+                </div>
+              )}
               {serverError !== null && (
                 <StatusText showIcon status="error">
                   {serverError}

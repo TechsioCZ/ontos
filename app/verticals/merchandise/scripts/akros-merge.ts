@@ -38,6 +38,64 @@ export const decodeCategoryText = <C extends Partial<Pick<CatalogCategory, (type
   return Object.keys(patch).length === 0 ? category : { ...category, ...patch };
 };
 
+// Kai's copy promises quantity discounts ("Limity množstevních slev: … Snížená cena se projeví po vložení zboží do
+// košíku"), but his catalog has one price tier per item, so the cart can never give them. OntOS does not show them.
+const unbackedDiscountPattern = /Limity množstevních slev[\s\S]*?vložení zboží do košíku\.?/gu;
+
+/** Removes the quantity-discount promise that no price tier backs; returns the same string when absent. */
+export const stripUnbackedDiscount = (value: string): string =>
+  value.includes('Limity množstevních slev')
+    ? value
+        .replace(unbackedDiscountPattern, '')
+        .split(/\n\s*\n/u)
+        .map((part) => part.replaceAll(/[ \t]{2,}/gu, ' ').trim())
+        .filter((part) => part !== '')
+        .join('\n\n')
+    : value;
+
+const hasTieredPrice = (product: Product) =>
+  (product.priceTiers?.length ?? 0) > 1 ||
+  (product.variants ?? []).some((variant) => (variant.priceTiers?.length ?? 0) > 1);
+
+/** Strips the unbacked discount promise from a product an older import stored; same object when nothing changes. */
+export const repairDiscountPromise = (product: Product): Product => {
+  if (hasTieredPrice(product)) return product;
+  const description = product.description === undefined ? undefined : stripUnbackedDiscount(product.description);
+  const shortDescription =
+    product.shortDescription === undefined ? undefined : stripUnbackedDiscount(product.shortDescription);
+  return description === product.description && shortDescription === product.shortDescription
+    ? product
+    : {
+        ...product,
+        ...(description === undefined ? {} : { description }),
+        ...(shortDescription === undefined ? {} : { shortDescription }),
+      };
+};
+
+/**
+ * Kai's tree has no order (every position is 0), so the storefront sorts siblings by name. Gives siblings
+ * positions 10, 20, 30… in that same name order, so staff can move a category first, last or between two others.
+ * Leaves a sibling group alone once any of its members has a non-zero position (a staff choice).
+ */
+export const orderCategoryPositions = <C extends Pick<CatalogCategory, 'name' | 'parentId' | 'position'>>(
+  categories: readonly C[],
+): C[] => {
+  const groups = new Map<string | null, C[]>();
+  for (const category of categories)
+    groups.set(category.parentId, [...(groups.get(category.parentId) ?? []), category]);
+  const positions = new Map<C, number>();
+  for (const siblings of groups.values()) {
+    if (siblings.some((category) => category.position !== 0)) continue;
+    siblings
+      .toSorted((a, b) => a.name.localeCompare(b.name, 'cs'))
+      .forEach((category, index) => positions.set(category, (index + 1) * 10));
+  }
+  return categories.map((category) => {
+    const position = positions.get(category);
+    return position === undefined ? category : { ...category, position };
+  });
+};
+
 /** Fills catalog content an older seed did not store; never overwrites a value that already exists. */
 export const backfillProduct = (current: Product, seed: Product): Product => {
   const missing: Partial<Product> = {
@@ -79,10 +137,10 @@ export const mergeSeed = (current: MerchandiseState, seed: MerchandiseState): Me
   const orderNumbers = new Set(current.orders.map((entry) => entry.number));
   const categoryIds = new Set((current.categories ?? []).map((entry) => entry.id));
   return {
-    categories: [
+    categories: orderCategoryPositions([
       ...(current.categories ?? []).map(decodeCategoryText),
       ...(seed.categories ?? []).filter((entry) => !categoryIds.has(entry.id)),
-    ],
+    ]),
     homepageFeaturedProductIds: current.homepageFeaturedProductIds ?? seed.homepageFeaturedProductIds ?? [],
     movements: [...current.movements, ...seed.movements.filter((entry) => !movementIds.has(entry.id))],
     orders: [
@@ -92,7 +150,7 @@ export const mergeSeed = (current: MerchandiseState, seed: MerchandiseState): Me
     products: [
       ...seed.products.map((entry) => {
         const existing = currentProducts.get(entry.id);
-        return existing === undefined ? entry : backfillProduct(existing, entry);
+        return existing === undefined ? entry : repairDiscountPromise(backfillProduct(existing, entry));
       }),
       ...current.products.filter((entry) => !seedProductIds.has(entry.id)),
     ],

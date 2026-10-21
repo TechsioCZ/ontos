@@ -202,3 +202,41 @@ it.effect('the storefront API key may only place guest orders in the e-shop comp
     yield* assertStorefrontScope('human', eshop, 'EditOrder');
   }),
 );
+
+it.effect('a product with variants refuses a stock movement without a variant', () =>
+  Effect.gen(function* variantMovement() {
+    const state = yield* seeded;
+    const failure = yield* Effect.flip(
+      apply(state, { _tag: 'RecordStockMovement', delta: 10, productId: 'p1', reason: 'RECEIPT' }, 'm2'),
+    );
+    expect(isConflict(failure)).toBe(true);
+  }),
+);
+
+it.effect('UpdateProduct and CreateProduct refuse a storefront slug another product uses', () =>
+  Effect.gen(function* duplicateSlug() {
+    const state = yield* seeded;
+    const named = yield* apply(state, { _tag: 'UpdateProduct', id: 'p1', patch: { slug: 'etiopie' } }, 'u2');
+    const second = yield* apply(
+      named.state,
+      {
+        _tag: 'CreateProduct',
+        active: true,
+        category: 'Zrnková káva',
+        lowStockThreshold: 3,
+        name: 'Keňa',
+        priceMinor: 25_804,
+        sku: 'KEN',
+        unit: 'ks',
+        vatRate: 12,
+      },
+      'p2',
+    );
+    const taken = yield* Effect.flip(
+      apply(second.state, { _tag: 'UpdateProduct', id: 'p2', patch: { slug: 'Etiopie' } }, 'u3'),
+    );
+    expect(isConflict(taken)).toBe(true);
+    const same = yield* apply(named.state, { _tag: 'UpdateProduct', id: 'p1', patch: { slug: 'etiopie' } }, 'u4');
+    expect(same.state.products[0]?.slug).toBe('etiopie');
+  }),
+);

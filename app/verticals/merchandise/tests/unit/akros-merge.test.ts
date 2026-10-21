@@ -1,6 +1,12 @@
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { backfillProduct, decodeHtmlEntities, mergeSeed } from '../../scripts/akros-merge.ts';
+import {
+  backfillProduct,
+  decodeHtmlEntities,
+  mergeSeed,
+  orderCategoryPositions,
+  stripUnbackedDiscount,
+} from '../../scripts/akros-merge.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 
@@ -139,4 +145,35 @@ it('cleans entities in existing category text once and is then idempotent', () =
   expect(once.categories?.[0]?.name).toBe('Kategorie c1');
   const twice = mergeSeed(once, state({ categories: [category('c1')] }));
   expect(twice.categories?.[0]).toBe(once.categories?.[0]);
+});
+
+it('removes the quantity-discount promise no price tier backs and keeps the rest of the text', () => {
+  expect(
+    stripUnbackedDiscount(
+      'Limity množstevních slev: nižší cena od 100 kusů další snížení ceny od 500 kusů Snížená cena se projeví po vložení zboží do košíku Odolnost: 140 stupňů',
+    ),
+  ).toBe('Odolnost: 140 stupňů');
+  expect(
+    stripUnbackedDiscount(
+      'Limity množstevních slevy nižší cena od 100 kusů Snížená cena se projeví po vložení zboží do košíku.',
+    ),
+  ).toBe('');
+  expect(stripUnbackedDiscount('Nerezový šroub')).toBe('Nerezový šroub');
+});
+
+it('numbers unordered siblings 10, 20, 30 by Czech name and keeps a group staff already ordered', () => {
+  const ordered = orderCategoryPositions([
+    { name: 'Šrouby', parentId: null, position: 0 },
+    { name: 'Matice', parentId: null, position: 0 },
+    { name: 'Čepy', parentId: null, position: 0 },
+    { name: 'B', parentId: 'x', position: 5 },
+    { name: 'A', parentId: 'x', position: 0 },
+  ]);
+  expect(ordered.map((category) => `${category.name}:${category.position}`)).toEqual([
+    'Šrouby:30',
+    'Matice:20',
+    'Čepy:10',
+    'B:5',
+    'A:0',
+  ]);
 });

@@ -208,6 +208,10 @@ the `mock` mode.
 - `featured` returns `homepageFeaturedProductIds` order first, then `isRecommended` products.
 - `in-stock` means IN_STOCK or LOW_STOCK. `out-of-stock` is everything else (OUT_OF_STOCK, UNKNOWN).
 - Price filters compare the gross `grossPriceMinor`.
+- `q` ignores case and diacritics (`sroub` finds `šroub`, like the mock search). Every word must occur in the name,
+  SKU, short description, parameters, or a variant's name, SKU, attributes or parameters, in any order.
+- `categories` carries `heading` and `longDescription` only for the category named by `categorySlug`; every other
+  category has them as `""`. The storefront shows them nowhere else, and this keeps each read about 250 kB smaller.
 - Without `storefrontCatalog`, the legacy `{ "storefront": true }` read returns the whole published catalog
   (about 13 MB for AKROS). Do not use it.
 
@@ -228,9 +232,9 @@ returned.
 
 | Status    | Czech label                 |
 | --------- | --------------------------- |
-| NEW       | Přijatá                     |
+| NEW       | Nová                        |
 | CONFIRMED | Zpracovává se               |
-| PACKING   | Připravujeme k předání      |
+| PACKING   | Připravená k předání        |
 | SHIPPED   | Předáno dopravci (simulace) |
 | DELIVERED | Dokončená                   |
 | CANCELLED | Stornovaná                  |
@@ -262,7 +266,14 @@ returned.
   „Historie změn obsahu“.
 - Name and descriptions are on „Detail“. Images are on „E-shop a obrázky“.
 - „Kategorie e-shopu“ on the product list edits name, heading, descriptions and order. This is `UpdateCategory`,
-  administrator only, audited.
+  administrator only, audited. The list uses the storefront order (position, then Czech name). The seed numbers
+  Kai's unordered siblings 10, 20, 30… by name, so the storefront order stays the same and a category can be
+  moved first („Na začátek“), last („Na konec“) or between two others.
+- The product slug must be unique. `UpdateProduct`/`CreateProduct` with a slug another product uses is refused
+  (409), and the editor says „Adresu produktu už používá jiný produkt“.
+- On a product with variants every manual stock movement („Pohyby“ or „Varianty a ceny“) names the variant; a
+  product-level movement is refused (409), because the storefront sells variant stock. „Pohyby“ shows the variant
+  of each row.
 - The service key may only place storefront orders and read the storefront views.
 
 ### Performance
@@ -280,6 +291,9 @@ cd app && mise exec -- pnpm demo:seed:akros --restore-catalog # reset seed produ
 
 - Full catalog: 1 289 groups, 19 025 explicit variants plus single-item groups, 20 304 sellable units, 2 125 categories.
 - Existing products, prices, stock, live orders and the 6 sample orders are kept.
+- Kai's copy promises quantity discounts („Limity množstevních slev … Snížená cena se projeví po vložení zboží do
+  košíku“) in 1 018 texts, but his data has one price tier per item. OntOS cannot honour them, so the import (and a
+  re-run on existing data) removes that sentence. Real tiers can be added later as `priceTiers`.
 - A second run prints `already seeded … nothing changed`.
 
 ### Environment

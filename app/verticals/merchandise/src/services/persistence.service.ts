@@ -49,7 +49,7 @@ import { AKROS_LEGAL_ENTITY_ID, staffCommandAllowed } from '../../shared/actions
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
 import { assignCategory, updateCategoryCommand, withContentHistory } from './catalog-content.ts';
 import { cachedProductRecords, getCachedState, setCachedState, stateCacheKey } from './state-cache.ts';
-import { storefrontCatalogPage, storefrontOrderStatusOf } from './storefront-catalog.ts';
+import { normalizeSearchText, storefrontCatalogPage, storefrontOrderStatusOf } from './storefront-catalog.ts';
 
 const unavailable = (cause?: unknown) =>
   Object.defineProperty(
@@ -333,6 +333,12 @@ const repriced = (product: Product, priceMinor: number, input: MerchandiseComman
         updatedAt: input.now,
       };
 
+/** The storefront finds a product by slug, so two products with one slug would hide one of them. */
+const slugTaken = (products: readonly Product[], slug: string, exceptId: string) => {
+  const key = slug.trim().toLowerCase();
+  return products.some((entry) => entry.id !== exceptId && entry.slug?.trim().toLowerCase() === key);
+};
+
 const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
   state: MerchandiseState,
   value: CommandOf<'CreateProduct'>,
@@ -344,6 +350,9 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
   }
   if (state.products.some((entry) => sameSku(entry.sku, value.sku))) {
     return yield* conflict('A product with this SKU already exists');
+  }
+  if (value.slug !== undefined && slugTaken(state.products, value.slug, id)) {
+    return yield* conflict('Another product already uses this storefront slug');
   }
   const { _tag, priceMinor, ...fields } = value;
   void _tag;
@@ -365,6 +374,9 @@ const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updatePro
   input: MerchandiseCommandInput,
 ) {
   const product = yield* findProduct(state.products, value.id);
+  if (value.patch.slug !== undefined && slugTaken(state.products, value.patch.slug, product.id)) {
+    return yield* conflict('Another product already uses this storefront slug');
+  }
   // categoryPathIds is server-derived; categoryId moves the product inside the storefront category tree.
   const { variants: patchVariants, categoryId: patchCategoryId, categoryPathIds: _clientPath, ...patch } = value.patch;
   void _clientPath;
@@ -539,6 +551,9 @@ const recordStockMovement = Effect.fn('Merchandise.recordStockMovement')(functio
   }
   if (value.variantId !== undefined) {
     yield* findVariant(product, value.variantId);
+  } else if (realVariantsOf(product).length > 0) {
+    // The storefront sells variant stock; a product-level movement would change the total but no variant.
+    return yield* conflict('A product with variants needs the variant of the stock movement');
   }
   const current =
     value.variantId === undefined
@@ -1355,7 +1370,12 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         return yield* unavailable();
       }
       const cached = getCachedState(
-        stateCacheKey({ legalEntityId: scopeLegalEntityId, revision: head.revision, tenantId: scope.tenantId, updatedAt: head.updatedAt }),
+        stateCacheKey({
+          legalEntityId: scopeLegalEntityId,
+          revision: head.revision,
+          tenantId: scope.tenantId,
+          updatedAt: head.updatedAt,
+        }),
       );
       if (cached !== undefined) {
         return { revision: head.revision, state: cached };
@@ -1374,7 +1394,12 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         Effect.mapError(unavailable),
       );
       setCachedState(
-        stateCacheKey({ legalEntityId: scopeLegalEntityId, revision: row.revision, tenantId: scope.tenantId, updatedAt: row.updatedAt }),
+        stateCacheKey({
+          legalEntityId: scopeLegalEntityId,
+          revision: row.revision,
+          tenantId: scope.tenantId,
+          updatedAt: row.updatedAt,
+        }),
         state,
       );
       return { revision: row.revision, state };
@@ -1396,7 +1421,12 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       }
       // Warm the cache with what we just wrote; a rolled-back write can never match a committed key.
       setCachedState(
-        stateCacheKey({ legalEntityId: scopeLegalEntityId, revision: expectedRevision + 1, tenantId: scope.tenantId, updatedAt: updatedAtDate }),
+        stateCacheKey({
+          legalEntityId: scopeLegalEntityId,
+          revision: expectedRevision + 1,
+          tenantId: scope.tenantId,
+          updatedAt: updatedAtDate,
+        }),
         state,
       );
       return expectedRevision + 1;
@@ -1510,9 +1540,9 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
             record.categoryId === view.categoryId ||
             record.categoryPathIds?.includes(view.categoryId)) &&
           (view.search === undefined ||
-            `${record.name} ${record.sku} ${record.variants?.map((variant) => `${variant.sku} ${variant.name}`).join(' ') ?? ''}`
-              .toLocaleLowerCase('cs')
-              .includes(view.search.toLocaleLowerCase('cs'))) &&
+            normalizeSearchText(
+              `${record.name} ${record.sku} ${record.variants?.map((variant) => `${variant.sku} ${variant.name}`).join(' ') ?? ''}`,
+            ).includes(normalizeSearchText(view.search))) &&
           (view.active === undefined || record.active === view.active) &&
           (view.category === undefined || record.category === view.category) &&
           (view.lowStockOnly !== true || record.lowStock),
@@ -1569,7 +1599,9 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         orders: filteredOrders,
         products: filteredProducts,
         revision: snapshot.revision,
-        ...(view.includeCategories === true && !storefront ? { categories: [...(snapshot.state.categories ?? [])] } : {}),
+        ...(view.includeCategories === true && !storefront
+          ? { categories: [...(snapshot.state.categories ?? [])] }
+          : {}),
       };
       return response;
     });
