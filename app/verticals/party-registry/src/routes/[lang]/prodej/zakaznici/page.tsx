@@ -54,10 +54,10 @@ const pageSizeOptions = [50, 100, 200];
 /** The row-selection column stays first, ahead of the pinned name. */
 const pinning = { end: [], start: ['__select', 'displayName'] };
 /**
- * Phone, DIČ and Stav stay in the column menu. Segment shows by default; when its lookup fails the column is
- * left out entirely, so the column menu never offers a column of dashes.
+ * DIČ and Stav stay in the column menu; phone shows, because the list is searched by phone. Segment shows by
+ * default; when its lookup fails the column is left out entirely, so the column menu never offers a column of dashes.
  */
-const defaultColumnVisibility = { phone: false, status: false, vatId: false } satisfies ColumnVisibility;
+const defaultColumnVisibility = { status: false, vatId: false } satisfies ColumnVisibility;
 const allSegments = 'all';
 /** Archived customers stay out of the list until the status filter asks for them. */
 const allStatuses = 'all';
@@ -367,7 +367,7 @@ const CustomersContent = () => {
     return <TagCell tags={tagsBySubject.get(subjectIdOf(info.row.original.partyId)) ?? []} />;
   };
 
-  // Seven visible columns at 1440px; phone, DIČ and Stav live in the column menu.
+  // Eight visible columns at 1440px; DIČ and Stav live in the column menu.
   const columns: ColumnDef<CustomerListItem>[] = [
     {
       accessorKey: 'displayName',
@@ -383,6 +383,7 @@ const CustomersContent = () => {
     { accessorKey: 'companyId', cell: textCell, header: t(`${key}.columns.companyId`), meta: { width: 100 } },
     { accessorKey: 'city', cell: textCell, header: t(`${key}.columns.city`), meta: { width: 130 } },
     { accessorKey: 'email', cell: textCell, header: t(`${key}.columns.email`), meta: { width: 210 } },
+    { accessorKey: 'phone', cell: textCell, header: t(`${key}.columns.phone`), meta: { width: 140 } },
     ...segmentColumns,
     {
       accessorKey: 'createdAt',
@@ -392,7 +393,6 @@ const CustomersContent = () => {
     },
     { cell: tagsCell, enableSorting: false, header: t(`${key}.columns.tags`), id: 'tags', meta: { width: 180 } },
     { accessorKey: 'vatId', cell: textCell, header: t(`${key}.columns.vatId`), meta: { width: 130 } },
-    { accessorKey: 'phone', cell: textCell, header: t(`${key}.columns.phone`), meta: { width: 140 } },
     {
       accessorFn: statusLabel,
       cell: statusCell,

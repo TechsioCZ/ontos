@@ -91,6 +91,9 @@ const fieldsFor = (source: {
   priceTiers: source.priceTiers,
   sourceUnit: source.unit,
 });
+/** Feed root branches AKROS keeps out of the storefront navigation (internal „Mimo menu“, UNC thread nuts). */
+export const AKROS_HIDDEN_CATEGORY_IDS: ReadonlySet<string> = new Set(['322', '3504']);
+
 export const buildAkrosEncodedFrom = (source: AkrosSource, demoId: DemoId): Encoded => {
   const { catalog, categories } = source;
   // Import every source group; never silently curate the live owner catalog.
@@ -234,6 +237,7 @@ export const buildAkrosEncodedFrom = (source: AkrosSource, demoId: DemoId): Enco
           imageSrc: category.imageSrc ?? '',
           imageAlt: category.imageAlt ?? category.name,
           hasChildren: category.hasChildren ?? false,
+          ...(AKROS_HIDDEN_CATEGORY_IDS.has(category.id) ? { published: false } : {}),
         })),
     ),
     homepageFeaturedProductIds: catalog.homepageFeaturedProductIds,
