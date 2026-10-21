@@ -10,11 +10,23 @@ import { CrmNotFound } from '../errors/crm-not-found.ts';
 import { CrmPermissionDenied } from '../errors/crm-permission-denied.ts';
 import { CrmReferenceIneligible } from '../errors/crm-reference-ineligible.ts';
 
+/** A Counterparty the server read from Party Registry for this command (CUSTOMER of the scoped company). */
+export interface VerifiedParty {
+  readonly counterpartyId: string;
+  readonly displayName?: string;
+  readonly partyId: string;
+}
+
 export interface CommandContext {
   /** Core action invocation id; unique per command. */
   readonly invocationId: string;
   /** ISO timestamp of the command. */
   readonly now: string;
+  /**
+   * Party Registry links verified by the server before the reducer runs, keyed by counterpartyId. A command that
+   * carries a partyRef without a verified entry is refused (the browser's claim alone is never stored).
+   */
+  readonly verifiedParties?: ReadonlyMap<string, VerifiedParty>;
   readonly viewer: CrmViewer;
 }
 

@@ -4,14 +4,24 @@
 // Every change appends a readable ClientEvent (card "Historie" tab); archiving never deletes anything (C01-03),
 // removing a contact person only archives it, and reassignment keeps the full history (C00-03).
 import { Effect, Match, Schema } from 'effect';
-import type { Client, ClientEvent, ClientEventKind, ClientsSlice, ContactPerson } from '../domain/clients.ts';
-import { ClientKindSchema } from '../domain/clients.ts';
+import type {
+  Client,
+  ClientEvent,
+  ClientEventKind,
+  ClientsSlice,
+  ContactPerson,
+  PartyLinkInput,
+  PartyRef,
+} from '../domain/clients.ts';
+import { ClientKindSchema, PartyLinkInputSchema } from '../domain/clients.ts';
 import { EntityIdSchema, LongTextSchema, ShortTextSchema } from '../domain/common.ts';
+import { canReadClient } from '../domain/access.ts';
 import type { CrmState } from '../domain/state.ts';
 import type { CommandContext, Reducer } from './context.ts';
 import {
   conflict,
   definedOnly,
+  denied,
   invalid,
   newId,
   notFound,
@@ -49,6 +59,8 @@ export const clientsCommandSchemas = [
     name: ShortTextSchema,
     /** Defaults to the creating salesperson; only demo.crm.assign may choose someone else. */
     ownerSalespersonId: Schema.optionalKey(EntityIdSchema),
+    /** Party Registry identity created or matched before; verified by the server (CRM.md §3). */
+    partyRef: Schema.optionalKey(PartyLinkInputSchema),
   }),
   Schema.TaggedStruct('UpdateClient', {
     id: EntityIdSchema,
@@ -77,6 +89,12 @@ export const clientsCommandSchemas = [
     /** Absent = unassign. */
     toSalespersonId: Schema.optionalKey(EntityIdSchema),
   }),
+  // Appended last: ai-changes.ts picks commands from this array by position.
+  /** Links an existing client to its Party Registry identity (verified by the server). */
+  Schema.TaggedStruct('LinkClientParty', {
+    clientId: EntityIdSchema,
+    partyRef: PartyLinkInputSchema,
+  }),
 ] as const;
 export const ClientsCommandSchema = Schema.Union(clientsCommandSchemas);
 export type ClientsCommand = typeof ClientsCommandSchema.Type;
@@ -91,6 +109,38 @@ const requireSalesperson = (salespeople: readonly { id: string; active: boolean 
   salespeople.some((person) => person.id === id && person.active)
     ? Effect.void
     : invalid('Obchodník neexistuje nebo není aktivní');
+
+/**
+ * The verified registry link for a command's partyRef. One Party is one CRM client: a second client for the same
+ * Party would be the parallel customer record CRM.md §3 forbids, so it is refused instead of silently merged.
+ */
+const verifiedPartyRef = (state: CrmState, context: CommandContext, input: PartyLinkInput, clientId?: string) =>
+  Effect.gen(function* verifiedParty() {
+    const verified = context.verifiedParties?.get(input.counterpartyId);
+    if (verified === undefined || verified.partyId !== input.partyId) {
+      return yield* invalid('Vazbu na Party Registry se nepodařilo ověřit; vyberte zákazníka z registru znovu');
+    }
+    const holder = state.clients.items.find(
+      (entry) =>
+        entry.id !== clientId &&
+        (entry.partyRef?.counterpartyId === input.counterpartyId || entry.partyRef?.partyId === input.partyId),
+    );
+    if (holder !== undefined) {
+      return yield* conflict(
+        canReadClient(context.viewer, holder)
+          ? `Tato firma je v CRM již vedena jako klient „${holder.name}“`
+          : 'Tato firma je v CRM již vedena u jiného obchodníka; požádejte vedoucího obchodu o převod',
+      );
+    }
+    const ref: PartyRef = {
+      ...definedOnly({ registryName: verified.displayName }),
+      counterpartyId: verified.counterpartyId,
+      linkedAt: context.now,
+      linkedBy: context.viewer.principalId,
+      partyId: verified.partyId,
+    };
+    return ref;
+  });
 
 const event = (
   context: CommandContext,
@@ -174,7 +224,10 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
           return yield* invalid('Obchodník bez záznamu obchodníka nemůže založit klienta');
         }
         const id = newId(context, 'client');
+        const partyRef =
+          value.partyRef === undefined ? undefined : yield* verifiedPartyRef(state, context, value.partyRef);
         const client: Client = {
+          ...(partyRef === undefined ? {} : { partyRef }),
           ...definedOnly({
             address: value.address,
             email: value.email,
@@ -231,6 +284,9 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
             },
             [
               event(context, 'created', id, 'client_created', { subject: value.name }),
+              ...(partyRef === undefined
+                ? []
+                : [event(context, 'party', id, 'party_linked', { subject: partyRef.registryName ?? value.name })]),
               ...contacts.map((entry, index) =>
                 event(context, `contact-${index}`, id, 'contact_added', { subject: entry.name }),
               ),
@@ -366,6 +422,28 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
           entityIds: [contact.id],
           state: withClients(state, { contacts: replaceContact(state.clients.contacts, next) }, [
             event(context, 'contact', contact.clientId, 'contact_removed', { subject: contact.name }),
+          ]),
+        };
+      }),
+    ),
+    Match.tag('LinkClientParty', (value) =>
+      Effect.gen(function* linkClientParty() {
+        const client = yield* requireWritableClient(state, context, value.clientId);
+        if (
+          client.partyRef?.counterpartyId === value.partyRef.counterpartyId &&
+          client.partyRef.partyId === value.partyRef.partyId
+        ) {
+          return yield* conflict('Klient je s tímto záznamem Party Registry již propojen');
+        }
+        if (client.partyRef?.counterpartyId !== undefined && !context.viewer.writeAll) {
+          return yield* denied('Změnit vazbu na Party Registry smí jen správce nebo vedoucí obchodu');
+        }
+        const partyRef = yield* verifiedPartyRef(state, context, value.partyRef, client.id);
+        const next: Client = { ...client, partyRef, updatedAt: context.now };
+        return {
+          entityIds: [client.id],
+          state: withClients(state, { items: replaceClient(state.clients.items, next) }, [
+            event(context, 'party', client.id, 'party_linked', { subject: partyRef.registryName ?? client.name }),
           ]),
         };
       }),

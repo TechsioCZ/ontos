@@ -24,6 +24,7 @@ const iconOf: Record<string, string> = {
   contact_added: 'icon-[mdi--account-plus-outline]',
   contact_removed: 'icon-[mdi--account-remove-outline]',
   contact_updated: 'icon-[mdi--account-edit-outline]',
+  party_linked: 'icon-[mdi--link-variant]',
 };
 
 const timelineOf = (records: RecordsResponse, client: Client): TimelineEntry[] => {
@@ -32,7 +33,7 @@ const timelineOf = (records: RecordsResponse, client: Client): TimelineEntry[] =
   );
   const entries: TimelineEntry[] = events.map((event) => {
     const fields = event.fields?.map((field) => fieldLabels[field] ?? field).join(', ');
-    const subject = event.kind.startsWith('contact_') ? event.subject : undefined;
+    const subject = event.kind.startsWith('contact_') || event.kind === 'party_linked' ? event.subject : undefined;
     const detail = [subject, fields === undefined ? undefined : `změněno: ${fields}`]
       .filter((part) => part !== undefined)
       .join(' · ');

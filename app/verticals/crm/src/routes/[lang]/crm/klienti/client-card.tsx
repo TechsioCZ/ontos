@@ -226,8 +226,15 @@ const CardBody = ({
           <Fact icon="icon-[mdi--account-tie-outline]" label="Obchodník">
             <SalespersonChip name={owner} />
           </Fact>
-          <Fact icon="icon-[mdi--calendar-check-outline]" label="Poslední kontakt">
-            {facts.lastVisitAt === undefined ? <Missing>bez zapsaného kontaktu</Missing> : formatDate(facts.lastVisitAt)}
+          <Fact icon="icon-[mdi--map-marker-check-outline]" label="Poslední návštěva">
+            {facts.lastVisitAt === undefined ? <Missing>bez osobní návštěvy</Missing> : formatDate(facts.lastVisitAt)}
+          </Fact>
+          <Fact icon="icon-[mdi--calendar-check-outline]" label="Poslední kontakt (jakýkoli)">
+            {facts.lastContactAt === undefined ? (
+              <Missing>bez zapsaného kontaktu</Missing>
+            ) : (
+              formatDate(facts.lastContactAt)
+            )}
           </Fact>
           <Fact icon="icon-[mdi--receipt-text-outline]" label="Evidované objednávky">
             {facts.orderCount === 0 ? (

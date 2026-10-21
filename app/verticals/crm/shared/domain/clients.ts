@@ -7,13 +7,28 @@ import { canReadClient } from './access.ts';
 import { EntityIdSchema, IsoTimeSchema, LongTextSchema, PrincipalIdSchema, ShortTextSchema } from './common.ts';
 
 /**
- * Reference to the canonical identity in Party Registry (ADR-0015). TODO(crm-clients): create/match the Party
- * through party-registry Actions; until then clients carry only the display snapshot below.
+ * Reference to the canonical identity in Party Registry (ADR-0015, CRM.md §3/§4). The Party Registry owns the
+ * Party, its Contact Points and the CUSTOMER Counterparty Role; the CRM client only links to it and keeps a display
+ * snapshot for its lists. The server verifies every link through the party-registry counterparty Read before it is
+ * stored (never trusted from the browser).
  */
 export const PartyRefSchema = Schema.Struct({
   counterpartyId: Schema.optionalKey(EntityIdSchema),
+  /** When the link was verified and stored. */
+  linkedAt: Schema.optionalKey(IsoTimeSchema),
+  linkedBy: Schema.optionalKey(PrincipalIdSchema),
+  partyId: EntityIdSchema,
+  /** Display name of the Party in the registry at link time. */
+  registryName: Schema.optionalKey(ShortTextSchema),
+});
+export type PartyRef = typeof PartyRefSchema.Type;
+
+/** What a command may send: the Counterparty (CUSTOMER context of this company) and its Party. */
+export const PartyLinkInputSchema = Schema.Struct({
+  counterpartyId: EntityIdSchema,
   partyId: EntityIdSchema,
 });
+export type PartyLinkInput = typeof PartyLinkInputSchema.Type;
 
 export const ClientKindSchema = Schema.Literals(['organization', 'person']);
 export const ClientStatusSchema = Schema.Literals(['active', 'archived']);
@@ -96,6 +111,7 @@ export const ClientEventKindSchema = Schema.Literals([
   'contact_updated',
   'contact_removed',
   'assigned',
+  'party_linked',
 ]);
 export type ClientEventKind = typeof ClientEventKindSchema.Type;
 

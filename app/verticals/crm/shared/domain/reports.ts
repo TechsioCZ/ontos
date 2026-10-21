@@ -548,7 +548,10 @@ export const rawStatusesInUse = (state: CrmState) => {
 // ---------------------------------------------------------------------------------------------------------------
 
 export interface ClientSalesFacts {
+  /** Latest recorded contact of any kind (visit, call, video call, e-mail). */
+  readonly lastContactAt: string | undefined;
   readonly lastOrderAt: string | undefined;
+  /** Latest personal visit only (kind === 'visit'); calls and e-mails are not visits (C05/C06). */
   readonly lastVisitAt: string | undefined;
   /** Confirmed (paired, non-duplicate) orders of the client. */
   readonly orderCount: number;
@@ -557,17 +560,19 @@ export interface ClientSalesFacts {
   readonly withoutAmount: number;
 }
 
+const latestOccurrence = (visits: readonly { readonly occurredAt: string }[]) =>
+  visits.reduce<string | undefined>(
+    (latest, visit) => (latest === undefined || visit.occurredAt > latest ? visit.occurredAt : latest),
+    undefined,
+  );
+
 export const clientSalesFacts = (state: CrmState, clientId: string, period?: ReportPeriod): ClientSalesFacts => {
   const report = buildSalesReport(state, period === undefined ? { clientId } : { clientId, period });
-  const lastVisitAt = state.visits.items
-    .filter((visit) => visit.clientId === clientId)
-    .reduce<string | undefined>(
-      (latest, visit) => (latest === undefined || visit.occurredAt > latest ? visit.occurredAt : latest),
-      undefined,
-    );
+  const contacts = state.visits.items.filter((visit) => visit.clientId === clientId);
   return {
+    lastContactAt: latestOccurrence(contacts),
     lastOrderAt: report.lastOrderAt,
-    lastVisitAt,
+    lastVisitAt: latestOccurrence(contacts.filter((visit) => visit.kind === 'visit')),
     orderCount: report.count,
     totals: report.totals,
     withoutAmount: report.withoutAmount,

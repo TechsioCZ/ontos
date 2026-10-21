@@ -6,6 +6,7 @@ import type { CrmState } from '../domain/state.ts';
 import { AiChangesCommandSchema, aiChangesCommandSchemas, applyAiChangesCommand } from './ai-changes.ts';
 import { ClientsCommandSchema, applyClientsCommand, clientsCommandSchemas } from './clients.ts';
 import { ImportsCommandSchema, applyImportsCommand, importsCommandSchemas } from './imports.ts';
+import { TeamCommandSchema, applyTeamCommand, teamCommandSchemas } from './team.ts';
 import { VisitsCommandSchema, applyVisitsCommand, visitsCommandSchemas } from './visits.ts';
 
 export const CrmCommandSchema = Schema.Union([
@@ -13,6 +14,7 @@ export const CrmCommandSchema = Schema.Union([
   ...visitsCommandSchemas,
   ...importsCommandSchemas,
   ...aiChangesCommandSchemas,
+  ...teamCommandSchemas,
 ]);
 export type CrmCommand = typeof CrmCommandSchema.Type;
 
@@ -20,6 +22,7 @@ const isClientsCommand = Schema.is(ClientsCommandSchema);
 const isVisitsCommand = Schema.is(VisitsCommandSchema);
 const isImportsCommand = Schema.is(ImportsCommandSchema);
 const isAiChangesCommand = Schema.is(AiChangesCommandSchema);
+const isTeamCommand = Schema.is(TeamCommandSchema);
 
 /** Commands a non-human principal (API key, agent bot) may not run. Lanes may extend via their own lists. */
 export const nonHumanForbiddenCrmCommands: ReadonlySet<string> = new Set([
@@ -28,6 +31,10 @@ export const nonHumanForbiddenCrmCommands: ReadonlySet<string> = new Set([
   // AI level C: only people decide on and revert AI proposals.
   'AiDecideChanges',
   'AiRevertBatch',
+  // Team and identity links are people's decisions.
+  'LinkClientParty',
+  'RegisterSalesperson',
+  'SetSalespersonActive',
 ]);
 /** AI level C: an API key may run ONLY these commands in demo.crm (everything else is a proposal). */
 export { nonHumanAllowedCrmCommands } from './ai-changes.ts';
@@ -48,6 +55,9 @@ export const dispatchCrmCommand = (
   }
   if (isAiChangesCommand(command)) {
     return applyAiChangesCommand(state, command, context);
+  }
+  if (isTeamCommand(command)) {
+    return applyTeamCommand(state, command, context);
   }
   return Effect.die(new Error(`Unrouted CRM command ${String((command as { readonly _tag?: unknown })._tag)}`));
 };

@@ -66,7 +66,7 @@ export const summaryCsv = (report: SalesReport, grouping: GroupingKey, state: Cr
       ...(grouping === 'client'
         ? [
             clientSalesFacts(state, group.key).lastVisitAt === undefined
-              ? 'bez záznamu'
+              ? 'bez návštěvy'
               : formatDate(clientSalesFacts(state, group.key).lastVisitAt),
           ]
         : []),
@@ -176,7 +176,11 @@ export const SummaryTable = ({
                   Poslední objednávka
                 </th>
                 {grouping === 'client' && (
-                  <th className="py-100 text-right font-medium" scope="col">
+                  <th
+                    className="py-100 text-right font-medium"
+                    scope="col"
+                    title="Jen osobní návštěvy; telefonáty a e-maily se nepočítají"
+                  >
                     Poslední návštěva
                   </th>
                 )}
@@ -243,7 +247,7 @@ export const SummaryTable = ({
                     {grouping === 'client' && (
                       <td className="py-100 text-right tabular-nums">
                         {clientFacts?.lastVisitAt === undefined ? (
-                          <span className="text-fg-secondary">bez záznamu</span>
+                          <span className="text-fg-secondary">bez návštěvy</span>
                         ) : (
                           formatDate(clientFacts.lastVisitAt)
                         )}

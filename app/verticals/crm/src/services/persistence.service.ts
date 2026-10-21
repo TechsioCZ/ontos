@@ -3,19 +3,24 @@
 // and command; projections and reducers in shared/ enforce it (C00).
 import { ContextAccess, OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
+import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/api/client';
 import { and, eq } from 'drizzle-orm';
 import { DateTime, Effect, Schema } from 'effect';
 
 import {
   CrmPermissionDenied,
   CrmPersistenceUnavailable,
+  CrmReferenceIneligible,
   CrmReferenceUnavailable,
   CrmRevisionConflict,
   CrmScopeMismatch,
 } from '../../shared/actions/apply-command.ts';
 import type { CrmCommand } from '../../shared/actions/apply-command.ts';
 import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
+import type { VerifiedParty } from '../../shared/commands/context.ts';
 import { dispatchCrmCommand } from '../../shared/commands/index.ts';
+import type { PartyLinkInput } from '../../shared/domain/clients.ts';
 import type { CrmPermissionKey, CrmViewer } from '../../shared/domain/access.ts';
 import { canWriteAnything, crmPermissionKeys } from '../../shared/domain/access.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
@@ -45,6 +50,80 @@ const referenceUnavailable = (cause?: unknown) =>
     }),
     cause,
   );
+
+const registryUnavailable = (cause?: unknown) =>
+  withCause(
+    new CrmReferenceUnavailable({
+      code: 'crm_reference_unavailable',
+      reason: 'Party Registry je dočasně nedostupný; vazbu na zákazníka teď nelze ověřit',
+    }),
+    cause,
+  );
+
+const partyIneligible = (reason: string) => new CrmReferenceIneligible({ code: 'crm_reference_ineligible', reason });
+
+/** Party Registry links a command asks to store; each one is verified before the reducer runs (CRM.md §3). */
+export const partyLinksOf = (command: CrmCommand): readonly PartyLinkInput[] => {
+  if (command._tag === 'CreateClient') {
+    return command.partyRef === undefined ? [] : [command.partyRef];
+  }
+  return command._tag === 'LinkClientParty' ? [command.partyRef] : [];
+};
+
+const NotVisibleProblem = Schema.Struct({ status: Schema.Literals([403, 404]) });
+const isNotVisible = Schema.is(NotVisibleProblem);
+
+interface CounterpartyFacts {
+  readonly currentRoles: readonly {
+    readonly roleType: string;
+    readonly state: string;
+    readonly validFrom: string;
+    readonly validTo: string | null;
+  }[];
+  readonly legalEntityRef: { readonly resourceId: string };
+  readonly party: {
+    readonly archived: boolean;
+    readonly canonicalPartyRef: { readonly resourceId: string };
+    readonly displayName: string | null;
+    readonly storedPartyRef: { readonly resourceId: string };
+  };
+}
+
+/** A registry answer is usable when it is a current CUSTOMER of the scoped company and names the same Party. */
+export const verifiedPartyOf = (
+  link: PartyLinkInput,
+  counterparty: CounterpartyFacts,
+  legalEntityId: string,
+  today: string,
+): VerifiedParty | string => {
+  if (counterparty.legalEntityRef.resourceId !== legalEntityId) {
+    return 'Zákazník v Party Registry patří jiné firmě';
+  }
+  if (counterparty.party.archived) {
+    return 'Záznam v Party Registry je archivovaný';
+  }
+  if (
+    counterparty.party.canonicalPartyRef.resourceId !== link.partyId &&
+    counterparty.party.storedPartyRef.resourceId !== link.partyId
+  ) {
+    return 'Party a Counterparty v Party Registry k sobě nepatří';
+  }
+  const customer = counterparty.currentRoles.some(
+    (role) =>
+      role.roleType === 'CUSTOMER' &&
+      role.state === 'ACTIVE' &&
+      role.validFrom.slice(0, 10) <= today &&
+      (role.validTo === null || role.validTo.slice(0, 10) > today),
+  );
+  if (!customer) {
+    return 'Firma nemá v Party Registry platnou roli zákazníka';
+  }
+  return {
+    counterpartyId: link.counterpartyId,
+    ...(counterparty.party.displayName === null ? {} : { displayName: counterparty.party.displayName }),
+    partyId: counterparty.party.canonicalPartyRef.resourceId,
+  };
+};
 
 /** One batched context-permission check for all five CRM permissions. */
 const grantedPermissions = Effect.fn('Crm.grantedPermissions')(function* grantedPermissions(
@@ -101,6 +180,41 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
       });
     }
     const access = yield* ContextAccess;
+    // Forwarded single-use assertions of the signed-in principal (header x-ontos-reference-credentials); the
+    // registry answers with that principal's own rights, so nobody links a Party they could not read.
+    const references = yield* makeReferenceGatewayCredentialSource(scope).pipe(Effect.mapError(referenceUnavailable));
+    const verifyParties = Effect.fn('Crm.verifyParties')(function* verifyParties(links: readonly PartyLinkInput[]) {
+      const verified = new Map<string, VerifiedParty>();
+      const today = DateTime.formatIsoDateUtc(yield* DateTime.now);
+      for (const link of links) {
+        const credential = yield* references.issue('party-registry').pipe(Effect.mapError(registryUnavailable));
+        const counterparty = yield* executeCounterpartyReadWithAuthorization(
+          {
+            counterpartyRef: {
+              moduleId: 'party.registry',
+              resourceId: link.counterpartyId,
+              resourceType: 'party.registry.counterparty',
+              tenantId: scope.tenantId,
+            },
+          },
+          credential.authorization,
+          scope.correlationId,
+          { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
+        ).pipe(
+          Effect.mapError((failure) =>
+            isNotVisible(failure)
+              ? partyIneligible('Zákazník v Party Registry neexistuje nebo k němu nemáte přístup')
+              : registryUnavailable(failure),
+          ),
+        );
+        const outcome = verifiedPartyOf(link, counterparty, legalEntityId, today);
+        if (typeof outcome === 'string') {
+          return yield* partyIneligible(outcome);
+        }
+        verified.set(link.counterpartyId, outcome);
+      }
+      return verified;
+    });
     const whereScope = and(eq(crmStates.tenantId, scope.tenantId), eq(crmStates.legalEntityId, legalEntityId));
     const load = Effect.fn('Crm.load')(function* load() {
       const rows = yield* transaction.select().from(crmStates).where(whereScope).limit(1);
@@ -167,8 +281,15 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
           reason: 'CRM changed; refresh before another operation',
         });
       }
+      const links = partyLinksOf(command);
+      const verifiedParties = links.length === 0 ? undefined : yield* verifyParties(links);
       const now = DateTime.formatIso(yield* DateTime.now);
-      const change = yield* dispatchCrmCommand(snapshot.state, command, { invocationId, now, viewer });
+      const change = yield* dispatchCrmCommand(snapshot.state, command, {
+        invocationId,
+        now,
+        viewer,
+        ...(verifiedParties === undefined ? {} : { verifiedParties }),
+      });
       const revision = yield* save(expectedRevision, change.state);
       return { entityIds: [...change.entityIds], revision };
     });

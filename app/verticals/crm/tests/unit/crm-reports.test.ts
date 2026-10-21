@@ -213,6 +213,7 @@ describe('CRM sales report (C05)', () => {
       order({ amount: '5.00', clientId: 'x', currency: 'EUR', orderedAt: '2026-10-01', pairing: 'paired' }),
     ]);
     expect(clientSalesFacts(state, 'x')).toEqual({
+      lastContactAt: '2026-09-15T09:00:00.000Z',
       lastOrderAt: '2026-10-01',
       lastVisitAt: '2026-09-15T09:00:00.000Z',
       orderCount: 2,
@@ -222,6 +223,31 @@ describe('CRM sales report (C05)', () => {
       ],
       withoutAmount: 0,
     });
+  });
+
+  it('last visit counts personal visits only; calls and e-mails are only the last contact', () => {
+    const state = base([]);
+    const withCall: CrmState = {
+      ...state,
+      visits: {
+        ...state.visits,
+        items: [
+          ...state.visits.items,
+          { ...state.visits.items[0]!, id: 'v-call', kind: 'call', occurredAt: '2026-10-17T08:00:00.000Z' },
+          {
+            ...state.visits.items[0]!,
+            clientId: 'y',
+            id: 'v-mail',
+            kind: 'email',
+            occurredAt: '2026-10-18T08:00:00.000Z',
+          },
+        ],
+      },
+    };
+    expect(clientSalesFacts(withCall, 'x').lastVisitAt).toBe('2026-09-15T09:00:00.000Z');
+    expect(clientSalesFacts(withCall, 'x').lastContactAt).toBe('2026-10-17T08:00:00.000Z');
+    expect(clientSalesFacts(withCall, 'y').lastVisitAt).toBeUndefined();
+    expect(clientSalesFacts(withCall, 'y').lastContactAt).toBe('2026-10-18T08:00:00.000Z');
   });
 
   it('CSV escapes separators and keeps currencies in separate columns', () => {

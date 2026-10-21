@@ -26,6 +26,7 @@ export const kindLabels = { organization: 'Firma', person: 'Fyzická osoba' } as
 
 /** Known demo principals of Velkoobchod Hanák (companies lane personas) for readable history rows. */
 const knownPrincipals: Record<string, string> = {
+  '72000000-0000-4000-8000-000000000021': 'Vedení Siampark',
   '849fdb3c-fab6-5c14-b20a-d885dc27313d': 'Karel Hanák (správce)',
   '8abb7df7-c19d-5d49-836a-2146dbe5064c': 'Lucie Dvořáková (vedoucí obchodu)',
 };
@@ -42,6 +43,9 @@ export const principalLabel = (records: RecordsResponse, principalId: string) =>
   }
   return principalId === records.viewer.principalId ? 'Vy' : 'Jiný uživatel';
 };
+
+/** Is the client linked to its canonical identity in Party Registry (CRM.md §3)? */
+export const partyLinked = (client: Client) => client.partyRef?.counterpartyId !== undefined;
 
 export const activeContactsOf = (records: RecordsResponse, clientId: string): readonly ContactPerson[] =>
   records.state.clients.contacts
@@ -105,6 +109,7 @@ export const eventLabels: Record<ClientEventKind, string> = {
   contact_added: 'Přidána kontaktní osoba',
   contact_removed: 'Odebrána kontaktní osoba',
   contact_updated: 'Upravena kontaktní osoba',
+  party_linked: 'Propojeno s Party Registry',
 };
 
 export const fieldLabels: Record<string, string> = {
