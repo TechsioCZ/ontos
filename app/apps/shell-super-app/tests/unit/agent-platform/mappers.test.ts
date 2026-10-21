@@ -244,3 +244,18 @@ it('labels a successful legacy write of an approval-only agent as a proposal', (
   expect(entry.actionLabel).toBe('Návrh ke schválení');
   expect(entry.detail).toBe('Návrh do schvalovací fronty modulu Obchodní případy');
 });
+
+it('lists the stored command for modules without their own diff, never the agent text', () => {
+  const row: AgentProposalRow = {
+    ...baseRow,
+    appId: 'facility-operations',
+    command: { _tag: 'MeterCreate', name: 'Elektroměr hala A' },
+    diff: [{ after: 'něco jiného', field: 'name', label: 'Název' }],
+    moduleKey: 'facility.operations',
+    revert: null,
+  };
+  const [batch] = rowsToQueueBatches([row], { canDecide: canDecideAll, names });
+  expect(batch?.items[0]?.diffSource).toBe('command');
+  expect(batch?.items[0]?.diff).toEqual([{ after: 'Elektroměr hala A', field: 'name', label: 'Název' }]);
+  expect(batch?.items[0]?.revertUnavailableReason).toBe('Tuto změnu nelze automaticky vrátit.');
+});

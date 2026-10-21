@@ -16,7 +16,7 @@ import {
   type AgentRevertPlan,
   type AgentRisk,
 } from '@app/shared-contracts/agent-proposals';
-import { agentPlatformDiff } from '@app/shared-contracts/agent-diff';
+import { agentCommandDiff, agentPlatformDiff } from '@app/shared-contracts/agent-diff';
 import { agentRevertUnavailableBeforeApproval } from '@app/shared-contracts/agent-revert';
 import { DateTime } from 'effect';
 
@@ -102,11 +102,13 @@ const withStoredBefore = (
 export const itemDiff = (
   row: AgentProposalRow,
   liveBefore: Readonly<Record<string, unknown>> | undefined,
-): { readonly diff: readonly AgentDiffLine[]; readonly diffSource: 'agent' | 'platform' } => {
+): { readonly diff: readonly AgentDiffLine[]; readonly diffSource: 'agent' | 'command' | 'platform' } => {
   const live = row.status === 'pending' ? liveBefore : undefined;
   const platform = agentPlatformDiff(row.appId, row.command, live);
   if (platform === undefined) {
-    return { diff: row.diff, diffSource: 'agent' };
+    // Modules without their own lines: the platform lists the stored command itself (never the agent's text).
+    const fromCommand = agentCommandDiff(row.command);
+    return fromCommand.length > 0 ? { diff: fromCommand, diffSource: 'command' } : { diff: row.diff, diffSource: 'agent' };
   }
   return { diff: live === undefined ? withStoredBefore(platform, row.diff) : platform, diffSource: 'platform' };
 };

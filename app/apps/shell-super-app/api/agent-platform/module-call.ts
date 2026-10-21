@@ -129,16 +129,23 @@ const attemptCommand = (
   key: string,
 ) =>
   Effect.gen(function* () {
-    const read = yield* callModuleAs(principal, appId, '/reads/records', recordsQueryFor(appId));
-    const revision = isRecord(read.body) ? read.body['revision'] : undefined;
-    if (read.status !== 200 || typeof revision !== 'number') {
-      return failed(problemMessage(read.body, read.status), read.status === 200 ? 503 : read.status);
+    const slug = options.actionSlug ?? 'apply-command';
+    // Named Actions (party-registry, commerce) take the stored payload as is and have no module-wide revision;
+    // apply-command modules get `{ command, expectedRevision }` with the revision read just now.
+    let body: unknown = command;
+    if (slug === 'apply-command') {
+      const read = yield* callModuleAs(principal, appId, '/reads/records', recordsQueryFor(appId));
+      const revision = isRecord(read.body) ? read.body['revision'] : undefined;
+      if (read.status !== 200 || typeof revision !== 'number') {
+        return failed(problemMessage(read.body, read.status), read.status === 200 ? 503 : read.status);
+      }
+      body = { command, expectedRevision: revision };
     }
     const write = yield* callModuleAs(
       principal,
       appId,
-      `/${appId}/actions/${options.actionSlug ?? 'apply-command'}`,
-      { command, expectedRevision: revision },
+      `/${appId}/actions/${slug}`,
+      body,
       {
         idempotencyKey: key,
         ...(options.referenceAudiences === undefined ? {} : { referenceAudiences: options.referenceAudiences }),
@@ -152,7 +159,8 @@ const attemptCommand = (
   }).pipe(Effect.catchTag('AgentModuleCallError', (error) => Effect.succeed(failed(error.reason, 503))));
 
 /**
- * Runs a module's apply-command as the given person: reads the current revision, then posts the command with it.
+ * Runs a module's command as the given person. apply-command: reads the current revision first, then posts
+ * `{ command, expectedRevision }`; named Actions are posted as stored.
  * Retries once with a fresh idempotency key when the module reports a revision conflict.
  */
 export const applyModuleCommand = Effect.fn('AgentPlatform.applyModuleCommand')(function* applyModuleCommand(

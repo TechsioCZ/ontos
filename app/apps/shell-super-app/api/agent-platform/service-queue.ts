@@ -16,7 +16,7 @@ import type {
   AgentQueueBatch,
   AgentQueueResponse,
 } from '@app/shared-contracts/agent-proposals';
-import { agentPlatformDiff } from '@app/shared-contracts/agent-diff';
+import { agentCommandDiff, agentPlatformDiff } from '@app/shared-contracts/agent-diff';
 import { Effect } from 'effect';
 
 import { loadAgentProfiles } from '../auth/agent-store.ts';
@@ -38,6 +38,8 @@ import {
 import type { NewAgentProposal } from './proposal-store.ts';
 
 const HUMAN_ONLY_COMMANDS: ReadonlySet<string> = new Set(['AiDecideChanges', 'AiRevertBatch']);
+/** Named Action slugs, e.g. `update-party`; `apply-command` is the default command envelope. */
+const ACTION_SLUG = /^[a-z][a-z0-9-]{0,99}$/u;
 const QUEUE_LIMIT = 300;
 /** Modules whose records are private per person (see legacy-queue.ts seesWholeModule). */
 const PRIVATE_SCOPE_APPS: ReadonlySet<string> = new Set(['crm']);
@@ -81,22 +83,30 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
     if (!modules.access.has(module.moduleKey)) {
       return yield* new AgentPlatformForbidden({ reason: `Agent nemá přístup k modulu ${module.label}.` });
     }
+    const actionSlug = proposal.actionSlug ?? 'apply-command';
     const tag = proposal.command['_tag'];
-    if (typeof tag !== 'string' || tag === '' || HUMAN_ONLY_COMMANDS.has(tag)) {
+    // apply-command needs a command `_tag`; a named Action (party-registry, commerce) takes its payload without one.
+    const allowedCommand =
+      ACTION_SLUG.test(actionSlug) &&
+      (actionSlug === 'apply-command'
+        ? typeof tag === 'string' && tag !== '' && !HUMAN_ONLY_COMMANDS.has(tag)
+        : tag === undefined);
+    if (!allowedCommand) {
       return yield* new AgentPlatformInvalid({ reason: `Návrh ${index + 1} nemá povolený příkaz modulu.` });
     }
     // The platform describes commands it understands itself (read as the agent), never trusting the agent's diff.
     const target = yield* readTargetEntity(agent.principal, module.appId, proposal.command);
     const platformDiff = agentPlatformDiff(module.appId, proposal.command, target.needed ? target.value : undefined);
+    const commandDiff = agentCommandDiff(proposal.command);
     rows.push({
-      actionSlug: proposal.actionSlug ?? 'apply-command',
+      actionSlug,
       agentLabel: request.agentLabel ?? names.get(principalId) ?? 'AI agent',
       agentPrincipalId: principalId,
       appId: module.appId,
       batchId,
       batchInstruction: request.instruction,
       command: proposal.command,
-      diff: platformDiff ?? proposal.diff,
+      diff: platformDiff ?? (commandDiff.length > 0 ? commandDiff : proposal.diff),
       legalEntityId,
       moduleKey: module.moduleKey,
       position: index,
