@@ -19,8 +19,8 @@ import { forgetRecordedPageReads } from '../../browser-request-cache.ts';
 import { signInReason, signInReturnPath } from '../../sign-in-return.ts';
 import type { SignInReason } from '../../sign-in-return.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
-import { clientNameFrom, OAUTH_PRELOGIN_PATH, readOAuthLoginRequest } from './oauth-handoff.ts';
-import type { OAuthLoginRequest } from './oauth-handoff.ts';
+import { clientNameFrom, OAUTH_PRELOGIN_PATH, readOAuthLoginError, readOAuthLoginRequest } from './oauth-handoff.ts';
+import type { OAuthLoginErrorCode, OAuthLoginRequest } from './oauth-handoff.ts';
 
 interface LoginValidation {
   loginMissing: boolean;
@@ -71,12 +71,14 @@ const LoginPage = () => {
   const [reason, setReason] = useState<SignInReason | 'sign_in_required'>();
   const [oauthRequest, setOAuthRequest] = useState<OAuthLoginRequest>();
   const [oauthClientName, setOAuthClientName] = useState<string>();
+  const [oauthError, setOAuthError] = useState<OAuthLoginErrorCode>();
   useEffect(() => {
     const { href } = window.location;
     setReason(
       signInReason(href) ?? (signInReturnPath(href, language) === undefined ? undefined : 'sign_in_required'),
     );
     setOAuthRequest(readOAuthLoginRequest(href));
+    setOAuthError(readOAuthLoginError(href));
   }, [language]);
   useEffect(() => {
     if (oauthRequest === undefined) {
@@ -217,7 +219,14 @@ const LoginPage = () => {
             </Badge>
           </div>
           <p className="text-fg-secondary text-sm">{t('shell.login.welcome')}</p>
-          {oauthRequest === undefined ? null : (
+          {oauthError === undefined ? null : (
+            <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base flex flex-col gap-100 p-200 text-sm" data-testid="oauth-login-error" role="alert">
+              <h1 className="font-semibold text-lg">{t('shell.login.oauth.error.title')}</h1>
+              <p>{t(`shell.login.oauth.error.${oauthError}`)}</p>
+              <p className="text-fg-secondary">{t('shell.login.oauth.error.next')}</p>
+            </div>
+          )}
+          {oauthRequest === undefined || oauthError !== undefined ? null : (
             <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm" data-testid="oauth-login-banner" role="status">
               <p>
                 <strong>
@@ -237,7 +246,7 @@ const LoginPage = () => {
           )}
           {/* Once signed in the URL has moved on, so the title and fields step aside while the next page loads.
               They are hidden, not unmounted, so their refs survive a failed navigation; the submit button stays. */}
-          <div>
+          <div hidden={oauthError !== undefined}>
             <h1 className="shell:text-2xl shell:font-bold" hidden={attempt === 'opening'}>
               {t('shell.login.title')}
             </h1>
@@ -300,9 +309,21 @@ const LoginPage = () => {
           <p className="border-border-primary border-t pt-200 text-fg-secondary text-xs">
             {t('shell.login.contextHint')}
           </p>
-          <Link as={LocalizedLink} className="self-start text-sm" to="/">
-            {t('shell.login.back')}
-          </Link>
+          {/* Error card: a full page load back to the plain sign-in (the card is read from the URL once, on mount).
+              Connect flow: "back to the home page" would silently abandon the client, so say how to cancel instead. */}
+          {oauthError === undefined ? null : (
+            <Link className="self-start text-sm" href={`/${language}/login`}>
+              {t('shell.login.oauth.error.signIn')}
+            </Link>
+          )}
+          {oauthError === undefined && oauthRequest !== undefined ? (
+            <p className="text-fg-secondary text-sm">{t('shell.login.oauth.cancelHint')}</p>
+          ) : null}
+          {oauthError === undefined && oauthRequest === undefined ? (
+            <Link as={LocalizedLink} className="self-start text-sm" to="/">
+              {t('shell.login.back')}
+            </Link>
+          ) : null}
         </section>
       </main>
       <Toaster

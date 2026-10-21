@@ -1,6 +1,6 @@
 import { expect, test } from 'effect-rstest';
 
-import { clientNameFrom, readOAuthLoginRequest } from '../../../../src/routes/[lang]/login/oauth-handoff.ts';
+import { clientNameFrom, readOAuthLoginError, readOAuthLoginRequest } from '../../../../src/routes/[lang]/login/oauth-handoff.ts';
 
 const claudeHref =
   'http://localhost:3020/cs/login?response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Foauth%2Fclaude-code-client-metadata&redirect_uri=http%3A%2F%2Flocalhost%3A53682%2Fcallback&scope=openid+offline_access+ontos&state=xyz&code_challenge=abc&code_challenge_method=S256&resource=http%3A%2F%2Flocalhost%3A3090%2Fmcp&prompt=login+consent&exp=999&ba_iat=1&ba_param=client_id&sig=SIG';
@@ -67,4 +67,11 @@ test('reads client_name from the prelogin body', () => {
   expect(clientNameFrom({})).toBeUndefined();
   expect(clientNameFrom(null)).toBeUndefined();
   expect(clientNameFrom({ client_name: 5 })).toBeUndefined();
+});
+
+test('reads the Czech error card code from oauth_error', () => {
+  expect(readOAuthLoginError('http://localhost:3020/cs/login?oauth_error=invalid_redirect')).toBe('invalid_redirect');
+  expect(readOAuthLoginError('http://localhost:3020/cs/login?oauth_error=invalid_client')).toBe('invalid_client');
+  expect(readOAuthLoginError('http://localhost:3020/cs/login?oauth_error=%3Cscript%3E')).toBe('request_failed');
+  expect(readOAuthLoginError('http://localhost:3020/cs/login')).toBeUndefined();
 });

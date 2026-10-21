@@ -177,7 +177,16 @@
         "request": "({{host}}) is requesting access to your OntOS account.",
         "requestNoHost": "is requesting access to your OntOS account.",
         "unknownClient": "An application",
-        "unverified": "The application presents itself as {{client}}. Make sure you started this connection yourself."
+        "unverified": "The application presents itself as {{client}}. Make sure you started this connection yourself.",
+        "cancelHint": "Close this window to cancel the connection.",
+        "error": {
+          "title": "The application cannot be connected",
+          "invalid_client": "The application requesting access could not be verified. The connection link is invalid or the application is unavailable.",
+          "invalid_redirect": "The application wanted to return to an address it has not registered. The connection was stopped for your security.",
+          "request_failed": "The connection request is invalid or has expired.",
+          "next": "Go back to the application (for example ChatGPT or Claude) and start the connection again. If the problem persists, contact your OntOS administrator.",
+          "signIn": "Sign in to OntOS"
+        }
       },
       "submit": "Login",
       "title": "Login",

@@ -62,3 +62,26 @@ export const clientNameFrom = (body: unknown): string | undefined => {
   const name = body.client_name;
   return typeof name === 'string' && name.trim() !== '' ? name.trim() : undefined;
 };
+
+export type OAuthLoginErrorCode = 'invalid_client' | 'invalid_redirect' | 'request_failed';
+
+/**
+ * `?oauth_error=<code>`: the authorization server refused a connect request it cannot send back to the client
+ * (unknown client, unregistered redirect). The page then shows a Czech error card instead of the sign-in form.
+ */
+export const readOAuthLoginError = (href: string): OAuthLoginErrorCode | undefined => {
+  if (!URL.canParse(href)) {
+    return undefined;
+  }
+  const code = new URL(href).searchParams.get('oauth_error');
+  if (code === null) {
+    return undefined;
+  }
+  switch (code) {
+    case 'invalid_client':
+    case 'invalid_redirect':
+      return code;
+    default:
+      return 'request_failed';
+  }
+};

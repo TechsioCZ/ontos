@@ -37,6 +37,7 @@ import {
   TenantAccessForbiddenError,
 } from './errors.ts';
 import { OAuthConnectionHooks, stubOAuthConnectionHooks } from './oauth-server/connection-hooks.ts';
+import { makeOAuthEndpointGuards } from './oauth-server/endpoint-guards.ts';
 import type { OAuthConnectionHooksContract } from './oauth-server/connection-hooks.ts';
 import {
   OAUTH_ACCESS_TOKEN_TTL_SECONDS,
@@ -444,6 +445,7 @@ const fallbackClearingCookies = (configuration: AuthConfigValue): readonly strin
 
 interface AuthenticationAssemblyOptions {
   readonly allowFixtureSignUp?: boolean;
+  readonly authDatabase: (typeof AuthDatabase)['Service'];
   readonly oauthHooks: OAuthConnectionHooksContract;
   readonly runResolverEffect: typeof Effect.runPromise;
 }
@@ -981,6 +983,16 @@ const assembleAuthenticationService = (
         ),
       ),
     oauth: {
+      guards: makeOAuthEndpointGuards({
+        database: options.authDatabase,
+        readSession: (requestHeaders) =>
+          Effect.tryPromise(() => auth.api.getSession({ headers: requestHeaders })).pipe(
+            Effect.map((result) =>
+              result === null ? undefined : { sessionId: result.session.id, userId: result.user.id },
+            ),
+            Effect.orElseSucceed(() => undefined),
+          ),
+      }),
       handler: (request: Request) => auth.handler(request),
       issuer: oauthIssuer,
     },
@@ -1137,6 +1149,7 @@ export const makeAuthenticationService = Effect.fn('AuthenticationService.make')
     const oauthHooks = Option.getOrElse(yield* Effect.serviceOption(OAuthConnectionHooks), () => stubOAuthConnectionHooks);
     return assembleAuthenticationService(configuration, database.adapter, resolver, {
       ...options,
+      authDatabase: database,
       oauthHooks,
       runResolverEffect: Effect.runPromiseWith(effectContext),
     });

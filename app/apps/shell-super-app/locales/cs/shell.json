@@ -177,7 +177,16 @@
         "request": "({{host}}) žádá o přístup k vašemu účtu v OntOS.",
         "requestNoHost": "žádá o přístup k vašemu účtu v OntOS.",
         "unknownClient": "Aplikace",
-        "unverified": "Aplikace se představuje jako {{client}}. Ověřte, že připojení zahajujete vy."
+        "unverified": "Aplikace se představuje jako {{client}}. Ověřte, že připojení zahajujete vy.",
+        "cancelHint": "Připojení zrušíte zavřením tohoto okna.",
+        "error": {
+          "title": "Připojení aplikace nelze dokončit",
+          "invalid_client": "Aplikaci, která o přístup žádá, se nepodařilo ověřit. Odkaz pro připojení je neplatný nebo aplikace není dostupná.",
+          "invalid_redirect": "Aplikace chtěla po přihlášení přesměrovat na adresu, kterou u sebe nemá zaregistrovanou. Z bezpečnostních důvodů jsme připojení zastavili.",
+          "request_failed": "Žádost o připojení není platná nebo už vypršela.",
+          "next": "Vraťte se do aplikace (například ChatGPT nebo Claude) a začněte připojení znovu. Pokud chyba trvá, obraťte se na správce OntOS.",
+          "signIn": "Přihlásit se do OntOS"
+        }
       },
       "submit": "Přihlásit se",
       "title": "Přihlášení",
