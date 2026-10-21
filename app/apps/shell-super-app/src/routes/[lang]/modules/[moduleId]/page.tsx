@@ -162,15 +162,17 @@ export const ModuleTargetView = ({ initialModel }: ModuleTargetViewProps) => {
   const navigate = useNavigate();
   const model = initialModel;
   const anonymous = model.shell.state === 'anonymous';
+  const signInReason = model.shell.state === 'anonymous' ? model.shell.reason : undefined;
   // A protected module opened without a session goes to sign-in rather than a dead end, and sign-in returns here.
+  // A session that died (disabled account, session no longer accepted) goes there too, with the reason shown.
   useEffect(() => {
     if (anonymous) {
       void navigate({
-        href: signInHref(language, `${window.location.pathname}${window.location.search}`),
+        href: signInHref(language, `${window.location.pathname}${window.location.search}`, signInReason),
         replace: true,
       });
     }
-  }, [anonymous, language, navigate]);
+  }, [anonymous, language, navigate, signInReason]);
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
   if (model.shell.state !== 'authenticated') {
     let message = 'shell.moduleTarget.selection_required';

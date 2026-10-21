@@ -353,7 +353,8 @@ export const rentalDemoRoles = {
       'party.registry': 'write',
       'siampark.agreements': 'write',
       'siampark.billing-finance': 'read',
-      'siampark.occupancy': 'read',
+      // S01-02: the salesperson logs calls and moves the business case; Provoz books stays (S10).
+      'siampark.occupancy': 'write',
       'siampark.property': 'read',
       'siampark.work': 'write',
     },
@@ -373,7 +374,15 @@ export const siamparkRentalPersonas = [
   {
     email: 'management@siampark.demo',
     principalId: '72000000-0000-4000-8000-000000000021',
-    role: withSiamparkOps(rentalDemoRoles.headOfSales),
+    // S00: Vedení keeps every CRM contact and entrusts chosen ones to the external salesperson (demo.crm.assign).
+    role: (() => {
+      const base = withSiamparkOps(rentalDemoRoles.headOfSales);
+      return {
+        ...base,
+        contextPermissions: { 'demo.crm': ['demo.crm.read_all', 'demo.crm.write_all', 'demo.crm.assign'] },
+        modules: { ...base.modules, 'demo.crm': 'write' },
+      } satisfies DemoRole;
+    })(),
   },
   {
     email: 'operations@siampark.demo',
@@ -388,14 +397,17 @@ export const siamparkRentalPersonas = [
   {
     email: 'external@siampark.demo',
     principalId: '72000000-0000-4000-8000-000000000024',
+    // S00: reads only the CRM clients entrusted to him (`demo.crm.read_assigned`, no write, no read_all);
+    // billing/finance, agreements and occupancy stay closed. Siampark CRM data: scripts/demo/seed-siampark-crm.mts.
     role: {
       contextPermissions: {
+        'demo.crm': ['demo.crm.read_assigned'],
         'demo.siampark-ops': ['demo.siampark_ops.read_operational', 'demo.siampark_ops.write_operational'],
       },
       identityAdmin: false,
       label: 'Externí partner',
-      modules: { 'demo.siampark-ops': 'write' },
-      restrictedModules: ['demo.siampark-ops'],
+      modules: { 'demo.crm': 'read', 'demo.siampark-ops': 'write' },
+      restrictedModules: ['demo.crm', 'demo.siampark-ops'],
     },
   },
 ] as const satisfies readonly { readonly email: string; readonly principalId: string; readonly role: DemoRole }[];
@@ -460,7 +472,13 @@ export const eshopDemoRoles = {
   akrosAdmin: {
     identityAdmin: true,
     label: 'Správce e-shopu',
-    modules: { 'demo.merchandise': 'write', 'demo.tagging': 'read', 'party.registry': 'write', 'siampark.work': 'write', 'demo.workforce': 'write' },
+    modules: {
+      'demo.merchandise': 'write',
+      'demo.tagging': 'read',
+      'party.registry': 'write',
+      'siampark.work': 'write',
+      'demo.workforce': 'write',
+    },
   },
   eshopAdmin: {
     identityAdmin: false,
@@ -533,7 +551,12 @@ export const companyPermissionRelationships = (actions: readonly DemoAction[]): 
   ...companyHumanAccounts.flatMap((account) =>
     principalRelationships(account.principalId, companyRoles[account.role], actions, account.legalEntityId),
   ),
-  ...principalRelationships(akrosStorefrontPrincipal.principalId, companyRoles.storefront, actions, akrosDemoLegalEntityId),
+  ...principalRelationships(
+    akrosStorefrontPrincipal.principalId,
+    companyRoles.storefront,
+    actions,
+    akrosDemoLegalEntityId,
+  ),
   ...principalRelationships(
     storefrontPrincipal.principalId,
     companyRoles[storefrontPrincipal.role],

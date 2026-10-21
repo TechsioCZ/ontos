@@ -14,11 +14,29 @@ const SignInRouteSearch = Schema.Struct({
 const isSafeReturnPath = (path: string, language: string): boolean =>
   path.startsWith(`/${language}/`) && !path.includes('\\') && !path.startsWith(`/${language}/login`);
 
+/** Why a signed-in browser was sent back to sign-in: the account lost access, or the session is no longer valid. */
+export const signInReasons = ['account_forbidden', 'session_ended'] as const;
+export type SignInReason = (typeof signInReasons)[number];
+const SignInReasonSchema = Schema.Literals(signInReasons);
+
 /** Login page URL that returns to `path` after sign-in, or the plain login page when `path` is not returnable. */
-export const signInHref = (language: string, path: string): string => {
+export const signInHref = (language: string, path: string, reason?: SignInReason): string => {
   const login = `/${language}/login`;
-  return isSafeReturnPath(path, language) ? `${login}?${UrlParams.toString({ returnTo: path })}` : login;
+  const params = {
+    ...(isSafeReturnPath(path, language) ? { returnTo: path } : {}),
+    ...(reason === undefined ? {} : { reason }),
+  };
+  return Object.keys(params).length === 0 ? login : `${login}?${UrlParams.toString(params)}`;
 };
+
+/** The sign-in notice to show, read from the login page URL or path; unknown values are ignored. */
+export const signInReason = (href: string): SignInReason | undefined =>
+  Option.getOrUndefined(
+    Option.flatMap(
+      UrlParams.getFirst(Url.urlParams(new URL(href, 'http://localhost')), 'reason'),
+      Schema.decodeUnknownOption(SignInReasonSchema),
+    ),
+  );
 
 /** The page to open after sign-in, read from the login page URL when it is safe to follow. */
 export const signInReturnPath = (href: string, language: string): string | undefined => {

@@ -25,6 +25,12 @@ it.each([true, false])('hides competing legacy customer destinations when CRM is
   ]);
 });
 
+it('keeps the customer list beside the entrusted-contact CRM outside the wholesale company', () => {
+  expect(presentableDemoNavigation(clientDestinations(), true, '71000000-0000-4000-8000-000000000021')).toEqual(
+    clientDestinations(),
+  );
+});
+
 it('preserves the customer workflow for companies without CRM', () => {
   const withoutCrm = clientDestinations().filter(({ moduleId }) => moduleId !== 'demo.crm');
   expect(presentableDemoNavigation(withoutCrm, true)).toEqual(withoutCrm);
@@ -40,6 +46,23 @@ it.each([
     expect(presentableDemoNavigation(unavailableCrm, true)).toEqual(unavailableCrm);
   },
 );
+
+const crmPages = [
+  '/crm/klienti',
+  '/crm/k-osloveni',
+  '/crm/navstevy',
+  '/crm/importy',
+  '/crm/parovani',
+  '/crm/prehled-prodeju',
+  '/crm/schvalovani-ai',
+].map((href) => ({ enabled: true, href, moduleId: 'demo.crm' })) as ShellNavigationItem[];
+
+it('keeps wholesale CRM pages only in the wholesale CRM company', () => {
+  expect(presentableDemoNavigation(crmPages, false, '71000000-0000-4000-8000-000000000022')).toEqual(crmPages);
+  expect(
+    presentableDemoNavigation(crmPages, false, '71000000-0000-4000-8000-000000000021').map(({ href }) => href),
+  ).toEqual(['/crm/klienti', '/crm/k-osloveni', '/crm/navstevy']);
+});
 
 it.each([
   ['management@siampark.demo', 'Management', 'Vedení'],

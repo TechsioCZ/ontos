@@ -23,12 +23,15 @@ import type { AvailableTenantsClientError, ShellAuthenticationClientOptions } fr
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { browserBaseUrl, browserReadKey, browserStaleWhileRevalidateCache, keyPart } from '../browser-swr-cache.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../shell-authentication-client-options.ts';
+import type { SignInReason } from '../sign-in-return.ts';
 
 interface HomeLoaderArguments {
   readonly request: Request;
 }
 
 export interface AnonymousHomePageModel {
+  /** Set when a browser that held a session lost it: the account was disabled, or the session is no longer valid. */
+  readonly reason?: SignInReason;
   readonly state: 'anonymous';
 }
 
@@ -82,6 +85,8 @@ export type HomePageModel =
   | UnavailableHomePageModel;
 
 const anonymousModel: AnonymousHomePageModel = { state: 'anonymous' };
+const accountForbiddenModel: AnonymousHomePageModel = { reason: 'account_forbidden', state: 'anonymous' };
+const sessionEndedModel: AnonymousHomePageModel = { reason: 'session_ended', state: 'anonymous' };
 const unavailableModel: UnavailableHomePageModel = { state: 'unavailable' };
 const reloadRequiredModel: ReloadRequiredHomePageModel = { state: 'reload_required' };
 
@@ -237,7 +242,7 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       const hasPeoplePage = composition.navigation.some(({ href }) => href === '/sprava/lide');
       const canManagePeople = hasPeoplePage ? yield* peopleCapabilityFor(session.identity, options) : false;
       navigation = {
-        items: presentableDemoNavigation(composition.navigation, canManagePeople),
+        items: presentableDemoNavigation(composition.navigation, canManagePeople, session.identity.legalEntityId),
         state: 'available',
         unavailableDeployments: composition.unavailableDeployments,
       };
@@ -292,7 +297,7 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
           tenants,
         }): HomePageModel => {
           if (tenants.state === 'stale') {
-            return anonymousModel;
+            return sessionEndedModel;
           }
           const contribution = Option.getOrUndefined(contributionOption);
           const baseModel = {
@@ -322,15 +327,17 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       Effect.succeed<HomePageModel>(
         Match.value(error).pipe(
           Match.tag('InvalidCredentialsProblem', () => anonymousModel),
+          // A disabled account keeps its browser cookie, but the session read answers 403: that is "not signed in
+          // (account without access)", not an outage. A session the Shell no longer accepts is "not signed in" too.
+          Match.tag('OntosIdentityForbiddenProblem', () => accountForbiddenModel),
+          Match.tag('ShellAuthenticationRequiredProblem', () => sessionEndedModel),
           Match.tag('DocumentCompositionRevisionError', 'ShellReloadRequiredProblem', () => reloadRequiredModel),
           Match.tag(
             'AuthenticationInternalProblem',
             'AuthenticationUnavailableProblem',
             'ConfigError',
             'HttpClientError',
-            'OntosIdentityForbiddenProblem',
             'SchemaError',
-            'ShellAuthenticationRequiredProblem',
             'ShellCapabilityUnavailableProblem',
             'ShellInternalProblem',
             'ShellInvalidRequestProblem',

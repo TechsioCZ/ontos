@@ -8,14 +8,15 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Toaster, useToast } from '@techsio/ui-kit/molecules/toast';
 import { Effect, Match, Option, Predicate, Schema } from 'effect';
 import type { Cause } from 'effect';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { SignInPayloadSchema } from '../../../../shared/api.ts';
 import { signIn } from '../../../api/auth-client.ts';
 import type { ShellAuthenticationClientError } from '../../../api/auth-client.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { forgetRecordedPageReads } from '../../browser-request-cache.ts';
-import { signInReturnPath } from '../../sign-in-return.ts';
+import { signInReason, signInReturnPath } from '../../sign-in-return.ts';
+import type { SignInReason } from '../../sign-in-return.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 
 interface LoginValidation {
@@ -61,6 +62,12 @@ const LoginPage = () => {
   const [attemptedLogin, setAttemptedLogin] = useState('');
   // Keep failures next to the form until retry; a short-lived toast is easy to miss during an outage.
   const [submissionError, setSubmissionError] = useState<string>();
+  // A dead session (disabled account, session no longer accepted) arrives here with a reason; say why once.
+  // Read after mount: the server render has no browser URL, so both renders start without the notice.
+  const [reason, setReason] = useState<SignInReason>();
+  useEffect(() => {
+    setReason(signInReason(window.location.href));
+  }, []);
   const handleNavigationFailure = (error: Cause.TimeoutError | Cause.UnknownError) =>
     Effect.sync(() => {
       void error;
@@ -208,6 +215,12 @@ const LoginPage = () => {
                   validateStatus={validation.passwordMissing ? 'error' : 'default'}
                 />
               </div>
+              {reason === undefined || submissionError !== undefined ? null : (
+                <div className="rounded-md border border-border-primary bg-surface p-200 text-sm" role="status">
+                  <p className="font-semibold">{t(`shell.login.notice.${reason}.title`)}</p>
+                  <p>{t(`shell.login.notice.${reason}.body`)}</p>
+                </div>
+              )}
               {submissionError === undefined ? null : (
                 <div className="rounded-md border border-border-primary bg-surface p-200 text-sm" role="alert">
                   <p className="font-semibold">{t(errorTitleKey)}</p>

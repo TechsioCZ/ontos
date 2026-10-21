@@ -183,6 +183,16 @@
         "close": "Zavřít oznámení",
         "label": "Oznámení",
         "loading": "Probíhá…"
+      },
+      "notice": {
+        "account_forbidden": {
+          "title": "Účet nemá přístup",
+          "body": "Tento účet byl deaktivován nebo už nemá přístup k žádné firmě. Přihlaste se jiným účtem, případně kontaktujte správce."
+        },
+        "session_ended": {
+          "title": "Přihlášení vypršelo",
+          "body": "Vaše relace už není platná. Přihlaste se prosím znovu."
+        }
       }
     },
     "modules": {

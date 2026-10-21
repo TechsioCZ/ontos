@@ -183,6 +183,16 @@
         "close": "Close notification",
         "label": "Notifications",
         "loading": "Working…"
+      },
+      "notice": {
+        "account_forbidden": {
+          "title": "Account has no access",
+          "body": "This account was deactivated or no longer has access to any company. Sign in with another account or contact the administrator."
+        },
+        "session_ended": {
+          "title": "Session ended",
+          "body": "Your session is no longer valid. Please sign in again."
+        }
       }
     },
     "modules": {

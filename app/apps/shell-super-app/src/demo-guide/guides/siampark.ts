@@ -144,6 +144,23 @@ export const siamparkGuide: DemoGuide = {
       id: 'externista',
       steps: [
         {
+          click: 'Otevřete Kavárnu Na Nábřeží s.r.o. a ukažte řádek Obchodník: Martin Krejčí (externí obchodník).',
+          id: 'siampark-vedeni-sveruje',
+          persona: management,
+          say: 'Vedení vidí všechny zájemce o pronájem a vybrané svěří externímu obchodníkovi. Svěření je záznam s autorem a důvodem.',
+          target: { kind: 'app', path: '/crm/klienti' },
+          title: 'Vedení svěřuje kontakty',
+        },
+        {
+          click:
+            'Seznam Klienti: jen tři svěření zájemci a štítek Vidíte pouze klienty přidělené vám. Otevřete jednoho z nich.',
+          id: 'siampark-externista-klienti',
+          persona: external,
+          say: 'Externí obchodník čte jen svěřené kontakty a jejich jednání. Ostatní zájemce ani finance nevidí a hlídá to server, ne skryté menu.',
+          target: { kind: 'app', path: '/crm/klienti' },
+          title: 'Jen svěřené kontakty',
+        },
+        {
           click: 'Najděte úkol Předání nájemního prostoru R101 a ukažte omezené menu.',
           id: 'siampark-externista-prace',
           persona: external,
@@ -160,7 +177,7 @@ export const siamparkGuide: DemoGuide = {
           title: 'Přímý odkaz na finance',
         },
       ],
-      summary: 'Externí dodavatel dostane práci, ne účetnictví.',
+      summary: 'Externí obchodník dostane svěřené kontakty a svou práci, ne účetnictví.',
       title: 'Externista a oprávnění',
     },
   ],

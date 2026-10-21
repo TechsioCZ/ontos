@@ -134,6 +134,8 @@ if [ "${DEMO_RESET:-1}" != 0 ]; then
   # E-shop company (Kavárna Doma, LE …023): merges the seed, keeps live demo orders (use --reset to wipe).
   step demo-seed-eshop pnpm_ demo:seed:eshop
   step demo-seed-akros pnpm_ demo:seed:akros
+  # Siampark CRM (0021): prospects entrusted to external@siampark.demo (S00); writes only when absent.
+  step demo-seed-siampark-crm "${WITH_ENV[@]}" node scripts/demo/seed-siampark-crm.mts
 fi
 # Verifiers of owners whose sales seed is still a placeholder report a missing seeded aggregate; that must
 # not block the demo. DEMO_STRICT_VERIFY=1 makes the verification fatal again.

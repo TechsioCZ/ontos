@@ -1,12 +1,14 @@
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
+import { useLoaderData, useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { Match } from 'effect';
+import { useEffect } from 'react';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 
 import { DemoGuideHomeCard } from '../../demo-guide/demo-guide-home-card.tsx';
 import { AuthenticatedDashboardLayout } from '../shell-frame';
 import { UltramodernRouteHead } from '../ultramodern-route-head';
+import { signInHref } from '../sign-in-return.ts';
 import { useShellControls } from '../use-shell-controls.ts';
 import { HomeWelcome } from './home-welcome.tsx';
 import { ResolvedTarget } from './modules/[moduleId]/page.tsx';
@@ -17,9 +19,17 @@ interface HomeViewProps {
 }
 
 export const HomeView = ({ initialModel }: HomeViewProps) => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const model = initialModel;
   const controls = useShellControls(model.state === 'authenticated' ? model : undefined);
+  const navigate = useNavigate();
+  const signInReason = model.state === 'anonymous' ? model.reason : undefined;
+  // A browser whose session died (disabled account, session no longer accepted) goes to sign-in with the reason.
+  useEffect(() => {
+    if (signInReason !== undefined) {
+      void navigate({ href: signInHref(language, window.location.pathname, signInReason), replace: true });
+    }
+  }, [language, navigate, signInReason]);
 
   if (model.state === 'anonymous') {
     return (

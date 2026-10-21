@@ -230,7 +230,7 @@ Every account uses the password `password1234`. Sign in at http://localhost:3020
 | `management@siampark.demo` | Management: reads all Siampark modules                                           |
 | `operations@siampark.demo` | Operations: can write in the Siampark modules                                    |
 | `finance@siampark.demo`    | Finance: can write in billing/finance                                            |
-| `external@siampark.demo`   | External: sees only assigned records                                             |
+| `external@siampark.demo`   | External: reads only CRM contacts entrusted to him (`demo.crm.read_assigned`)    |
 | `demo@test.com`            | Local Tenant from `local:initialize`. Holds every Action in its own Tenant only. |
 
 ### Sales demo permissions
@@ -294,6 +294,15 @@ The storefront key lands in `app/.env.demo.local` as `ONTOS_STOREFRONT_API_KEY` 
 accounts (`management@`, `operations@`, `finance@`, `external@siampark.demo`) also get their roles in the
 Siampark company 0021 (`siamparkRentalPersonas`).
 
+### Siampark CRM: entrusted contacts (S00)
+
+`node --env-file=.env scripts/demo/seed-siampark-crm.mts` writes the Siampark (0021) CRM state once (`--reset`
+replaces it): six prospective tenants, three entrusted by Vedení to `external@siampark.demo` (Martin Krejčí), with
+contacts, calls/meetings and planned contacts. `management@` holds `demo.crm` read_all/write_all/assign and
+`external@` only `demo.crm.read_assigned`, so the crm owner returns just the three entrusted clients to him; finance,
+agreements and occupancy stay closed. On a running demo `node scripts/demo/siampark-crm-permissions.mts` adds the two
+grants without a full permission reset. In Siampark the sidebar shows only Klienti, K oslovení and Návštěvy of CRM.
+
 ### Proofs
 
 `node scripts/demo/prove-sales-demo.mts` checks requirements 5, 7d and 10 over HTTP against the running stack:
@@ -321,6 +330,7 @@ verification assertions`. Its development target passes no explicit assertions, 
   price-group-catalog and privacy workers, because those owners are not in the composition. During
   the first seconds, before the composition is published, the shell also logs
   `InstalledModuleCatalogUnavailableError`. Both are harmless for the demo.
-- If a browser already holds a session from another OntOS instance on `localhost:3020`, you see
-  "Přihlášené prostředí je dočasně nedostupné". Sign out (`POST /shell-super-app-api/auth/sign-out`)
-  and sign in again.
+- A disabled account's open session is sent to sign-in with „Účet nemá přístup“; a session the Shell no longer
+  accepts is sent there with „Přihlášení vypršelo“. If a browser holds a session from another OntOS instance on
+  `localhost:3020` and still sees "Přihlášené prostředí je dočasně nedostupné", sign out
+  (`POST /shell-super-app-api/auth/sign-out`) and sign in again.

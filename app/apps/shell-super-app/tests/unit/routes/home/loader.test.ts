@@ -276,8 +276,16 @@ it.effect('tears down stale authenticated data when tenant context requires auth
   Effect.gen(function* verifyCase12() {
     availableTenantsMock.mockReturnValueOnce(Effect.fail({ _tag: 'TenantAuthenticationRequiredProblem' }));
     expect(yield* loadModel({ request: request() })).toEqual({
+      reason: 'session_ended',
       state: 'anonymous',
     });
+  }),
+);
+
+it.effect('sends a disabled account to sign-in instead of the unavailable state (S00)', () =>
+  Effect.gen(function* verifyDisabledAccount() {
+    currentSessionMock.mockReturnValueOnce(Effect.fail({ _tag: 'OntosIdentityForbiddenProblem' }));
+    expect(yield* loadModel({ request: request() })).toEqual({ reason: 'account_forbidden', state: 'anonymous' });
   }),
 );
 
