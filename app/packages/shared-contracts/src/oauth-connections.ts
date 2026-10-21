@@ -274,7 +274,8 @@ export type ConnectApproveResponse = typeof ConnectApproveResponseSchema.Type;
 export const ConnectDenyRequestSchema = Schema.Struct({ grantId: Schema.NullOr(Id), oauthQuery: OAuthQuery });
 export type ConnectDenyRequest = typeof ConnectDenyRequestSchema.Type;
 
-export const ConnectDenyResponseSchema = Schema.Struct({ status: Schema.Literal('denied') });
+/** `redirectTo` = the client's redirect_uri with `error=access_denied`, the original `state` and `iss` (RFC 9207). */
+export const ConnectDenyResponseSchema = Schema.Struct({ redirectTo: Schema.String, status: Schema.Literal('denied') });
 export type ConnectDenyResponse = typeof ConnectDenyResponseSchema.Type;
 
 /** Problem `code` values of the connect endpoints (Czech copy lives in the screens). */
