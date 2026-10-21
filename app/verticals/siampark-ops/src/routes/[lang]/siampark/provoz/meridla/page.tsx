@@ -299,7 +299,9 @@ const MetersView = () => {
             </Badge>
           )
         }
-        description={t(`${k}.${canReadFinancial ? 'description' : 'operationalDescription'}`)}
+        description={t(
+          `${k}.${canReadFinancial ? 'description' : canWrite ? 'operationalDescription' : 'operationalReadOnlyDescription'}`,
+        )}
         title={t(`${k}.title`)}
       />
       <AgendaGate onRetry={() => void ops.reload()} readable={envelope !== undefined} status={ops.status}>

@@ -2,6 +2,7 @@
   "title": "Meters and energy",
   "description": "Utility meters of properties and units, readings, consumption and period costs. Consumption is only computed from two consecutive readings of the same meter in the same unit.",
   "operationalDescription": "Operational meter readings and consumption. You may record readings; costs, contracts, photos and internal notes remain protected.",
+  "operationalReadOnlyDescription": "Operational meter readings and consumption, read only. Siampark staff record readings; costs, contracts, photos and internal notes stay protected.",
   "fields": {
     "serialNumber": "Serial number",
     "medium": "Medium",

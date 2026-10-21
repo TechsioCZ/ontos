@@ -2,6 +2,7 @@
   "title": "Měřidla a energie",
   "description": "Měřidla médií u nemovitostí a jednotek, odečty, spotřeba a náklady za období. Spotřeba se počítá jen ze dvou navazujících odečtů stejného měřidla ve stejné jednotce.",
   "operationalDescription": "Provozní odečty a spotřeba měřidel. Můžete zapsat odečet; náklady, smlouvy, fotografie a interní poznámky zůstávají chráněné.",
+  "operationalReadOnlyDescription": "Provozní odečty a spotřeba měřidel jen pro čtení. Odečty zapisují zaměstnanci Siampark; náklady, smlouvy, fotografie a interní poznámky zůstávají chráněné.",
   "fields": {
     "serialNumber": "Výrobní číslo",
     "medium": "Médium",
