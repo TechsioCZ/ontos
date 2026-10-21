@@ -51,6 +51,7 @@ export const legacyCanonicalRedirects: ReadonlyMap<string, string> = new Map([
   ['/siampark/provoz/bezpecnost', '/provoz/bezpecnost'],
   ['/siampark/provoz/dokumenty', '/provoz/dokumenty'],
   ['/provoz/ukoly', '/ukoly'],
+  ['/profil', '/profile'],
 ]);
 
 const redirectTo = (href: string): never => {

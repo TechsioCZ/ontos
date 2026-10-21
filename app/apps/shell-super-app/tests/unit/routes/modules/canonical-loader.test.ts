@@ -167,6 +167,7 @@ it.effect.each([
   ['/siampark/provoz/bezpecnost', '/provoz/bezpecnost'],
   ['/siampark/provoz/dokumenty', '/provoz/dokumenty'],
   ['/provoz/ukoly', '/ukoly'],
+  ['/profil', '/profile'],
 ] as const)('redirects the legacy path %s to %s and keeps the query string', ([legacyPath, domainPath]) =>
   Effect.gen(function* redirectsLegacyPath() {
     const thrown = yield* Effect.flip(
