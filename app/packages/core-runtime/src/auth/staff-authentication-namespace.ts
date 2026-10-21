@@ -24,7 +24,7 @@ export const staffAuthenticationNamespaceRegistration = (allowedAudiences: reado
     provider: 'better-auth',
     requiresOperationAdmission: false,
     reservationPrincipalKind: 'human',
-    subjectTypes: ['user', 'api_key'],
+    subjectTypes: ['user', 'api_key', 'oauth_grant'],
     trustedAttesterPrincipalIds: [],
   });
 

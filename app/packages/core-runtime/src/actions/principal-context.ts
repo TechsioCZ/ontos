@@ -9,6 +9,7 @@ const AuthenticationNamespaceIdSchema = decodedStringBrand(
   'AuthenticationNamespaceId',
 );
 const ImpersonatedByPrincipalIdSchema = decodedStringBrand(uuid, 'ImpersonatedByPrincipalId');
+const DelegatedByPrincipalIdSchema = decodedStringBrand(uuid, 'DelegatedByPrincipalId');
 const LegalEntityIdSchema = decodedStringBrand(uuid, 'LegalEntityId');
 const PrincipalIdSchema = decodedStringBrand(uuid, 'PrincipalId');
 const TenantIdSchema = decodedStringBrand(uuid, 'TenantId');
@@ -17,11 +18,31 @@ const TrustedStorefrontIdSchema = decodedStringBrand(
   'TrustedStorefrontId',
 );
 
+const ConnectionModuleGrantSchema = Schema.Struct({
+  access: Schema.Literals(['read', 'write']),
+  moduleId: nonEmptyString.check(Schema.isMaxLength(120)),
+});
+
+/** What an MCP OAuth connection may do (ONTOS-MCP-AUTH-DESIGN.md §4.3); only with authMethod 'oauth_connection'. */
+export const OAuthConnectionContextSchema = Schema.Struct({
+  clientId: nonEmptyString.check(Schema.isMaxLength(500)),
+  clientName: nonEmptyString.check(Schema.isMaxLength(200)),
+  grantId: uuid,
+  modules: Schema.Union([
+    Schema.Literal('all'),
+    Schema.Array(ConnectionModuleGrantSchema).check(Schema.isMaxLength(100)),
+  ]),
+  writePolicy: Schema.Literals(['read_only', 'approval', 'direct']),
+});
+export type OAuthConnectionContext = typeof OAuthConnectionContextSchema.Type;
+
 const TrustedPrincipalContextFieldsSchema = Schema.Struct({
   authBindingId: Schema.optionalKey(AuthBindingIdSchema),
   authContextRef: Schema.optionalKey(nonEmptyString.check(Schema.isMaxLength(500))),
   authenticationNamespaceId: Schema.optionalKey(AuthenticationNamespaceIdSchema),
-  authMethod: Schema.Literals(['session', 'api_key', 'system', 'support_impersonation']),
+  authMethod: Schema.Literals(['session', 'api_key', 'system', 'support_impersonation', 'oauth_connection']),
+  connection: Schema.optionalKey(OAuthConnectionContextSchema),
+  delegatedByPrincipalId: Schema.optionalKey(DelegatedByPrincipalIdSchema),
   impersonatedByPrincipalId: Schema.optionalKey(ImpersonatedByPrincipalIdSchema),
   legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
   principalId: PrincipalIdSchema,
@@ -66,8 +87,19 @@ const validateSystemContext: PrincipalContextValidator = (context) =>
     ? issue('system context requires only a safe job/run reference')
     : [];
 
+const validateOAuthConnectionContext: PrincipalContextValidator = (context) =>
+  context.authBindingId === undefined ||
+  context.connection === undefined ||
+  context.legalEntityId === undefined ||
+  context.impersonatedByPrincipalId !== undefined ||
+  context.authContextRef !== `oauth-grant:${context.connection.grantId}` ||
+  context.delegatedByPrincipalId === context.principalId
+    ? issue('oauth_connection context requires a binding, its grant reference, a legal entity and a distinct delegating principal')
+    : [];
+
 const principalContextValidators = {
   api_key: validateApiKeyContext,
+  oauth_connection: validateOAuthConnectionContext,
   session: validateSessionContext,
   support_impersonation: validateSupportImpersonationContext,
   system: validateSystemContext,
@@ -76,6 +108,10 @@ const principalContextValidators = {
 export const TrustedPrincipalContextSchema = TrustedPrincipalContextFieldsSchema.check(
   Schema.makeFilter((context) => [
     ...principalContextValidators[context.authMethod](context),
+    ...(context.authMethod !== 'oauth_connection' &&
+    (context.connection !== undefined || context.delegatedByPrincipalId !== undefined)
+      ? [{ issue: 'only oauth_connection contexts carry connection data', path: ['connection'] }]
+      : []),
     ...(context.trustedStorefrontId !== undefined && context.legalEntityId === undefined
       ? [
           {

@@ -221,12 +221,15 @@ const hasInvalidPersistedBinding = (
   );
 };
 
-const subjectTypeForPrincipal = (principal: TrustedPrincipalContext): 'user' | 'api_key' | undefined => {
+const subjectTypeForPrincipal = (principal: TrustedPrincipalContext): 'user' | 'api_key' | 'oauth_grant' | undefined => {
   if (principal.authMethod === 'api_key') {
     return 'api_key';
   }
   if (principal.authMethod === 'session' || principal.authMethod === 'support_impersonation') {
     return 'user';
+  }
+  if (principal.authMethod === 'oauth_connection') {
+    return 'oauth_grant';
   }
   return undefined;
 };
