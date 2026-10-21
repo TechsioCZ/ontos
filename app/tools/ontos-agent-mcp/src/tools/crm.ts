@@ -82,7 +82,7 @@ export const registerCrmTools = (server: McpServer) => {
   defineTool(
     server,
     'propose_crm_changes',
-    'Pouze NAVRHNI změny CRM. Žádný klient, kontakt, přidělení ani objednávka se tím nezmění. Každou položku schválí správce nebo vedoucí na /cs/crm/schvalovani-ai; tam je i Vrátit vše. Před návrhem načti list_crm. Jedna dávka může obsahovat nejvýše jednu změnu téže existující entity. Pro opakování použij stejné runId. Jiným modulům tento profil zapisovat nesmí.',
+    'Pouze NAVRHNI změny CRM. Žádný klient, kontakt, přidělení ani objednávka se tím nezmění. Každou položku schválí správce nebo vedoucí na /cs/sprava/ke-schvaleni (Nastavení › Ke schválení); tam je i Vrátit vše. Před návrhem načti list_crm. Jedna dávka může obsahovat nejvýše jednu změnu téže existující entity. Pro opakování použij stejné runId. Jiným modulům tento profil zapisovat nesmí.',
     {
       instruction: z.string().min(3).max(2000),
       runId: z.string().min(1).max(200),
@@ -119,7 +119,7 @@ export const registerCrmTools = (server: McpServer) => {
         message: pending
           ? 'Návrh uložen. Data se nezměnila; čeká na schválení člověkem.'
           : 'Tento běh už je evidován. Zkontrolujte skutečné výsledky položek v aplikaci; nový návrh nevznikl.',
-        reviewUrl: 'http://localhost:3020/cs/crm/schvalovani-ai',
+        reviewUrl: 'http://localhost:3020/cs/sprava/ke-schvaleni',
       };
     },
   );

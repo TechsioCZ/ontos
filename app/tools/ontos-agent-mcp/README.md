@@ -18,7 +18,7 @@ Typed tools exist for the current company only: `<app_id>__read_<slug>` and `<ap
 
 Write policy is `direct` or `approval`. With `approval` (zápis jen přes schválení), `ontos_execute` and the typed
 write tools only submit a proposal. The proposal goes to platform approvals when present, otherwise to the module's
-`AiProposeChanges`, and is approved on `/cs/crm/schvalovani-ai` or `/cs/prodej/schvalovani-ai`.
+`AiProposeChanges`, and is approved on `/cs/sprava/ke-schvaleni`.
 
 ## Tokens
 
@@ -130,7 +130,7 @@ Typované nástroje platí jen pro aktuální firmu: `<app_id>__read_<slug>` a `
 
 Zásada zápisu je `direct` (přímý zápis) nebo `approval` (zápis jen přes schválení). Při `approval` nástroj `ontos_execute`
 i typované zápisové nástroje jen podají návrh. Návrh jde do platformních schválení, pokud existují, jinak do `AiProposeChanges`
-modulu, a schvaluje se na `/cs/crm/schvalovani-ai` nebo `/cs/prodej/schvalovani-ai`.
+modulu, a schvaluje se na `/cs/sprava/ke-schvaleni`.
 
 ### 2. Tokeny
 
@@ -239,9 +239,9 @@ Workspace tool installed and validated with the application from `app/`.
 
 With `ONTOS_AGENT_PROFILE` the key comes from `ONTOS_AGENT_<PROFILE>_<COMPANY>_API_KEY` (never the broader legacy
 key) and the legal entity from the company. Only tools whose reads work with that company's grants are registered
-(`src/profiles.ts`). Level C: Hanák proposes CRM changes (`propose_crm_changes`, approved on `/crm/schvalovani-ai`);
-Obchodní firma proposes opportunity and order changes (`propose_sales_changes`, `list_ai_proposals`, approved on
-`/prodej/schvalovani-ai`). Principals, grants and keys: `scripts/demo/ai-profiles.mts`; proofs against the running
+(`src/profiles.ts`). Level C: Hanák proposes CRM changes (`propose_crm_changes`) and Obchodní firma proposes
+opportunity and order changes (`propose_sales_changes`, `list_ai_proposals`); both are approved on
+`/cs/sprava/ke-schvaleni`. Principals, grants and keys: `scripts/demo/ai-profiles.mts`; proofs against the running
 demo: `pnpm demo:prove:ai`, `demo:prove:ai:c`, `demo:prove:ai:c:obchod`; presenter guide:
 `app/docs/demo/AI_AGENT_DEMO.cs.md`.
 

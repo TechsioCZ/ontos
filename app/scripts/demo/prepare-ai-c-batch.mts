@@ -2,7 +2,7 @@
 /**
  * LOCAL ONLY. Prepares the waiting AI level C batch the in-app demo guide (Hanák, chapter "AI agent A / B / C") walks
  * through: the real MCP server with profile C proposes a new telephone and a website for Bistro Král s.r.o. Nothing
- * changes in the client record until a person approves it in /crm/schvalovani-ai.
+ * changes in the client record until a person approves it in /cs/sprava/ke-schvaleni.
  *
  * Idempotent: when a batch of this kind is still fully pending, it is reused and no second batch is created. After a
  * demo ("Vrátit vše") run it again to get a fresh batch for the next customer.

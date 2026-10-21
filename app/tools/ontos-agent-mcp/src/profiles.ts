@@ -68,8 +68,8 @@ export const profileLabel = (profile: AgentProfile, company: AgentCompany | unde
   profile !== 'C'
     ? PROFILE_LABEL[profile]
     : company === 'obchod'
-      ? 'Úroveň C — návrhy změn příležitostí a objednávek; každou změnu schvaluje člověk na /prodej/schvalovani-ai'
-      : 'Úroveň C — návrhy změn CRM; každou změnu schvaluje člověk na /crm/schvalovani-ai';
+      ? 'Úroveň C — návrhy změn příležitostí a objednávek; každou změnu schvaluje člověk na /sprava/ke-schvaleni'
+      : 'Úroveň C — návrhy změn CRM; každou změnu schvaluje člověk na /sprava/ke-schvaleni';
 
 export const isToolAllowed = (
   profile: AgentProfile | undefined,

@@ -306,7 +306,7 @@ describe('generic execute operations', () => {
       });
       assert.equal(outcome.status, 'proposed');
       assert.equal(outcome.status === 'proposed' ? outcome.via : undefined, 'module-ai-proposals');
-      assert.match(outcome.status === 'proposed' ? outcome.messageCs : '', /\/cs\/crm\/schvalovani-ai/u);
+      assert.match(outcome.status === 'proposed' ? outcome.messageCs : '', /\/cs\/sprava\/ke-schvaleni/u);
     }),
   );
 

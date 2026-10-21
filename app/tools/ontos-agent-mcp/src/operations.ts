@@ -15,9 +15,9 @@ import { applyCommand } from './tools/shared.ts';
 export const PLATFORM_APPROVALS_MODULE_ID = 'platform.approvals';
 export const PLATFORM_APPROVALS_COMMAND = 'SubmitProposal';
 export const AI_REVIEW_URL_CS: Readonly<Record<string, string>> = {
-  'demo.crm': '/cs/crm/schvalovani-ai',
-  'demo.sales-pipeline': '/cs/prodej/schvalovani-ai',
-  'demo.merchandise': '/cs/prodej/schvalovani-ai',
+  'demo.crm': '/cs/sprava/ke-schvaleni',
+  'demo.sales-pipeline': '/cs/sprava/ke-schvaleni',
+  'demo.merchandise': '/cs/sprava/ke-schvaleni',
 };
 
 const JsonObjectSchema = Schema.Record(Schema.String, Schema.Json);

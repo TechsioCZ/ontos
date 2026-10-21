@@ -1,5 +1,5 @@
 // AI level C for Obchodní firma (specs AGENT.md §3): the agent PROPOSES changes of opportunities (sales-pipeline) and
-// orders (merchandise). Nothing changes until a person approves each item on /cs/prodej/schvalovani-ai, where the whole
+// orders (merchandise). Nothing changes until a person approves each item on /cs/sprava/ke-schvaleni, where the whole
 // run can also be reverted. The C principal has no write grant, so a direct apply-command is refused by the module.
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { Schema } from 'effect';
@@ -10,7 +10,7 @@ import { OPPORTUNITY_STAGES } from './sales.ts';
 import { ORDER_STATUSES } from './merchandise.ts';
 import { applyCommand, CALENDAR_DATE, defineTool, minorFromCzk, readRecordsOf, readRevision } from './shared.ts';
 
-export const SALES_AI_REVIEW_URL = 'http://localhost:3020/cs/prodej/schvalovani-ai';
+export const SALES_AI_REVIEW_URL = 'http://localhost:3020/cs/sprava/ke-schvaleni';
 const AGENT_LABEL = 'AI asistent Obchodní firmy · úroveň C';
 
 const id = z.string().min(1).max(300);
@@ -289,7 +289,7 @@ export const registerSalesAiTools = (server: McpServer): void => {
   defineTool(
     server,
     'propose_sales_changes',
-    'Pouze NAVRHNI změny příležitostí a objednávek Obchodní firmy. Data se tím nezmění: každou položku schválí nebo zamítne člověk na /cs/prodej/schvalovani-ai, kde lze celý běh i vrátit („Vrátit vše“). Před návrhem načti list_opportunities / list_orders / list_employees / list_customers a použij existující id. Částky jsou v Kč. Jedna dávka může obsahovat nejvýše jednu změnu téhož záznamu. Pro opakování použij stejné runId. Návrh, který modul nepovolí (např. uzavřená příležitost, nepovolený přechod stavu objednávky), se odmítne hned.',
+    'Pouze NAVRHNI změny příležitostí a objednávek Obchodní firmy. Data se tím nezmění: každou položku schválí nebo zamítne člověk na /cs/sprava/ke-schvaleni (Nastavení › Ke schválení), kde lze celý běh i vrátit („Vrátit vše“). Před návrhem načti list_opportunities / list_orders / list_employees / list_customers a použij existující id. Částky jsou v Kč. Jedna dávka může obsahovat nejvýše jednu změnu téhož záznamu. Pro opakování použij stejné runId. Návrh, který modul nepovolí (např. uzavřená příležitost, nepovolený přechod stavu objednávky), se odmítne hned.',
     {
       changes: z
         .array(z.object({ operation: salesAiOperation, reason: z.string().min(3).max(2000) }))
