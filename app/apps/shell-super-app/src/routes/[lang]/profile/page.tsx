@@ -6,7 +6,6 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { SignInRedirect } from '../../sign-in-redirect.tsx';
 import { ShellContentLayout } from '../../shell-content-layout.tsx';
 import { useShellControls } from '../../use-shell-controls.ts';
-import { PersonalMcpSection } from './personal-mcp-section.tsx';
 
 const ProfilePage = () => {
   const { t } = useModernI18n();
@@ -40,7 +39,6 @@ const ProfilePage = () => {
           <h2 className="font-semibold text-lg">{t('shell.profile.identity')}</h2>
           <p className="text-sm">{model.shell.identity.displayName}</p>
         </section>
-        <PersonalMcpSection />
       </div>
     </ShellContentLayout>
   );

@@ -4,13 +4,12 @@ import cs from '../../../../locales/cs/shell.json';
 import en from '../../../../locales/en/shell.json';
 import { ultramodernRouteMetadata } from '../../../../src/routes/ultramodern-route-metadata';
 
-test.each([
-  ['profile', cs.shell.profile, en.shell.profile],
-  ['profile.mcp', cs.shell.profile.mcp, en.shell.profile.mcp],
-  ['profile.errors', cs.shell.profile.errors, en.shell.profile.errors],
-])('aligns Czech and English %s translation keys', (_name, czech, english) => {
-  expect(Object.keys(czech).toSorted()).toEqual(Object.keys(english).toSorted());
-});
+test.each([['profile', cs.shell.profile, en.shell.profile]])(
+  'aligns Czech and English %s translation keys',
+  (_name, czech, english) => {
+    expect(Object.keys(czech).toSorted()).toEqual(Object.keys(english).toSorted());
+  },
+);
 
 test('includes the profile route in the generated metadata manifest', () => {
   expect(ultramodernRouteMetadata).toContainEqual(

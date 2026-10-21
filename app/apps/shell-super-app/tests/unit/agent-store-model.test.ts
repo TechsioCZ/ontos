@@ -4,7 +4,6 @@ import {
   DEFAULT_AGENT_PROFILE,
   foldAgentProfiles,
   moduleLabel,
-  mcpScopeOfMetadata,
   seededAgentProfiles,
 } from '../../api/auth/agent-store-model.ts';
 
@@ -60,14 +59,6 @@ test('later evidence wins over earlier evidence', () => {
     seeded: false,
     writePolicy: 'approval',
   });
-});
-
-test('mcpScopeOfMetadata reads direct, double-encoded, null and garbage metadata', () => {
-  const direct = JSON.stringify({ ontosLegalEntityId: HANAK_C });
-  expect(mcpScopeOfMetadata(direct)).toBe(HANAK_C);
-  expect(mcpScopeOfMetadata(JSON.stringify(direct))).toBe(HANAK_C);
-  expect(mcpScopeOfMetadata(null)).toBeUndefined();
-  expect(mcpScopeOfMetadata('garbage')).toBeUndefined();
 });
 
 test('moduleLabel returns the Czech label or the module id', () => {

@@ -1,5 +1,5 @@
-// Agent profiles and MCP token scope, pure part (lane agent-entities). No database imports; the DB side lives in
-// agent-store.ts. Seeded AI principals match scripts/demo/ai-profiles.mts; administrator edits are audit evidence.
+// Agent profiles, pure part (lane agent-entities). No database imports; the DB side lives in agent-store.ts.
+// Seeded AI principals match scripts/demo/ai-profiles.mts; administrator edits are audit evidence.
 import { AgentModuleGrantSchema, AgentWritePolicySchema } from '@app/shared-contracts/agent-access';
 import type { AgentModuleGrant, AgentWritePolicy } from '@app/shared-contracts/agent-access';
 import { Option, Schema } from 'effect';
@@ -32,10 +32,21 @@ const withWrites = (reads: readonly string[], writes: readonly string[]): readon
   reads.map((moduleId) => ({ access: writes.includes(moduleId) ? 'write' : 'read', moduleId }));
 
 export const seededAgentProfiles: Readonly<
-  Record<string, { readonly legalEntityId: string; readonly modules: readonly AgentModuleGrant[]; readonly writePolicy: AgentWritePolicy }>
+  Record<
+    string,
+    {
+      readonly legalEntityId: string;
+      readonly modules: readonly AgentModuleGrant[];
+      readonly writePolicy: AgentWritePolicy;
+    }
+  >
 > = {
   // ai-agent-a-obchod
-  '35b748a0-d93a-520e-bd52-91433c8d15b8': { legalEntityId: OBCHOD, modules: withWrites(obchodReads, []), writePolicy: 'read_only' },
+  '35b748a0-d93a-520e-bd52-91433c8d15b8': {
+    legalEntityId: OBCHOD,
+    modules: withWrites(obchodReads, []),
+    writePolicy: 'read_only',
+  },
   // ai-agent-b-obchod
   'e931e0fd-adba-56fd-9e17-e5f3adb3efa0': {
     legalEntityId: OBCHOD,
@@ -49,7 +60,11 @@ export const seededAgentProfiles: Readonly<
     writePolicy: 'approval',
   },
   // ai-agent-a-hanak
-  '40052c4b-ea18-5c8c-ae8d-5d80548cec33': { legalEntityId: HANAK, modules: withWrites(hanakReads, []), writePolicy: 'read_only' },
+  '40052c4b-ea18-5c8c-ae8d-5d80548cec33': {
+    legalEntityId: HANAK,
+    modules: withWrites(hanakReads, []),
+    writePolicy: 'read_only',
+  },
   // ai-agent-b-hanak
   'c771c6f7-8d32-5ba7-af67-de4bd05eabc7': {
     legalEntityId: HANAK,
@@ -131,27 +146,4 @@ export const foldAgentProfiles = (
     }
   }
   return profiles;
-};
-
-const MetadataScope = Schema.fromJsonString(Schema.Struct({ ontosLegalEntityId: Schema.String }));
-const MetadataString = Schema.fromJsonString(Schema.String);
-
-/** Token metadata written to the Better Auth API key row: the one company the token may act for. */
-export const mcpTokenMetadata = (legalEntityId: string): string => JSON.stringify({ ontosLegalEntityId: legalEntityId });
-
-/** Company scope of a token; tolerates Better Auth double-encoding the metadata as a JSON string. */
-export const mcpScopeOfMetadata = (metadata: string | null | undefined): string | undefined => {
-  if (metadata === null || metadata === undefined) {
-    return undefined;
-  }
-  const direct = Schema.decodeOption(MetadataScope)(metadata);
-  if (Option.isSome(direct)) {
-    return direct.value.ontosLegalEntityId;
-  }
-  const inner = Schema.decodeOption(MetadataString)(metadata);
-  if (Option.isNone(inner)) {
-    return undefined;
-  }
-  const nested = Schema.decodeOption(MetadataScope)(inner.value);
-  return Option.isSome(nested) ? nested.value.ontosLegalEntityId : undefined;
 };

@@ -334,45 +334,6 @@
         "disabled": "Disabled accounts",
         "all": "All accounts"
       }
-    },
-    "agents": {
-      "tokens": {
-        "title": "MCP access",
-        "description": "A token is the key the agent uses to connect to OntOS over MCP. It works only in this company and only within the agent's permissions.",
-        "inactive": "An inactive agent cannot use or receive tokens. Reactivate it first.",
-        "empty": "The agent has no token yet.",
-        "issue": "Issue new token",
-        "issuing": "Issuing…",
-        "created": "Created {{date}}",
-        "lastUsed": "Last used {{date}}",
-        "neverUsed": "Not used yet",
-        "active": "Active",
-        "disabled": "Paused",
-        "rotate": "Rotate",
-        "revoke": "Revoke",
-        "reason": "Reason",
-        "reasonRequired": "Enter a reason.",
-        "confirmRotate": "Rotate token",
-        "confirmRevoke": "Revoke token",
-        "cancel": "Back",
-        "rotateHint": "The old token stops working as soon as the new one is issued.",
-        "revokeHint": "A revoked token stops working on the next request. This cannot be undone.",
-        "once": "The token is shown only now. Copy it; you will not see it again.",
-        "secretLabel": "Token",
-        "copy": "Copy",
-        "copied": "Copied",
-        "copyFailed": "Copying failed, select the text manually.",
-        "chatgptTitle": "ChatGPT (custom MCP connector)",
-        "chatgptUrl": "MCP server URL",
-        "chatgptHeader": "Authorization header",
-        "chatgptNote": "ChatGPT connects from the internet and needs a public HTTPS URL (for example through a tunnel). On the local demo use Claude Desktop or Claude Code.",
-        "claudeDesktopTitle": "Claude Desktop (claude_desktop_config.json)",
-        "claudeCodeTitle": "Claude Code (terminal command)",
-        "done": "Done, I saved the token",
-        "toastIssued": "Token for {{name}} issued",
-        "toastRotated": "Token for {{name}} rotated",
-        "toastRevoked": "Token for {{name}} revoked"
-      }
     }
   }
 }
