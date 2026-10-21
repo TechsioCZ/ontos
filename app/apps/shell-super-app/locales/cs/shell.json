@@ -176,6 +176,13 @@
       "seo": {
         "description": "Přihlaste se do pracovního prostoru OntOS."
       },
+      "oauth": {
+        "continue": "Přihlaste se, abyste mohli pokračovat.",
+        "request": "({{host}}) žádá o přístup k vašemu účtu v OntOS.",
+        "requestNoHost": "žádá o přístup k vašemu účtu v OntOS.",
+        "unknownClient": "Aplikace",
+        "unverified": "Aplikace se představuje jako {{client}}. Ověřte, že připojení zahajujete vy."
+      },
       "submit": "Přihlásit se",
       "title": "Přihlášení",
       "toast": {

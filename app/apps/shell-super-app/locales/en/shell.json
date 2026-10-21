@@ -176,6 +176,13 @@
       "seo": {
         "description": "Sign in to the OntOS workspace."
       },
+      "oauth": {
+        "continue": "Sign in to continue.",
+        "request": "({{host}}) is requesting access to your OntOS account.",
+        "requestNoHost": "is requesting access to your OntOS account.",
+        "unknownClient": "An application",
+        "unverified": "The application presents itself as {{client}}. Make sure you started this connection yourself."
+      },
       "submit": "Login",
       "title": "Login",
       "toast": {
