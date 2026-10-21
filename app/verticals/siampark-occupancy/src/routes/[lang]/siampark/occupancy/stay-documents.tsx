@@ -358,18 +358,22 @@ export const NoticeCard = ({
   const [templateKey, setTemplateKey] = useState(templates[0]?.key ?? '');
   const [channel, setChannel] = useState<NoticeChannel>('EMAIL');
   const template = templates.find((item) => item.key === templateKey) ?? templates[0];
-  const initial = template?.render(context, 'EMAIL') ?? { subject: '', body: '' };
-  const [subject, setSubject] = useState(initial.subject);
-  const [body, setBody] = useState(initial.body);
-  const [recipient, setRecipient] = useState(defaultEmail);
+  // The text stays derived from the template until the user edits it, so names, contacts and the unit that
+  // finish loading after the card mounted replace the interim placeholder instead of freezing it in the draft.
+  const rendered = template?.render(context, channel) ?? { subject: '', body: '' };
+  const [draft, setDraft] = useState<{ readonly subject: string; readonly body: string }>();
+  const subject = draft?.subject ?? rendered.subject;
+  const body = draft?.body ?? rendered.body;
+  const [recipientDraft, setRecipientDraft] = useState<string>();
+  const recipient = recipientDraft ?? (channel === 'SMS' ? defaultPhone : defaultEmail);
+  const setSubject = (value: string) => setDraft({ subject: value, body });
+  const setBody = (value: string) => setDraft({ subject, body: value });
   const [copied, setCopied] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const applyTemplate = (key: string, nextChannel: NoticeChannel) => {
-    const next = templates.find((item) => item.key === key)?.render(context, nextChannel);
     setTemplateKey(key);
     setChannel(nextChannel);
-    setSubject(next?.subject ?? '');
-    setBody(next?.body ?? '');
+    setDraft(undefined);
     setCopied(false);
   };
   const recipientError =
@@ -443,7 +447,7 @@ export const NoticeCard = ({
                   aria-label="Kanál oznámení"
                   onChange={(event) => {
                     const next = event.target.value === 'SMS' ? 'SMS' : 'EMAIL';
-                    setRecipient(next === 'SMS' ? defaultPhone : defaultEmail);
+                    setRecipientDraft(undefined);
                     applyTemplate(template.key, next);
                   }}
                   value={channel}
@@ -455,7 +459,7 @@ export const NoticeCard = ({
             </div>
             <FormInput
               label={channel === 'EMAIL' ? 'E-mail příjemce' : 'Telefon příjemce'}
-              onChange={(event) => setRecipient(event.target.value)}
+              onChange={(event) => setRecipientDraft(event.target.value)}
               type={channel === 'EMAIL' ? 'email' : 'tel'}
               value={recipient}
               {...(submitted && recipientError !== undefined

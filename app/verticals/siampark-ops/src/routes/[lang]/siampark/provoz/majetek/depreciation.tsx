@@ -306,7 +306,9 @@ export const DepreciationOverview = ({
   readonly state: AssetsState;
 }) => {
   const k = useK();
-  const rows = state.assets.flatMap((asset) => (asset.depreciationPlans ?? []).map((plan) => ({ asset, plan })));
+  const rows = state.assets
+    .filter((asset) => asset.archive === undefined)
+    .flatMap((asset) => (asset.depreciationPlans ?? []).map((plan) => ({ asset, plan })));
   const year = todayIsoDate().slice(0, 4);
   const sumFor = (type: DepreciationType) =>
     rows

@@ -160,7 +160,9 @@
     "save": "Uložit",
     "back": "Zpět",
     "close": "Zavřít",
-    "exportCsv": "Export CSV"
+    "exportCsv": "Export CSV",
+    "archive": "Archivovat záznam",
+    "restoreArchived": "Obnovit z archivu"
   },
   "stats": {
     "count": "Položek majetku",
@@ -189,10 +191,12 @@
     "allResponsible": "Všechny odpovědné osoby",
     "acquiredFrom": "Pořízeno od",
     "acquiredTo": "Pořízeno do",
-    "scopedTotals": "Souhrnné karty, souhrn hodnot i export CSV počítají jen s vyfiltrovanými záznamy ({{count}})."
+    "scopedTotals": "Souhrnné karty, souhrn hodnot i export CSV počítají jen s vyfiltrovanými záznamy ({{count}}).",
+    "archived": "Archivované"
   },
   "states": {
-    "noDisposed": "Žádný majetek zatím nebyl vyřazen."
+    "noDisposed": "Žádný majetek zatím nebyl vyřazen.",
+    "noArchived": "Žádné archivované záznamy."
   },
   "detail": {
     "tabs": {
@@ -345,7 +349,9 @@
     "marked": "Výsledek inventury uložen",
     "followUpCreated": "Navázaný úkol založen",
     "followUpResolved": "Úkol označen jako vyřešený",
-    "inventoryClosed": "Inventura uzavřena"
+    "inventoryClosed": "Inventura uzavřena",
+    "archived": "Záznam byl archivován a zmizel z evidence.",
+    "restored": "Záznam byl obnoven z archivu."
   },
   "create": {
     "title": "Nový majetek",
@@ -439,5 +445,11 @@
       "difference": "Rozdíl skutečnost − plán",
       "overdueHint": "po plánovaném termínu: {{count}}"
     }
+  },
+  "archive": {
+    "title": "Archivováno {{at}} · {{by}}",
+    "note": "Archivovaný záznam se nezobrazuje v evidenci, souhrnech ani výběrech; data a historie zůstávají. Zobrazíte jej filtrem Stav → Archivované.",
+    "prompt": "Archivovat vyřazený záznam? Zmizí z evidence, souhrnů i výběrů; data a historie zůstanou a lze jej obnovit. Důvod archivace:",
+    "defaultReason": "Testovací záznam z ověřování"
   }
 }

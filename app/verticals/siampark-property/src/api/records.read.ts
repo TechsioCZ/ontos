@@ -49,16 +49,25 @@ export const recordsRead = defineRead(
     context.services.load().pipe(
       Effect.mapError(unavailable),
       Effect.map(({ revision, state }) => {
+        // Archived demo records stay stored but leave every register unless the reader asks for them.
+        const listed = input.includeArchived === true;
+        const archivedProperties = new Set(
+          state.properties.filter((record) => record.archive !== undefined).map((record) => record.propertyRef.resourceId),
+        );
         const properties = state.properties.filter(
-          (record) => input.resourceId === undefined || record.propertyRef.resourceId === input.resourceId,
+          (record) =>
+            (listed || record.archive === undefined) &&
+            (input.resourceId === undefined || record.propertyRef.resourceId === input.resourceId),
         );
         const units = state.units.filter(
           (record) =>
+            (listed || (record.archive === undefined && !archivedProperties.has(record.propertyRef.resourceId))) &&
             (input.resourceId === undefined || record.unitRef.resourceId === input.resourceId) &&
             (input.propertyId === undefined || record.propertyRef.resourceId === input.propertyId),
         );
         const assets = state.assets.filter(
           (record) =>
+            (listed || !archivedProperties.has(record.propertyRef.resourceId)) &&
             (input.resourceId === undefined || record.assetRef.resourceId === input.resourceId) &&
             (input.propertyId === undefined || record.propertyRef.resourceId === input.propertyId),
         );

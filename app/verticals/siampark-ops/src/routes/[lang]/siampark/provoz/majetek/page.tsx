@@ -32,7 +32,7 @@ import type {
   InventoryItem,
   Investment,
 } from '../../../../../../shared/domain/assets.ts';
-import { assetKinds, isActiveAsset, upcomingServiceDue } from '../../../../../../shared/domain/assets.ts';
+import { assetKinds, isActiveAsset, isArchivedAsset, upcomingServiceDue } from '../../../../../../shared/domain/assets.ts';
 import { AgendaFrame, AgendaGate } from '../../../../../ui/agenda-frame.tsx';
 import { useAgendaRecords } from '../../../../../ui/use-agenda.ts';
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
@@ -151,7 +151,10 @@ const AssetsView = () => {
 
   const query = foldSearchText(search.trim());
   // Every filter except the status filter: the KPI cards and the value summary follow these rows.
-  const scoped = state.assets.filter(
+  // Archived (test) records leave the register, KPI cards and filters; only the „Archivované“ view shows them.
+  const showArchived = statusFilter === 'archived';
+  const registered = state.assets.filter((asset) => isArchivedAsset(asset) === showArchived);
+  const scoped = registered.filter(
     (asset) =>
       (kindFilter === ALL || (asset.kind ?? 'equipment') === kindFilter) &&
       (propertyFilter === ALL || asset.propertyId === propertyFilter) &&
@@ -163,14 +166,14 @@ const AssetsView = () => {
           `${asset.inventoryNumber} ${asset.name} ${asset.category} ${asset.location?.label ?? ''} ${asset.serialNumber ?? ''} ${asset.responsible ?? ''}`,
         ).includes(query)),
   );
-  const filtered = scoped.length !== state.assets.length;
+  const filtered = scoped.length !== registered.length;
   const stats = portfolioStats({ ...state, assets: scoped }, today);
   const responsibles = [
-    ...new Set(state.assets.flatMap((asset) => (asset.responsible === undefined ? [] : [asset.responsible]))),
+    ...new Set(registered.flatMap((asset) => (asset.responsible === undefined ? [] : [asset.responsible]))),
   ].toSorted((left, right) => left.localeCompare(right, 'cs'));
   const properties = [
     ...new Map(
-      state.assets.flatMap((asset) =>
+      registered.flatMap((asset) =>
         asset.propertyId === undefined || asset.location === undefined
           ? []
           : [
@@ -183,7 +186,7 @@ const AssetsView = () => {
     ).entries(),
   ];
   const rows = scoped.filter(
-    (asset) => statusFilter === ALL || (statusFilter === 'active') === isActiveAsset(asset),
+    (asset) => statusFilter === ALL || showArchived || (statusFilter === 'active') === isActiveAsset(asset),
   );
   const propertyName = (asset: Asset) =>
     properties.find(([id]) => id === asset.propertyId)?.[1] ?? k('summary.noProperty');
@@ -418,6 +421,7 @@ const AssetsView = () => {
                     { label: k('filters.active'), value: 'active' },
                     { label: k('filters.disposed'), value: 'disposed' },
                     { label: k('filters.allStatuses'), value: ALL },
+                    { label: k('filters.archived'), value: 'archived' },
                   ])}
                   label={k('filters.status')}
                   name="statusFilter"
@@ -507,6 +511,8 @@ const AssetsView = () => {
                 emptyDescription:
                   statusFilter === 'disposed'
                     ? k('states.noDisposed')
+                    : showArchived
+                      ? k('states.noArchived')
                     : t('siampark-ops.common.states.emptyDescription'),
                 emptyTitle: t('siampark-ops.common.states.emptyTitle'),
               }}

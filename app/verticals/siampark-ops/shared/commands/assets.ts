@@ -119,6 +119,9 @@ export const assetsCommandSchemas = [
     proceedsMinor: Schema.optionalKey(MinorAmountSchema),
     reason: TextSchema(2000),
   }),
+  /** Staff-only: a disposed asset (typically a test record) leaves the register; data and history stay. */
+  Schema.TaggedStruct('AssetArchive', { assetId: AssetIdSchema, reason: TextSchema(2000) }),
+  Schema.TaggedStruct('AssetArchiveRestore', { assetId: AssetIdSchema }),
   Schema.TaggedStruct('AssetServiceRecord', {
     assetId: AssetIdSchema,
     documentRef: optionalText(300),
@@ -456,6 +459,54 @@ const disposeAsset = Effect.fn('SiamparkOps.Assets.dispose')(function* disposeAs
   return yield* changed(replaceAsset(state, next), asset.id);
 });
 
+const archiveAsset = Effect.fn('SiamparkOps.Assets.archive')(function* archiveAsset(
+  state: AssetsState,
+  value: CommandOf<'AssetArchive'>,
+  input: OpsCommandInput,
+) {
+  const asset = yield* findAsset(state, value.assetId);
+  if (isActiveAsset(asset)) {
+    return yield* opsConflict('Only a disposed asset can be archived');
+  }
+  if (asset.archive !== undefined) {
+    return yield* opsConflict('The asset is already archived');
+  }
+  const event = makeEvent(input, 'archive', {
+    date: DateTime.formatIso(input.now).slice(0, 10),
+    kind: 'note',
+    note: `Archivováno: ${value.reason}`,
+  });
+  const next: Asset = auditUpdated(
+    {
+      ...asset,
+      archive: { at: input.now, by: input.actor, reason: value.reason },
+      events: [...(asset.events ?? []), event],
+    },
+    input,
+  );
+  return yield* changed(replaceAsset(state, next), asset.id);
+});
+
+const restoreArchivedAsset = Effect.fn('SiamparkOps.Assets.restoreArchived')(function* restoreArchivedAsset(
+  state: AssetsState,
+  value: CommandOf<'AssetArchiveRestore'>,
+  input: OpsCommandInput,
+) {
+  const asset = yield* findAsset(state, value.assetId);
+  if (asset.archive === undefined) {
+    return yield* opsConflict('The asset is not archived');
+  }
+  const { archive: _archive, ...rest } = asset;
+  void _archive;
+  const event = makeEvent(input, 'archive-restore', {
+    date: DateTime.formatIso(input.now).slice(0, 10),
+    kind: 'note',
+    note: 'Obnoveno z archivu.',
+  });
+  const next: Asset = auditUpdated({ ...rest, events: [...(asset.events ?? []), event] }, input);
+  return yield* changed(replaceAsset(state, next), asset.id);
+});
+
 const recordService = Effect.fn('SiamparkOps.Assets.recordService')(function* recordService(
   state: AssetsState,
   value: CommandOf<'AssetServiceRecord'>,
@@ -767,6 +818,8 @@ export const evolveAssets = (state: AssetsState, command: AssetsCommand, input: 
     Match.tag('AssetValueChange', (value) => changeValue(state, value, input)),
     Match.tag('AssetEventRecord', (value) => recordEvent(state, value, input)),
     Match.tag('AssetDispose', (value) => disposeAsset(state, value, input)),
+    Match.tag('AssetArchive', (value) => archiveAsset(state, value, input)),
+    Match.tag('AssetArchiveRestore', (value) => restoreArchivedAsset(state, value, input)),
     Match.tag('AssetServiceRecord', (value) => recordService(state, value, input)),
     Match.tag('AssetDepreciationPlanCreate', (value) => createPlan(state, value, input)),
     Match.tag('AssetDepreciationPlanConfirm', (value) => confirmPlan(state, value, input)),

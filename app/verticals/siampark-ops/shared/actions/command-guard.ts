@@ -12,7 +12,12 @@ export const principalKindOf = (authMethod: TrustedPrincipalContext['authMethod'
   authMethod === 'session' || authMethod === 'support_impersonation' ? 'human' : 'non_human';
 
 /** Commands reserved for human users; non-human principals (API keys, system jobs) are rejected. */
-export const nonHumanForbiddenCommands: ReadonlySet<string> = new Set(['FileUpload']);
+export const nonHumanForbiddenCommands: ReadonlySet<string> = new Set([
+  'FileUpload',
+  // Archiving hides records from the register: staff sessions only.
+  'AssetArchive',
+  'AssetArchiveRestore',
+]);
 const forbidsCommand = (commandTag: string): boolean => nonHumanForbiddenCommands.has(commandTag);
 
 export const assertCommandAllowed = (

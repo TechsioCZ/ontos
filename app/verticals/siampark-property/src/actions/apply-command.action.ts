@@ -7,6 +7,8 @@ import {
   ApplyCommandPayloadSchema,
   ApplyCommandResultSchema,
   PropertyErrorSchema,
+  PropertyIneligible,
+  isStaffOnlyPropertyCommand,
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
 import { persistenceService } from '../services/persistence.service.ts';
@@ -18,6 +20,23 @@ const handleApplyCommand = Effect.fn('Property.Action.applyCommand')(function* h
   payload: ApplyCommandPayload,
   context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
 ) {
+  const { command } = payload;
+  if (isStaffOnlyPropertyCommand(command)) {
+    // Archiving hides records from every register: interactive staff sessions only, never API keys or jobs.
+    const { authMethod } = context.scope;
+    if (authMethod !== 'session' && authMethod !== 'support_impersonation') {
+      return yield* new PropertyIneligible({
+        code: 'property_ineligible',
+        reason: `Property command ${command._tag} is reserved for staff users`,
+      });
+    }
+    yield* context.recordAuditEvidence({
+      command: command._tag,
+      principalId: context.scope.principalId,
+      reason: 'reason' in command ? command.reason : null,
+      targetId: 'propertyRef' in command ? command.propertyRef.resourceId : command.unitRef.resourceId,
+    });
+  }
   const milliseconds = yield* Clock.currentTimeMillis;
   yield* context.recordDataAccess({
     accessKind: 'read',

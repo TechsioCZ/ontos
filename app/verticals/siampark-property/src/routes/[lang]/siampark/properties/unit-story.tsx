@@ -53,6 +53,7 @@ export const pragueToday = () =>
 /** Leases, contracts and service tasks of one unit, each linking to its owner's detail. */
 export const UnitStory = ({
   agreements,
+  canLease,
   language,
   occupancy,
   t,
@@ -60,6 +61,8 @@ export const UnitStory = ({
   unit,
 }: {
   readonly agreements: Agreements | undefined;
+  /** False for retired or archived units and units of a building out of operation: no new lease is offered. */
+  readonly canLease: boolean;
   readonly language: string;
   readonly occupancy: Occupancies | undefined;
   readonly t: Translate;
@@ -82,14 +85,16 @@ export const UnitStory = ({
       <section aria-label={t(`${K}.leases`)} className={cardClass}>
         <div className="siamparkproperty:flex siamparkproperty:items-center siamparkproperty:justify-between siamparkproperty:gap-2">
           <h3 className="siamparkproperty:text-sm siamparkproperty:font-semibold">{t(`${K}.leases`)}</h3>
-          <LinkButton
-            href={`/${language}/siampark/occupancy?create=lease&unitId=${unit.unitRef.resourceId}`}
-            size="sm"
-            theme="borderless"
-            variant="secondary"
-          >
-            {t(`${K}.newLease`)}
-          </LinkButton>
+          {canLease && (
+            <LinkButton
+              href={`/${language}/siampark/occupancy?create=lease&unitId=${unit.unitRef.resourceId}`}
+              size="sm"
+              theme="borderless"
+              variant="secondary"
+            >
+              {t(`${K}.newLease`)}
+            </LinkButton>
+          )}
         </div>
         {occupancy === undefined && <p className={mutedClass}>{t(`${K}.notLoaded`)}</p>}
         {occupancy !== undefined && leases.length === 0 && <p className={mutedClass}>{t(`${K}.noLeases`)}</p>}

@@ -50,6 +50,12 @@ export const PropertyCommandSchema = Schema.Union([
     unitRef: UnitRefSchema,
   }),
   Schema.TaggedStruct('ChangeUnitLifecycle', { lifecycleState: UnitLifecycleSchema, unitRef: UnitRefSchema }),
+  /** Staff-only archive of a property that is not in operation; its units are retired and archived with it. */
+  Schema.TaggedStruct('ArchiveProperty', { propertyRef: PropertyRefSchema, reason: PropertyTextSchema }),
+  Schema.TaggedStruct('RestoreProperty', { propertyRef: PropertyRefSchema }),
+  /** Staff-only archive of a retired unit. */
+  Schema.TaggedStruct('ArchiveUnit', { reason: PropertyTextSchema, unitRef: UnitRefSchema }),
+  Schema.TaggedStruct('RestoreUnit', { unitRef: UnitRefSchema }),
   Schema.TaggedStruct('CreateAsset', {
     category: PropertyTextSchema,
     code: PropertyTextSchema,
@@ -66,6 +72,14 @@ export const PropertyCommandSchema = Schema.Union([
   Schema.TaggedStruct('ChangeAssetLifecycle', { assetRef: AssetRefSchema, lifecycleState: AssetLifecycleSchema }),
 ]);
 export type PropertyCommand = typeof PropertyCommandSchema.Type;
+type StaffOnlyPropertyCommand = Extract<
+  PropertyCommand,
+  { readonly _tag: 'ArchiveProperty' | 'ArchiveUnit' | 'RestoreProperty' | 'RestoreUnit' }
+>;
+const staffOnlyTags: ReadonlySet<string> = new Set(['ArchiveProperty', 'RestoreProperty', 'ArchiveUnit', 'RestoreUnit']);
+/** Archive commands change what every register shows, so only interactive staff sessions may run them. */
+export const isStaffOnlyPropertyCommand = (command: PropertyCommand): command is StaffOnlyPropertyCommand =>
+  staffOnlyTags.has(command._tag);
 export const ApplyCommandPayloadSchema = Schema.Struct({
   command: PropertyCommandSchema,
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),

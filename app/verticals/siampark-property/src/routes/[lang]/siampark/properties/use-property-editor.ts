@@ -193,6 +193,12 @@ export const usePropertyEditor = (records: RecordsResponse | undefined, onSaved:
     /** S02: a unit is taken out of service, returned to service or retired (history stays). */
     changeUnitLifecycle: (unit: Unit, lifecycleState: Unit['lifecycleState']) =>
       submit({ _tag: 'ChangeUnitLifecycle', lifecycleState, unitRef: unit.unitRef }),
+    /** Staff-only archive (S02 demo hygiene): hides a test record from every register, history stays. */
+    archiveProperty: (property: Property, reason: string) =>
+      submit({ _tag: 'ArchiveProperty', propertyRef: property.propertyRef, reason }),
+    restoreProperty: (property: Property) => submit({ _tag: 'RestoreProperty', propertyRef: property.propertyRef }),
+    archiveUnit: (unit: Unit, reason: string) => submit({ _tag: 'ArchiveUnit', reason, unitRef: unit.unitRef }),
+    restoreUnit: (unit: Unit) => submit({ _tag: 'RestoreUnit', unitRef: unit.unitRef }),
     busy,
     cancel: () => setDraft(undefined),
     change,

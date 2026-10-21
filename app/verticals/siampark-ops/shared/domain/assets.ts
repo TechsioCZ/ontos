@@ -157,8 +157,20 @@ export const DisposalSchema = Schema.Struct({
 });
 export type Disposal = typeof DisposalSchema.Type;
 
+/**
+ * Staff-only archive of a disposed record (S02 demo hygiene, e.g. test records from verification runs): the
+ * asset keeps its data and history but leaves the register, KPI cards and pickers until restored.
+ */
+export const AssetArchiveSchema = Schema.Struct({
+  at: Schema.DateTimeUtcFromString,
+  by: PrincipalRefSchema,
+  reason: TextSchema(2000),
+});
+export type AssetArchive = typeof AssetArchiveSchema.Type;
+
 export const AssetSchema = Schema.Struct({
   ...AuditFieldsSchema.fields,
+  archive: Schema.optionalKey(AssetArchiveSchema),
   acquisitionDate: Schema.optionalKey(IsoDateSchema),
   acquisitionMethod: Schema.optionalKey(AcquisitionMethodSchema),
   acquisitionValueMinor: Schema.optionalKey(MinorAmountSchema),
@@ -293,6 +305,7 @@ export const emptyAssetsState: AssetsStateEncoded = { assets: [], inventories: [
 
 export const assetStatusOf = (asset: Asset): AssetStatus => asset.status ?? 'active';
 export const isActiveAsset = (asset: Asset): boolean => assetStatusOf(asset) === 'active';
+export const isArchivedAsset = (asset: Asset): boolean => asset.archive !== undefined;
 
 /**
  * Current revision / check / permit deadlines: for each asset, the newest record per (kind, title) that carries a

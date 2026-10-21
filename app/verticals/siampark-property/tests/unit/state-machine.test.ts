@@ -147,3 +147,76 @@ describe('Units of disposed properties', () => {
     }),
   );
 });
+
+describe('Staff archive of demo records', () => {
+  it.effect('archives a property out of operation with its units, freezes them and restores them together', () =>
+    Effect.gen(function* archiveScenario() {
+      const archiveContext = { ...context, principalId: '72000000-0000-4000-8000-000000000021' };
+      const first = yield* applyPropertyCommand(empty, create, context);
+      const { propertyRef } = yield* Effect.fromNullishOr(first.state.properties[0]);
+      const unit = yield* applyPropertyCommand(
+        first.state,
+        { _tag: 'CreateUnit', capacity: null, code: 'V01', name: 'Vrátnice', propertyRef },
+        { ...context, resourceId: '76000000-0000-4000-8000-000000000021' },
+      );
+      const active = yield* applyPropertyCommand(
+        unit.state,
+        { _tag: 'ChangePropertyLifecycle', lifecycleState: 'ACTIVE', propertyRef },
+        context,
+      );
+      const refused = yield* Effect.exit(
+        applyPropertyCommand(active.state, { _tag: 'ArchiveProperty', propertyRef, reason: 'Test' }, archiveContext),
+      );
+      expect(Exit.isFailure(refused)).toBe(true);
+      const archived = yield* applyPropertyCommand(
+        unit.state,
+        { _tag: 'ArchiveProperty', propertyRef, reason: 'Testovací záznam' },
+        archiveContext,
+      );
+      expect(archived.state.properties[0]?.archive?.archivedBy).toBe(archiveContext.principalId);
+      expect(archived.state.units[0]?.lifecycleState).toBe('RETIRED');
+      expect(archived.state.units[0]?.archive?.reason).toBe('Testovací záznam');
+      const unitRef = yield* Effect.fromNullishOr(archived.state.units[0]?.unitRef);
+      const frozen = yield* Effect.exit(
+        applyPropertyCommand(
+          archived.state,
+          { _tag: 'ChangeUnitLifecycle', lifecycleState: 'OUT_OF_SERVICE', unitRef },
+          context,
+        ),
+      );
+      expect(Exit.isFailure(frozen)).toBe(true);
+      const restored = yield* applyPropertyCommand(archived.state, { _tag: 'RestoreProperty', propertyRef }, context);
+      expect(restored.state.properties[0]?.archive).toBeUndefined();
+      expect(restored.state.units[0]?.archive).toBeUndefined();
+      expect(restored.state.units[0]?.lifecycleState).toBe('RETIRED');
+    }),
+  );
+
+  it.effect('archives only retired units', () =>
+    Effect.gen(function* unitArchiveScenario() {
+      const first = yield* applyPropertyCommand(empty, create, context);
+      const { propertyRef } = yield* Effect.fromNullishOr(first.state.properties[0]);
+      const unit = yield* applyPropertyCommand(
+        first.state,
+        { _tag: 'CreateUnit', capacity: null, code: 'C01', name: 'Hala C', propertyRef },
+        { ...context, resourceId: '76000000-0000-4000-8000-000000000022' },
+      );
+      const unitRef = yield* Effect.fromNullishOr(unit.state.units[0]?.unitRef);
+      const refused = yield* Effect.exit(
+        applyPropertyCommand(unit.state, { _tag: 'ArchiveUnit', reason: 'Test', unitRef }, context),
+      );
+      expect(Exit.isFailure(refused)).toBe(true);
+      const retired = yield* applyPropertyCommand(
+        unit.state,
+        { _tag: 'ChangeUnitLifecycle', lifecycleState: 'RETIRED', unitRef },
+        context,
+      );
+      const archived = yield* applyPropertyCommand(
+        retired.state,
+        { _tag: 'ArchiveUnit', reason: 'Test', unitRef },
+        context,
+      );
+      expect(archived.state.units[0]?.archive?.reason).toBe('Test');
+    }),
+  );
+});

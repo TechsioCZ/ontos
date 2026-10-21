@@ -14,7 +14,18 @@ export const AssetLifecycleSchema = Schema.Literals(['ACTIVE', 'IN_SERVICE', 'OU
 export const PropertyTextSchema = Schema.Trim.check(Schema.isNonEmpty(), Schema.isMaxLength(300));
 export const PropertyDateSchema = CalendarDateWireSchema;
 export const PropertyInstantSchema = Schema.toEncoded(Schema.DateTimeUtcFromString);
+/**
+ * Staff-only archive mark (S02 demo hygiene): an archived record keeps its data and history but is left out of
+ * every register and picker unless a reader explicitly asks for archived records.
+ */
+export const ArchiveMarkSchema = Schema.Struct({
+  archivedAt: PropertyInstantSchema,
+  archivedBy: Schema.String,
+  reason: PropertyTextSchema,
+});
+export type ArchiveMark = typeof ArchiveMarkSchema.Type;
 export const PropertyRecordSchema = Schema.Struct({
+  archive: Schema.optionalKey(ArchiveMarkSchema),
   propertyType: Schema.optionalKey(PropertyTextSchema),
   responsiblePerson: Schema.optionalKey(PropertyTextSchema),
   address: PropertyTextSchema,
@@ -28,6 +39,7 @@ export const PropertyRecordSchema = Schema.Struct({
   updatedAt: PropertyInstantSchema,
 });
 export const UnitRecordSchema = Schema.Struct({
+  archive: Schema.optionalKey(ArchiveMarkSchema),
   capacity: Schema.toEncoded(Schema.OptionFromNullOr(Schema.Int.check(Schema.isGreaterThan(0)))),
   code: PropertyTextSchema,
   lifecycleState: UnitLifecycleSchema,
@@ -57,6 +69,8 @@ export const PropertyStateSchema = Schema.Struct({
 });
 export type PropertyState = typeof PropertyStateSchema.Type;
 export const RecordsRequestSchema = Schema.Struct({
+  /** Archived properties and units are returned only when asked for (the staff register toggle). */
+  includeArchived: Schema.optionalKey(Schema.Boolean),
   propertyId: Schema.optionalKey(
     Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('ResourceId'))),
   ),

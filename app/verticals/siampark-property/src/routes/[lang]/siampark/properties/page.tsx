@@ -10,7 +10,7 @@ import { executeRecords as readAgreements } from '@app/siampark-agreements/clien
 import { executeRecords as readOccupancy } from '@app/siampark-occupancy/clients/records';
 import { executeRecords as readFinance } from '@app/siampark-billing-finance/clients/records';
 import { executeRecords as readWork } from '@app/siampark-work/clients/records';
-import { Effect, Match, Option, Random, Result, Schema } from 'effect';
+import { DateTime, Effect, Match, Option, Random, Result, Schema } from 'effect';
 import { useEffect, useEffectEvent, useState } from 'react';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { usePropertyEditor } from './use-property-editor.ts';
@@ -166,7 +166,7 @@ const usePropertyRecords = () => {
     setPending(true);
     void browserRuntime.runPromise(
       Random.nextInt.pipe(
-        Effect.flatMap((id) => executeRecords({}, `siampark-properties:${id}`)),
+        Effect.flatMap((id) => executeRecords({ includeArchived: true }, `siampark-properties:${id}`)),
         Effect.match({
           onFailure: (error) => {
             setRecords(undefined);
@@ -335,6 +335,7 @@ const usePropertyRecords = () => {
     {
       kind: 'properties',
       rows: (records?.properties ?? []).map((item) => ({
+        archived: item.archive !== undefined,
         code: item.code,
         id: item.propertyRef.resourceId,
         name: item.name,
@@ -346,6 +347,7 @@ const usePropertyRecords = () => {
     {
       kind: 'units',
       rows: units.map((item) => ({
+        archived: item.archive !== undefined || property?.archive !== undefined,
         code: item.code,
         id: item.unitRef.resourceId,
         name: item.name,
@@ -357,6 +359,7 @@ const usePropertyRecords = () => {
     {
       kind: 'assets',
       rows: assets.map((item) => ({
+        archived: property?.archive !== undefined,
         code: item.code,
         id: item.assetRef.resourceId,
         name: item.name,
@@ -404,6 +407,8 @@ const detailHeadingClass = 'siamparkproperty:text-sm siamparkproperty:font-semib
 const tableWrapperClass =
   'siamparkproperty:min-w-0 siamparkproperty:overflow-x-auto siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface)';
 const messageClass = 'siamparkproperty:block siamparkproperty:text-sm siamparkproperty:text-(--color-fg-secondary)';
+const archivedAtFormat = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeZone: 'Europe/Prague' });
+const formatArchivedAt = (value: string) => archivedAtFormat.format(DateTime.toEpochMillis(DateTime.makeUnsafe(value)));
 const RecordsPageContent = () => {
   const model = usePropertyRecords();
   const editor = usePropertyEditor(model.records, model.refresh);
@@ -422,17 +427,35 @@ const RecordsPageContent = () => {
   const { asset, key, relatedSections, t, unit } = model;
   const handleRefresh = model.refresh;
   const handleLoadSummary = model.loadSummary;
+  // A unit is offered only while both the unit and its building are in operation; retired or archived units
+  // and units of a building out of operation never advertise availability.
+  const leasable = (lifecycle: string) =>
+    lifecycle === 'ACTIVE' && model.property?.lifecycleState === 'ACTIVE' && model.property.archive === undefined;
   const availabilityLabel = (id: string, lifecycle: string) => {
+    if (lifecycle === 'RETIRED') {
+      return 'Vyřazena – nenabízí se k pronájmu';
+    }
+    if (lifecycle !== 'ACTIVE') {
+      return t(`${key}.outOfService`);
+    }
+    if (!leasable(lifecycle)) {
+      return 'Budova není v provozu – nenabízí se k pronájmu';
+    }
     if (model.occupancy === undefined) {
       return t(`${key}.summaryNotLoaded`);
     }
-    if (lifecycle === 'ACTIVE') {
-      return t(`${key}.availability.${model.availability(id)}`);
-    }
-    return t(`${key}.outOfService`);
+    return t(`${key}.availability.${model.availability(id)}`);
   };
+  const archiveReason = (label: string) =>
+    globalThis.prompt(
+      `Archivovat ${label}? Záznam zmizí ze všech seznamů a výběrů; data i historie zůstanou a lze jej obnovit. Důvod archivace:`,
+      'Testovací záznam z ověřování',
+    );
   const handleCancelEditor = editor.cancel;
   const [showClosed, setShowClosed] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const unitArchive = unit?.archive ?? model.property?.archive;
+  const archivedCount = model.records?.properties.filter((item) => item.archive !== undefined).length ?? 0;
   return (
     <>
       <UltramodernRouteHead />
@@ -523,6 +546,16 @@ const RecordsPageContent = () => {
               <input checked={showClosed} onChange={(event) => setShowClosed(event.target.checked)} type="checkbox" />{' '}
               Zobrazit i neaktivní a vyřazené nemovitosti a jednotky
             </label>
+            {archivedCount > 0 && (
+              <label className={secondaryTextClass}>
+                <input
+                  checked={showArchived}
+                  onChange={(event) => setShowArchived(event.target.checked)}
+                  type="checkbox"
+                />{' '}
+                Zobrazit archivované záznamy ({archivedCount})
+              </label>
+            )}
             {model.tables.flatMap((group) =>
               (group.kind !== 'properties' && model.property === undefined) ||
               (group.kind === 'assets' && group.rows.length === 0)
@@ -542,11 +575,12 @@ const RecordsPageContent = () => {
                           {group.rows
                             .filter(
                               (item) =>
-                                showClosed ||
+                                (showArchived || !item.archived) &&
+                                (showClosed ||
                                 group.kind === 'assets' ||
                                 ['ACTIVE', 'PLANNED', 'OUT_OF_SERVICE'].includes(item.state) ||
                                 item.id === model.property?.propertyRef.resourceId ||
-                                item.id === unit?.unitRef.resourceId,
+                                item.id === unit?.unitRef.resourceId),
                             )
                             .map((item) => (
                               <Table.Row key={item.id}>
@@ -557,6 +591,11 @@ const RecordsPageContent = () => {
                                     <Badge size="sm" variant={item.state === 'ACTIVE' ? 'success' : 'outline'}>
                                       {t(`${key}.states.${item.state}`)}
                                     </Badge>
+                                    {item.archived && (
+                                      <Badge size="sm" variant="secondary">
+                                        Archivováno
+                                      </Badge>
+                                    )}
                                     {group.kind === 'units' && (
                                       <span className={secondaryTextClass}>
                                         {availabilityLabel(item.id, item.state)}
@@ -610,7 +649,15 @@ const RecordsPageContent = () => {
                 </h2>
                 <p className={secondaryTextClass}>{model.property.address}</p>
                 <p className={secondaryTextClass}>{model.property.note ?? '—'}</p>
+                {model.property.archive !== undefined && (
+                  <p className={secondaryTextClass} role="status">
+                    Archivováno {formatArchivedAt(model.property.archive.archivedAt)} · {model.property.archive.reason}.
+                    Záznam se nezobrazuje v seznamech ani výběrech ostatních agend.
+                  </p>
+                )}
                 <div className="siamparkproperty:flex siamparkproperty:flex-wrap siamparkproperty:gap-2">
+                  {model.property.archive === undefined ? (
+                    <>
                   <Button
                     disabled={editor.busy}
                     onClick={() => {
@@ -636,6 +683,36 @@ const RecordsPageContent = () => {
                   >
                     {t(`${key}.editor.createUnit`)}
                   </Button>
+                  {model.property.lifecycleState !== 'ACTIVE' && (
+                    <Button
+                      disabled={editor.busy}
+                      onClick={() => {
+                        const property = model.property;
+                        const reason = property === undefined ? null : archiveReason(`nemovitost ${property.code}`);
+                        if (property !== undefined && reason !== null && reason.trim() !== '')
+                          editor.archiveProperty(property, reason.trim());
+                      }}
+                      size="sm"
+                      theme="outlined"
+                      variant="danger"
+                    >
+                      Archivovat záznam
+                    </Button>
+                  )}
+                    </>
+                  ) : (
+                    <Button
+                      disabled={editor.busy}
+                      onClick={() => {
+                        if (model.property !== undefined) editor.restoreProperty(model.property);
+                      }}
+                      size="sm"
+                      theme="outlined"
+                      variant="secondary"
+                    >
+                      Obnovit z archivu
+                    </Button>
+                  )}
                   <Button
                     disabled={model.pending}
                     onClick={handleLoadSummary}
@@ -684,8 +761,43 @@ const RecordsPageContent = () => {
                         Budova není aktivní, jednotku proto nelze pronajmout ani rezervovat.
                       </p>
                     )}
+                    {unit.lifecycleState === 'RETIRED' && (
+                      <p className={secondaryTextClass}>
+                        Jednotka je vyřazená: nenabízí se k pronájmu ani rezervaci, historie nájmů a smluv zůstává.
+                      </p>
+                    )}
+                    {unitArchive !== undefined && (
+                      <p className={secondaryTextClass} role="status">
+                        Archivováno {formatArchivedAt(unitArchive.archivedAt)} · {unitArchive.reason}.
+                      </p>
+                    )}
                     <div className="siamparkproperty:flex siamparkproperty:flex-wrap siamparkproperty:gap-2">
-                      {unit.lifecycleState === 'ACTIVE' && (
+                      {unit.lifecycleState === 'RETIRED' && unitArchive === undefined && (
+                        <Button
+                          disabled={editor.busy}
+                          onClick={() => {
+                            const reason = archiveReason(`jednotku ${unit.code}`);
+                            if (reason !== null && reason.trim() !== '') editor.archiveUnit(unit, reason.trim());
+                          }}
+                          size="sm"
+                          theme="outlined"
+                          variant="danger"
+                        >
+                          Archivovat jednotku
+                        </Button>
+                      )}
+                      {unit.archive !== undefined && model.property?.archive === undefined && (
+                        <Button
+                          disabled={editor.busy}
+                          onClick={() => editor.restoreUnit(unit)}
+                          size="sm"
+                          theme="outlined"
+                          variant="secondary"
+                        >
+                          Obnovit z archivu
+                        </Button>
+                      )}
+                      {unitArchive === undefined && unit.lifecycleState === 'ACTIVE' && (
                         <Button
                           disabled={editor.busy}
                           onClick={() => editor.changeUnitLifecycle(unit, 'OUT_OF_SERVICE')}
@@ -696,7 +808,9 @@ const RecordsPageContent = () => {
                           Dočasně mimo provoz
                         </Button>
                       )}
-                      {unit.lifecycleState === 'OUT_OF_SERVICE' && model.property?.lifecycleState !== 'DISPOSED' && (
+                      {unitArchive === undefined &&
+                        unit.lifecycleState === 'OUT_OF_SERVICE' &&
+                        model.property?.lifecycleState !== 'DISPOSED' && (
                         <Button
                           disabled={editor.busy}
                           onClick={() => editor.changeUnitLifecycle(unit, 'ACTIVE')}
@@ -707,7 +821,7 @@ const RecordsPageContent = () => {
                           Vrátit do provozu
                         </Button>
                       )}
-                      {unit.lifecycleState !== 'RETIRED' && (
+                      {unitArchive === undefined && unit.lifecycleState !== 'RETIRED' && (
                         <Button
                           disabled={editor.busy}
                           onClick={() => {
@@ -728,6 +842,7 @@ const RecordsPageContent = () => {
                     </div>
                     <UnitStory
                       agreements={model.agreements}
+                      canLease={unitArchive === undefined && leasable(unit.lifecycleState)}
                       language={model.language}
                       occupancy={model.occupancy}
                       t={t}

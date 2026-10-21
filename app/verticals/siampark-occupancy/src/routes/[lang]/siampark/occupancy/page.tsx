@@ -1392,7 +1392,14 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
         ? 'siampark-occupancy.demo.newBooking'
         : LABEL_EDIT_DRAFT;
   const title = editor === 'lease' && editingId.length === 0 ? 'siampark-occupancy.demo.newLease' : panelTitle;
-  const activeUnits = (properties?.units ?? []).filter((record) => record.lifecycleState === 'ACTIVE');
+  // Only units in operation inside a building in operation are offered for a new stay or lease.
+  const activeUnits = (properties?.units ?? []).filter(
+    (record) =>
+      record.lifecycleState === 'ACTIVE' &&
+      properties?.properties.some(
+        (item) => item.propertyRef.resourceId === record.propertyRef.resourceId && item.lifecycleState === 'ACTIVE',
+      ) === true,
+  );
   return (
     <SidePanel
       actions={

@@ -21,7 +21,14 @@ const conflict = (reason: string) => new PropertyConflict({ code: 'property_conf
 const ineligible = (reason: string) => new PropertyIneligible({ code: 'property_ineligible', reason });
 const missing = () => new PropertyNotFound({ code: 'property_not_found', reason: 'Property resource not found' });
 
-type PropertyTransitionContext = Readonly<{ legalEntityId: string; now: string; resourceId: string; tenantId: string }>;
+type PropertyTransitionContext = Readonly<{
+  legalEntityId: string;
+  now: string;
+  /** Principal of the change, kept on archive marks. */
+  principalId?: string;
+  resourceId: string;
+  tenantId: string;
+}>;
 
 /** S02: a disposed building takes its units out of the register; they keep their history as RETIRED. */
 const retireUnitsOfDisposed = (state: PropertyState): PropertyState => {
@@ -38,6 +45,12 @@ const retireUnitsOfDisposed = (state: PropertyState): PropertyState => {
         : unit,
     ),
   };
+};
+
+const withoutArchive = <Record extends { readonly archive?: unknown }>(record: Record): Omit<Record, 'archive'> => {
+  const { archive: _archive, ...rest } = record;
+  void _archive;
+  return rest;
 };
 
 export const applyPropertyCommand = Effect.fn('Property.applyCommand')(function* applyPropertyCommandEffect(
@@ -85,7 +98,38 @@ export const applyPropertyCommand = Effect.fn('Property.applyCommand')(function*
   ) {
     return yield* missing();
   }
+  // Archived records are frozen until restored; only the restore commands may touch them.
+  const archivedProperty = (id: string | undefined) =>
+    state.properties.some((record) => record.propertyRef.resourceId === id && record.archive !== undefined);
+  const unitOf = (id: string | undefined) => state.units.find((record) => record.unitRef.resourceId === id);
+  const targetsArchived =
+    command._tag !== 'RestoreProperty' &&
+    command._tag !== 'RestoreUnit' &&
+    (('propertyRef' in command && archivedProperty(command.propertyRef.resourceId)) ||
+      ('unitRef' in command &&
+        command.unitRef !== null &&
+        (unitOf(command.unitRef.resourceId)?.archive !== undefined ||
+          archivedProperty(unitOf(command.unitRef.resourceId)?.propertyRef.resourceId))));
+  if (targetsArchived) {
+    return yield* ineligible('Archived record; restore it before changing it');
+  }
   yield* Match.value(command).pipe(
+    Match.tag('ArchiveProperty', (input) =>
+      state.properties.find((record) => record.propertyRef.resourceId === input.propertyRef.resourceId)
+        ?.lifecycleState === 'ACTIVE'
+        ? Effect.fail(ineligible('Only a property out of operation can be archived'))
+        : Effect.void,
+    ),
+    Match.tag('ArchiveUnit', (input) =>
+      unitOf(input.unitRef.resourceId)?.lifecycleState === 'RETIRED'
+        ? Effect.void
+        : Effect.fail(ineligible('Only a retired unit can be archived')),
+    ),
+    Match.tag('RestoreUnit', (input) =>
+      archivedProperty(unitOf(input.unitRef.resourceId)?.propertyRef.resourceId)
+        ? Effect.fail(ineligible('Restore the property of this unit first'))
+        : Effect.void,
+    ),
     Match.tag('CreateAsset', (input) =>
       input.unitRef !== null &&
       !state.units.some(
@@ -128,6 +172,75 @@ export const applyPropertyCommand = Effect.fn('Property.applyCommand')(function*
               record.propertyRef.resourceId === input.propertyRef.resourceId
                 ? { ...record, lifecycleState: input.lifecycleState, updatedAt: context.now }
                 : record,
+            ),
+          },
+        }),
+      ArchiveProperty: (input) => {
+        const mark = { archivedAt: context.now, archivedBy: context.principalId ?? '', reason: input.reason };
+        return Effect.succeed({
+          resourceRef: input.propertyRef,
+          state: {
+            ...state,
+            properties: state.properties.map((record) =>
+              record.propertyRef.resourceId === input.propertyRef.resourceId
+                ? { ...record, archive: mark, updatedAt: context.now }
+                : record,
+            ),
+            units: state.units.map((record) =>
+              record.propertyRef.resourceId === input.propertyRef.resourceId
+                ? { ...record, archive: record.archive ?? mark, lifecycleState: 'RETIRED' as const }
+                : record,
+            ),
+          },
+        });
+      },
+      ArchiveUnit: (input) =>
+        Effect.succeed({
+          resourceRef: input.unitRef,
+          state: {
+            ...state,
+            units: state.units.map((record) =>
+              record.unitRef.resourceId === input.unitRef.resourceId
+                ? {
+                    ...record,
+                    archive: { archivedAt: context.now, archivedBy: context.principalId ?? '', reason: input.reason },
+                  }
+                : record,
+            ),
+          },
+        }),
+      RestoreProperty: (input) => {
+        const mark = state.properties.find(
+          (record) => record.propertyRef.resourceId === input.propertyRef.resourceId,
+        )?.archive;
+        return Effect.succeed({
+          resourceRef: input.propertyRef,
+          state: {
+            ...state,
+            properties: state.properties.map((record) =>
+              record.propertyRef.resourceId === input.propertyRef.resourceId
+                ? { ...withoutArchive(record), updatedAt: context.now }
+                : record,
+            ),
+            // Units archived together with the property come back with it (still retired); separately archived
+            // units stay archived.
+            units: state.units.map((record) =>
+              record.propertyRef.resourceId === input.propertyRef.resourceId &&
+              mark !== undefined &&
+              record.archive?.archivedAt === mark.archivedAt
+                ? withoutArchive(record)
+                : record,
+            ),
+          },
+        });
+      },
+      RestoreUnit: (input) =>
+        Effect.succeed({
+          resourceRef: input.unitRef,
+          state: {
+            ...state,
+            units: state.units.map((record) =>
+              record.unitRef.resourceId === input.unitRef.resourceId ? withoutArchive(record) : record,
             ),
           },
         }),
@@ -292,6 +405,7 @@ export const persistenceService = (transaction: ScopedTransaction, scope: Operat
       const next = yield* applyPropertyCommand(current.state, input.command, {
         legalEntityId,
         now: input.now,
+        principalId: scope.principalId,
         resourceId: input.resourceId,
         tenantId: scope.tenantId,
       });

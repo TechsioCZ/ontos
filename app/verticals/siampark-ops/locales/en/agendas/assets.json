@@ -160,7 +160,9 @@
     "save": "Save",
     "back": "Back",
     "close": "Close",
-    "exportCsv": "Export CSV"
+    "exportCsv": "Export CSV",
+    "archive": "Archive record",
+    "restoreArchived": "Restore from archive"
   },
   "stats": {
     "count": "Assets",
@@ -189,10 +191,12 @@
     "allResponsible": "All responsible people",
     "acquiredFrom": "Acquired from",
     "acquiredTo": "Acquired to",
-    "scopedTotals": "Totals, the value summary and the CSV export use only the filtered records ({{count}})."
+    "scopedTotals": "Totals, the value summary and the CSV export use only the filtered records ({{count}}).",
+    "archived": "Archived"
   },
   "states": {
-    "noDisposed": "No asset has been disposed yet."
+    "noDisposed": "No asset has been disposed yet.",
+    "noArchived": "No archived records."
   },
   "detail": {
     "tabs": {
@@ -343,7 +347,9 @@
     "marked": "Inventory result saved",
     "followUpCreated": "Follow-up task created",
     "followUpResolved": "Task marked as resolved",
-    "inventoryClosed": "Inventory closed"
+    "inventoryClosed": "Inventory closed",
+    "archived": "The record was archived and left the register.",
+    "restored": "The record was restored from the archive."
   },
   "create": {
     "title": "New asset",
@@ -437,5 +443,11 @@
       "difference": "Actual − planned",
       "overdueHint": "past planned date: {{count}}"
     }
+  },
+  "archive": {
+    "title": "Archived {{at}} · {{by}}",
+    "note": "An archived record is left out of the register, summaries and pickers; data and history stay. Show it with Status → Archived.",
+    "prompt": "Archive this disposed record? It leaves the register, summaries and pickers; data and history stay and it can be restored. Reason:",
+    "defaultReason": "Test record from verification"
   }
 }

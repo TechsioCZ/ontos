@@ -427,6 +427,18 @@ const CardTab = ({
           <p className="text-fg-secondary text-xs">{k('card.disposedNote')}</p>
         </div>
       )}
+      {asset.archive !== undefined && (
+        <div className="flex flex-col gap-50 rounded-lg border border-border-primary bg-surface-secondary p-200 text-sm">
+          <p className="font-medium">
+            {k('archive.title', {
+              at: instantLabel(asset.archive.at),
+              by: principalLabel(asset.archive.by, actor, k('you')),
+            })}
+          </p>
+          <p>{asset.archive.reason}</p>
+          <p className="text-fg-secondary text-xs">{k('archive.note')}</p>
+        </div>
+      )}
       {asset.note !== undefined && (
         <div className="text-sm">
           <p className="text-fg-secondary text-xs">{k('fields.note')}</p>
@@ -613,6 +625,35 @@ export const AssetDetailPanel = ({
             <Button onClick={onClose} theme="outlined" variant="secondary">
               {k('actions.close')}
             </Button>
+            {canWrite && !active && asset.archive === undefined && (
+              <Button
+                disabled={busy}
+                onClick={() => {
+                  const reason = globalThis.prompt(k('archive.prompt'), k('archive.defaultReason'))?.trim();
+                  if (reason !== undefined && reason !== '') {
+                    void onSubmit({ _tag: 'AssetArchive', assetId: asset.id, reason }, 'messages.archived').then(
+                      (ok) => {
+                        if (ok) onClose();
+                      },
+                    );
+                  }
+                }}
+                theme="outlined"
+                variant="danger"
+              >
+                {k('actions.archive')}
+              </Button>
+            )}
+            {canWrite && asset.archive !== undefined && (
+              <Button
+                disabled={busy}
+                onClick={() => void onSubmit({ _tag: 'AssetArchiveRestore', assetId: asset.id }, 'messages.restored')}
+                theme="outlined"
+                variant="secondary"
+              >
+                {k('actions.restoreArchived')}
+              </Button>
+            )}
             {canWrite && active && (
               <>
                 <Button onClick={() => setMode({ kind: 'dispose' })} theme="outlined" variant="danger">
