@@ -302,7 +302,7 @@ const RecordsPageContent = () => {
         </output>
         {records !== undefined && (
           <>
-            <div className="siamparkrelationships:overflow-x-auto siamparkrelationships:rounded-lg siamparkrelationships:border siamparkrelationships:border-(--color-border-muted) siamparkrelationships:bg-(--color-surface)">
+            <div className="siamparkrelationships:overflow-x-auto">
               <Table size="sm" variant="outline">
                 <Table.Caption>{t(`${key}.timeline`)}</Table.Caption>
                 <Table.Header>
@@ -388,7 +388,7 @@ const RecordsPageContent = () => {
               {card !== undefined && (
                 <article
                   aria-label={t(`${key}.contact`)}
-                  className="siamparkrelationships:min-w-0 siamparkrelationships:space-y-5 siamparkrelationships:rounded-lg siamparkrelationships:border siamparkrelationships:border-(--color-border-muted) siamparkrelationships:bg-(--color-surface) siamparkrelationships:p-5"
+                  className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 siamparkrelationships:min-w-0 siamparkrelationships:space-y-5 siamparkrelationships:p-5"
                 >
                   <div className="siamparkrelationships:space-y-1">
                     <p className="siamparkrelationships:text-sm siamparkrelationships:text-(--color-fg-secondary)">
@@ -398,7 +398,7 @@ const RecordsPageContent = () => {
                       {card.party.displayName ?? t(`${key}.unnamed`)}
                     </h2>
                   </div>
-                  <dl className="siamparkrelationships:grid siamparkrelationships:gap-4 siamparkrelationships:rounded-lg siamparkrelationships:bg-(--color-surface-subtle) siamparkrelationships:p-4 siamparkrelationships:text-sm">
+                  <dl className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base siamparkrelationships:grid siamparkrelationships:gap-4 siamparkrelationships:p-4 siamparkrelationships:text-sm">
                     <div className="siamparkrelationships:space-y-1">
                       <dt className="siamparkrelationships:text-(--color-fg-secondary)">{t(`${key}.partyType`)}</dt>
                       <dd>{card.party.partyType}</dd>
@@ -418,7 +418,7 @@ const RecordsPageContent = () => {
               )}
               {records.canWrite && (
                 <form
-                  className={`siamparkrelationships:min-w-0 siamparkrelationships:space-y-5 siamparkrelationships:rounded-lg siamparkrelationships:border siamparkrelationships:border-(--color-border-muted) siamparkrelationships:bg-(--color-surface) siamparkrelationships:p-5 ${card === undefined ? 'siamparkrelationships:lg:col-span-2' : ''}`}
+                  className={`ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 siamparkrelationships:min-w-0 siamparkrelationships:space-y-5 siamparkrelationships:p-5 ${card === undefined ? 'siamparkrelationships:lg:col-span-2' : ''}`}
                   onSubmit={(event) => {
                     event.preventDefault();
                     save();
@@ -428,7 +428,7 @@ const RecordsPageContent = () => {
                     {t(`${key}.record`)}
                   </h2>
                   <div className="siamparkrelationships:grid siamparkrelationships:items-start siamparkrelationships:gap-4 siamparkrelationships:md:grid-cols-2">
-                    <div className="siamparkrelationships:space-y-4 siamparkrelationships:rounded-lg siamparkrelationships:bg-(--color-surface-subtle) siamparkrelationships:p-4">
+                    <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base siamparkrelationships:space-y-4 siamparkrelationships:p-4">
                       <div className="siamparkrelationships:flex siamparkrelationships:flex-wrap siamparkrelationships:items-end siamparkrelationships:gap-3">
                         <div className="siamparkrelationships:min-w-0 siamparkrelationships:flex-1">
                           <FormInput
@@ -471,7 +471,7 @@ const RecordsPageContent = () => {
                         </Select.Positioner>
                       </Select>
                     </div>
-                    <div className="siamparkrelationships:space-y-4 siamparkrelationships:rounded-lg siamparkrelationships:bg-(--color-surface-subtle) siamparkrelationships:p-4">
+                    <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base siamparkrelationships:space-y-4 siamparkrelationships:p-4">
                       <Button
                         disabled={pending}
                         onClick={loadTasks}
@@ -509,7 +509,7 @@ const RecordsPageContent = () => {
                     required
                     value={summary}
                   />
-                  <div className="siamparkrelationships:flex siamparkrelationships:flex-wrap siamparkrelationships:gap-2 siamparkrelationships:border-t siamparkrelationships:border-(--color-border-muted) siamparkrelationships:pt-4">
+                  <div className="siamparkrelationships:flex siamparkrelationships:flex-wrap siamparkrelationships:gap-2 siamparkrelationships:border-t border-border-primary/60 siamparkrelationships:pt-4">
                     <Button
                       disabled={pending || summary.trim() === '' || counterpartyId.length === 0}
                       size="sm"

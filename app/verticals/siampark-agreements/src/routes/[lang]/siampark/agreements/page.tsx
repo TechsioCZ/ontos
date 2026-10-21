@@ -1,5 +1,13 @@
 import { RecordDiscussion } from '@app/siampark-ops/ui/record-discussion';
-import { DetailList, PageHeader, SectionCard, SidePanel, formatDate, formatMoney } from '@app/admin-ui';
+import {
+  DetailList,
+  PageHeader,
+  SectionCard,
+  SidePanel,
+  formatDate,
+  formatMoney,
+  surfaceTileClassName,
+} from '@app/admin-ui';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
@@ -149,7 +157,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
             )}
             {state.detailView.documents.map((record) => (
               <p
-                className="siamparkagreements:flex siamparkagreements:flex-wrap siamparkagreements:items-center siamparkagreements:gap-3 siamparkagreements:rounded-lg siamparkagreements:border siamparkagreements:border-(--color-border-muted) siamparkagreements:p-4 siamparkagreements:text-sm"
+                className={`${surfaceTileClassName} siamparkagreements:flex siamparkagreements:flex-wrap siamparkagreements:items-center siamparkagreements:gap-3 siamparkagreements:p-4 siamparkagreements:text-sm`}
                 key={record.documentRef.resourceId}
               >
                 {record.title} · {record.fileName} ·{' '}
@@ -212,7 +220,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
 
           {state.detailView.signatureObservations.map((record) => (
             <p
-              className="siamparkagreements:space-y-2 siamparkagreements:break-words siamparkagreements:rounded-lg siamparkagreements:bg-(--color-surface-subtle) siamparkagreements:p-4 siamparkagreements:text-sm siamparkagreements:text-(--color-fg-secondary)"
+              className={`${surfaceTileClassName} siamparkagreements:space-y-2 siamparkagreements:break-words siamparkagreements:p-4 siamparkagreements:text-sm siamparkagreements:text-(--color-fg-secondary)`}
               key={record.observationId}
             >
               <Badge variant="info">{t('siampark-agreements.demo.simulated')}</Badge> {record.correlation} ·{' '}
@@ -562,7 +570,7 @@ const RecordsPageContent = () => {
               }
               title={t('siampark-agreements.pages.records.title')}
             />
-            <div className="siamparkagreements:flex siamparkagreements:flex-wrap siamparkagreements:items-center siamparkagreements:justify-between siamparkagreements:gap-4 siamparkagreements:border-b siamparkagreements:border-(--color-border-muted) siamparkagreements:pb-4">
+            <div className="siamparkagreements:flex siamparkagreements:flex-wrap siamparkagreements:items-center siamparkagreements:justify-between siamparkagreements:gap-4 siamparkagreements:pb-4">
               <div className="siamparkagreements:flex siamparkagreements:flex-wrap siamparkagreements:gap-2">
                 <Button
                   aria-pressed={!expiringOnly}
@@ -588,7 +596,7 @@ const RecordsPageContent = () => {
               </Button>
             </div>
             {snapshot !== undefined && visible.length === 0 && (
-              <p className="siamparkagreements:rounded-lg siamparkagreements:bg-(--color-surface-subtle) siamparkagreements:p-5 siamparkagreements:text-sm siamparkagreements:text-(--color-fg-secondary)">
+              <p className={`${surfaceTileClassName} siamparkagreements:p-5 siamparkagreements:text-sm siamparkagreements:text-(--color-fg-secondary)`}>
                 {t('siampark-agreements.demo.empty')}
               </p>
             )}

@@ -58,7 +58,6 @@
 .sp-overview .sp-stat,
 .sp-overview .sp-panel {
   background: var(--color-surface);
-  border: 1px solid var(--color-border-muted);
   border-radius: 12px;
   padding: 20px;
   min-width: 0;
@@ -78,7 +77,7 @@
 }
 .sp-overview .sp-stat:hover,
 .sp-overview .sp-unit:hover {
-  background: var(--color-surface-subtle);
+  background: var(--color-base);
 }
 .sp-overview .sp-columns {
   display: grid;
@@ -94,7 +93,7 @@
   display: grid;
   gap: 16px;
   padding-bottom: 20px;
-  border-bottom: 1px solid var(--color-border-muted);
+  border-bottom: 1px solid color-mix(in oklab, var(--color-border-primary) 60%, transparent);
 }
 .sp-overview .sp-property:last-child {
   padding: 0;
@@ -108,7 +107,6 @@
 .sp-overview .sp-unit {
   display: grid;
   gap: 8px;
-  border: 1px solid var(--color-border-muted);
   border-radius: 8px;
   padding: 12px;
   text-decoration: none;
@@ -124,7 +122,7 @@
   display: grid;
   gap: 6px;
   padding: 12px 0;
-  border-bottom: 1px solid var(--color-border-muted);
+  border-bottom: 1px solid color-mix(in oklab, var(--color-border-primary) 60%, transparent);
   text-decoration: none;
 }
 .sp-overview .sp-attention:last-child {
@@ -141,16 +139,15 @@
   gap: 8px;
 }
 .sp-overview .sp-quicklinks a {
-  border: 1px solid var(--color-border-muted);
   border-radius: 8px;
   padding: 8px 12px;
   text-decoration: none;
   font-size: 13px;
 }
 .sp-overview .sp-search {
-  border: 1px solid var(--color-border-muted);
+  border: 1px solid var(--color-border-primary);
   border-radius: 8px;
-  background: var(--color-surface);
+  background: var(--color-base);
   color: inherit;
   padding: 12px;
   width: 100%;
@@ -174,7 +171,7 @@
 }
 .sp-overview th,
 .sp-overview td {
-  border-bottom: 1px solid var(--color-border-muted);
+  border-bottom: 1px solid color-mix(in oklab, var(--color-border-primary) 60%, transparent);
   padding: 12px 8px;
   vertical-align: top;
 }

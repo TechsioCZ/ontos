@@ -17,9 +17,9 @@ const K = 'siampark-property.pages.records.unitStory';
 
 export type LeaseBlock = 'building' | 'outOfService' | 'retired';
 const cardClass =
-  'siamparkproperty:min-w-0 siamparkproperty:space-y-3 siamparkproperty:rounded-lg siamparkproperty:border siamparkproperty:border-(--color-border-muted) siamparkproperty:bg-(--color-surface) siamparkproperty:p-4';
+  'ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base siamparkproperty:min-w-0 siamparkproperty:space-y-3 siamparkproperty:p-4';
 const rowClass =
-  'siamparkproperty:flex siamparkproperty:flex-wrap siamparkproperty:items-center siamparkproperty:justify-between siamparkproperty:gap-2 siamparkproperty:rounded-md siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-3 siamparkproperty:text-sm';
+  'siamparkproperty:flex siamparkproperty:flex-wrap siamparkproperty:items-center siamparkproperty:justify-between siamparkproperty:gap-2 siamparkproperty:py-3 siamparkproperty:text-sm border-b border-border-primary/60 last:border-b-0';
 const mutedClass = 'siamparkproperty:text-sm siamparkproperty:text-(--color-fg-secondary)';
 const occupancyBadge = {
   ACTIVE: 'success',

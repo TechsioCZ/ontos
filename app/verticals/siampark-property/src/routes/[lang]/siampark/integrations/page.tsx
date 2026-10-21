@@ -74,7 +74,7 @@ const IntegrationsPageContent = () => {
         aria-labelledby={headingId}
         className="siamparkproperty:w-full siamparkproperty:min-w-0 siamparkproperty:max-w-none siamparkproperty:space-y-6 siamparkproperty:p-0 siamparkproperty:text-(--color-page-fg)"
       >
-        <header className="siamparkproperty:flex siamparkproperty:flex-wrap siamparkproperty:items-start siamparkproperty:justify-between siamparkproperty:gap-4 siamparkproperty:border-b siamparkproperty:border-(--color-border-muted) siamparkproperty:pb-5">
+        <header className="siamparkproperty:flex siamparkproperty:flex-wrap siamparkproperty:items-start siamparkproperty:justify-between siamparkproperty:gap-4 siamparkproperty:pb-5">
           <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2">
             <h1
               className="siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tracking-tight"
@@ -100,14 +100,14 @@ const IntegrationsPageContent = () => {
           <div className="siamparkproperty:space-y-6">
             <section
               aria-label={t(`${key}.accounting`)}
-              className="siamparkproperty:min-w-0 siamparkproperty:space-y-4 siamparkproperty:rounded-lg siamparkproperty:border siamparkproperty:border-(--color-border-muted) siamparkproperty:bg-(--color-surface) siamparkproperty:p-5"
+              className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 siamparkproperty:min-w-0 siamparkproperty:space-y-4 siamparkproperty:p-5"
             >
               <h2 className="siamparkproperty:text-lg siamparkproperty:font-semibold">{t(`${key}.accounting`)}</h2>
 
               <div className="siamparkproperty:min-w-0 siamparkproperty:overflow-x-auto siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface)">
                 <Table className="siamparkproperty:w-full" size="sm" variant="outline">
                   <Table.Caption>{t(`${key}.accounting`)}</Table.Caption>
-                  <Table.Header className="siamparkproperty:bg-(--color-surface-subtle)">
+                  <Table.Header>
                     <Table.Row>
                       {['correlation', 'attempt', 'attemptedAt', 'state', 'summary'].map((column) => (
                         <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
@@ -155,7 +155,7 @@ const IntegrationsPageContent = () => {
             </section>
             <section
               aria-label={t(`${key}.booking`)}
-              className="siamparkproperty:min-w-0 siamparkproperty:space-y-4 siamparkproperty:rounded-lg siamparkproperty:border siamparkproperty:border-(--color-border-muted) siamparkproperty:bg-(--color-surface) siamparkproperty:p-5"
+              className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 siamparkproperty:min-w-0 siamparkproperty:space-y-4 siamparkproperty:p-5"
             >
               <h2 className="siamparkproperty:text-lg siamparkproperty:font-semibold">{t(`${key}.booking`)}</h2>
               {records.booking.bookingObservations.length === 0 && (
@@ -166,7 +166,7 @@ const IntegrationsPageContent = () => {
               <div className="siamparkproperty:min-w-0 siamparkproperty:overflow-x-auto siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface)">
                 <Table className="siamparkproperty:w-full" size="sm" variant="outline">
                   <Table.Caption>{t(`${key}.booking`)}</Table.Caption>
-                  <Table.Header className="siamparkproperty:bg-(--color-surface-subtle)">
+                  <Table.Header>
                     <Table.Row>
                       {['correlation', 'attempt', 'attemptedAt', 'state', 'summary'].map((column) => (
                         <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
@@ -215,7 +215,7 @@ const IntegrationsPageContent = () => {
             </section>
             <section
               aria-label={t(`${key}.signature`)}
-              className="siamparkproperty:min-w-0 siamparkproperty:space-y-4 siamparkproperty:rounded-lg siamparkproperty:border siamparkproperty:border-(--color-border-muted) siamparkproperty:bg-(--color-surface) siamparkproperty:p-5"
+              className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 siamparkproperty:min-w-0 siamparkproperty:space-y-4 siamparkproperty:p-5"
             >
               <h2 className="siamparkproperty:text-lg siamparkproperty:font-semibold">{t(`${key}.signature`)}</h2>
               {records.signature.signatureObservations.length === 0 && (
@@ -226,7 +226,7 @@ const IntegrationsPageContent = () => {
               <div className="siamparkproperty:min-w-0 siamparkproperty:overflow-x-auto siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface)">
                 <Table className="siamparkproperty:w-full" size="sm" variant="outline">
                   <Table.Caption>{t(`${key}.signature`)}</Table.Caption>
-                  <Table.Header className="siamparkproperty:bg-(--color-surface-subtle)">
+                  <Table.Header>
                     <Table.Row>
                       {['correlation', 'attempt', 'attemptedAt', 'state', 'summary'].map((column) => (
                         <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
@@ -265,7 +265,7 @@ const IntegrationsPageContent = () => {
             </section>
             <section
               aria-label={t(`${key}.email`)}
-              className="siamparkproperty:min-w-0 siamparkproperty:space-y-4 siamparkproperty:rounded-lg siamparkproperty:border siamparkproperty:border-(--color-border-muted) siamparkproperty:bg-(--color-surface) siamparkproperty:p-5"
+              className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 siamparkproperty:min-w-0 siamparkproperty:space-y-4 siamparkproperty:p-5"
             >
               <h2 className="siamparkproperty:text-lg siamparkproperty:font-semibold">{t(`${key}.email`)}</h2>
               {records.notification.emailObservations.length === 0 && (
@@ -276,7 +276,7 @@ const IntegrationsPageContent = () => {
               <div className="siamparkproperty:min-w-0 siamparkproperty:overflow-x-auto siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface)">
                 <Table className="siamparkproperty:w-full" size="sm" variant="outline">
                   <Table.Caption>{t(`${key}.email`)}</Table.Caption>
-                  <Table.Header className="siamparkproperty:bg-(--color-surface-subtle)">
+                  <Table.Header>
                     <Table.Row>
                       {['correlation', 'attempt', 'attemptedAt', 'state', 'summary'].map((column) => (
                         <Table.ColumnHeader key={column}>{t(`${key}.${column}`)}</Table.ColumnHeader>
@@ -315,7 +315,7 @@ const IntegrationsPageContent = () => {
             </section>
           </div>
         )}
-        <section className="siamparkproperty:space-y-2 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-5">
+        <section className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base siamparkproperty:space-y-2 siamparkproperty:p-5">
           <h2 className="siamparkproperty:text-lg siamparkproperty:font-semibold">{t(`${key}.other`)}</h2>
           <p className="siamparkproperty:text-sm siamparkproperty:text-(--color-fg-secondary)">{t(`${key}.payroll`)}</p>
         </section>

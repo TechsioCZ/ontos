@@ -1,4 +1,4 @@
-import { DetailList, SectionCard, formatDate, formatMoney } from '@app/admin-ui';
+import { DetailList, SectionCard, formatDate, formatMoney, surfaceTileClassName } from '@app/admin-ui';
 import type { listCustomers } from '@app/party-registry/api/client';
 import type { executeRecords as readAgreements } from '@app/siampark-agreements/clients/records';
 import type { Invoice } from '@app/siampark-billing-finance/contracts/records';
@@ -29,7 +29,7 @@ export interface LeaseRelated {
 const P = 'siampark-occupancy';
 const mutedClass = 'siamparkoccupancy:text-sm siamparkoccupancy:text-(--color-fg-secondary)';
 const rowClass =
-  'siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:items-center siamparkoccupancy:justify-between siamparkoccupancy:gap-3 siamparkoccupancy:rounded-lg siamparkoccupancy:border siamparkoccupancy:border-(--color-border-muted) siamparkoccupancy:p-3 siamparkoccupancy:text-sm';
+  `${surfaceTileClassName} siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:items-center siamparkoccupancy:justify-between siamparkoccupancy:gap-3 siamparkoccupancy:p-3 siamparkoccupancy:text-sm`;
 
 const isLoadedList = <A,>(value: readonly A[] | 'unavailable' | undefined): value is readonly A[] =>
   value !== undefined && value !== 'unavailable';
@@ -89,7 +89,7 @@ export interface StoryStep {
 export const LeaseStoryNav = ({ steps, t }: { readonly steps: readonly StoryStep[]; readonly t: Translate }) => (
   <nav
     aria-label={t(`${P}.story.title`)}
-    className="siamparkoccupancy:overflow-x-auto siamparkoccupancy:rounded-lg siamparkoccupancy:border siamparkoccupancy:border-(--color-border-muted) siamparkoccupancy:bg-(--color-surface) siamparkoccupancy:p-3"
+    className={`${surfaceTileClassName} siamparkoccupancy:overflow-x-auto siamparkoccupancy:p-3`}
   >
     <ol className="siamparkoccupancy:flex siamparkoccupancy:min-w-max siamparkoccupancy:items-stretch siamparkoccupancy:gap-2">
       {steps.map((step, index) => {
@@ -105,8 +105,8 @@ export const LeaseStoryNav = ({ steps, t }: { readonly steps: readonly StoryStep
         );
         const tone =
           step.current === true
-            ? 'siamparkoccupancy:border-2 siamparkoccupancy:border-(--color-fg-secondary) siamparkoccupancy:bg-(--color-surface-subtle)'
-            : 'siamparkoccupancy:border-(--color-border-muted)';
+            ? 'siamparkoccupancy:border-2 siamparkoccupancy:border-(--color-fg-secondary) bg-base'
+            : 'siamparkoccupancy:border-transparent bg-base';
         return (
           <li
             className="siamparkoccupancy:flex siamparkoccupancy:items-center siamparkoccupancy:gap-2"
@@ -121,7 +121,7 @@ export const LeaseStoryNav = ({ steps, t }: { readonly steps: readonly StoryStep
               </div>
             ) : (
               <a
-                className={`siamparkoccupancy:rounded-md siamparkoccupancy:border siamparkoccupancy:px-3 siamparkoccupancy:py-2 siamparkoccupancy:no-underline siamparkoccupancy:hover:bg-(--color-surface-subtle) ${tone}`}
+                className={`siamparkoccupancy:rounded-md siamparkoccupancy:border siamparkoccupancy:px-3 siamparkoccupancy:py-2 siamparkoccupancy:no-underline hover:bg-surface ${tone}`}
                 href={step.href}
               >
                 {body}

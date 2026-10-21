@@ -8,6 +8,8 @@ import {
   comboboxTranslations,
   formatDate,
   formatMoney,
+  surfaceCardClassName,
+  surfaceTileClassName,
 } from '@app/admin-ui';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { failureFeedback } from '../../../../../shared/actions/apply-command.ts';
@@ -1194,7 +1196,7 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
                 value.occupancyRef?.resourceId === selected.occupancyRef.resourceId
                   ? [
                       <p
-                        className="siamparkoccupancy:space-y-2 siamparkoccupancy:break-words siamparkoccupancy:rounded-lg siamparkoccupancy:bg-(--color-surface-subtle) siamparkoccupancy:p-4 siamparkoccupancy:text-sm siamparkoccupancy:text-(--color-fg-secondary)"
+                        className={`${surfaceTileClassName} siamparkoccupancy:space-y-2 siamparkoccupancy:break-words siamparkoccupancy:p-4 siamparkoccupancy:text-sm siamparkoccupancy:text-(--color-fg-secondary)`}
                         key={value.observationId}
                       >
                         {t(`siampark-occupancy.demo.bookingStates.${value.state}`)} · {value.correlation} ·{' '}
@@ -1281,7 +1283,7 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
           {isLease && <ContractCard contract={contract} language={language} t={t} />}
           <UnitCard language={language} property={property} t={t} unit={unit} />
           {property !== undefined && (
-            <div className="siamparkoccupancy:min-w-0 siamparkoccupancy:rounded-lg siamparkoccupancy:border siamparkoccupancy:border-(--color-border-muted) siamparkoccupancy:bg-(--color-surface) siamparkoccupancy:p-4">
+            <div className={`${surfaceCardClassName} siamparkoccupancy:min-w-0 siamparkoccupancy:p-4`}>
               <PropertyEquipment
                 language={language}
                 propertyId={property.propertyRef.resourceId}
@@ -1749,7 +1751,7 @@ const RecordsPageContent = () => {
                 Kalendář a přehled nemovitostí →
               </LinkButton>
             </div>
-            <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:items-center siamparkoccupancy:justify-between siamparkoccupancy:gap-4 siamparkoccupancy:border-b siamparkoccupancy:border-(--color-border-muted) siamparkoccupancy:pb-4">
+            <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:items-center siamparkoccupancy:justify-between siamparkoccupancy:gap-4 siamparkoccupancy:pb-4">
               <div className="siamparkoccupancy:flex siamparkoccupancy:flex-wrap siamparkoccupancy:gap-2">
                 {(['ALL', 'LONG_TERM_LEASE', 'SHORT_STAY'] as const).map((kind) => (
                   <Button
@@ -1781,7 +1783,7 @@ const RecordsPageContent = () => {
               </div>
             </div>
             {snapshot !== undefined && visible.length === 0 && (
-              <p className="siamparkoccupancy:rounded-lg siamparkoccupancy:bg-(--color-surface-subtle) siamparkoccupancy:p-5 siamparkoccupancy:text-sm siamparkoccupancy:text-(--color-fg-secondary)">
+              <p className={`${surfaceTileClassName} siamparkoccupancy:p-5 siamparkoccupancy:text-sm siamparkoccupancy:text-(--color-fg-secondary)`}>
                 {t('siampark-occupancy.demo.empty')}
               </p>
             )}
@@ -1869,13 +1871,13 @@ const RecordsPageContent = () => {
                 unitName={unitName}
               />
             )}
-            <section className="siamparkoccupancy:space-y-4 siamparkoccupancy:rounded-lg siamparkoccupancy:border siamparkoccupancy:border-(--color-border-muted) siamparkoccupancy:bg-(--color-surface) siamparkoccupancy:p-5">
+            <section className={`${surfaceCardClassName} siamparkoccupancy:space-y-4 siamparkoccupancy:p-5`}>
               <h2 className="siamparkoccupancy:text-lg siamparkoccupancy:font-semibold">
                 {t('siampark-occupancy.demo.bookingObservations')}
               </h2>
               {snapshot?.bookingObservations.map((value) => (
                 <p
-                  className="siamparkoccupancy:space-y-2 siamparkoccupancy:break-words siamparkoccupancy:rounded-lg siamparkoccupancy:bg-(--color-surface-subtle) siamparkoccupancy:p-4 siamparkoccupancy:text-sm siamparkoccupancy:text-(--color-fg-secondary)"
+                  className={`${surfaceTileClassName} siamparkoccupancy:space-y-2 siamparkoccupancy:break-words siamparkoccupancy:p-4 siamparkoccupancy:text-sm siamparkoccupancy:text-(--color-fg-secondary)`}
                   key={value.observationId}
                 >
                   <Badge variant="info">{t(LABEL_SIMULATED)}</Badge> {value.correlation} ·{' '}

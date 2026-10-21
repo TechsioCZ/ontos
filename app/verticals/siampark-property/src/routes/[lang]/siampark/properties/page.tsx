@@ -400,12 +400,12 @@ const usePropertyRecords = () => {
 };
 const secondaryTextClass = 'siamparkproperty:text-sm siamparkproperty:text-(--color-fg-secondary)';
 const detailCardClass =
-  'siamparkproperty:min-w-0 siamparkproperty:space-y-4 siamparkproperty:rounded-lg siamparkproperty:border siamparkproperty:border-(--color-border-muted) siamparkproperty:bg-(--color-surface) siamparkproperty:p-5';
+  'ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 siamparkproperty:min-w-0 siamparkproperty:space-y-4 siamparkproperty:p-5';
 const relatedCardClass =
-  'siamparkproperty:min-w-0 siamparkproperty:space-y-3 siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface-subtle) siamparkproperty:p-4';
+  'ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base siamparkproperty:min-w-0 siamparkproperty:space-y-3 siamparkproperty:p-4';
 const detailHeadingClass = 'siamparkproperty:text-sm siamparkproperty:font-semibold';
 const tableWrapperClass =
-  'siamparkproperty:min-w-0 siamparkproperty:overflow-x-auto siamparkproperty:rounded-lg siamparkproperty:bg-(--color-surface)';
+  'siamparkproperty:min-w-0 siamparkproperty:overflow-x-auto';
 const messageClass = 'siamparkproperty:block siamparkproperty:text-sm siamparkproperty:text-(--color-fg-secondary)';
 const archivedAtFormat = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeZone: 'Europe/Prague' });
 const formatArchivedAt = (value: string) => archivedAtFormat.format(DateTime.toEpochMillis(DateTime.makeUnsafe(value)));
@@ -463,7 +463,7 @@ const RecordsPageContent = () => {
         aria-labelledby="records-heading"
         className="siamparkproperty:w-full siamparkproperty:min-w-0 siamparkproperty:max-w-none siamparkproperty:space-y-6 siamparkproperty:p-0 siamparkproperty:text-(--color-page-fg)"
       >
-        <header className="siamparkproperty:flex siamparkproperty:flex-wrap siamparkproperty:items-start siamparkproperty:justify-between siamparkproperty:gap-4 siamparkproperty:border-b siamparkproperty:border-(--color-border-muted) siamparkproperty:pb-5">
+        <header className="siamparkproperty:flex siamparkproperty:flex-wrap siamparkproperty:items-start siamparkproperty:justify-between siamparkproperty:gap-4 siamparkproperty:pb-5">
           <div className="siamparkproperty:min-w-0 siamparkproperty:space-y-2">
             <h1
               className="siamparkproperty:text-3xl siamparkproperty:font-semibold siamparkproperty:tracking-tight"

@@ -34,7 +34,7 @@
 }
 .sp-tenant .sp-tenant-contact {
   padding: 16px;
-  border: 1px solid var(--color-border-muted);
+  background: var(--color-surface);
   border-radius: 8px;
   text-decoration: none;
 }
@@ -53,7 +53,7 @@
   display: grid;
   gap: 8px;
   padding: 16px 0;
-  border-bottom: 1px solid var(--color-border-muted);
+  border-bottom: 1px solid color-mix(in oklab, var(--color-border-primary) 60%, transparent);
   font-size: 13px;
   overflow-wrap: anywhere;
 }
@@ -65,7 +65,7 @@
 .sp-tenant select {
   padding: 8px 12px;
   border-radius: 6px;
-  border: 1px solid var(--color-border-muted);
+  border: 1px solid var(--color-border-primary);
   background: var(--color-surface);
   color: var(--color-page-fg);
   font-size: 13px;
@@ -80,7 +80,7 @@
   width: 100%;
   min-width: 0;
   padding: 8px 10px;
-  border: 1px solid var(--color-border-muted);
+  border: 1px solid var(--color-border-primary);
   border-radius: 6px;
   background: var(--color-surface);
   color: inherit;
