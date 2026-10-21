@@ -16,10 +16,10 @@ export const writePolicyLabel: Record<AgentWritePolicy, string> = {
   read_only: 'Jen čtení',
 };
 
-export const writePolicyBadge: Record<AgentWritePolicy, 'info' | 'secondary' | 'warning'> = {
+export const writePolicyBadge: Record<AgentWritePolicy, 'info' | 'outline' | 'warning'> = {
   approval: 'info',
   direct: 'warning',
-  read_only: 'secondary',
+  read_only: 'outline',
 };
 
 export const clientKindLabel: Record<ConnectionClientKind, string> = {
@@ -35,11 +35,11 @@ export const statusLabel: Record<ConnectionStatus, string> = {
   superseded: 'Nahrazené',
 };
 
-export const statusBadge: Record<ConnectionStatus, 'secondary' | 'success'> = {
+export const statusBadge: Record<ConnectionStatus, 'outline' | 'success'> = {
   active: 'success',
-  denied: 'secondary',
-  revoked: 'secondary',
-  superseded: 'secondary',
+  denied: 'outline',
+  revoked: 'outline',
+  superseded: 'outline',
 };
 
 /** Who acts through the connection, as the person sees it in their own list. */

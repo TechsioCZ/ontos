@@ -41,7 +41,7 @@ const CopyButton = ({
 export const ConnectedAppsGuide = ({ mcpUrl }: { readonly mcpUrl: string }) => (
   <section className="grid min-w-0 gap-200 border-border-primary border-t pt-300">
     <div className="grid min-w-0 gap-100">
-      <h3 className="font-semibold text-base">Jak připojit</h3>
+      <h3 className="font-semibold text-md">Jak připojit</h3>
       <p className="text-fg-secondary text-sm">
         Do aplikace vložte jen tuto adresu. Přihlásíte se svým účtem OntOS a na obrazovce souhlasu vyberete firmu,
         rozsah a režim zápisu. Žádný klíč ani token se nekopíruje.

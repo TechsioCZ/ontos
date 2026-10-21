@@ -29,9 +29,9 @@ type ListView =
 const AppIdentity = ({ connection: c }: { readonly connection: ConnectionSummary }) => (
   <div className="flex min-w-0 items-center gap-150">
     {c.client.logoUri === null ? (
-      <span aria-hidden className="icon-[mdi--application-outline] size-8 shrink-0" />
+      <span aria-hidden className="icon-[mdi--application-outline] size-400 shrink-0 text-fg-secondary" />
     ) : (
-      <img alt="" className="size-8 shrink-0 rounded" src={c.client.logoUri} />
+      <img alt="" className="size-400 shrink-0 rounded" src={c.client.logoUri} />
     )}
     <div className="grid min-w-0 gap-50">
       <span className="font-medium">{c.client.name}</span>
@@ -39,7 +39,7 @@ const AppIdentity = ({ connection: c }: { readonly connection: ConnectionSummary
         <Badge size="sm" variant="outline">
           {c.client.host}
         </Badge>
-        <Badge size="sm" variant="secondary">
+        <Badge size="sm" variant="outline">
           {clientKindLabel[c.client.kind]}
         </Badge>
       </div>

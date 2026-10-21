@@ -140,7 +140,10 @@ export const ConnectionsAdminPanel = () => {
       )}
       <p className="text-fg-secondary">
         Všechna připojení ChatGPT, Claude a dalších aplikací ve firmě {company.legalName.replace(/\.$/u, '')}. Odpojená
-        aplikace ztratí přístup do 30 sekund. <a href="/cs/sprava/aktivita-agentu">Zobrazit aktivitu agentů</a>
+        aplikace ztratí přístup do 30 sekund.{' '}
+        <a className="font-medium text-fg-primary underline" href="/cs/sprava/aktivita-agentu">
+          Zobrazit aktivitu agentů
+        </a>
       </p>
 
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-3">
@@ -236,10 +239,10 @@ export const ConnectionsAdminPanel = () => {
                     <td className="p-100">{c.user.displayName}</td>
                     <td className="p-100">{actingAdminLabel(c)}</td>
                     <td className="p-100">{accessSummary(c)}</td>
-                    <td className="p-100">
+                    <td className="whitespace-nowrap p-100">
                       <Badge variant={writePolicyBadge[c.writePolicy]}>{writePolicyLabel[c.writePolicy]}</Badge>
                     </td>
-                    <td className="p-100">
+                    <td className="whitespace-nowrap p-100">
                       <Badge variant={statusBadge[c.status]}>{statusLabel[c.status]}</Badge>
                     </td>
                     <td className="p-100">{formatWhen(c.createdAt)}</td>
