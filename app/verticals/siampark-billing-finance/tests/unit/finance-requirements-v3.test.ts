@@ -2,7 +2,12 @@ import { describe, expect, it } from 'effect-rstest';
 import { DateTime, Effect, Exit } from 'effect';
 import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
 import type { FinanceState, Invoice } from '../../shared/apis/records.ts';
-import { cashFlowMonths, invoiceActualMinor, paymentEvents } from '../../shared/domain/finance-planning.ts';
+import {
+  cashFlowMonths,
+  invoiceActualMinor,
+  isTestReminderRecipient,
+  paymentEvents,
+} from '../../shared/domain/finance-planning.ts';
 import { computeInvoiceTotals, lineDiscountMinor } from '../../shared/domain/invoice-totals.ts';
 import { buildPohodaDataPack } from '../../shared/domain/pohoda-xml.ts';
 import { commandReferenceAudiences } from '../../shared/domain/reference-audiences.ts';
@@ -219,6 +224,33 @@ describe('S07.R5 lifecycle and S07.R3 bulk preparation', () => {
     }),
   );
 
+  it.effect('approval of a plain draft is refused server-side with a readable Czech reason', () =>
+    Effect.gen(function* plainDraft() {
+      const state = { ...empty, invoices: [invoice('d-1', { businessState: 'DRAFT' })] };
+      const refused = yield* Effect.exit(run(state, { _tag: 'ConfirmInvoice', invoiceRef: state.invoices[0]!.ref }));
+      expect(failsWith(refused, 'confirm_requires_prepared')).toBe(true);
+      expect(failsWith(refused, 'Připraveno ke schválení')).toBe(true);
+      const prepared = yield* run(state, { _tag: 'MarkInvoicesPrepared', actorLabel: 'Finance', invoiceRefs: [state.invoices[0]!.ref] });
+      const returned = yield* run(prepared.state, { _tag: 'ReturnInvoiceToDraft', invoiceRef: state.invoices[0]!.ref });
+      const refusedAgain = yield* Effect.exit(
+        run(returned.state, { _tag: 'ConfirmInvoice', invoiceRef: state.invoices[0]!.ref }),
+      );
+      expect(failsWith(refusedAgain, 'confirm_requires_prepared')).toBe(true);
+      const approved = yield* run(prepared.state, { _tag: 'ConfirmInvoice', invoiceRef: state.invoices[0]!.ref });
+      // The preparation step stays in the invoice history after approval.
+      expect(approved.invoice).toMatchObject({ businessState: 'CONFIRMED', preparedByLabel: 'Finance' });
+      expect(approved.invoice?.preparedAt).toBeDefined();
+    }),
+  );
+
+  it('test sends to reserved test domains are recognised, customer addresses are not', () => {
+    expect(isTestReminderRecipient('fakturace.audit@example.invalid')).toBe(true);
+    expect(isTestReminderRecipient('fakturace@odberatel.example')).toBe(true);
+    expect(isTestReminderRecipient('qa@example.com')).toBe(true);
+    expect(isTestReminderRecipient('fakturace@kavarnauparku.cz')).toBe(false);
+    expect(isTestReminderRecipient('ucetni@examples.cz')).toBe(false);
+  });
+
   it.effect('S08 export goes PREPARED → HANDED_OVER → CONFIRMED, or FAILED with a reason', () =>
     Effect.gen(function* exportLifecycle() {
       const state = { ...empty, invoices: [invoice('c-1')] };
@@ -275,7 +307,8 @@ describe('S07.R2 final invoice takes earlier advances into account by hand', () 
         confirmedByLabel: 'Účetní',
         entries: [{ amountMinor: 30_000, invoiceResourceId: 'adv-1', number: 'adv-1' }],
       });
-      const approved = yield* run(set.state, { _tag: 'ConfirmInvoice', invoiceRef: final.ref });
+      const ready = yield* run(set.state, { _tag: 'MarkInvoicesPrepared', invoiceRefs: [final.ref] });
+      const approved = yield* run(ready.state, { _tag: 'ConfirmInvoice', invoiceRef: final.ref });
       expect(approved.invoice).toMatchObject({ paidMinor: 30_000, paymentState: 'PARTIALLY_PAID' });
       const events = paymentEvents(approved.state).filter((event) => event.invoiceResourceId === 'fin-1');
       expect(events.map((event) => event.source)).toEqual(['PRIOR']);

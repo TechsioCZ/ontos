@@ -387,9 +387,15 @@ const executeGoldenInvoice = Effect.fn('SiamparkLiveHttp.executeGoldenInvoice')(
     'siampark-agreements',
   ];
   const draft = yield* applyFinanceCommand(session, prepared.finance.revision, payload.command, providers);
-  const confirmed = yield* applyFinanceCommand(
+  const ready = yield* applyFinanceCommand(
     session,
     draft.revision,
+    { _tag: 'MarkInvoicesPrepared', invoiceRefs: [draft.invoice.ref] },
+    providers,
+  );
+  const confirmed = yield* applyFinanceCommand(
+    session,
+    ready.revision,
     { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice.ref },
     providers,
   );

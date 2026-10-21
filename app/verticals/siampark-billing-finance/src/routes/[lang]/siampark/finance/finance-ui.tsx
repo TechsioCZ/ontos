@@ -111,6 +111,8 @@ export const shortMonthLabel = (month: string) =>
 /** Known domain refusals in Czech; anything else falls back to the generic feedback text. */
 export const reasonText: Readonly<Record<string, string>> = {
   budget_line_already_exists: 'Rozpočtová položka pro tento měsíc, typ, kategorii a objekt už existuje.',
+  confirm_requires_prepared:
+    'Doklad nelze schválit, dokud není ve stavu „Připraveno ke schválení“. Nejdřív zvolte „Připravit ke schválení“.',
   contract_not_usable: 'Vybraná smlouva už v evidenci není dostupná.',
   document_kind_requires_draft: 'Druh dokladu lze změnit jen u návrhu.',
   export_cannot_fail: 'Chybu lze zapsat jen u připraveného nebo předaného balíčku.',

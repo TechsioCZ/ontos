@@ -72,6 +72,9 @@ export interface FinanceTransition {
 export const MANUAL_COUNTERPARTY_ID = '00000000-0000-4000-8000-000000000000';
 const rejected = (reason: string) => new FinanceRejected({ code: 'finance_rejected', reason });
 const conflict = (reason: string) => new FinanceConflict({ code: 'finance_conflict', reason });
+/** Stable code first (the UI matches it), then a readable Czech explanation for API callers. */
+export const CONFIRM_REQUIRES_PREPARED =
+  'confirm_requires_prepared: Doklad nelze schválit, dokud není ve stavu „Připraveno ke schválení“. Nejdřív zvolte „Připravit ke schválení“.';
 export const requireFinanceRevision = (
   currentRevision: number,
   expectedRevision: number,
@@ -344,6 +347,10 @@ const handleConfirmInvoice = Effect.fn('Finance.handleConfirmInvoice')(function*
 
   if (previous.businessState !== 'DRAFT') {
     return yield* conflict('confirm_requires_draft');
+  }
+  // S07.R5: approval needs the preparation step first (návrh -> připraveno ke schválení -> schváleno).
+  if (previous.reviewState !== 'PREPARED') {
+    return yield* conflict(CONFIRM_REQUIRES_PREPARED);
   }
   const settled = yield* priorSettlementTotal(state, previous, previous.priorSettlement?.entries ?? []);
   const { reviewState: _reviewState, ...rest } = previous;

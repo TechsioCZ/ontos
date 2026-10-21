@@ -16,6 +16,7 @@ import { executeApplyCommand } from '../../../../api/apply-command-action-client
 import { browserCrypto } from '../../../../api/browser-crypto.ts';
 import { executeRecords } from '../../../../api/records-client.ts';
 import { financeBrowserRuntime } from '../../../../runtime/browser.ts';
+import { reasonText } from './finance-ui.tsx';
 import { useFinanceReferences } from './use-finance-references.ts';
 import { useSiamparkObjects } from './use-siampark-objects.ts';
 
@@ -338,7 +339,14 @@ export const useFinanceRecords = () => {
             const failure = financeFailureFeedback(error);
             setFeedback(failure);
             // The detail panel covers the page's status line, so a rejected confirm or void also raises a toast.
-            toaster.create({ title: t(`siampark-billing-finance.demo.feedback.${failure}`), type: 'error' });
+            // A known domain refusal (e.g. approving a draft that was not prepared) is explained in Czech.
+            const reason = failureReason(error);
+            const known = Object.entries(reasonText).find(([key]) => reason?.includes(key) === true)?.[1];
+            toaster.create({
+              ...(known === undefined ? {} : { description: known }),
+              title: t(`siampark-billing-finance.demo.feedback.${known === undefined ? failure : 'refused'}`),
+              type: 'error',
+            });
           },
           onSuccess: (result) => {
             setFeedback('ready');

@@ -147,10 +147,16 @@ describe('Invoice line snapshots', () => {
         vatRecap: [{ baseMinor: 2000, rate: 21, vatMinor: 420 }],
       });
 
-      const confirmed = yield* run(relined.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice!.ref }, 'unused');
+      const plainConfirm = yield* Effect.exit(
+        run(relined.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice!.ref }, 'unused'),
+      );
+      expect(Exit.isFailure(plainConfirm)).toBe(true);
+      const prepared = yield* run(relined.state, { _tag: 'MarkInvoicesPrepared', invoiceRefs: [draft.invoice!.ref] }, 'unused');
+      const confirmed = yield* run(prepared.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice!.ref }, 'unused');
       const {
         approvedAt: _approvedAt,
         businessState: _confirmedState,
+        preparedAt: _confirmedPreparedAt,
         updatedAt: _confirmedAt,
         ...confirmedSnapshot
       } = confirmed.invoice!;

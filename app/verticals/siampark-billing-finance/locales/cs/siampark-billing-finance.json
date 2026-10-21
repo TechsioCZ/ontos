@@ -229,7 +229,8 @@
         "forbidden": "Pro tuto operaci nemáte oprávnění.",
         "conflict": "Data se mezitím změnila. Seznam jsme aktualizovali, zkuste to prosím znovu.",
         "validation": "Zkontrolujte částku, datum a obchodní vazby.",
-        "unavailable": "Služba je nedostupná. Zkuste obnovit data."
+        "unavailable": "Služba je nedostupná. Zkuste obnovit data.",
+        "refused": "Akci nelze provést"
       },
       "labels": {
         "ALL": "Vše",

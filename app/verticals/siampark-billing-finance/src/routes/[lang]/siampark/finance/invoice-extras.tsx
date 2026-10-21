@@ -12,7 +12,7 @@ import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { DateTime } from 'effect';
 import { useEffect, useState } from 'react';
 import type { Invoice } from '../../../../../shared/apis/records.ts';
-import { paymentEvents, reminderText } from '../../../../../shared/domain/finance-planning.ts';
+import { isTestReminderRecipient, paymentEvents, reminderText } from '../../../../../shared/domain/finance-planning.ts';
 import {
   ACCEPTED_DOCUMENT_TYPES,
   downloadBase64,
@@ -442,9 +442,15 @@ export const InvoiceReminders = ({
   readonly invoice: Invoice;
   readonly vm: FinanceViewModel;
 }) => {
-  const reminders = (vm.snapshot?.state.reminders ?? []).filter(
+  const allReminders = (vm.snapshot?.state.reminders ?? []).filter(
     (reminder) => reminder.invoiceResourceId === invoice.ref.resourceId,
   );
+  // Test sends to reserved test domains stay in the audit record but are not shown as customer reminders.
+  const testCount = allReminders.filter((reminder) => isTestReminderRecipient(reminder.recipient)).length;
+  const [showTests, setShowTests] = useState(false);
+  const reminders = showTests
+    ? allReminders
+    : allReminders.filter((reminder) => !isTestReminderRecipient(reminder.recipient));
   const receipts = useReminderEmailReceipts(
     reminders.filter((reminder) => reminder.deliveryMode === 'EMAIL').map((reminder) => reminder.id),
   );
@@ -622,6 +628,11 @@ export const InvoiceReminders = ({
               <li className="flex flex-wrap items-center gap-150 py-100" key={reminder.id}>
                 <span className="tabular-nums">{at(reminder.createdAt)}</span>
                 <span className="font-medium">{reminder.recipient}</span>
+                {isTestReminderRecipient(reminder.recipient) && (
+                  <Badge size="sm" variant="outline">
+                    Zkušební adresa – nejde o upomínku zákazníkovi
+                  </Badge>
+                )}
                 {reminder.deliveryMode === 'EMAIL' ? (
                   <ReminderEmailStatus receipts={receipts} reminderId={reminder.id} />
                 ) : (
@@ -633,6 +644,20 @@ export const InvoiceReminders = ({
               </li>
             ))}
           </ul>
+        )}
+        {testCount > 0 && (
+          <Button
+            className="self-start"
+            data-finance-test-reminders={testCount}
+            onClick={() => setShowTests((current) => !current)}
+            size="sm"
+            theme="borderless"
+            variant="secondary"
+          >
+            {showTests
+              ? 'Skrýt zkušební odeslání'
+              : `Zkušební odeslání na testovací adresy: ${testCount} (skryto, v auditu zůstává)`}
+          </Button>
         )}
       </div>
     </SectionCard>

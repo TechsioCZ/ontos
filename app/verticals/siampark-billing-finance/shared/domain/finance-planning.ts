@@ -426,6 +426,16 @@ export const buildAccountingExport = (
 const czk = (minor: number) =>
   `${new Intl.NumberFormat('cs-CZ', { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(minor / 100)} Kč`;
 
+/**
+ * A reminder sent to a reserved test domain (RFC 2606/6761: `.invalid`, `.example`, `.test`, `.localhost`,
+ * `example.com/.net/.org`) was a test of the e-mail path, not a reminder to the customer. The audit record stays;
+ * the demo view only keeps it out of the customer's reminder list.
+ */
+export const isTestReminderRecipient = (recipient: string) => {
+  const domain = recipient.trim().toLowerCase().split('@').at(-1) ?? '';
+  return /(?:^|\.)(?:invalid|example|test|localhost)$/u.test(domain) || /(?:^|\.)example\.(?:com|net|org)$/u.test(domain);
+};
+
 /** Simple Czech reminder template (S07.R7). */
 export const reminderText = (input: {
   readonly businessDate: string;

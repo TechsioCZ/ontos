@@ -229,7 +229,8 @@
         "forbidden": "You are not authorized for this operation.",
         "conflict": "The data changed meanwhile. The list was refreshed, please try again.",
         "validation": "Check amounts, dates and business references.",
-        "unavailable": "Service unavailable. Refresh and try again."
+        "unavailable": "Service unavailable. Refresh and try again.",
+        "refused": "The action cannot be completed"
       },
       "labels": {
         "ALL": "All",

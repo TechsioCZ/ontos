@@ -268,7 +268,8 @@ describe('Finance owner transitions', () => {
         propertyRef,
         totalMinor: 425_000,
       });
-      const confirmed = yield* run(edited.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice!.ref });
+      const prepared = yield* run(edited.state, { _tag: 'MarkInvoicesPrepared', invoiceRefs: [draft.invoice!.ref] });
+      const confirmed = yield* run(prepared.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice!.ref });
       expect(confirmed.invoice!.businessState).toBe('CONFIRMED');
       yield* fails(confirmed.state, {
         ...create,

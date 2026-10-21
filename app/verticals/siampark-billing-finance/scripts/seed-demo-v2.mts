@@ -284,7 +284,8 @@ const program = Effect.gen(function* seed() {
           : invoice,
       ),
     };
-    const confirmed = yield* invoiceOf(yield* apply({ _tag: 'ConfirmInvoice', invoiceRef: draft.ref }));
+    yield* apply({ _tag: 'MarkInvoicesPrepared', actorLabel: ACTOR, invoiceRefs: [draft.ref] });
+    const confirmed = yield* invoiceOf(yield* apply({ _tag: 'ConfirmInvoice', actorLabel: ACTOR, invoiceRef: draft.ref }));
     if (entry.paid !== 'NONE') {
       yield* apply({
         _tag: 'RecordManualPayment',

@@ -126,6 +126,7 @@ export const repairRentalInvoices = (original: FinanceState, now: DateTime.Utc) 
             : entry,
         ),
       };
+      yield* apply({ _tag: 'MarkInvoicesPrepared', invoiceRefs: [draft.invoice.ref] }, correction.replacementId);
       yield* apply({ _tag: 'ConfirmInvoice', invoiceRef: draft.invoice.ref }, correction.replacementId);
     }
     const duplicate = state.invoices.find((entry) => entry.ref.resourceId === '8471308c-6070-4f0b-a9a1-545e30b698ee');
