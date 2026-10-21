@@ -2,7 +2,7 @@
 // salesperson, client and status meaning; values strictly per currency; excluded orders reported aside; CSV export
 // of exactly the rows shown; drill-down to the client card. Data = the ACL-projected records of the signed-in
 // principal (a salesperson only ever receives own clients, so the report and the CSV cannot contain others).
-import { PageHeader, formatDateTime } from '@app/admin-ui';
+import { PageHeader, formatDateTime, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { useState } from 'react';
@@ -115,7 +115,7 @@ const ReportView = ({
           <p
             className={
               report.excludedTotal > 0
-                ? 'rounded-md border border-border-primary bg-surface-secondary px-150 py-100'
+                ? `${surfaceTileClassName} px-150 py-100`
                 : 'text-fg-secondary'
             }
             data-testid="crm-report-excluded"
@@ -183,7 +183,7 @@ const ReportView = ({
           <ItemsCard report={report} />
         </>
       ) : (
-        <div className="rounded-lg border border-border-primary bg-surface">
+        <div className={surfaceTileClassName}>
           <div className="flex flex-col items-center gap-150 p-450 text-center">
             <p className="font-semibold text-md">Bez dat</p>
             <p className="max-w-prose text-fg-secondary text-sm">

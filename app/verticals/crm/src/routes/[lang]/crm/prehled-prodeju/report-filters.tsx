@@ -18,6 +18,7 @@ import type { PeriodOption } from './report-format.ts';
 import { periodOptions } from './report-format.ts';
 import type { GroupingKey } from './report-tables.tsx';
 import { groupingLabels } from './report-tables.tsx';
+import { surfaceTileClassName } from '@app/admin-ui';
 
 export interface ReportQuery {
   readonly client: string;
@@ -161,7 +162,7 @@ export const ReportFilterBar = ({ onChange, periods, query, records, scopeAll }:
   const active = query.period !== ALL || query.salesperson !== ALL || query.client !== ALL || query.status !== ALL;
 
   return (
-    <div className="flex flex-wrap items-end gap-150 rounded-lg border border-border-primary bg-surface p-200">
+    <div className={`${surfaceTileClassName} flex flex-wrap items-end gap-150 p-200`}>
       <div className="w-52">
         <SelectTemplate
           id="crm-report-period"

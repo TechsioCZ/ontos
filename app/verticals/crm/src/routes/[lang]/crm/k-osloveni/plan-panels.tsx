@@ -1,5 +1,5 @@
 // AREA: visits (C06) — owned by the crm-visits lane. Plan a contact / reschedule it / complete it (+ visit).
-import { DetailList, SidePanel, comboboxTranslations } from '@app/admin-ui';
+import { DetailList, SidePanel, comboboxTranslations, surfaceTileClassName } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
@@ -330,7 +330,7 @@ export const CompletePlanPanel = ({
           size="sm"
         />
         {withVisit && (
-          <div className="flex flex-col gap-200 rounded-md border border-border-primary p-200">
+          <div className={`${surfaceTileClassName} flex flex-col gap-200 p-200`}>
             <VisitFields
               draft={draft}
               idPrefix="crm-plan-visit"
