@@ -120,11 +120,12 @@ export const siamparkGuide: DemoGuide = {
       id: 'finance',
       steps: [
         {
-          click: 'Řádek FV-2026-0007 → Úhrady, potom Upomínky. Nic nového neúčtujte ani neodesílejte.',
+          click:
+            'Otevře se faktura FV-2026-0007: sekce Úhrady, pod ní Upomínky. Nic nového neúčtujte ani neodesílejte.',
           id: 'siampark-castecna-uhrada',
           persona: finance,
           say: 'Finance vidí doklad, evidovanou částečnou platbu i upomínky skutečně odeslané e-mailem; řádek SIMULACE je starší záznam z doby před napojením e-mailu. Platba je ruční evidence, ne napojení na banku.',
-          target: { kind: 'app', path: '/siampark/finance' },
+          target: { kind: 'app', path: '/siampark/finance?resourceId=c9f16710-c669-43ca-91d6-8e9f0bd70a4b' },
           title: 'Částečná úhrada a upomínky',
         },
         {
