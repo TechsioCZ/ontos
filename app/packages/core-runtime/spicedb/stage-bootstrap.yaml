@@ -1,5 +1,9 @@
 schema: |-
-  definition principal {}
+  definition principal {
+    relation tenant: tenant
+    relation operator: principal
+    permission operate = operator & tenant->access
+  }
 
   definition tenant {
     relation member: principal

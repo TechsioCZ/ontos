@@ -833,6 +833,8 @@ export type { ManageDemoAccountPayload, ManageDemoAccountResult } from './module
 export { demoAccountObjectIdParts, openDemoAccountGrants } from './install/demo-account-administration.ts';
 export type { DemoAccountGrants } from './install/demo-account-administration.ts';
 export type { DemoAccountRelationship } from './install/demo-account-administration.ts';
+export { openPrincipalOperators, operatorChanges } from './permissions/principal-operators.ts';
+export type { PrincipalOperators } from './permissions/principal-operators.ts';
 export {
   actionKeyOfObjectId,
   agentGrantRelationships,

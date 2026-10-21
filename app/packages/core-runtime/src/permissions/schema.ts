@@ -1,4 +1,8 @@
-export const ONTOS_SPICEDB_SCHEMA = `definition principal {}
+export const ONTOS_SPICEDB_SCHEMA = `definition principal {
+  relation tenant: tenant
+  relation operator: principal
+  permission operate = operator & tenant->access
+}
 
 definition tenant {
   relation member: principal
