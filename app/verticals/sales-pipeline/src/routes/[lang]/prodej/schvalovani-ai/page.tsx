@@ -39,6 +39,8 @@ type AiCommand =
 
 interface ModuleSlice {
   readonly batches: readonly AiBatch[];
+  /** Customer (partyId) of every opportunity or order, so a target reads „title · customer“. */
+  readonly partyOf: ReadonlyMap<string, string>;
   readonly canWrite: boolean;
   readonly changes: readonly AiChange<unknown>[];
   readonly log: readonly AiLogEntry[];
@@ -66,10 +68,11 @@ interface RunGroup {
 const correlation = (name: string) => Random.nextInt.pipe(Effect.map((nonce) => `sales-pipeline:ai:${name}:${nonce}`));
 
 const loadOpportunities = correlation('records').pipe(
-  Effect.flatMap((key) => executePipelineRecords({ ids: [] }, key)),
+  Effect.flatMap((key) => executePipelineRecords({}, key)),
   Effect.map(
     (response): ModuleSlice => ({
       batches: response.aiChanges?.batches ?? [],
+      partyOf: new Map(response.items.map((item) => [item.id as string, item.partyId as string] as const)),
       canWrite: response.canWrite,
       changes: response.aiChanges?.changes ?? [],
       log: response.aiChanges?.log ?? [],
@@ -86,6 +89,7 @@ const loadOrders = correlation('orders').pipe(
       canWrite: response.canWrite,
       changes: response.aiChanges?.changes ?? [],
       log: response.aiChanges?.log ?? [],
+      partyOf: new Map(response.orders.map((order) => [order.id as string, order.partyId as string] as const)),
       revision: response.revision,
     }),
   ),
@@ -211,19 +215,21 @@ const ChangeCard = ({
   canWrite,
   change,
   decide,
+  targetLabel,
   valueLabel,
 }: {
   readonly busy: boolean;
   readonly canWrite: boolean;
   readonly change: AiChange<unknown>;
   readonly decide: (ids: readonly string[], decision: 'approve' | 'reject') => void;
+  readonly targetLabel: string;
   readonly valueLabel: (field: string, value: string | undefined) => string | undefined;
 }) => (
   <article className="sp-ai-review-change" data-change-id={change.id}>
     <div className="sp-ai-review-heading">
       <div>
         <h3 className="font-semibold text-sm">{change.summary}</h3>
-        <p className="text-fg-secondary text-sm">{change.target.label}</p>
+        <p className="text-fg-secondary text-sm">{targetLabel}</p>
       </div>
       <div className="sp-ai-review-actions">
         <Badge variant={change.status === 'pending' ? 'warning' : change.status === 'applied' ? 'success' : 'secondary'}>
@@ -281,6 +287,7 @@ const RunCard = ({
   group,
   nameOf,
   run,
+  targetLabel,
   valueLabel,
 }: {
   readonly busy: boolean;
@@ -288,6 +295,7 @@ const RunCard = ({
   readonly group: RunGroup;
   readonly nameOf: (principalId: string | undefined) => string;
   readonly run: (steps: readonly { readonly command: AiCommand; readonly module: ModuleKey }[], success: string) => void;
+  readonly targetLabel: (module: ModuleKey, change: AiChange<unknown>) => string;
   readonly valueLabel: (field: string, value: string | undefined) => string | undefined;
 }) => {
   const [note, setNote] = useState('');
@@ -428,6 +436,7 @@ const RunCard = ({
               canWrite={canWrite(part.module)}
               change={change}
               decide={decideOne(part.module)}
+              targetLabel={targetLabel(part.module, change)}
               valueLabel={valueLabel}
             />
           ))}
@@ -478,6 +487,18 @@ const AiApprovalsContent = () => {
             ? (customerNames.get(value) ?? 'Zákazník mimo seznam')
             : value,
     [customerNames, employeeNames],
+  );
+  const targetLabel = useCallback(
+    (module: ModuleKey, change: AiChange<unknown>) => {
+      const state = modules[module];
+      const partyId =
+        state.status === 'ready' && change.target.id !== undefined ? state.partyOf.get(change.target.id) : undefined;
+      const customer = partyId === undefined ? undefined : customerNames.get(partyId);
+      return customer === undefined || change.target.label.includes(customer)
+        ? change.target.label
+        : `${change.target.label} · ${customer}`;
+    },
+    [customerNames, modules],
   );
   const nameOf = useCallback(
     (principalId: string | undefined) => {
@@ -610,6 +631,7 @@ const AiApprovalsContent = () => {
                 group={group}
                 nameOf={nameOf}
                 run={run}
+                targetLabel={targetLabel}
                 valueLabel={valueLabel}
               />
             ))
