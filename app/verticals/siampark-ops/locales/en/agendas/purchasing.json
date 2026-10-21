@@ -1,6 +1,6 @@
 {
   "title": "Stock and purchasing",
-  "description": "Stock levels computed from movements, supplier quotes, purchase orders with partial deliveries and a link to the received invoice.",
+  "description": "Stock levels computed from movements, supplier quotes, purchase orders with partial deliveries and a link to the received invoice; customer sales: quotes, sales orders and issued invoices.",
   "footer": "Stock is always computed from stored movements. Replenishment suggestions are rule-based (minimum/maximum, lead time), not a consumption forecast. Received invoices live in Finance; only a reference is kept here.",
   "fields": {
     "sku": "Item code",
@@ -67,7 +67,8 @@
     "orders": "Orders",
     "quotes": "Supplier quotes",
     "movements": "Movements",
-    "suppliers": "Suppliers"
+    "suppliers": "Suppliers",
+    "sales": "Sales"
   },
   "stats": {
     "count": "Stock items",
@@ -333,5 +334,114 @@
     "item": "Choose an item",
     "batch": "Choose a batch",
     "option": "Choose an option"
+  },
+  "sales": {
+    "intro": "Selling services and goods: a quote with a directory counterparty, lines, quantity, price and VAT → a sales order (lines and prices copied) → delivery → an issued invoice draft in Finance. Editing the quote later never changes the order or invoice.",
+    "newQuote": "New customer quote",
+    "editQuote": "Edit quote {{number}}",
+    "quoteTitle": "Quote {{number}}",
+    "orderTitle": "Sales order {{number}}",
+    "ordersTitle": "Sales orders ({{count}}, open {{open}})",
+    "quotesTitle": "Customer quotes ({{count}})",
+    "noOrders": "No sales order yet.",
+    "noOrdersHint": "Create one from a quote with “Create sales order”.",
+    "noQuotes": "No customer quote yet.",
+    "noQuotesHint": "Create one with “New customer quote”.",
+    "noInvoice": "not invoiced",
+    "openInvoice": "Open in Finance",
+    "withVat": "incl. VAT {{total}}",
+    "totals": "Excl. VAT {{base}} · incl. VAT {{total}}",
+    "remaining_one": "{{count}} unit left to deliver",
+    "remaining_other": "{{count}} units left to deliver",
+    "quoteStatus": {
+      "draft": "Draft",
+      "sent": "Sent",
+      "accepted": "Accepted",
+      "rejected": "Rejected"
+    },
+    "event": {
+      "created": "Created",
+      "approved": "Approved",
+      "ordered": "Confirmed to customer",
+      "delivery": "Delivery",
+      "invoice": "Invoice issued",
+      "cancelled": "Cancelled",
+      "completed": "Completed"
+    },
+    "columns": {
+      "order": "Order",
+      "quote": "Quote",
+      "status": "Status",
+      "delivered": "Delivered",
+      "deliveredShort": "Delivered",
+      "total": "Total excl. VAT",
+      "invoices": "Issued invoices",
+      "date": "Date",
+      "validUntil": "Valid until",
+      "lineTotal": "Total excl. VAT"
+    },
+    "fields": {
+      "customer": "Customer (counterparty)",
+      "date": "Quote date",
+      "validUntil": "Valid until",
+      "lines": "Items and services",
+      "description": "Item / service",
+      "quantity": "Quantity",
+      "unitPrice": "Unit price excl. VAT (CZK)",
+      "vat": "VAT",
+      "note": "Note",
+      "deliveryDate": "Delivery date",
+      "closeReason": "Reason to close with a remainder",
+      "issueDate": "Issue date",
+      "dueDate": "Due date"
+    },
+    "detail": {
+      "info": "Details",
+      "history": "Status history",
+      "lastChange": "Last change"
+    },
+    "actions": {
+      "editQuote": "Edit",
+      "reject": "Reject",
+      "createOrder": "Create sales order",
+      "openOrder": "Open {{number}}",
+      "approve": "Approve",
+      "confirm": "Confirm order",
+      "deliver": "Record delivery",
+      "saveDelivery": "Save delivery",
+      "invoice": "Issue invoice",
+      "createInvoice": "Create invoice draft",
+      "close": "Close with remainder",
+      "cancel": "Cancel order"
+    },
+    "form": {
+      "pickCustomer": "Choose a customer from the directory",
+      "customersLoading": "Loading customers…",
+      "customersUnavailable": "The customer directory is unavailable; a quote cannot be created now.",
+      "descriptionPlaceholder": "e.g. Lounge rental – corporate event",
+      "addLine": "Add line",
+      "removeLine": "Remove",
+      "saveDraft": "Save as draft",
+      "saveSent": "Save as sent",
+      "saveChanges": "Save changes",
+      "required": "Choose a customer, a date and fill in name, quantity and price for every line.",
+      "validity": "The quote cannot expire before its date.",
+      "copyNote": "This quote already has an order. The order and issued invoices keep their own copy of the lines; editing the quote does not change them.",
+      "deliveryRequired": "Enter a delivered quantity for at least one line.",
+      "remainingHelp": "Left to deliver: {{count}}",
+      "dueDate": "The due date cannot be before the issue date.",
+      "invoiceIntro": "Finance creates an issued invoice draft for {{customer}} with a copy of this order’s lines and prices. The invoice links to the order and the order to the invoice.",
+      "invoiceFailed": "The invoice draft could not be created. Reload and try again."
+    },
+    "messages": {
+      "rejected": "Quote rejected.",
+      "orderCreated": "Sales order created from the quote.",
+      "approved": "Order approved.",
+      "confirmed": "Order confirmed to the customer.",
+      "delivered": "Delivery recorded.",
+      "closed": "Order closed.",
+      "cancelled": "Order cancelled.",
+      "invoiced": "Invoice draft {{number}} created in Finance."
+    }
   }
 }

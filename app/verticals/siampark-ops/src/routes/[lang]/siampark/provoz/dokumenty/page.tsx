@@ -6,10 +6,12 @@ import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
+import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
+import { DateTime } from 'effect';
 import { useEffect, useState } from 'react';
 import type { DocumentRecord, SubjectRef } from '../../../../../../shared/domain/documents.ts';
 import { documentLinks } from '../../../../../../shared/domain/documents.ts';
@@ -28,6 +30,7 @@ import {
   usePrincipalLabel,
 } from '../../../../../ui/documents-kit.tsx';
 import { useAgendaRecords } from '../../../../../ui/use-agenda.ts';
+import { exportCsv } from '../../../../../ui/ops-agenda/ui-bits.tsx';
 import { LinkedDocuments } from '../../../../../ui/linked-documents.tsx';
 import { useTaskOptions } from '../../../../../ui/task-options.ts';
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
@@ -83,6 +86,9 @@ const DocumentsView = () => {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState(ALL);
   const [link, setLink] = useState(ALL);
+  const [owner, setOwner] = useState(ALL);
+  const [changedFrom, setChangedFrom] = useState('');
+  const [changedTo, setChangedTo] = useState('');
   const [openId, setOpenId] = useState<string | undefined>(undefined);
   const [form, setForm] = useState<DocumentFormMode | undefined>(undefined);
   const [channel, setChannel] = useState<(typeof channels)[number]>('provoz');
@@ -96,10 +102,49 @@ const DocumentsView = () => {
   }, [searchStr]);
 
   const filter = { category: category === ALL ? '' : category, link: link === ALL ? '' : link, query };
+  /** Owner = contract owner when stated, otherwise the person who uploaded the current version (or created it). */
+  const ownerOf = (document: DocumentRecord) =>
+    document.contract?.owner ?? principalLabel(document.versions.at(-1)?.uploadedBy ?? document.createdBy);
+  const pragueDay = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Prague' });
+  /** Date of the last change (Europe/Prague business date). */
+  const changedOn = (document: DocumentRecord) => pragueDay.format(DateTime.toEpochMillis(document.updatedAt));
+  const owners = [...new Set(documents.map(ownerOf))].toSorted((left, right) => left.localeCompare(right, 'cs'));
   const filtered = documents
     .filter((document) => matchesFilter(document, filter))
+    .filter((document) => owner === ALL || ownerOf(document) === owner)
+    .filter((document) => changedFrom === '' || changedOn(document) >= changedFrom)
+    .filter((document) => changedTo === '' || changedOn(document) <= changedTo)
     .toSorted((left, right) => formatSortKey(right).localeCompare(formatSortKey(left)));
-  const filtersActive = query !== '' || category !== ALL || link !== ALL;
+  const filtersActive =
+    query !== '' || category !== ALL || link !== ALL || owner !== ALL || changedFrom !== '' || changedTo !== '';
+  const downloadCsv = () =>
+    exportCsv({
+      fileName: `siampark-dokumenty-${today}.csv`,
+      filter: [query, category === ALL ? '' : category, owner === ALL ? '' : owner, changedFrom, changedTo]
+        .filter((part) => part !== '')
+        .join(' · '),
+      header: [
+        t(`${k}.fields.title`),
+        t(`${k}.fields.category`),
+        t(`${k}.filters.owner`),
+        t(`${k}.fields.links`),
+        t(`${k}.fields.currentVersion`),
+        t(`${k}.fields.lastChange`),
+      ],
+      list: 'Dokumenty a smlouvy',
+      log: false,
+      revision: envelope?.revision ?? 0,
+      rows: filtered.map((document) => [
+        document.title,
+        categoryLabel(document.category),
+        ownerOf(document),
+        documentLinks(document)
+          .map((entry) => entry.label)
+          .join(', '),
+        document.versions.at(-1)?.file.name ?? '',
+        changedOn(document),
+      ]),
+    });
   const contractDocs = documents.filter(isContractDocument);
   const register = contractRegister(documents);
   const deadlines = upcomingDeadlines(documents, today);
@@ -206,11 +251,18 @@ const DocumentsView = () => {
     <>
       <PageHeader
         actions={
-          canWrite ? (
-            <Button onClick={() => setForm({ kind: 'create' })} size="sm" variant="primary">
-              {t(`${k}.create.title`)}
-            </Button>
-          ) : undefined
+          envelope === undefined ? undefined : (
+            <>
+              <Button onClick={() => void downloadCsv()} size="sm" theme="borderless" variant="secondary">
+                {t(`${k}.filters.exportCsv`)}
+              </Button>
+              {canWrite && (
+                <Button onClick={() => setForm({ kind: 'create' })} size="sm" variant="primary">
+                  {t(`${k}.create.title`)}
+                </Button>
+              )}
+            </>
+          )
         }
         description={t(`${k}.description`)}
         title={t(`${k}.title`)}
@@ -296,6 +348,39 @@ const DocumentsView = () => {
                   value={[category]}
                 />
               </div>
+              <div className="w-56">
+                <Select
+                  items={[
+                    { displayValue: t(`${k}.filters.allOwners`), label: t(`${k}.filters.allOwners`), value: ALL },
+                    ...owners.map((name) => ({ displayValue: name, label: name, value: name })),
+                  ]}
+                  label={t(`${k}.filters.owner`)}
+                  name="documents-owner-filter"
+                  onValueChange={({ value }) => setOwner(value[0] ?? ALL)}
+                  size="sm"
+                  value={[owner]}
+                />
+              </div>
+              <div className="w-40">
+                <FormInput
+                  id="documents-changed-from"
+                  label={t(`${k}.filters.changedFrom`)}
+                  onChange={(event) => setChangedFrom(event.target.value)}
+                  size="sm"
+                  type="date"
+                  value={changedFrom}
+                />
+              </div>
+              <div className="w-40">
+                <FormInput
+                  id="documents-changed-to"
+                  label={t(`${k}.filters.changedTo`)}
+                  onChange={(event) => setChangedTo(event.target.value)}
+                  size="sm"
+                  type="date"
+                  value={changedTo}
+                />
+              </div>
               <div className="w-72">
                 <Select
                   items={[
@@ -315,6 +400,9 @@ const DocumentsView = () => {
                     setQuery('');
                     setCategory(ALL);
                     setLink(ALL);
+                    setOwner(ALL);
+                    setChangedFrom('');
+                    setChangedTo('');
                   }}
                   size="sm"
                   theme="borderless"

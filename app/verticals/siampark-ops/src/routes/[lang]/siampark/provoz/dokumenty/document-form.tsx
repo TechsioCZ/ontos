@@ -26,6 +26,7 @@ import {
   useCategoryLabel,
 } from '../../../../../ui/documents-kit.tsx';
 import { usePropertyOptions } from '../../../../../ui/property-options.ts';
+import { useContactOptions, useInvoiceOptions } from '../../../../../ui/party-invoice-options.ts';
 import type { TaskOptionsState } from '../../../../../ui/task-options.ts';
 import type { CommandOutcome, FailureReason } from '../../../../../ui/use-agenda.ts';
 import { MAX_UPLOAD_BYTES, uploadFile } from '../../../../../ui/use-agenda.ts';
@@ -129,13 +130,14 @@ export const DocumentFormPanel = ({
   const toast = useToast();
   const categoryLabel = useCategoryLabel();
   const properties = usePropertyOptions();
+  const contacts = useContactOptions();
+  const invoices = useInvoiceOptions();
   const [file, setFile] = useState<File | undefined>(undefined);
   const [dragging, setDragging] = useState(false);
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('other');
   const [description, setDescription] = useState('');
   const [links, setLinks] = useState<readonly SubjectRef[]>([]);
-  const [tenant, setTenant] = useState('');
   const [amends, setAmends] = useState(NONE);
   const [contract, setContract] = useState<ContractDraft>(emptyContract);
   const [busy, setBusy] = useState<'upload' | 'save' | undefined>(undefined);
@@ -151,7 +153,6 @@ export const DocumentFormPanel = ({
     }
     setFile(undefined);
     setError(undefined);
-    setTenant('');
     if (mode.kind === 'edit') {
       setTitle(mode.document.title);
       setCategory(mode.document.category);
@@ -465,38 +466,47 @@ export const DocumentFormPanel = ({
               value={[]}
             />
           )}
-          <div className="siampark-document-counterparty">
-            <div>
-              <FormInput
-                autoComplete="off"
-                id="document-tenant"
-                label={t(`${k}.create.tenant`)}
-                maxLength={300}
-                onChange={(event) => setTenant(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && tenant.trim() !== '') {
-                    event.preventDefault();
-                    addLink({ id: `tenant:${tenant.trim().toLowerCase()}`, kind: 'tenant', label: tenant.trim() });
-                    setTenant('');
-                  }
-                }}
-                placeholder={t(`${k}.create.tenantPlaceholder`)}
-                value={tenant}
-              />
-            </div>
-            <Button
-              disabled={tenant.trim() === ''}
-              onClick={() => {
-                addLink({ id: `tenant:${tenant.trim().toLowerCase()}`, kind: 'tenant', label: tenant.trim() });
-                setTenant('');
+          {contacts.status === 'ready' && (
+            <Select
+              items={contacts.options.map((option) => ({
+                displayValue: option.label,
+                label: option.label,
+                value: option.id,
+              }))}
+              label={t(`${k}.create.tenant`)}
+              name="document-link-contact"
+              placeholder={t(`${k}.create.pickContact`)}
+              onValueChange={({ value }) => {
+                const picked = contacts.options.find((option) => option.id === value[0]);
+                if (picked !== undefined) addLink(picked);
               }}
               size="md"
-              theme="outlined"
-              variant="secondary"
-            >
-              {t(`${k}.create.addLink`)}
-            </Button>
-          </div>
+              value={[]}
+            />
+          )}
+          {contacts.status !== 'ready' && (
+            <p className="text-fg-secondary text-xs">
+              {t(`${k}.create.${contacts.status === 'loading' ? 'contactsLoading' : 'contactsUnavailable'}`)}
+            </p>
+          )}
+          {invoices.status === 'ready' && invoices.options.length > 0 && (
+            <Select
+              items={invoices.options.map((option) => ({
+                displayValue: option.label,
+                label: option.label,
+                value: option.id,
+              }))}
+              label={t(`${k}.create.invoiceLink`)}
+              name="document-link-invoice"
+              placeholder={t(`${k}.create.pickInvoice`)}
+              onValueChange={({ value }) => {
+                const picked = invoices.options.find((option) => option.id === value[0]);
+                if (picked !== undefined) addLink(picked);
+              }}
+              size="md"
+              value={[]}
+            />
+          )}
         </fieldset>
 
         {isContractCategory(category) && (

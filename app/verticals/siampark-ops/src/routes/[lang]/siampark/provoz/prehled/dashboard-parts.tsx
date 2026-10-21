@@ -217,7 +217,9 @@ const kpiIcon: Record<KpiId, IconName> = {
   occupancy: 'key',
   openTasks: 'tasks',
   overdueInvoices: 'invoice',
+  planActual: 'clipboard',
   properties: 'building',
+  salesCases: 'contract',
 };
 
 const secondaryValues = (kpi: Kpi): Record<string, string | number> => {

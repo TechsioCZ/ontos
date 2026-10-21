@@ -59,7 +59,8 @@
     "work": "Úkoly",
     "finance": "Faktury",
     "ops": "Provoz areálu",
-    "parties": "Klienti"
+    "parties": "Klienti",
+    "sales": "Obchodní případy"
   },
   "state": {
     "loading": "Načítám…",
@@ -305,6 +306,18 @@
       "opsDeadline": "Provozní termín",
       "delivery": "Očekávané dodání",
       "validity": "Konec platnosti"
+    },
+    "sales": {
+      "LEAD": "Nový",
+      "QUALIFIED": "Kvalifikovaný",
+      "PROPOSAL": "Nabídka",
+      "NEGOTIATION": "Vyjednávání",
+      "WON": "Vyhraný",
+      "LOST": "Prohraný"
+    },
+    "budget": {
+      "COST": "Náklad",
+      "REVENUE": "Výnos"
     }
   },
   "kpi": {
@@ -347,6 +360,16 @@
       "label": "Smlouvy končící do 60 dní",
       "definition": "Aktivní smlouvy, jejichž datum konce je do 60 dnů od dneška (nebo už uplynulo).",
       "secondary": "z {{active}} aktivních smluv"
+    },
+    "salesCases": {
+      "label": "Rozpracované obchodní případy",
+      "definition": "Obchodní případy (příležitosti) ve fázích Nový až Vyjednávání, které nejsou vyhrané, prohrané ani archivované. Hodnota bez DPH; vážená hodnota = hodnota × pravděpodobnost.",
+      "secondary": "v hodnotě {{value}} · vážené {{weighted}}"
+    },
+    "planActual": {
+      "label": "Plán a skutečnost (náklady letos)",
+      "definition": "Rozpočtové řádky Financí od ledna do aktuálního měsíce. Skutečnost = ručně potvrzená částka řádku, jinak potvrzené faktury téhož měsíce, kategorie, směru a objektu. Číslo = podíl skutečných nákladů na plánovaných.",
+      "secondary": "Náklady {{costActual}} z {{costPlan}} · výnosy {{revenueActual}} z {{revenuePlan}}"
     }
   },
   "overview": {

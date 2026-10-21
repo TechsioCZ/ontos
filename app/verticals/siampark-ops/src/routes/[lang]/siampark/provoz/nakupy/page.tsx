@@ -21,9 +21,11 @@ import type { DraftLine } from './order-forms.tsx';
 import { OrderPanel, OrdersTab } from './orders-tab.tsx';
 import { MovementsTab, QuotePanel, QuotesTab, ReplenishTab, SuppliersTab } from './other-tabs.tsx';
 import { formatAmount, todayIso, usePurchasingT } from './purchasing-model.ts';
+import { SalesOrderPanel, SalesQuoteFormPanel, SalesQuotePanel, SalesTab } from './sales-tab.tsx';
 import { ItemPanel, StockTab } from './stock-tab.tsx';
+import type { SalesQuote } from '../../../../../../shared/domain/purchasing.ts';
 
-type Tab = 'stock' | 'replenish' | 'orders' | 'quotes' | 'movements' | 'suppliers';
+type Tab = 'stock' | 'replenish' | 'orders' | 'quotes' | 'sales' | 'movements' | 'suppliers';
 type Panel =
   | { readonly kind: 'item'; readonly id: string }
   | { readonly kind: 'order'; readonly id: string }
@@ -31,7 +33,10 @@ type Panel =
   | { readonly kind: 'create-order'; readonly supplierId?: string; readonly lines?: readonly DraftLine[] }
   | { readonly kind: 'create-quote' }
   | { readonly kind: 'create-item' }
-  | { readonly kind: 'create-supplier' };
+  | { readonly kind: 'create-supplier' }
+  | { readonly kind: 'sales-quote'; readonly id: string }
+  | { readonly kind: 'sales-order'; readonly id: string }
+  | { readonly kind: 'sales-quote-form'; readonly quote?: SalesQuote };
 
 const Stats = ({ state }: { readonly state: PurchasingState }) => {
   const k = usePurchasingT();
@@ -72,12 +77,18 @@ const PurchasingView = () => {
   const state = envelope?.state;
   const canWrite = envelope?.canWrite === true;
   const me = ops.data?.actorPrincipalRef;
+  const params = typeof window === 'undefined' ? undefined : new URLSearchParams(window.location.search);
   const [tab, setTab] = useState<Tab>(() =>
-    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('orderId') ? 'orders' : 'stock',
+    params?.has('orderId') === true
+      ? 'orders'
+      : params?.has('salesOrderId') === true || params?.get('tab') === 'prodej'
+        ? 'sales'
+        : 'stock',
   );
   const [panel, setPanel] = useState<Panel | undefined>(() => {
-    const id = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('orderId');
-    return id === null ? undefined : { kind: 'order', id };
+    const id = params?.get('orderId') ?? null;
+    const salesId = params?.get('salesOrderId') ?? null;
+    return id !== null ? { kind: 'order', id } : salesId !== null ? { id: salesId, kind: 'sales-order' } : undefined;
   });
   const [financeRefresh, setFinanceRefresh] = useState(0);
   const close = () => setPanel(undefined);
@@ -157,6 +168,7 @@ const PurchasingView = () => {
                   </Tabs.Trigger>
                   <Tabs.Trigger value="orders">{k('tabs.orders')}</Tabs.Trigger>
                   <Tabs.Trigger value="quotes">{k('tabs.quotes')}</Tabs.Trigger>
+                  <Tabs.Trigger value="sales">{k('tabs.sales')}</Tabs.Trigger>
                   <Tabs.Trigger value="movements">{k('tabs.movements')}</Tabs.Trigger>
                   <Tabs.Trigger value="suppliers">{k('tabs.suppliers')}</Tabs.Trigger>
                   <Tabs.Indicator />
@@ -180,6 +192,15 @@ const PurchasingView = () => {
               </Tabs.Content>
               <Tabs.Content className="py-200" value="quotes">
                 <QuotesTab onOpen={openQuote} state={state} />
+              </Tabs.Content>
+              <Tabs.Content className="py-200" value="sales">
+                <SalesTab
+                  canWrite={canWrite}
+                  onNewQuote={() => setPanel({ kind: 'sales-quote-form' })}
+                  onOpenOrder={(id) => setPanel({ id, kind: 'sales-order' })}
+                  onOpenQuote={(id) => setPanel({ id, kind: 'sales-quote' })}
+                  state={state}
+                />
               </Tabs.Content>
               <Tabs.Content className="py-200" value="movements">
                 <MovementsTab me={me} onOpenOrder={openOrder} state={state} />
@@ -241,6 +262,37 @@ const PurchasingView = () => {
               <ItemCreatePanel onClose={close} onCreated={openItem} run={ops.run} state={state} />
             )}
             {panel?.kind === 'create-supplier' && <SupplierPanel onClose={close} run={ops.run} />}
+            {panel?.kind === 'sales-quote-form' && (
+              <SalesQuoteFormPanel
+                onClose={close}
+                onSaved={(id) => setPanel({ id, kind: 'sales-quote' })}
+                run={ops.run}
+                {...(panel.quote === undefined ? {} : { quote: panel.quote })}
+              />
+            )}
+            {panel?.kind === 'sales-quote' && (
+              <SalesQuotePanel
+                canWrite={canWrite}
+                key={panel.id}
+                onClose={close}
+                onEdit={(quote) => setPanel({ kind: 'sales-quote-form', quote })}
+                onOpenOrder={(id) => setPanel({ id, kind: 'sales-order' })}
+                quoteId={panel.id}
+                run={ops.run}
+                state={state}
+              />
+            )}
+            {panel?.kind === 'sales-order' && (
+              <SalesOrderPanel
+                canWrite={canWrite}
+                key={panel.id}
+                onClose={close}
+                onOpenQuote={(id) => setPanel({ id, kind: 'sales-quote' })}
+                orderId={panel.id}
+                run={ops.run}
+                state={state}
+              />
+            )}
           </>
         )}
       </AgendaGate>

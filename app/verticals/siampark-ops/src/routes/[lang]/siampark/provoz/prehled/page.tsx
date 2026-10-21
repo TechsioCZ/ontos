@@ -17,7 +17,18 @@ import { Icon, fmt, langOf } from '../../../../../ui/ops-agenda/ui-bits.tsx';
 import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
 import { DrillDown, Hero, KpiGrid, OccupancyByBuilding, OpsAgendas, SearchResults, UpcomingTimeline } from './dashboard-parts.tsx';
 
-const kpiIds: readonly KpiId[] = ['occupancy', 'properties', 'leases', 'overdueInvoices', 'openTasks', 'incidents', 'deadlines', 'contracts'];
+const kpiIds: readonly KpiId[] = [
+  'occupancy',
+  'properties',
+  'leases',
+  'overdueInvoices',
+  'openTasks',
+  'incidents',
+  'deadlines',
+  'contracts',
+  'salesCases',
+  'planActual',
+];
 
 const readKpiParam = (): KpiId | undefined => {
   if (typeof window === 'undefined') {

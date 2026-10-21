@@ -59,7 +59,8 @@
     "work": "Tasks",
     "finance": "Invoices",
     "ops": "Site operations",
-    "parties": "Clients"
+    "parties": "Clients",
+    "sales": "Sales cases"
   },
   "state": {
     "loading": "Loading…",
@@ -287,6 +288,18 @@
       "opsDeadline": "Operations deadline",
       "delivery": "Expected delivery",
       "validity": "Validity ends"
+    },
+    "sales": {
+      "LEAD": "Lead",
+      "QUALIFIED": "Qualified",
+      "PROPOSAL": "Proposal",
+      "NEGOTIATION": "Negotiation",
+      "WON": "Won",
+      "LOST": "Lost"
+    },
+    "budget": {
+      "COST": "Cost",
+      "REVENUE": "Revenue"
     }
   },
   "kpi": {
@@ -329,6 +342,16 @@
       "label": "Contracts ending within 60 days",
       "definition": "Active contracts whose end date is within 60 days from today (or already past).",
       "secondary": "of {{active}} active contracts"
+    },
+    "salesCases": {
+      "label": "Open sales cases",
+      "definition": "Opportunities from Lead to Negotiation that are not won, lost or archived. Amounts excl. VAT; weighted = amount × probability.",
+      "secondary": "worth {{value}} · weighted {{weighted}}"
+    },
+    "planActual": {
+      "label": "Plan vs. actual (costs this year)",
+      "definition": "Finance budget lines from January to the current month. Actual = the manually confirmed amount of the line, otherwise confirmed invoices of the same month, category, direction and object. Value = actual costs / planned costs.",
+      "secondary": "Costs {{costActual}} of {{costPlan}} · revenue {{revenueActual}} of {{revenuePlan}}"
     }
   },
   "overview": {

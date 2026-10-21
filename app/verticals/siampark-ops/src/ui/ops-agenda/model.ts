@@ -1,6 +1,6 @@
 // Derived views over the loaded sources: calendar deadlines, overview KPIs (each with its exact drill-down rows),
 // and the permission-filtered search index. Pure; owned by the ops-agenda lane.
-import { foldSearchText } from '@app/admin-ui';
+import { foldSearchText, formatMoney } from '@app/admin-ui';
 import type { AgendaState } from '../../../shared/domain/agenda.ts';
 import {
   addDays,
@@ -21,6 +21,7 @@ import {
   taskDeadlines,
 } from './deadlines.ts';
 import type { Deadline } from './deadlines.ts';
+import { isOpenSalesCase } from './sales-source.ts';
 import { sourceKeys } from './sources.ts';
 import type { SiamparkSources, SourceKey, SourceStatus } from './sources.ts';
 
@@ -108,7 +109,9 @@ export type KpiId =
   | 'openTasks'
   | 'incidents'
   | 'deadlines'
-  | 'contracts';
+  | 'contracts'
+  | 'salesCases'
+  | 'planActual';
 
 export interface Kpi {
   readonly id: KpiId;
@@ -393,6 +396,106 @@ export const buildKpis = (
     });
   } else {
     kpis.push(unavailable(sources, 'contracts', ['agreements']));
+  }
+
+  // Open sales cases: opportunities not won, lost or archived (sales pipeline, filtered to what the person may read).
+  const sales = sources.sales.data;
+  if (sales !== undefined) {
+    const open = sales.items
+      .filter(isOpenSalesCase)
+      .toSorted((left, right) => left.expectedCloseDate.localeCompare(right.expectedCloseDate));
+    const value = open.reduce((sum, entry) => sum + entry.amountMinor, 0);
+    const weighted = open.reduce((sum, entry) => sum + Math.round((entry.amountMinor * entry.probability) / 100), 0);
+    kpis.push({
+      ...kpiBase(sources, 'salesCases', ['sales']),
+      kind: 'count',
+      rows: open.map((entry) => ({
+        amountMinor: entry.amountMinor,
+        date: entry.expectedCloseDate,
+        href: `/prodej/prilezitosti?resourceId=${encodeURIComponent(entry.id)}`,
+        id: entry.id,
+        status: `sales.${entry.stage}`,
+        subtitle: names.get(entry.partyId),
+        title: entry.title,
+        tone: entry.expectedCloseDate < today ? 'warning' : 'info',
+      })),
+      secondary: { value: formatMoney(value), weighted: formatMoney(weighted) },
+      tone: 'info',
+      value: open.length,
+    });
+  } else {
+    kpis.push(unavailable(sources, 'salesCases', ['sales']));
+  }
+
+  // Plan vs actual (year to date): budget lines of finance; the actual is the manually confirmed amount, otherwise
+  // the confirmed invoices of that month, category, direction and object (same rule as Finance › Rozpočet).
+  if (finance !== undefined) {
+    const year = today.slice(0, 4);
+    const month = today.slice(0, 7);
+    const invoices = finance.state.invoices;
+    const lines = (finance.state.budgets ?? []).filter((line) => line.period.startsWith(year) && line.period <= month);
+    const actualOf = (line: (typeof lines)[number]) =>
+      line.actualManualMinor ??
+      invoices
+        .filter(
+          (invoice) =>
+            invoice.businessState === 'CONFIRMED' &&
+            invoice.budgetCategory === line.category &&
+            invoice.issueDate.slice(0, 7) === line.period &&
+            invoice.direction === (line.kind === 'COST' ? 'INCOMING' : 'OUTGOING') &&
+            (line.propertyRef === undefined || invoice.propertyRef?.resourceId === line.propertyRef.resourceId) &&
+            (line.unitRef === undefined || invoice.unitRef?.resourceId === line.unitRef.resourceId) &&
+            (line.costCenter === undefined || invoice.costCenter === line.costCenter),
+        )
+        .reduce((sum, invoice) => sum + invoice.totalMinor, 0);
+    const totals = (kind: 'COST' | 'REVENUE') => {
+      const ofKind = lines.filter((line) => line.kind === kind);
+      return {
+        actual: ofKind.reduce((sum, line) => sum + actualOf(line), 0),
+        plan: ofKind.reduce((sum, line) => sum + line.plannedMinor, 0),
+      };
+    };
+    const cost = totals('COST');
+    const revenue = totals('REVENUE');
+    kpis.push({
+      ...kpiBase(sources, 'planActual', ['finance']),
+      kind: 'percent',
+      rows: lines
+        .toSorted((left, right) => right.period.localeCompare(left.period) || left.category.localeCompare(right.category))
+        .map((line) => {
+          const actual = actualOf(line);
+          const difference = actual - line.plannedMinor;
+          return {
+            amountMinor: actual,
+            date: `${line.period}-01`,
+            href: '/siampark/finance?tab=plan',
+            id: line.id,
+            status: `budget.${line.kind}`,
+            subtitle: `${line.period} · plán ${formatMoney(line.plannedMinor)} · rozdíl ${difference > 0 ? '+' : ''}${formatMoney(difference)}${line.actualManualMinor === undefined ? '' : ' · ručně potvrzeno'}`,
+            title: [line.category, line.propertyRef === undefined ? undefined : names.get(line.propertyRef.resourceId)]
+              .filter((part) => part !== undefined)
+              .join(' · '),
+            tone:
+              line.kind === 'COST'
+                ? difference > 0
+                  ? 'danger'
+                  : 'success'
+                : difference < 0
+                  ? 'warning'
+                  : 'success',
+          };
+        }),
+      secondary: {
+        costActual: formatMoney(cost.actual),
+        costPlan: formatMoney(cost.plan),
+        revenueActual: formatMoney(revenue.actual),
+        revenuePlan: formatMoney(revenue.plan),
+      },
+      tone: cost.actual > cost.plan ? 'warning' : 'success',
+      ...(cost.plan === 0 ? {} : { value: cost.actual / cost.plan }),
+    });
+  } else {
+    kpis.push(unavailable(sources, 'planActual', ['finance'], 'percent'));
   }
   return kpis;
 };

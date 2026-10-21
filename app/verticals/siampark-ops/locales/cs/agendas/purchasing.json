@@ -1,6 +1,6 @@
 {
   "title": "Sklad a nákupy",
-  "description": "Skladové zásoby se stavem počítaným z pohybů, nabídky dodavatelů, nákupní objednávky s částečnými dodávkami a vazbou na přijatou fakturu.",
+  "description": "Skladové zásoby se stavem počítaným z pohybů, nabídky dodavatelů, nákupní objednávky s částečnými dodávkami a vazbou na přijatou fakturu; prodej zákazníkům: nabídky, prodejní objednávky a vystavené faktury.",
   "footer": "Stav zásob se vždy počítá z uložených pohybů. Návrhy doplnění jsou pravidlové (minimum/maximum, dodací lhůta), nejde o predikci spotřeby. Přijaté faktury eviduje Finance; zde je jen odkaz.",
   "fields": {
     "sku": "Kód položky",
@@ -67,7 +67,8 @@
     "orders": "Objednávky",
     "quotes": "Nabídky dodavatelů",
     "movements": "Pohyby",
-    "suppliers": "Dodavatelé"
+    "suppliers": "Dodavatelé",
+    "sales": "Prodej zákazníkům"
   },
   "stats": {
     "count": "Skladových položek",
@@ -342,5 +343,116 @@
     "item": "Vyberte položku",
     "batch": "Vyberte šarži",
     "option": "Vyberte možnost"
+  },
+  "sales": {
+    "intro": "Prodej služeb a zboží zákazníkům: nabídka s protistranou z adresáře, položkami, množstvím, cenou a DPH → prodejní objednávka (řádky a ceny se zkopírují) → dodání → vystavená faktura jako návrh ve Financích. Pozdější úprava nabídky už hotovou objednávku ani fakturu nemění.",
+    "newQuote": "Nová nabídka zákazníkovi",
+    "editQuote": "Upravit nabídku {{number}}",
+    "quoteTitle": "Nabídka {{number}}",
+    "orderTitle": "Prodejní objednávka {{number}}",
+    "ordersTitle": "Prodejní objednávky ({{count}}, nevyřízené {{open}})",
+    "quotesTitle": "Nabídky zákazníkům ({{count}})",
+    "noOrders": "Zatím žádná prodejní objednávka.",
+    "noOrdersHint": "Objednávka vznikne z nabídky tlačítkem „Vytvořit prodejní objednávku“.",
+    "noQuotes": "Zatím žádná nabídka zákazníkovi.",
+    "noQuotesHint": "Založte nabídku tlačítkem „Nová nabídka zákazníkovi“.",
+    "noInvoice": "bez faktury",
+    "openInvoice": "Otevřít ve Financích",
+    "withVat": "s DPH {{total}}",
+    "totals": "Bez DPH {{base}} · s DPH {{total}}",
+    "remaining_one": "Zbývá dodat {{count}} jednotku",
+    "remaining_few": "Zbývá dodat {{count}} jednotky",
+    "remaining_many": "Zbývá dodat {{count}} jednotek",
+    "remaining_other": "Zbývá dodat {{count}} jednotek",
+    "quoteStatus": {
+      "draft": "Rozpracovaná",
+      "sent": "Odeslaná",
+      "accepted": "Přijatá",
+      "rejected": "Zamítnutá"
+    },
+    "event": {
+      "created": "Založeno",
+      "approved": "Schváleno",
+      "ordered": "Potvrzeno zákazníkovi",
+      "delivery": "Dodání",
+      "invoice": "Vystavena faktura",
+      "cancelled": "Zrušeno",
+      "completed": "Dokončeno"
+    },
+    "columns": {
+      "order": "Objednávka",
+      "quote": "Nabídka",
+      "status": "Stav",
+      "delivered": "Dodáno",
+      "deliveredShort": "Dodáno",
+      "total": "Celkem bez DPH",
+      "invoices": "Vystavené faktury",
+      "date": "Datum",
+      "validUntil": "Platnost do",
+      "lineTotal": "Celkem bez DPH"
+    },
+    "fields": {
+      "customer": "Zákazník (protistrana)",
+      "date": "Datum nabídky",
+      "validUntil": "Platnost do",
+      "lines": "Položky a služby",
+      "description": "Položka / služba",
+      "quantity": "Množství",
+      "unitPrice": "Cena za jednotku bez DPH (Kč)",
+      "vat": "DPH",
+      "note": "Poznámka",
+      "deliveryDate": "Datum dodání",
+      "closeReason": "Důvod uzavření se zbytkem",
+      "issueDate": "Datum vystavení",
+      "dueDate": "Datum splatnosti"
+    },
+    "detail": {
+      "info": "Základní údaje",
+      "history": "Historie stavů",
+      "lastChange": "Poslední změna"
+    },
+    "actions": {
+      "editQuote": "Upravit",
+      "reject": "Zamítnout",
+      "createOrder": "Vytvořit prodejní objednávku",
+      "openOrder": "Otevřít {{number}}",
+      "approve": "Schválit",
+      "confirm": "Potvrdit objednávku",
+      "deliver": "Zaznamenat dodání",
+      "saveDelivery": "Uložit dodání",
+      "invoice": "Vystavit fakturu",
+      "createInvoice": "Vytvořit návrh faktury",
+      "close": "Uzavřít se zbytkem",
+      "cancel": "Zrušit objednávku"
+    },
+    "form": {
+      "pickCustomer": "Vyberte zákazníka z adresáře",
+      "customersLoading": "Načítám zákazníky…",
+      "customersUnavailable": "Adresář zákazníků je nedostupný; nabídku teď nelze založit.",
+      "descriptionPlaceholder": "Např. Pronájem salonku – firemní akce",
+      "addLine": "Přidat položku",
+      "removeLine": "Odebrat",
+      "saveDraft": "Uložit rozpracovanou",
+      "saveSent": "Uložit jako odeslanou",
+      "saveChanges": "Uložit změny",
+      "required": "Vyberte zákazníka, datum a u každé položky vyplňte název, množství a cenu.",
+      "validity": "Platnost nabídky nemůže skončit před jejím datem.",
+      "copyNote": "K nabídce už existuje objednávka. Ta i vystavené faktury mají vlastní kopii řádků – úprava nabídky je nezmění.",
+      "deliveryRequired": "Zadejte dodané množství alespoň u jedné položky.",
+      "remainingHelp": "Zbývá dodat: {{count}}",
+      "dueDate": "Splatnost nemůže být před datem vystavení.",
+      "invoiceIntro": "Finance založí návrh vydané faktury pro {{customer}} s kopií řádků a cen této objednávky. Faktura odkazuje na objednávku a objednávka na fakturu.",
+      "invoiceFailed": "Návrh faktury se nepodařilo vytvořit. Obnovte stránku a zkuste to znovu."
+    },
+    "messages": {
+      "rejected": "Nabídka zamítnuta.",
+      "orderCreated": "Prodejní objednávka vytvořena z nabídky.",
+      "approved": "Objednávka schválena.",
+      "confirmed": "Objednávka potvrzena zákazníkovi.",
+      "delivered": "Dodání zaznamenáno.",
+      "closed": "Objednávka uzavřena.",
+      "cancelled": "Objednávka zrušena.",
+      "invoiced": "Návrh faktury {{number}} vytvořen ve Financích."
+    }
   }
 }

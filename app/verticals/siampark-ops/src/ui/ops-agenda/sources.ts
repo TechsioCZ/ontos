@@ -14,6 +14,7 @@ import type { RecordsResponse as OpsRecords } from '../../../shared/apis/records
 import { agendaIds } from '../../../shared/agendas.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { loadRecords } from '../use-agenda.ts';
+import { loadSalesCases } from './sales-source.ts';
 
 export type SourceStatus = 'loading' | 'ready' | 'forbidden' | 'unavailable';
 
@@ -30,6 +31,7 @@ const loadEffect = () => ({
   occupancy: executeOccupancy({}, 'ops-agenda.occupancy'),
   parties: listCustomers({ includeArchived: false }),
   property: executeProperty({}, 'ops-agenda.property'),
+  sales: loadSalesCases('ops-agenda.sales'),
   work: executeWork({}, 'ops-agenda.work'),
 });
 type Loaders = ReturnType<typeof loadEffect>;
@@ -41,6 +43,7 @@ export type OccupancyData = Success<'occupancy'>;
 export type WorkData = Success<'work'>;
 export type FinanceData = Success<'finance'>;
 export type PartiesData = Success<'parties'>;
+export type SalesData = Success<'sales'>;
 
 export interface SiamparkSources {
   readonly ops: SourceState<OpsRecords>;
@@ -50,6 +53,8 @@ export interface SiamparkSources {
   readonly work: SourceState<WorkData>;
   readonly finance: SourceState<FinanceData>;
   readonly parties: SourceState<PartiesData>;
+  /** Open sales cases (sales pipeline). Only the overview tile reads it; the calendar and search do not. */
+  readonly sales: SourceState<SalesData>;
 }
 
 export type SourceKey = keyof SiamparkSources;
@@ -63,6 +68,7 @@ const initial: SiamparkSources = {
   ops: loading,
   parties: loading,
   property: loading,
+  sales: loading,
   work: loading,
 };
 
@@ -111,6 +117,7 @@ export const useSiamparkSources = () => {
       settle(loaders.work).then((value) => update('work', value)),
       settle(loaders.finance).then((value) => update('finance', value)),
       settle(loaders.parties).then((value) => update('parties', value)),
+      settle(loaders.sales).then((value) => update('sales', value)),
     ]);
   }, []);
 

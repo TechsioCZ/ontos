@@ -10,7 +10,7 @@ import { buildKpis, buildSearchIndex, currentAgendaState } from '../../src/ui/op
 
 const absent = { status: 'unavailable' } as const;
 const sources = (extra: Partial<SiamparkSources> = {}): SiamparkSources => ({
-  property: absent, occupancy: absent, agreements: absent, work: absent, finance: absent, ops: absent, parties: absent,
+  property: absent, occupancy: absent, agreements: absent, work: absent, finance: absent, ops: absent, parties: absent, sales: absent,
   ...extra,
 });
 

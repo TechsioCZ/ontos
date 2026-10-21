@@ -98,7 +98,12 @@
     "link": "Link",
     "allLinks": "All linked records",
     "clear": "Clear filters",
-    "noMatch": "No document matches the filter."
+    "noMatch": "No document matches the filter.",
+    "owner": "Owner",
+    "allOwners": "Everyone",
+    "changedFrom": "Changed from",
+    "changedTo": "Changed to",
+    "exportCsv": "Export CSV"
   },
   "stats": {
     "count": "Documents",
@@ -132,7 +137,7 @@
     "noFile": "No file — you can upload it later as a version.",
     "linksHelp": "The document shows on every linked record.",
     "addLink": "Add link",
-    "tenant": "Tenant / counterparty",
+    "tenant": "Tenant / counterparty (contact)",
     "tenantPlaceholder": "e.g. Kavárna U Parku s.r.o.",
     "contractLink": "Related contract",
     "taskLink": "Related task",
@@ -140,7 +145,12 @@
     "tasksLoading": "Loading available tasks…",
     "tasksUnavailable": "The task is unavailable or you do not have access.",
     "noneContract": "No related contract",
-    "removeLink": "Remove link {{label}}"
+    "removeLink": "Remove link {{label}}",
+    "pickContact": "Choose a contact from the directory",
+    "contactsLoading": "Loading contacts…",
+    "contactsUnavailable": "The contact directory is unavailable; a contact link cannot be added now.",
+    "invoiceLink": "Invoice",
+    "pickInvoice": "Choose an invoice from finance"
   },
   "created": "Document saved",
   "updated": "Changes saved",

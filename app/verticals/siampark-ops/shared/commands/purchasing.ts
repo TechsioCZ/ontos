@@ -17,6 +17,7 @@ import {
   opsNotFound,
 } from '../domain/common.ts';
 import type { EntityId, OpsCommandInput } from '../domain/common.ts';
+import { evolveSales, salesCommandSchemas } from './sales.ts';
 import {
   BatchSchema,
   CurrencySchema,
@@ -208,6 +209,7 @@ export const purchasingCommandSchemas = [
     amountMinor: Schema.optionalKey(MinorAmountSchema),
     note: Schema.optionalKey(NoteSchema),
   }),
+  ...salesCommandSchemas,
 ] as const;
 
 export const PurchasingCommandSchema = Schema.Union(purchasingCommandSchemas);
@@ -872,6 +874,15 @@ export const evolvePurchasing = (state: PurchasingState, command: PurchasingComm
     Match.tag('PurchaseOrderTransition', (value) => transitionOrder(state, value, input)),
     Match.tag('PurchaseOrderReceive', (value) => receiveOrder(state, value, input)),
     Match.tag('PurchaseOrderLinkInvoice', (value) => linkInvoice(state, value, input)),
+    Match.tags({
+      SalesOrderCreateFromQuote: (value) => evolveSales(state, value, input),
+      SalesOrderDeliver: (value) => evolveSales(state, value, input),
+      SalesOrderLinkInvoice: (value) => evolveSales(state, value, input),
+      SalesOrderTransition: (value) => evolveSales(state, value, input),
+      SalesQuoteCreate: (value) => evolveSales(state, value, input),
+      SalesQuoteReject: (value) => evolveSales(state, value, input),
+      SalesQuoteUpdate: (value) => evolveSales(state, value, input),
+    }),
     Match.exhaustive,
   );
 

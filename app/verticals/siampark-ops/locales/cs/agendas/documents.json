@@ -98,7 +98,12 @@
     "link": "Vazba",
     "allLinks": "Všechny vazby",
     "clear": "Zrušit filtry",
-    "noMatch": "Filtru neodpovídá žádný dokument."
+    "noMatch": "Filtru neodpovídá žádný dokument.",
+    "owner": "Odpovědná osoba",
+    "allOwners": "Všechny osoby",
+    "changedFrom": "Změněno od",
+    "changedTo": "Změněno do",
+    "exportCsv": "Exportovat CSV"
   },
   "stats": {
     "count": "Dokumentů",
@@ -133,7 +138,7 @@
     "noFile": "Bez souboru — soubor lze nahrát později jako verzi.",
     "linksHelp": "Dokument se zobrazí u každého vybraného záznamu.",
     "addLink": "Přidat vazbu",
-    "tenant": "Nájemce / protistrana",
+    "tenant": "Nájemce / protistrana (kontakt)",
     "tenantPlaceholder": "Např. Kavárna U Parku s.r.o.",
     "contractLink": "Související smlouva",
     "taskLink": "Související úkol",
@@ -141,7 +146,12 @@
     "tasksLoading": "Načítání dostupných úkolů…",
     "tasksUnavailable": "Úkol není dostupný nebo k němu nemáte oprávnění.",
     "noneContract": "Bez vazby na smlouvu",
-    "removeLink": "Odebrat vazbu {{label}}"
+    "removeLink": "Odebrat vazbu {{label}}",
+    "pickContact": "Vyberte kontakt z adresáře",
+    "contactsLoading": "Načítám kontakty…",
+    "contactsUnavailable": "Adresář kontaktů je nedostupný; vazbu na kontakt teď nelze přidat.",
+    "invoiceLink": "Faktura",
+    "pickInvoice": "Vyberte fakturu z financí"
   },
   "created": "Dokument uložen",
   "updated": "Změny uloženy",
