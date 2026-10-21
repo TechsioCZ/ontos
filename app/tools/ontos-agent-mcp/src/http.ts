@@ -126,7 +126,12 @@ export const startHttpServer = async (options: HttpServerOptions): Promise<Runni
         sendJson(res, 404, { error: 'Neznámá cesta.' });
         return;
       }
-      urlToken = decodeURIComponent(match[1]);
+      try {
+        urlToken = decodeURIComponent(match[1]);
+      } catch {
+        sendJson(res, 404, { error: 'Neznámá cesta.' });
+        return;
+      }
     }
 
     const token = bearerToken(req.headers.authorization) ?? urlToken;
@@ -198,6 +203,10 @@ export const startHttpServer = async (options: HttpServerOptions): Promise<Runni
     };
     await server.connect(transport);
     await transport.handleRequest(req, res, body);
+    if (transport.sessionId === undefined || !sessions.has(transport.sessionId)) {
+      // Initialize did not open a session: release the per-token server instead of leaking it.
+      await server.close().catch(() => undefined);
+    }
   };
 
   const httpServer: Server = createHttpServer((req, res) => {
