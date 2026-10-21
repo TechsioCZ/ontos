@@ -17,7 +17,7 @@ import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
 import { normalizeCatalogSearchTerm } from "@/lib/product-variant-search";
 import { useCatalog, useDataSource } from "@/ontos/catalog-provider";
-import type { RemoteSearchResponse } from "@/ontos/search-suggestions";
+import type { RemoteCategorySuggestion, RemoteSearchResponse } from "@/ontos/search-suggestions";
 
 type SuggestionData =
   | { kind: "category"; trail: string }
@@ -45,10 +45,13 @@ export function HeaderSearch() {
   const ready = trimmedQuery.length >= 2;
   // OntOS mode: the browser only holds featured products, so product suggestions come from the BFF.
   const ontos = useDataSource() === "ontos";
-  const [remote, setRemote] = useState<RemoteSearchResponse & { query: string }>({
+  const [remote, setRemote] = useState<
+    RemoteSearchResponse & { query: string; categories: RemoteCategorySuggestion[] }
+  >({
     query: "",
     items: [],
     total: 0,
+    categories: [],
   });
   useEffect(() => {
     if (!ontos || !ready) return;
@@ -66,6 +69,7 @@ export function HeaderSearch() {
             query: trimmedQuery,
             items: Array.isArray(body.items) ? body.items : [],
             total: typeof body.total === "number" ? body.total : 0,
+            categories: Array.isArray(body.categories) ? body.categories : [],
           }),
         )
         .catch(() => undefined);
@@ -80,12 +84,17 @@ export function HeaderSearch() {
     [ontos, remote, trimmedQuery],
   );
   const remoteTotal = ontos && remote.query === trimmedQuery ? remote.total : 0;
+  // OntOS mode: the browser holds only the navigation, so category matches come from the BFF too.
+  const remoteCategories = useMemo(
+    () => (ontos && remote.query === trimmedQuery ? remote.categories : []),
+    [ontos, remote, trimmedQuery],
+  );
   const results = useMemo(
     () => (ready && !ontos ? searchCatalog(trimmedQuery) : []),
     [ready, ontos, trimmedQuery],
   );
   const categories = useMemo(() => {
-    if (!ready) return [];
+    if (!ready || ontos) return [];
     const normalizedQuery = normalizeCatalogSearchTerm(trimmedQuery);
     const rank = (normalizedName: string) => {
       return normalizedName === normalizedQuery
@@ -99,24 +108,31 @@ export function HeaderSearch() {
       .sort((left, right) => rank(left.normalizedName) - rank(right.normalizedName))
       .slice(0, 4)
       .map(({ category }) => category);
-  }, [ready, trimmedQuery]);
+  }, [ready, ontos, trimmedQuery]);
   const groups = useMemo<SearchSuggestionGroup<SuggestionData>[]>(
     () => [
       {
         id: "categories",
         label: cs.search.categories,
-        items: categories.map((category) => ({
-          value: `category:${category.id}`,
-          label: category.name,
-          href: `/kategorie/${category.slug}`,
-          data: {
-            kind: "category",
-            trail: getCategoryTrail(category)
-              .slice(0, -1)
-              .map((parent) => parent.name)
-              .join(" › "),
-          },
-        })),
+        items: ontos
+          ? remoteCategories.map((category) => ({
+              value: `category:${category.id}`,
+              label: category.name,
+              href: `/kategorie/${category.slug}`,
+              data: { kind: "category" as const, trail: category.trail },
+            }))
+          : categories.map((category) => ({
+              value: `category:${category.id}`,
+              label: category.name,
+              href: `/kategorie/${category.slug}`,
+              data: {
+                kind: "category",
+                trail: getCategoryTrail(category)
+                  .slice(0, -1)
+                  .map((parent) => parent.name)
+                  .join(" › "),
+              },
+            })),
       },
       {
         id: "products",
@@ -158,7 +174,7 @@ export function HeaderSearch() {
             }),
       },
     ],
-    [categories, ontos, remoteItems, results, trimmedQuery],
+    [categories, ontos, remoteCategories, remoteItems, results, trimmedQuery],
   );
   const resultsHref = `/vyhledavani?q=${encodeURIComponent(trimmedQuery)}`;
 

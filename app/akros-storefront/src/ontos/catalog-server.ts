@@ -1,6 +1,6 @@
 import "server-only";
 import { cache } from "react";
-import type { CatalogProduct } from "@/mock-storefront/types";
+import type { CatalogCategory, CatalogProduct } from "@/mock-storefront/types";
 import { createCatalog } from "./catalog-model";
 import { isOntos } from "./config";
 import { readRecords } from "./gateway";
@@ -87,28 +87,55 @@ export async function getSnapshot(
   return snapshot;
 }
 
-/** Root-layout payload for the client provider: featured products + slim category tree. */
+const slimCategory = ({
+  id,
+  parentId,
+  hasChildren,
+  slug,
+  name,
+  position,
+  imageSrc,
+  imageAlt,
+}: CatalogCategory): CatalogCategory => ({
+  id,
+  parentId,
+  hasChildren,
+  slug,
+  name,
+  position,
+  imageSrc,
+  imageAlt,
+});
+
+/**
+ * Root-layout payload for the client provider. In OntOS mode the browser only needs the navigation:
+ * the sidebar roots and their listed children (no products, no full 2,000+ category tree). Category
+ * and product pages add their active branch with `getCategoryBranch`; header search asks the BFF.
+ */
 export async function getShellSnapshot(): Promise<CatalogSnapshot> {
   const snapshot = await getSnapshot();
   if (snapshot.mode === "mock") return snapshot;
+  const model = createCatalog(snapshot.catalog, snapshot.categories);
   return {
     ...snapshot,
+    catalog: { ...snapshot.catalog, products: [], homepageFeaturedProductIds: [] },
     categories: {
       ...snapshot.categories,
-      categories: snapshot.categories.categories.map(
-        ({ id, parentId, hasChildren, slug, name, position, imageSrc, imageAlt }) => ({
-          id,
-          parentId,
-          hasChildren,
-          slug,
-          name,
-          position,
-          imageSrc,
-          imageAlt,
-        }),
-      ),
+      categories: model.getSidebarCategories().map(slimCategory),
     },
   };
+}
+
+/** Extra navigation for one active category: its trail and the children of every trail level. */
+export async function getCategoryBranch(activeSlug: string): Promise<CatalogCategory[]> {
+  if (!isOntos()) return [];
+  const snapshot = await getSnapshot();
+  const model = createCatalog(snapshot.catalog, snapshot.categories);
+  const base = new Set(model.getSidebarCategories().map((category) => category.id));
+  return model
+    .getSidebarCategories(activeSlug)
+    .filter((category) => !base.has(category.id))
+    .map(slimCategory);
 }
 
 export const getCatalog = cache(async (query?: CatalogQuery): Promise<CatalogModel> => {

@@ -8,6 +8,7 @@ import { cs } from "@/i18n/cs";
 import { getProductStockStatus } from "@/lib/product-stock";
 import { getCatalog, getCatalogPage } from "@/ontos/catalog-server";
 import { isOntos } from "@/ontos/config";
+import { placeholdersLast } from "@/ontos/search-suggestions";
 import type { CatalogSearchResult } from "@/mock-storefront/types";
 
 export const metadata: Metadata = { title: cs.search.results };
@@ -71,7 +72,8 @@ export default async function SearchPage({
       const matches = new Map(
         listing.model.searchCatalog(term).map((result) => [result.product.id, result] as const),
       );
-      visibleResults = listing.products.map(
+      // Kai's placeholder group "AKCE" matches almost every query: keep it, but after real goods.
+      visibleResults = placeholdersLast(listing.products).map(
         (product) => matches.get(product.id) ?? { product, matchingVariants: [] },
       );
       itemCount = listing.total;

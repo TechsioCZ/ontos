@@ -59,21 +59,58 @@ describe("OntOS catalog server reads", () => {
     expect(readRecords).toHaveBeenCalledTimes(2);
     expect(server.CATALOG_CACHE_MS).toBeLessThanOrEqual(15_000);
   });
-  it("reads the homepage selection for the layout and strips long category texts", async () => {
+  it("ships only the slim navigation to the layout: no products, no deep categories", async () => {
+    const category = (id: string, parentId: string | null, slug: string) => ({
+      id,
+      parentId,
+      slug,
+      name: slug,
+      position: 1,
+      longDescription: "Velmi dlouhý popis kategorie",
+      imageSrc: "/akros/products/product-02.jpg",
+      imageAlt: slug,
+    });
+    vi.mocked(readRecords).mockResolvedValue({
+      ...body,
+      categories: [
+        category("root", null, "nerezovy-spojovaci-material"),
+        category("srouby", "root", "srouby"),
+        category("din", "srouby", "din-933"),
+        category("din-a2", "din", "din-933-a2"),
+        category("other", null, "jina-sekce"),
+      ],
+      products: [
+        {
+          id: "p1",
+          slug: "p1",
+          name: "p1",
+          grossPriceMinor: 121,
+          currentPriceMinor: 100,
+          stockOnHand: 5,
+          minimumQuantity: 1,
+        },
+      ],
+    });
     const snapshot = await server.getShellSnapshot();
     expect(vi.mocked(readRecords).mock.calls[0][2]).toEqual({
       view: { storefront: true, storefrontCatalog: { featured: true, pageSize: 20 } },
     });
-    expect(snapshot.categories.categories[0]).toEqual({
-      id: "c1",
-      parentId: null,
-      hasChildren: false,
+    expect(snapshot.catalog.products).toEqual([]);
+    expect(snapshot.categories.categories.map((c) => c.id)).toEqual(["root", "srouby"]);
+    expect(snapshot.categories.categories[1]).toEqual({
+      id: "srouby",
+      parentId: "root",
+      hasChildren: true,
       slug: "srouby",
-      name: "Šrouby",
+      name: "srouby",
       position: 1,
       imageSrc: "/akros/products/product-02.jpg",
-      imageAlt: "Šrouby",
+      imageAlt: "srouby",
     });
+    // A category page adds only its own trail and the children of each trail level.
+    const branch = await server.getCategoryBranch("din-933");
+    expect(branch.map((c) => c.id)).toEqual(["din", "din-a2"]);
+    expect(branch[0]).not.toHaveProperty("longDescription");
   });
   it("returns page totals for paginated pages", async () => {
     const page = await server.getCatalogPage({ q: "page-test", page: 1, pageSize: 24 });

@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { guard, jsonBody, problem } from "@/ontos/http";
+import { guard, jsonBody, problem, RequestError } from "@/ontos/http";
 import { assertCart } from "@/ontos/quote";
 import { getSnapshot } from "@/ontos/catalog-server";
 import { callAction, OntosError } from "@/ontos/gateway";
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
       Object.keys(validateAddresses(draft)).length ||
       Object.keys(validateMethods(draft)).length
     )
-      throw new Error("Neplatné dodací údaje.");
+      throw new RequestError(400, "Neplatné dodací údaje.");
     if (!["osobni", "zasilkovna"].includes(draft.deliveryId) || draft.extendedReturn)
       return Response.json(
         {

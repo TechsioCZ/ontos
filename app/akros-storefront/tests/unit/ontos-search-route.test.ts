@@ -76,6 +76,7 @@ describe("header search BFF", () => {
     expect(getCatalogPage).toHaveBeenCalledWith({ q: "šroub", page: 1, pageSize: 6 });
     expect(await response.json()).toEqual({
       total: 37,
+      categories: [],
       items: [
         {
           productId: "p1",
@@ -100,10 +101,10 @@ describe("header search BFF", () => {
     });
   });
   it("does not read OntOS for fewer than two characters", async () => {
-    expect(await (await ask("š")).json()).toEqual({ items: [], total: 0 });
+    expect(await (await ask("š")).json()).toEqual({ items: [], total: 0, categories: [] });
     expect(getCatalogPage).not.toHaveBeenCalled();
   });
   it("refuses cross-origin calls", async () => {
-    expect((await ask("šroub", "https://evil.example")).status).toBe(503);
+    expect((await ask("šroub", "https://evil.example")).status).toBe(403);
   });
 });

@@ -107,7 +107,7 @@ export default async function NewsPage() {
               <h1>Novinky a akce</h1>
               <p>
                 Prohlédněte si výběr novinek a produkty označené v katalogu jako akční. Zobrazené
-                prodejní ceny vycházejí z dodaného feedu.
+                prodejní ceny vycházejí {ontos ? "z katalogu OntOS" : "z dodaného feedu"}.
               </p>
               <PrimaryLinkButton href="#action-products">Zobrazit akční nabídku</PrimaryLinkButton>
             </div>

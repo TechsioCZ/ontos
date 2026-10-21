@@ -1,5 +1,5 @@
 import "server-only";
-import { guard, jsonBody, problem } from "@/ontos/http";
+import { guard, jsonBody, outageMessage, problem } from "@/ontos/http";
 import { parseOrderStatusRequest, readOrderStatus } from "@/ontos/order-status";
 
 const noStore = { "cache-control": "no-store" };
@@ -20,6 +20,6 @@ export async function POST(request: Request) {
       );
     return Response.json(status, { headers: noStore });
   } catch (e) {
-    return problem(e);
+    return problem(e, outageMessage.orderStatus);
   }
 }

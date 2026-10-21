@@ -1,7 +1,7 @@
 "use client";
 import { useDataSource } from "@/ontos/catalog-provider";
 import { demoCheckoutNotice, demoPayment } from "@/ontos/demo-checkout";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import NextLink from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@techsio/ui-kit/atoms/button";
@@ -27,17 +27,21 @@ export function ReviewStep() {
   const { draft, updateDraft, completeOrder, submitted, storageError } = useCheckout();
   const router = useRouter();
   const [sending, setSending] = useState(false);
+  const sendingRef = useRef(false);
   const totals = getCheckoutTotals(cart, draft, ontos);
   return (
     <form
       data-akros-checkout-review
       onSubmit={async (event) => {
         event.preventDefault();
-        if (sending) return;
+        // A ref locks synchronously: a fast double/triple click never sends a second request.
+        if (sendingRef.current) return;
+        sendingRef.current = true;
         setSending(true);
         try {
           if (await completeOrder()) router.push("/potvrzeni-objednavky");
         } finally {
+          sendingRef.current = false;
           setSending(false);
         }
       }}

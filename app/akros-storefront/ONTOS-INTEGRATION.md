@@ -90,7 +90,14 @@ parameters, labels (`flags`), prices/tiers, stock and minimums. Unknown/new owne
 offered; unpublished or inactive ones never are. Missing price, stock or minimum means not offered,
 never a mock fallback. Images that `next/image` cannot serve (non-https or a host outside
 `www.akros.cz/data/**` + `STOREFRONT_IMAGE_HOSTS`) become the honest "image unavailable" placeholder.
-The browser receives only the featured products plus a slim category tree (no long category texts).
+Navigation payload: the browser never receives the whole category tree or product data from the
+layout. The root layout ships only Kai's curated sidebar sections (2 roots + their listed children,
+id/parentId/slug/name/position/image only) and no products. Category and product pages add their
+active branch (trail + children of each trail level) through `CategoryBranch`
+(`src/ontos/category-branch.tsx`). Header suggestions get category matches from
+`POST /api/ontos/search` (`categories: [{id,slug,name,trail}]`). This keeps `/` at roughly 0.2 MB of
+HTML instead of about 1.9 MB. Kai's placeholder group named "AKCE" stays in search results and totals
+but is listed after real goods (search page and header suggestions).
 Kai's homepage banner carousel and content pages are static marketing content, not catalog data.
 The sidebar keeps Kai's curated section order by category slug; renamed categories update live,
 a category whose slug changes in OntOS drops out of that curated sidebar but stays reachable.
@@ -115,6 +122,10 @@ original unit/package behavior. The server still rechecks all constraints indepe
 and an idempotency key derived from the persisted `clientRequestId` + exact payload. The owner
 rechecks prices/stock/quantities and persists/deduplicates the order by clientRequestId. It never
 accepts a browser-requested arbitrary Action. Origin/content-type/body-size checks protect the BFF.
+BFF status codes: cross-origin 403, non-JSON content type 415, oversized body 413, malformed JSON or
+invalid cart/delivery data 400, ontos mode off 404; only a real OntOS failure is 503, with a
+route-specific Czech message (cart, order status, search). The summary button locks on the first
+click (ref, not state), so a fast double/triple click sends one order request.
 
 The browser persists the pending request ID before sending, then stores the real order number,
 owner order id, request id and owner totals in Kai's order snapshot. Confirmation survives refresh

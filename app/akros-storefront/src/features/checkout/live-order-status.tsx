@@ -81,11 +81,12 @@ export function LiveOrderStatus({
         <>
           Aktuální stav v OntOS: <strong>{state.statusLabel}</strong>
           <span className="block text-xs text-(--color-fg-secondary)">
-            Aktualizováno{" "}
-            {new Date(state.updatedAt).toLocaleString("cs-CZ", {
-              dateStyle: "short",
+            Aktualizováno {/* Same format as the e-mail receipts below: "21. 10. 2026 3:08". */}
+            {new Intl.DateTimeFormat("cs-CZ", {
+              dateStyle: "medium",
               timeStyle: "short",
-            })}
+              timeZone: "Europe/Prague",
+            }).format(new Date(state.updatedAt))}
           </span>
         </>
       )}

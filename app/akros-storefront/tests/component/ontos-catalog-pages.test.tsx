@@ -13,6 +13,10 @@ vi.mock("@/ontos/catalog-server", async () => {
   const model = await import("@/mock-storefront/catalog");
   return { getCatalog: async () => model, getCatalogPage: vi.fn() };
 });
+// The active-branch navigation is an async server wrapper; shell rendering is covered elsewhere.
+vi.mock("@/ontos/category-branch", () => ({
+  CategoryBranch: ({ children }: { children: ReactNode }) => children,
+}));
 vi.mock("@/components/storefront-shell", () => ({
   StorefrontShell: ({ children }: { children: ReactNode }) => <main>{children}</main>,
 }));

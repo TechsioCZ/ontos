@@ -77,6 +77,6 @@ describe("live order status BFF", () => {
     expect((await ask({ orderId, clientRequestId })).status).toBe(404);
   });
   it("refuses cross-origin calls", async () => {
-    expect((await ask({ orderId, clientRequestId }, "https://evil.example")).status).toBe(503);
+    expect((await ask({ orderId, clientRequestId }, "https://evil.example")).status).toBe(403);
   });
 });

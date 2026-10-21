@@ -1,4 +1,5 @@
 import "server-only";
+import { RequestError } from "./http";
 import { purchaseConstraints } from "./purchase-constraints";
 import type { CartState, CartLine } from "@/mock-storefront/cart";
 import { createCatalog } from "./catalog-model";
@@ -11,7 +12,7 @@ export function assertCart(value: unknown): asserts value is CartState {
     cart.lines.length < 1 ||
     cart.lines.length > 50
   )
-    throw new Error("Neplatný košík.");
+    throw new RequestError(400, "Neplatný košík.");
   const seen = new Set<string>();
   for (const l of cart.lines) {
     const key = `${l.productId}:${l.variantId ?? ""}`;
@@ -25,7 +26,7 @@ export function assertCart(value: unknown): asserts value is CartState {
       !Number.isSafeInteger(l.priceMinor) ||
       l.priceMinor < 0
     )
-      throw new Error("Neplatná položka košíku.");
+      throw new RequestError(400, "Neplatná položka košíku.");
     seen.add(key);
   }
 }

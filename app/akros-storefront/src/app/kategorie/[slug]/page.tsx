@@ -13,6 +13,7 @@ import { CatalogPagination } from "@/components/catalog-pagination";
 import { ProductGrid } from "@/components/product-grid";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
+import { CategoryBranch } from "@/ontos/category-branch";
 import { cs } from "@/i18n/cs";
 import { getCatalog, getCatalogPage, type CatalogQuery } from "@/ontos/catalog-server";
 import type { CatalogProduct } from "@/mock-storefront/types";
@@ -117,58 +118,60 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
   ];
 
   return (
-    <StorefrontShell activeCategorySlug={category.slug}>
-      <StorefrontBreadcrumbs items={breadcrumbItems} />
-      <section
-        className="akros-section akros-product-listing-section"
-        aria-labelledby="category-title"
-      >
-        <div className="akros-category-heading">
-          <h1 id="category-title">{category.name}</h1>
-          {description && <p>{description}</p>}
-        </div>
-        {hasVisualChildCategories && <CategoryGrid categories={childCategories} />}
-      </section>
-
-      {ontos && (
-        <CategoryFilters
-          key={JSON.stringify(filters)}
-          filters={filters}
-          pathname={`/kategorie/${category.slug}`}
-          count={itemCount}
-        />
-      )}
-      {itemCount > 0 && products.length > 0 ? (
+    <CategoryBranch activeSlug={category.slug}>
+      <StorefrontShell activeCategorySlug={category.slug}>
+        <StorefrontBreadcrumbs items={breadcrumbItems} />
         <section
           className="akros-section akros-product-listing-section"
-          aria-label={`Produkty: ${category.name}`}
+          aria-labelledby="category-title"
         >
-          <ProductGrid products={products.map(toProductSummary)} />
-          <CatalogPagination
-            currentPage={currentPage}
-            itemCount={itemCount}
-            pageSize={productsPerPage}
+          <div className="akros-category-heading">
+            <h1 id="category-title">{category.name}</h1>
+            {description && <p>{description}</p>}
+          </div>
+          {hasVisualChildCategories && <CategoryGrid categories={childCategories} />}
+        </section>
+
+        {ontos && (
+          <CategoryFilters
+            key={JSON.stringify(filters)}
+            filters={filters}
             pathname={`/kategorie/${category.slug}`}
-            searchParams={ontos ? categoryFilterParams(filters) : undefined}
+            count={itemCount}
           />
-        </section>
-      ) : (
-        <p className="akros-empty-state">
-          {filtersActive
-            ? "Nenalezeny žádné produkty. Upravte nebo vymažte filtry."
-            : cs.catalog.emptyCategory}
-        </p>
-      )}
+        )}
+        {itemCount > 0 && products.length > 0 ? (
+          <section
+            className="akros-section akros-product-listing-section"
+            aria-label={`Produkty: ${category.name}`}
+          >
+            <ProductGrid products={products.map(toProductSummary)} />
+            <CatalogPagination
+              currentPage={currentPage}
+              itemCount={itemCount}
+              pageSize={productsPerPage}
+              pathname={`/kategorie/${category.slug}`}
+              searchParams={ontos ? categoryFilterParams(filters) : undefined}
+            />
+          </section>
+        ) : (
+          <p className="akros-empty-state">
+            {filtersActive
+              ? "Nenalezeny žádné produkty. Upravte nebo vymažte filtry."
+              : cs.catalog.emptyCategory}
+          </p>
+        )}
 
-      {recommendations.length > 0 && (
-        <section
-          className="akros-section akros-product-listing-section"
-          aria-labelledby="recommendations-title"
-        >
-          <h2 id="recommendations-title">{cs.catalog.recommendations}</h2>
-          <ProductGrid products={recommendations.slice(0, 4).map(toProductSummary)} />
-        </section>
-      )}
-    </StorefrontShell>
+        {recommendations.length > 0 && (
+          <section
+            className="akros-section akros-product-listing-section"
+            aria-labelledby="recommendations-title"
+          >
+            <h2 id="recommendations-title">{cs.catalog.recommendations}</h2>
+            <ProductGrid products={recommendations.slice(0, 4).map(toProductSummary)} />
+          </section>
+        )}
+      </StorefrontShell>
+    </CategoryBranch>
   );
 }
