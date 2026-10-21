@@ -282,6 +282,12 @@ export default defineConfig(
           '@modern-js/plugin-i18n/runtime$': '@modern-js/plugin-i18n/runtime/no-react-i18next',
         },
         globalVars: {
+          'globalThis.ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT':
+            getBuildConfigEnvironment('ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT') ??
+            (cloudflareDeployEnabled ? '' : 'http://localhost:3070'),
+          'globalThis.ULTRAMODERN_PUBLIC_URL_ESHOP_STOREFRONT':
+            getBuildConfigEnvironment('ULTRAMODERN_PUBLIC_URL_ESHOP_STOREFRONT') ??
+            (cloudflareDeployEnabled ? '' : 'http://localhost:3060'),
           ULTRAMODERN_SITE_URL: siteUrl,
         },
         mainEntryName: 'index',

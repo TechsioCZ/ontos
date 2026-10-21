@@ -4,7 +4,10 @@ const eshop: DemoGuidePersona = { email: 'eshop@akros.demo', role: 'Správce e-s
 const expedice: DemoGuidePersona = { email: 'expedice@akros.demo', role: 'Expedice' };
 
 /** Kai Uwe's standalone AKROS storefront, connected to OntOS; opened in a new tab, the customer needs no sign-in. */
-const storefront = 'http://localhost:3070';
+declare global {
+  var ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT: string | undefined;
+}
+const storefront = globalThis.ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT ?? 'http://localhost:3070';
 const productUrl = `${storefront}/produkt/srouby-s-valcovou-hlavou-s-vnitrnim-sestihranem-din-912-a2?variant=10091200010004`;
 
 export const akrosGuide: DemoGuide = {

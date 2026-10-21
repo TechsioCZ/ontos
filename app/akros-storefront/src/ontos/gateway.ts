@@ -7,6 +7,7 @@ import "server-only";
 // Core evaluates permissions and legal-entity scope on every call; the key is never sent to the browser.
 import { randomUUID } from "node:crypto";
 import { getConfig } from "./config";
+import { readActiveRevision } from "./composition-revision";
 
 const GATEWAY_CONTEXT_PATH = "/shell-super-app-api/auth/api-key/gateway-context";
 
@@ -35,11 +36,8 @@ let liveRevision: string | undefined;
 
 const fetchActiveRevision = async (): Promise<string | undefined> => {
   try {
-    const response = await fetch(getConfig().compositionUrl, { signal: AbortSignal.timeout(4000) });
-    if (!response.ok) return undefined;
-    const body = (await response.json()) as { composition?: { revision?: unknown } };
-    const revision = body.composition?.revision;
-    if (typeof revision === "string" && /^[\da-f]{64}$/u.test(revision)) {
+    const revision = await readActiveRevision();
+    if (revision !== undefined) {
       liveRevision = revision;
       return revision;
     }

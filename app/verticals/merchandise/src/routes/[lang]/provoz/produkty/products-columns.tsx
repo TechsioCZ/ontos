@@ -25,7 +25,7 @@ export const productColumns = (
       const variants = product.variantRecords?.length ?? 0;
       return (
         <span className="flex min-w-0 items-center gap-100">
-          {image !== undefined && (
+          {image !== undefined && imageUrl(image) !== undefined && (
             <img
               alt=""
               className="shrink-0 rounded-sm border border-border-primary object-cover"

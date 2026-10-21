@@ -16,6 +16,7 @@ import {
 } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseCommand } from '../../shared/actions/apply-command.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
+import { AKROS_STOREFRONT_ORIGIN, STOREFRONT_ORIGIN } from '../../shared/storefront-urls.ts';
 import type { MerchandiseState, RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import {
   EntityIdSchema,
@@ -1761,13 +1762,13 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           ? { aiChanges: snapshot.state.aiChanges }
           : {};
       const canManageCatalog = canWrite && (legalEntityId !== AKROS_LEGAL_ENTITY_ID || isAdministrator);
+      const storefrontOrigin = legalEntityId === AKROS_LEGAL_ENTITY_ID ? AKROS_STOREFRONT_ORIGIN : STOREFRONT_ORIGIN;
       const response: RecordsResponse = {
         ...aiChanges,
         totalProducts: matchingProducts.length,
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
         canWrite,
         canManageCatalog: !storefront && canManageCatalog,
-        storefrontOrigin: legalEntityId === AKROS_LEGAL_ENTITY_ID ? 'http://localhost:3070' : 'http://localhost:3060',
         canEditOrders: !storefront && canManageCatalog,
         canCleanupDemo: !storefront && canWrite && isAdministrator,
         canResetDemo: !storefront && canWrite && isAdministrator && legalEntityId === AKROS_LEGAL_ENTITY_ID,
@@ -1790,6 +1791,9 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           ? { categories: [...(snapshot.state.categories ?? [])] }
           : {}),
       };
+      if (storefrontOrigin !== undefined) {
+        return { ...response, storefrontOrigin };
+      }
       return response;
     });
     return { apply, records };

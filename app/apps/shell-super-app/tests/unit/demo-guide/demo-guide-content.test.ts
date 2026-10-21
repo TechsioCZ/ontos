@@ -1,6 +1,31 @@
-import { expect, it } from 'effect-rstest';
+import { Effect } from 'effect';
+import { expect, it, rs } from 'effect-rstest';
 
 import { demoGuideFor, demoGuides } from '../../../src/demo-guide/demo-guide-registry.ts';
+
+it.effect('links to the configured stage storefront without localhost destinations', () =>
+  Effect.gen(function* stageStorefrontGuide() {
+    yield* Effect.acquireRelease(
+      Effect.sync(() => {
+        rs.stubGlobal('ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT', 'https://ontos-stage-akros.bleeding.dev');
+        rs.resetModules();
+      }),
+      () =>
+        Effect.sync(() => {
+          rs.unstubAllGlobals();
+          rs.resetModules();
+        }),
+    );
+    const { akrosGuide } = yield* Effect.promise(() => import('../../../src/demo-guide/guides/akros.ts'));
+    for (const chapter of akrosGuide.chapters) {
+      for (const step of chapter.steps) {
+        if (step.target.kind === 'external') {
+          expect(step.target.url.startsWith('https://ontos-stage-akros.bleeding.dev/')).toBe(true);
+        }
+      }
+    }
+  }),
+);
 
 /** Demo accounts of each company; a guide may only send the presenter to its own company's accounts. */
 const personaDomains: Readonly<Record<string, string>> = {

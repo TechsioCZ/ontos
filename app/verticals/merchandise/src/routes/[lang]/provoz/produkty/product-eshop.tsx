@@ -20,15 +20,13 @@ import { runCommand } from './products-api.ts';
 import { useCommandFailure } from './product-forms.tsx';
 import { moveImage } from './product-images.ts';
 
-/** The customer storefront (apps/eshop-storefront) serves product images and pages. */
-export const STOREFRONT_ORIGIN = 'http://localhost:3060';
-/** Kai Uwe's AKROS storefront serves its own relative assets under /akros/ (e.g. the image placeholder). */
-const AKROS_STOREFRONT_ORIGIN = 'http://localhost:3070';
+import { AKROS_STOREFRONT_ORIGIN, STOREFRONT_ORIGIN } from '../../../../../shared/storefront-urls.ts';
 
-export const imageUrl = (reference: string): string => {
+export const imageUrl = (reference: string): string | undefined => {
   if (/^https?:\/\//u.test(reference)) return reference;
   const path = reference.startsWith('/') ? reference : `/${reference}`;
-  return `${path.startsWith('/akros/') ? AKROS_STOREFRONT_ORIGIN : STOREFRONT_ORIGIN}${path}`;
+  const origin = path.startsWith('/akros/') ? AKROS_STOREFRONT_ORIGIN : STOREFRONT_ORIGIN;
+  return origin === undefined ? undefined : `${origin}${path}`;
 };
 
 const availabilityPresentation: Readonly<
@@ -622,7 +620,8 @@ export const EshopPanel = ({
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [broken, setBroken] = useState<ReadonlySet<string>>(new Set());
-  const storefrontHref = `${storefrontOrigin}/produkt/${product.slug ?? product.id}`;
+  const storefrontHref =
+    storefrontOrigin === undefined ? undefined : `${storefrontOrigin}/produkt/${product.slug ?? product.id}`;
   const [archiveReason, setArchiveReason] = useState('');
   const slugInvalid = slug.trim() !== '' && !/^[a-z0-9-]{1,120}$/u.test(slug.trim());
   // The slug the server refused because another product uses it; editing the field clears the message.
@@ -684,9 +683,11 @@ export const EshopPanel = ({
               Skryto v e-shopu
             </Badge>
           )}
-          <Link className="ml-auto" external href={storefrontHref} target="_blank">
-            Otevřít v e-shopu
-          </Link>
+          {storefrontHref !== undefined && (
+            <Link className="ml-auto" external href={storefrontHref} target="_blank">
+              Otevřít v e-shopu
+            </Link>
+          )}
         </div>
       </SectionCard>
 
@@ -740,8 +741,10 @@ export const EshopPanel = ({
           <ul className="grid grid-cols-2 gap-200 sm:grid-cols-4">
             {images.map((image, index) => (
               <li className="flex flex-col gap-100" key={`${image}-${index}`}>
-                <div className={`${surfaceTileClassName} flex aspect-square items-center justify-center overflow-hidden`}>
-                  {broken.has(image) ? (
+                <div
+                  className={`${surfaceTileClassName} flex aspect-square items-center justify-center overflow-hidden`}
+                >
+                  {broken.has(image) || imageUrl(image) === undefined ? (
                     <span className="p-100 text-center text-fg-secondary text-xs">
                       Náhled se nenačetl (e-shop neběží?)
                     </span>

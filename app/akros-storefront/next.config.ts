@@ -10,6 +10,7 @@ const extraImageHosts = (process.env.STOREFRONT_IMAGE_HOSTS ?? "")
 const nextConfig: NextConfig = {
   agentRules: false,
   images: {
+    unoptimized: process.env.AKROS_CLOUDFLARE_BUILD === "1",
     remotePatterns: [
       {
         protocol: "https",
