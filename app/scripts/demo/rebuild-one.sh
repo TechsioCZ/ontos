@@ -232,6 +232,10 @@ start() {
     nohup "$@" >"$LOG_DIR/$name.log" 2>&1 </dev/null &
   echo $! >"$PID_DIR/$name.pid"
 }
+# Restarts and the composition republish run under one shared lock (builds above still run in parallel): a
+# publisher started while another caller restarts a different app cannot fetch that app's manifest and never
+# answers (STATUS 2026-10-21 15:58, tagging + workforce rebuilt at once).
+acquire_app_lock composition
 for id in "$@"; do
   stop_pid "$id"
   if [ "$id" = shell-super-app ]; then
@@ -244,9 +248,8 @@ for id in "$@"; do
   say "restarted $id"
 done
 
-# A rebuilt app gets a new build marker, so the composition must be republished either way.
-# Two callers must not restart the composition publisher at the same time.
-acquire_app_lock composition
+# A rebuilt app gets a new build marker, so the composition must be republished either way (still under the
+# composition lock taken before the restarts).
 stop_pid composition
 # Demo only: after downtime the previous composition lease has expired and the publisher refuses to drain it.
 docker --context orbstack exec ontos-demo-db psql -q -U "${POSTGRES_USER:-ontos_admin}" -d "${POSTGRES_DB:-siampark_demo}" \
