@@ -13,6 +13,11 @@ export const resetEnvironment = Config.all({
   DATABASE_URL: Config.Redacted('DATABASE_URL'),
   // The stage demo seed reaches stage's `db` through loopback forwarders and names it explicitly.
   ONTOS_DEMO_DATABASE_NAME: Config.String('ONTOS_DEMO_DATABASE_NAME').pipe(Config.withDefault('siampark_demo')),
+  // Children that call the running Shell and composition must reach the same target as the reset itself.
+  ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: Config.String('ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL').pipe(
+    Config.withDefault('http://127.0.0.1:3041/active'),
+  ),
+  ONTOS_SHELL_URL: Config.String('ONTOS_SHELL_URL').pipe(Config.withDefault('http://localhost:3020')),
   SPICEDB_CA_CERT: Config.String('SPICEDB_CA_CERT'),
   SPICEDB_ENDPOINT: Config.String('SPICEDB_ENDPOINT'),
   SPICEDB_PRESHARED_KEY: Config.Redacted('SPICEDB_PRESHARED_KEY'),
