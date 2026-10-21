@@ -21,7 +21,7 @@
       "records": {
         "title": "Tasks",
         "restrictedLookups": "Related details from agendas you cannot access are not displayed.",
-        "pageDescription": "Site tasks, responsible people and deadlines.",
+        "pageDescription": "Company tasks, responsible people and deadlines.",
         "newTask": "New task",
         "create": "New task",
         "edit": "Edit task",
@@ -129,7 +129,8 @@
           "title": "Enter a task title.",
           "id": "Enter a valid ID.",
           "clear": "This value cannot be removed while editing.",
-          "mismatch": "The opportunity belongs to another customer."
+          "mismatch": "The opportunity belongs to another customer.",
+          "dueDate": "Enter a due date between 2000 and 2099."
         },
         "empty": "No tasks yet.",
         "emptyDescription": "Create the first task and assign it to an employee.",

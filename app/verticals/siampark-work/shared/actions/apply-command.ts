@@ -23,12 +23,24 @@ import {
 } from '../apis/records.ts';
 import { TaskRefSchema } from '../resources/task.ts';
 
+/**
+ * A task due date must be a plausible working year. The calendar format alone accepted typos such as 0026-02-12,
+ * which the list then showed as 12.02.26.
+ */
+export const earliestDueDate = '2000-01-01';
+export const latestDueDate = '2099-12-31';
+export const isPlausibleDueDate = (value: string) => value >= earliestDueDate && value <= latestDueDate;
+const DueDateSchema = CalendarDateSchema.check(
+  Schema.makeFilter((value: string) => isPlausibleDueDate(value), {
+    message: `Termín musí být mezi ${earliestDueDate} a ${latestDueDate}.`,
+  }),
+);
 const editableFields = {
   plannedHours: Schema.optionalKey(PlannedHoursSchema),
   projectId: Schema.optionalKey(ProjectIdSchema),
   assigneeEmployeeId: Schema.optionalKey(EmployeeIdSchema),
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
-  dueDate: Schema.optionalKey(CalendarDateSchema),
+  dueDate: Schema.optionalKey(DueDateSchema),
   opportunityId: Schema.optionalKey(OpportunityIdSchema),
   ownerPrincipalRef: Schema.optionalKey(PrincipalRefSchema),
   partyId: Schema.optionalKey(PartyIdSchema),
@@ -51,7 +63,7 @@ export const SingleWorkCommandSchema = Schema.Union([
     plannedHours: Schema.optionalKey(Schema.OptionFromNullOr(PlannedHoursSchema)),
     projectId: Schema.optionalKey(Schema.OptionFromNullOr(ProjectIdSchema)),
     // Wire `null` removes the due date (None in the decoded model); an absent key keeps it.
-    dueDate: Schema.optionalKey(Schema.OptionFromNullOr(CalendarDateSchema)),
+    dueDate: Schema.optionalKey(Schema.OptionFromNullOr(DueDateSchema)),
     taskRef: TaskRefSchema,
     title: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
   }),

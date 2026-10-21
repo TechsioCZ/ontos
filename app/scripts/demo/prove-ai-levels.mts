@@ -11,8 +11,10 @@
  *     backend (not the hidden tool) refuses the write: HTTP 403 + a denied Core audit event.
  * Writes performed: one task created by B (+ idempotent replay), then cancelled through the same governed Action.
  * Cleanup also cancels older open tasks carrying this proof's exact title/description signature; history is retained.
+ * Finally the cancelled proof tasks of earlier runs are pruned from the task list (Core audit stays), so Úkoly keeps
+ * only the newest one the presenter guide opens instead of one more cancelled task per run.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 
@@ -541,6 +543,23 @@ try {
     mcpB.close();
   }
 }
+
+// Keep Úkoly presentable: only the newest cancelled proof task stays listed; Core audit keeps every run.
+const pruned = spawnSync(
+  process.execPath,
+  ['--no-warnings', '--env-file=.env', 'verticals/siampark-work/scripts/prune-demo-leftovers.mts', '--apply'],
+  { cwd: appRoot, encoding: 'utf-8' },
+);
+record(
+  'Úklid',
+  'Starší důkazové úkoly odebrány ze seznamu',
+  'Older proof tasks pruned from the list',
+  'zůstane jen nejnovější',
+  pruned.status === 0
+    ? (pruned.stdout.trim().split('\n').at(-1) ?? 'OK')
+    : `RUČNÍ ÚKLID NUTNÝ: ${pruned.stderr.trim().slice(0, 200)}`,
+  pruned.status === 0,
+);
 
 // Core audit evidence for both principals since the proof started.
 const auditRows = await Effect.runPromise(

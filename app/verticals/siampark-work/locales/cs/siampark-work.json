@@ -21,7 +21,7 @@
       "records": {
         "title": "Úkoly",
         "restrictedLookups": "Související údaje z agend, ke kterým nemáte přístup, se nezobrazují.",
-        "pageDescription": "Úkoly areálu, odpovědné osoby a termíny.",
+        "pageDescription": "Úkoly firmy, odpovědné osoby a termíny.",
         "newTask": "Nový úkol",
         "create": "Nový úkol",
         "edit": "Upravit úkol",
@@ -129,7 +129,8 @@
           "title": "Vyplňte název úkolu.",
           "id": "Zadejte platné ID.",
           "clear": "Tuto hodnotu nelze v úpravě odebrat.",
-          "mismatch": "Příležitost patří jinému zákazníkovi."
+          "mismatch": "Příležitost patří jinému zákazníkovi.",
+          "dueDate": "Zadejte termín v letech 2000–2099."
         },
         "empty": "Zatím tu nejsou žádné úkoly.",
         "emptyDescription": "Založte první úkol a přiřaďte ho řešiteli.",

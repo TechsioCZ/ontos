@@ -22,6 +22,7 @@ import {
 import { TaskContextPickers } from './task-context-pickers.tsx';
 import type { ContextRef, LookupAccess, Task, WorkProject } from '../../../../../shared/apis/records.ts';
 import { isClosedTaskState } from '../../../../../shared/actions/task-transitions.ts';
+import { earliestDueDate, isPlausibleDueDate, latestDueDate } from '../../../../../shared/actions/apply-command.ts';
 import { customerOptionItems, opportunityOptionItems, selectOption, taskContextHref } from './tasks-model.ts';
 import type { CustomerOption, OpportunityOption } from './tasks-model.ts';
 
@@ -70,11 +71,12 @@ interface Decoded {
   readonly partyId: PartyId | undefined;
 }
 
-const FieldErrorSchema = Schema.Literals(['clear', 'id', 'mismatch', 'title']);
+const FieldErrorSchema = Schema.Literals(['clear', 'dueDate', 'id', 'mismatch', 'title']);
 type FieldError = typeof FieldErrorSchema.Type;
 
 interface FieldErrors {
   readonly assigneeId: FieldError | undefined;
+  readonly dueDate: FieldError | undefined;
   readonly opportunityId: FieldError | undefined;
   readonly partyId: FieldError | undefined;
   readonly title: FieldError | undefined;
@@ -134,6 +136,11 @@ const validate = (
   opportunityOwner: string | undefined,
 ): FieldErrors => ({
   assigneeId: clearedError(task?.assigneeEmployeeId !== undefined, decoded.assigneeEmployeeId !== undefined),
+  // A typed year such as 0026 is a valid calendar date but not a real deadline. Only a changed date is checked.
+  dueDate:
+    values.dueDate !== undefined && values.dueDate !== task?.dueDate && !isPlausibleDueDate(values.dueDate)
+      ? 'dueDate'
+      : undefined,
   opportunityId:
     idError(values.opportunityId, task?.opportunityId !== undefined, decoded.opportunityId !== undefined) ??
     mismatchError(values, task, opportunityOwner),
@@ -142,10 +149,12 @@ const validate = (
 });
 
 /** Calendar value for the date picker. `YYYY-MM-DD` strings are the form's storage format. */
-const toCalendarDate = (isoDate: string | undefined) =>
-  isoDate === undefined
-    ? null
-    : new CalendarDate(Number(isoDate.slice(0, 4)), Number(isoDate.slice(5, 7)), Number(isoDate.slice(8, 10)));
+const fromIsoDate = (isoDate: string) =>
+  new CalendarDate(Number(isoDate.slice(0, 4)), Number(isoDate.slice(5, 7)), Number(isoDate.slice(8, 10)));
+const toCalendarDate = (isoDate: string | undefined) => (isoDate === undefined ? null : fromIsoDate(isoDate));
+/** The calendar cannot pick a day outside the years the command accepts. */
+const dueDateMin = fromIsoDate(earliestDueDate);
+const dueDateMax = fromIsoDate(latestDueDate);
 
 /**
  * The calendar is portalled to <body>, outside the drawer. Its content has no z-index of its own, so it would sit
@@ -497,6 +506,7 @@ export const TaskFormDialog = ({
   ];
   const isEdit = task !== undefined;
   const assigneeMessage = message('assigneeId');
+  const dueDateMessage = message('dueDate');
   const titleMessage = message('title');
 
   return (
@@ -659,7 +669,10 @@ export const TaskFormDialog = ({
             <DatePicker.Root
               defaultValue={toCalendarDate(values.dueDate)}
               disabled={fieldsDisabled}
+              invalid={dueDateMessage !== undefined}
               locale="cs-CZ"
+              max={dueDateMax}
+              min={dueDateMin}
               onOpenChange={onListOpenChange}
               onValueChange={(details) => set({ dueDate: details.value === null ? undefined : details.valueAsString })}
               shouldForceLeadingZeros
@@ -681,6 +694,7 @@ export const TaskFormDialog = ({
                 </DatePicker.Content>
               </DatePicker.Positioner>
             </DatePicker.Root>
+            {dueDateMessage !== undefined && <StatusText status="error">{dueDateMessage}</StatusText>}
           </div>
           <div onFocus={rememberListField}>
             <Select
