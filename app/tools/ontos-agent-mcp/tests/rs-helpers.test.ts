@@ -85,12 +85,13 @@ describe('inputProblems', () => {
 });
 
 describe('action availability and annotations', () => {
-  it('hides demo maintenance always and human-only merchandise commands for direct writes', () => {
-    assert.equal(actionAvailability(action('demo.merchandise', 'ResetDemoData'), 'approval'), 'demo_maintenance');
-    assert.equal(actionAvailability(action('demo.merchandise', 'RemoveDemoOrder'), 'direct'), 'demo_maintenance');
-    assert.equal(actionAvailability(action('demo.merchandise', 'ChangePrice'), 'direct'), 'human_only');
-    assert.equal(actionAvailability(action('demo.merchandise', 'ChangePrice'), 'approval'), 'offered');
-    assert.equal(actionAvailability(action('demo.crm', 'AiProposeChanges'), 'approval'), 'ai_meta');
+  it('hides demo maintenance always and human-only merchandise commands for direct agent writes', () => {
+    assert.equal(actionAvailability(action('demo.merchandise', 'ResetDemoData'), 'approval', 'human'), 'demo_maintenance');
+    assert.equal(actionAvailability(action('demo.merchandise', 'RemoveDemoOrder'), 'direct', 'human'), 'demo_maintenance');
+    assert.equal(actionAvailability(action('demo.merchandise', 'ChangePrice'), 'direct', 'agent'), 'human_only');
+    assert.equal(actionAvailability(action('demo.merchandise', 'ChangePrice'), 'direct', 'human'), 'offered');
+    assert.equal(actionAvailability(action('demo.merchandise', 'ChangePrice'), 'approval', 'agent'), 'offered');
+    assert.equal(actionAvailability(action('demo.crm', 'AiProposeChanges'), 'approval', 'human'), 'ai_meta');
   });
 
   it('marks erasing personal data, voiding and terminating as destructive', () => {

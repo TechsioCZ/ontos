@@ -56,8 +56,9 @@ export const isAiMetaCommand = (entry: CatalogEntry): boolean =>
 /** Demo maintenance (reset, remove demo orders) is never offered to connected apps. */
 const DEMO_MAINTENANCE = /(reset[-_]?demo|demo[-_]?data|demo[-_]?order|demo[-_]?product|seed)/iu;
 /**
- * Commands a module reserves for people working in the app (merchandise command-guard nonHumanForbiddenCommands):
- * a connection may only propose them for approval, never run them directly.
+ * Commands a module reserves for people (merchandise command-guard nonHumanForbiddenCommands): a connection acting
+ * for an AI agent may only propose them for approval. A connection acting as the person runs them with that
+ * person's rights, so the module itself decides (e.g. only catalog managers may change prices).
  */
 export const HUMAN_ONLY_COMMANDS: Readonly<Record<string, ReadonlySet<string>>> = {
   'demo.merchandise': new Set(['BulkUpdateProducts', 'ChangePrice', 'EditOrder', 'UpdateCategory']),
@@ -67,20 +68,27 @@ const humanOnly = (entry: CatalogEntry): boolean =>
 
 export type ActionAvailability = 'offered' | 'ai_meta' | 'demo_maintenance' | 'human_only';
 /** Whether an action is offered to this connection at all (independent of the module grant). */
-export const actionAvailability = (entry: CatalogEntry, policy: ConnectionDescription['writePolicy']): ActionAvailability => {
+export const actionAvailability = (
+  entry: CatalogEntry,
+  policy: ConnectionDescription['writePolicy'],
+  actingKind: ConnectionDescription['acting']['kind'],
+): ActionAvailability => {
   if (isAiMetaCommand(entry)) {
     return 'ai_meta';
   }
   if (entry.kind === 'action' && DEMO_MAINTENANCE.test(entry.commandTag ?? entry.actionSlug)) {
     return 'demo_maintenance';
   }
-  if (policy === 'direct' && humanOnly(entry)) {
+  if (policy === 'direct' && actingKind === 'agent' && humanOnly(entry)) {
     return 'human_only';
   }
   return 'offered';
 };
-export const isOffered = (entry: CatalogEntry, policy: ConnectionDescription['writePolicy']): boolean =>
-  actionAvailability(entry, policy) === 'offered';
+export const isOffered = (
+  entry: CatalogEntry,
+  policy: ConnectionDescription['writePolicy'],
+  actingKind: ConnectionDescription['acting']['kind'],
+): boolean => actionAvailability(entry, policy, actingKind) === 'offered';
 
 /** Deletes, cancels, voids, erases or otherwise removes data or access; clients should ask before calling. */
 const DESTRUCTIVE =
@@ -115,7 +123,9 @@ export const planTools = (catalog: Catalog, description: ConnectionDescription):
     }
     module.reads.forEach(add);
     if (canWrite(description, module.moduleId)) {
-      const actions = module.actions.filter((action) => isOffered(action, description.writePolicy));
+      const actions = module.actions.filter((action) =>
+        isOffered(action, description.writePolicy, description.acting.kind),
+      );
       // Approval: typed tools only for commands the module accepts as proposals; ontos_execute can propose any.
       (description.writePolicy === 'approval' ? actions.filter((action) => action.proposable) : actions).forEach(add);
     }

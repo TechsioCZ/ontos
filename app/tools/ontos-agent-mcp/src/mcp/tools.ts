@@ -287,7 +287,7 @@ export const buildConnectionTools = async (
       return { error: errorResult(MSG_UNKNOWN(id)) };
     }
     // ontos_propose always proposes, so human-only commands are fine there; everything else follows the policy.
-    const availability = actionAvailability(entry, mode === 'propose' ? 'approval' : d.writePolicy);
+    const availability = actionAvailability(entry, mode === 'propose' ? 'approval' : d.writePolicy, d.acting.kind);
     if (availability === 'ai_meta') {
       return { error: errorResult(MSG_AI_META) };
     }
@@ -435,14 +435,14 @@ export const buildConnectionTools = async (
     const id = stringArg(args, 'id');
     if (id !== undefined) {
       const entry = findEntry(catalog, id);
-      if (entry === undefined || (entry.kind === 'action' && !isOffered(entry, 'approval') && !isOffered(entry, d.writePolicy))) {
+      if (entry === undefined || (entry.kind === 'action' && !isOffered(entry, 'approval', d.acting.kind) && !isOffered(entry, d.writePolicy, d.acting.kind))) {
         return errorResult(MSG_UNKNOWN(id));
       }
       if (!canRead(d, entry.moduleId)) {
         return errorResult(MSG_NO_READ(labelOf(entry.moduleId)));
       }
       const moduleCs = labelOf(entry.moduleId);
-      const writable = entry.kind === 'action' && canWrite(d, entry.moduleId) && isOffered(entry, d.writePolicy);
+      const writable = entry.kind === 'action' && canWrite(d, entry.moduleId) && isOffered(entry, d.writePolicy, d.acting.kind);
       return okResult({
         descriptionCs: entryDescriptionCs(entry, moduleCs, d.writePolicy),
         id: entry.id,
@@ -478,7 +478,7 @@ export const buildConnectionTools = async (
           .slice(0, 60);
         const actions = write
           ? module.actions
-              .filter((action) => isOffered(action, d.writePolicy))
+              .filter((action) => isOffered(action, d.writePolicy, d.acting.kind))
               .map((action) => ({
                 destructive: annotationsFor(action).destructiveHint === true,
                 id: action.id,
