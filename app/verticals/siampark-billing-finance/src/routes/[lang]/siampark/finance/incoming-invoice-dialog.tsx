@@ -2,19 +2,29 @@
 // @effect-diagnostics newPromise:off
 // @effect-diagnostics globalTimers:off
 // @effect-diagnostics globalDate:off
-import { formatMoney, SidePanel } from '@app/admin-ui';
+import { DetailList, formatMoney, SidePanel } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { addCalendarDaysTo } from '../../../../../shared/domain/finance-planning.ts';
+import {
+  draftTotals,
+  lineIssue,
+  lineValueIssue,
+  newDraftLine,
+  toInvoiceLine,
+} from '../../../../../shared/domain/invoice-draft.ts';
+import type { DraftLine } from '../../../../../shared/domain/invoice-draft.ts';
+import { InvoiceLineEditor } from './invoice-line-editor.tsx';
+import { emptyObjectSelection, objectAnchors, ObjectFields } from './object-fields.tsx';
+import type { ObjectSelection } from './object-fields.tsx';
 import {
   ACCEPTED_DOCUMENT_TYPES,
   formatBytes,
   MAX_UPLOAD_BYTES,
   outcomeMessage,
-  parseAmountMinor,
   readUpload,
 } from './finance-ui.tsx';
 import type { FinanceViewModel, PreparedUpload } from './finance-ui.tsx';
@@ -32,8 +42,9 @@ export const BUDGET_CATEGORIES = [
 ] as const;
 
 interface IncomingDraft {
-  readonly amount: string;
   readonly category: string;
+  readonly lines: readonly DraftLine[];
+  readonly object: ObjectSelection;
   readonly documentNumber: string;
   readonly dueDate: string;
   readonly issueDate: string;
@@ -43,8 +54,9 @@ interface IncomingDraft {
 }
 
 const emptyDraft = (today: string): IncomingDraft => ({
-  amount: '',
   category: 'Energie',
+  lines: [newDraftLine('incoming-line-1', 'free')],
+  object: emptyObjectSelection,
   documentNumber: '',
   dueDate: addCalendarDaysTo(today, 14),
   issueDate: today,
@@ -67,7 +79,12 @@ export const IncomingInvoiceDialog = ({ onOpenChange, open, vm }: IncomingInvoic
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
   const set = (patch: Partial<IncomingDraft>) => setDraft((current) => ({ ...current, ...patch }));
-  const amountMinor = parseAmountMinor(draft.amount);
+  const [submitted, setSubmitted] = useState(false);
+  const lineSequence = useRef(1);
+  const totals = draftTotals(draft.lines);
+  const priceList = (vm.snapshot?.state.priceList ?? []).filter((item) => item.active);
+  const setLines = (next: (lines: readonly DraftLine[]) => readonly DraftLine[]) =>
+    setDraft((current) => ({ ...current, lines: next(current.lines) }));
 
   const pickFile = async (picked: File | undefined) => {
     setError(undefined);
@@ -90,6 +107,7 @@ export const IncomingInvoiceDialog = ({ onOpenChange, open, vm }: IncomingInvoic
     setDraft(emptyDraft(today));
     setFile(undefined);
     setError(undefined);
+    setSubmitted(false);
     onOpenChange(false);
   };
 
@@ -98,8 +116,13 @@ export const IncomingInvoiceDialog = ({ onOpenChange, open, vm }: IncomingInvoic
       setError('Vyplňte dodavatele a číslo dokladu.');
       return;
     }
-    if (amountMinor === undefined || amountMinor === 0) {
-      setError('Zadejte kladnou částku, např. 12 100 nebo 12 100,50.');
+    setSubmitted(true);
+    if (draft.lines.some((line) => lineIssue(line) !== undefined)) {
+      setError('Doplňte u každé položky popis, množství, cenu bez DPH a sazbu DPH.');
+      return;
+    }
+    if (totals === undefined || totals.totalMinor === 0) {
+      setError('Součet položek musí být kladná částka.');
       return;
     }
     if (draft.dueDate < draft.issueDate) {
@@ -112,14 +135,16 @@ export const IncomingInvoiceDialog = ({ onOpenChange, open, vm }: IncomingInvoic
         _tag: 'RecordIncomingInvoice',
         ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
         budgetCategory: draft.category,
+        ...objectAnchors(vm.objects, { ...draft.object, contractId: '' }),
         ...(file === undefined ? {} : { document: file.upload }),
         documentNumber: draft.documentNumber.trim(),
         dueDate: draft.dueDate,
         issueDate: draft.issueDate,
         ...(draft.note.trim() === '' ? {} : { note: draft.note.trim() }),
         ...(draft.supplierCompanyId.trim() === '' ? {} : { supplierCompanyId: draft.supplierCompanyId.trim() }),
+        lines: draft.lines.map(toInvoiceLine),
         supplierName: draft.supplierName.trim(),
-        totalMinor: amountMinor,
+        totalMinor: totals.totalMinor,
       },
       'Přijatá faktura zaevidována',
     );
@@ -195,17 +220,6 @@ export const IncomingInvoiceDialog = ({ onOpenChange, open, vm }: IncomingInvoic
             size="sm"
             value={draft.documentNumber}
           />
-          <FormInput
-            helpText={amountMinor === undefined ? 'Celková částka včetně DPH' : formatMoney(amountMinor)}
-            id="incoming-amount"
-            inputMode="decimal"
-            label="Částka celkem (Kč)"
-            onChange={(event) => set({ amount: event.target.value })}
-            placeholder="0,00"
-            required
-            size="sm"
-            value={draft.amount}
-          />
         </div>
         <div className="grid grid-cols-1 gap-200 md:grid-cols-2">
           <FormInput
@@ -227,6 +241,58 @@ export const IncomingInvoiceDialog = ({ onOpenChange, open, vm }: IncomingInvoic
             value={draft.dueDate}
           />
         </div>
+        <div className="flex flex-col gap-150">
+          <span className="font-medium text-sm">Položky dokladu (ceny bez DPH)</span>
+          {draft.lines.map((line, index) => (
+            <InvoiceLineEditor
+              canRemove={draft.lines.length > 1}
+              issue={submitted ? lineIssue(line) : lineValueIssue(line)}
+              key={line.key}
+              line={line}
+              onChange={(next) => setLines((lines) => lines.map((entry) => (entry.key === line.key ? next : entry)))}
+              onRemove={() => setLines((lines) => lines.filter((entry) => entry.key !== line.key))}
+              position={index + 1}
+              priceList={priceList}
+              products={[]}
+              productsReadable={false}
+            />
+          ))}
+          <div>
+            <Button
+              icon="icon-[mdi--plus]"
+              onClick={() => {
+                lineSequence.current += 1;
+                const key = `incoming-line-${lineSequence.current}`;
+                setLines((lines) => [...lines, newDraftLine(key, 'free')]);
+              }}
+              size="sm"
+              theme="outlined"
+              variant="secondary"
+            >
+              Přidat položku
+            </Button>
+          </div>
+          <DetailList
+            items={[
+              { label: 'Základ', value: <span className="tabular-nums">{totals === undefined ? '—' : formatMoney(totals.subtotalMinor)}</span> },
+              { label: 'DPH', value: <span className="tabular-nums">{totals === undefined ? '—' : formatMoney(totals.vatMinor)}</span> },
+              {
+                label: 'Celkem s DPH',
+                value: (
+                  <span className="font-semibold tabular-nums">
+                    {totals === undefined ? '—' : formatMoney(totals.totalMinor)}
+                  </span>
+                ),
+              },
+            ]}
+          />
+        </div>
+        <ObjectFields
+          idPrefix="incoming-object"
+          objects={vm.objects}
+          onChange={(next) => set({ object: next })}
+          value={draft.object}
+        />
         <SelectTemplate
           items={BUDGET_CATEGORIES.map((category) => ({ displayValue: category, label: category, value: category }))}
           label="Kategorie rozpočtu"

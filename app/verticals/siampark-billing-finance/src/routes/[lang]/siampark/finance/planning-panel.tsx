@@ -35,6 +35,9 @@ import {
 import { minorToInput, monthLabel, outcomeMessage, parseAmountMinor, shortMonthLabel } from './finance-ui.tsx';
 import type { FinanceViewModel } from './finance-ui.tsx';
 import { BUDGET_CATEGORIES } from './incoming-invoice-dialog.tsx';
+import { emptyObjectSelection, objectAnchors, ObjectFields, objectSummary } from './object-fields.tsx';
+import type { ObjectSelection } from './object-fields.tsx';
+import { PlanItemsSection } from './plan-items-section.tsx';
 
 const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
 const wholeKc = (minor: number) => formatMoney(Math.round(minor / 100) * 100);
@@ -44,6 +47,7 @@ const percent = (value: number) =>
   `${value > 0 ? '+' : ''}${new Intl.NumberFormat('cs-CZ', { maximumFractionDigits: 1 }).format(value * 100)} %`;
 
 interface BudgetDraft {
+  readonly object: ObjectSelection;
   readonly actual: string;
   readonly category: string;
   readonly explanation: string;
@@ -53,6 +57,7 @@ interface BudgetDraft {
 }
 
 const newDraft = (): BudgetDraft => ({
+  object: emptyObjectSelection,
   actual: '',
   category: 'Energie',
   explanation: '',
@@ -129,7 +134,25 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
   const [openingAmount, setOpeningAmount] = useState('');
   const [openingDate, setOpeningDate] = useState(`${currentMonth}-01`);
   const invoices = state?.invoices ?? [];
-  const budgets = (state?.budgets ?? []).filter((budget) => budget.period === budgetMonth);
+  const [objectFilter, setObjectFilter] = useState('ALL');
+  const budgets = (state?.budgets ?? []).filter(
+    (budget) =>
+      budget.period === budgetMonth &&
+      (objectFilter === 'ALL' ||
+        (objectFilter === 'COMPANY' &&
+          budget.propertyRef === undefined &&
+          budget.costCenter === undefined) ||
+        (objectFilter.startsWith('property:') && budget.propertyRef?.resourceId === objectFilter.slice(9)) ||
+        (objectFilter.startsWith('cc:') && budget.costCenter === objectFilter.slice(3))),
+  );
+  const objectFilterItems = [
+    { label: 'Všechny objekty a střediska', value: 'ALL' },
+    { label: 'Celá firma (bez objektu)', value: 'COMPANY' },
+    ...vm.objects.properties.map((entry) => ({ label: entry.label, value: `property:${entry.ref.resourceId}` })),
+    ...[...new Set((state?.budgets ?? []).flatMap((budget) => (budget.costCenter === undefined ? [] : [budget.costCenter])))]
+      .sort((left, right) => left.localeCompare(right, 'cs'))
+      .map((center) => ({ label: `Středisko ${center}`, value: `cc:${center}` })),
+  ];
   const budgetRows = budgets
     .map((budget) => ({ actual: budgetActualMinor(budget, invoices), budget }))
     .sort(
@@ -188,6 +211,7 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
         kind: draft.kind,
         period: budgetMonth,
         plannedMinor: planned,
+        ...objectAnchors(vm.objects, { ...draft.object, contractId: '' }),
       },
       'Rozpočet uložen',
     );
@@ -267,7 +291,8 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
       >
         <StatusText showIcon size="sm" status="default">
           Odhad = ručně potvrzený počáteční stav + uhrazené a očekávané příjmy − výdaje. Nejde o bankovní zůstatek.
-          Uhrazená faktura se v očekávaných už nepočítá; plán se započítá jen v části, kterou ještě nepokryly doklady.
+          Uhrazená faktura se v očekávaných už nepočítá; rozpočet se započítá jen v části, kterou ještě nepokryly doklady,
+          a položky finančního plánu podle své pravděpodobnosti.
           {opening !== undefined &&
             ` Počáteční stav k ${formatDate(opening.openingDate)} potvrdil(a) ${opening.actorLabel ?? 'uživatel'} ${at(opening.confirmedAt)}.`}
         </StatusText>
@@ -320,7 +345,7 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                 <Table.ColumnHeader align="end">Výdaje uhrazené</Table.ColumnHeader>
                 <Table.ColumnHeader align="end">Očekávané příjmy</Table.ColumnHeader>
                 <Table.ColumnHeader align="end">Očekávané výdaje</Table.ColumnHeader>
-                <Table.ColumnHeader align="end">Plán (nepokrytý)</Table.ColumnHeader>
+                <Table.ColumnHeader align="end">Plán (rozpočet + fin. plán)</Table.ColumnHeader>
                 <Table.ColumnHeader align="end">Odhad zůstatku</Table.ColumnHeader>
               </Table.Row>
             </Table.Header>
@@ -360,9 +385,25 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
         </FinanceTableScroll>
       </SectionCard>
 
+      <PlanItemsSection vm={vm} />
+
       <SectionCard
         actions={
           <>
+            <div className="w-56">
+              <SelectTemplate
+                aria-label="Objekt nebo středisko rozpočtu"
+                items={objectFilterItems.map((entry) => ({ displayValue: entry.label, label: entry.label, value: entry.value }))}
+                onValueChange={({ value }) => {
+                  const [next] = value;
+                  if (next !== undefined) {
+                    setObjectFilter(next);
+                  }
+                }}
+                size="sm"
+                value={[objectFilter]}
+              />
+            </div>
             <div className="w-44">
               <SelectTemplate
                 aria-label="Měsíc rozpočtu"
@@ -391,8 +432,9 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
         title="Rozpočet – plán a skutečnost"
       >
         <p className="text-fg-secondary text-sm">
-          Skutečnost = ručně zadaná částka, jinak součet potvrzených faktur dané kategorie v měsíci. Procentní odchylka
-          se počítá jen u nenulového plánu.
+          Rozpočet lze vést za celou firmu, za nemovitost či jednotku, nebo za středisko. Skutečnost = ručně zadaná
+          částka, jinak součet potvrzených faktur dané kategorie v měsíci přiřazených ke stejnému objektu či středisku.
+          Procentní odchylka se počítá jen u nenulového plánu.
         </p>
         {budgetRows.length === 0 ? (
           <EmptyState description={`Pro ${monthLabel(budgetMonth)} zatím není rozpočet.`} title="Bez rozpočtu" />
@@ -401,7 +443,7 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
             <PlanActualBars
               rows={budgetRows.map(({ actual, budget }) => ({
                 actual,
-                label: `${budget.category} (${budget.kind === 'COST' ? 'výdaj' : 'příjem'})`,
+                label: `${budget.category} (${budget.kind === 'COST' ? 'výdaj' : 'příjem'})${objectSummary(vm.objects, budget) === undefined ? '' : ` · ${objectSummary(vm.objects, budget)}`}`,
                 over: budget.kind === 'COST' ? actual > budget.plannedMinor : actual < budget.plannedMinor,
                 planned: budget.plannedMinor,
               }))}
@@ -411,6 +453,7 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                 <Table.Header>
                   <Table.Row>
                     <Table.ColumnHeader>Kategorie</Table.ColumnHeader>
+                    <Table.ColumnHeader>Objekt / středisko</Table.ColumnHeader>
                     <Table.ColumnHeader>Typ</Table.ColumnHeader>
                     <Table.ColumnHeader align="end">Plán</Table.ColumnHeader>
                     <Table.ColumnHeader align="end">Skutečnost</Table.ColumnHeader>
@@ -427,6 +470,7 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                     return (
                       <Table.Row key={budget.id}>
                         <Table.Cell className="font-medium">{budget.category}</Table.Cell>
+                        <Table.Cell className="max-w-56 text-sm">{objectSummary(vm.objects, budget) ?? 'Celá firma'}</Table.Cell>
                         <Table.Cell>
                           <Badge size="sm" variant={budget.kind === 'COST' ? 'warning' : 'success'}>
                             {budget.kind === 'COST' ? 'Výdaj' : 'Příjem'}
@@ -470,6 +514,12 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                                 icon="icon-[mdi--pencil-outline]"
                                 onClick={() =>
                                   setDraft({
+                                    object: {
+                                      contractId: '',
+                                      costCenter: budget.costCenter ?? '',
+                                      propertyId: budget.propertyRef?.resourceId ?? '',
+                                      unitId: budget.unitRef?.resourceId ?? '',
+                                    },
                                     actual: minorToInput(budget.actualManualMinor),
                                     category: budget.category,
                                     explanation: budget.explanation ?? '',
@@ -564,6 +614,12 @@ export const PlanningPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                 value={[draft.category]}
               />
             </div>
+            <ObjectFields
+              idPrefix="budget-object"
+              objects={vm.objects}
+              onChange={(next) => setDraft({ ...draft, object: next })}
+              value={draft.object}
+            />
             <FormInput
               id="budget-planned"
               inputMode="decimal"

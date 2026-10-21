@@ -14,7 +14,7 @@ import { FinanceReferenceUnavailable, FinanceRejected } from '../../shared/actio
 import type { Invoice } from '../../shared/apis/records.ts';
 import { hasUsableRole } from '../../shared/domain/reference-audiences.ts';
 import { matchesFinanceRef } from './persistence.service.ts';
-import type { ExportPartnerReference, FinanceValidators } from './persistence.service.ts';
+import type { ExportPartnerReference, FinanceAnchors, FinanceValidators } from './persistence.service.ts';
 
 type ReferenceFailure = Effect.Error<
   | ReturnType<typeof makeReferenceGatewayCredentialSource>
@@ -102,7 +102,9 @@ export const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(fu
     }
     return yield* Effect.void;
   });
-  const validateProperty = Effect.fn('Finance.validateProperty')(function* validateProperty(invoice: Invoice) {
+  const validateProperty = Effect.fn('Finance.validateProperty')(function* validateProperty(
+    invoice: Pick<Invoice, 'propertyRef'>,
+  ) {
     if (invoice.propertyRef !== undefined) {
       const target = yield* source.issue('siampark-property').pipe(Effect.mapError(unavailable));
       const response = yield* readProperty(
@@ -111,9 +113,8 @@ export const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(fu
         scope.correlationId,
         { baseUrl: target.apiBaseUrl, compositionRevision: target.compositionRevision },
       ).pipe(Effect.mapError(unavailable));
-      const property = response.properties.find((record) =>
-        matchesFinanceRef(record.propertyRef, invoice.propertyRef ?? invoice.counterpartyRef),
-      );
+      const wanted = invoice.propertyRef;
+      const property = response.properties.find((record) => matchesFinanceRef(record.propertyRef, wanted));
       if (
         property === undefined ||
         property.legalEntityRef.resourceId !== legalEntityId ||
@@ -124,7 +125,9 @@ export const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(fu
     }
     return yield* Effect.void;
   });
-  const validateUnit = Effect.fn('Finance.validateUnit')(function* validateUnit(invoice: Invoice) {
+  const validateUnit = Effect.fn('Finance.validateUnit')(function* validateUnit(
+    invoice: Pick<Invoice, 'propertyRef' | 'unitRef'>,
+  ) {
     if (invoice.unitRef !== undefined) {
       const target = yield* source.issue('siampark-property').pipe(Effect.mapError(unavailable));
       const response = yield* readProperty(
@@ -133,9 +136,8 @@ export const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(fu
         scope.correlationId,
         { baseUrl: target.apiBaseUrl, compositionRevision: target.compositionRevision },
       ).pipe(Effect.mapError(unavailable));
-      const unit = response.units.find((record) =>
-        matchesFinanceRef(record.unitRef, invoice.unitRef ?? invoice.counterpartyRef),
-      );
+      const wanted = invoice.unitRef;
+      const unit = response.units.find((record) => matchesFinanceRef(record.unitRef, wanted));
       if (
         unit === undefined ||
         invoice.propertyRef === undefined ||
@@ -233,7 +235,29 @@ export const makeFinanceValidators = Effect.fn('Finance.referenceValidators')(fu
     }
     return yield* Effect.void;
   });
+  /** Budgets, plan items and hand-typed supplier invoices: the anchors must exist in this legal entity. */
+  const validateContractAnchor = Effect.fn('Finance.validateContractAnchor')(function* validateContractAnchor(
+    anchors: FinanceAnchors,
+  ) {
+    if (anchors.contractRef !== undefined) {
+      const wanted = anchors.contractRef;
+      const target = yield* source.issue('siampark-agreements').pipe(Effect.mapError(unavailable));
+      const response = yield* readAgreements({ resourceId: wanted.resourceId }, target.authorization, scope.correlationId, {
+        baseUrl: target.apiBaseUrl,
+        compositionRevision: target.compositionRevision,
+      }).pipe(Effect.mapError(unavailable));
+      if (!response.contracts.some((record) => matchesFinanceRef(record.contractRef, wanted))) {
+        return yield* rejected('contract_not_usable');
+      }
+    }
+    return yield* Effect.void;
+  });
   return {
+    anchors: Effect.fn('Finance.authorizedAnchors')(function* anchorReferences(anchors: FinanceAnchors) {
+      yield* validateProperty(anchors);
+      yield* validateUnit(anchors);
+      return yield* validateContractAnchor(anchors);
+    }),
     exportReferences,
     invoice: Effect.fn('Finance.authorizedInvoiceReferences')(function* invoiceReferences(invoice: Invoice) {
       yield* validateCounterparty(invoice);

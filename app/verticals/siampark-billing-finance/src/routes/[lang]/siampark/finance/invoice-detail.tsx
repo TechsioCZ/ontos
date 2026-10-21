@@ -33,17 +33,28 @@ import {
   InvoicePayments,
   InvoiceReminders,
 } from './invoice-extras.tsx';
+import { FinanceTableScroll } from './finance-table-scroll.tsx';
+import { InvoiceLifecycleCard, PaymentTermsCard, PriorSettlementCard } from './invoice-workflow.tsx';
+import { objectSummary } from './object-fields.tsx';
+import type { SiamparkObjects } from './use-siampark-objects.ts';
+import { lineBaseMinor, lineDiscountMinor, totalDiscountMinor } from '../../../../../shared/domain/invoice-totals.ts';
 
 /** Clickable chain from the invoice back to its property, unit, lease and contract. */
-const InvoiceAnchors = ({ invoice }: { readonly invoice: Invoice }) => {
+const InvoiceAnchors = ({ invoice, objects }: { readonly invoice: Invoice; readonly objects: SiamparkObjects }) => {
   const lang = typeof window === 'undefined' ? 'cs' : (window.location.pathname.split('/')[1] ?? 'cs');
   const links = [
     invoice.propertyRef === undefined
       ? undefined
-      : { href: `/${lang}/siampark/properties?resourceId=${invoice.propertyRef.resourceId}`, label: 'Nemovitost' },
+      : {
+          href: `/${lang}/siampark/properties?resourceId=${invoice.propertyRef.resourceId}`,
+          label: `Nemovitost: ${objects.propertyName(invoice.propertyRef.resourceId) ?? 'otevřít'}`,
+        },
     invoice.unitRef === undefined
       ? undefined
-      : { href: `/${lang}/siampark/properties?resourceId=${invoice.unitRef.resourceId}`, label: 'Jednotka' },
+      : {
+          href: `/${lang}/siampark/properties?resourceId=${invoice.unitRef.resourceId}`,
+          label: `Jednotka: ${objects.unitName(invoice.unitRef.resourceId) ?? 'otevřít'}`,
+        },
     invoice.occupancyRef === undefined
       ? undefined
       : { href: `/${lang}/siampark/occupancy?resourceId=${invoice.occupancyRef.resourceId}`, label: 'Nájem / pobyt' },
@@ -51,12 +62,18 @@ const InvoiceAnchors = ({ invoice }: { readonly invoice: Invoice }) => {
       ? undefined
       : { href: `/${lang}/siampark/agreements?resourceId=${invoice.contractRef.resourceId}`, label: 'Smlouva' },
   ].filter((link) => link !== undefined);
-  if (links.length === 0) {
+  if (links.length === 0 && invoice.costCenter === undefined) {
     return null;
   }
   return (
-    <SectionCard title="Vazby">
+    <SectionCard title="Související objekt a vazby">
       <ul className="flex flex-col gap-100 text-sm">
+        {invoice.costCenter !== undefined && (
+          <li className="inline-flex items-center gap-50">
+            <span aria-hidden className="icon-[mdi--sitemap-outline] size-4" />
+            Středisko: {invoice.costCenter}
+          </li>
+        )}
         {links.map((link) => (
           <li key={link.label}>
             <a
@@ -100,6 +117,8 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
   const number = invoice.number ?? invoice.documentNumber;
   const isDraft = invoice.businessState === 'DRAFT';
   const lines = invoice.lines ?? [];
+  const discountMinor = totalDiscountMinor(lines);
+  const priorMinor = (invoice.priorSettlement?.entries ?? []).reduce((sum, entry) => sum + entry.amountMinor, 0);
   const vatRecap = invoice.vatRecap ?? [];
   const customer = customerOf(references.customerById, invoice);
   const title = opportunityTitle(references.opportunityTitles, invoice);
@@ -211,6 +230,7 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
                     { label: t(`${ns}.companyId`), value: customer?.companyId ?? invoice.counterpartyCompanyId ?? '—' },
                     { label: 'Číslo dokladu dodavatele', value: invoice.documentNumber },
                     { label: 'Kategorie rozpočtu', value: invoice.budgetCategory ?? '—' },
+                    { label: 'Související objekt', value: objectSummary(vm.objects, invoice) ?? '—' },
                   ]}
                 />
               ) : (
@@ -243,6 +263,7 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
             {lines.length === 0 ? (
               <p className="px-250 pb-250 text-fg-secondary text-sm">{t(`${ns}.noLines`)}</p>
             ) : (
+              <FinanceTableScroll label={t(`${ns}.lines`)}>
               <Table size="sm" variant="line">
                 <Table.Header>
                   <Table.Row>
@@ -254,9 +275,25 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
                   </Table.Row>
                 </Table.Header>
                 <Table.Body>
-                  {lines.map((line) => (
-                    <Table.Row key={`${line.description}-${line.quantity}-${line.unitPriceMinor}-${line.vatRate}`}>
-                      <Table.Cell>{line.description}</Table.Cell>
+                  {lines.map((line, index) => (
+                    <Table.Row key={`${index}-${line.description}-${line.quantity}-${line.unitPriceMinor}-${line.vatRate}`}>
+                      <Table.Cell>
+                        <span className="flex min-w-0 flex-col">
+                          <span>{line.description}</span>
+                          {line.priceListItemId !== undefined && (
+                            <span className="text-fg-secondary text-xs">z ceníku</span>
+                          )}
+                          {line.discount !== undefined && (
+                            <span className="text-xs" data-finance-line-discount="">
+                              Sleva{' '}
+                              {line.discount.kind === 'PERCENT'
+                                ? `${line.discount.value} %`
+                                : formatMoney(line.discount.value)}{' '}
+                              (−{formatMoney(lineDiscountMinor(line))}) · důvod: {line.discount.reason}
+                            </span>
+                          )}
+                        </span>
+                      </Table.Cell>
                       <Table.Cell align="end" className="tabular-nums">
                         {formatNumber(line.quantity)}
                       </Table.Cell>
@@ -267,15 +304,18 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
                         {formatPercent(line.vatRate / 100)}
                       </Table.Cell>
                       <Table.Cell align="end" className="tabular-nums">
-                        {formatMoney(line.quantity * line.unitPriceMinor)}
+                        {formatMoney(lineBaseMinor(line))}
                       </Table.Cell>
                     </Table.Row>
                   ))}
                 </Table.Body>
               </Table>
+              </FinanceTableScroll>
             )}
           </SectionCard>
+          <PriorSettlementCard invoice={invoice} vm={vm} />
           <InvoicePayments invoice={invoice} vm={vm} />
+          <PaymentTermsCard invoice={invoice} vm={vm} />
           <InvoiceDocuments invoice={invoice} vm={vm} />
           <div className="print:hidden">
             <InvoiceReminders counterpartyName={counterpartyName} invoice={invoice} vm={vm} />
@@ -286,6 +326,18 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
             <div className="flex flex-col gap-200">
               <DetailList
                 items={[
+                  ...(discountMinor === 0
+                    ? []
+                    : [
+                        {
+                          label: 'Cena před slevou',
+                          value: <span className="tabular-nums">{formatMoney((invoice.subtotalMinor ?? 0) + discountMinor)}</span>,
+                        },
+                        {
+                          label: 'Schválená sleva',
+                          value: <span className="tabular-nums">− {formatMoney(discountMinor)}</span>,
+                        },
+                      ]),
                   {
                     label: t(`${ns}.subtotal`),
                     value: <span className="tabular-nums">{optionalMoney(invoice.subtotalMinor)}</span>,
@@ -333,8 +385,16 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
                     label: t(`${ns}.total`),
                     value: <span className="font-semibold tabular-nums">{formatMoney(invoice.totalMinor)}</span>,
                   },
+                  ...(priorMinor === 0
+                    ? []
+                    : [
+                        {
+                          label: 'Zohledněno z předchozích dokladů',
+                          value: <span className="tabular-nums">− {formatMoney(priorMinor)}</span>,
+                        },
+                      ]),
                   {
-                    label: t(`${ns}.paid`),
+                    label: priorMinor === 0 ? t(`${ns}.paid`) : 'Uhrazeno (včetně zohledněných záloh)',
                     value: <span className="tabular-nums">{formatMoney(invoice.paidMinor)}</span>,
                   },
                 ]}
@@ -342,7 +402,12 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
             </div>
           </SectionCard>
           <SectionCard title={t(`${ns}.columns.status`)}>
-            <StatusBadge kind={status.kind} value={status.value} />
+            <InvoiceLifecycleCard invoice={invoice} vm={vm} />
+            {invoice.businessState === 'CONFIRMED' && (
+              <div className="mt-100">
+                <StatusBadge kind={status.kind} value={status.value} />
+              </div>
+            )}
             {!incoming && (
               <div className="print:hidden">
                 <SelectTemplate
@@ -374,7 +439,8 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
                 />
                 {(invoice.documentKind === 'FINAL' || invoice.documentKind === 'PARTIAL') && (
                   <p className="mt-100 text-fg-secondary text-xs">
-                    Zohlednění dříve uhrazených záloh potvrzuje účetní ručně; OntOS daňové vyúčtování neprovádí.
+                    Odkazy na dřívější zálohové a dílčí faktury a ručně potvrzené částky jsou v sekci Předchozí zálohové
+                    a dílčí doklady.
                   </p>
                 )}
               </div>
@@ -383,7 +449,7 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
           <div className="print:hidden">
             <InvoiceHandover invoice={invoice} vm={vm} />
           </div>
-          <InvoiceAnchors invoice={invoice} />
+          <InvoiceAnchors invoice={invoice} objects={vm.objects} />
           <div className="print:hidden">
             <CounterpartyHistory invoice={invoice} vm={vm} />
           </div>
@@ -410,19 +476,55 @@ export const FinanceInvoiceDetail = ({ invoice, vm }: FinanceInvoiceDetailProps)
                 {t(`${ns}.void`)}
               </Button>
             )}
-            {canWrite && isDraft && (
+            {canWrite && isDraft && invoice.reviewState !== 'PREPARED' && (
               <Button
                 className="whitespace-nowrap"
                 disabled={busy}
-                icon="icon-[mdi--check-circle-outline]"
-                isLoading={busy}
-                loadingText={t(`${ns}.confirming`)}
-                onClick={() => confirmInvoice(invoice)}
+                icon="icon-[mdi--clipboard-check-outline]"
+                onClick={() =>
+                  void vm.execute(
+                    {
+                      _tag: 'MarkInvoicesPrepared',
+                      ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
+                      invoiceRefs: [invoice.ref],
+                    },
+                    'Doklad připraven ke schválení',
+                  )
+                }
                 size="sm"
                 variant="primary"
               >
-                {t(`${ns}.confirm`)}
+                Připravit ke schválení
               </Button>
+            )}
+            {canWrite && isDraft && invoice.reviewState === 'PREPARED' && (
+              <>
+                <Button
+                  className="whitespace-nowrap"
+                  disabled={busy}
+                  icon="icon-[mdi--undo]"
+                  onClick={() =>
+                    void vm.execute({ _tag: 'ReturnInvoiceToDraft', invoiceRef: invoice.ref }, 'Doklad vrácen do návrhu')
+                  }
+                  size="sm"
+                  theme="outlined"
+                  variant="secondary"
+                >
+                  Vrátit do návrhu
+                </Button>
+                <Button
+                  className="whitespace-nowrap"
+                  disabled={busy}
+                  icon="icon-[mdi--check-circle-outline]"
+                  isLoading={busy}
+                  loadingText={t(`${ns}.confirming`)}
+                  onClick={() => confirmInvoice(invoice)}
+                  size="sm"
+                  variant="primary"
+                >
+                  {t(`${ns}.confirmAction`)}
+                </Button>
+              </>
             )}
           </div>
         </div>

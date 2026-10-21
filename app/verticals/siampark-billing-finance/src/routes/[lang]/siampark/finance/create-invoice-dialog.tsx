@@ -36,6 +36,9 @@ import type {
 } from '../../../../../shared/domain/invoice-draft.ts';
 import { financeBrowserRuntime } from '../../../../runtime/browser.ts';
 import { InvoiceLineEditor } from './invoice-line-editor.tsx';
+import { emptyObjectSelection, objectAnchors, ObjectFields } from './object-fields.tsx';
+import type { ObjectSelection } from './object-fields.tsx';
+import type { InvoiceDocumentKind } from '../../../../../shared/apis/records.ts';
 import { formLabelProps } from './invoice-view.ts';
 import type { CalendarDate, DraftInvoiceOutcome, useFinanceRecords } from './use-finance-records.ts';
 
@@ -54,8 +57,19 @@ const toIssueCalendarDate = (isoDate: string): IntlCalendarDate | null =>
     ? new IntlCalendarDate(Number(isoDate.slice(0, 4)), Number(isoDate.slice(5, 7)), Number(isoDate.slice(8, 10)))
     : null;
 
+/** S07.R2: document kinds offered when a draft is created. */
+export const DOCUMENT_KINDS: readonly (readonly [InvoiceDocumentKind, string])[] = [
+  ['STANDARD', 'Běžná faktura'],
+  ['ADVANCE', 'Zálohová faktura'],
+  ['PARTIAL', 'Dílčí faktura'],
+  ['FINAL', 'Konečná faktura'],
+  ['RECURRING', 'Opakovaná faktura'],
+];
+
 interface Draft {
   readonly customerId: string;
+  readonly documentKind: InvoiceDocumentKind;
+  readonly object: ObjectSelection;
   /** Today's date (real clock) when the form opens. */
   readonly issueDate: CalendarDate;
   readonly lines: readonly DraftLine[];
@@ -68,6 +82,8 @@ const CUSTOMER_COMBOBOX_ID = 'invoice-customer';
 
 const emptyDraft = (lineKind: DraftLineKind): Draft => ({
   customerId: '',
+  documentKind: 'STANDARD',
+  object: emptyObjectSelection,
   issueDate: DateTime.formatIsoDateUtc(DateTime.nowUnsafe()),
   lines: [newDraftLine('line-1', lineKind)],
   paymentDays: 14,
@@ -87,6 +103,8 @@ const isDraftEdited = (draft: Draft, lineKind: DraftLineKind): boolean => {
   const fresh = emptyDraft(lineKind);
   return (
     draft.customerId !== fresh.customerId ||
+    draft.documentKind !== fresh.documentKind ||
+    draft.object !== fresh.object ||
     draft.issueDate !== fresh.issueDate ||
     draft.paymentDays !== fresh.paymentDays ||
     draft.lines.length !== fresh.lines.length ||
@@ -223,7 +241,8 @@ const DraftTotalsSummary = ({ totals, zeroPriceWarning }: DraftTotalsSummaryProp
 };
 
 export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDialogProps) => {
-  const { confirmInvoice, createDraft, references, t } = vm;
+  const { createDraft, references, t } = vm;
+  const priceList = (vm.snapshot?.state.priceList ?? []).filter((item) => item.active);
   const defaultLineKind = references.productsReadable === false ? 'free' : 'product';
   const toaster = useToast();
   const lineSequence = useRef(1);
@@ -325,13 +344,20 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
           <Button
             onClick={() => {
               toaster.dismiss(toastId);
-              confirmInvoice(invoice);
+              void vm.execute(
+                {
+                  _tag: 'MarkInvoicesPrepared',
+                  ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
+                  invoiceRefs: [invoice.ref],
+                },
+                'Doklad připraven ke schválení',
+              );
             }}
             size="sm"
             theme="outlined"
             variant="secondary"
           >
-            {t(`${ns}.confirm`)}
+            Připravit ke schválení
           </Button>
         </div>
       ),
@@ -379,7 +405,14 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
     setBusy(true);
     setServerError(null);
     void financeBrowserRuntime.runPromise(
-      createDraft({ customer, dueDate, issueDate, lines: draft.lines.map(toInvoiceLine) }).pipe(
+      createDraft({
+        anchors: objectAnchors(vm.objects, { ...draft.object, contractId: '' }),
+        customer,
+        documentKind: draft.documentKind,
+        dueDate,
+        issueDate,
+        lines: draft.lines.map(toInvoiceLine),
+      }).pipe(
         Effect.tap((outcome) => Effect.sync(() => handleOutcome(outcome))),
       ),
     );
@@ -444,6 +477,31 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
             </StatusText>
           )}
         </div>
+        <SelectTemplate
+          items={DOCUMENT_KINDS.map(([value, label]) => ({ displayValue: label, label, value }))}
+          label="Druh dokladu"
+          labelProps={formLabelProps}
+          name="documentKind"
+          onValueChange={({ value }) => {
+            const next = DOCUMENT_KINDS.find(([kind]) => kind === value[0])?.[0];
+            if (next !== undefined) {
+              setDraft((current) => ({ ...current, documentKind: next }));
+            }
+          }}
+          value={[draft.documentKind]}
+        />
+        {(draft.documentKind === 'FINAL' || draft.documentKind === 'PARTIAL') && (
+          <p className="text-fg-secondary text-xs">
+            Po uložení návrhu v detailu dokladu vyberete dřívější zálohové nebo dílčí faktury a ručně potvrdíte částky,
+            které se zohlední. Daňové vyúčtování OntOS automaticky neprovádí.
+          </p>
+        )}
+        <ObjectFields
+          idPrefix="invoice-object"
+          objects={vm.objects}
+          onChange={(next) => setDraft((current) => ({ ...current, object: next }))}
+          value={draft.object}
+        />
         <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
           <IssueDateField
             error={issueDateError}
@@ -488,6 +546,7 @@ export const CreateInvoiceDialog = ({ onOpenChange, open, vm }: CreateInvoiceDia
               onChange={(next) => updateLine(line.key, next)}
               onRemove={() => removeLine(line.key)}
               position={index + 1}
+              priceList={priceList}
               products={products}
               productsReadable={references.productsReadable !== false}
             />

@@ -148,7 +148,12 @@ describe('Invoice line snapshots', () => {
       });
 
       const confirmed = yield* run(relined.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice!.ref }, 'unused');
-      const { businessState: _confirmedState, updatedAt: _confirmedAt, ...confirmedSnapshot } = confirmed.invoice!;
+      const {
+        approvedAt: _approvedAt,
+        businessState: _confirmedState,
+        updatedAt: _confirmedAt,
+        ...confirmedSnapshot
+      } = confirmed.invoice!;
       const { businessState: _draftState, updatedAt: _draftAt, ...draftSnapshot } = relined.invoice!;
       expect(confirmedSnapshot).toEqual(draftSnapshot);
       expect(confirmed.invoice!.lines).toBe(relined.invoice!.lines);

@@ -26,6 +26,7 @@ import { FinanceInvoiceTable } from './invoices-table.tsx';
 import { AccountingPanel } from './accounting-panel.tsx';
 import { IncomingInvoiceDialog } from './incoming-invoice-dialog.tsx';
 import { PlanningPanel } from './planning-panel.tsx';
+import { PriceListPanel } from './price-list-panel.tsx';
 import { RecurringPanel } from './recurring-panel.tsx';
 import { customerInvoiceFilterKey, decodeCustomerInvoiceSearch, useFinanceRecords } from './use-finance-records.ts';
 
@@ -39,7 +40,7 @@ const ns = 'siampark-billing-finance.faktury';
 /** KPI tiles show whole Kč; the table keeps exact amounts. */
 const wholeKc = (minor: number) => formatMoney(Math.round(minor / 100) * 100);
 
-const TABS = ['faktury', 'opakovane', 'predani', 'plan'] as const;
+const TABS = ['faktury', 'opakovane', 'cenik', 'predani', 'plan'] as const;
 type FinanceTab = (typeof TABS)[number];
 const initialTab = (): FinanceTab => {
   if (typeof window === 'undefined') {
@@ -163,6 +164,7 @@ const RecordsPageContent = () => {
               <Tabs.List>
                 <Tabs.Trigger value="faktury">Faktury</Tabs.Trigger>
                 <Tabs.Trigger value="opakovane">Opakované faktury</Tabs.Trigger>
+                <Tabs.Trigger value="cenik">Ceník a slevy</Tabs.Trigger>
                 <Tabs.Trigger value="predani">Účetní předání</Tabs.Trigger>
                 <Tabs.Trigger value="plan">Rozpočet a cash-flow</Tabs.Trigger>
                 <Tabs.Indicator />
@@ -172,6 +174,9 @@ const RecordsPageContent = () => {
               </Tabs.Content>
               <Tabs.Content className="pt-250" value="opakovane">
                 {tab === 'opakovane' && vm.snapshot !== undefined && <RecurringPanel vm={vm} />}
+              </Tabs.Content>
+              <Tabs.Content className="pt-250" value="cenik">
+                {tab === 'cenik' && vm.snapshot !== undefined && <PriceListPanel vm={vm} />}
               </Tabs.Content>
               <Tabs.Content className="pt-250" value="predani">
                 {tab === 'predani' && vm.snapshot !== undefined && <AccountingPanel vm={vm} />}

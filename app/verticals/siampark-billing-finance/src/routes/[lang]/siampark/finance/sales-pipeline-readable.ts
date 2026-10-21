@@ -59,3 +59,30 @@ const lookupReferenceAccess = makeEffectHttpApiClient(ShellNavigationApi, { base
  * document. Concurrent callers share the one request.
  */
 export const financeReferenceAccess = financeBrowserRuntime.runSync(Effect.cached(lookupReferenceAccess));
+
+const PROPERTY_MODULE = 'siampark.property';
+const AGREEMENTS_MODULE = 'siampark.agreements';
+
+/** Siampark object modules (property/unit, contracts) the company can read; other companies get no object picker. */
+export const objectAccessFromComposition = ({
+  navigation,
+  state,
+}: {
+  readonly navigation: readonly { readonly moduleId: string }[];
+  readonly state: string;
+}) => {
+  const modules = new Set(navigation.map(({ moduleId }) => moduleId));
+  return {
+    contractsReadable: state !== 'available' || modules.has(AGREEMENTS_MODULE),
+    propertiesReadable: state !== 'available' || modules.has(PROPERTY_MODULE),
+  };
+};
+
+const lookupObjectAccess = makeEffectHttpApiClient(ShellNavigationApi, { baseUrl: SHELL_API_PREFIX }).pipe(
+  Effect.flatMap((client) => client.composition.shellComposition({})),
+  Effect.map(objectAccessFromComposition),
+  Effect.timeout(COMPOSITION_TIMEOUT),
+  Effect.orElseSucceed(() => ({ contractsReadable: true, propertiesReadable: true })),
+);
+
+export const financeObjectAccess = financeBrowserRuntime.runSync(Effect.cached(lookupObjectAccess));

@@ -27,6 +27,18 @@ import {
 import type { FinanceViewModel } from './finance-ui.tsx';
 import { ReminderEmailStatus, useEmailProvider, useReminderEmailReceipts } from './reminder-email-receipts.tsx';
 import { useInvoiceIssuer } from './use-invoice-issuer.ts';
+import { confirmedDocumentsLabel } from './invoice-view.ts';
+import type { AccountingExportStatus } from '../../../../../shared/apis/records.ts';
+
+/** S08 handover package states as the finance screens show them. */
+export const EXPORT_STATUS: Readonly<
+  Record<AccountingExportStatus, { readonly label: string; readonly variant: 'danger' | 'info' | 'success' | 'warning' }>
+> = {
+  CONFIRMED_BY_ACCOUNTANT: { label: 'Potvrzeno účetní', variant: 'success' },
+  FAILED: { label: 'Chyba předání', variant: 'danger' },
+  HANDED_OVER: { label: 'Předáno – čeká na potvrzení účetní', variant: 'info' },
+  PREPARED: { label: 'Připraveno k předání', variant: 'warning' },
+};
 
 /** Same bound as FinanceLongTextSchema in shared/apis/records.ts (trimmed reminder text, at most 4000 characters). */
 const REMINDER_TEXT_MAX = 4000;
@@ -292,6 +304,10 @@ export const InvoicePayments = ({ invoice, vm }: { readonly invoice: Invoice; re
                   {event.source === 'MANUAL' ? (
                     <Badge size="sm" variant="success">
                       Ručně potvrzeno
+                    </Badge>
+                  ) : event.source === 'PRIOR' ? (
+                    <Badge size="sm" variant="info">
+                      {`Zohledněno z ${invoice.priorSettlement?.entries[Number(event.id.split(':').at(-1))]?.number ?? 'zálohy'} · bez pohybu peněz`}
                     </Badge>
                   ) : (
                     <SimulationBadge>
@@ -635,9 +651,14 @@ export const InvoiceHandover = ({ invoice, vm }: { readonly invoice: Invoice; re
         <p className="text-fg-secondary text-sm">Doklad zatím nebyl předán účetní.</p>
       ) : (
         <div className="flex flex-col gap-100 text-sm">
-          <Badge size="sm" variant={latest.status === 'HANDED_OVER' ? 'info' : 'success'}>
-            {latest.status === 'HANDED_OVER' ? 'Předáno – čeká na potvrzení účetní' : 'Potvrdila účetní'}
+          <Badge className="self-start" size="sm" variant={EXPORT_STATUS[latest.status].variant}>
+            {EXPORT_STATUS[latest.status].label}
           </Badge>
+          {latest.status === 'FAILED' && latest.failureReason !== undefined && (
+            <span className="break-words text-xs" style={{ color: 'var(--color-danger)' }}>
+              Chyba: {latest.failureReason}. Doklad lze zařadit do nového balíčku.
+            </span>
+          )}
           <span className="text-fg-secondary">
             Balíček {latest.batchNumber} ({latest.format === 'POHODA_XML' ? 'POHODA XML' : latest.format}, verze{' '}
             {latest.version}) · {at(latest.createdAt)} · {actorText(latest.actorLabel, latest.actorPrincipalId)}
@@ -670,7 +691,7 @@ export const CounterpartyHistory = ({ invoice, vm }: { readonly invoice: Invoice
     <SectionCard title="Platební historie protistrany">
       <div className="flex flex-col gap-100 text-sm">
         <span>
-          {related.length} potvrzených dokladů · uhrazeno {paid} · po splatnosti{' '}
+          {confirmedDocumentsLabel(related.length)} · uhrazeno {paid} · po splatnosti{' '}
           <strong style={overdue > 0 ? { color: 'var(--color-danger)' } : undefined}>{overdue}</strong>
         </span>
         <span>

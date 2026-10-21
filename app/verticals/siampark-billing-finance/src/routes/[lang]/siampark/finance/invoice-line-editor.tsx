@@ -15,7 +15,10 @@ import {
   VAT_RATE_CHOICES,
   withProductSnapshot,
 } from '../../../../../shared/domain/invoice-draft.ts';
-import type { DraftLine, DraftLineIssue } from '../../../../../shared/domain/invoice-draft.ts';
+import type { DraftDiscountKind, DraftLine, DraftLineIssue } from '../../../../../shared/domain/invoice-draft.ts';
+import { draftLineDiscount, toInvoiceLine } from '../../../../../shared/domain/invoice-draft.ts';
+import { lineDiscountMinor } from '../../../../../shared/domain/invoice-totals.ts';
+import type { PriceListItem } from '../../../../../shared/apis/records.ts';
 import { formLabelProps } from './invoice-view.ts';
 
 const ns = 'siampark-billing-finance.faktury';
@@ -28,10 +31,18 @@ interface InvoiceLineEditorProps {
   readonly onRemove: () => void;
   /** 1-based line number; names the line group and its remove button, so each line is told apart. */
   readonly position: number;
+  /** Active finance price-list items offered for free lines. */
+  readonly priceList?: readonly PriceListItem[];
   /** Active products only; the caller filters them. */
   readonly products: readonly ProductRecord[];
   readonly productsReadable: boolean;
 }
+
+const DISCOUNT_KINDS: readonly (readonly [DraftDiscountKind, string])[] = [
+  ['NONE', 'Bez slevy'],
+  ['PERCENT', 'Procentem'],
+  ['AMOUNT', 'Částkou'],
+];
 
 const priceFormatOptions: Intl.NumberFormatOptions = { maximumFractionDigits: 2, minimumFractionDigits: 0 };
 // Without a format the input parses with parseFloat, which stops at the decimal comma: `2,25` became 2.
@@ -46,6 +57,7 @@ export const InvoiceLineEditor = ({
   onChange,
   onRemove,
   position,
+  priceList = [],
   products,
   productsReadable,
 }: InvoiceLineEditorProps) => {
@@ -206,6 +218,85 @@ export const InvoiceLineEditor = ({
           </>
         )}
       </div>
+      {line.kind === 'free' && priceList.length > 0 && (
+        <div className="min-w-0">
+          <SelectTemplate
+            items={[
+              { displayValue: 'Ruční zadání', label: 'Ruční zadání', value: 'MANUAL' },
+              ...priceList.map((item) => {
+                const label = `${item.name} · ${formatMoney(item.unitPriceMinor)}${item.unit === undefined ? '' : ` / ${item.unit}`}`;
+                return { displayValue: label, label, value: item.id };
+              }),
+            ]}
+            label="Z ceníku"
+            labelProps={formLabelProps}
+            name={`invoice-line-price-list-${line.key}`}
+            onValueChange={({ value }) => {
+              const item = priceList.find((entry) => entry.id === value[0]);
+              onChange(
+                item === undefined
+                  ? { ...line, priceListItemId: null }
+                  : {
+                      ...line,
+                      description: item.name,
+                      priceListItemId: item.id,
+                      unitPriceMinor: item.unitPriceMinor,
+                      vatRate: item.vatRate,
+                    },
+              );
+            }}
+            size="sm"
+            value={[line.priceListItemId ?? 'MANUAL']}
+          />
+        </div>
+      )}
+      <div className="finance-invoice-line-discount grid grid-cols-1 items-end gap-150 sm:grid-cols-[10rem_8rem_minmax(0,1fr)]">
+        <SelectTemplate
+          items={DISCOUNT_KINDS.map(([value, label]) => ({ displayValue: label, label, value }))}
+          label="Sleva"
+          labelProps={formLabelProps}
+          name={`invoice-line-discount-kind-${line.key}`}
+          onValueChange={({ value }) => {
+            const kind = DISCOUNT_KINDS.find(([entry]) => entry === value[0])?.[0] ?? 'NONE';
+            onChange({
+              ...line,
+              discountKind: kind,
+              ...(kind === 'NONE' ? { discountInput: '', discountReason: '', discountValue: Number.NaN } : {}),
+            });
+          }}
+          size="sm"
+          value={[line.discountKind ?? 'NONE']}
+        />
+        {(line.discountKind ?? 'NONE') !== 'NONE' && (
+          <>
+            <FormInput
+              id={`invoice-line-discount-value-${line.key}`}
+              inputMode="decimal"
+              label={line.discountKind === 'PERCENT' ? 'Sleva (%)' : 'Sleva (Kč)'}
+              onChange={(event) => {
+                const raw = event.target.value;
+                const parsed = Number(raw.replaceAll(/\s/gu, '').replace(',', '.'));
+                onChange({ ...line, discountInput: raw, discountValue: raw.trim() === '' ? Number.NaN : parsed });
+              }}
+              size="sm"
+              value={line.discountInput ?? ''}
+            />
+            <FormInput
+              id={`invoice-line-discount-reason-${line.key}`}
+              label="Důvod schválené slevy"
+              onChange={(event) => onChange({ ...line, discountReason: event.target.value })}
+              placeholder="např. věrnostní sleva podle smlouvy"
+              size="sm"
+              value={line.discountReason ?? ''}
+            />
+          </>
+        )}
+      </div>
+      {draftLineDiscount(line) !== undefined && (
+        <p className="text-fg-secondary text-xs">
+          Sleva {formatMoney(lineDiscountMinor(toInvoiceLine(line)))} se na dokladu zobrazí samostatně i s důvodem.
+        </p>
+      )}
       {line.kind === 'product' && product !== undefined && (
         <p className="text-fg-secondary text-xs">
           {t(`${ns}.form.productMeta`, {

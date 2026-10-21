@@ -6,6 +6,7 @@ import type {
   Invoice,
   ManualPayment,
   PaymentObservation,
+  PlanItem,
 } from '../apis/records.ts';
 import { DateTime } from 'effect';
 import { ACCOUNTING_EXPORT_SCHEMA_VERSION } from '../apis/records.ts';
@@ -49,7 +50,8 @@ export interface PaymentEvent {
   readonly direction: Invoice['direction'];
   readonly id: string;
   readonly invoiceResourceId: string;
-  readonly source: 'MANUAL' | 'SIMULATED' | 'SNAPSHOT';
+  /** PRIOR = an earlier advance/partial amount taken into account by hand: it settles, but moves no money. */
+  readonly source: 'MANUAL' | 'PRIOR' | 'SIMULATED' | 'SNAPSHOT';
 }
 
 const isoDateOf = (value: unknown): string => {
@@ -75,11 +77,22 @@ export const paymentEvents = (
       continue;
     }
     const id = invoice.ref.resourceId;
+    let explained = 0;
+    for (const [index, entry] of (invoice.priorSettlement?.entries ?? []).entries()) {
+      events.push({
+        amountMinor: entry.amountMinor,
+        date: isoDateOf(invoice.approvedAt ?? invoice.priorSettlement?.confirmedAt ?? invoice.updatedAt),
+        direction: invoice.direction,
+        id: `${id}:prior:${index}`,
+        invoiceResourceId: id,
+        source: 'PRIOR',
+      });
+      explained += entry.amountMinor;
+    }
     const observations = state.paymentObservations
       .filter((observation: PaymentObservation) => observation.invoiceRef.resourceId === id)
       .map((observation) => ({ amount: observation.confirmedPaidMinor, date: isoDateOf(observation.observedAt) }))
       .sort((left, right) => left.amount - right.amount);
-    let explained = 0;
     let cumulative = 0;
     for (const [index, observation] of observations.entries()) {
       const increment = observation.amount - cumulative;
@@ -121,15 +134,23 @@ export const paymentEvents = (
   return events;
 };
 
+/** Plan item amount weighted by its optional probability (absent = certain), rounded to whole haléře. */
+export const planItemWeightedMinor = (item: Pick<PlanItem, 'amountMinor' | 'probabilityPercent'>): number =>
+  Math.round((item.amountMinor * (item.probabilityPercent ?? 100)) / 100);
+
 /** Signed difference actual − plan and the percentage, which is only defined for a non-zero plan (S09-03). */
 export const budgetVariance = (plannedMinor: number, actualMinor: number) => ({
   differenceMinor: actualMinor - plannedMinor,
   percent: plannedMinor === 0 ? undefined : (actualMinor - plannedMinor) / plannedMinor,
 });
 
-/** Invoice actual for a budget line: confirmed invoices of that month, category and direction. */
+/**
+ * Invoice actual for a budget line: confirmed invoices of that month, category and direction; a budget for a
+ * property, unit or středisko only counts invoices assigned to that same object.
+ */
 export const invoiceActualMinor = (
-  budget: Pick<BudgetLine, 'category' | 'kind' | 'period'>,
+  budget: Pick<BudgetLine, 'category' | 'kind' | 'period'> &
+    Partial<Pick<BudgetLine, 'costCenter' | 'propertyRef' | 'unitRef'>>,
   invoices: readonly Invoice[],
 ): number =>
   invoices
@@ -138,7 +159,10 @@ export const invoiceActualMinor = (
         invoice.businessState === 'CONFIRMED' &&
         invoice.budgetCategory === budget.category &&
         monthOf(invoice.issueDate) === budget.period &&
-        invoice.direction === (budget.kind === 'COST' ? 'INCOMING' : 'OUTGOING'),
+        invoice.direction === (budget.kind === 'COST' ? 'INCOMING' : 'OUTGOING') &&
+        (budget.propertyRef === undefined || invoice.propertyRef?.resourceId === budget.propertyRef.resourceId) &&
+        (budget.unitRef === undefined || invoice.unitRef?.resourceId === budget.unitRef.resourceId) &&
+        (budget.costCenter === undefined || invoice.costCenter === budget.costCenter),
     )
     .reduce((sum, invoice) => sum + invoice.totalMinor, 0);
 
@@ -170,6 +194,7 @@ export const cashFlowMonths = (
     readonly budgets?: readonly BudgetLine[];
     readonly cashFlowOpening?: CashFlowOpening;
     readonly manualPayments?: readonly ManualPayment[];
+    readonly planItems?: readonly PlanItem[];
   },
   options: { readonly businessDate: string; readonly fromMonth: string; readonly months: number },
 ): readonly CashFlowMonth[] => {
@@ -180,7 +205,8 @@ export const cashFlowMonths = (
   const buckets = new Map(months.map((month) => [month, empty()] as const));
   const openingDate = opening?.openingDate;
   for (const event of paymentEvents(state)) {
-    if (openingDate !== undefined && event.date < openingDate) {
+    // A taken-into-account advance moved its money when the advance itself was paid.
+    if (event.source === 'PRIOR' || (openingDate !== undefined && event.date < openingDate)) {
       continue;
     }
     const bucket = buckets.get(monthOf(event.date));
@@ -220,6 +246,20 @@ export const cashFlowMonths = (
       bucket.planIn += uncovered;
     } else {
       bucket.planOut += uncovered;
+    }
+  }
+  // Plan items count with their probability; a past expected date that is still planned lands in this month.
+  for (const item of state.planItems ?? []) {
+    const month = monthOf(item.expectedDate);
+    const bucket = buckets.get(month < currentMonth ? currentMonth : month);
+    if (bucket === undefined) {
+      continue;
+    }
+    const weighted = planItemWeightedMinor(item);
+    if (item.kind === 'REVENUE') {
+      bucket.planIn += weighted;
+    } else {
+      bucket.planOut += weighted;
     }
   }
   let balance = opening?.openingBalanceMinor;
@@ -289,7 +329,7 @@ export const exportFileName = (format: AccountingExportFormat, meta: Pick<Export
   `${meta.batchNumber}-v${meta.version}.${format === 'CSV' ? 'csv' : format === 'JSON' ? 'json' : 'xml'}`;
 
 const objectLabel = (invoice: Invoice) =>
-  [invoice.propertyRef?.resourceId, invoice.unitRef?.resourceId, invoice.budgetCategory]
+  [invoice.propertyRef?.resourceId, invoice.unitRef?.resourceId, invoice.costCenter, invoice.budgetCategory]
     .filter((part) => part !== undefined)
     .join(' / ');
 

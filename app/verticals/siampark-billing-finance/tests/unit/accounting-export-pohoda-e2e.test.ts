@@ -128,7 +128,7 @@ describe('S08 POHODA XML handover end-to-end', () => {
       const created = result.state.accountingExports?.[0];
       expect(created?.fileName).toBe('UP-2026-001-v1.xml');
       expect(created?.format).toBe('POHODA_XML');
-      expect(created?.status).toBe('HANDED_OVER');
+      expect(created?.status).toBe('PREPARED');
       expect(created?.issuerName).toBe('Siampark');
       expect(created?.issuerIco).toBe('12345678');
       const content = created?.content ?? '';

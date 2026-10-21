@@ -15,8 +15,19 @@ export type DraftLineKind = typeof DraftLineKindSchema.Type;
  * One line on the create form. A product line carries a snapshot of the catalog product taken when it is
  * picked; a free line is typed by hand. Both end up as the same stored `InvoiceLine`.
  */
+export type DraftDiscountKind = 'AMOUNT' | 'NONE' | 'PERCENT';
+
 export interface DraftLine {
   readonly description: string;
+  /** Approved discount: NONE, a whole percentage, or a fixed amount in CZK; the reason is required with it. */
+  readonly discountKind?: DraftDiscountKind;
+  /** Raw typed discount text, so a half-typed "10," stays visible. */
+  readonly discountInput?: string;
+  readonly discountReason?: string;
+  /** PERCENT: whole percent 1–100; AMOUNT: CZK (two decimals). */
+  readonly discountValue?: number;
+  /** Price-list item the free line was filled from. */
+  readonly priceListItemId?: string | null;
   readonly key: string;
   readonly kind: DraftLineKind;
   readonly productId: string | null;
@@ -25,7 +36,14 @@ export interface DraftLine {
   readonly vatRate: VatRate;
 }
 
-export const DraftLineIssueSchema = Schema.Literals(['amount', 'description', 'price', 'product', 'quantity']);
+export const DraftLineIssueSchema = Schema.Literals([
+  'amount',
+  'description',
+  'discount',
+  'price',
+  'product',
+  'quantity',
+]);
 export type DraftLineIssue = typeof DraftLineIssueSchema.Type;
 
 /** Largest quantity the stored invoice line accepts (`InvoiceLineSchema`). */
@@ -61,9 +79,25 @@ export const withProductSnapshot = (
 /** Form amounts are entered in CZK and stored in minor units (haléře). */
 export const czkToMinor = (czk: number): number => Math.round(czk * 100);
 
+/** The stored discount of a draft line, or undefined for none (or an incomplete one, which `lineIssue` flags). */
+export const draftLineDiscount = (line: DraftLine): InvoiceLine['discount'] => {
+  const kind = line.discountKind ?? 'NONE';
+  const value = line.discountValue ?? Number.NaN;
+  const reason = (line.discountReason ?? '').trim();
+  if (kind === 'NONE' || !Number.isFinite(value) || value <= 0 || reason === '') {
+    return undefined;
+  }
+  return { kind, reason, value: kind === 'PERCENT' ? Math.round(value) : czkToMinor(value) };
+};
+
 export const toInvoiceLine = (line: DraftLine): InvoiceLine => {
+  const discount = draftLineDiscount(line);
   const invoiceLine: InvoiceLine = {
     description: line.description.trim(),
+    ...(discount === undefined ? {} : { discount }),
+    ...(line.kind === 'free' && line.priceListItemId !== undefined && line.priceListItemId !== null
+      ? { priceListItemId: line.priceListItemId }
+      : {}),
     quantity: line.quantity,
     unitPriceMinor: line.unitPriceMinor,
     vatRate: line.vatRate,
@@ -84,6 +118,16 @@ export const lineValueIssue = (line: DraftLine): DraftLineIssue | undefined => {
   }
   if (!Number.isSafeInteger(line.unitPriceMinor) || line.unitPriceMinor < 0) {
     return 'price';
+  }
+  if ((line.discountKind ?? 'NONE') !== 'NONE') {
+    const value = line.discountValue ?? Number.NaN;
+    const percentInvalid = line.discountKind === 'PERCENT' && (!Number.isInteger(value) || value < 1 || value > 100);
+    const amountInvalid =
+      line.discountKind === 'AMOUNT' &&
+      (!Number.isFinite(value) || value <= 0 || czkToMinor(value) > line.quantity * line.unitPriceMinor);
+    if (percentInvalid || amountInvalid || (line.discountReason ?? '').trim() === '') {
+      return 'discount';
+    }
   }
   // A valid quantity times a large price can pass the stored money range, which would total as 0 Kč.
   return computeInvoiceTotals([toInvoiceLine(line)]) === undefined ? 'amount' : undefined;

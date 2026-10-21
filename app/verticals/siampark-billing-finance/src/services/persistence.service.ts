@@ -18,7 +18,7 @@ import type {
   RecordsRequest,
   RecordsResponse,
 } from '../../shared/apis/records.ts';
-import { computeInvoiceTotals, nextInvoiceNumber } from '../../shared/domain/invoice-totals.ts';
+import { computeInvoiceTotals, isLineDiscountValid, nextInvoiceNumber } from '../../shared/domain/invoice-totals.ts';
 import {
   addCalendarDaysTo,
   buildAccountingExport,
@@ -47,7 +47,11 @@ export interface ExportReferences {
   /** Keyed by both the counterparty id and the party id, so an invoice resolves whichever one it stores. */
   readonly partners: ReadonlyMap<string, ExportPartnerReference>;
 }
+/** Optional Siampark anchors of a budget line, plan item or hand-typed supplier invoice. */
+export type FinanceAnchors = Partial<Pick<Invoice, 'contractRef' | 'propertyRef' | 'unitRef'>>;
 export interface FinanceValidators {
+  /** Checks that the anchors exist in this legal entity. Absent in hosts without reference access (tests, seeds). */
+  readonly anchors?: (anchors: FinanceAnchors) => Effect.Effect<void, FinanceError>;
   /** Absent in hosts that cannot reach Core and the party registry (outbox worker); exports then fail closed. */
   readonly exportReferences?: Effect.Effect<ExportReferences, FinanceError>;
   readonly invoice: (invoice: Invoice) => Effect.Effect<void, FinanceError>;
@@ -113,10 +117,32 @@ const validate = Effect.fn('Finance.validate')(function* validate(
     return yield* rejected('invalid_invoice_anchors_or_dates');
   }
   if (invoice.counterpartyRef.resourceId === MANUAL_COUNTERPARTY_ID) {
-    // Manually entered suppliers are not registry parties: there is no public reference to validate.
-    return yield* Effect.void;
+    // Manually entered suppliers are not registry parties; only the object anchors are checked.
+    return yield* validateAnchors(anchorsOf(invoice), scope, validators);
   }
   return yield* validators.invoice(invoice);
+});
+const validateAnchors = Effect.fn('Finance.validateAnchors')(function* validateAnchors(
+  anchors: FinanceAnchors,
+  scope: FinanceScope,
+  validators: FinanceValidators,
+) {
+  if ([anchors.propertyRef, anchors.unitRef, anchors.contractRef].some((ref) => ref !== undefined && ref.tenantId !== scope.tenantId)) {
+    return yield* rejected('scope_mismatch');
+  }
+  if (anchors.unitRef !== undefined && anchors.propertyRef === undefined) {
+    return yield* rejected('invalid_invoice_anchors_or_dates');
+  }
+  if (validators.anchors === undefined || Object.values(anchors).every((ref) => ref === undefined)) {
+    return yield* Effect.void;
+  }
+  return yield* validators.anchors(anchors);
+});
+/** Only the Siampark anchors of a record, without undefined keys. */
+const anchorsOf = (record: FinanceAnchors): FinanceAnchors => ({
+  ...(record.contractRef === undefined ? {} : { contractRef: record.contractRef }),
+  ...(record.propertyRef === undefined ? {} : { propertyRef: record.propertyRef }),
+  ...(record.unitRef === undefined ? {} : { unitRef: record.unitRef }),
 });
 interface FinanceTransitionContext {
   readonly input: {
@@ -145,6 +171,9 @@ const draftTotals = Effect.fn('Finance.draftTotals')(function* draftTotals(draft
     return draft.totalMinor === undefined
       ? yield* rejected('invoice_total_or_lines_required')
       : { totalMinor: draft.totalMinor };
+  }
+  if (!draft.lines.every(isLineDiscountValid)) {
+    return yield* rejected('invalid_line_discount');
   }
   const totals = computeInvoiceTotals(draft.lines);
   if (totals === undefined) {
@@ -281,13 +310,18 @@ const handleUpdateInvoiceDraft = Effect.fn('Finance.handleUpdateInvoiceDraft')(f
   const totals = yield* draftTotals(command);
   // Replace all optional draft anchors and line snapshots; omitted ones are intentionally cleared.
   // The assigned number and the source opportunity are identity, so they are preserved.
+  // Editing content sends a prepared draft back to a plain draft: it has to be prepared again.
   const {
     contractRef: _contract,
+    costCenter: _costCenter,
     lines: _previousLines,
     note: _note,
     occupancyRef: _occupancy,
     partyId: _party,
+    preparedAt: _preparedAt,
+    preparedByLabel: _preparedBy,
     propertyRef: _property,
+    reviewState: _reviewState,
     subtotalMinor: _subtotal,
     taskRef: _task,
     totalMinor: _previousTotal,
@@ -311,9 +345,76 @@ const handleConfirmInvoice = Effect.fn('Finance.handleConfirmInvoice')(function*
   if (previous.businessState !== 'DRAFT') {
     return yield* conflict('confirm_requires_draft');
   }
-  const invoice: Invoice = { ...previous, businessState: 'CONFIRMED', updatedAt: input.now };
+  const settled = yield* priorSettlementTotal(state, previous, previous.priorSettlement?.entries ?? []);
+  const { reviewState: _reviewState, ...rest } = previous;
+  const invoice: Invoice = {
+    ...rest,
+    approvedAt: input.now,
+    ...(command.actorLabel === undefined ? {} : { approvedByLabel: command.actorLabel }),
+    businessState: 'CONFIRMED',
+    // Earlier advances taken into account by hand settle that part of the final invoice (no money moves).
+    ...(settled === 0 ? {} : { paidMinor: settled, paymentState: derivePaymentState(settled, previous.totalMinor) }),
+    updatedAt: input.now,
+  };
   yield* validate(invoice, scope, validators);
   return replace(state, invoice);
+});
+
+/** Amount of earlier documents already taken into account by other live invoices, per earlier invoice id. */
+const deductedElsewhere = (state: FinanceState, exceptResourceId: string) => {
+  const used = new Map<string, number>();
+  for (const invoice of state.invoices) {
+    if (invoice.ref.resourceId === exceptResourceId || invoice.businessState === 'VOIDED') {
+      continue;
+    }
+    for (const entry of invoice.priorSettlement?.entries ?? []) {
+      used.set(entry.invoiceResourceId, (used.get(entry.invoiceResourceId) ?? 0) + entry.amountMinor);
+    }
+  }
+  return used;
+};
+/**
+ * Validates prior-settlement entries of a final/partial invoice and returns their sum: each points to another
+ * confirmed advance or partial invoice of the same counterparty, takes at most what was paid on it and not yet
+ * taken into account elsewhere, and together they never exceed the invoice total.
+ */
+const priorSettlementTotal = Effect.fn('Finance.priorSettlementTotal')(function* priorSettlementTotal(
+  state: FinanceState,
+  invoice: Invoice,
+  entries: readonly { readonly amountMinor: number; readonly invoiceResourceId: string }[],
+) {
+  if (entries.length === 0) {
+    return 0;
+  }
+  if (invoice.direction !== 'OUTGOING' || (invoice.documentKind !== 'FINAL' && invoice.documentKind !== 'PARTIAL')) {
+    return yield* conflict('prior_settlement_requires_final_or_partial');
+  }
+  const used = deductedElsewhere(state, invoice.ref.resourceId);
+  const seen = new Set<string>();
+  let total = 0;
+  for (const entry of entries) {
+    const earlier = state.invoices.find((record) => record.ref.resourceId === entry.invoiceResourceId);
+    if (
+      earlier === undefined ||
+      seen.has(entry.invoiceResourceId) ||
+      earlier.ref.resourceId === invoice.ref.resourceId ||
+      earlier.direction !== 'OUTGOING' ||
+      earlier.businessState !== 'CONFIRMED' ||
+      (earlier.documentKind !== 'ADVANCE' && earlier.documentKind !== 'PARTIAL') ||
+      earlier.counterpartyRef.resourceId !== invoice.counterpartyRef.resourceId
+    ) {
+      return yield* rejected('prior_settlement_invoice_not_eligible');
+    }
+    seen.add(entry.invoiceResourceId);
+    if (entry.amountMinor > earlier.paidMinor - (used.get(earlier.ref.resourceId) ?? 0)) {
+      return yield* rejected('prior_settlement_exceeds_paid_amount');
+    }
+    total += entry.amountMinor;
+  }
+  if (total > invoice.totalMinor) {
+    return yield* rejected('prior_settlement_exceeds_total');
+  }
+  return total;
 });
 
 const handleVoidInvoice = Effect.fn('Finance.handleVoidInvoice')(function* handleVoidInvoice(
@@ -326,8 +427,9 @@ const handleVoidInvoice = Effect.fn('Finance.handleVoidInvoice')(function* handl
   if (previous.businessState === 'VOIDED') {
     return unchanged(state, previous);
   }
+  const settledByPrior = (previous.priorSettlement?.entries ?? []).reduce((sum, entry) => sum + entry.amountMinor, 0);
   if (
-    previous.paidMinor !== 0 ||
+    previous.paidMinor !== (previous.businessState === 'CONFIRMED' ? settledByPrior : 0) ||
     previous.accountingSyncState === 'PENDING' ||
     previous.accountingSyncState === 'SYNCED'
   ) {
@@ -615,7 +717,12 @@ const handleRecordIncomingInvoice = Effect.fn('Finance.handleRecordIncomingInvoi
     accountingCorrelation: `demo-accounting:${input.resourceId}`,
     accountingSyncState: 'NOT_SYNCED',
     ...(command.budgetCategory === undefined ? {} : { budgetCategory: command.budgetCategory }),
+    // A hand-entered received invoice is recorded and approved by the same person in one step.
+    ...(command.sourceOrder === undefined
+      ? { approvedAt: input.now, ...(command.actorLabel === undefined ? {} : { approvedByLabel: command.actorLabel }) }
+      : {}),
     businessState: command.sourceOrder === undefined ? 'CONFIRMED' : 'DRAFT',
+    ...(command.costCenter === undefined ? {} : { costCenter: command.costCenter }),
     ...(command.sourceOrder === undefined ? {} : { sourceOrder: { ...command.sourceOrder } }),
     ...(command.supplierCompanyId === undefined ? {} : { counterpartyCompanyId: command.supplierCompanyId }),
     counterpartyName: command.supplierName,
@@ -637,6 +744,7 @@ const handleRecordIncomingInvoice = Effect.fn('Finance.handleRecordIncomingInvoi
     paymentState: 'UNPAID',
     ...(command.propertyRef === undefined ? {} : { propertyRef: command.propertyRef }),
     ref: invoiceRefFor(scope, input.resourceId),
+    ...(command.unitRef === undefined ? {} : { unitRef: command.unitRef }),
     ...totals,
     updatedAt: input.now,
   };
@@ -682,11 +790,31 @@ const handleSetInvoiceDetails = Effect.fn('Finance.handleSetInvoiceDetails')(fun
   context: FinanceTransitionContext,
 ): Effect.fn.Return<FinanceTransition, FinanceError> {
   const previous = yield* findInvoice(context.state, command.invoiceRef, context.scope);
-  const { budgetCategory: _category, documentKind: _kind, ...rest } = previous;
+  const kindChanges = command.documentKind !== undefined && command.documentKind !== (previous.documentKind ?? 'STANDARD');
+  if (kindChanges && previous.businessState !== 'DRAFT') {
+    return yield* conflict('document_kind_requires_draft');
+  }
+  const keepsSettlement = command.documentKind === undefined || command.documentKind === 'FINAL' || command.documentKind === 'PARTIAL';
+  const {
+    budgetCategory: _category,
+    costCenter: _costCenter,
+    documentKind: _kind,
+    priorSettlement: _prior,
+    ...rest
+  } = previous;
+  const category = command.budgetCategory ?? previous.budgetCategory;
+  const costCenter = command.costCenter ?? previous.costCenter;
   const invoice: Invoice = {
     ...rest,
-    ...(command.budgetCategory === undefined ? {} : { budgetCategory: command.budgetCategory }),
-    ...(command.documentKind === undefined ? {} : { documentKind: command.documentKind }),
+    ...(category === undefined ? {} : { budgetCategory: category }),
+    ...(costCenter === undefined ? {} : { costCenter }),
+    ...(command.documentKind === undefined
+      ? previous.documentKind === undefined
+        ? {}
+        : { documentKind: previous.documentKind }
+      : { documentKind: command.documentKind }),
+    // Leaving the final/partial kind drops the amounts taken into account; they belong to that kind only.
+    ...(keepsSettlement && previous.priorSettlement !== undefined ? { priorSettlement: previous.priorSettlement } : {}),
     updatedAt: context.input.now,
   };
   return replace(context.state, invoice);
@@ -950,7 +1078,8 @@ const handleCreateAccountingExport = Effect.fn('Finance.handleCreateAccountingEx
         issuerName: references.issuerName,
         schemaVersion: 'ontos-finance-export/1',
         sha256: createHash('sha256').update(content, 'utf8').digest('hex'),
-        status: 'HANDED_OVER',
+        // S08: the file is prepared first; handing it over to the accountant is its own recorded step.
+        status: 'PREPARED',
         version,
       },
     ],
@@ -966,8 +1095,11 @@ const handleConfirmAccountingExport = Effect.fn('Finance.handleConfirmAccounting
   if (target === undefined) {
     return yield* new FinanceNotFound({ code: 'finance_not_found', reason: 'Export not found' });
   }
-  if (target.status !== 'HANDED_OVER') {
+  if (target.status === 'CONFIRMED_BY_ACCOUNTANT') {
     return yield* conflict('export_already_confirmed');
+  }
+  if (target.status !== 'HANDED_OVER') {
+    return yield* conflict('export_requires_handover');
   }
   return stateOnly({
     ...context.state,
@@ -996,7 +1128,10 @@ const handleUpsertBudgetLine = Effect.fn('Finance.handleUpsertBudgetLine')(funct
       entry.id !== id &&
       entry.period === command.period &&
       entry.kind === command.kind &&
-      entry.category.toLocaleLowerCase('cs') === command.category.toLocaleLowerCase('cs'),
+      entry.category.toLocaleLowerCase('cs') === command.category.toLocaleLowerCase('cs') &&
+      entry.propertyRef?.resourceId === command.propertyRef?.resourceId &&
+      entry.unitRef?.resourceId === command.unitRef?.resourceId &&
+      (entry.costCenter ?? '') === (command.costCenter ?? ''),
   );
   if (clash !== undefined) {
     return yield* conflict('budget_line_already_exists');
@@ -1004,6 +1139,7 @@ const handleUpsertBudgetLine = Effect.fn('Finance.handleUpsertBudgetLine')(funct
   if (command.id !== undefined && !budgets.some((entry) => entry.id === command.id)) {
     return yield* new FinanceNotFound({ code: 'finance_not_found', reason: 'Budget line not found' });
   }
+  yield* validateAnchors(anchorsOf(command), context.scope, context.validators);
   const { _tag: _command, actorLabel, id: _id, ...fields } = command;
   const line = { ...actorOf(context, actorLabel), ...fields, id, updatedAt: context.input.now };
   return stateOnly({
@@ -1038,6 +1174,245 @@ const handleSetOpeningBalance = Effect.fn('Finance.handleSetOpeningBalance')(fun
   });
 });
 
+const handleMarkInvoicesPrepared = Effect.fn('Finance.handleMarkInvoicesPrepared')(function* markPrepared(
+  command: CommandOf<'MarkInvoicesPrepared'>,
+  context: FinanceTransitionContext,
+): Effect.fn.Return<FinanceTransition, FinanceError> {
+  const targets: Invoice[] = [];
+  for (const ref of command.invoiceRefs) {
+    const invoice = yield* findInvoice(context.state, ref, context.scope);
+    if (invoice.businessState !== 'DRAFT') {
+      return yield* conflict('prepare_requires_draft');
+    }
+    targets.push(invoice);
+  }
+  const ids = new Set(targets.filter((invoice) => invoice.reviewState !== 'PREPARED').map((invoice) => invoice.ref.resourceId));
+  if (ids.size === 0) {
+    return { changed: false, state: context.state };
+  }
+  return stateOnly({
+    ...context.state,
+    invoices: context.state.invoices.map((invoice) =>
+      ids.has(invoice.ref.resourceId)
+        ? {
+            ...invoice,
+            preparedAt: context.input.now,
+            ...(command.actorLabel === undefined ? {} : { preparedByLabel: command.actorLabel }),
+            reviewState: 'PREPARED' as const,
+            updatedAt: context.input.now,
+          }
+        : invoice,
+    ),
+  });
+});
+
+const handleReturnInvoiceToDraft = Effect.fn('Finance.handleReturnInvoiceToDraft')(function* returnToDraft(
+  command: CommandOf<'ReturnInvoiceToDraft'>,
+  context: FinanceTransitionContext,
+): Effect.fn.Return<FinanceTransition, FinanceError> {
+  const previous = yield* findInvoice(context.state, command.invoiceRef, context.scope);
+  if (previous.businessState !== 'DRAFT') {
+    return yield* conflict('return_requires_draft');
+  }
+  if (previous.reviewState === undefined) {
+    return unchanged(context.state, previous);
+  }
+  const { preparedAt: _at, preparedByLabel: _by, reviewState: _state, ...rest } = previous;
+  return replace(context.state, { ...rest, updatedAt: context.input.now });
+});
+
+const handleSetPriorSettlement = Effect.fn('Finance.handleSetPriorSettlement')(function* setPriorSettlement(
+  command: CommandOf<'SetPriorSettlement'>,
+  context: FinanceTransitionContext,
+): Effect.fn.Return<FinanceTransition, FinanceError> {
+  const previous = yield* findInvoice(context.state, command.invoiceRef, context.scope);
+  if (previous.businessState !== 'DRAFT') {
+    return yield* conflict('prior_settlement_requires_draft');
+  }
+  yield* priorSettlementTotal(context.state, previous, command.entries);
+  const { priorSettlement: _previous, ...rest } = previous;
+  if (command.entries.length === 0) {
+    return replace(context.state, { ...rest, updatedAt: context.input.now });
+  }
+  const numberOf = (id: string) => {
+    const earlier = context.state.invoices.find((record) => record.ref.resourceId === id);
+    return earlier?.number ?? earlier?.documentNumber ?? id;
+  };
+  return replace(context.state, {
+    ...rest,
+    priorSettlement: {
+      confirmedAt: context.input.now,
+      ...(command.actorLabel === undefined ? {} : { confirmedByLabel: command.actorLabel }),
+      ...(context.input.principalId === undefined ? {} : { confirmedByPrincipalId: context.input.principalId }),
+      entries: command.entries.map((entry) => ({
+        amountMinor: entry.amountMinor,
+        invoiceResourceId: entry.invoiceResourceId,
+        number: numberOf(entry.invoiceResourceId),
+      })),
+      ...(command.note === undefined ? {} : { note: command.note }),
+    },
+    updatedAt: context.input.now,
+  });
+});
+
+const handleSetPaymentTerms = Effect.fn('Finance.handleSetPaymentTerms')(function* setPaymentTerms(
+  command: CommandOf<'SetPaymentTerms'>,
+  context: FinanceTransitionContext,
+): Effect.fn.Return<FinanceTransition, FinanceError> {
+  const previous = yield* findInvoice(context.state, command.invoiceRef, context.scope);
+  if (previous.businessState === 'VOIDED') {
+    return yield* conflict('payment_terms_require_live_invoice');
+  }
+  if (
+    (command.skontoApprovedMinor ?? 0) > previous.totalMinor ||
+    (command.skontoApprovedMinor !== undefined && command.skontoText === undefined) ||
+    (command.lateInterestApprovedMinor !== undefined && command.lateInterestText === undefined)
+  ) {
+    return yield* rejected('payment_terms_invalid');
+  }
+  const { paymentTerms: _previous, ...rest } = previous;
+  const empty =
+    command.skontoText === undefined &&
+    command.skontoApprovedMinor === undefined &&
+    command.lateInterestText === undefined &&
+    command.lateInterestApprovedMinor === undefined;
+  return replace(context.state, {
+    ...rest,
+    ...(empty
+      ? {}
+      : {
+          paymentTerms: {
+            ...(command.lateInterestApprovedMinor === undefined
+              ? {}
+              : { lateInterestApprovedMinor: command.lateInterestApprovedMinor }),
+            ...(command.lateInterestText === undefined ? {} : { lateInterestText: command.lateInterestText }),
+            ...(command.skontoApprovedMinor === undefined ? {} : { skontoApprovedMinor: command.skontoApprovedMinor }),
+            ...(command.skontoText === undefined ? {} : { skontoText: command.skontoText }),
+            updatedAt: context.input.now,
+            ...(command.actorLabel === undefined ? {} : { updatedByLabel: command.actorLabel }),
+            ...(context.input.principalId === undefined ? {} : { updatedByPrincipalId: context.input.principalId }),
+          },
+        }),
+    updatedAt: context.input.now,
+  });
+});
+
+const handleHandOverAccountingExport = Effect.fn('Finance.handleHandOverAccountingExport')(function* handOver(
+  command: CommandOf<'HandOverAccountingExport'>,
+  context: FinanceTransitionContext,
+): Effect.fn.Return<FinanceTransition, FinanceError> {
+  const exports = context.state.accountingExports ?? [];
+  const target = exports.find((entry) => entry.id === command.exportId);
+  if (target === undefined) {
+    return yield* new FinanceNotFound({ code: 'finance_not_found', reason: 'Export not found' });
+  }
+  if (target.status !== 'PREPARED') {
+    return yield* conflict('export_not_prepared');
+  }
+  return stateOnly({
+    ...context.state,
+    accountingExports: exports.map((entry) =>
+      entry.id === command.exportId
+        ? {
+            ...entry,
+            handedOverAt: context.input.now,
+            ...(command.actorLabel === undefined ? {} : { handedOverByLabel: command.actorLabel }),
+            status: 'HANDED_OVER' as const,
+          }
+        : entry,
+    ),
+  });
+});
+
+const handleMarkAccountingExportFailed = Effect.fn('Finance.handleMarkAccountingExportFailed')(function* markFailed(
+  command: CommandOf<'MarkAccountingExportFailed'>,
+  context: FinanceTransitionContext,
+): Effect.fn.Return<FinanceTransition, FinanceError> {
+  const exports = context.state.accountingExports ?? [];
+  const target = exports.find((entry) => entry.id === command.exportId);
+  if (target === undefined) {
+    return yield* new FinanceNotFound({ code: 'finance_not_found', reason: 'Export not found' });
+  }
+  if (target.status !== 'PREPARED' && target.status !== 'HANDED_OVER') {
+    return yield* conflict('export_cannot_fail');
+  }
+  return stateOnly({
+    ...context.state,
+    accountingExports: exports.map((entry) =>
+      entry.id === command.exportId
+        ? {
+            ...entry,
+            failedAt: context.input.now,
+            ...(command.actorLabel === undefined ? {} : { failedByLabel: command.actorLabel }),
+            failureReason: command.reason,
+            status: 'FAILED' as const,
+          }
+        : entry,
+    ),
+  });
+});
+
+const handleUpsertPlanItem = Effect.fn('Finance.handleUpsertPlanItem')(function* upsertPlanItem(
+  command: CommandOf<'UpsertPlanItem'>,
+  context: FinanceTransitionContext,
+): Effect.fn.Return<FinanceTransition, FinanceError> {
+  const items = context.state.planItems ?? [];
+  const existing = command.id === undefined ? undefined : items.find((entry) => entry.id === command.id);
+  if (command.id !== undefined && existing === undefined) {
+    return yield* new FinanceNotFound({ code: 'finance_not_found', reason: 'Plan item not found' });
+  }
+  yield* validateAnchors(anchorsOf(command), context.scope, context.validators);
+  const { _tag: _command, actorLabel, id: _id, ...fields } = command;
+  const item = {
+    ...actorOf(context, actorLabel),
+    ...fields,
+    createdAt: existing?.createdAt ?? context.input.now,
+    id: existing?.id ?? context.input.resourceId,
+    updatedAt: context.input.now,
+  };
+  return stateOnly({
+    ...context.state,
+    planItems: existing === undefined ? [...items, item] : items.map((entry) => (entry.id === item.id ? item : entry)),
+  });
+});
+
+const handleDeletePlanItem = Effect.fn('Finance.handleDeletePlanItem')(function* deletePlanItem(
+  command: CommandOf<'DeletePlanItem'>,
+  context: FinanceTransitionContext,
+): Effect.fn.Return<FinanceTransition, FinanceError> {
+  const items = context.state.planItems ?? [];
+  if (!items.some((entry) => entry.id === command.id)) {
+    return yield* new FinanceNotFound({ code: 'finance_not_found', reason: 'Plan item not found' });
+  }
+  return stateOnly({ ...context.state, planItems: items.filter((entry) => entry.id !== command.id) });
+});
+
+const handleUpsertPriceListItem = Effect.fn('Finance.handleUpsertPriceListItem')(function* upsertPriceListItem(
+  command: CommandOf<'UpsertPriceListItem'>,
+  context: FinanceTransitionContext,
+): Effect.fn.Return<FinanceTransition, FinanceError> {
+  const items = context.state.priceList ?? [];
+  const id = command.id ?? context.input.resourceId;
+  if (command.id !== undefined && !items.some((entry) => entry.id === command.id)) {
+    return yield* new FinanceNotFound({ code: 'finance_not_found', reason: 'Price list item not found' });
+  }
+  if (
+    items.some(
+      (entry) =>
+        entry.id !== id && entry.active && entry.name.toLocaleLowerCase('cs') === command.name.toLocaleLowerCase('cs'),
+    ) &&
+    command.active
+  ) {
+    return yield* conflict('price_list_item_already_exists');
+  }
+  const { _tag: _command, actorLabel, id: _id, ...fields } = command;
+  const item = { ...actorOf(context, actorLabel), ...fields, id, updatedAt: context.input.now };
+  return stateOnly({
+    ...context.state,
+    priceList: command.id === undefined ? [...items, item] : items.map((entry) => (entry.id === id ? item : entry)),
+  });
+});
+
 export const transitionFinance = (
   state: FinanceState,
   request: FinanceCommand,
@@ -1055,6 +1430,24 @@ export const transitionFinance = (
       return handleUpdateInvoiceDraft(request, context);
     case 'ConfirmInvoice':
       return handleConfirmInvoice(request, context);
+    case 'MarkInvoicesPrepared':
+      return handleMarkInvoicesPrepared(request, context);
+    case 'ReturnInvoiceToDraft':
+      return handleReturnInvoiceToDraft(request, context);
+    case 'SetPriorSettlement':
+      return handleSetPriorSettlement(request, context);
+    case 'SetPaymentTerms':
+      return handleSetPaymentTerms(request, context);
+    case 'HandOverAccountingExport':
+      return handleHandOverAccountingExport(request, context);
+    case 'MarkAccountingExportFailed':
+      return handleMarkAccountingExportFailed(request, context);
+    case 'UpsertPlanItem':
+      return handleUpsertPlanItem(request, context);
+    case 'DeletePlanItem':
+      return handleDeletePlanItem(request, context);
+    case 'UpsertPriceListItem':
+      return handleUpsertPriceListItem(request, context);
     case 'VoidInvoice':
       return handleVoidInvoice(request, context);
     case 'RequestAccountingSync':
@@ -1219,6 +1612,8 @@ const optionalStateParts = (state: FinanceState, selected: ReadonlySet<string>, 
     cashFlowOpening: unfiltered ? state.cashFlowOpening : undefined,
     documents: byInvoice(state.documents),
     manualPayments: byInvoice(state.manualPayments),
+    planItems: unfiltered ? state.planItems : undefined,
+    priceList: state.priceList,
     recurringTemplates: unfiltered ? state.recurringTemplates : undefined,
     reminders: byInvoice(state.reminders),
   };
@@ -1231,6 +1626,8 @@ const optionalStateParts = (state: FinanceState, selected: ReadonlySet<string>, 
       | 'cashFlowOpening'
       | 'documents'
       | 'manualPayments'
+      | 'planItems'
+      | 'priceList'
       | 'recurringTemplates'
       | 'reminders'
     >

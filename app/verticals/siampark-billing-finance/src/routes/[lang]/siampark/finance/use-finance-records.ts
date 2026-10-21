@@ -17,11 +17,18 @@ import { browserCrypto } from '../../../../api/browser-crypto.ts';
 import { executeRecords } from '../../../../api/records-client.ts';
 import { financeBrowserRuntime } from '../../../../runtime/browser.ts';
 import { useFinanceReferences } from './use-finance-references.ts';
+import { useSiamparkObjects } from './use-siampark-objects.ts';
 
 export type CalendarDate = typeof CalendarDateSchema.Type;
 
 export interface DraftInvoiceInput {
+  readonly anchors?: {
+    readonly costCenter?: string;
+    readonly propertyRef?: NonNullable<Invoice['propertyRef']>;
+    readonly unitRef?: NonNullable<Invoice['unitRef']>;
+  };
   readonly customer: CustomerListItem;
+  readonly documentKind?: NonNullable<Invoice['documentKind']>;
   readonly dueDate: CalendarDate;
   readonly issueDate: CalendarDate;
   readonly lines: readonly InvoiceLine[];
@@ -230,6 +237,7 @@ export const useFinanceRecords = () => {
   const busy = feedback === 'loading' || feedback === 'saving';
   const canWrite = Option.isSome(request) && snapshot?.canWrite === true;
   const references = useFinanceReferences();
+  const objects = useSiamparkObjects();
 
   const load = (): Effect.Effect<void, UiFailure> =>
     Option.isSome(request)
@@ -257,6 +265,8 @@ export const useFinanceRecords = () => {
       issueDate: input.issueDate,
       lines: [...input.lines],
       partyId: input.customer.partyId,
+      ...(input.documentKind === undefined || input.documentKind === 'STANDARD' ? {} : { documentKind: input.documentKind }),
+      ...input.anchors,
     };
     return submitFinanceCommand(snapshot, command).pipe(
       Effect.tap(() => load().pipe(Effect.ignore)),
@@ -405,7 +415,11 @@ export const useFinanceRecords = () => {
     confirmPending: () => {
       if (confirmTarget !== undefined) {
         runCommand(
-          { _tag: 'ConfirmInvoice', invoiceRef: confirmTarget.ref },
+          {
+            _tag: 'ConfirmInvoice',
+            ...(actorLabel === undefined ? {} : { actorLabel }),
+            invoiceRef: confirmTarget.ref,
+          },
           t('siampark-billing-finance.faktury.confirmed'),
         );
       }
@@ -422,6 +436,7 @@ export const useFinanceRecords = () => {
     feedback: Option.isNone(request) ? ('validation' as const) : feedback,
     indicators: Option.isSome(request) ? snapshot?.indicators : undefined,
     invoices: Option.isSome(request) ? [...(snapshot?.state.invoices ?? [])] : [],
+    objects,
     openDetail: (id: string) => {
       detailPushed.current = true;
       pushDetailUrl(id);

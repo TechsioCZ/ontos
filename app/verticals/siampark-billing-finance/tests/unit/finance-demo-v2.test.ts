@@ -184,7 +184,7 @@ describe('S08 accounting handover', () => {
       });
       const created = first.state.accountingExports?.[0];
       expect(created?.invoiceResourceIds).toEqual(['a', 'b', 'c']);
-      expect(created?.status).toBe('HANDED_OVER');
+      expect(created?.status).toBe('PREPARED');
       expect(created?.content.trim().split('\r\n').length).toBe(4);
       expect(created?.version).toBe(1);
       for (const id of ['a', 'b', 'c']) {

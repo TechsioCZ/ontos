@@ -25,6 +25,7 @@ import {
   SourceOrderSchema,
   InvoiceSchema,
   MoneyMinorSchema,
+  VatRateSchema,
 } from '../apis/records.ts';
 import { InvoiceRefSchema } from '../resources/invoice.ts';
 
@@ -40,10 +41,24 @@ export const DocumentUploadSchema = Schema.Struct({
 });
 export type DocumentUpload = typeof DocumentUploadSchema.Type;
 const actorLabel = Schema.optionalKey(FinanceTextSchema);
+/** Optional draft extras the create/update forms send next to the core draft fields. */
+const DraftExtras = {
+  costCenter: Schema.optionalKey(FinanceTextSchema),
+  documentKind: Schema.optionalKey(InvoiceDocumentKindSchema),
+};
+const AnchorFields = {
+  contractRef: Schema.optionalKey(ContractRefSchema),
+  propertyRef: Schema.optionalKey(PropertyRefSchema),
+  unitRef: Schema.optionalKey(UnitRefSchema),
+};
 
 export const FinanceCommandSchema = Schema.Union([
-  Schema.TaggedStruct('CreateInvoiceDraft', InvoiceDraftCommandFields),
-  Schema.TaggedStruct('UpdateInvoiceDraft', { ...InvoiceDraftCommandFields, invoiceRef: InvoiceRefSchema }),
+  Schema.TaggedStruct('CreateInvoiceDraft', { ...InvoiceDraftCommandFields, ...DraftExtras }),
+  Schema.TaggedStruct('UpdateInvoiceDraft', {
+    ...InvoiceDraftCommandFields,
+    ...DraftExtras,
+    invoiceRef: InvoiceRefSchema,
+  }),
   // Idempotent by opportunityId: a second delivery for the same opportunity returns the existing invoice.
   Schema.TaggedStruct('CreateInvoiceFromOpportunity', {
     issueDate: Schema.optionalKey(CalendarDateSchema),
@@ -51,7 +66,32 @@ export const FinanceCommandSchema = Schema.Union([
     opportunityId: FinanceOpportunityIdSchema,
     partyId: FinancePartyIdSchema,
   }),
-  Schema.TaggedStruct('ConfirmInvoice', { invoiceRef: InvoiceRefSchema }),
+  /** S07.R5 "schváleno": approves (issues) a draft or a prepared draft. */
+  Schema.TaggedStruct('ConfirmInvoice', { actorLabel, invoiceRef: InvoiceRefSchema }),
+  /** S07.R3 bulk step: moves the selected drafts to "připraveno k odsouhlasení" without closing them. */
+  Schema.TaggedStruct('MarkInvoicesPrepared', {
+    actorLabel,
+    invoiceRefs: Schema.Array(InvoiceRefSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  }),
+  Schema.TaggedStruct('ReturnInvoiceToDraft', { invoiceRef: InvoiceRefSchema }),
+  /** S07.R2: earlier advance/partial amounts a final or partial draft takes into account, confirmed by hand. */
+  Schema.TaggedStruct('SetPriorSettlement', {
+    actorLabel,
+    entries: Schema.Array(
+      Schema.Struct({ amountMinor: MoneyMinorSchema.check(Schema.isGreaterThan(0)), invoiceResourceId: FinanceTextSchema }),
+    ).check(Schema.isMaxLength(20)),
+    invoiceRef: InvoiceRefSchema,
+    note: Schema.optionalKey(FinanceTextSchema),
+  }),
+  /** S09: skonto and agreed late-payment interest as text or hand-approved amounts; never computed. */
+  Schema.TaggedStruct('SetPaymentTerms', {
+    actorLabel,
+    invoiceRef: InvoiceRefSchema,
+    lateInterestApprovedMinor: Schema.optionalKey(MoneyMinorSchema),
+    lateInterestText: Schema.optionalKey(FinanceTextSchema),
+    skontoApprovedMinor: Schema.optionalKey(MoneyMinorSchema),
+    skontoText: Schema.optionalKey(FinanceTextSchema),
+  }),
   Schema.TaggedStruct('VoidInvoice', { invoiceRef: InvoiceRefSchema }),
   Schema.TaggedStruct('RequestAccountingSync', { invoiceRef: InvoiceRefSchema }),
   Schema.TaggedStruct('RetryAccountingSync', { invoiceRef: InvoiceRefSchema }),
@@ -76,6 +116,7 @@ export const FinanceCommandSchema = Schema.Union([
     sourceOrder: Schema.optionalKey(SourceOrderSchema),
     actorLabel,
     budgetCategory: Schema.optionalKey(FinanceTextSchema),
+    costCenter: Schema.optionalKey(FinanceTextSchema),
     counterpartyRef: Schema.optionalKey(CounterpartyRefSchema),
     document: Schema.optionalKey(DocumentUploadSchema),
     documentNumber: FinanceTextSchema,
@@ -83,6 +124,7 @@ export const FinanceCommandSchema = Schema.Union([
     issueDate: CalendarDateSchema,
     note: Schema.optionalKey(FinanceTextSchema),
     propertyRef: Schema.optionalKey(PropertyRefSchema),
+    unitRef: Schema.optionalKey(UnitRefSchema),
     supplierCompanyId: Schema.optionalKey(FinanceTextSchema),
     supplierName: FinanceTextSchema,
     totalMinor: MoneyMinorSchema.check(Schema.isGreaterThan(0)),
@@ -90,6 +132,7 @@ export const FinanceCommandSchema = Schema.Union([
   Schema.TaggedStruct('AttachDocument', { actorLabel, document: DocumentUploadSchema, invoiceRef: InvoiceRefSchema }),
   Schema.TaggedStruct('SetInvoiceDetails', {
     budgetCategory: Schema.optionalKey(FinanceTextSchema),
+    costCenter: Schema.optionalKey(FinanceTextSchema),
     documentKind: Schema.optionalKey(InvoiceDocumentKindSchema),
     invoiceRef: InvoiceRefSchema,
   }),
@@ -142,6 +185,12 @@ export const FinanceCommandSchema = Schema.Union([
     // Issuer name and partner identities are resolved by the server (Core legal entity, party registry).
     invoiceResourceIds: Schema.Array(FinanceTextSchema).check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
   }),
+  Schema.TaggedStruct('HandOverAccountingExport', { actorLabel, exportId: FinanceTextSchema }),
+  Schema.TaggedStruct('MarkAccountingExportFailed', {
+    actorLabel,
+    exportId: FinanceTextSchema,
+    reason: FinanceTextSchema,
+  }),
   Schema.TaggedStruct('ConfirmAccountingExport', {
     actorLabel,
     evidence: FinanceTextSchema,
@@ -151,13 +200,42 @@ export const FinanceCommandSchema = Schema.Union([
     actorLabel,
     actualManualMinor: Schema.optionalKey(MoneyMinorSchema),
     category: FinanceTextSchema,
+    costCenter: Schema.optionalKey(FinanceTextSchema),
     explanation: Schema.optionalKey(FinanceTextSchema),
     id: Schema.optionalKey(FinanceTextSchema),
     kind: BudgetKindSchema,
     period: CalendarMonthSchema,
     plannedMinor: MoneyMinorSchema,
+    propertyRef: Schema.optionalKey(PropertyRefSchema),
+    unitRef: Schema.optionalKey(UnitRefSchema),
   }),
   Schema.TaggedStruct('DeleteBudgetLine', { id: FinanceTextSchema }),
+  Schema.TaggedStruct('UpsertPlanItem', {
+    ...AnchorFields,
+    actorLabel,
+    amountMinor: MoneyMinorSchema.check(Schema.isGreaterThan(0)),
+    currency: Schema.Literal('CZK'),
+    expectedDate: CalendarDateSchema,
+    id: Schema.optionalKey(FinanceTextSchema),
+    kind: BudgetKindSchema,
+    note: Schema.optionalKey(FinanceTextSchema),
+    probabilityPercent: Schema.optionalKey(
+      Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(100)),
+    ),
+    projectName: Schema.optionalKey(FinanceTextSchema),
+    title: FinanceTextSchema,
+  }),
+  Schema.TaggedStruct('DeletePlanItem', { id: FinanceTextSchema }),
+  Schema.TaggedStruct('UpsertPriceListItem', {
+    actorLabel,
+    active: Schema.Boolean,
+    code: Schema.optionalKey(FinanceTextSchema),
+    id: Schema.optionalKey(FinanceTextSchema),
+    name: FinanceTextSchema,
+    unit: Schema.optionalKey(FinanceTextSchema),
+    unitPriceMinor: MoneyMinorSchema,
+    vatRate: VatRateSchema,
+  }),
   Schema.TaggedStruct('SetOpeningBalance', {
     actorLabel,
     openingBalanceMinor: Schema.Int.check(

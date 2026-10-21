@@ -79,7 +79,8 @@
           "description": "Zadejte popis položky.",
           "quantity": "Zadejte celé množství od 1 do 1 000 000.",
           "price": "Zadejte cenu 0 Kč nebo vyšší.",
-          "amount": "Snižte množství nebo cenu: částka položky s DPH může být nejvýše 10 000 000 000 Kč."
+          "amount": "Snižte množství nebo cenu: částka položky s DPH může být nejvýše 10 000 000 000 Kč.",
+          "discount": "Zadejte slevu 1–100 % nebo částku nejvýše do výše položky a uveďte důvod slevy."
         }
       },
       "cancel": "Zrušit",
@@ -114,7 +115,9 @@
         "status": "Stav",
         "all": "Všechny stavy",
         "states": {
-          "DRAFT": "Koncept",
+          "DRAFT": "Návrh",
+          "PREPARED": "Připraveno ke schválení",
+          "HANDED_OVER": "Předáno do účetnictví",
           "UNPAID": "Neuhrazená",
           "PARTIAL": "Částečně uhrazená",
           "PAID": "Uhrazená",
@@ -122,12 +125,12 @@
           "VOIDED": "Stornovaná"
         }
       },
-      "confirm": "Potvrdit",
-      "confirmed": "Faktura potvrzena",
-      "confirming": "Potvrzuji…",
-      "confirmTitle": "Potvrdit fakturu {{number}}?",
-      "confirmDescription": "Potvrzenou fakturu už nelze upravit, jen stornovat.",
-      "confirmAction": "Potvrdit fakturu",
+      "confirm": "Schválit",
+      "confirmed": "Faktura schválena a vystavena",
+      "confirming": "Schvaluji…",
+      "confirmTitle": "Schválit fakturu {{number}}?",
+      "confirmDescription": "Schválením se doklad vystaví a už ho nelze upravit, jen stornovat. Uloží se, kdo a kdy ho schválil.",
+      "confirmAction": "Schválit a vystavit",
       "void": "Stornovat",
       "voided": "Faktura stornována",
       "voidTitle": "Stornovat fakturu {{number}}?",

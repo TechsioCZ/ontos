@@ -6,6 +6,9 @@ import { formatCzechDays } from '@app/shared-contracts';
 // @effect-diagnostics globalDate:off
 import { dialogCloseLabel, EmptyState, formatMoney, SectionCard, SidePanel } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
+import { Checkbox } from '@techsio/ui-kit/atoms/checkbox';
+import { formatDate } from '@app/admin-ui';
+import { invoiceLifecycle, LIFECYCLE_PRESENTATION } from './invoice-view.ts';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
@@ -59,6 +62,8 @@ export const RecurringPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
   const [result, setResult] = useState<GenerationResult>();
   const [duplicateTarget, setDuplicateTarget] = useState<RecurringTemplate>();
   const [running, setRunning] = useState(false);
+  const [bulkSelected, setBulkSelected] = useState<ReadonlySet<string>>(new Set());
+  const [bulkResult, setBulkResult] = useState<{ readonly kind: 'error' | 'success'; readonly text: string }>();
   const customers = vm.references.customers;
   const set = (patch: Partial<TemplateDraft>) => setDraft((current) => ({ ...current, ...patch }));
 
@@ -155,6 +160,45 @@ export const RecurringPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
   };
 
   const active = templates.filter((template) => template.active);
+  const recurringDrafts = invoices.filter(
+    (invoice) =>
+      invoice.businessState === 'DRAFT' &&
+      (invoice.recurringTemplateId !== undefined || invoice.documentKind === 'RECURRING'),
+  );
+  const selectable = recurringDrafts.filter((invoice) => invoice.reviewState !== 'PREPARED');
+  const selectedDrafts = selectable.filter((invoice) => bulkSelected.has(invoice.ref.resourceId));
+  const toggleDraft = (id: string) =>
+    setBulkSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  const prepareSelected = async () => {
+    if (selectedDrafts.length === 0) {
+      return;
+    }
+    const outcome = await vm.execute(
+      {
+        _tag: 'MarkInvoicesPrepared',
+        ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
+        invoiceRefs: selectedDrafts.map((invoice) => invoice.ref),
+      },
+      `Připraveno ke schválení: ${selectedDrafts.length}`,
+    );
+    if (outcome.ok) {
+      setBulkResult({
+        kind: 'success',
+        text: `${selectedDrafts.map((invoice) => invoice.number ?? invoice.documentNumber).join(', ')} – připraveno ke schválení. Doklady zůstávají otevřené, nic se neschválilo ani nepředalo účetní.`,
+      });
+      setBulkSelected(new Set());
+    } else {
+      setBulkResult({ kind: 'error', text: outcomeMessage(vm, outcome) });
+    }
+  };
   const periodOptions = Array.from({ length: 6 }, (_, index) => addMonths(nextMonth, index - 1));
 
   return (
@@ -209,7 +253,8 @@ export const RecurringPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
       >
         <p className="text-fg-secondary text-sm">
           Šablona + období + ruční spuštění vytvoří nový <strong>návrh</strong> faktury. Druhý návrh pro stejné období
-          systém nevytvoří bez výslovného potvrzení. Návrhy se potvrzují (vystavují) jednotlivě v seznamu faktur.
+          systém nevytvoří bez výslovného potvrzení. Vybrané návrhy níže hromadně přepnete k odsouhlasení – schválení
+          (vystavení) a předání účetní zůstávají samostatnými kroky.
         </p>
         {result !== undefined && (
           <div className="flex flex-col gap-100">
@@ -336,6 +381,107 @@ export const RecurringPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
           </FinanceTableScroll>
         </SectionCard>
       )}
+      <SectionCard
+        actions={
+          vm.canWrite ? (
+            <Button
+              disabled={selectedDrafts.length === 0 || vm.busy}
+              icon="icon-[mdi--clipboard-check-multiple-outline]"
+              onClick={() => void prepareSelected()}
+              size="sm"
+              variant="primary"
+            >
+              Přepnout vybrané k odsouhlasení ({selectedDrafts.length})
+            </Button>
+          ) : undefined
+        }
+        flush
+        title="Návrhy z opakovaných faktur"
+      >
+        <div className="flex flex-col gap-150 px-250 pb-150">
+          <p className="text-fg-secondary text-sm">
+            Hromadné zpracování jen připraví návrhy ke schválení. Účetně se tím nic neuzavírá.
+          </p>
+          {bulkResult !== undefined && (
+            <StatusText showIcon size="sm" status={bulkResult.kind}>
+              {bulkResult.text}
+            </StatusText>
+          )}
+        </div>
+        {recurringDrafts.length === 0 ? (
+          <p className="px-250 pb-250 text-fg-secondary text-sm">Žádné otevřené návrhy z opakovaných faktur.</p>
+        ) : (
+          <FinanceTableScroll label="Návrhy z opakovaných faktur">
+            <Table size="sm" variant="line">
+              <Table.Header>
+                <Table.Row>
+                  <Table.ColumnHeader>
+                    <Checkbox
+                      aria-label="Vybrat všechny návrhy"
+                      checked={
+                        selectable.length > 0 && selectable.every((invoice) => bulkSelected.has(invoice.ref.resourceId))
+                      }
+                      disabled={selectable.length === 0}
+                      onChange={(event) =>
+                        setBulkSelected(
+                          event.target.checked
+                            ? new Set(selectable.map((invoice) => invoice.ref.resourceId))
+                            : new Set(),
+                        )
+                      }
+                    />
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader>Doklad</Table.ColumnHeader>
+                  <Table.ColumnHeader>Nájemce</Table.ColumnHeader>
+                  <Table.ColumnHeader>Období</Table.ColumnHeader>
+                  <Table.ColumnHeader>Vystavení</Table.ColumnHeader>
+                  <Table.ColumnHeader align="end">Celkem</Table.ColumnHeader>
+                  <Table.ColumnHeader>Stav</Table.ColumnHeader>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {recurringDrafts.map((invoice) => {
+                  const presentation = LIFECYCLE_PRESENTATION[invoiceLifecycle(invoice)];
+                  const prepared = invoice.reviewState === 'PREPARED';
+                  return (
+                    <Table.Row key={invoice.ref.resourceId}>
+                      <Table.Cell>
+                        <Checkbox
+                          aria-label={`Vybrat ${invoice.number ?? invoice.documentNumber}`}
+                          checked={!prepared && bulkSelected.has(invoice.ref.resourceId)}
+                          disabled={prepared}
+                          onChange={() => toggleDraft(invoice.ref.resourceId)}
+                        />
+                      </Table.Cell>
+                      <Table.Cell className="whitespace-nowrap font-medium">
+                        <a className="underline" href={`?resourceId=${encodeURIComponent(invoice.ref.resourceId)}`}>
+                          {invoice.number ?? invoice.documentNumber}
+                        </a>
+                      </Table.Cell>
+                      <Table.Cell>
+                        {vm.references.customerById.get(invoice.partyId ?? invoice.counterpartyRef.resourceId)
+                          ?.displayName ??
+                          invoice.counterpartyName ??
+                          '—'}
+                      </Table.Cell>
+                      <Table.Cell>{invoice.recurringPeriod === undefined ? '—' : monthLabel(invoice.recurringPeriod)}</Table.Cell>
+                      <Table.Cell>{formatDate(invoice.issueDate)}</Table.Cell>
+                      <Table.Cell align="end" className="tabular-nums">
+                        {formatMoney(invoice.totalMinor)}
+                      </Table.Cell>
+                      <Table.Cell>
+                        <Badge className="whitespace-nowrap" size="sm" variant={presentation.variant}>
+                          {presentation.label}
+                        </Badge>
+                      </Table.Cell>
+                    </Table.Row>
+                  );
+                })}
+              </Table.Body>
+            </Table>
+          </FinanceTableScroll>
+        )}
+      </SectionCard>
       <Dialog
         actions={
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', justifyContent: 'flex-end', width: '100%' }}>

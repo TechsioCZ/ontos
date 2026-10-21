@@ -9,12 +9,15 @@ import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { useState } from 'react';
 import type { Row } from '@techsio/ui-kit/organisms/data-table';
 import type { Invoice } from '../../../../../shared/apis/records.ts';
+import { Badge } from '@techsio/ui-kit/atoms/badge';
 import {
   customerDisplayName,
   customerLoadingLabel,
   customerOf,
+  invoiceLifecycle,
   invoiceStatusBadge,
   isVoidable,
+  LIFECYCLE_PRESENTATION,
   opportunityTitle,
 } from './invoice-view.ts';
 import type { InvoiceColumn } from './invoice-table-types.ts';
@@ -25,7 +28,24 @@ type Translate = FinanceViewModel['t'];
 
 const ns = 'siampark-billing-finance.faktury';
 const ALL = 'ALL';
-const STATUS_FILTERS = ['DRAFT', 'UNPAID', 'PARTIAL', 'PAID', 'OVERDUE', 'VOIDED'] as const;
+const STATUS_FILTERS = ['DRAFT', 'PREPARED', 'HANDED_OVER', 'UNPAID', 'PARTIAL', 'PAID', 'OVERDUE', 'VOIDED'] as const;
+
+/** Lifecycle filters (návrh, připraveno, předáno) read the lifecycle; the rest read the payment/business badge. */
+const matchesStatusFilter = (
+  invoice: Invoice,
+  status: string,
+  referenceDate: string,
+  exports: Parameters<typeof invoiceLifecycle>[1],
+) => {
+  const lifecycle = invoiceLifecycle(invoice, exports);
+  if (status === 'DRAFT' || status === 'PREPARED') {
+    return lifecycle === status;
+  }
+  if (status === 'HANDED_OVER') {
+    return lifecycle === 'HANDED_OVER' || lifecycle === 'ACCOUNTANT_CONFIRMED';
+  }
+  return invoiceStatusBadge(invoice, referenceDate).value === status;
+};
 
 const tableTranslations = (t: Translate) => ({
   actionsLabel: '',
@@ -54,6 +74,7 @@ const tableTranslations = (t: Translate) => ({
  */
 const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
   const { referenceDate, references } = vm;
+  const exports = vm.snapshot?.state.accountingExports ?? [];
   const unknownCustomer = references.customersLoading ? customerLoadingLabel : t(`${ns}.unknownCustomer`);
   return [
     {
@@ -98,7 +119,7 @@ const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
       },
       header: 'Odběratel / dodavatel',
       id: 'customer',
-      meta: { width: 200 },
+      meta: { width: 185 },
     },
     {
       accessorKey: 'issueDate',
@@ -119,11 +140,22 @@ const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
       meta: { align: 'end', type: 'number', width: 125 },
     },
     {
-      accessorFn: (row) => invoiceStatusBadge(row, referenceDate).value,
-      cell: (info) => <StatusBadge {...invoiceStatusBadge(info.row.original, referenceDate)} />,
+      accessorFn: (row) => invoiceLifecycle(row, exports),
+      cell: (info) => {
+        const presentation = LIFECYCLE_PRESENTATION[invoiceLifecycle(info.row.original, exports)];
+        const confirmed = info.row.original.businessState === 'CONFIRMED';
+        return (
+          <span className="flex min-w-0 flex-col items-start gap-50">
+            <Badge className="max-w-full truncate" size="sm" variant={presentation.variant}>
+              {presentation.label}
+            </Badge>
+            {confirmed && <StatusBadge {...invoiceStatusBadge(info.row.original, referenceDate)} />}
+          </span>
+        );
+      },
       header: t(`${ns}.columns.status`),
       id: 'status',
-      meta: { width: 115 },
+      meta: { width: 150 },
     },
     {
       accessorFn: (row) => opportunityTitle(references.opportunityTitles, row) ?? '',
@@ -156,7 +188,7 @@ const buildColumns = (t: Translate, vm: FinanceViewModel): InvoiceColumn[] => {
       enableSorting: false,
       header: t(`${ns}.columns.source`),
       id: 'source',
-      meta: { width: 135 },
+      meta: { width: 115 },
     },
   ];
 };
@@ -191,7 +223,7 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
   const unknownCustomer = references.customersLoading ? customerLoadingLabel : t(`${ns}.unknownCustomer`);
 
   const visibleInvoices = invoices.filter((invoice) => {
-    if (status !== ALL && invoiceStatusBadge(invoice, referenceDate).value !== status) {
+    if (status !== ALL && !matchesStatusFilter(invoice, status, referenceDate, snapshot?.state.accountingExports ?? [])) {
       return false;
     }
     if (direction !== ALL && invoice.direction !== direction) {
@@ -223,6 +255,18 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
     if (invoice.businessState !== 'DRAFT') {
       return [voidItem];
     }
+    if (invoice.reviewState !== 'PREPARED') {
+      return [
+        {
+          disabled: busy,
+          icon: 'icon-[mdi--clipboard-check-outline]',
+          label: 'Připravit ke schválení',
+          type: 'action',
+          value: 'prepare',
+        },
+        voidItem,
+      ];
+    }
     const confirmItem: MenuItem = {
       disabled: busy,
       icon: 'icon-[mdi--check-circle-outline]',
@@ -230,7 +274,11 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
       type: 'action',
       value: 'confirm',
     };
-    return [confirmItem, voidItem];
+    return [
+      confirmItem,
+      { disabled: busy, icon: 'icon-[mdi--undo]', label: 'Vrátit do návrhu', type: 'action', value: 'return' },
+      voidItem,
+    ];
   };
   const rowMenu = (invoice: Invoice) =>
     isVoidable(invoice) ? (
@@ -257,6 +305,17 @@ export const FinanceInvoiceTable = ({ vm }: FinanceInvoiceTableProps) => {
           onSelect={({ value }) => {
             if (value === 'confirm') {
               confirmInvoice(invoice);
+            } else if (value === 'prepare') {
+              void vm.execute(
+                {
+                  _tag: 'MarkInvoicesPrepared',
+                  ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
+                  invoiceRefs: [invoice.ref],
+                },
+                'Doklad připraven ke schválení',
+              );
+            } else if (value === 'return') {
+              void vm.execute({ _tag: 'ReturnInvoiceToDraft', invoiceRef: invoice.ref }, 'Doklad vrácen do návrhu');
             } else if (value === 'void') {
               requestVoid(invoice);
             }

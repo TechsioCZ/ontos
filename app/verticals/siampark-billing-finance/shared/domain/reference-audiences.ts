@@ -19,6 +19,15 @@ export const invoiceReferenceAudiences = (anchors: InvoiceAnchors): readonly str
   ...(anchors.taskRef === undefined ? [] : ['siampark-work']),
 ];
 
+/** Audiences for property/unit/contract anchors without a registry counterparty (budgets, plan items, manual suppliers). */
+export const anchorReferenceAudiences = (
+  anchors: Partial<Pick<Invoice, 'contractRef' | 'propertyRef' | 'unitRef'>>,
+): readonly string[] => [
+  ...(anchors.propertyRef === undefined ? [] : ['siampark-property']),
+  ...(anchors.unitRef === undefined ? [] : ['siampark-property']),
+  ...(anchors.contractRef === undefined ? [] : ['siampark-agreements']),
+];
+
 /** Audiences for a command: draft commands carry their anchors, the rest act on an invoice already in the list. */
 export const MANUAL_COUNTERPARTY_RESOURCE_ID = '00000000-0000-4000-8000-000000000000';
 const isManualCounterparty = (id: string) => id === MANUAL_COUNTERPARTY_RESOURCE_ID;
@@ -32,13 +41,17 @@ export const commandReferenceAudiences = (
     Match.tag('CreateInvoiceDraft', 'UpdateInvoiceDraft', (draft) => invoiceReferenceAudiences(draft)),
     Match.tag('CreateInvoiceFromOpportunity', () => invoiceReferenceAudiences({})),
     // A manually typed supplier has no registry party to check; a picked registry supplier does.
-    Match.tag('RecordIncomingInvoice', (incoming) =>
-      incoming.counterpartyRef === undefined
-        ? []
-        : invoiceReferenceAudiences({
-            ...(incoming.propertyRef === undefined ? {} : { propertyRef: incoming.propertyRef }),
-          }),
-    ),
+    // A hand-typed supplier has no registry party to check, but its property/unit anchors are still verified.
+    Match.tag('RecordIncomingInvoice', (incoming) => {
+      const anchors = {
+        ...(incoming.propertyRef === undefined ? {} : { propertyRef: incoming.propertyRef }),
+        ...(incoming.unitRef === undefined ? {} : { unitRef: incoming.unitRef }),
+      };
+      return incoming.counterpartyRef === undefined
+        ? anchorReferenceAudiences(anchors)
+        : invoiceReferenceAudiences(anchors);
+    }),
+    Match.tag('UpsertBudgetLine', 'UpsertPlanItem', (record) => anchorReferenceAudiences(record)),
     Match.tag('GenerateRecurringInvoice', (generate) => {
       const template = templates.find((entry) => entry.id === generate.templateId);
       if (template === undefined) {
@@ -57,9 +70,16 @@ export const commandReferenceAudiences = (
       'SetRecurringTemplateActive',
       'UpdateAccountingSetup',
       'ConfirmAccountingExport',
-      'UpsertBudgetLine',
       'DeleteBudgetLine',
       'SetOpeningBalance',
+      'MarkInvoicesPrepared',
+      'ReturnInvoiceToDraft',
+      'SetPriorSettlement',
+      'SetPaymentTerms',
+      'HandOverAccountingExport',
+      'MarkAccountingExportFailed',
+      'DeletePlanItem',
+      'UpsertPriceListItem',
       () => [],
     ),
     Match.orElse((targeted) =>

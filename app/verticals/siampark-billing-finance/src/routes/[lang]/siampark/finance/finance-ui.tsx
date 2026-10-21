@@ -110,7 +110,23 @@ export const shortMonthLabel = (month: string) =>
 
 /** Known domain refusals in Czech; anything else falls back to the generic feedback text. */
 export const reasonText: Readonly<Record<string, string>> = {
-  budget_line_already_exists: 'Rozpočtová položka pro tento měsíc, typ a kategorii už existuje.',
+  budget_line_already_exists: 'Rozpočtová položka pro tento měsíc, typ, kategorii a objekt už existuje.',
+  contract_not_usable: 'Vybraná smlouva už v evidenci není dostupná.',
+  document_kind_requires_draft: 'Druh dokladu lze změnit jen u návrhu.',
+  export_cannot_fail: 'Chybu lze zapsat jen u připraveného nebo předaného balíčku.',
+  export_not_prepared: 'Balíček už byl předán nebo uzavřen.',
+  export_requires_handover: 'Potvrzení účetní lze zapsat až po předání balíčku.',
+  invalid_line_discount: 'Sleva musí být 1–100 % nebo částka nejvýše do výše položky a musí mít důvod.',
+  prepare_requires_draft: 'Ke schválení lze připravit jen návrhy.',
+  price_list_item_already_exists: 'Aktivní položka ceníku se stejným názvem už existuje.',
+  prior_settlement_exceeds_paid_amount: 'Částka přesahuje uhrazenou a dosud nezohledněnou část dřívějšího dokladu.',
+  prior_settlement_exceeds_total: 'Součet zohledněných částek přesahuje celkovou částku faktury.',
+  prior_settlement_invoice_not_eligible:
+    'Zohlednit lze jen potvrzenou zálohovou nebo dílčí fakturu stejného odběratele.',
+  prior_settlement_requires_draft: 'Zohlednění předchozích dokladů lze měnit jen u návrhu.',
+  prior_settlement_requires_final_or_partial: 'Předchozí doklady se zohledňují jen u konečné nebo dílčí faktury.',
+  property_not_usable: 'Vybraná nemovitost není aktivní nebo nepatří vybrané firmě.',
+  unit_property_mismatch: 'Vybraná jednotka nepatří k vybrané nemovitosti.',
   document_too_large: 'Soubor je příliš velký (nejvýše 3 MB).',
   document_type_not_supported: 'Podporované jsou soubory PDF, PNG, JPEG a WebP.',
   export_already_confirmed: 'Předání už je potvrzené.',

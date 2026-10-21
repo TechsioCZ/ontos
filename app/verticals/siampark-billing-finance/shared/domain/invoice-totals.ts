@@ -12,13 +12,46 @@ export interface InvoiceTotals {
   readonly vatRecap: readonly VatRecapEntry[];
 }
 
-/** Line base in minor units: quantity × unit price, no rounding needed for integer inputs. */
-export const lineBaseMinor = (line: Pick<InvoiceLine, 'quantity' | 'unitPriceMinor'>): number =>
+type LineAmounts = Pick<InvoiceLine, 'quantity' | 'unitPriceMinor'> & { readonly discount?: InvoiceLine['discount'] };
+
+/** Line amount before any discount: quantity × unit price, no rounding needed for integer inputs. */
+export const lineGrossMinor = (line: Pick<InvoiceLine, 'quantity' | 'unitPriceMinor'>): number =>
   line.quantity * line.unitPriceMinor;
 
+/** Approved discount of one line in minor units (percent rounded half-up). Never more than the line amount. */
+export const lineDiscountMinor = (line: LineAmounts): number => {
+  const discount = line.discount;
+  if (discount === undefined) {
+    return 0;
+  }
+  const gross = lineGrossMinor(line);
+  const value =
+    discount.kind === 'PERCENT' ? Math.floor((gross * Math.min(100, discount.value) + 50) / 100) : discount.value;
+  return Math.min(gross, value);
+};
+
+/** A stored discount must be a 1–100 % share or an amount no larger than the line amount, with a reason. */
+export const isLineDiscountValid = (line: LineAmounts): boolean => {
+  const discount = line.discount;
+  if (discount === undefined) {
+    return true;
+  }
+  if (!Number.isSafeInteger(discount.value) || discount.value <= 0 || discount.reason.trim() === '') {
+    return false;
+  }
+  return discount.kind === 'PERCENT' ? discount.value <= 100 : discount.value <= lineGrossMinor(line);
+};
+
+/** Line base in minor units: quantity × unit price minus the approved discount. */
+export const lineBaseMinor = (line: LineAmounts): number => lineGrossMinor(line) - lineDiscountMinor(line);
+
 /** VAT of one line, rounded half-up to whole minor units (bases are non-negative integers). */
-export const lineVatMinor = (line: Pick<InvoiceLine, 'quantity' | 'unitPriceMinor' | 'vatRate'>): number =>
+export const lineVatMinor = (line: LineAmounts & Pick<InvoiceLine, 'vatRate'>): number =>
   Math.floor((lineBaseMinor(line) * line.vatRate + 50) / 100);
+
+/** Sum of approved discounts on the lines (shown separately from the subtotal). */
+export const totalDiscountMinor = (lines: readonly LineAmounts[]): number =>
+  lines.reduce((sum, line) => sum + lineDiscountMinor(line), 0);
 
 const withinMoneyRange = (value: number) => Number.isSafeInteger(value) && value >= 0 && value <= MAX_MONEY_MINOR;
 
@@ -30,6 +63,9 @@ const withinMoneyRange = (value: number) => Number.isSafeInteger(value) && value
 export const computeInvoiceTotals = (lines: readonly InvoiceLine[]): InvoiceTotals | undefined => {
   const byRate = new Map<number, { baseMinor: number; vatMinor: number }>();
   for (const line of lines) {
+    if (!withinMoneyRange(lineGrossMinor(line)) || !isLineDiscountValid(line)) {
+      return undefined;
+    }
     const baseMinor = lineBaseMinor(line);
     if (!withinMoneyRange(baseMinor)) {
       return undefined;

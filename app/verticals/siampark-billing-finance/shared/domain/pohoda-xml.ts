@@ -1,7 +1,7 @@
 import type { Invoice, InvoiceLine, VatRate, VatRecapEntry } from '../apis/records.ts';
 import { POHODA_DATAPACK_VERSION } from '../apis/records.ts';
 import type { ExportIssuer, ExportMeta, ExportPartnerIdentity, ExportRow } from './finance-planning.ts';
-import { computeInvoiceTotals, lineBaseMinor, lineVatMinor } from './invoice-totals.ts';
+import { computeInvoiceTotals, lineBaseMinor, lineGrossMinor, lineVatMinor } from './invoice-totals.ts';
 
 /** Official STORMWARE namespaces of POHODA XML version 2 (https://www.stormware.cz/xml/schema/version_2/). */
 export const POHODA_NAMESPACES = {
@@ -79,21 +79,66 @@ const addressXml = (parts: AddressParts, indent: string) => {
   return lines.length === 0 ? undefined : `${indent}<typ:address>\n${lines.join('\n')}\n${indent}</typ:address>`;
 };
 
+const itemElement = (input: {
+  readonly base: number;
+  readonly discountPercentage?: number;
+  readonly label: string;
+  readonly quantity: number;
+  readonly rate: VatRate;
+  readonly unitPrice: number;
+  readonly vat: number;
+}) => `          <inv:invoiceItem>
+            <inv:text>${text(input.label, 90)}</inv:text>
+            <inv:quantity>${input.quantity}</inv:quantity>
+            <inv:payVAT>false</inv:payVAT>
+            <inv:rateVAT>${pohodaVatRate(input.rate)}</inv:rateVAT>
+${input.discountPercentage === undefined ? '' : `            <inv:discountPercentage>${input.discountPercentage}</inv:discountPercentage>\n`}            <inv:homeCurrency>
+              <typ:unitPrice>${money(input.unitPrice)}</typ:unitPrice>
+              <typ:price>${money(input.base)}</typ:price>
+              <typ:priceVAT>${money(input.vat)}</typ:priceVAT>
+              <typ:priceSum>${money(input.base + input.vat)}</typ:priceSum>
+            </inv:homeCurrency>
+          </inv:invoiceItem>`;
+
+/**
+ * One OntOS line. A percentage discount becomes POHODA's discountPercentage on the item; a fixed-amount discount
+ * becomes its own negative item "Sleva", so item sums still equal the stored VAT recap exactly.
+ */
 const itemXml = (line: InvoiceLine) => {
   const base = lineBaseMinor(line);
   const vat = lineVatMinor(line);
-  return `          <inv:invoiceItem>
-            <inv:text>${text(line.description, 90)}</inv:text>
-            <inv:quantity>${line.quantity}</inv:quantity>
-            <inv:payVAT>false</inv:payVAT>
-            <inv:rateVAT>${pohodaVatRate(line.vatRate)}</inv:rateVAT>
-            <inv:homeCurrency>
-              <typ:unitPrice>${money(line.unitPriceMinor)}</typ:unitPrice>
-              <typ:price>${money(base)}</typ:price>
-              <typ:priceVAT>${money(vat)}</typ:priceVAT>
-              <typ:priceSum>${money(base + vat)}</typ:priceSum>
-            </inv:homeCurrency>
-          </inv:invoiceItem>`;
+  const discount = line.discount;
+  if (discount === undefined || discount.kind === 'PERCENT') {
+    return itemElement({
+      base,
+      ...(discount === undefined ? {} : { discountPercentage: discount.value }),
+      label: line.description,
+      quantity: line.quantity,
+      rate: line.vatRate,
+      unitPrice: line.unitPriceMinor,
+      vat,
+    });
+  }
+  const gross = lineGrossMinor(line);
+  const grossVat = lineVatMinor({ quantity: line.quantity, unitPriceMinor: line.unitPriceMinor, vatRate: line.vatRate });
+  return [
+    itemElement({
+      base: gross,
+      label: line.description,
+      quantity: line.quantity,
+      rate: line.vatRate,
+      unitPrice: line.unitPriceMinor,
+      vat: grossVat,
+    }),
+    itemElement({
+      base: base - gross,
+      label: `Sleva: ${discount.reason}`,
+      quantity: 1,
+      rate: line.vatRate,
+      unitPrice: base - gross,
+      vat: vat - grossVat,
+    }),
+  ].join('\n');
 };
 
 const summaryXml = (invoice: Invoice, recap: readonly VatRecapEntry[] | undefined) => {

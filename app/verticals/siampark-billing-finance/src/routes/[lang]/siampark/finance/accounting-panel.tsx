@@ -20,6 +20,7 @@ import { downloadText, outcomeMessage } from './finance-ui.tsx';
 import type { FinanceViewModel } from './finance-ui.tsx';
 import { customerOf } from './invoice-view.ts';
 import { useInvoiceIssuer } from './use-invoice-issuer.ts';
+import { EXPORT_STATUS } from './invoice-extras.tsx';
 
 const at = (value: DateTime.Utc) => formatDateTime(DateTime.formatIso(value));
 
@@ -65,16 +66,11 @@ const ALL_FIELDS = [...SETUP_FIELDS, ...ISSUER_FIELDS] as const;
 const present = (value: string | null | undefined): value is string =>
   value !== null && value !== undefined && value !== '';
 
-const statusBadge = (entry: AccountingExport) =>
-  entry.status === 'HANDED_OVER' ? (
-    <Badge className="whitespace-nowrap" size="sm" variant="info">
-      Předáno – čeká na potvrzení účetní
-    </Badge>
-  ) : (
-    <Badge className="whitespace-nowrap" size="sm" variant="success">
-      Potvrdila účetní
-    </Badge>
-  );
+const statusBadge = (entry: AccountingExport) => (
+  <Badge className="whitespace-nowrap" size="sm" variant={EXPORT_STATUS[entry.status].variant}>
+    {EXPORT_STATUS[entry.status].label}
+  </Badge>
+);
 
 /** Readable author label (display hint) next to the authenticated principal the server stored. */
 const authorText = (entry: AccountingExport) => entry.actorLabel ?? 'neznámý uživatel';
@@ -85,7 +81,12 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
   const setup = state?.accountingSetup ?? {};
   const exports = [...(state?.accountingExports ?? [])].reverse();
   const confirmed = (state?.invoices ?? []).filter((invoice) => invoice.businessState === 'CONFIRMED');
-  const handedOver = new Set((state?.accountingExports ?? []).flatMap((entry) => entry.invoiceResourceIds));
+  // A failed package hands nothing over: its invoices go into the next package again.
+  const handedOver = new Set(
+    (state?.accountingExports ?? []).filter((entry) => entry.status !== 'FAILED').flatMap((entry) => entry.invoiceResourceIds),
+  );
+  const [failTarget, setFailTarget] = useState<AccountingExport>();
+  const [failReason, setFailReason] = useState('');
   const [onlyNew, setOnlyNew] = useState(true);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [format, setFormat] = useState<AccountingExportFormat>('CSV');
@@ -175,7 +176,7 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
       setSelected(new Set());
       setMessage({
         kind: 'success',
-        text: `Balíček s ${ids.length} doklady je uložen v historii a připraven ke stažení.`,
+        text: `Balíček je připravený (stav „Připraveno k předání“). Stáhněte soubor, pošlete ho účetní a v historii klikněte na Předat účetní.`,
       });
     } else {
       setMessage({
@@ -185,6 +186,40 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
             ? 'Balíček nevznikl: vystavitele nebo údaje partnerů z adresáře se teď nepodařilo ověřit. Nic se neuložilo, zkuste to prosím znovu.'
             : outcomeMessage(vm, outcome),
       });
+    }
+  };
+
+  const handOver = async (entry: AccountingExport) => {
+    const outcome = await vm.execute(
+      {
+        _tag: 'HandOverAccountingExport',
+        ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
+        exportId: entry.id,
+      },
+      `Balíček ${entry.batchNumber} předán účetní`,
+    );
+    if (!outcome.ok) {
+      setMessage({ kind: 'error', text: outcomeMessage(vm, outcome) });
+    }
+  };
+
+  const markFailed = async () => {
+    if (failTarget === undefined || failReason.trim() === '') {
+      return;
+    }
+    const outcome = await vm.execute(
+      {
+        _tag: 'MarkAccountingExportFailed',
+        ...(vm.actorLabel === undefined ? {} : { actorLabel: vm.actorLabel }),
+        exportId: failTarget.id,
+        reason: failReason.trim(),
+      },
+      `Balíček ${failTarget.batchNumber} označen jako chybný`,
+    );
+    setFailTarget(undefined);
+    setFailReason('');
+    if (!outcome.ok) {
+      setMessage({ kind: 'error', text: outcomeMessage(vm, outcome) });
     }
   };
 
@@ -551,6 +586,17 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                     <Table.Cell>
                       <span className="flex flex-col gap-50">
                         {statusBadge(entry)}
+                        {entry.handedOverAt !== undefined && (
+                          <span className="text-fg-secondary text-xs">
+                            předáno {entry.handedOverByLabel ?? ''} · {at(entry.handedOverAt)}
+                          </span>
+                        )}
+                        {entry.status === 'FAILED' && (
+                          <span className="max-w-56 break-words text-xs" style={{ color: 'var(--color-danger)' }}>
+                            {entry.failureReason ?? 'Chyba'}
+                            {entry.failedAt === undefined ? '' : ` · ${entry.failedByLabel ?? ''} ${at(entry.failedAt)}`}
+                          </span>
+                        )}
                         {entry.confirmedAt !== undefined && (
                           <span className="text-fg-secondary text-xs">
                             {entry.confirmedByLabel ?? ''} · {at(entry.confirmedAt)}
@@ -575,6 +621,19 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                             Stáhnout
                           </Button>
                         )}
+                        {vm.canWrite && entry.status === 'PREPARED' && (
+                          <Button
+                            className="whitespace-nowrap"
+                            disabled={vm.busy}
+                            icon="icon-[mdi--send-check-outline]"
+                            onClick={() => void handOver(entry)}
+                            size="sm"
+                            theme="outlined"
+                            variant="secondary"
+                          >
+                            Předat účetní
+                          </Button>
+                        )}
                         {vm.canWrite && entry.status === 'HANDED_OVER' && (
                           <Button
                             className="whitespace-nowrap"
@@ -586,6 +645,20 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
                             Potvrzení účetní
                           </Button>
                         )}
+                        {vm.canWrite && (entry.status === 'PREPARED' || entry.status === 'HANDED_OVER') && (
+                          <Button
+                            className="whitespace-nowrap"
+                            onClick={() => {
+                              setFailReason('');
+                              setFailTarget(entry);
+                            }}
+                            size="sm"
+                            theme="borderless"
+                            variant="secondary"
+                          >
+                            Označit chybu
+                          </Button>
+                        )}
                       </span>
                     </Table.Cell>
                   </Table.Row>
@@ -595,6 +668,39 @@ export const AccountingPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
           </FinanceTableScroll>
         )}
       </SectionCard>
+      <Dialog
+        actions={
+          <>
+            <Button onClick={() => setFailTarget(undefined)} theme="outlined" variant="secondary">
+              Zrušit
+            </Button>
+            <Button disabled={failReason.trim() === '' || vm.busy} onClick={() => void markFailed()} variant="danger">
+              Uložit chybu
+            </Button>
+          </>
+        }
+        closeLabel={dialogCloseLabel}
+        customTrigger
+        description="Např. účetní systém import odmítl nebo v balíčku chybí doklad. Doklady z chybného balíčku lze zařadit do nového."
+        onOpenChange={(details) => {
+          if (!details.open) {
+            setFailTarget(undefined);
+          }
+        }}
+        open={failTarget !== undefined}
+        placement="center"
+        size="sm"
+        title={`Chyba předání ${failTarget?.batchNumber ?? ''}`}
+      >
+        <FormInput
+          id="export-failure"
+          label="Popis chyby"
+          onChange={(event) => setFailReason(event.target.value)}
+          placeholder="např. POHODA odmítla import – chybí DIČ odběratele"
+          size="sm"
+          value={failReason}
+        />
+      </Dialog>
       <Dialog
         actions={
           <>

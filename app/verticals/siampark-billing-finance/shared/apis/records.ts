@@ -39,9 +39,23 @@ export const AccountingSyncStateSchema = Schema.Literals(['NOT_SYNCED', 'PENDING
 /** Czech VAT rates in whole percent. */
 export const VatRateSchema = Schema.Literals([0, 10, 12, 21]);
 export type VatRate = typeof VatRateSchema.Type;
+/**
+ * Approved line discount (S07.R4): a whole percentage of the line amount or a fixed amount in haléře, always with
+ * its reason. The discount is shown separately on the line and in the totals; it is approved with the document.
+ */
+export const LineDiscountSchema = Schema.Struct({
+  kind: Schema.Literals(['PERCENT', 'AMOUNT']),
+  reason: FinanceTextSchema,
+  /** PERCENT: 1–100 (whole percent). AMOUNT: haléře, at most the line amount. */
+  value: Schema.Int.check(Schema.isGreaterThan(0), Schema.isLessThanOrEqualTo(1_000_000_000_000)),
+});
+export type LineDiscount = typeof LineDiscountSchema.Type;
 /** One invoice line; a snapshot that is never re-priced from the catalog after it is stored. */
 export const InvoiceLineSchema = Schema.Struct({
   description: FinanceTextSchema,
+  discount: Schema.optionalKey(LineDiscountSchema),
+  /** Finance price-list item the line was filled from (snapshot; later price-list changes do not reach it). */
+  priceListItemId: Schema.optionalKey(FinanceTextSchema),
   productId: Schema.optionalKey(FinanceProductIdSchema),
   quantity: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(1_000_000)),
   unitPriceMinor: MoneyMinorSchema,
@@ -91,8 +105,45 @@ export const CalendarMonthSchema = Schema.String.check(Schema.isPattern(/^\d{4}-
 export const FinanceLongTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(4000));
 /** Purchase-order identity in the same tenant/legal-entity finance aggregate. */
 export const SourceOrderSchema = Schema.Struct({ id: FinanceTextSchema, number: FinanceTextSchema });
+/** Earlier advance/partial invoice whose amount a final or partial invoice takes into account (S07.R2). */
+export const PriorSettlementEntrySchema = Schema.Struct({
+  amountMinor: MoneyMinorSchema.check(Schema.isGreaterThan(0)),
+  invoiceResourceId: FinanceTextSchema,
+  number: FinanceTextSchema,
+});
+/** Amounts of earlier documents a user confirmed by hand; OntOS performs no automatic tax settlement. */
+export const PriorSettlementSchema = Schema.Struct({
+  confirmedAt: Schema.DateTimeUtcFromString,
+  confirmedByLabel: Schema.optionalKey(FinanceTextSchema),
+  confirmedByPrincipalId: Schema.optionalKey(FinanceTextSchema),
+  entries: Schema.Array(PriorSettlementEntrySchema).check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+  note: Schema.optionalKey(FinanceTextSchema),
+});
+export type PriorSettlement = typeof PriorSettlementSchema.Type;
+/** Agreed early-payment discount (skonto) and late-payment interest, as text or a hand-approved amount (S09). */
+export const PaymentTermsSchema = Schema.Struct({
+  lateInterestApprovedMinor: Schema.optionalKey(MoneyMinorSchema),
+  lateInterestText: Schema.optionalKey(FinanceTextSchema),
+  skontoApprovedMinor: Schema.optionalKey(MoneyMinorSchema),
+  skontoText: Schema.optionalKey(FinanceTextSchema),
+  updatedAt: Schema.DateTimeUtcFromString,
+  updatedByLabel: Schema.optionalKey(FinanceTextSchema),
+  updatedByPrincipalId: Schema.optionalKey(FinanceTextSchema),
+});
+export type PaymentTerms = typeof PaymentTermsSchema.Type;
 /** Optional invoice fields added for the sales demo v2; all optional so stored states keep decoding. */
 export const InvoiceDemoFields = {
+  /** S07.R5 "schváleno": who approved (confirmed) the document and when. */
+  approvedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  approvedByLabel: Schema.optionalKey(FinanceTextSchema),
+  /** Středisko (cost centre) label of the document, used by budgets and the accounting handover. */
+  costCenter: Schema.optionalKey(FinanceTextSchema),
+  paymentTerms: Schema.optionalKey(PaymentTermsSchema),
+  preparedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  preparedByLabel: Schema.optionalKey(FinanceTextSchema),
+  priorSettlement: Schema.optionalKey(PriorSettlementSchema),
+  /** S07.R5 "připraveno": a draft moved to approval (k odsouhlasení). Absent on a plain draft. */
+  reviewState: Schema.optionalKey(Schema.Literal('PREPARED')),
   /** Auditable replacement: the original issued document keeps its identity and customer snapshot. */
   correctsInvoiceRef: Schema.optionalKey(InvoiceRefSchema),
   sourceOrder: Schema.optionalKey(SourceOrderSchema),
@@ -248,6 +299,13 @@ export type AccountingExportFormat = typeof AccountingExportFormatSchema.Type;
 export const ACCOUNTING_EXPORT_SCHEMA_VERSION = 'ontos-finance-export/1';
 /** Version of the STORMWARE POHODA XML `dat:dataPack` the POHODA_XML format produces. */
 export const POHODA_DATAPACK_VERSION = '2.0';
+export const AccountingExportStatusSchema = Schema.Literals([
+  'PREPARED',
+  'HANDED_OVER',
+  'CONFIRMED_BY_ACCOUNTANT',
+  'FAILED',
+]);
+export type AccountingExportStatus = typeof AccountingExportStatusSchema.Type;
 /** A handover package for the accountant (S08). Never means "booked": at most "confirmed by the accountant". */
 export const AccountingExportSchema = Schema.Struct({
   ...ActorFields,
@@ -266,16 +324,25 @@ export const AccountingExportSchema = Schema.Struct({
   issuerName: Schema.optionalKey(FinanceTextSchema),
   schemaVersion: Schema.Literal(ACCOUNTING_EXPORT_SCHEMA_VERSION),
   sha256: FinanceTextSchema,
-  status: Schema.Literals(['HANDED_OVER', 'CONFIRMED_BY_ACCOUNTANT']),
+  /** S08: PREPARED (file built) → HANDED_OVER → CONFIRMED_BY_ACCOUNTANT, or FAILED with a reason. */
+  status: AccountingExportStatusSchema,
+  failedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  failedByLabel: Schema.optionalKey(FinanceTextSchema),
+  failureReason: Schema.optionalKey(FinanceTextSchema),
+  handedOverAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
+  handedOverByLabel: Schema.optionalKey(FinanceTextSchema),
   version: Schema.Int.check(Schema.isGreaterThan(0)),
 });
 export type AccountingExport = typeof AccountingExportSchema.Type;
 export const BudgetKindSchema = Schema.Literals(['COST', 'REVENUE']);
-/** User-editable monthly budget line per category (S09.R2). */
+/** User-editable monthly budget line per category, optionally for one property/unit or středisko (S09.R2). */
 export const BudgetLineSchema = Schema.Struct({
   ...ActorFields,
   actualManualMinor: Schema.optionalKey(MoneyMinorSchema),
   category: FinanceTextSchema,
+  costCenter: Schema.optionalKey(FinanceTextSchema),
+  propertyRef: Schema.optionalKey(PropertyRefSchema),
+  unitRef: Schema.optionalKey(UnitRefSchema),
   explanation: Schema.optionalKey(FinanceTextSchema),
   id: FinanceTextSchema,
   kind: BudgetKindSchema,
@@ -284,6 +351,41 @@ export const BudgetLineSchema = Schema.Struct({
   updatedAt: Schema.DateTimeUtcFromString,
 });
 export type BudgetLine = typeof BudgetLineSchema.Type;
+/** S09 financial-plan item: an expected income or expense with an optional probability and relation. */
+export const PlanItemSchema = Schema.Struct({
+  ...ActorFields,
+  amountMinor: MoneyMinorSchema.check(Schema.isGreaterThan(0)),
+  contractRef: Schema.optionalKey(ContractRefSchema),
+  createdAt: Schema.DateTimeUtcFromString,
+  currency: Schema.Literal('CZK'),
+  expectedDate: CalendarDateSchema,
+  id: FinanceTextSchema,
+  kind: BudgetKindSchema,
+  note: Schema.optionalKey(FinanceTextSchema),
+  /** Optional probability in whole percent; absent means the item is certain. */
+  probabilityPercent: Schema.optionalKey(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(100)),
+  ),
+  projectName: Schema.optionalKey(FinanceTextSchema),
+  propertyRef: Schema.optionalKey(PropertyRefSchema),
+  title: FinanceTextSchema,
+  unitRef: Schema.optionalKey(UnitRefSchema),
+  updatedAt: Schema.DateTimeUtcFromString,
+});
+export type PlanItem = typeof PlanItemSchema.Type;
+/** Finance price list (ceník) of services the company invoices; lines copy a snapshot of an item. */
+export const PriceListItemSchema = Schema.Struct({
+  ...ActorFields,
+  active: Schema.Boolean,
+  code: Schema.optionalKey(FinanceTextSchema),
+  id: FinanceTextSchema,
+  name: FinanceTextSchema,
+  unit: Schema.optionalKey(FinanceTextSchema),
+  unitPriceMinor: MoneyMinorSchema,
+  updatedAt: Schema.DateTimeUtcFromString,
+  vatRate: VatRateSchema,
+});
+export type PriceListItem = typeof PriceListItemSchema.Type;
 /** Manually confirmed opening balance for the cash-flow forecast; it is not a bank balance. */
 export const CashFlowOpeningSchema = Schema.Struct({
   ...ActorFields,
@@ -306,6 +408,8 @@ export const FinanceStateSchema = Schema.Struct({
   invoices: Schema.Array(InvoiceSchema).check(Schema.isMaxLength(1000)),
   manualPayments: Schema.optionalKey(Schema.Array(ManualPaymentSchema).check(Schema.isMaxLength(5000))),
   paymentObservations: Schema.Array(PaymentObservationSchema).check(Schema.isMaxLength(5000)),
+  planItems: Schema.optionalKey(Schema.Array(PlanItemSchema).check(Schema.isMaxLength(2000))),
+  priceList: Schema.optionalKey(Schema.Array(PriceListItemSchema).check(Schema.isMaxLength(500))),
   recurringTemplates: Schema.optionalKey(Schema.Array(RecurringTemplateSchema).check(Schema.isMaxLength(500))),
   reminders: Schema.optionalKey(Schema.Array(InvoiceReminderSchema).check(Schema.isMaxLength(5000))),
 });

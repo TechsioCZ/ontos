@@ -1,5 +1,5 @@
 import type { CustomerListItem } from '@app/party-registry/api/client';
-import type { Invoice } from '../../../../../shared/apis/records.ts';
+import type { AccountingExport, Invoice } from '../../../../../shared/apis/records.ts';
 
 /** Select labels in the invoice dialog take the same label size as the FormInput, Combobox and numeric labels. */
 export const formLabelProps = { className: 'font-label text-label-md' } as const;
@@ -63,3 +63,50 @@ export const invoiceStatusBadge = (invoice: Invoice, referenceDate: string) =>
   invoice.businessState === 'CONFIRMED'
     ? ({ kind: 'payment', value: paymentKind(invoice, referenceDate) } as const)
     : ({ kind: 'invoice', value: invoice.businessState } as const);
+
+/** S07.R5 document lifecycle: návrh → připraveno → schváleno → předáno do účetnictví (→ potvrdila účetní). */
+export type InvoiceLifecycle = 'ACCOUNTANT_CONFIRMED' | 'APPROVED' | 'DRAFT' | 'HANDED_OVER' | 'PREPARED' | 'VOIDED';
+
+type ExportLike = Pick<AccountingExport, 'invoiceResourceIds' | 'status'>;
+
+/** The latest live (not failed) handover package that contains the invoice. */
+export const latestHandover = <T extends ExportLike>(invoice: Invoice, exports: readonly T[]): T | undefined =>
+  exports.filter((entry) => entry.status !== 'FAILED' && entry.invoiceResourceIds.includes(invoice.ref.resourceId)).at(-1);
+
+export const invoiceLifecycle = (invoice: Invoice, exports: readonly ExportLike[] = []): InvoiceLifecycle => {
+  if (invoice.businessState === 'VOIDED') {
+    return 'VOIDED';
+  }
+  if (invoice.businessState === 'DRAFT') {
+    return invoice.reviewState === 'PREPARED' ? 'PREPARED' : 'DRAFT';
+  }
+  const handover = latestHandover(invoice, exports);
+  if (handover?.status === 'CONFIRMED_BY_ACCOUNTANT') {
+    return 'ACCOUNTANT_CONFIRMED';
+  }
+  return handover?.status === 'HANDED_OVER' ? 'HANDED_OVER' : 'APPROVED';
+};
+
+export const LIFECYCLE_PRESENTATION: Readonly<
+  Record<InvoiceLifecycle, { readonly label: string; readonly variant: 'info' | 'primary' | 'success' | 'warning' }>
+> = {
+  ACCOUNTANT_CONFIRMED: { label: 'Předáno · potvrdila účetní', variant: 'success' },
+  APPROVED: { label: 'Schváleno', variant: 'info' },
+  DRAFT: { label: 'Návrh', variant: 'warning' },
+  HANDED_OVER: { label: 'Předáno do účetnictví', variant: 'primary' },
+  PREPARED: { label: 'Připraveno ke schválení', variant: 'warning' },
+  VOIDED: { label: 'Stornováno', variant: 'info' },
+};
+
+/** Czech plural of "potvrzený doklad" (1 doklad, 2–4 doklady, 5+ dokladů). */
+export const confirmedDocumentsLabel = (count: number): string => {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (count === 1) {
+    return '1 potvrzený doklad';
+  }
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+    return `${count} potvrzené doklady`;
+  }
+  return `${count} potvrzených dokladů`;
+};
