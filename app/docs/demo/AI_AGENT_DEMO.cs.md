@@ -1,20 +1,23 @@
-# AI agent nad ERP — úrovně A a B (podklad pro prezentujícího)
+# AI agent nad ERP — úrovně A, B a C (podklad pro prezentujícího)
 
 Cíl ukázky: AI asistent (Claude Desktop nebo Claude Code) pracuje s živými daty OntOS, ale **jen v mezích, které
-mu dal backend**. Úroveň A smí pouze číst. Úroveň B navíc zakládá a upravuje úkoly a nic jiného. Omezení
+mu dal backend**. Úroveň A smí pouze číst. Úroveň B navíc zakládá a upravuje úkoly a nic jiného. Úroveň C
+navrhuje změny příležitostí, objednávek a klientů; provede se jen to, co člověk schválí v aplikaci. Omezení
 nevzniká skrytím tlačítek v chatu. Každá úroveň má vlastní technickou identitu (servisní Principal), vlastní
 API klíč a vlastní oprávnění v jádru. Zakázaný zápis vrátí HTTP 403 i při přímém volání API a jádro ho
 zapíše do auditu jako zamítnutý pokus.
 
 | Úroveň | Identita (Principal)               | Smí                                                                  | Nesmí (backend vrací 403)                          |
 | ------ | ---------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------- |
-| A      | `ai-agent-a-obchod` (služba)       | číst objednávky, příležitosti, úkoly, zaměstnance, zákazníky, metriky | jakýkoli zápis                                     |
+| A      | `ai-agent-a-obchod` (služba)       | číst objednávky, příležitosti, faktury, úkoly, zaměstnance, zákazníky, metriky | jakýkoli zápis                                     |
 | B      | `ai-agent-b-obchod` (služba)       | totéž + vytvořit / upravit úkol                                      | příležitosti, štítky, objednávky, faktury, zákazníci |
+| C      | `ai-agent-c-obchod` (služba)       | číst + **navrhnout** změnu příležitosti nebo objednávky (schválí člověk) | přímou změnu, schválení i vrácení              |
 
 Obě identity patří jen firmě **Obchodní firma**. Pokus použít stejný klíč pro Siampark jádro odmítne.
-Stejná dvojice identit existuje i pro **Velkoobchod Hanák s.r.o.** (`ai-agent-a-hanak`, `ai-agent-b-hanak`,
-`ONTOS_AGENT_COMPANY=hanak`). Čtení CRM klientů (`demo.crm`) zatím nemá vlastní MCP nástroj, takže se ukazuje
-hlavně na Obchodní firmě.
+Stejné tři úrovně existují i pro **Velkoobchod Hanák s.r.o.** (`ai-agent-a-hanak`, `ai-agent-b-hanak`,
+`ai-agent-c-hanak`, `ONTOS_AGENT_COMPANY=hanak`). Hanák nemá příležitosti, katalog ani faktury, proto jeho
+A a B nabízejí jen čtení, která fungují: `list_crm` (klienti, kontakty, importované objednávky), zákazníci,
+zaměstnanci, úkoly a štítky. Každý nástroj, který agent vidí, vrací data; nic nekončí chybou 403.
 
 ## Příprava (jednou, před schůzkou)
 
@@ -29,8 +32,8 @@ mise exec -- node scripts/demo/prove-ai-levels.mts   # důkaz A/B proti běžíc
 
 `ai-profiles.mts` se spouští i automaticky v `scripts/demo/reset-permissions.mts`, takže po `up.sh` už klíče
 obvykle existují. Klíče jsou v `app/.env.demo.local` (necommituje se):
-`ONTOS_AGENT_A_OBCHOD_API_KEY`, `ONTOS_AGENT_B_OBCHOD_API_KEY`, `ONTOS_AGENT_A_HANAK_API_KEY`,
-`ONTOS_AGENT_B_HANAK_API_KEY`.
+`ONTOS_AGENT_A_OBCHOD_API_KEY`, `ONTOS_AGENT_B_OBCHOD_API_KEY`, `ONTOS_AGENT_C_OBCHOD_API_KEY`,
+`ONTOS_AGENT_A_HANAK_API_KEY`, `ONTOS_AGENT_B_HANAK_API_KEY`, `ONTOS_AGENT_C_HANAK_API_KEY`.
 
 Výstup důkazu (zkráceně, 20. 10. 2026 02:57):
 
@@ -138,8 +141,9 @@ data. Druhé volání vrátí `deduplicated: true` a existující úkol. Důkaz:
   oprávnění a právo spouštět Actions. Úroveň A nemá právo spustit žádnou Action. Úroveň B může spustit jen Actions modulu úkolů.
 - **Dá se to zpětně dohledat?** Ano. Každý povolený i zamítnutý pokus je v Core auditu s identitou agenta,
   akcí, firmou, výsledkem a časem.
-- **Úroveň C** pro CRM Hanák je součástí dema: návrhy klientských údajů a párování objednávek,
-  lidské schvalování a hromadné vrácení. Přesný rozsah a ukázkové pokyny jsou níže.
+- **Úroveň C** je součástí dema ve dvou firmách: v Obchodní firmě návrhy změn **příležitostí a objednávek**
+  (schvalování na **Prodej → AI změny ke schválení**), v CRM Hanák návrhy klientských údajů a párování
+  objednávek. Všude platí lidské schválení, deník a hromadné vrácení. Rozsah a ukázkové pokyny jsou níže.
 
 ## Řešení potíží
 
@@ -163,7 +167,7 @@ nástroje: `whoami`, `list_crm`, `propose_crm_changes`.
 ### Připojení
 
 Použijte stejný MCP server jako u A/B, ale prostředí `ONTOS_AGENT_PROFILE=C` a
-`ONTOS_AGENT_COMPANY=hanak` (výchozí firma profilu C). Profil C pro jinou firmu server odmítne.
+`ONTOS_AGENT_COMPANY=hanak` (výchozí firma profilu C). Pro Obchodní firmu viz další oddíl.
 Nastavení existujícího MCP klienta:
 
 ```json
@@ -206,9 +210,9 @@ mise exec -- pnpm demo:prove:ai      # původní A/B musí zůstat zelené
 
 ### Poctivé hranice ukázky
 
-- CRM Hanák neobsahuje obchodní příležitosti ani editovatelné účetní objednávky. C umí klienty,
-  kontakty, přidělení obchodníkovi, plán kontaktu a **párování importované objednávky**. Cenu, položky,
-  stav externí objednávky ani příležitosti jiného modulu měnit nesmí. Tyto části nejsou simulovány.
+- CRM Hanák neobsahuje obchodní příležitosti ani editovatelné účetní objednávky. C Hanák umí klienty,
+  kontakty, přidělení obchodníkovi, plán kontaktu a **párování importované objednávky**. Cenu, položky ani
+  stav externí objednávky měnit nesmí. Změny příležitostí a objednávek ukazuje C Obchodní firmy (níže).
 - Jedna dávka může obsahovat více úprav stejného klienta (např. telefon a web). Schválit je lze společně
   i jednotlivě v libovolném pořadí; „Vrátit vše“ obnoví původní stav celé dávky. Úprava mimo tuto dávku
   zneplatní původní porovnání: schválení ji odmítne a vyžádá nový návrh.
@@ -220,3 +224,62 @@ mise exec -- pnpm demo:prove:ai      # původní A/B musí zůstat zelené
   mezitím změnil nebo na nového klienta navazují další záznamy, backend vrácení odmítne bez částečného zápisu.
 - Tato stránka není vestavěný chat ani automaticky běžící LLM. Agent používá skutečné MCP nástroje
   připojené do klienta; důkaz volá stejný MCP server bez placeného modelového volání.
+
+## Úroveň C — Obchodní firma: příležitosti a objednávky ke schválení
+
+**Firma:** Obchodní firma (LE 0020). **Schvalovatel:** `obchod@demo.ontos` (vedoucí obchodu), heslo
+`password1234`. **Stránka:** <http://localhost:3020/cs/prodej/schvalovani-ai> — Prodej → **AI změny ke schválení**.
+
+C je samostatný servisní principal `ai-agent-c-obchod` s klíčem `ONTOS_AGENT_C_OBCHOD_API_KEY`. Smí spustit
+Actions příležitostí a objednávek, ale **nemá právo zápisu** (`write_all`). Moduly proto přijmou jen
+`AiProposeChanges`; přímá změna fáze, storno objednávky, schválení i vrácení týmž klíčem skončí HTTP 403.
+Nástroje v MCP: `whoami`, `list_opportunities`, `list_orders`, `list_customers`, `list_employees`,
+`list_products`, `propose_sales_changes`, `list_ai_proposals`.
+
+Co smí navrhnout: změnu fáze příležitosti, předání obchodníkovi, úpravu názvu / termínu / pravděpodobnosti /
+položek / poznámky, novou příležitost; u objednávky změnu stavu (např. storno) a úpravu položek, dopravy,
+adresy, kontaktu nebo poznámky. Každý návrh nejdřív projde „nanečisto“ stejnými pravidly modulu: uzavřenou
+příležitost nebo nepovolený přechod stavu objednávky agent zjistí hned, bez zápisu.
+
+### Připojení
+
+```json
+"env": { "ONTOS_AGENT_PROFILE": "C", "ONTOS_AGENT_COMPANY": "obchod" }
+```
+
+```bash
+cd /Volumes/TraceDecayKingston/techsio-demo/ontos-runtime/app
+mise exec -- pnpm demo:ai-profiles          # idempotentní; vydá klíč C pro Obchodní firmu
+mise exec -- pnpm demo:prove:ai:c:obchod    # MCP → pending → vedoucí schválí → zápis + sklad → Vrátit vše
+```
+
+### České ukázkové pokyny
+
+1. „Které příležitosti jsou ve fázi Nabídka a kdo je má na starosti? Zatím nic neměň.“
+2. „Serverovnu pro Kroměřížskou tiskárnu posuň do Vyjednávání, zákazník potvrdil zájem. Jen připrav návrh.“
+3. „Nepřiřazenou příležitost na serverovnu předej Petru Svobodovi. Použij skutečné id z list_employees.“
+4. „Objednávku OBJ-2026-0023 zákazník zrušil. Navrhni storno a do důvodu napiš, že přišel e-mail.“
+5. „Udělej to rovnou bez schvalování.“ → agent vysvětlí, že smí jen navrhovat; přímé API vrací 403.
+
+### Ukázka v aplikaci
+
+1. Agent uloží návrh (`status: pending`, odkaz na schvalování). Data se nemění: příležitost je stále ve
+   své fázi, objednávka nová, sklad beze změny.
+2. Vedoucí otevře **Prodej → AI změny ke schválení**. Jeden běh agenta je jedna dávka (příležitosti +
+   objednávky), u každé změny vidí důvod, riziko a **Před změnou / Po schválení** se jmény obchodníků a zákazníků.
+3. **Schválit změnu** / **Schválit dávku** provede uložený příkaz jako vedoucí (Core audit, stage-change
+   událost, u storna se zboží vrátí na sklad). **Zamítnout** nic nezmění.
+4. **Všechny dávky → Vrátit vše → Potvrdit**: příležitosti se vrátí do původní fáze a k původnímu
+   obchodníkovi, objednávka do původního stavu a skladový pohyb se vyrovná protipohybem. Nová příležitost se
+   archivuje. Když záznam mezitím upravil člověk, vrácení se odmítne a nic nepřepíše.
+5. **Deník AI a schvalování** ukáže návrh agenta, rozhodnutí (jménem schvalovatele) a vrácení.
+
+### Poctivé hranice (Obchodní firma)
+
+- Schvalovat smí uživatel s právem zápisu do daného modulu: příležitosti vedoucí i obchodník, objednávky
+  vedoucí (obchodník je vidí, ale schválit je nemůže). Stránku vidí jen uživatelé s právem zápisu do příležitostí.
+- Klienty (zákazníky Party Registry) C Obchodní firmy nemění; návrhy klientských údajů ukazuje C Hanák.
+- Jedna dávka smí měnit každý záznam jen jednou (např. buď storno, nebo úpravu téže objednávky).
+- Návrh a jeho výsledek žijí v modulu, kterého se týkají (příležitosti / objednávky); stránka je zobrazuje
+  společně. Vrácení celé dávky proběhne v každém modulu atomicky.
+

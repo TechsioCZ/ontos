@@ -321,6 +321,14 @@ const logEntry = (
   invocationId: context.invocationId,
 });
 
+/** Czech plural: 1 změna vrácena, 2–4 změny vráceny, 0/5+ změn vráceno. */
+const revertedCount = (count: number) =>
+  count === 1
+    ? '1 provedená změna vrácena'
+    : count >= 2 && count <= 4
+      ? `${count} provedené změny vráceny`
+      : `${count} provedených změn vráceno`;
+
 const subInvocation = (context: AiContext, suffix: string) => deriveAiUuid(`${context.invocationId}:${suffix}`);
 
 export interface AiProposal<Operation> {
@@ -640,7 +648,7 @@ export const revertAiBatch = <State, Operation extends { readonly _tag: string }
         action: 'batch_reverted',
         actorKind: 'human',
         batchId: batch.id,
-        message: `Vrátit vše: ${applied.length} provedených změn vráceno do původního stavu.`,
+        message: `Vrátit vše: ${revertedCount(applied.length)} do původního stavu.`,
       }),
     );
     const current = sliceOf(adapter, working);

@@ -12,12 +12,16 @@ Workspace tool installed and validated with the application from `app/`.
 | `ONTOS_COMPOSITION_REVISION`               | no       | from the publisher             | Live release revision (64 hex). The shell rejects other values           |
 | `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL` | no       | `http://127.0.0.1:3041/active` | Composition publisher; supplies the revision when it is missing or stale |
 | `ONTOS_LEGAL_ENTITY_ID`                    | no       | none                           | UUID of the legal entity to scope assertions to                          |
-| `ONTOS_AGENT_PROFILE`                      | no       | none (legacy `agent-bot`)      | `A` read-only or `B` reads + tasks; registers only that level's tools    |
-| `ONTOS_AGENT_COMPANY`                      | no       | `obchod`                       | `obchod` or `hanak`; picks `ONTOS_AGENT_<A\|B>_<COMPANY>_API_KEY`         |
+| `ONTOS_AGENT_PROFILE`                      | no       | none (legacy `agent-bot`)      | `A` read-only, `B` reads + tasks, `C` proposals a person approves       |
+| `ONTOS_AGENT_COMPANY`                      | no       | `obchod` (C: `hanak`)          | `obchod` or `hanak`; picks `ONTOS_AGENT_<A\|B\|C>_<COMPANY>_API_KEY`      |
 
 With `ONTOS_AGENT_PROFILE` the key comes from `ONTOS_AGENT_<PROFILE>_<COMPANY>_API_KEY` (never the broader legacy
-key) and the legal entity from the company. Principals, grants and keys: `scripts/demo/ai-profiles.mts`; proof
-against the running demo: `pnpm demo:prove:ai`; presenter guide: `app/docs/demo/AI_AGENT_DEMO.cs.md`.
+key) and the legal entity from the company. Only tools whose reads work with that company's grants are registered
+(`src/profiles.ts`). Level C: Hanák proposes CRM changes (`propose_crm_changes`, approved on `/crm/schvalovani-ai`);
+Obchodní firma proposes opportunity and order changes (`propose_sales_changes`, `list_ai_proposals`, approved on
+`/prodej/schvalovani-ai`). Principals, grants and keys: `scripts/demo/ai-profiles.mts`; proofs against the running
+demo: `pnpm demo:prove:ai`, `demo:prove:ai:c`, `demo:prove:ai:c:obchod`; presenter guide:
+`app/docs/demo/AI_AGENT_DEMO.cs.md`.
 
 Process environment wins. Missing values are read from `app/.env.demo.local` (`KEY=VALUE` lines).
 That file is gitignored by `**/.env.*` in `app/.gitignore`. `scripts/demo/reset-permissions.mts` writes the key,

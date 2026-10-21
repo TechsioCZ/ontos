@@ -138,6 +138,7 @@
     "demo:ai-profiles": "node scripts/demo/ai-profiles.mts",
     "demo:prove:ai": "node scripts/demo/prove-ai-levels.mts",
     "demo:prove:ai:c": "node scripts/demo/prove-ai-c.mts",
+    "demo:prove:ai:c:obchod": "node scripts/demo/prove-ai-c-obchod.mts",
     "demo:seed:rental": "node scripts/demo/seed-rental-demo.mts",
     "demo:seed:crm": "node --env-file=.env verticals/crm/scripts/reset-demo.mts --sales-demo",
     "demo:seed:akros": "node verticals/merchandise/scripts/seed-akros.mts",
