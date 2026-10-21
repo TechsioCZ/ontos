@@ -133,9 +133,7 @@ const occupancyRevert = ({ before, command, tenantId }: AgentRevertInput): Agent
   switch (command['_tag']) {
     case 'SetRentTerms': {
       const rentTerms = before?.['rentTerms'];
-      return isRecord(rentTerms)
-        ? commands([{ _tag: 'SetRentTerms', occupancyRef, rentTerms }])
-        : none(MISSING_BEFORE);
+      return isRecord(rentTerms) ? commands([{ _tag: 'SetRentTerms', occupancyRef, rentTerms }]) : none(MISSING_BEFORE);
     }
     case 'UpdateDraft': {
       if (before === undefined || typeof before['startDate'] !== 'string') return none(MISSING_BEFORE);
@@ -207,9 +205,7 @@ const replaceCreatedId = (value: unknown, created: string): unknown => {
   if (value === AGENT_CREATED_ID_PLACEHOLDER) return created;
   if (Array.isArray(value)) return value.map((item: unknown) => replaceCreatedId(item, created));
   if (isRecord(value)) {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, item]) => [key, replaceCreatedId(item, created)]),
-    );
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, replaceCreatedId(item, created)]));
   }
   return value;
 };
@@ -227,4 +223,23 @@ export const resolveAgentRevertPlan = (
     commands: plan.commands.map((command) => replaceCreatedId(command, created) as AgentCommand),
     kind: 'commands',
   };
+};
+
+const REVERTIBLE_COMMANDS: Readonly<Record<string, ReadonlySet<string>>> = {
+  merchandise: new Set(['ChangePrice', 'UpdateProduct', 'CreateProduct']),
+  'property-leasing': new Set(['SetRentTerms', 'UpdateDraft', 'CreateDraft']),
+  'work-tasks': new Set(['CreateTask', 'UpdateTask', 'ChangeTaskState', 'AssignTask']),
+};
+
+/**
+ * For a proposal that is still pending: why its change will not be undoable by „Vrátit vše“, or undefined when the
+ * module declares an undo for this command (the exact plan is built from the live record at approval).
+ */
+export const agentRevertUnavailableBeforeApproval = (appId: string, command: AgentCommand): string | undefined => {
+  const tag = command['_tag'];
+  if (typeof tag === 'string' && REVERTIBLE_COMMANDS[appId]?.has(tag) === true) return undefined;
+  if (appId === 'property-leasing' && ['Confirm', 'Activate', 'Complete', 'Cancel'].includes(String(tag))) {
+    return RENT_STATE_UNAVAILABLE;
+  }
+  return AGENT_REVERT_UNAVAILABLE;
 };

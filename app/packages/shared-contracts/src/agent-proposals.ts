@@ -106,12 +106,17 @@ export const AgentQueueItemSchema = Schema.Struct({
   appId: Schema.String,
   /** True when the current person may approve/reject this item (module write permission). */
   canDecide: Schema.Boolean,
-  /** Exact module command an approval runs (core queue only); the diff above is the agent's own description. */
+  /** Exact module command an approval runs (core queue only). */
   command: Schema.optionalKey(AgentCommandSchema),
   decidedAt: Schema.optionalKey(Schema.String),
   decidedByName: Schema.optionalKey(Schema.String),
   decisionNote: Schema.optionalKey(Schema.String),
   diff: Schema.Array(AgentDiffLineSchema),
+  /**
+   * `platform`: lines built by the platform from the stored command and the record (live while pending).
+   * `agent`: the platform does not understand this command; the lines are the agent's own description.
+   */
+  diffSource: Schema.optionalKey(Schema.Literals(['platform', 'agent'])),
   failure: Schema.optionalKey(Schema.String),
   /** `core:<proposalId>` or `legacy:<appId>:<changeId>`; pass back unchanged in decide requests. */
   key: Schema.String,

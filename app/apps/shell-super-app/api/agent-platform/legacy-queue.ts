@@ -12,27 +12,50 @@ export type LegacyBatchesResult =
   | { readonly state: 'unavailable' }
   | { readonly batches: AgentQueueBatch[]; readonly state: 'ok' };
 
-/** Reads one legacy module's `aiChanges` queue. A module that is not installed or not visible counts as absent. */
+const ABSENT: LegacyBatchesResult = { state: 'absent' };
+const UNAVAILABLE: LegacyBatchesResult = { state: 'unavailable' };
+
+const readLegacyOnce = (
+  principal: TrustedPrincipalContext,
+  module: AgentApprovalModule,
+  options: { readonly canDecide: boolean; readonly names: ReadonlyMap<string, string> },
+) =>
+  Effect.gen(function* readLegacyOnce() {
+    const result = yield* callModuleAs(principal, module.appId, '/reads/records', recordsQueryFor(module.appId)).pipe(
+      Effect.result,
+    );
+    if (result._tag === 'Failure') {
+      return result.failure.stage === 'assertion' ? ABSENT : UNAVAILABLE;
+    }
+    const response = result.success;
+    if (response.status === 403 || response.status === 404) {
+      return ABSENT;
+    }
+    if (response.status !== 200) {
+      return UNAVAILABLE;
+    }
+    const ok: LegacyBatchesResult = {
+      batches: normalizeLegacySlice(module, sliceFromRecords(response.body), options),
+      state: 'ok',
+    };
+    return ok;
+  });
+
+/**
+ * Reads one legacy module's `aiChanges` queue. A module that is not installed or not visible counts as absent. A
+ * module that just restarted can refuse the first call (401/5xx), so an unavailable read is retried once.
+ */
 export const readLegacyBatches = Effect.fn('AgentPlatform.readLegacyBatches')(function* readLegacyBatches(
   principal: TrustedPrincipalContext,
   module: AgentApprovalModule,
   options: { readonly canDecide: boolean; readonly names: ReadonlyMap<string, string> },
 ) {
-  const result = yield* callModuleAs(principal, module.appId, '/reads/records', recordsQueryFor(module.appId)).pipe(
-    Effect.result,
-  );
-  if (result._tag === 'Failure') {
-    return (
-      result.failure.stage === 'assertion' ? { state: 'absent' } : { state: 'unavailable' }
-    ) as LegacyBatchesResult;
+  const first = yield* readLegacyOnce(principal, module, options);
+  if (first.state !== 'unavailable') {
+    return first;
   }
-  const response = result.success;
-  if (response.status === 403 || response.status === 404) return { state: 'absent' } as const;
-  if (response.status !== 200) return { state: 'unavailable' } as const;
-  return {
-    batches: normalizeLegacySlice(module, sliceFromRecords(response.body), options),
-    state: 'ok' as const,
-  };
+  yield* Effect.sleep('600 millis');
+  return yield* readLegacyOnce(principal, module, options);
 });
 
 export const decideLegacy = (

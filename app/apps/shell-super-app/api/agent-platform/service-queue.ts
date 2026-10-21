@@ -16,16 +16,22 @@ import type {
   AgentQueueBatch,
   AgentQueueResponse,
 } from '@app/shared-contracts/agent-proposals';
+import { agentPlatformDiff } from '@app/shared-contracts/agent-diff';
 import { Effect } from 'effect';
 
+import { loadAgentProfiles } from '../auth/agent-store.ts';
+
 import { AgentPlatformForbidden, AgentPlatformInvalid, callerModuleAccess } from './caller.ts';
+import { readTargetEntity } from './service-decide.ts';
 import type { AgentPlatformCaller } from './caller.ts';
 import { readLegacyBatches } from './legacy-queue.ts';
 import { rowsToQueueBatches } from './mappers.ts';
 import {
+  AgentStoreUnavailable,
   findRunProposals,
   insertProposals,
   listAgentActivity,
+  listCompanyAgentIds,
   listCompanyProposals,
   principalNames,
 } from './proposal-store.ts';
@@ -77,6 +83,9 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
     if (typeof tag !== 'string' || tag === '' || HUMAN_ONLY_COMMANDS.has(tag)) {
       return yield* new AgentPlatformInvalid({ reason: `Návrh ${index + 1} nemá povolený příkaz modulu.` });
     }
+    // The platform describes commands it understands itself (read as the agent), never trusting the agent's diff.
+    const target = yield* readTargetEntity(agent.principal, module.appId, proposal.command);
+    const platformDiff = agentPlatformDiff(module.appId, proposal.command, target.needed ? target.value : undefined);
     rows.push({
       actionSlug: proposal.actionSlug ?? 'apply-command',
       agentLabel: request.agentLabel ?? names.get(principalId) ?? 'AI agent',
@@ -85,7 +94,7 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
       batchId,
       batchInstruction: request.instruction,
       command: proposal.command,
-      diff: proposal.diff,
+      diff: platformDiff ?? proposal.diff,
       legalEntityId,
       moduleKey: module.moduleKey,
       position: index,
@@ -115,7 +124,10 @@ export const listOwnAgentBatches = Effect.fn('AgentPlatform.listOwnAgentBatches'
   agent: AgentPlatformCaller,
 ) {
   const { legalEntityId, principalId, tenantId } = agent.principal;
-  const rows = yield* listCompanyProposals(tenantId, legalEntityId, { agentPrincipalId: principalId, limit: QUEUE_LIMIT });
+  const rows = yield* listCompanyProposals(tenantId, legalEntityId, {
+    agentPrincipalId: principalId,
+    limit: QUEUE_LIMIT,
+  });
   const names = yield* principalNames(tenantId);
   const batches = rowsToQueueBatches(rows, { canDecide: () => false, names });
   return {
@@ -136,11 +148,23 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
     return yield* new AgentPlatformForbidden({ reason: NO_DECIDER });
   }
   const names = yield* principalNames(tenantId);
-  const rows = yield* listCompanyProposals(tenantId, legalEntityId, { limit: QUEUE_LIMIT });
-  const coreBatches = rowsToQueueBatches(
-    rows.filter((row) => modules.access.has(row.moduleKey) || modules.write.has(row.moduleKey)),
-    { canDecide: (moduleKey) => modules.write.has(moduleKey), names },
+  const rows = (yield* listCompanyProposals(tenantId, legalEntityId, { limit: QUEUE_LIMIT })).filter(
+    (row) => modules.access.has(row.moduleKey) || modules.write.has(row.moduleKey),
   );
+  // Pending items show "before" from the live record, read as this person.
+  const live = yield* Effect.forEach(
+    rows.filter((row) => row.status === 'pending'),
+    (row) =>
+      readTargetEntity(caller.principal, row.appId, row.command).pipe(
+        Effect.map((read) => (read.needed && read.value !== undefined ? [[row.proposalId, read.value] as const] : [])),
+      ),
+    { concurrency: 4 },
+  );
+  const coreBatches = rowsToQueueBatches(rows, {
+    canDecide: (moduleKey) => modules.write.has(moduleKey),
+    liveBefore: new Map(live.flat()),
+    names,
+  });
   const legacyModules = agentApprovalModules.filter(
     (module) => module.legacyEngine && modules.access.has(module.moduleKey),
   );
@@ -156,7 +180,9 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
   const unavailableModules = legacy
     .filter(({ result }) => result.state === 'unavailable')
     .map(({ module }) => module.label);
-  const batches = [...coreBatches, ...legacyBatches].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  const batches = [...coreBatches, ...legacyBatches].sort((left, right) =>
+    right.createdAt.localeCompare(left.createdAt),
+  );
   return {
     batches,
     company: { legalEntityId, legalName: caller.legalName },
@@ -165,7 +191,7 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
   } satisfies AgentQueueResponse;
 });
 
-/** Every agent read, write, denial, proposal and decision in the company. */
+/** Agent reads, writes, denials, proposals and decisions in the modules where the person approves changes. */
 export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(function* loadAgentActivity(
   caller: AgentPlatformCaller,
   request: AgentActivityRequest,
@@ -174,5 +200,17 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
   if (modules.write.size === 0) {
     return yield* new AgentPlatformForbidden({ reason: NO_DECIDER });
   }
-  return yield* listAgentActivity(caller.principal.tenantId, caller.principal.legalEntityId, request);
+  const { legalEntityId, tenantId } = caller.principal;
+  const agentIds = yield* listCompanyAgentIds(tenantId);
+  const profiles = yield* loadAgentProfiles(tenantId, agentIds).pipe(
+    Effect.mapError((cause) => new AgentStoreUnavailable({ cause })),
+  );
+  const proposalOnlyAgents = new Set(
+    agentIds.filter((principalId) => profiles.get(principalId)?.writePolicy === 'approval'),
+  );
+  // People see agent activity only in modules where they approve agent changes.
+  return yield* listAgentActivity(tenantId, legalEntityId, request, {
+    proposalOnlyAgents,
+    visibleModules: modules.write,
+  });
 });

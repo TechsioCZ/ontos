@@ -16,6 +16,8 @@ import {
   type AgentRevertPlan,
   type AgentRisk,
 } from '@app/shared-contracts/agent-proposals';
+import { agentPlatformDiff } from '@app/shared-contracts/agent-diff';
+import { agentRevertUnavailableBeforeApproval } from '@app/shared-contracts/agent-revert';
 import { DateTime } from 'effect';
 
 export interface AgentProposalRow {
@@ -79,17 +81,54 @@ export interface AccessActivityRow {
 export const nameOf = (names: ReadonlyMap<string, string>, principalId: string | null): string =>
   principalId === null ? 'Neznámý uživatel' : (names.get(principalId) ?? 'Neznámý uživatel');
 
-const toItem = (
+export interface QueueItemOptions {
+  readonly canDecide: (moduleKey: string) => boolean;
+  /** Live wire JSON of the target entity of pending proposals (by proposal id), read as the person. */
+  readonly liveBefore?: ReadonlyMap<string, Readonly<Record<string, unknown>>>;
+  readonly names: ReadonlyMap<string, string>;
+}
+
+/** Keeps the platform lines, taking `before` from the stored lines of the same field (stored at submit/approval). */
+const withStoredBefore = (
+  lines: readonly AgentDiffLine[],
+  stored: readonly AgentDiffLine[],
+): readonly AgentDiffLine[] =>
+  lines.map((line) => {
+    const before = line.before ?? stored.find((candidate) => candidate.field === line.field)?.before;
+    return before === undefined ? line : { ...line, before };
+  });
+
+/** The diff a person sees: platform-built from the command whenever the platform understands it. */
+export const itemDiff = (
   row: AgentProposalRow,
-  options: { readonly canDecide: (moduleKey: string) => boolean; readonly names: ReadonlyMap<string, string> },
-): AgentQueueItem => {
+  liveBefore: Readonly<Record<string, unknown>> | undefined,
+): { readonly diff: readonly AgentDiffLine[]; readonly diffSource: 'agent' | 'platform' } => {
+  const live = row.status === 'pending' ? liveBefore : undefined;
+  const platform = agentPlatformDiff(row.appId, row.command, live);
+  if (platform === undefined) {
+    return { diff: row.diff, diffSource: 'agent' };
+  }
+  return { diff: live === undefined ? withStoredBefore(platform, row.diff) : platform, diffSource: 'platform' };
+};
+
+const toItem = (row: AgentProposalRow, options: QueueItemOptions): AgentQueueItem => {
   const revertUnavailableReason =
-    row.revert === null ? AGENT_REVERT_UNAVAILABLE : row.revert.kind === 'none' ? row.revert.reason : undefined;
+    row.status === 'pending'
+      ? agentRevertUnavailableBeforeApproval(row.appId, row.command)
+      : row.revert === null
+        ? AGENT_REVERT_UNAVAILABLE
+        : row.revert.kind === 'none'
+          ? row.revert.reason
+          : undefined;
+  const { diff, diffSource } = itemDiff(row, options.liveBefore?.get(row.proposalId));
+  // A pending row with decided_at is only claimed by an approval in progress; it has no decision yet.
+  const decided = row.status !== 'pending';
   return {
     appId: row.appId,
     canDecide: options.canDecide(row.moduleKey),
     command: row.command,
-    diff: row.diff,
+    diff,
+    diffSource,
     key: `core:${row.proposalId}`,
     moduleKey: row.moduleKey,
     moduleLabel: agentModuleLabel(row.moduleKey),
@@ -99,18 +138,17 @@ const toItem = (
     status: row.status,
     summary: row.summary,
     targetLabel: row.targetLabel,
-    ...(row.decidedAt === null ? {} : { decidedAt: row.decidedAt.toISOString() }),
-    ...(row.decidedByPrincipalId === null ? {} : { decidedByName: nameOf(options.names, row.decidedByPrincipalId) }),
+    ...(!decided || row.decidedAt === null ? {} : { decidedAt: row.decidedAt.toISOString() }),
+    ...(!decided || row.decidedByPrincipalId === null
+      ? {}
+      : { decidedByName: nameOf(options.names, row.decidedByPrincipalId) }),
     ...(row.decisionNote === null ? {} : { decisionNote: row.decisionNote }),
     ...(row.failure === null ? {} : { failure: row.failure }),
     ...(revertUnavailableReason === undefined ? {} : { revertUnavailableReason }),
   };
 };
 
-export const rowsToQueueBatches = (
-  rows: readonly AgentProposalRow[],
-  options: { readonly canDecide: (moduleKey: string) => boolean; readonly names: ReadonlyMap<string, string> },
-): AgentQueueBatch[] => {
+export const rowsToQueueBatches = (rows: readonly AgentProposalRow[], options: QueueItemOptions): AgentQueueBatch[] => {
   const groups = new Map<string, { readonly head: AgentProposalRow; readonly rows: AgentProposalRow[] }>();
   for (const row of rows) {
     const group = groups.get(row.batchId);
@@ -151,11 +189,37 @@ export const rowsToQueueBatches = (
 export const moduleKeyOfAction = (actionKey: string | null): string | null =>
   actionKey === null || !actionKey.includes('.') ? null : actionKey.slice(0, actionKey.lastIndexOf('.'));
 
-export const auditRowToEntry = (row: AuditActivityRow): AgentActivityEntry => {
-  const kind: AgentActivityKind =
-    row.outcome === 'succeeded' ? 'write' : row.outcome === 'denied' ? 'denied' : 'failed';
-  const actionLabel = kind === 'write' ? 'Zápis změny' : kind === 'denied' ? 'Pokus o zápis odmítnut' : 'Zápis selhal';
+/** Legacy module engines (CRM, sales, merchandise) take agent proposals as a write of their own apply-command. */
+const LEGACY_PROPOSAL_MODULES: ReadonlySet<string> = new Set(['demo.crm', 'demo.merchandise', 'demo.sales-pipeline']);
+
+export const auditRowToEntry = (
+  row: AuditActivityRow,
+  options: { readonly proposalOnly: boolean } = { proposalOnly: false },
+): AgentActivityEntry => {
   const moduleKey = moduleKeyOfAction(row.actionKey);
+  const proposal =
+    row.outcome === 'succeeded' && options.proposalOnly && moduleKey !== null && LEGACY_PROPOSAL_MODULES.has(moduleKey);
+  const kind: AgentActivityKind = proposal
+    ? 'proposal'
+    : row.outcome === 'succeeded'
+      ? 'write'
+      : row.outcome === 'denied'
+        ? 'denied'
+        : 'failed';
+  const actionLabel = proposal
+    ? 'Návrh ke schválení'
+    : kind === 'write'
+      ? 'Zápis změny'
+      : kind === 'denied'
+        ? 'Pokus o zápis odmítnut'
+        : 'Zápis selhal';
+  // `<module>.apply-command` says nothing beyond the module label; other action keys stay as detail.
+  const detail =
+    row.actionKey === null || row.actionKey.endsWith('.apply-command')
+      ? proposal
+        ? `Návrh do schvalovací fronty modulu ${agentModuleLabel(moduleKey)}`
+        : undefined
+      : row.actionKey;
   return {
     actionLabel,
     agentName: row.displayName,
@@ -165,8 +229,8 @@ export const auditRowToEntry = (row: AuditActivityRow): AgentActivityEntry => {
     moduleKey,
     moduleLabel: agentModuleLabel(moduleKey),
     occurredAt: row.occurredAt.toISOString(),
-    outcomeCode: row.outcomeCode,
-    ...(row.actionKey === null ? {} : { detail: row.actionKey }),
+    outcomeCode: proposal ? 'proposed' : row.outcomeCode,
+    ...(detail === undefined ? {} : { detail }),
   };
 };
 
@@ -217,11 +281,16 @@ export const proposalRowToEntries = (
       outcomeCode: 'proposed',
     },
   ];
-  if (row.decidedAt !== null) {
+  if (row.decidedAt !== null && row.status !== 'pending') {
     const decider = nameOf(names, row.decidedByPrincipalId);
     entries.push({
       ...base,
-      actionLabel: row.status === 'rejected' ? `Zamítnuto: ${decider}` : `Schváleno: ${decider}`,
+      actionLabel:
+        row.status === 'rejected'
+          ? `Zamítnuto: ${decider}`
+          : row.status === 'failed'
+            ? `Schváleno, ale nešlo provést: ${decider}`
+            : `Schváleno: ${decider}`,
       detail: row.summary,
       id: `decision:${row.proposalId}`,
       kind: 'decision',

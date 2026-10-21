@@ -192,3 +192,55 @@ it('keeps the agent list unfiltered when filtering by kind and applies the limit
   expect(limited.entries).toHaveLength(2);
   expect(limited.entries[0]?.id).toBe('audit:a1');
 });
+
+it('builds the price diff from the command and the live product, not from the agent text', () => {
+  const row: AgentProposalRow = {
+    ...baseRow,
+    appId: 'merchandise',
+    command: { _tag: 'ChangePrice', id: 'p1', priceMinor: 100 },
+    diff: [{ after: '3 660,00 Kč', before: '3 490,00 Kč', field: 'currentPriceMinor', label: 'Cena bez DPH' }],
+    moduleKey: 'demo.merchandise',
+  };
+  const [batch] = rowsToQueueBatches([row], {
+    canDecide: canDecideAll,
+    liveBefore: new Map([[row.proposalId, { currentPriceMinor: 349_000, id: 'p1' }]]),
+    names,
+  });
+  const item = batch?.items[0];
+  expect(item?.diffSource).toBe('platform');
+  expect(item?.diff).toEqual([
+    { after: '1,00\u00a0Kč', before: '3\u00a0490,00\u00a0Kč', field: 'priceMinor', label: 'Cena bez DPH' },
+  ]);
+  expect(item?.revertUnavailableReason).toBeUndefined();
+});
+
+it('marks commands the platform does not understand as agent-described', () => {
+  const [batch] = rowsToQueueBatches([baseRow], { canDecide: canDecideAll, names });
+  expect(batch?.items[0]?.diffSource).toBe('agent');
+  expect(batch?.items[0]?.diff).toEqual(baseRow.diff);
+});
+
+it('does not report a pending claim as a decision', () => {
+  const claimed: AgentProposalRow = { ...baseRow, decidedAt: new Date(), decidedByPrincipalId: JANA };
+  const [batch] = rowsToQueueBatches([claimed], { canDecide: canDecideAll, names });
+  expect(batch?.items[0]?.decidedAt).toBeUndefined();
+  expect(proposalRowToEntries(claimed, names)).toHaveLength(1);
+});
+
+it('labels a successful legacy write of an approval-only agent as a proposal', () => {
+  const entry = auditRowToEntry(
+    {
+      actionKey: 'demo.sales-pipeline.apply-command',
+      auditEventId: 'a2',
+      displayName: 'AI agent C',
+      occurredAt: new Date('2026-10-20T09:00:00.000Z'),
+      outcome: 'succeeded',
+      outcomeCode: 'action_executed',
+      principalId: AGENT,
+    },
+    { proposalOnly: true },
+  );
+  expect(entry.kind).toBe('proposal');
+  expect(entry.actionLabel).toBe('Návrh ke schválení');
+  expect(entry.detail).toBe('Návrh do schvalovací fronty modulu Obchodní případy');
+});

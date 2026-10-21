@@ -9,7 +9,7 @@ import type {
   AgentRevertPlan,
   AgentRisk,
 } from '@app/shared-contracts/agent-proposals';
-import { and, asc, desc, eq, ne, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql, type SQL } from 'drizzle-orm';
 import { integer, jsonb, pgSchema, text, timestamp, uuid } from 'drizzle-orm/pg-core';
 import { Data, DateTime, Effect } from 'effect';
 
@@ -132,14 +132,7 @@ export interface NewAgentProposal {
 }
 
 const RISKS: readonly AgentRisk[] = ['low', 'medium', 'high'];
-const STATUSES: readonly AgentItemStatus[] = [
-  'pending',
-  'applied',
-  'rejected',
-  'failed',
-  'reverted',
-  'revert_failed',
-];
+const STATUSES: readonly AgentItemStatus[] = ['pending', 'applied', 'rejected', 'failed', 'reverted', 'revert_failed'];
 
 const isRisk = (value: string): value is AgentRisk => (RISKS as readonly string[]).includes(value);
 const isStatus = (value: string): value is AgentItemStatus => (STATUSES as readonly string[]).includes(value);
@@ -286,9 +279,69 @@ export const loadBatchProposals = Effect.fn('AgentStore.loadBatchProposals')(fun
   return rows.map(toRow);
 });
 
+/**
+ * An approval in progress holds a claim (decided_by/decided_at set while status stays `pending`). A claim older than
+ * this is treated as abandoned (the shell stopped mid-approval) and may be taken over.
+ */
+const CLAIM_TTL = sql`interval '2 minutes'`;
+const unclaimed = () =>
+  or(isNull(coreAgentProposals.decidedAt), sql`${coreAgentProposals.decidedAt} < now() - ${CLAIM_TTL}`);
+const batchNotReverted = () =>
+  sql`not exists (select 1 from core.agent_proposals sibling where sibling.batch_id = ${coreAgentProposals.batchId} and sibling.batch_reverted_at is not null)`;
+
+/**
+ * Atomically reserves a pending proposal for one approver (one UPDATE, so two concurrent decisions cannot both win).
+ * Refused when the proposal is decided, being decided by someone else, or its batch was already reverted.
+ */
+export const claimForApproval = Effect.fn('AgentStore.claimForApproval')(function* claimForApproval(
+  proposalId: string,
+  by: string,
+) {
+  const { executor } = yield* AuthDatabase;
+  const rows = yield* executor
+    .update(coreAgentProposals)
+    .set({ decidedAt: sql`now()`, decidedByPrincipalId: by })
+    .where(
+      and(
+        eq(coreAgentProposals.proposalId, proposalId),
+        eq(coreAgentProposals.status, 'pending'),
+        unclaimed(),
+        batchNotReverted(),
+      ),
+    )
+    .returning({ proposalId: coreAgentProposals.proposalId })
+    .pipe(Effect.mapError(unavailable));
+  return rows.length === 1;
+});
+
+/** Gives a claim back (the module refused this person; someone else may approve later). */
+export const releaseApprovalClaim = Effect.fn('AgentStore.releaseApprovalClaim')(function* releaseApprovalClaim(
+  proposalId: string,
+  by: string,
+) {
+  const { executor } = yield* AuthDatabase;
+  yield* executor
+    .update(coreAgentProposals)
+    .set({ decidedAt: null, decidedByPrincipalId: null })
+    .where(
+      and(
+        eq(coreAgentProposals.proposalId, proposalId),
+        eq(coreAgentProposals.status, 'pending'),
+        eq(coreAgentProposals.decidedByPrincipalId, by),
+      ),
+    )
+    .pipe(Effect.mapError(unavailable));
+});
+
+/** Records the applied result of a claimed proposal, with the platform-built diff and the revert plan. */
 export const markApplied = Effect.fn('AgentStore.markApplied')(function* markApplied(
   proposalId: string,
-  input: { readonly by: string; readonly applyResult: unknown; readonly revert: AgentRevertPlan | null },
+  input: {
+    readonly by: string;
+    readonly applyResult: unknown;
+    readonly diff: readonly AgentDiffLine[] | undefined;
+    readonly revert: AgentRevertPlan | null;
+  },
 ) {
   const { executor } = yield* AuthDatabase;
   const now = yield* DateTime.nowAsDate;
@@ -302,27 +355,30 @@ export const markApplied = Effect.fn('AgentStore.markApplied')(function* markApp
       failure: null,
       revertJson: input.revert,
       status: 'applied',
+      ...(input.diff === undefined ? {} : { diffJson: input.diff }),
     })
     .where(and(eq(coreAgentProposals.proposalId, proposalId), eq(coreAgentProposals.status, 'pending')))
     .pipe(Effect.mapError(unavailable));
 });
 
+/** Rejects a pending proposal unless an approval holds it; false when it was already decided or is being approved. */
 export const markRejected = Effect.fn('AgentStore.markRejected')(function* markRejected(
   proposalId: string,
   input: { readonly by: string; readonly note: string | null },
 ) {
   const { executor } = yield* AuthDatabase;
-  const now = yield* DateTime.nowAsDate;
-  yield* executor
+  const rows = yield* executor
     .update(coreAgentProposals)
     .set({
-      decidedAt: now,
+      decidedAt: sql`now()`,
       decidedByPrincipalId: input.by,
       decisionNote: input.note,
       status: 'rejected',
     })
-    .where(and(eq(coreAgentProposals.proposalId, proposalId), eq(coreAgentProposals.status, 'pending')))
+    .where(and(eq(coreAgentProposals.proposalId, proposalId), eq(coreAgentProposals.status, 'pending'), unclaimed()))
+    .returning({ proposalId: coreAgentProposals.proposalId })
     .pipe(Effect.mapError(unavailable));
+  return rows.length === 1;
 });
 
 export const markFailed = Effect.fn('AgentStore.markFailed')(function* markFailed(
@@ -352,11 +408,17 @@ export const markReverted = Effect.fn('AgentStore.markReverted')(function* markR
   yield* executor
     .update(coreAgentProposals)
     .set({
+      failure: null,
       revertedAt: now,
       revertedByPrincipalId: input.by,
       status: 'reverted',
     })
-    .where(eq(coreAgentProposals.proposalId, proposalId))
+    .where(
+      and(
+        eq(coreAgentProposals.proposalId, proposalId),
+        inArray(coreAgentProposals.status, ['applied', 'revert_failed']),
+      ),
+    )
     .pipe(Effect.mapError(unavailable));
 });
 
@@ -372,21 +434,65 @@ export const markRevertFailed = Effect.fn('AgentStore.markRevertFailed')(functio
     .pipe(Effect.mapError(unavailable));
 });
 
-export const markBatchReverted = Effect.fn('AgentStore.markBatchReverted')(function* markBatchReverted(
+/** Is any pending item of the batch being approved right now? */
+export const batchHasApprovalInProgress = Effect.fn('AgentStore.batchHasApprovalInProgress')(
+  function* batchHasApprovalInProgress(batchId: string) {
+    const { executor } = yield* AuthDatabase;
+    const rows = yield* executor
+      .select({ proposalId: coreAgentProposals.proposalId })
+      .from(coreAgentProposals)
+      .where(
+        and(
+          eq(coreAgentProposals.batchId, batchId),
+          eq(coreAgentProposals.status, 'pending'),
+          isNotNull(coreAgentProposals.decidedAt),
+          sql`${coreAgentProposals.decidedAt} >= now() - ${CLAIM_TTL}`,
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError(unavailable));
+    return rows.length > 0;
+  },
+);
+
+/** Atomically marks the batch reverted; false when it already was (a concurrent „Vrátit vše“ won). */
+export const claimBatchRevert = Effect.fn('AgentStore.claimBatchRevert')(function* claimBatchRevert(
   batchId: string,
   input: { readonly by: string; readonly note: string | null },
 ) {
   const { executor } = yield* AuthDatabase;
-  const now = yield* DateTime.nowAsDate;
+  const rows = yield* executor
+    .update(coreAgentProposals)
+    .set({ batchRevertNote: input.note, batchRevertedAt: sql`now()`, batchRevertedByPrincipalId: input.by })
+    .where(and(eq(coreAgentProposals.batchId, batchId), isNull(coreAgentProposals.batchRevertedAt)))
+    .returning({ proposalId: coreAgentProposals.proposalId })
+    .pipe(Effect.mapError(unavailable));
+  return rows.length > 0;
+});
+
+/** After „Vrátit vše“ the batch is closed: its still-pending items are rejected with the given note. */
+export const closePendingInBatch = Effect.fn('AgentStore.closePendingInBatch')(function* closePendingInBatch(
+  batchId: string,
+  input: { readonly by: string; readonly note: string },
+) {
+  const { executor } = yield* AuthDatabase;
   yield* executor
     .update(coreAgentProposals)
-    .set({
-      batchRevertNote: input.note,
-      batchRevertedAt: now,
-      batchRevertedByPrincipalId: input.by,
-    })
-    .where(eq(coreAgentProposals.batchId, batchId))
+    .set({ decidedAt: sql`now()`, decidedByPrincipalId: input.by, decisionNote: input.note, status: 'rejected' })
+    .where(and(eq(coreAgentProposals.batchId, batchId), eq(coreAgentProposals.status, 'pending'), unclaimed()))
     .pipe(Effect.mapError(unavailable));
+});
+
+/** Did someone revert this batch (checked right after an approval, to undo a change that raced the revert)? */
+export const isBatchReverted = Effect.fn('AgentStore.isBatchReverted')(function* isBatchReverted(batchId: string) {
+  const { executor } = yield* AuthDatabase;
+  const rows = yield* executor
+    .select({ proposalId: coreAgentProposals.proposalId })
+    .from(coreAgentProposals)
+    .where(and(eq(coreAgentProposals.batchId, batchId), isNotNull(coreAgentProposals.batchRevertedAt)))
+    .limit(1)
+    .pipe(Effect.mapError(unavailable));
+  return rows.length > 0;
 });
 
 export const principalNames = Effect.fn('AgentStore.principalNames')(function* principalNames(tenantId: string) {
@@ -397,6 +503,19 @@ export const principalNames = Effect.fn('AgentStore.principalNames')(function* p
     .where(eq(corePrincipals.tenantId, tenantId))
     .pipe(Effect.mapError(unavailable));
   return new Map<string, string>(rows.map((row) => [row.principalId, row.displayName]));
+});
+
+/** Agent principals of the tenant (the company filter happens on their activity rows). */
+export const listCompanyAgentIds = Effect.fn('AgentStore.listCompanyAgentIds')(function* listCompanyAgentIds(
+  tenantId: string,
+) {
+  const { executor } = yield* AuthDatabase;
+  const rows = yield* executor
+    .select({ principalId: corePrincipals.principalId })
+    .from(corePrincipals)
+    .where(and(eq(corePrincipals.tenantId, tenantId), eq(corePrincipals.kind, 'agent')))
+    .pipe(Effect.mapError(unavailable));
+  return rows.map((row) => row.principalId);
 });
 
 export const companyLegalName = Effect.fn('AgentStore.companyLegalName')(function* companyLegalName(
@@ -413,10 +532,18 @@ export const companyLegalName = Effect.fn('AgentStore.companyLegalName')(functio
   return rows[0]?.legalName ?? legalEntityId;
 });
 
+export interface AgentActivityScope {
+  /** Module keys whose agent activity the person may see (the modules they approve in). */
+  readonly visibleModules: ReadonlySet<string>;
+  /** Agents that may only propose: their successful legacy-module writes are proposals, not direct changes. */
+  readonly proposalOnlyAgents: ReadonlySet<string>;
+}
+
 export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(function* listAgentActivity(
   tenantId: string,
   legalEntityId: string,
   request: AgentActivityRequest,
+  scope: AgentActivityScope,
 ) {
   const { executor } = yield* AuthDatabase;
   const agentFilter = request.agentPrincipalId === undefined ? undefined : request.agentPrincipalId;
@@ -441,15 +568,12 @@ export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(funct
         eq(corePrincipals.tenantId, coreAuditEvents.tenantId),
       ),
     )
-    .leftJoin(
-      coreActionInvocations,
-      eq(coreActionInvocations.actionInvocationId, coreAuditEvents.actionInvocationId),
-    )
+    .leftJoin(coreActionInvocations, eq(coreActionInvocations.actionInvocationId, coreAuditEvents.actionInvocationId))
     .where(
       and(
         eq(coreAuditEvents.tenantId, tenantId),
         eq(coreAuditEvents.legalEntityId, legalEntityId),
-        ne(corePrincipals.kind, 'human'),
+        eq(corePrincipals.kind, 'agent'),
         ...(agentFilter === undefined ? [] : [eq(corePrincipals.principalId, agentFilter)]),
       ),
     )
@@ -494,7 +618,7 @@ export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(funct
       and(
         eq(coreDataAccessEvents.tenantId, tenantId),
         eq(coreDataAccessEvents.legalEntityId, legalEntityId),
-        ne(corePrincipals.kind, 'human'),
+        eq(corePrincipals.kind, 'agent'),
         ...(agentFilter === undefined ? [] : [eq(corePrincipals.principalId, agentFilter)]),
       ),
     )
@@ -508,12 +632,10 @@ export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(funct
   });
   const names = yield* principalNames(tenantId);
 
-  return buildActivityResponse(
-    [
-      ...audit.map(auditRowToEntry),
-      ...accessRows.map(accessRowToEntry),
-      ...proposals.flatMap((row) => proposalRowToEntries(row, names)),
-    ],
-    request,
-  );
+  const entries = [
+    ...audit.map((row) => auditRowToEntry(row, { proposalOnly: scope.proposalOnlyAgents.has(row.principalId) })),
+    ...accessRows.map(accessRowToEntry),
+    ...proposals.flatMap((row) => proposalRowToEntries(row, names)),
+  ].filter((entry) => entry.moduleKey !== null && scope.visibleModules.has(entry.moduleKey));
+  return buildActivityResponse(entries, request);
 });

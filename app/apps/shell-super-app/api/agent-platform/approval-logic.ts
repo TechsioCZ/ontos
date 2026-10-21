@@ -28,13 +28,15 @@ export const moduleAccessSets = (
   };
 };
 
-/** `core:<id>` -> `<id>`; anything else -> undefined. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+
+/** `core:<uuid>` -> `<uuid>`; anything else (including malformed ids) -> undefined. */
 export const parseCoreKey = (key: string): string | undefined => {
   if (!key.startsWith('core:')) {
     return undefined;
   }
   const id = key.slice('core:'.length);
-  return id === '' ? undefined : id;
+  return UUID.test(id) ? id.toLowerCase() : undefined;
 };
 
 export interface RevertBeforeLookup {
@@ -98,23 +100,29 @@ export const revertBeforeLookup = (appId: string, command: Rec): RevertBeforeLoo
 };
 
 export interface RevertCounts {
+  /** Changes left alone because someone changed the record after the approval. */
+  readonly changed: number;
   readonly failed: number;
   readonly reverted: number;
   readonly unavailable: number;
 }
 
 /** Czech summary of one „Vrátit vše“ run. */
-export const revertResultMessage = ({ failed, reverted, unavailable }: RevertCounts): AgentRevertResponse => {
-  if (reverted === 0 && failed === 0 && unavailable === 0) {
+export const revertResultMessage = ({ changed, failed, reverted, unavailable }: RevertCounts): AgentRevertResponse => {
+  if (reverted === 0 && failed === 0 && unavailable === 0 && changed === 0) {
     return { message: 'V dávce není žádná provedená změna k vrácení.', outcome: 'failed' };
   }
   const parts = [`Vráceno změn: ${reverted}.`];
+  if (changed > 0) {
+    parts.push(`Záznam se mezitím změnil, ponecháno beze změny: ${changed}.`);
+  }
   if (unavailable > 0) {
     parts.push(`Nelze automaticky vrátit: ${unavailable}.`);
   }
   if (failed > 0) {
     parts.push(`Vrácení se nepodařilo: ${failed}.`);
   }
-  const outcome = reverted === 0 ? 'failed' : failed === 0 && unavailable === 0 ? 'reverted' : 'partial';
+  const outcome =
+    reverted === 0 ? 'failed' : failed === 0 && unavailable === 0 && changed === 0 ? 'reverted' : 'partial';
   return { message: parts.join(' '), outcome };
 };

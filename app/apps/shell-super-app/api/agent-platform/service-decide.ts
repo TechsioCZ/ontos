@@ -10,6 +10,7 @@ import type {
   AgentRevertRequest,
   AgentRevertResponse,
 } from '@app/shared-contracts/agent-proposals';
+import { agentChangeStillInPlace, agentPlatformDiff } from '@app/shared-contracts/agent-diff';
 import { buildAgentRevertPlan, resolveAgentRevertPlan } from '@app/shared-contracts/agent-revert';
 import { Effect } from 'effect';
 
@@ -21,13 +22,19 @@ import { decideLegacy, revertLegacy } from './legacy-queue.ts';
 import type { AgentProposalRow } from './mappers.ts';
 import { applyModuleCommand, callModuleAs } from './module-call.ts';
 import {
+  batchHasApprovalInProgress,
+  claimBatchRevert,
+  claimForApproval,
+  closePendingInBatch,
+  isBatchReverted,
   loadBatchProposals,
   markApplied,
-  markBatchReverted,
   markFailed,
   markRejected,
   markRevertFailed,
   markReverted,
+  principalNames,
+  releaseApprovalClaim,
 } from './proposal-store.ts';
 
 type DecideResult = AgentDecideResponse['results'][number];
@@ -36,25 +43,112 @@ const result = (itemKey: string, outcome: DecideResult['outcome'], message?: str
   message === undefined ? { itemKey, outcome } : { itemKey, message, outcome };
 
 const BATCH_NOT_FOUND = 'Dávka návrhů nebyla nalezena.';
+const ALREADY_DECIDED = 'Změnu už vyřídil někdo jiný nebo se právě schvaluje. Obnovte seznam.';
+const BATCH_REVERTED = 'Dávka už byla vrácena, změnu nelze schválit.';
 const notAllowed = (moduleLabel: string) => `Změny v modulu ${moduleLabel} nemůžete schválit ani zamítnout.`;
 
 const audiencesOf = (row: AgentProposalRow) =>
   row.referenceAudiences.length === 0 ? {} : { referenceAudiences: row.referenceAudiences };
 
-/** Current wire JSON of the entity the command changes, read as the person; undefined when not needed/unreadable. */
-const readBefore = Effect.fn('AgentPlatform.readBefore')(function* readBefore(
+type EntityRead =
+  | { readonly needed: false }
+  | { readonly needed: true; readonly value: Readonly<Record<string, unknown>> | undefined };
+
+/** Current wire JSON of the entity the command changes, read as `principal` (`needed: false` for create commands). */
+export const readTargetEntity = Effect.fn('AgentPlatform.readTargetEntity')(function* readTargetEntity(
+  principal: AgentPlatformCaller['principal'],
+  appId: string,
+  command: Readonly<Record<string, unknown>>,
+) {
+  const lookup = revertBeforeLookup(appId, command);
+  if (lookup === undefined) {
+    const notNeeded: EntityRead = { needed: false };
+    return notNeeded;
+  }
+  const response = yield* callModuleAs(principal, appId, '/reads/records', lookup.query).pipe(Effect.result);
+  const value =
+    response._tag === 'Failure' || response.success.status !== 200 ? undefined : lookup.pick(response.success.body);
+  const read: EntityRead = { needed: true, value };
+  return read;
+});
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const taskRefOf = (row: AgentProposalRow, applyResult: unknown): unknown => {
+  if (row.command['_tag'] !== 'CreateTask') {
+    return row.command['taskRef'];
+  }
+  const task = isRecord(applyResult) ? applyResult['task'] : undefined;
+  return isRecord(task) ? task['ref'] : undefined;
+};
+
+/**
+ * Module history only knows the approving person. For tasks the platform also leaves a comment naming the agent, so
+ * Úkoly shows who proposed the change. Best effort: a failed comment never undoes the approved change.
+ */
+const noteAgentProvenance = Effect.fn('AgentPlatform.noteAgentProvenance')(function* noteAgentProvenance(
   caller: AgentPlatformCaller,
   row: AgentProposalRow,
+  applyResult: unknown,
 ) {
-  const lookup = revertBeforeLookup(row.appId, row.command);
-  if (lookup === undefined) {
-    return undefined;
+  if (row.appId !== 'work-tasks') {
+    return;
   }
-  const response = yield* callModuleAs(caller.principal, row.appId, '/reads/records', lookup.query).pipe(Effect.result);
-  if (response._tag === 'Failure' || response.success.status !== 200) {
-    return undefined;
+  const taskRef = taskRefOf(row, applyResult);
+  if (typeof taskRef !== 'object' || taskRef === null) {
+    return;
   }
-  return lookup.pick(response.success.body);
+  const names = yield* principalNames(caller.principal.tenantId).pipe(
+    Effect.orElseSucceed(() => new Map<string, string>()),
+  );
+  const approver = names.get(caller.principal.principalId) ?? 'schvalovatel';
+  yield* applyModuleCommand(
+    caller.principal,
+    row.appId,
+    {
+      _tag: 'AddTaskComment',
+      taskRef,
+      text: `Změnu navrhl ${row.agentLabel}. Schválil(a) ${approver} na stránce Ke schválení (${row.summary}).`,
+    },
+    { idempotencyKey: `agent-proposal-${row.proposalId}-provenance`, ...audiencesOf(row) },
+  ).pipe(Effect.ignore);
+});
+
+type RowRevert = 'changed' | 'failed' | 'reverted' | 'unavailable';
+
+/** Undoes one applied proposal as the person, unless someone changed the record after the approval. */
+const revertRow = Effect.fn('AgentPlatform.revertRow')(function* revertRow(
+  caller: AgentPlatformCaller,
+  row: AgentProposalRow,
+  plan: AgentProposalRow['revert'],
+) {
+  if (plan === null || plan.kind === 'none') {
+    return 'unavailable' satisfies RowRevert;
+  }
+  const current = yield* readTargetEntity(caller.principal, row.appId, row.command);
+  if (current.needed) {
+    if (current.value === undefined) {
+      yield* markRevertFailed(row.proposalId, { failure: 'Záznam se teď nepodařilo načíst.' });
+      return 'failed' satisfies RowRevert;
+    }
+    if (agentChangeStillInPlace(row.appId, row.command, current.value) === false) {
+      return 'changed' satisfies RowRevert;
+    }
+  }
+  for (const [index, command] of plan.commands.entries()) {
+    const outcome = yield* applyModuleCommand(caller.principal, row.appId, command, {
+      actionSlug: row.actionSlug,
+      idempotencyKey: `agent-revert-${row.proposalId}-${index}`,
+      ...audiencesOf(row),
+    });
+    if (!outcome.ok) {
+      yield* markRevertFailed(row.proposalId, { failure: outcome.message });
+      return 'failed' satisfies RowRevert;
+    }
+  }
+  yield* markReverted(row.proposalId, { by: caller.principal.principalId });
+  return 'reverted' satisfies RowRevert;
 });
 
 const approveCoreRow = Effect.fn('AgentPlatform.approveCoreRow')(function* approveCoreRow(
@@ -63,23 +157,42 @@ const approveCoreRow = Effect.fn('AgentPlatform.approveCoreRow')(function* appro
 ) {
   const itemKey = `core:${row.proposalId}`;
   const by = caller.principal.principalId;
-  const before = yield* readBefore(caller, row);
-  const plan = buildAgentRevertPlan(row.appId, { before, command: row.command, tenantId: caller.principal.tenantId });
+  // One atomic claim: a concurrent reject, approval or „Vrátit vše“ cannot also act on this proposal.
+  if (!(yield* claimForApproval(row.proposalId, by))) {
+    return result(itemKey, 'skipped', ALREADY_DECIDED);
+  }
+  const before = yield* readTargetEntity(caller.principal, row.appId, row.command);
+  const beforeValue = before.needed ? before.value : undefined;
+  const plan = buildAgentRevertPlan(row.appId, {
+    before: beforeValue,
+    command: row.command,
+    tenantId: caller.principal.tenantId,
+  });
   const outcome = yield* applyModuleCommand(caller.principal, row.appId, row.command, {
     actionSlug: row.actionSlug,
     idempotencyKey: `agent-proposal-${row.proposalId}`,
     ...audiencesOf(row),
   });
   if (outcome.ok) {
+    const revert = resolveAgentRevertPlan(plan, outcome.body);
     yield* markApplied(row.proposalId, {
       applyResult: outcome.body,
       by,
-      revert: resolveAgentRevertPlan(plan, outcome.body),
+      diff:
+        before.needed && beforeValue === undefined ? undefined : agentPlatformDiff(row.appId, row.command, beforeValue),
+      revert,
     });
+    yield* noteAgentProvenance(caller, row, outcome.body);
+    if (yield* isBatchReverted(row.batchId)) {
+      // „Vrátit vše“ ran while this change was being applied: undo it right away so the batch stays reverted.
+      yield* revertRow(caller, row, revert);
+      return result(itemKey, 'skipped', 'Dávka byla mezitím vrácena, změna byla hned vrácena také.');
+    }
     return result(itemKey, 'applied');
   }
   if (outcome.status === 403) {
     // The module refused this person: the proposal stays pending for someone with the right permission.
+    yield* releaseApprovalClaim(row.proposalId, by);
     return result(itemKey, 'forbidden', outcome.message);
   }
   yield* markFailed(row.proposalId, { by, failure: outcome.message });
@@ -113,8 +226,11 @@ const decideCore = Effect.fn('AgentPlatform.decideCore')(function* decideCore(
           return result(itemKey, 'forbidden', notAllowed(agentModuleLabel(row.moduleKey)));
         }
         if (request.decision === 'reject') {
-          yield* markRejected(row.proposalId, { by: principalId, note: request.note ?? null });
-          return result(itemKey, 'rejected');
+          const rejected = yield* markRejected(row.proposalId, { by: principalId, note: request.note ?? null });
+          return rejected ? result(itemKey, 'rejected') : result(itemKey, 'skipped', ALREADY_DECIDED);
+        }
+        if (row.batchRevertedAt !== null) {
+          return result(itemKey, 'skipped', BATCH_REVERTED);
         }
         return yield* approveCoreRow(caller, row);
       }),
@@ -199,39 +315,26 @@ const revertCoreBatch = Effect.fn('AgentPlatform.revertCoreBatch')(function* rev
       reason: 'Dávku může vrátit jen člověk s oprávněním k zápisu ve všech jejích modulech.',
     });
   }
-  let reverted = 0;
-  let unavailable = 0;
-  let failed = 0;
+  if (applied.length === 0) {
+    return revertResultMessage({ changed: 0, failed: 0, reverted: 0, unavailable: 0 });
+  }
+  if (yield* batchHasApprovalInProgress(batchId)) {
+    return {
+      message: 'Některá změna z dávky se právě schvaluje. Zkuste to prosím za chvíli znovu.',
+      outcome: 'failed',
+    } satisfies AgentRevertResponse;
+  }
+  if (!(yield* claimBatchRevert(batchId, { by: principalId, note: request.note ?? null }))) {
+    return { message: 'Dávka už byla vrácena.', outcome: 'failed' } satisfies AgentRevertResponse;
+  }
+  // The batch is closed: proposals nobody decided yet will not run any more.
+  yield* closePendingInBatch(batchId, { by: principalId, note: 'Dávka byla vrácena, návrh se už neprovede.' });
+  const counts = { changed: 0, failed: 0, reverted: 0, unavailable: 0 };
   for (const row of applied) {
-    const plan = row.revert;
-    if (plan === null || plan.kind === 'none') {
-      unavailable += 1;
-      continue;
-    }
-    let failure: string | undefined;
-    for (const [index, command] of plan.commands.entries()) {
-      const outcome = yield* applyModuleCommand(caller.principal, row.appId, command, {
-        actionSlug: row.actionSlug,
-        idempotencyKey: `agent-revert-${row.proposalId}-${index}`,
-        ...audiencesOf(row),
-      });
-      if (!outcome.ok) {
-        failure = outcome.message;
-        break;
-      }
-    }
-    if (failure === undefined) {
-      yield* markReverted(row.proposalId, { by: principalId });
-      reverted += 1;
-    } else {
-      yield* markRevertFailed(row.proposalId, { failure });
-      failed += 1;
-    }
+    const outcome = yield* revertRow(caller, row, row.revert);
+    counts[outcome] += 1;
   }
-  if (reverted > 0) {
-    yield* markBatchReverted(batchId, { by: principalId, note: request.note ?? null });
-  }
-  return revertResultMessage({ failed, reverted, unavailable });
+  return revertResultMessage(counts);
 });
 
 const revertLegacyBatch = Effect.fn('AgentPlatform.revertLegacyBatch')(function* revertLegacyBatch(

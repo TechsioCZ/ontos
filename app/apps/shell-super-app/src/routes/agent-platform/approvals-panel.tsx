@@ -48,9 +48,15 @@ const queueFailureText = (httpStatus: number): string => {
 
 const commandValue = (value: unknown): string => (typeof value === 'string' ? value : JSON.stringify(value));
 
-/** The exact command an approval runs, so a person can check it against the agent's own description above. */
-const CommandDetails = ({ command }: { readonly command: Readonly<Record<string, unknown>> }) => (
-  <details className="ai-review-command">
+/** The exact command an approval runs; open by default when the lines above are only the agent's description. */
+const CommandDetails = ({
+  command,
+  open,
+}: {
+  readonly command: Readonly<Record<string, unknown>>;
+  readonly open: boolean;
+}) => (
+  <details className="ai-review-command" open={open}>
     <summary>Přesný příkaz pro modul</summary>
     <dl>
       {Object.entries(command)
@@ -110,7 +116,20 @@ const ChangeCard = ({
         </div>
       ))}
     </div>
-    {item.command !== undefined && <CommandDetails command={item.command} />}
+    {item.diffSource === 'agent' ? (
+      <StatusText showIcon size="sm" status="warning">
+        Tento popis změny napsal agent a platforma ho neumí ověřit. Schválení provede přesně příkaz níže.
+      </StatusText>
+    ) : (
+      item.diffSource === 'platform' && (
+        <p className="text-fg-secondary text-xs">
+          {item.status === 'pending'
+            ? 'Hodnoty sestavila platforma z příkazu a aktuálního stavu záznamu.'
+            : 'Hodnoty sestavila platforma z provedeného příkazu.'}
+        </p>
+      )
+    )}
+    {item.command !== undefined && <CommandDetails command={item.command} open={item.diffSource === 'agent'} />}
     {item.failure !== undefined && (
       <p className="text-sm" role="alert">
         Změnu nelze provést: {item.failure}
@@ -408,7 +427,7 @@ export const ApprovalsPanel = () => {
       </div>
       {response.unavailableModules.length > 0 && (
         <StatusText aria-live="polite" showIcon status="warning">
-          {`Návrhy z modulů ${response.unavailableModules.join(', ')} se teď nepodařilo načíst.`}
+          {`Návrhy z modulů ${response.unavailableModules.join(', ')} se teď nepodařilo načíst. Obnovte prosím stránku za chvíli.`}
         </StatusText>
       )}
       <div className="ai-review-actions agent-filters" role="group" aria-label="Zobrazení dávek">

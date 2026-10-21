@@ -1,7 +1,11 @@
 import { expect, it } from 'effect-rstest';
 
 import type { AgentCommand, AgentRevertPlan } from '../../src/agent-proposals.ts';
-import { buildAgentRevertPlan, resolveAgentRevertPlan } from '../../src/agent-revert.ts';
+import {
+  agentRevertUnavailableBeforeApproval,
+  buildAgentRevertPlan,
+  resolveAgentRevertPlan,
+} from '../../src/agent-revert.ts';
 
 const tenantId = 'tenant-1';
 const taskRef = { moduleId: 'work.tasks', resourceId: 'T-1', resourceType: 'work.tasks.task', tenantId };
@@ -39,9 +43,7 @@ it('UpdateTask restores previous fields and nulls a missing dueDate', () => {
     { _tag: 'UpdateTask', taskRef, title: 'Nový', priority: 'HIGH', dueDate: '2026-11-01' },
     { title: 'Starý', priority: 'LOW' },
   );
-  expect(commandsOf(plan)).toEqual([
-    { _tag: 'UpdateTask', taskRef, title: 'Starý', priority: 'LOW', dueDate: null },
-  ]);
+  expect(commandsOf(plan)).toEqual([{ _tag: 'UpdateTask', taskRef, title: 'Starý', priority: 'LOW', dueDate: null }]);
 });
 
 it('UpdateTask without before is not revertible', () => {
@@ -59,17 +61,13 @@ it('ChangeTaskState IN_PROGRESS back to NEW is an illegal transition', () => {
 });
 
 it('ChangeTaskState WAITING back to IN_PROGRESS is legal', () => {
-  expect(commandsOf(build('work-tasks', { _tag: 'ChangeTaskState', state: 'WAITING', taskRef }, { state: 'IN_PROGRESS' }))).toEqual([
-    { _tag: 'ChangeTaskState', state: 'IN_PROGRESS', taskRef },
-  ]);
+  expect(
+    commandsOf(build('work-tasks', { _tag: 'ChangeTaskState', state: 'WAITING', taskRef }, { state: 'IN_PROGRESS' })),
+  ).toEqual([{ _tag: 'ChangeTaskState', state: 'IN_PROGRESS', taskRef }]);
 });
 
 it('ChangePrice without variant restores currentPriceMinor', () => {
-  const plan = build(
-    'merchandise',
-    { _tag: 'ChangePrice', id: 'P1', priceMinor: 14900 },
-    { currentPriceMinor: 12900 },
-  );
+  const plan = build('merchandise', { _tag: 'ChangePrice', id: 'P1', priceMinor: 14900 }, { currentPriceMinor: 12900 });
   expect(commandsOf(plan)).toEqual([{ _tag: 'ChangePrice', id: 'P1', priceMinor: 12900 }]);
 });
 
@@ -101,7 +99,12 @@ it('CreateDraft cancel is filled with the created occupancy id', () => {
     commands: [
       {
         _tag: 'Cancel',
-        occupancyRef: { moduleId: 'property.leasing', resourceId: 'O-1', resourceType: 'property.leasing.occupancy', tenantId },
+        occupancyRef: {
+          moduleId: 'property.leasing',
+          resourceId: 'O-1',
+          resourceType: 'property.leasing.occupancy',
+          tenantId,
+        },
       },
     ],
     kind: 'commands',
@@ -128,4 +131,14 @@ it('resolving without the created id is not revertible', () => {
     kind: 'none',
     reason: 'Nepodařilo se zjistit nově založený záznam, změnu nelze automaticky vrátit.',
   });
+});
+
+it('pending proposals report undo support from the command alone', () => {
+  expect(
+    agentRevertUnavailableBeforeApproval('merchandise', { _tag: 'ChangePrice', id: 'p', priceMinor: 1 }),
+  ).toBeUndefined();
+  expect(agentRevertUnavailableBeforeApproval('work-tasks', { _tag: 'CreateTask', title: 'X' })).toBeUndefined();
+  expect(agentRevertUnavailableBeforeApproval('tagging', { _tag: 'AttachTag' })).toBe(
+    'Tuto změnu nelze automaticky vrátit.',
+  );
 });
