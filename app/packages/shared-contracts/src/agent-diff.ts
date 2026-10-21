@@ -82,6 +82,7 @@ const CLIENT_SEGMENTS: Readonly<Record<string, string>> = {
 };
 
 const isoDate = /^(\d{4})-(\d{2})-(\d{2})$/u;
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
 /** Readable Czech text of one wire value; undefined for empty values. */
 const show = (field: string, value: unknown): string | undefined => {
@@ -105,6 +106,10 @@ const show = (field: string, value: unknown): string | undefined => {
   }
   if (typeof value === 'number') {
     return field.endsWith('PriceMinor') || field === 'priceMinor' ? formatAgentMoneyMinor(value) : number.format(value);
+  }
+  if (typeof value === 'string' && uuid.test(value)) {
+    // A bare reference id says nothing to a person; the card title names the record.
+    return `záznam ${value.slice(0, 8)}…`;
   }
   if (typeof value === 'string') {
     const date = isoDate.exec(value);

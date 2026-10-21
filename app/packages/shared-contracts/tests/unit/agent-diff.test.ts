@@ -82,3 +82,9 @@ it('command-built lines list patch fields one by one and skip the record id', ()
     { after: 'a@b.cz', field: 'email', label: 'E-mail' },
   ]);
 });
+
+it('command-built lines show a bare reference id as a short record reference', () => {
+  expect(agentCommandDiff({ _tag: 'UpdateAgendaEvent', eventId: '73130000-0000-4000-8000-000000000101' })).toEqual([
+    { after: 'záznam 73130000…', field: 'eventId', label: 'Událost' },
+  ]);
+});
