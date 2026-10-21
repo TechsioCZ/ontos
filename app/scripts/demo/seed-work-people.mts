@@ -3,7 +3,7 @@
  * Only uses governed workforce Reads/Actions; never resets another agenda or company.
  */
 import { demoId, demoTenantId, rentalDemoLegalEntityId } from './fixture-ids.mts';
-const shell = 'http://localhost:3020';
+const shell = process.env['ONTOS_SHELL_URL'] ?? 'http://localhost:3020';
 const api = `${shell}/shell-super-app-api`;
 const jar = new Map<string, string>();
 const absorb = (response: Response) => {
@@ -27,7 +27,7 @@ const call = async (path: string, payload?: unknown) => {
   if (!response.ok) throw new Error(`${path}: HTTP ${response.status} ${await response.text()}`);
   return response.json();
 };
-await call('/auth/sign-in', { email: 'management@siampark.demo', password: 'password1234' });
+await call('/auth/sign-in', { email: 'management@siampark.demo', password: process.env['ONTOS_DEMO_PASSWORD'] ?? 'password1234' });
 await call('/auth/legal-entity/switch', { legalEntityId: rentalDemoLegalEntityId });
 const composition = await call('/shell/composition');
 const gateway = await call('/auth/gateway-context', {
