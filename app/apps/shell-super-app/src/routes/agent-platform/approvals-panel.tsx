@@ -46,6 +46,23 @@ const queueFailureText = (httpStatus: number): string => {
   return 'Seznam návrhů se nepodařilo načíst.';
 };
 
+const commandValue = (value: unknown): string => (typeof value === 'string' ? value : JSON.stringify(value));
+
+/** The exact command an approval runs, so a person can check it against the agent's own description above. */
+const CommandDetails = ({ command }: { readonly command: Readonly<Record<string, unknown>> }) => (
+  <details className="ai-review-command">
+    <summary>Přesný příkaz pro modul</summary>
+    <dl>
+      {Object.entries(command).map(([field, value]) => (
+        <div key={field}>
+          <dt>{field === '_tag' ? 'Příkaz' : field}</dt>
+          <dd>{commandValue(value)}</dd>
+        </div>
+      ))}
+    </dl>
+  </details>
+);
+
 const ChangeCard = ({
   item,
   busy,
@@ -91,6 +108,7 @@ const ChangeCard = ({
         </div>
       ))}
     </div>
+    {item.command !== undefined && <CommandDetails command={item.command} />}
     {item.failure !== undefined && (
       <p className="text-sm" role="alert">
         Změnu nelze provést: {item.failure}

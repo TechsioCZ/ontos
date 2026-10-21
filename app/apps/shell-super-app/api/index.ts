@@ -158,6 +158,7 @@ import { AuthPersistenceLive } from './auth/runtime-infrastructure.ts';
 import { AuthenticationService, AuthenticationServiceLive } from './auth/service.ts';
 import type { ShellContextResult } from './auth/service.ts';
 import type { AgentPlatformCaller, AgentPlatformForbidden, AgentPlatformInvalid } from './agent-platform/caller.ts';
+import { assertKeyAgentMayPropose } from './agent-platform/caller.ts';
 import type { AgentStoreUnavailable } from './agent-platform/proposal-store.ts';
 import { decideAgentItems, revertAgentBatch } from './agent-platform/service-decide.ts';
 import {
@@ -1913,8 +1914,7 @@ const agentPlatformSessionCaller = Effect.fn('shell.agentPlatform.sessionCaller'
   const { legalEntityId } = session.identity;
   const caller: AgentPlatformCaller = {
     legalName:
-      session.availableLegalEntities.find((entry) => entry.legalEntityId === legalEntityId)?.legalName ??
-      legalEntityId,
+      session.availableLegalEntities.find((entry) => entry.legalEntityId === legalEntityId)?.legalName ?? legalEntityId,
     principal: { ...session.principal, legalEntityId },
   };
   return caller;
@@ -1981,15 +1981,23 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
   handlers
     .handle('submitAgentProposals', ({ headers, payload, request }) =>
       Effect.gen(function* submitAgentProposalsHandler() {
-        const agent =
-          headers['x-ontos-connector-key'] === undefined
-            ? yield* agentPlatformKeyCaller(headers['x-api-key'], payload.legalEntityId)
-            : yield* agentPlatformConnectorCaller(
-                headers,
-                payload.legalEntityId,
-                payload.proposals.map((proposal) => proposal.appId),
-              );
-        const response = yield* submitAgentProposals(agent, payload).pipe(Effect.catch(agentPlatformFailure));
+        if (headers['x-ontos-connector-key'] !== undefined) {
+          const connector = yield* agentPlatformConnectorCaller(
+            headers,
+            payload.legalEntityId,
+            payload.proposals.map((proposal) => proposal.appId),
+          );
+          const response = yield* submitAgentProposals(connector, payload).pipe(Effect.catch(agentPlatformFailure));
+          yield* noStore;
+          return response;
+        }
+        const agent = yield* agentPlatformKeyCaller(headers['x-api-key'], payload.legalEntityId);
+        // An API-key agent is always shown under its own principal name; only the MCP connector names the acting party.
+        const { agentLabel: _agentLabel, ...submission } = payload;
+        const response = yield* assertKeyAgentMayPropose(agent).pipe(
+          Effect.andThen(submitAgentProposals(agent, submission)),
+          Effect.catch(agentPlatformFailure),
+        );
         yield* noStore;
         return response;
       }).pipe(agentPlatformDefect(request)),

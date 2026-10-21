@@ -88,6 +88,7 @@ const toItem = (
   return {
     appId: row.appId,
     canDecide: options.canDecide(row.moduleKey),
+    command: row.command,
     diff: row.diff,
     key: `core:${row.proposalId}`,
     moduleKey: row.moduleKey,

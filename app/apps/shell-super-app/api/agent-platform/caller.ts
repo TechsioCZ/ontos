@@ -3,6 +3,7 @@ import { openDemoAccountGrants } from '@app/core-runtime';
 import type { TrustedPrincipalContext } from '@app/core-runtime';
 import { Data, Effect } from 'effect';
 
+import { loadAgentProfiles } from '../auth/agent-store.ts';
 import { moduleAccessSets } from './approval-logic.ts';
 import { AgentStoreUnavailable } from './proposal-store.ts';
 
@@ -26,3 +27,19 @@ export const callerModuleAccess = Effect.fn('AgentPlatform.callerModuleAccess')(
   ).pipe(Effect.mapError((cause) => new AgentStoreUnavailable({ cause })));
   return moduleAccessSets(relationships, caller.principal.legalEntityId);
 });
+
+/**
+ * API-key agents may queue proposals only with an `approval` or `direct` write policy (a read-only agent, level A,
+ * may not). MCP connectors check the policy of their connection in connector-service.ts.
+ */
+export const assertKeyAgentMayPropose = Effect.fn('AgentPlatform.assertKeyAgentMayPropose')(
+  function* assertKeyAgentMayPropose(caller: AgentPlatformCaller) {
+    const { principalId, tenantId } = caller.principal;
+    const profiles = yield* loadAgentProfiles(tenantId, [principalId]).pipe(
+      Effect.mapError((cause) => new AgentStoreUnavailable({ cause })),
+    );
+    if ((profiles.get(principalId)?.writePolicy ?? 'read_only') === 'read_only') {
+      return yield* new AgentPlatformForbidden({ reason: 'Agent smí jen číst, návrhy změn podávat nemůže.' });
+    }
+  },
+);

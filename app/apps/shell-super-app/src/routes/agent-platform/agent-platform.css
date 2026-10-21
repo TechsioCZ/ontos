@@ -192,6 +192,34 @@
   outline-offset: 2px;
 }
 
+.ai-review-command > summary {
+  cursor: pointer;
+  color: var(--color-fg-secondary);
+  font-size: 0.75rem;
+}
+.ai-review-command > summary:focus-visible {
+  outline: 2px solid #28649b;
+  outline-offset: 2px;
+}
+.ai-review-command dl {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+}
+.ai-review-command dl > div {
+  display: grid;
+  grid-template-columns: minmax(6rem, 12rem) minmax(0, 1fr);
+  gap: 0.75rem;
+}
+.ai-review-command dt {
+  color: var(--color-fg-secondary);
+}
+.ai-review-command dd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
 .agent-activity-table {
   display: grid;
   min-width: 0;

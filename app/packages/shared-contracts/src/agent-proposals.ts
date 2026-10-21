@@ -106,6 +106,8 @@ export const AgentQueueItemSchema = Schema.Struct({
   appId: Schema.String,
   /** True when the current person may approve/reject this item (module write permission). */
   canDecide: Schema.Boolean,
+  /** Exact module command an approval runs (core queue only); the diff above is the agent's own description. */
+  command: Schema.optionalKey(AgentCommandSchema),
   decidedAt: Schema.optionalKey(Schema.String),
   decidedByName: Schema.optionalKey(Schema.String),
   decisionNote: Schema.optionalKey(Schema.String),
