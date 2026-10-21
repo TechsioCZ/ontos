@@ -365,7 +365,7 @@ export interface BindApiKeyInput {
 const bindApiKeyFor = (persistence: PrincipalManagementPersistence) =>
   Effect.fn('PrincipalManagement.bindApiKey')(function* bindKey(input: BindApiKeyInput) {
     const target = yield* persistence.loadPrincipal(input.tenantId, input.principalId);
-    const allowedKinds: readonly PrincipalKind[] = input.managed ? ['service', 'integration'] : ['human'];
+    const allowedKinds: readonly PrincipalKind[] = input.managed ? ['service', 'integration', 'agent'] : ['human'];
     if (Option.isNone(target) || target.value.status !== 'active' || !allowedKinds.includes(target.value.kind)) {
       return yield* invalid('The API key target is not eligible');
     }
@@ -428,7 +428,7 @@ const validateSupportImpersonationFor = (persistence: PrincipalManagementPersist
   });
 
 const isEligibleBindingTarget = (managed: boolean, status: PrincipalStatus, kind: PrincipalKind): boolean => {
-  const allowedKinds: readonly PrincipalKind[] = managed ? ['service', 'integration'] : ['human'];
+  const allowedKinds: readonly PrincipalKind[] = managed ? ['service', 'integration', 'agent'] : ['human'];
   return status === 'active' && allowedKinds.includes(kind);
 };
 

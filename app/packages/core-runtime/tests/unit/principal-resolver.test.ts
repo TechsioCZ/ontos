@@ -164,10 +164,10 @@ it.effect('rejects Better Auth user bindings to non-human principals', () =>
     ),
   ),
 );
-it.effect('resolves exactly one API-key subject for human, service, or integration principals', () =>
+it.effect('resolves exactly one API-key subject for human, service, integration or agent principals', () =>
   Effect.gen(function* resolvesApiKeySubject() {
     yield* Effect.all(
-      (['human', 'service', 'integration'] as const).map((principalKind) =>
+      (['human', 'service', 'integration', 'agent'] as const).map((principalKind) =>
         Effect.gen(function* resolvesPrincipalKind() {
           const resolved = yield* classifyApiKeyPrincipal([{ ...activeRecord, principalKind }]);
           expect(resolved.principalKind).toBe(principalKind);

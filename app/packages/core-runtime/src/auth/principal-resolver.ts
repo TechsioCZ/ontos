@@ -216,7 +216,7 @@ export const classifyApiKeyPrincipal = Effect.fn('PrincipalResolver.classifyApiK
     if (eligible.length !== 1 || only === undefined) {
       return yield* new PrincipalBindingAmbiguousError();
     }
-    if (!['human', 'service', 'integration'].includes(only.principalKind)) {
+    if (!['human', 'service', 'integration', 'agent'].includes(only.principalKind)) {
       return yield* new PrincipalInactiveError();
     }
     return toResolvedIdentity(only);
