@@ -460,7 +460,7 @@ const program = Effect.gen(function* () {
   );
   if (!dryRun) {
     yield* Console.log(
-      'domain regroup migration committed. Next: fast-forward the runtime, pnpm install, build the changed apps, DEMO_RESET=0 DEMO_SKIP_BUILD=1 scripts/demo/up.sh, restart the agent MCP server.',
+      'domain regroup migration committed. Next: node scripts/demo/migrate-domain-regroup-authorization.mts (SpiceDB grants), fast-forward the runtime, pnpm install, build the changed apps, DEMO_RESET=0 DEMO_SKIP_BUILD=1 scripts/demo/up.sh, restart the agent MCP server.',
     );
   }
 });
