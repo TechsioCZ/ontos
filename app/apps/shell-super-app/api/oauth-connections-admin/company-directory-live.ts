@@ -1,7 +1,8 @@
 // lane mcp-connections-ui: Core principals + SpiceDB membership/operators of one company for the management handlers.
-// Reads `core.principals` (display names, kinds, status) through AuthDatabase, takes company membership and agent
-// operator relations from SpiceDB via openDemoAccountGrants, and audits operator changes in `core.audit_events`.
-import { openDemoAccountGrants } from '@app/core-runtime';
+// Reads `core.principals` (display names, kinds, status) through AuthDatabase, takes company membership from SpiceDB
+// via openDemoAccountGrants, reads and writes agent operator relations via openPrincipalOperators, and audits
+// operator changes in `core.audit_events`.
+import { openDemoAccountGrants, openPrincipalOperators } from '@app/core-runtime';
 import type { PrincipalRef } from '@app/shared-contracts/agent-access';
 import { and, eq, inArray } from 'drizzle-orm';
 import { jsonb, pgSchema, text, uuid } from 'drizzle-orm/pg-core';
@@ -95,8 +96,10 @@ const agents = Effect.fn('CompanyDirectory.agents')(function* agents(tenantId: s
     .map((row): CompanyAgent => {
       const profile = profiles.get(row.principalId);
       return {
+        description: profile?.description ?? null,
         displayName: row.displayName,
         modules: profile?.modules ?? [],
+        ownerPrincipalId: profile?.ownerPrincipalId ?? null,
         principalId: row.principalId,
         seeded: profile?.seeded ?? false,
         status: row.status === 'active' ? 'active' : row.status === 'archived' ? 'archived' : 'disabled',
@@ -107,7 +110,7 @@ const agents = Effect.fn('CompanyDirectory.agents')(function* agents(tenantId: s
 });
 
 const operatorsOf = (agentPrincipalId: string) =>
-  Effect.scoped(Effect.flatMap(openDemoAccountGrants, (grants) => grants.agentOperators(agentPrincipalId))).pipe(
+  Effect.scoped(Effect.flatMap(openPrincipalOperators, (operators) => operators.operatorsOf(agentPrincipalId))).pipe(
     Effect.mapError(unavailable),
   );
 
@@ -119,10 +122,11 @@ const replaceOperators = Effect.fn('CompanyDirectory.replaceOperators')(function
   readonly tenantId: string;
 }) {
   yield* Effect.scoped(
-    Effect.flatMap(openDemoAccountGrants, (grants) =>
-      grants.replaceAgentOperators({
+    Effect.flatMap(openPrincipalOperators, (operators) =>
+      operators.replaceOperators({
         agentPrincipalId: input.agentPrincipalId,
         operatorPrincipalIds: input.operatorPrincipalIds,
+        tenantId: input.tenantId,
       }),
     ),
   ).pipe(Effect.mapError(unavailable));

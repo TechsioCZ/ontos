@@ -1,16 +1,25 @@
 // Agent profiles, pure part (lane agent-entities). No database imports; the DB side lives in agent-store.ts.
 // Seeded AI principals match scripts/demo/ai-profiles.mts; administrator edits are audit evidence.
+// Profiles also carry the administrator's description and the responsible person (owner).
 import { AgentModuleGrantSchema, AgentWritePolicySchema } from '@app/shared-contracts/agent-access';
 import type { AgentModuleGrant, AgentWritePolicy } from '@app/shared-contracts/agent-access';
 import { Option, Schema } from 'effect';
 
 export interface AgentProfile {
+  readonly description: string | null;
   readonly modules: readonly AgentModuleGrant[];
+  readonly ownerPrincipalId: string | null;
   readonly seeded: boolean;
   readonly writePolicy: AgentWritePolicy;
 }
 
-export const DEFAULT_AGENT_PROFILE: AgentProfile = { modules: [], seeded: false, writePolicy: 'read_only' };
+export const DEFAULT_AGENT_PROFILE: AgentProfile = {
+  description: null,
+  modules: [],
+  ownerPrincipalId: null,
+  seeded: false,
+  writePolicy: 'read_only',
+};
 
 const OBCHOD = '71000000-0000-4000-8000-000000000020';
 const HANAK = '71000000-0000-4000-8000-000000000022';
@@ -115,7 +124,9 @@ const ModulesJson = Schema.fromJsonString(Schema.Array(AgentModuleGrantSchema));
 
 const seedOf = (principalId: string): AgentProfile | undefined => {
   const seed = Object.hasOwn(seededAgentProfiles, principalId) ? seededAgentProfiles[principalId] : undefined;
-  return seed === undefined ? undefined : { modules: seed.modules, seeded: true, writePolicy: seed.writePolicy };
+  return seed === undefined
+    ? undefined
+    : { description: null, modules: seed.modules, ownerPrincipalId: null, seeded: true, writePolicy: seed.writePolicy };
 };
 
 /**
@@ -142,7 +153,15 @@ export const foldAgentProfiles = (
     const writePolicy = Schema.decodeUnknownOption(AgentWritePolicySchema)(evidence['writePolicy']);
     const modules = Schema.decodeUnknownOption(ModulesJson)(evidence['modulesJson']);
     if (Option.isSome(writePolicy) && Option.isSome(modules)) {
-      profiles.set(target, { modules: modules.value, seeded: false, writePolicy: writePolicy.value });
+      const description = typeof evidence['description'] === 'string' ? evidence['description'] : null;
+      const ownerPrincipalId = typeof evidence['ownerPrincipalId'] === 'string' ? evidence['ownerPrincipalId'] : null;
+      profiles.set(target, {
+        description,
+        modules: modules.value,
+        ownerPrincipalId,
+        seeded: false,
+        writePolicy: writePolicy.value,
+      });
     }
   }
   return profiles;

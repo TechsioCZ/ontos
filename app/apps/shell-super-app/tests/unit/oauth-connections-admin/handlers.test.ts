@@ -87,27 +87,33 @@ const caller = (overrides: Partial<ConnectionsCaller>): ConnectionsCaller => ({
 const fixture = (): Fixture => ({
   agents: [
     {
+      description: null,
       displayName: 'Agent Sklad',
       legalEntityId: companyA.legalEntityId,
       modules: [{ access: 'read', moduleId: 'warehouse' }],
+      ownerPrincipalId: null,
       principalId: 'agent-1',
       seeded: false,
       status: 'active',
       writePolicy: 'approval',
     },
     {
+      description: null,
       displayName: 'Agent Účet',
       legalEntityId: companyA.legalEntityId,
       modules: [{ access: 'read', moduleId: 'finance' }],
+      ownerPrincipalId: null,
       principalId: 'agent-2',
       seeded: true,
       status: 'active',
       writePolicy: 'direct',
     },
     {
+      description: null,
       displayName: 'Agent B',
       legalEntityId: companyB.legalEntityId,
       modules: [],
+      ownerPrincipalId: null,
       principalId: 'agent-b',
       seeded: false,
       status: 'active',

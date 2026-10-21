@@ -78,8 +78,12 @@ export interface GrantAdminPort<R> {
 
 /** An agent entity (Core principal kind `agent`) of one company with its current profile. */
 export interface CompanyAgent {
+  /** Administrator text; null when empty. */
+  readonly description: string | null;
   readonly displayName: string;
   readonly modules: readonly AgentModuleGrant[];
+  /** Responsible person of the company; null when none. */
+  readonly ownerPrincipalId: string | null;
   readonly principalId: string;
   readonly seeded: boolean;
   readonly status: AgentStatus;

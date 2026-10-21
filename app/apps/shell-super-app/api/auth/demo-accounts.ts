@@ -178,6 +178,9 @@ export class DemoAccountUnavailable extends Data.TaggedError('DemoAccountUnavail
 
 const unavailable = (cause: unknown) => new DemoAccountUnavailable({ cause });
 
+/** Core reports agents as active, disabled or archived; the demo UI shows active or disabled only. */
+const accountStatusOf = (status: string): 'active' | 'disabled' => (status === 'active' ? 'active' : 'disabled');
+
 export interface DemoAccountCaller {
   readonly legalName: string;
   readonly principal: TrustedPrincipalContext & { readonly legalEntityId: string };
@@ -315,8 +318,27 @@ const principalByEmail = Effect.fn('DemoAccounts.principalByEmail')(function* pr
   return row.principalId;
 });
 
+/** The company's roles with the principal of each role's template persona (module presets for agent entities). */
+export const companyRoleTemplates = Effect.fn('DemoAccounts.companyRoleTemplates')(function* companyRoleTemplates(
+  tenantId: string,
+  legalEntityId: string,
+) {
+  const roles = rolesOf(legalEntityId);
+  if (roles === undefined) {
+    return [] as readonly { readonly key: string; readonly label: string; readonly templatePrincipalId: string }[];
+  }
+  return yield* Effect.forEach(
+    roles.roles,
+    (role) =>
+      principalByEmail(tenantId, role.templateEmail).pipe(
+        Effect.map((templatePrincipalId) => ({ key: role.key, label: role.label, templatePrincipalId })),
+      ),
+    { concurrency: 3 },
+  );
+});
+
 /** The caller must hold an administrator role in the selected company (Core additionally checks `manage_identity`). */
-const requireAdministrator = Effect.fn('DemoAccounts.requireAdministrator')(function* requireAdministrator(
+export const requireAdministrator = Effect.fn('DemoAccounts.requireAdministrator')(function* requireAdministrator(
   caller: DemoAccountCaller,
   grants: DemoAccountGrants,
 ) {
@@ -347,12 +369,53 @@ const legalNames = Effect.fn('DemoAccounts.legalNames')(function* legalNames(ten
   return new Map(rows.map((row) => [row.legalEntityId, row.legalName]));
 });
 
-const auditTrail = Effect.fn('DemoAccounts.auditTrail')(function* auditTrail(
+/** Display names of principals by id (any kind: targets of agent audit rows are agent entities too). */
+const principalNames = Effect.fn('DemoAccounts.principalNames')(function* principalNames(
+  tenantId: string,
+  principalIds: readonly string[],
+) {
+  if (principalIds.length === 0) {
+    return new Map<string, string>();
+  }
+  const { executor } = yield* AuthDatabase;
+  const rows = yield* executor
+    .select({ displayName: corePrincipals.displayName, principalId: corePrincipals.principalId })
+    .from(corePrincipals)
+    .where(and(eq(corePrincipals.tenantId, tenantId), inArray(corePrincipals.principalId, [...principalIds])))
+    .pipe(Effect.mapError(unavailable));
+  return new Map(rows.map((row) => [row.principalId, row.displayName]));
+});
+
+/** Audit of the people (`subjects: 'people'`) or the agent entities (`subjects: 'agents'`) of one company. */
+export const auditTrail = Effect.fn('DemoAccounts.auditTrail')(function* auditTrail(
   tenantId: string,
   legalEntityId: string,
   members: readonly string[],
+  subjects: 'agents' | 'people',
 ) {
   const { executor } = yield* AuthDatabase;
+  const actionRows = and(
+    eq(coreAuditEvents.legalEntityId, legalEntityId),
+    sql`${coreAuditEvents.evidenceJson}->>'actionKey' = ${ACTION_KEY}`,
+    sql`${coreAuditEvents.eventType} in ('action.executed', 'action.rejected')`,
+    subjects === 'agents'
+      ? sql`${coreAuditEvents.evidenceJson}->>'principalKind' = 'agent'`
+      : sql`coalesce(${coreAuditEvents.evidenceJson}->>'principalKind', 'human') <> 'agent'`,
+  );
+  const otherRows =
+    subjects === 'agents'
+      ? and(
+          eq(coreAuditEvents.legalEntityId, legalEntityId),
+          eq(coreAuditEvents.eventType, 'identity.agent_operators_changed'),
+        )
+      : members.length === 0
+        ? sql`false`
+        : // Requests of deactivated accounts of this company, rejected and audited by the principal resolver.
+          and(
+            eq(coreAuditEvents.eventType, 'authn.rejected'),
+            eq(coreAuditEvents.outcomeCode, 'principal_inactive'),
+            inArray(coreAuditEvents.principalId, [...members]),
+          );
   const rows = yield* executor
     .select({
       actorName: corePrincipals.displayName,
@@ -372,39 +435,11 @@ const auditTrail = Effect.fn('DemoAccounts.auditTrail')(function* auditTrail(
         eq(corePrincipals.principalId, coreAuditEvents.principalId),
       ),
     )
-    .where(
-      and(
-        eq(coreAuditEvents.tenantId, tenantId),
-        or(
-          and(
-            eq(coreAuditEvents.legalEntityId, legalEntityId),
-            sql`${coreAuditEvents.evidenceJson}->>'actionKey' = ${ACTION_KEY}`,
-            sql`${coreAuditEvents.eventType} in ('action.executed', 'action.rejected')`,
-          ),
-          // Requests of deactivated accounts of this company, rejected and audited by the principal resolver.
-          members.length === 0
-            ? sql`false`
-            : and(
-                eq(coreAuditEvents.eventType, 'authn.rejected'),
-                eq(coreAuditEvents.outcomeCode, 'principal_inactive'),
-                inArray(coreAuditEvents.principalId, [...members]),
-              ),
-        ),
-      ),
-    )
+    .where(and(eq(coreAuditEvents.tenantId, tenantId), or(actionRows, otherRows)))
     .orderBy(desc(coreAuditEvents.occurredAt))
     .limit(80)
     .pipe(Effect.mapError(unavailable));
-  const targets = [
-    ...new Set(
-      rows.flatMap(({ evidence }) =>
-        typeof evidence['targetPrincipalId'] === 'string' ? [evidence['targetPrincipalId']] : [],
-      ),
-    ),
-  ];
-  const people = yield* loadPeople(tenantId, targets);
-  const names = new Map(people.map((person) => [person.principalId, person.displayName]));
-  return rows.map((row) => {
+  const entries = rows.map((row) => {
     const details: Record<string, string | null> = {};
     for (const [key, value] of Object.entries(row.evidence)) {
       if (key !== 'actionKey' && key !== 'resultHash' && (typeof value === 'string' || value === null)) {
@@ -414,6 +449,20 @@ const auditTrail = Effect.fn('DemoAccounts.auditTrail')(function* auditTrail(
     if (row.eventType === 'authn.rejected' && row.principalId !== null) {
       details['targetPrincipalId'] = row.principalId;
     }
+    if (typeof details['targetPrincipalId'] !== 'string' && typeof details['agentPrincipalId'] === 'string') {
+      details['targetPrincipalId'] = details['agentPrincipalId'];
+    }
+    return { details, row };
+  });
+  const targets = [
+    ...new Set(
+      entries.flatMap(({ details }) =>
+        typeof details['targetPrincipalId'] === 'string' ? [details['targetPrincipalId']] : [],
+      ),
+    ),
+  ];
+  const names = yield* principalNames(tenantId, targets);
+  return entries.map(({ details, row }) => {
     const target = details['targetPrincipalId'];
     return {
       actorName: row.actorName,
@@ -474,7 +523,7 @@ export const listDemoAccounts = Effect.fn('DemoAccounts.list')(function* listDem
       ),
     { concurrency: 4 },
   );
-  const audit = yield* auditTrail(tenantId, legalEntityId, members);
+  const audit = yield* auditTrail(tenantId, legalEntityId, members, 'people');
   const response: DemoAccountListResponse = {
     accounts: accounts.toSorted(
       (left, right) =>
@@ -495,7 +544,7 @@ export const listDemoAccounts = Effect.fn('DemoAccounts.list')(function* listDem
 }, Effect.scoped);
 
 /** Deterministic IDs per idempotency key, so a retried create replays the same Core Action. */
-const derivedUuid = (seed: string) => {
+export const derivedUuid = (seed: string) => {
   const hex = createHash('sha256').update(seed).digest('hex');
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 };
@@ -529,7 +578,11 @@ const ensureBetterAuthUser = Effect.fn('DemoAccounts.ensureBetterAuthUser')(func
 });
 
 /** A non-administrator's attempt is denied before the Core Action runs; it is still written to the Core audit. */
-const auditForbiddenAttempt = (caller: DemoAccountCaller, operation: string) =>
+export const auditForbiddenAttempt = (
+  caller: DemoAccountCaller,
+  operation: string,
+  principalKind: 'agent' | null = null,
+) =>
   AuthDatabase.pipe(
     Effect.flatMap(({ executor }) =>
       executor.insert(coreAuditEventsWrite).values({
@@ -537,7 +590,12 @@ const auditForbiddenAttempt = (caller: DemoAccountCaller, operation: string) =>
         authBindingId: caller.principal.authBindingId ?? null,
         authMethod: caller.principal.authMethod,
         eventType: 'action.rejected',
-        evidenceJson: { actionKey: ACTION_KEY, operation, reason: 'company_administrator_required' },
+        evidenceJson: {
+          actionKey: ACTION_KEY,
+          operation,
+          principalKind,
+          reason: 'company_administrator_required',
+        },
         legalEntityId: caller.principal.legalEntityId,
         outcome: 'denied',
         outcomeCode: 'company_administrator_required',
@@ -606,7 +664,7 @@ export const manageDemoAccount = Effect.fn('DemoAccounts.manage')(function* mana
       grantsRevoked: copied.revoked,
       operation: result.operation,
       principalId: result.principalId,
-      status: result.status,
+      status: accountStatusOf(result.status),
     };
     return response;
   }
@@ -638,7 +696,7 @@ export const manageDemoAccount = Effect.fn('DemoAccounts.manage')(function* mana
       grantsRevoked: changed.revoked,
       operation: result.operation,
       principalId: result.principalId,
-      status: result.status,
+      status: accountStatusOf(result.status),
     };
     return response;
   }
@@ -654,7 +712,7 @@ export const manageDemoAccount = Effect.fn('DemoAccounts.manage')(function* mana
     grantsRevoked: 0,
     operation: result.operation,
     principalId: result.principalId,
-    status: result.status,
+    status: accountStatusOf(result.status),
   };
   return response;
 }, Effect.scoped);
