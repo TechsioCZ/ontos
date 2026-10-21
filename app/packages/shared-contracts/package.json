@@ -17,7 +17,8 @@
     "./ai-approvals": "./src/ai-approvals.ts",
     "./agent-proposals": "./src/agent-proposals.ts",
     "./agent-revert": "./src/agent-revert.ts",
-    "./agent-access": "./src/agent-access.ts"
+    "./agent-access": "./src/agent-access.ts",
+    "./oauth-connections": "./src/oauth-connections.ts"
   },
   "scripts": {
     "test:types": "ultramodern-create ultramodern typecheck --project tests/tsconfig.json && ultramodern-create ultramodern typecheck --project tests/client-runtime-types.tsconfig.json",

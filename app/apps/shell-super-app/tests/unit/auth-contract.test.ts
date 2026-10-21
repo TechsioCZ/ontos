@@ -51,16 +51,29 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
   const tenantEndpoints = Object.keys(ShellAuthenticationApi.groups.tenants.endpoints).toSorted();
   const resourceEndpoints = Object.keys(ShellAuthenticationApi.groups.resources.endpoints).toSorted();
   const externalIdentityEndpoints = Object.keys(ShellAuthenticationApi.groups.externalIdentity.endpoints).toSorted();
+  const agentPlatformEndpoints = Object.keys(ShellAuthenticationApi.groups.agentPlatform.endpoints).toSorted();
 
+  expect(agentPlatformEndpoints).toEqual([
+    'agentActivity',
+    'agentDecide',
+    'agentQueue',
+    'agentRevert',
+    'listOwnAgentProposals',
+    'submitAgentProposals',
+  ]);
   expect(authenticationEndpoints).toEqual(['currentSession', 'signIn', 'signOut']);
   expect(gatewayEndpoints).toEqual(['issueGatewayContext', 'issueApiKeyGatewayContext']);
   expect(identityEndpoints).toEqual([
     'changePrincipalStatus',
+    'configureDemoCompanies',
     'createNonHumanPrincipal',
+    'demoAccountCapability',
     'issueManagedApiKey',
     'issueSelfApiKey',
+    'listDemoAccounts',
     'listManagedApiKeys',
     'listSelfApiKeys',
+    'manageDemoAccount',
     'rotateManagedApiKey',
     'rotateSelfApiKey',
     'setManagedApiKeyStatus',
@@ -87,21 +100,30 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     ),
   ).toEqual({
     activatePrincipalBinding: '/auth/identity/external/bindings/activate',
+    agentActivity: '/agent-platform/activity',
+    agentDecide: '/agent-platform/decide',
+    agentQueue: '/agent-platform/queue',
+    agentRevert: '/agent-platform/revert',
     attachMedia: '/shell/resource/media-attachment',
     availableLegalEntities: '/auth/legal-entities',
     availableTenants: '/auth/tenants',
     changePrincipalBindingStatus: '/auth/identity/external/binding/status',
     changePrincipalStatus: '/auth/identity/principal-status',
+    configureDemoCompanies: '/auth/identity/demo-companies',
     createNonHumanPrincipal: '/auth/identity/principals',
     currentSession: '/auth/session',
+    demoAccountCapability: '/auth/identity/demo-accounts/capability',
     executeLegalEntityDetail: '/core/reads/legal-entity-detail',
     issueApiKeyGatewayContext: '/auth/api-key/gateway-context',
     issueExternalGatewayContext: '/auth/identity/external/gateway-context',
     issueGatewayContext: '/auth/gateway-context',
     issueManagedApiKey: '/auth/identity/api-keys/managed',
     issueSelfApiKey: '/auth/identity/api-keys/self',
+    listDemoAccounts: '/auth/identity/demo-accounts/list',
     listManagedApiKeys: '/auth/identity/api-keys/managed/list',
+    listOwnAgentProposals: '/agent-platform/proposals/list',
     listSelfApiKeys: '/auth/identity/api-keys/self/list',
+    manageDemoAccount: '/auth/identity/demo-accounts',
     readPrincipalBinding: '/auth/identity/external/bindings/read',
     reservePrincipalBinding: '/auth/identity/external/bindings/reserve',
     resolveExternalSubject: '/auth/identity/external/resolve',
@@ -117,6 +139,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     signOut: '/auth/sign-out',
     startSupportImpersonation: '/auth/identity/impersonation/start',
     stopSupportImpersonation: '/auth/identity/impersonation/stop',
+    submitAgentProposals: '/agent-platform/proposals',
     switchLegalEntity: '/auth/legal-entity/switch',
     switchTenant: '/auth/tenant/switch',
   });
