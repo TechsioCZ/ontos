@@ -270,7 +270,7 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
       const writable = modules.filter((item) => item.write).map((item) => item.moduleId);
       const profileId = asString(value.profile_id) ?? '';
       const principalId = asString(acting.principalId);
-      const delegatedBy = acting.delegatedBy;
+      const delegatedBy = value.delegatedBy;
       const profileOk = !outcome.isError && profileId !== '';
       const pass =
         def.key === 'v1'
@@ -428,43 +428,60 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
       }
     });
 
-    // Refresh rotation: the old refresh token must be rejected once the 30 s grace has passed.
-    const rotated = await rec.step(k, 'rotace refresh tokenu (starý odmítnut po 30 s)', async () => {
+    // Refresh rotation: the rotated pair works at once.
+    let rotatedAt = Date.now();
+    const rotated = await rec.step(k, 'rotace refresh tokenu + nový access token funguje', async () => {
       const result = await rotateRefreshToken({ issuer: E2E.issuer, provider, resource: E2E.mcpUrl });
-      await sleep(31_000);
-      const rejected = await refreshIsRejected({
-        issuer: E2E.issuer,
-        provider,
-        refreshToken: result.oldRefreshToken,
-        resource: E2E.mcpUrl,
-      });
-      const pass = result.newRefreshToken !== undefined && result.newRefreshToken !== result.oldRefreshToken && rejected;
-      return {
-        pass,
-        detail: `nový refresh=${result.newRefreshToken === undefined ? 'ne' : 'ano'}, starý odmítnut=${rejected ? 'ano' : 'ne'}`,
-        value: result,
-      };
+      rotatedAt = Date.now();
+      const { client: fresh } = await connectMcp(E2E.mcpUrl, result.accessToken, 'modern');
+      open.push(fresh);
+      try {
+        const who = await callJson(fresh, 'ontos_whoami');
+        const pass =
+          result.newRefreshToken !== undefined && result.newRefreshToken !== result.oldRefreshToken && !who.isError;
+        return {
+          pass,
+          detail: `nový refresh=${result.newRefreshToken === undefined ? 'ne' : 'ano'}, whoami=${who.isError ? 'isError' : 'OK'}`,
+          value: result,
+        };
+      } finally {
+        await fresh.close();
+      }
     });
     if (rotated !== undefined) {
       access = rotated.accessToken;
     }
 
-    await rec.step(k, 'nový access token funguje', async () => {
+    /** Waits until the 30 s reuse grace of the rotated-out refresh token has passed, then presents it. */
+    const oldRefreshRejected = async (): Promise<boolean> => {
       if (rotated === undefined) {
-        return { pass: false, detail: 'rotace selhala, nový access token chybí' };
+        return false;
       }
-      const { client: fresh } = await connectMcp(E2E.mcpUrl, access, 'modern');
-      open.push(fresh);
-      try {
-        const who = await callJson(fresh, 'ontos_whoami');
-        return { pass: !who.isError, detail: who.isError ? 'isError' : 'whoami OK' };
-      } finally {
-        await fresh.close();
-      }
-    });
+      await sleep(Math.max(0, rotatedAt + 31_000 - Date.now()));
+      return await refreshIsRejected({
+        issuer: E2E.issuer,
+        provider,
+        refreshToken: rotated.oldRefreshToken,
+        resource: E2E.mcpUrl,
+      });
+    };
 
     if (keep) {
       rec.log(`grant ponechán: ${grantId}`);
+    } else if (def.key === 'v1') {
+      // Design §2.5: presenting the old refresh token after the 30 s grace is reuse; it is rejected and the
+      // connection is revoked (audit oauth.token.refresh_reuse), so the current access token stops working too.
+      await rec.step(k, 'starý refresh po 30 s odmítnut → připojení zrušeno, 401 do 35 s', async () => {
+        const rejected = await oldRefreshRejected();
+        if (!rejected) {
+          return { pass: false, detail: 'starý refresh token prošel' };
+        }
+        const waited = await waitForInvalidToken(access);
+        return {
+          pass: waited.ok,
+          detail: waited.ok ? `odmítnut, 401 za ${waited.seconds} s` : `odmítnut, poslední status ${waited.status}`,
+        };
+      });
     } else {
       await rec.step(k, 'odpojení → 401 do 35 s', async () => {
         const revoked = await sessionPost(
@@ -481,6 +498,10 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
           pass: waited.ok,
           detail: waited.ok ? `${waited.seconds} s` : `${waited.seconds} s, poslední status ${waited.status}`,
         };
+      });
+      await rec.step(k, 'starý refresh token odmítnut (po 30 s)', async () => {
+        const rejected = await oldRefreshRejected();
+        return { pass: rejected, detail: rejected ? 'invalid_grant' : 'starý refresh token prošel' };
       });
     }
   } finally {
