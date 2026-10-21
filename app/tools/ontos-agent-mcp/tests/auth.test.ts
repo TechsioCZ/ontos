@@ -1,8 +1,8 @@
 import { describe, expect, it } from '@rstest/core';
-import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from 'jose';
+import { createLocalJWKSet, errors, exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { prmPaths, prmResponse, protectedResourceMetadata, unauthorizedResponse, wwwAuthenticate } from '../src/oauth/prm.ts';
 import { createAccessTokenVerifier } from '../src/oauth/verify.ts';
-import { GRANT_CLAIM, InvalidTokenError } from '../src/oauth/types.ts';
+import { ConnectorUnavailableError, GRANT_CLAIM, InvalidTokenError } from '../src/oauth/types.ts';
 
 const ISSUER = 'http://localhost:3020/shell-super-app-api/oauth';
 const AUDIENCE = 'http://localhost:3090/mcp';
@@ -106,6 +106,16 @@ describe('createAccessTokenVerifier', () => {
       .sign(other.privateKey);
     const error = await errorOf(verify(forged));
     expect(error).toBeInstanceOf(InvalidTokenError);
+  });
+
+  it('maps an unreachable or failing JWKS to ConnectorUnavailableError, not 401', async () => {
+    const { sign } = await setup();
+    const failing = createAccessTokenVerifier({
+      audience: AUDIENCE,
+      issuer: ISSUER,
+      keys: () => Promise.reject(new errors.JOSEError('Expected 200 OK from the JSON Web Key Set HTTP response')),
+    });
+    expect(await errorOf(failing(await sign()))).toBeInstanceOf(ConnectorUnavailableError);
   });
 });
 

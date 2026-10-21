@@ -29,8 +29,12 @@ export interface VerifierOptions {
   readonly keys: JWTVerifyGetKey;
 }
 
+/** Issuer-side JWKS failures (timeout, network, non-200, unparsable or malformed set) mean 503, never 401. */
 const isUnavailable = (error: unknown): boolean =>
-  error instanceof errors.JWKSTimeout || error instanceof TypeError;
+  error instanceof errors.JWKSTimeout ||
+  error instanceof errors.JWKSInvalid ||
+  (error instanceof errors.JOSEError && error.code === 'ERR_JOSE_GENERIC') ||
+  error instanceof TypeError;
 
 export const createAccessTokenVerifier =
   (options: VerifierOptions) =>
