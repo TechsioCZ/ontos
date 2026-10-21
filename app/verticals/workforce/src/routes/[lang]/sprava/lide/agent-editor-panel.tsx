@@ -122,8 +122,9 @@ export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
       size="md"
       title={agent === null ? t(`${key}.createTitle`) : t(`${key}.editTitle`, { name: agent.displayName })}
     >
+      {/* `relative` keeps the selects' visually hidden native controls inside the panel's own scroll area. */}
       <form
-        className="flex flex-col gap-250 py-200"
+        className="relative flex flex-col gap-250 py-200"
         id="agent-editor-form"
         noValidate
         onSubmit={(event) => {

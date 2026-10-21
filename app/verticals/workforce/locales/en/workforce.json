@@ -354,7 +354,11 @@
           "save": "Save",
           "saving": "Saving…",
           "saved": "People for {{name}} saved",
-          "revoked": "Disconnected connections: {{count}}"
+          "revoked": "Disconnected connections: {{count}}",
+          "confirmTitle": "Remove and disconnect?",
+          "confirmDescription": "People you are removing have the agent connected: {{names}}. Saving disconnects these connections ({{count}}) at once.",
+          "confirm": "Save and disconnect",
+          "cancel": "Cancel"
         },
         "list": {
           "title": "Agent connections",
@@ -364,7 +368,7 @@
           "neverUsed": "Not used yet",
           "revoke": "Disconnect",
           "dialogTitle": "Disconnect {{client}}?",
-          "dialogDescription": "The app loses access as the agent within 30 seconds. The reason is written to the audit log.",
+          "dialogDescription": "The app loses access as the agent on its next request. The reason is written to the audit log.",
           "reason": "Reason",
           "reasonRequired": "Enter a reason.",
           "confirm": "Disconnect",
@@ -470,10 +474,19 @@
           "activated": "activated agent {{target}}",
           "deleted": "deleted agent {{target}}",
           "operators": "changed who may connect agent {{target}}",
-          "denied": "denied attempt to change an agent",
+          "denied": "tried to {{action}}, but only the company administrator manages agents",
           "reason": "Reason: {{reason}}",
           "system": "System",
-          "unknownAgent": "agent"
+          "unknownAgent": "agent",
+          "operatorsRevoked": "changed who may connect agent {{target}} and so disconnected its connections: {{count}}",
+          "operatorsCreated": "set who may connect agent {{target}}",
+          "deniedAction": {
+            "create": "create an agent",
+            "configure": "edit agent {{target}}",
+            "change-status": "change the status of agent {{target}}",
+            "delete": "delete agent {{target}}",
+            "other": "change agent {{target}}"
+          }
         }
       }
     }

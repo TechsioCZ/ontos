@@ -354,7 +354,11 @@
           "save": "Uložit",
           "saving": "Ukládám…",
           "saved": "Seznam lidí pro {{name}} je uložený",
-          "revoked": "Odpojená připojení: {{count}}"
+          "revoked": "Odpojená připojení: {{count}}",
+          "confirmTitle": "Odebrat a odpojit?",
+          "confirmDescription": "Agenta mají připojeného lidé, které odebíráte: {{names}}. Po uložení se tato připojení ({{count}}) hned odpojí.",
+          "confirm": "Uložit a odpojit",
+          "cancel": "Zrušit"
         },
         "list": {
           "title": "Připojení agenta",
@@ -364,7 +368,7 @@
           "neverUsed": "Zatím nepoužito",
           "revoke": "Odpojit",
           "dialogTitle": "Odpojit {{client}}?",
-          "dialogDescription": "Aplikace ztratí přístup za agenta do 30 sekund. Důvod se zapíše do auditu.",
+          "dialogDescription": "Aplikace ztratí přístup za agenta hned při dalším požadavku. Důvod se zapíše do auditu.",
           "reason": "Důvod odpojení",
           "reasonRequired": "Uveďte důvod.",
           "confirm": "Odpojit",
@@ -470,10 +474,19 @@
           "activated": "aktivoval(a) agenta {{target}}",
           "deleted": "smazal(a) agenta {{target}}",
           "operators": "změnil(a), kdo smí připojit agenta {{target}}",
-          "denied": "zamítnutý pokus o změnu agenta",
+          "denied": "zkusil(a) {{action}}, ale agenty spravuje jen správce firmy",
           "reason": "Důvod: {{reason}}",
           "system": "Systém",
-          "unknownAgent": "agenta"
+          "unknownAgent": "agenta",
+          "operatorsRevoked": "změnil(a), kdo smí připojit agenta {{target}}, a tím odpojil(a) jeho připojení: {{count}}",
+          "operatorsCreated": "určil(a), kdo smí připojit agenta {{target}}",
+          "deniedAction": {
+            "create": "vytvořit agenta",
+            "configure": "upravit agenta {{target}}",
+            "change-status": "změnit stav agenta {{target}}",
+            "delete": "smazat agenta {{target}}",
+            "other": "změnit agenta {{target}}"
+          }
         }
       }
     }

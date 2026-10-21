@@ -30,7 +30,8 @@ import { AgentEditorPanel } from './agent-editor-panel.tsx';
 
 const key = 'workforce.agents.section';
 const connectionsKey = 'workforce.agents.connections';
-const PEOPLE_ERROR_KEY = 'workforce.people.errors';
+const PEOPLE_KEY = 'workforce.people';
+const PEOPLE_ERROR_KEY = `${PEOPLE_KEY}.errors`;
 const AUDIT_LIMIT = 8;
 
 const statusVariant = { active: 'success', archived: 'outline', disabled: 'danger' } as const;
@@ -224,7 +225,7 @@ const AgentCard = ({ agent, company, members, modules, onChanged, onEdit, onNoti
     <article className={`${surfaceTileClassName} flex flex-col gap-200 p-250`}>
       <header className="flex flex-wrap items-start justify-between gap-150">
         <div className="flex min-w-0 flex-wrap items-center gap-100">
-          <span className="font-semibold">{agent.displayName}</span>
+          <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">{agent.displayName}</span>
           <Badge size="sm" variant={statusVariant[agent.status]}>
             {t(`${connectionsKey}.status.${agent.status}`)}
           </Badge>
@@ -303,7 +304,16 @@ const OperatorsBlock = ({ agent, company, members, onChanged, onNotify }: Operat
   const [selected, setSelected] = useState<readonly string[]>(initialIds);
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<AgentFailure | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const dirty = !sameIds(selected, initialIds);
+  // Connections that saving would cut: the agent connected by people who are being removed.
+  const cut = agent.connections.filter(
+    (connection) =>
+      connection.delegatedBy !== null &&
+      initialIds.includes(connection.delegatedBy.principalId) &&
+      !selected.includes(connection.delegatedBy.principalId),
+  );
+  const cutNames = [...new Set(cut.map((connection) => connection.delegatedBy?.displayName ?? ''))].join(', ');
 
   const toggle = (principalId: string, checked: boolean) =>
     setSelected((current) =>
@@ -313,6 +323,7 @@ const OperatorsBlock = ({ agent, company, members, onChanged, onNotify }: Operat
     );
 
   const save = () => {
+    setConfirming(false);
     setBusy(true);
     setFailure(null);
     void browserRuntime
@@ -362,13 +373,33 @@ const OperatorsBlock = ({ agent, company, members, onChanged, onNotify }: Operat
           disabled={!dirty || busy}
           isLoading={busy}
           loadingText={t(`${connectionsKey}.operators.saving`)}
-          onClick={save}
+          onClick={() => (cut.length > 0 ? setConfirming(true) : save())}
           size="sm"
           variant="primary"
         >
           {t(`${connectionsKey}.operators.save`)}
         </Button>
       </div>
+      <Dialog
+        actions={
+          <>
+            <Button onClick={() => setConfirming(false)} theme="outlined" type="button" variant="secondary">
+              {t(`${connectionsKey}.operators.cancel`)}
+            </Button>
+            <Button disabled={busy} onClick={save} type="button" variant="danger">
+              {t(`${connectionsKey}.operators.confirm`)}
+            </Button>
+          </>
+        }
+        closeLabel={dialogCloseLabel}
+        customTrigger
+        description={t(`${connectionsKey}.operators.confirmDescription`, { count: cut.length, names: cutNames })}
+        onOpenChange={(details) => setConfirming(details.open)}
+        open={confirming}
+        role="alertdialog"
+        size="sm"
+        title={t(`${connectionsKey}.operators.confirmTitle`)}
+      />
     </section>
   );
 };
@@ -696,16 +727,28 @@ const AgentStatusDialog = ({ action, onChanged, onClose, onNotify }: AgentStatus
   );
 };
 
+const DENIED_OPERATIONS = new Set(['change-status', 'configure', 'create', 'delete']);
+
 const AuditBlock = ({ audit }: { readonly audit: readonly AgentAuditEntry[] }) => {
   const { t } = useModernI18n();
 
   const describe = (entry: AgentAuditEntry): string => {
     const target = entry.targetName ?? t(`${key}.audit.unknownAgent`);
     if (entry.outcome === 'denied' || entry.eventType === 'action.rejected') {
-      return t(`${key}.audit.denied`);
+      const operation = (entry.details['operation'] ?? '').replace(/-agent$/u, '');
+      const action = t(`${key}.audit.deniedAction.${DENIED_OPERATIONS.has(operation) ? operation : 'other'}`, {
+        target,
+      });
+      return t(`${key}.audit.denied`, { action });
     }
     if (entry.eventType === 'identity.agent_operators_changed') {
-      return t(`${key}.audit.operators`, { target });
+      const revoked = Number(entry.details['revokedConnections'] ?? '0');
+      if (entry.details['context'] === 'agent-created') {
+        return t(`${key}.audit.operatorsCreated`, { target });
+      }
+      return revoked > 0
+        ? t(`${key}.audit.operatorsRevoked`, { count: revoked, target })
+        : t(`${key}.audit.operators`, { target });
     }
     switch (entry.details['operation']) {
       case 'create-agent':
@@ -731,17 +774,31 @@ const AuditBlock = ({ audit }: { readonly audit: readonly AgentAuditEntry[] }) =
       ) : (
         <ul className="flex min-w-0 flex-col">
           {audit.slice(0, AUDIT_LIMIT).map((entry) => {
-            const reason = entry.outcome === 'denied' ? undefined : entry.details['reason'];
+            const denied = entry.outcome === 'denied' || entry.eventType === 'action.rejected';
+            const reason = denied ? undefined : entry.details['reason'];
             return (
               <li
-                className="flex flex-col gap-50 border-border-primary/60 border-b py-100 last:border-b-0"
+                className="flex gap-150 border-border-primary/60 border-b py-100 last:border-b-0"
                 key={entry.auditEventId}
               >
-                <p className="text-sm">{`${entry.actorName ?? t(`${key}.audit.system`)} ${describe(entry)}`}</p>
-                <p className="text-fg-secondary text-xs tabular-nums">
-                  {formatDateTime(entry.occurredAt)}
-                  {typeof reason === 'string' && ` · ${t(`${key}.audit.reason`, { reason })}`}
-                </p>
+                <span
+                  aria-hidden
+                  className={`mt-50 size-150 shrink-0 rounded-full ${denied ? 'bg-danger' : 'bg-success'}`}
+                />
+                <div className="flex min-w-0 flex-1 flex-col gap-50">
+                  <p className="text-sm [overflow-wrap:anywhere]">
+                    <span className="font-medium">{entry.actorName ?? t(`${key}.audit.system`)}</span> {describe(entry)}
+                  </p>
+                  <p className="text-fg-secondary text-xs tabular-nums">
+                    {formatDateTime(entry.occurredAt)}
+                    {typeof reason === 'string' && ` · ${t(`${key}.audit.reason`, { reason })}`}
+                  </p>
+                </div>
+                <span className="shrink-0 self-start">
+                  <Badge size="sm" variant={denied ? 'danger' : 'success'}>
+                    {t(denied ? `${PEOPLE_KEY}.audit.denied` : `${PEOPLE_KEY}.audit.succeeded`)}
+                  </Badge>
+                </span>
               </li>
             );
           })}
