@@ -176,7 +176,7 @@ export const ConnectorDescribeRequestSchema = Schema.Struct({});
 export type ConnectorDescribeRequest = typeof ConnectorDescribeRequestSchema.Type;
 
 export const ConnectorGatewayContextRequestSchema = Schema.Struct({
-  /** Stable topology app id of the vertical, e.g. `siampark-work`. */
+  /** Stable topology app id of the vertical, e.g. `work-tasks`. */
   audience: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   /** `ConnectionDescription.compositionRevision`. */
   compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
