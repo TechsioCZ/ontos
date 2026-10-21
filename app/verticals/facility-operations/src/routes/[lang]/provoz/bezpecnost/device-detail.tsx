@@ -90,10 +90,7 @@ const IncidentCard = ({
 }) => {
   const k = useSecurityLabel();
   return (
-    <li
-      className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}
-      data-testid="security-incident"
-    >
+    <li className={`${surfaceTileClassName} flex flex-col gap-150 p-200`} data-testid="security-incident">
       <div className="flex flex-wrap items-start justify-between gap-100">
         <div className="flex min-w-0 flex-col gap-50">
           <span className="font-semibold text-sm">{incident.title}</span>
