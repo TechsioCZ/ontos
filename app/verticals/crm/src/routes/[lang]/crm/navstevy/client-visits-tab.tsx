@@ -1,7 +1,7 @@
 // Client-card "Návštěvy" tab. OWNER: crm-visits. Contract: export name + ClientCardTabProps (klienti/card-tab-props.ts).
 // The card itself is a SidePanel, so everything here is inline (no stacked dialogs): summary facts, inline
 // "record visit" and "plan contact" forms, open plan items, and the client's timeline with correction history.
-import { EmptyState, formatNumber } from '@app/admin-ui';
+import { EmptyState, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';

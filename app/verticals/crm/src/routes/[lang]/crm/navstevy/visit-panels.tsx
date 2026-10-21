@@ -1,5 +1,5 @@
 // AREA: visits — owned by the crm-visits lane. Side panels: record a visit, correct it (with history), detail.
-import { DetailList, SidePanel, comboboxTranslations } from '@app/admin-ui';
+import { DetailList, SidePanel, comboboxTranslations, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
