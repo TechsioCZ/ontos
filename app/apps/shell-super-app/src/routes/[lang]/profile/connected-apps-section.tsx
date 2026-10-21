@@ -168,7 +168,7 @@ export const ConnectedAppsSection = () => {
   const connections = connectionsView?.connections ?? [];
 
   return (
-    <section className="grid w-full min-w-0 max-w-5xl gap-200 rounded-lg border border-border-primary bg-base p-300">
+    <section className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 grid w-full min-w-0 max-w-5xl gap-200 p-300">
       <div className="grid min-w-0 gap-100">
         <h2 className="font-semibold text-lg">Připojené aplikace</h2>
         <p className="text-fg-secondary text-sm">
@@ -202,7 +202,7 @@ export const ConnectedAppsSection = () => {
           <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-border-primary border-b text-left text-fg-secondary text-xs">
+                <tr className="border-border-primary/60 border-b text-left text-fg-secondary text-xs">
                   <th className="py-100 pr-150 font-medium" scope="col">
                     Aplikace
                   </th>
@@ -231,7 +231,7 @@ export const ConnectedAppsSection = () => {
               </thead>
               <tbody>
                 {connections.map((c) => (
-                  <tr key={c.grantId} className="border-border-primary border-b align-top">
+                  <tr key={c.grantId} className="border-border-primary/60 border-b align-top">
                     <td className="py-150 pr-150">
                       <AppIdentity connection={c} />
                     </td>
@@ -258,7 +258,7 @@ export const ConnectedAppsSection = () => {
 
           <ul className="grid gap-150 md:hidden">
             {connections.map((c) => (
-              <li key={c.grantId} className="grid min-w-0 gap-150 rounded-md border border-border-primary p-200">
+              <li key={c.grantId} className="ontos-tile grid min-w-0 gap-150 rounded-md bg-surface p-200">
                 <AppIdentity connection={c} />
                 <Field label="Firma">{c.legalName}</Field>
                 <Field label="Jako">

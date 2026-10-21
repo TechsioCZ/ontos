@@ -145,7 +145,7 @@ export const ConnectionsAdminPanel = () => {
 
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-3">
         {tiles(stats).map((tile) => (
-          <div className="rounded-lg border border-border-primary bg-base p-250" key={tile.label}>
+          <div className="ontos-tile rounded-lg bg-surface p-250" key={tile.label}>
             <p className="text-fg-secondary text-sm">{tile.label}</p>
             <p className="font-semibold text-2xl">{tile.value}</p>
           </div>
@@ -228,7 +228,7 @@ export const ConnectionsAdminPanel = () => {
               </thead>
               <tbody>
                 {connections.map((c) => (
-                  <tr className="border-border-primary border-t" key={c.grantId}>
+                  <tr className="border-border-primary/60 border-t" key={c.grantId}>
                     <td className="p-100">
                       <span className="font-semibold">{c.client.name}</span>{' '}
                       <Badge variant="outline">{c.client.host}</Badge>
@@ -259,7 +259,7 @@ export const ConnectionsAdminPanel = () => {
 
           <ul className="grid gap-150 md:hidden">
             {connections.map((c) => (
-              <li className="rounded-lg border border-border-primary bg-base p-250" key={c.grantId}>
+              <li className="ontos-tile rounded-lg bg-surface p-250" key={c.grantId}>
                 <div className="grid gap-100 text-sm">
                   <p>
                     <span className="font-semibold">{c.client.name}</span>{' '}

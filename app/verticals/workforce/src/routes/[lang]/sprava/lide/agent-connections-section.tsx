@@ -1,4 +1,4 @@
-import { EmptyState, SectionCard, dialogCloseLabel, formatDateTime } from '@app/admin-ui';
+import { EmptyState, SectionCard, dialogCloseLabel, formatDateTime, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import type {
   AgentConnectionsOverview,
@@ -113,7 +113,7 @@ interface AgentCardProps {
 const AgentCard = ({ agent, company, members, onChanged, onNotify }: AgentCardProps) => {
   const { t } = useModernI18n();
   return (
-    <article className="flex flex-col gap-200 rounded-lg border border-border-primary p-250">
+    <article className={`${surfaceTileClassName} flex flex-col gap-200 p-250`}>
       <header className="flex flex-wrap items-center gap-100">
         <span className="font-semibold">{agent.displayName}</span>
         <Badge size="sm" variant={statusVariant[agent.status]}>
@@ -286,7 +286,7 @@ const ConnectionRow = ({ connection, onRevoked }: ConnectionRowProps) => {
   };
 
   return (
-    <li className="flex flex-wrap items-center justify-between gap-150 border-border-primary border-b py-150 last:border-b-0">
+    <li className="flex flex-wrap items-center justify-between gap-150 border-border-primary/60 border-b py-150 last:border-b-0">
       <div className="flex min-w-0 flex-1 flex-col gap-50">
         <div className="flex min-w-0 flex-wrap items-center gap-100">
           <span className="font-medium">{clientName}</span>
