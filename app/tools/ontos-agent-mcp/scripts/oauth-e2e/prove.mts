@@ -17,6 +17,7 @@ import type { ActAs, E2eTab } from './browser.mts';
 // Seeded agent (scripts/demo/ai-profiles.mts level B, operator = company administrator via mcp-agent-operators.mts):
 // direct writes on work.tasks only, every other module read-only.
 const AGENT_NAME = 'AI agent B · čtení + úkoly (Obchodní firma)';
+const PROOF_TASK_PREFIX = 'Důkaz MCP OAuth (agent)';
 const OUT_OF_GRANT_CANDIDATES = [
   'demo.crm/command/UpdateClient',
   'demo.merchandise/command/ChangePrice',
@@ -75,6 +76,28 @@ function readModules(value: Json): Array<{ moduleId: string; write: boolean }> {
     const module = asRecord(item);
     return { moduleId: asString(module.moduleId) ?? '', write: module.write === true };
   });
+}
+
+/** Proof tasks a previous, interrupted v2 run left open (title prefix, not yet cancelled or done). */
+function openProofTasks(value: unknown, found: Json[] = []): Json[] {
+  if (Array.isArray(value)) {
+    value.forEach((item) => openProofTasks(item, found));
+  } else if (typeof value === 'object' && value !== null) {
+    const record = asRecord(value);
+    const title = asString(record.title);
+    const ref = asRecord(record.ref);
+    if (
+      title?.startsWith(PROOF_TASK_PREFIX) === true &&
+      ref.resourceType === 'work.tasks.task' &&
+      record.state !== 'CANCELLED' &&
+      record.state !== 'DONE'
+    ) {
+      found.push(ref);
+    } else {
+      Object.values(record).forEach((item) => openProofTasks(item, found));
+    }
+  }
+  return found;
 }
 
 async function listToolNames(client: Client): Promise<string[]> {
@@ -251,16 +274,16 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
       const profileOk = !outcome.isError && profileId !== '';
       const pass =
         def.key === 'v1'
-          ? profileOk && acting.kind === 'human' && acting.writePolicy === 'approval'
+          ? profileOk && acting.kind === 'human' && value.writePolicy === 'approval'
           : profileOk &&
             acting.kind === 'agent' &&
             delegatedBy !== null &&
             delegatedBy !== undefined &&
-            acting.writePolicy === 'direct' &&
+            value.writePolicy === 'direct' &&
             modules.every((item) => !item.write || item.moduleId === 'work.tasks');
       return {
         pass,
-        detail: `profil=${profileId === '' ? 'chybí' : 'ano'}, acting=${String(acting.kind)}, writePolicy=${String(acting.writePolicy)}`,
+        detail: `profil=${profileId === '' ? 'chybí' : 'ano'}, acting=${String(acting.kind)}, writePolicy=${String(value.writePolicy)}`,
         value: { writable, profileId, principalId },
       };
     });
@@ -323,16 +346,39 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
         });
       }
     } else {
+      // A run interrupted between create and cancel leaves its task open; cancel such leftovers first.
+      await rec.step(k, 'úklid: staré důkazní úkoly zrušeny', async () => {
+        const listed = await callJson(client, 'ontos_read', { id: 'work.tasks/read/records', limit: 500 });
+        if (listed.isError) {
+          return { pass: false, detail: 'čtení úkolů selhalo' };
+        }
+        const leftovers = openProofTasks(listed.value);
+        let cancelled = 0;
+        for (const [index, taskRef] of leftovers.entries()) {
+          const outcome = await callJson(client, 'ontos_execute', {
+            id: 'work.tasks/command/ChangeTaskState',
+            input: { state: 'CANCELLED', taskRef },
+            idempotencyKey: `${runId}-v2-leftover-${index}`,
+          });
+          if (!outcome.isError && asRecord(outcome.value).status === 'executed') {
+            cancelled += 1;
+          }
+        }
+        return { pass: cancelled === leftovers.length, detail: `zrušeno ${cancelled}/${leftovers.length}` };
+      });
+
       // Direct era: the write executes at once; the task is cancelled again so the board stays clean.
       await rec.step(k, 'zápis přímo: úkol vytvořen a zrušen', async () => {
         const created = await callJson(client, 'ontos_execute', {
           id: 'work.tasks/command/CreateTask',
-          input: { title: `Důkaz MCP OAuth (agent) ${runId}` },
+          input: { title: `${PROOF_TASK_PREFIX} ${runId}` },
           idempotencyKey: `${runId}-v2`,
         });
         const createdValue = asRecord(created.value);
-        const taskRef = asString(asRecord(asRecord(createdValue.result).task).ref);
-        if (created.isError || createdValue.status !== 'executed' || taskRef === undefined) {
+        // TaskRef is a resource reference object ({ moduleId, resourceId, resourceType, tenantId }), passed back as is.
+        const taskRef = asRecord(asRecord(asRecord(createdValue.result).task).ref);
+        const taskId = asString(taskRef.resourceId);
+        if (created.isError || createdValue.status !== 'executed' || taskId === undefined) {
           return { pass: false, detail: `vytvoření: status ${String(createdValue.status)}, isError=${created.isError}` };
         }
         const cancelled = await callJson(client, 'ontos_execute', {
@@ -343,7 +389,7 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
         const cancelledStatus = asRecord(cancelled.value).status;
         return {
           pass: !cancelled.isError && cancelledStatus === 'executed',
-          detail: `úkol ${taskRef} vytvořen a zrušen (status ${String(cancelledStatus)})`,
+          detail: `úkol ${taskId} vytvořen a zrušen (status ${String(cancelledStatus)})`,
         };
       });
     }

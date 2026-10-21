@@ -1,5 +1,6 @@
 import type {
   OAuthClientMetadata,
+  OAuthDiscoveryState,
   OAuthClientProvider,
   StoredOAuthClientInformation,
   StoredOAuthTokens,
@@ -20,6 +21,7 @@ export class E2eOAuthProvider implements OAuthClientProvider {
   #clientInformation: StoredOAuthClientInformation | undefined = undefined;
   #tokens: StoredOAuthTokens | undefined = undefined;
   #codeVerifier: string | undefined = undefined;
+  #discoveryState: OAuthDiscoveryState | undefined = undefined;
   lastAuthorizationUrl: URL | undefined = undefined;
 
   constructor(options: E2eOAuthProviderOptions) {
@@ -64,6 +66,15 @@ export class E2eOAuthProvider implements OAuthClientProvider {
       throw new Error('Žádné tokeny');
     }
     return this.#tokens;
+  }
+
+  /** Persisted with the code verifier so the SDK binds the callback leg to the same authorization server (SEP-2352). */
+  saveDiscoveryState(state: OAuthDiscoveryState): void {
+    this.#discoveryState = state;
+  }
+
+  discoveryState(): OAuthDiscoveryState | undefined {
+    return this.#discoveryState;
   }
 
   saveCodeVerifier(codeVerifier: string): void {
