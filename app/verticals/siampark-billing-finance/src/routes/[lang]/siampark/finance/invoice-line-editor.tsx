@@ -245,7 +245,6 @@ export const InvoiceLineEditor = ({
                     },
               );
             }}
-            size="sm"
             value={[line.priceListItemId ?? 'MANUAL']}
           />
         </div>
@@ -264,7 +263,6 @@ export const InvoiceLineEditor = ({
               ...(kind === 'NONE' ? { discountInput: '', discountReason: '', discountValue: Number.NaN } : {}),
             });
           }}
-          size="sm"
           value={[line.discountKind ?? 'NONE']}
         />
         {(line.discountKind ?? 'NONE') !== 'NONE' && (
@@ -278,16 +276,14 @@ export const InvoiceLineEditor = ({
                 const parsed = Number(raw.replaceAll(/\s/gu, '').replace(',', '.'));
                 onChange({ ...line, discountInput: raw, discountValue: raw.trim() === '' ? Number.NaN : parsed });
               }}
-              size="sm"
-              value={line.discountInput ?? ''}
+                value={line.discountInput ?? ''}
             />
             <FormInput
               id={`invoice-line-discount-reason-${line.key}`}
               label="Důvod schválené slevy"
               onChange={(event) => onChange({ ...line, discountReason: event.target.value })}
               placeholder="např. věrnostní sleva podle smlouvy"
-              size="sm"
-              value={line.discountReason ?? ''}
+                value={line.discountReason ?? ''}
             />
           </>
         )}
