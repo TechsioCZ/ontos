@@ -142,6 +142,8 @@ export const MerchandiseCommandSchema = Schema.Union([
   }),
   Schema.TaggedStruct('RemoveDemoOrder', {
     id: OrderIdSchema,
+    /** Explicit legacy repair only; ordinary cleanup replay never credits previously compensated records. */
+    repairStock: Schema.optionalKey(Schema.Boolean),
     reason: Schema.Trim.check(Schema.isMinLength(5), Schema.isMaxLength(500)),
   }),
   Schema.TaggedStruct('ChangeOrderStatus', {

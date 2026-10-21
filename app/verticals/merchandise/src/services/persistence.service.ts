@@ -1307,6 +1307,7 @@ export const evolveMerchandiseState = (
         }
         const entity = yield* entityIdOf(order.id);
         if (order.demoCleanup !== undefined) {
+          if (value.repairStock !== true) return { entityIds: [entity], state };
           const returned = yield* returnOrderStock(
             state,
             order,

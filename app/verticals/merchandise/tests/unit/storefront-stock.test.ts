@@ -204,3 +204,39 @@ it.effect('archives only inactive unpublished products and retains the ledger an
     expect(archived.state.movements).toBe(state.movements);
   }),
 );
+
+it.effect('legacy removed order repair is explicit and ledger-idempotent', () =>
+  Effect.gen(function* () {
+    const placed = yield* run(state, order(100, 'legacy-removed-order'), 'legacy-order');
+    const original = placed.state.orders[0]!;
+    const legacy = {
+      ...placed.state,
+      orders: [
+        {
+          ...original,
+          status: 'DELIVERED' as const,
+          demoCleanup: { at: DateTime.makeUnsafe(at), actor, reason: 'Dřívější odstranění' },
+        },
+      ],
+    };
+    const replay = yield* run(
+      legacy,
+      { _tag: 'RemoveDemoOrder', id: original.id, reason: 'Opakované odstranění' },
+      'legacy-replay',
+    );
+    expect(replay.state).toBe(legacy);
+    const repaired = yield* run(
+      legacy,
+      { _tag: 'RemoveDemoOrder', id: original.id, repairStock: true, reason: 'Dorovnání chybějícího skladu' },
+      'legacy-repair',
+    );
+    expect(stockOf(repaired.state)).toBe(500);
+    expect(repaired.state.orders[0]?.history?.at(-1)?.reason).toBe('Dorovnání chybějícího skladu');
+    const repeated = yield* run(
+      repaired.state,
+      { _tag: 'RemoveDemoOrder', id: original.id, repairStock: true, reason: 'Opakované dorovnání skladu' },
+      'legacy-repair-2',
+    );
+    expect(repeated.state).toBe(repaired.state);
+  }),
+);

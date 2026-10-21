@@ -29,11 +29,13 @@ export const OrderCancelDialog = ({ busy, onConfirm, onDismiss, orders }: OrderC
   return (
     <Dialog
       actions={
-        <>
-          <Button onClick={onDismiss} theme="outlined" variant="secondary">
+        <div className="flex w-full flex-wrap justify-end gap-100">
+          <Button className="shrink-0 whitespace-nowrap" onClick={onDismiss} theme="outlined" variant="secondary">
             {t(key('confirm.back'))}
           </Button>
           <Button
+            className="shrink-0 whitespace-nowrap"
+            style={{ whiteSpace: 'nowrap', flexShrink: 0 }}
             isLoading={busy}
             loadingText={t(key('create.submitting'))}
             onClick={() => {
@@ -44,7 +46,7 @@ export const OrderCancelDialog = ({ busy, onConfirm, onDismiss, orders }: OrderC
           >
             {single === undefined ? t(key('confirm.cancelBulkAction')) : t(key('confirm.cancelAction'))}
           </Button>
-        </>
+        </div>
       }
       closeLabel={dialogCloseLabel}
       customTrigger
