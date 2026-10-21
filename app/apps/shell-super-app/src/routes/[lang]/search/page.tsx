@@ -126,7 +126,7 @@ const SearchPage = () => {
     .filter(({ enabled, href }) => enabled && href !== null);
   const content =
     model.state === 'unavailable' ? (
-      <section className="grid w-full max-w-2xl gap-200 rounded-lg border border-border-primary bg-base p-300">
+      <section className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 grid w-full max-w-2xl gap-200 p-300">
         <h1 className="font-semibold text-xl">{t('shell.search.agenda_title')}</h1>
         <p className="text-fg-secondary text-sm">{t('shell.search.agenda_hint')}</p>
         <ul className="grid gap-150 md:grid-cols-2">

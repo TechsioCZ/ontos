@@ -206,7 +206,7 @@ const LoginPage = () => {
     <>
       <UltramodernRouteHead />
       <main className="flex min-h-dvh items-center justify-center bg-surface px-200 py-400 text-fg-primary">
-        <section className="flex w-full max-w-md flex-col gap-200 rounded-lg border border-border-primary bg-base p-300 md:p-400">
+        <section className="ontos-card rounded-lg border border-border-primary/60 bg-base [&_.ontos-card]:border-0 [&_.ontos-card]:bg-transparent [&_.ontos-card]:p-0 flex w-full max-w-md flex-col gap-200 p-300 md:p-400">
           <div className="flex items-center gap-150">
             <span className="flex size-icon-control-lg items-center justify-center rounded-md bg-primary">
               <Icon icon="icon-[mdi--hexagon-multiple-outline]" size="md" />
@@ -218,7 +218,7 @@ const LoginPage = () => {
           </div>
           <p className="text-fg-secondary text-sm">{t('shell.login.welcome')}</p>
           {oauthRequest === undefined ? null : (
-            <div className="rounded-md border border-border-primary bg-surface p-200 text-sm" data-testid="oauth-login-banner" role="status">
+            <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm" data-testid="oauth-login-banner" role="status">
               <p>
                 <strong>
                   {oauthClientName ?? (oauthRequest.clientHost === '' ? t('shell.login.oauth.unknownClient') : oauthRequest.clientHost)}
@@ -272,13 +272,13 @@ const LoginPage = () => {
                 />
               </div>
               {reason === undefined || submissionError !== undefined ? null : (
-                <div className="rounded-md border border-border-primary bg-surface p-200 text-sm" role="status">
+                <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm" role="status">
                   <p className="font-semibold">{t(`shell.login.notice.${reason}.title`)}</p>
                   <p>{t(`shell.login.notice.${reason}.body`)}</p>
                 </div>
               )}
               {submissionError === undefined ? null : (
-                <div className="rounded-md border border-border-primary bg-surface p-200 text-sm" role="alert">
+                <div className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base p-200 text-sm" role="alert">
                   <p className="font-semibold">{t(errorTitleKey)}</p>
                   <p>{t(submissionError)}</p>
                 </div>
