@@ -219,7 +219,7 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
                   ? 'Hlavní kategorie podle pořadí v e-shopu. Pro podkategorie použijte hledání.'
                   : `Nalezeno: ${list.length}`}
               </p>
-              <ul className="flex flex-col gap-50">
+              <ul className="flex flex-col gap-100">
                 {list.map((c) => (
                   <li key={c.id}>
                     <Button

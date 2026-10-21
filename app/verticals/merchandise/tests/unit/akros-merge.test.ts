@@ -2,6 +2,7 @@ import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   backfillProduct,
+  decodeCategoryText,
   decodeHtmlEntities,
   mergeSeed,
   orderCategoryPositions,
@@ -176,4 +177,15 @@ it('numbers unordered siblings 10, 20, 30 by Czech name and keeps a group staff 
     'B:5',
     'A:0',
   ]);
+});
+
+it('stores the source "NULL" description placeholder as empty text', () => {
+  expect(
+    decodeCategoryText({ name: 'Null', description: 'NULL', longDescription: ' null ', heading: 'Šrouby' }),
+  ).toEqual({
+    name: 'Null',
+    description: '',
+    longDescription: '',
+    heading: 'Šrouby',
+  });
 });

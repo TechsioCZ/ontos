@@ -26,14 +26,17 @@ export const decodeHtmlEntities = (value: string): string =>
 
 const categoryTextKeys = ['name', 'heading', 'description', 'longDescription', 'imageAlt'] as const;
 
-/** Decodes entities left in category text by an older import; returns the same object when nothing changes. */
+/** Decodes entities and "NULL" placeholders left in category text; returns the same object when nothing changes. */
 export const decodeCategoryText = <C extends Partial<Pick<CatalogCategory, (typeof categoryTextKeys)[number]>>>(
   category: C,
 ): C => {
   const patch: Partial<Record<(typeof categoryTextKeys)[number], string>> = {};
   for (const key of categoryTextKeys) {
     const value = category[key];
-    if (typeof value === 'string' && decodeHtmlEntities(value) !== value) patch[key] = decodeHtmlEntities(value);
+    if (typeof value !== 'string') continue;
+    // Kai's export writes a missing description as the literal text "NULL"; OntOS stores it as empty.
+    if (key !== 'name' && /^\s*(null|undefined)\s*$/iu.test(value)) patch[key] = '';
+    else if (decodeHtmlEntities(value) !== value) patch[key] = decodeHtmlEntities(value);
   }
   return Object.keys(patch).length === 0 ? category : { ...category, ...patch };
 };
