@@ -16,9 +16,11 @@ import {
   OAUTH_MCP_SCOPE,
 } from '@app/shared-contracts/oauth-connections';
 import { Effect } from 'effect';
-import { type JWTVerifyGetKey, createRemoteJWKSet, jwtVerify } from 'jose';
+import { type JWTVerifyGetKey, createLocalJWKSet, jwtVerify } from 'jose';
 
 import { issueGatewayContextAssertion } from '../auth/gateway-issuer.ts';
+import { AuthenticationService } from '../auth/service.ts';
+import type { OAuthServerEndpoint } from '../auth/oauth-server/policy.ts';
 import type { AgentPlatformCaller } from '../agent-platform/caller.ts';
 import { ConnectionForbidden, ConnectionUnauthorized, ConnectionUnavailable } from './errors.ts';
 import { type LiveConnection, loadLiveConnection } from './connection-service.ts';
@@ -59,10 +61,7 @@ export const connectorKeyMatches = (secret: string, presented: string | undefine
 };
 
 /** Verifies the EdDSA user token: exact issuer, exact MCP audience, `ontos` scope and a grant claim. */
-export const makeAccessTokenVerifier = (
-  config: OAuthServerConfig,
-  keys: JWTVerifyGetKey = createRemoteJWKSet(new URL(`${config.issuer}/jwks`)),
-) => {
+export const makeAccessTokenVerifier = (config: OAuthServerConfig, keys: JWTVerifyGetKey) => {
   const invalid = () => new ConnectionUnauthorized({ code: 'token_invalid' });
   return (token: string): Effect.Effect<VerifiedAccessToken, ConnectionUnauthorized> =>
     Effect.tryPromise({
@@ -91,15 +90,16 @@ export const makeAccessTokenVerifier = (
     );
 };
 
-let verifierCache: { readonly issuer: string; readonly verify: ReturnType<typeof makeAccessTokenVerifier> } | undefined;
-
-/** One verifier (and its JWKS cache) per issuer and process. */
-const verifierFor = (config: OAuthServerConfig): ReturnType<typeof makeAccessTokenVerifier> => {
-  if (verifierCache?.issuer !== config.issuer) {
-    verifierCache = { issuer: config.issuer, verify: makeAccessTokenVerifier(config) };
-  }
-  return verifierCache.verify;
-};
+/** Resolve the local AS keys in-process: Workers must never fetch their own public hostname. */
+export const makeOAuthJwksResolver =
+  (endpoint: OAuthServerEndpoint): JWTVerifyGetKey =>
+  async (header, token) => {
+    const response = await endpoint.handler(new Request(`${endpoint.issuer}/jwks`));
+    if (!response.ok) {
+      throw new Error('OAuth signing keys unavailable');
+    }
+    return createLocalJWKSet(await response.json())(header, token);
+  };
 
 /** Checks the connector key and the user token, then the live grant; the token's subject must be the grant's user. */
 export const authenticateConnector = <R>(
@@ -153,10 +153,14 @@ export const connectorPrincipalContext = (live: LiveConnection) => {
 
 const liveDeps = Effect.gen(function* liveDepsEffect() {
   const config = yield* loadOAuthServerConfig;
+  const authentication = yield* AuthenticationService;
+  if (authentication.oauth === undefined || authentication.oauth.issuer !== config.issuer) {
+    return yield* new ConnectionUnavailable({ cause: 'OAuth issuer unavailable or mismatched' });
+  }
   return {
     config,
     loadLive: loadLiveConnection,
-    verifyAccessToken: verifierFor(config),
+    verifyAccessToken: makeAccessTokenVerifier(config, makeOAuthJwksResolver(authentication.oauth)),
   };
 });
 
@@ -186,10 +190,7 @@ export const describeConnection = (headers: ConnectorHeaders) =>
   });
 
 /** `POST /auth/connector/gateway-context`: a gateway assertion for one module app of the connection. */
-export const connectorGatewayContext = (
-  headers: ConnectorHeaders,
-  request: ConnectorGatewayContextRequest,
-) =>
+export const connectorGatewayContext = (headers: ConnectorHeaders, request: ConnectorGatewayContextRequest) =>
   Effect.gen(function* connectorGatewayContextEffect() {
     const live = yield* authenticateConnector(headers, yield* liveDeps);
     yield* auditExchange(live.grant, 'gateway-context');
@@ -230,6 +231,9 @@ export const authenticateConnectorProposalCaller = (
         }
       }
     }
-    const caller: AgentPlatformCaller = { legalName: description.legalName, principal: connectorPrincipalContext(live) };
+    const caller: AgentPlatformCaller = {
+      legalName: description.legalName,
+      principal: connectorPrincipalContext(live),
+    };
     return caller;
   });

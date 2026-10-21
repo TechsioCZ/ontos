@@ -13,7 +13,7 @@ import {
 } from '@app/core-runtime';
 import { apiKey } from '@better-auth/api-key';
 import { cimd } from '@better-auth/cimd';
-import { fetchClientMetadataResource } from '@better-auth/cimd/node';
+import { fetchClientMetadataResource } from '#cimd-transport';
 import { mcp } from '@better-auth/mcp';
 import { APIError, betterAuth } from 'better-auth';
 import { isAPIError } from 'better-auth/api';
@@ -541,7 +541,7 @@ const assembleAuthenticationService = (
         scopes: [...OAUTH_SCOPES],
         validateRedirectUri: validateAuthorizeRedirectUri,
       }),
-      // CIMD only (NO-COMPAT): no dynamic client registration; documents are fetched with the SSRF-safe Node transport.
+      // CIMD only (NO-COMPAT): no dynamic client registration; runtime-specific transport enforces the metadata fetch boundary.
       cimd({ fetchClientMetadataResource, metadataProfile: 'mcp-2026-07-28' }),
     ],
     secret: configuration.secret,
@@ -1146,7 +1146,10 @@ export const makeAuthenticationService = Effect.fn('AuthenticationService.make')
     const database = yield* AuthDatabase;
     const resolver = yield* PrincipalResolver;
     const effectContext = yield* Effect.context();
-    const oauthHooks = Option.getOrElse(yield* Effect.serviceOption(OAuthConnectionHooks), () => stubOAuthConnectionHooks);
+    const oauthHooks = Option.getOrElse(
+      yield* Effect.serviceOption(OAuthConnectionHooks),
+      () => stubOAuthConnectionHooks,
+    );
     return assembleAuthenticationService(configuration, database.adapter, resolver, {
       ...options,
       authDatabase: database,

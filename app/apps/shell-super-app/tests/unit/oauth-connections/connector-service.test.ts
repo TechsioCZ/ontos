@@ -11,6 +11,7 @@ import {
   connectorKeyMatches,
   connectorPrincipalContext,
   makeAccessTokenVerifier,
+  makeOAuthJwksResolver,
 } from '../../../api/oauth-connections/connector-service.ts';
 import type { LiveConnection } from '../../../api/oauth-connections/connection-service.ts';
 import {
@@ -104,7 +105,13 @@ const setup = () =>
 
 const sign = (
   privateKey: SigningKey,
-  claims: { readonly aud?: string; readonly grant?: string; readonly iss?: string; readonly scope?: string; readonly sub?: string },
+  claims: {
+    readonly aud?: string;
+    readonly grant?: string;
+    readonly iss?: string;
+    readonly scope?: string;
+    readonly sub?: string;
+  },
 ) =>
   new SignJWT({ 'https://ontos.cz/grant': claims.grant ?? 'g-active', scope: claims.scope ?? 'openid ontos' })
     .setProtectedHeader({ alg: 'EdDSA', kid: 'k1' })
@@ -115,7 +122,10 @@ const sign = (
     .setExpirationTime('5m')
     .sign(privateKey);
 
-const depsFor = (jwks: Parameters<typeof makeAccessTokenVerifier>[1], cfg: OAuthServerConfig = config): ConnectorDeps<never> => ({
+const depsFor = (
+  jwks: Parameters<typeof makeAccessTokenVerifier>[1],
+  cfg: OAuthServerConfig = config,
+): ConnectorDeps<never> => ({
   config: cfg,
   loadLive: (grantId) => {
     if (grantId === 'g-active') {
@@ -254,7 +264,9 @@ it('connectorProblemStatus maps connector failures to 401, 403, 409 and 503', ()
     ),
   ).toBe(409);
   expect(
-    connectorProblemStatus(new GatewayIssuerError({ code: 'gateway_audience_invalid', reason: 'x', stage: 'audience' })),
+    connectorProblemStatus(
+      new GatewayIssuerError({ code: 'gateway_audience_invalid', reason: 'x', stage: 'audience' }),
+    ),
   ).toBe(403);
 });
 
@@ -276,3 +288,34 @@ it('connectorPrincipalContext of a person carries no delegation', () => {
   expect(principal.connection.writePolicy).toBe('approval');
   expect(principal.connection.clientName).toBe('Claude');
 });
+
+it.effect('local AS JWKS verification never fetches the Worker public issuer', () =>
+  Effect.gen(function* () {
+    const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('EdDSA', { extractable: true }));
+    const jwk = yield* Effect.promise(() => exportJWK(publicKey));
+    const requests: string[] = [];
+    const resolver = makeOAuthJwksResolver({
+      handler: (request) => {
+        requests.push(request.url);
+        return Promise.resolve(Response.json({ keys: [{ ...jwk, alg: 'EdDSA', kid: 'k1' }] }));
+      },
+      issuer: config.issuer,
+    });
+    const token = yield* Effect.promise(() => sign(privateKey, {}));
+    expect(yield* makeAccessTokenVerifier(config, resolver)(token)).toEqual({ grantId: 'g-active', sub: 'u-1' });
+    expect(requests).toEqual([`${config.issuer}/jwks`]);
+  }),
+);
+
+it.effect('unavailable local JWKS fails closed as token_invalid', () =>
+  Effect.gen(function* () {
+    const { privateKey } = yield* setup();
+    const token = yield* Effect.promise(() => sign(privateKey, {}));
+    const resolver = makeOAuthJwksResolver({
+      handler: () => Promise.resolve(new Response(null, { status: 503 })),
+      issuer: config.issuer,
+    });
+    const error = yield* makeAccessTokenVerifier(config, resolver)(token).pipe(Effect.flip);
+    expect(error).toMatchObject({ code: 'token_invalid' });
+  }),
+);

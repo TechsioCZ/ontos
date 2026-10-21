@@ -1,28 +1,12 @@
-// @effect-diagnostics asyncFunction:off globalFetch:off processEnv:off -- Modern.js server middleware (Hono) is a Promise boundary: it serves the RFC 8414 path-inserted OAuth metadata URLs and sets security headers on the OAuth login and connect pages. expires: 2027-03-31.
-/**
- * Shell web-server middlewares of the OAuth authorization server (ONTOS-MCP-AUTH-DESIGN.md §2.1, §2.2).
- * Self-contained on purpose: Modern.js compiles server/ separately from api/.
- */
-const OAUTH_ISSUER_PATH = '/shell-super-app-api/oauth';
-
-/** Root discovery URL -> canonical issuer-relative document served by Better Auth inside the BFF. */
-export const ROOT_METADATA_ALIASES: ReadonlyMap<string, string> = new Map([
-  [`/.well-known/oauth-authorization-server${OAUTH_ISSUER_PATH}`, `${OAUTH_ISSUER_PATH}/.well-known/oauth-authorization-server`],
-  [`/.well-known/openid-configuration${OAUTH_ISSUER_PATH}`, `${OAUTH_ISSUER_PATH}/.well-known/openid-configuration`],
-]);
+// @effect-diagnostics asyncFunction:off -- Modern.js server middleware (Hono) is a Promise boundary: it serves the RFC 8414 path-inserted OAuth metadata URLs and sets security headers on the OAuth login and connect pages. expires: 2027-03-31.
+import { oauthMetadataTarget } from '../shared/oauth-metadata-routes.ts';
 
 const OAUTH_PAGE_PATH = /^\/(?:cs|en)\/(?:login|pripojit|connect)(?:\/.*)?$/u;
 
 export const isOAuthPagePath = (path: string): boolean => OAUTH_PAGE_PATH.test(path);
 
-export const rootMetadataTarget = (path: string): string | undefined => ROOT_METADATA_ALIASES.get(path);
-
-/** Origin the shell reaches itself on (Zerops: http://shellsuperapp:<port>). */
-export const shellInternalOrigin = (environment: Readonly<Record<string, string | undefined>>): string =>
-  (environment['ONTOS_SHELL_INTERNAL_URL'] ?? 'http://localhost:3020').replace(/\/+$/u, '');
-
 export interface MiddlewareContext {
-  readonly req: { readonly method: string; readonly path: string };
+  readonly req: { readonly method: string; readonly path: string; readonly url?: string };
   res: Response;
 }
 type Next = () => Promise<void>;
@@ -34,9 +18,9 @@ const METADATA_CORS_HEADERS = {
 } as const;
 
 export const serveRootMetadataAlias =
-  (fetchCanonical: (url: string) => Promise<Response>, origin: () => string) =>
+  (handleCanonical: (request: Request) => Promise<Response>) =>
   async (context: MiddlewareContext, next: Next): Promise<Response | undefined> => {
-    const target = rootMetadataTarget(context.req.path);
+    const target = oauthMetadataTarget(context.req.path);
     if (target === undefined) {
       await next();
       return undefined;
@@ -45,18 +29,19 @@ export const serveRootMetadataAlias =
       return new Response(null, { headers: METADATA_CORS_HEADERS, status: 204 });
     }
     if (context.req.method !== 'GET' && context.req.method !== 'HEAD') {
-      return new Response(null, { headers: { allow: 'GET, HEAD, OPTIONS' }, status: 405 });
+      return new Response(null, { headers: { ...METADATA_CORS_HEADERS, allow: 'GET, HEAD, OPTIONS' }, status: 405 });
     }
-    const upstream = await fetchCanonical(`${origin()}${target}`);
+    // Only the origin is carried into the canonical request; Better Auth pins its configured issuer.
+    const canonical = new URL(target, context.req.url ?? 'https://shell.invalid');
+    const upstream = await handleCanonical(new Request(canonical, { headers: { accept: 'application/json' } }));
     const body = await upstream.text();
-    return new Response(context.req.method === 'HEAD' ? null : body, {
-      headers: {
-        ...METADATA_CORS_HEADERS,
-        'cache-control': 'public, max-age=300',
-        'content-type': upstream.headers.get('content-type') ?? 'application/json',
-      },
-      status: upstream.status,
-    });
+    const headers = new Headers(upstream.headers);
+    headers.delete('content-length');
+    headers.delete('access-control-allow-credentials');
+    for (const [name, value] of Object.entries(METADATA_CORS_HEADERS)) {
+      headers.set(name, value);
+    }
+    return new Response(context.req.method === 'HEAD' ? null : body, { headers, status: upstream.status });
   };
 
 export const oauthPageSecurityHeaders = async (context: MiddlewareContext, next: Next): Promise<void> => {
@@ -78,10 +63,10 @@ export const oauthPageSecurityHeaders = async (context: MiddlewareContext, next:
 export default {
   middlewares: [
     {
-      handler: serveRootMetadataAlias(
-        (url) => fetch(url, { headers: { accept: 'application/json' }, redirect: 'manual' }),
-        () => shellInternalOrigin(process.env),
-      ),
+      handler: serveRootMetadataAlias(async (request) => {
+        const { handleOAuthMetadata } = await import('../api/index.ts');
+        return handleOAuthMetadata(request);
+      }),
       name: 'ontos-oauth-root-metadata',
       order: 'pre',
     },
