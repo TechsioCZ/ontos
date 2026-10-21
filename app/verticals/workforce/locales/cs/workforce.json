@@ -377,6 +377,55 @@
           "cancel": "Zrušit",
           "revoked": "{{client}} je odpojený"
         }
+      },
+      "editor": {
+        "createTitle": "Nový agent",
+        "editTitle": "Upravit agenta {{name}}",
+        "createDescription": "Agent jedná jen v modulech a s oprávněními, které mu tu dáte. Připojit ho smí jen lidé, které vyberete.",
+        "name": "Název agenta",
+        "description": "K čemu agent slouží",
+        "owner": "Kdo za agenta odpovídá",
+        "modulesTitle": "Oprávnění v modulech",
+        "modulesHint": "Stejná oprávnění jako u lidí: čtení, nebo čtení a zápis.",
+        "preset": "Převzít oprávnění z role",
+        "choice": {
+          "none": "Bez přístupu",
+          "read": "Čtení",
+          "write": "Čtení a zápis"
+        },
+        "policyTitle": "Jak smí agent zapisovat",
+        "policy": {
+          "read_only": {
+            "label": "Jen čtení",
+            "description": "Agent nic nemění, jen čte."
+          },
+          "approval": {
+            "label": "Přes schválení",
+            "description": "Změny agent jen navrhuje; provede je až člověk v Nastavení › Ke schválení."
+          },
+          "direct": {
+            "label": "Přímo",
+            "description": "Agent zapisuje sám v modulech se zápisem. Každá změna je v auditu."
+          }
+        },
+        "readOnlyIgnoresWrite": "V režimu Jen čtení agent nic nezapíše, ani v modulech se zápisem.",
+        "operatorsTitle": "Kdo smí agenta připojit",
+        "operatorsHint": "Tito lidé ho mohou připojit k ChatGPT nebo Claude volbou „Za agenta“. Žádné klíče se nekopírují.",
+        "errors": {
+          "nameRequired": "Vyplňte název agenta.",
+          "nameTooLong": "Název může mít nejvýš 200 znaků.",
+          "descriptionTooLong": "Popis může mít nejvýš 500 znaků.",
+          "ownerRequired": "Vyberte, kdo za agenta odpovídá.",
+          "modulesRequired": "Vyberte aspoň jeden modul."
+        },
+        "cancel": "Zrušit",
+        "create": "Vytvořit agenta",
+        "save": "Uložit změny",
+        "saving": "Ukládám…",
+        "toast": {
+          "created": "Agent {{name}} je vytvořený",
+          "saved": "Změny agenta {{name}} jsou uložené"
+        }
       }
     }
   }

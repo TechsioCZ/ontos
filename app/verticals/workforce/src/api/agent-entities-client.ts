@@ -2,7 +2,7 @@
  * Browser client of the shell's agent-entity endpoints (`AGENT_ACCESS_PATHS`) and of the connection-management
  * endpoints (`CONNECTION_MANAGEMENT_PATHS`: agent operators and agent connections). The page runs inside the shell
  * origin, so the session cookie authenticates the call; the shell resolves the selected company and the Core
- * Action authorizes and audits every change.
+ * Action authorizes and audits every change. Failures carry the shell's Czech problem detail (403/404/409/422).
  */
 import { Effect, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
@@ -25,10 +25,12 @@ import type {
   ManageAgentEntityRequest,
   ManageAgentEntityResponse,
 } from '@app/shared-contracts/agent-access';
-import type { PeopleFailure, PeopleOutcome } from './people-admin-client.ts';
+import type { PeopleFailure } from './people-admin-client.ts';
 
 export type AgentFailure = PeopleFailure;
-export type AgentOutcome<Value> = PeopleOutcome<Value>;
+export type AgentOutcome<Value> =
+  | { readonly detail: string | null; readonly reason: AgentFailure; readonly status: 'failed' }
+  | { readonly status: 'ok'; readonly value: Value };
 
 const failureOf = (status: number): AgentFailure => {
   if (status === 401) {
@@ -56,15 +58,25 @@ const post = (path: string, body: unknown, idempotencyKey?: string) =>
     const request = yield* HttpClientRequest.bodyJson(withKey, body);
     const response = yield* client.execute(request);
     if (response.status !== 200) {
-      return { reason: failureOf(response.status), status: 'failed' as const };
+      const body: unknown = yield* response.json.pipe(Effect.orElseSucceed(() => null));
+      const detail =
+        [403, 404, 409, 422].includes(response.status) &&
+        typeof body === 'object' &&
+        body !== null &&
+        'detail' in body &&
+        typeof body.detail === 'string'
+          ? body.detail
+          : null;
+      return { detail, reason: failureOf(response.status), status: 'failed' as const };
     }
     const json: unknown = yield* response.json;
     return { json, status: 'ok' as const };
   });
 
-const failed = (reason: AgentFailure): { readonly reason: AgentFailure; readonly status: 'failed' } => ({
+const failed = (reason: AgentFailure, detail: string | null = null) => ({
+  detail,
   reason,
-  status: 'failed',
+  status: 'failed' as const,
 });
 
 const decodeOverview = Schema.decodeUnknownEffect(AgentEntityOverviewSchema);
@@ -80,7 +92,7 @@ export const loadAgentEntities: Effect.Effect<
 > = Effect.gen(function* loadAgentOverview() {
   const answer = yield* post(AGENT_ACCESS_PATHS.list, {});
   if (answer.status === 'failed') {
-    return failed(answer.reason);
+    return failed(answer.reason, answer.detail);
   }
   const value = yield* decodeOverview(answer.json);
   return { status: 'ok' as const, value };
@@ -93,7 +105,7 @@ export const runAgentCommand = (
   Effect.gen(function* runAgentManage() {
     const answer = yield* post(AGENT_ACCESS_PATHS.manage, command, idempotencyKey);
     if (answer.status === 'failed') {
-      return failed(answer.reason);
+      return failed(answer.reason, answer.detail);
     }
     const value = yield* decodeManageResponse(answer.json);
     return { status: 'ok' as const, value };
@@ -107,7 +119,7 @@ export const loadAgentConnections: Effect.Effect<
 > = Effect.gen(function* loadAgentConnectionsCall() {
   const answer = yield* post(CONNECTION_MANAGEMENT_PATHS.agentConnections, {});
   if (answer.status === 'failed') {
-    return failed(answer.reason);
+    return failed(answer.reason, answer.detail);
   }
   const value = yield* decodeConnections(answer.json);
   return { status: 'ok' as const, value };
@@ -120,7 +132,7 @@ export const saveAgentOperators = (
   Effect.gen(function* saveAgentOperatorsCall() {
     const answer = yield* post(CONNECTION_MANAGEMENT_PATHS.operators, request);
     if (answer.status === 'failed') {
-      return failed(answer.reason);
+      return failed(answer.reason, answer.detail);
     }
     const value = yield* decodeOperators(answer.json);
     return { status: 'ok' as const, value };
@@ -133,7 +145,7 @@ export const revokeAgentConnection = (
   Effect.gen(function* revokeAgentConnectionCall() {
     const answer = yield* post(CONNECTION_MANAGEMENT_PATHS.revoke, request);
     if (answer.status === 'failed') {
-      return failed(answer.reason);
+      return failed(answer.reason, answer.detail);
     }
     const value = yield* decodeMutation(answer.json);
     return { status: 'ok' as const, value };

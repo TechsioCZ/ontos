@@ -377,6 +377,55 @@
           "cancel": "Cancel",
           "revoked": "{{client}} disconnected"
         }
+      },
+      "editor": {
+        "createTitle": "New agent",
+        "editTitle": "Edit agent {{name}}",
+        "createDescription": "The agent acts only in the modules and with the rights you give it here. Only the people you choose may connect it.",
+        "name": "Agent name",
+        "description": "What the agent is for",
+        "owner": "Responsible person",
+        "modulesTitle": "Module permissions",
+        "modulesHint": "The same rights as people have: read, or read and write.",
+        "preset": "Copy permissions from a role",
+        "choice": {
+          "none": "No access",
+          "read": "Read",
+          "write": "Read and write"
+        },
+        "policyTitle": "How the agent may write",
+        "policy": {
+          "read_only": {
+            "label": "Read only",
+            "description": "The agent changes nothing, it only reads."
+          },
+          "approval": {
+            "label": "Through approval",
+            "description": "The agent only proposes changes; a person carries them out in Settings › Approvals."
+          },
+          "direct": {
+            "label": "Directly",
+            "description": "The agent writes on its own in modules with write access. Every change is audited."
+          }
+        },
+        "readOnlyIgnoresWrite": "In Read only mode the agent writes nothing, not even in modules with write access.",
+        "operatorsTitle": "Who may connect the agent",
+        "operatorsHint": "These people can connect it to ChatGPT or Claude by choosing “As the agent”. No keys are copied.",
+        "errors": {
+          "nameRequired": "Enter the agent name.",
+          "nameTooLong": "The name can have at most 200 characters.",
+          "descriptionTooLong": "The description can have at most 500 characters.",
+          "ownerRequired": "Choose who is responsible for the agent.",
+          "modulesRequired": "Choose at least one module."
+        },
+        "cancel": "Cancel",
+        "create": "Create agent",
+        "save": "Save changes",
+        "saving": "Saving…",
+        "toast": {
+          "created": "Agent {{name}} was created",
+          "saved": "Changes to agent {{name}} were saved"
+        }
       }
     }
   }
