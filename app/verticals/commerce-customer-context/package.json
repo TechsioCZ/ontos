@@ -198,7 +198,7 @@
     "@modern-js/i18n-integration": "catalog:ultramodern",
     "@modern-js/federation-runtime": "catalog:ultramodern",
     "@modern-js/runtime-renderer-extensions": "catalog:ultramodern",
-    "better-auth": "1.7.6",
+    "better-auth": "1.7.12",
     "@app/email-delivery": "workspace:*",
     "@app/price-group-catalog-contracts": "workspace:*",
     "@app/better-auth-effect-drizzle": "workspace:*"
