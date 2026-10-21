@@ -62,9 +62,15 @@ export const readTargetEntity = Effect.fn('AgentPlatform.readTargetEntity')(func
     return notNeeded;
   }
   const response = yield* callModuleAs(principal, appId, '/reads/records', lookup.query).pipe(Effect.result);
-  const available = response._tag === 'Success' && response.success.status === 200;
-  const body = available ? response.success.body : undefined;
-  const read: TargetRead = { available, body, needed: true, value: available ? lookup.pick(body) : undefined };
+  // 404: the module answered that the record does not exist for this person (CRM: a colleague's client).
+  const status = response._tag === 'Success' ? response.success.status : undefined;
+  const body = response._tag === 'Success' && status === 200 ? response.success.body : undefined;
+  const read: TargetRead = {
+    available: status === 200 || status === 404,
+    body,
+    needed: true,
+    value: body === undefined ? undefined : lookup.pick(body),
+  };
   return read;
 });
 
@@ -77,7 +83,8 @@ export const checkApprover = Effect.fn('AgentPlatform.checkApprover')(function* 
   row: Pick<AgentProposalRow, 'appId' | 'command'>,
 ) {
   const target = yield* readTargetEntity(principal, row.appId, row.command);
-  const moduleBody = target.needed && target.available ? target.body : yield* readModuleRecords(principal, row.appId);
+  const moduleBody =
+    target.needed && target.body !== undefined ? target.body : yield* readModuleRecords(principal, row.appId);
   return approverCheck(row.appId, row.command, moduleBody, target);
 });
 

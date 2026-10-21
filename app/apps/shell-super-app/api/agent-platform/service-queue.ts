@@ -222,9 +222,7 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
   // for modules with private records (CRM clients of other salespeople), which records they may even see.
   const appIds = [
     ...new Set(
-      moduleRows
-        .filter((row) => row.status === 'pending' || PRIVATE_SCOPE_APPS.has(row.appId))
-        .map((row) => row.appId),
+      moduleRows.filter((row) => row.status === 'pending' || PRIVATE_SCOPE_APPS.has(row.appId)).map((row) => row.appId),
     ),
   ];
   const moduleReads = new Map(
@@ -257,7 +255,7 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
   const checks = new Map(
     pending.map((row) => {
       const target = targets.get(row.proposalId) ?? { needed: false as const };
-      const moduleBody = target.needed && target.available ? target.body : moduleReads.get(row.appId);
+      const moduleBody = target.needed && target.body !== undefined ? target.body : moduleReads.get(row.appId);
       return [row.proposalId, approverCheck(row.appId, row.command, moduleBody, target)] as const;
     }),
   );

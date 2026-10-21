@@ -204,6 +204,9 @@ export const approverCheck = (
   moduleBody: unknown,
   target: TargetRead = { needed: false },
 ): ApproverCheck => {
+  if (target.needed && target.available && target.value === undefined) {
+    return blocked('Záznam, který návrh mění, nevidíte nebo už neexistuje.', true);
+  }
   if (!isRecord(moduleBody)) {
     return ALLOWED;
   }
@@ -243,9 +246,6 @@ export const approverCheck = (
     if (tag === 'EditOrder' && moduleBody['canEditOrders'] === false) {
       return blocked('Úpravy objednávek schvaluje jen člověk s oprávněním k úpravám objednávek.');
     }
-  }
-  if (target.needed && target.available && target.value === undefined) {
-    return blocked('Záznam, který návrh mění, nevidíte nebo už neexistuje.', true);
   }
   return ALLOWED;
 };
