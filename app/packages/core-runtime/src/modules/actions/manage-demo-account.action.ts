@@ -230,7 +230,13 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
     }
     yield* transaction
       .insert(principals)
-      .values({ displayName: payload.displayName, kind: 'agent', principalId: payload.principalId, status: 'active', tenantId })
+      .values({
+        displayName: payload.displayName,
+        kind: 'agent',
+        principalId: payload.principalId,
+        status: 'active',
+        tenantId,
+      })
       .pipe(Effect.mapError(persistenceFailure));
     yield* context.recordAuditEvidence({
       ...emptyEvidence(payload.principalId, 'create-agent'),
@@ -306,9 +312,9 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
   yield* context.recordAuditEvidence({
     ...emptyEvidence(payload.principalId, 'change-status'),
     displayName: target.displayName,
-    principalKind: target.kind,
     newStatus: payload.newStatus,
     previousStatus: payload.expectedStatus,
+    principalKind: target.kind,
     reason: payload.reason ?? null,
   });
   return { operation: 'change-status' as const, principalId: payload.principalId, status: payload.newStatus };

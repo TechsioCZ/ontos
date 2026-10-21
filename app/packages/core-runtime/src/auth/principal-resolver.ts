@@ -344,23 +344,23 @@ export const makePrincipalResolver = (
             }
             inactiveDenialAuditedAt.set(record.principalId, now);
             return database.executor
-          .insert(auditEvents)
-          .values({
-            auditProfile: 'sensitive',
-            authBindingId: record.authBindingId,
-            authMethod: subject.subjectType === 'api_key' ? 'api_key' : 'session',
-            eventType: 'authn.rejected',
-            evidenceJson: { reason: 'principal_disabled', subjectType: subject.subjectType },
-            outcome: 'denied',
-            outcomeCode: 'principal_inactive',
-            outcomeStage: 'authn',
-            principalId: record.principalId,
-            targetModuleKey: 'core.identity',
-            targetResourceId: record.principalId,
-            targetResourceType: 'principal',
-            tenantId: record.tenantId,
-          })
-          .pipe(Effect.ignore);
+              .insert(auditEvents)
+              .values({
+                auditProfile: 'sensitive',
+                authBindingId: record.authBindingId,
+                authMethod: subject.subjectType === 'api_key' ? 'api_key' : 'session',
+                eventType: 'authn.rejected',
+                evidenceJson: { reason: 'principal_disabled', subjectType: subject.subjectType },
+                outcome: 'denied',
+                outcomeCode: 'principal_inactive',
+                outcomeStage: 'authn',
+                principalId: record.principalId,
+                targetModuleKey: 'core.identity',
+                targetResourceId: record.principalId,
+                targetResourceType: 'principal',
+                tenantId: record.tenantId,
+              })
+              .pipe(Effect.ignore);
           }),
         ),
       { discard: true },
