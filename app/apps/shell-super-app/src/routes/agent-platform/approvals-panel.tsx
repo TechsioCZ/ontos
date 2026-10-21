@@ -53,12 +53,14 @@ const CommandDetails = ({ command }: { readonly command: Readonly<Record<string,
   <details className="ai-review-command">
     <summary>Přesný příkaz pro modul</summary>
     <dl>
-      {Object.entries(command).map(([field, value]) => (
-        <div key={field}>
-          <dt>{field === '_tag' ? 'Příkaz' : field}</dt>
-          <dd>{commandValue(value)}</dd>
-        </div>
-      ))}
+      {Object.entries(command)
+        .toSorted(([left], [right]) => Number(right === '_tag') - Number(left === '_tag'))
+        .map(([field, value]) => (
+          <div key={field}>
+            <dt>{field === '_tag' ? 'Příkaz' : field}</dt>
+            <dd>{commandValue(value)}</dd>
+          </div>
+        ))}
     </dl>
   </details>
 );
