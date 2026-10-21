@@ -9,6 +9,10 @@
  * `reset-permissions.mts` calls `setupAiProfiles` after the legacy `agent-bot`, so a full demo reset provisions
  * these principals too. Running this file alone is safe while the demo is up: SpiceDB writes are TOUCH-only.
  *
+ * The principals are agent entities (Core kind `agent`) shown in /cs/sprava/lide › Agentní entity. Write policies:
+ * A = Jen čtení (read only), B = Zápis přímo (úkoly, direct), C = Zápis jen přes schválení člověkem (approval).
+ * Their profiles are seeded in apps/shell-super-app/api/auth/agent-store-model.ts until an administrator edits them.
+ *
  * Level A: read-only. Module access + `read_all` context permissions; NO Action executor grant at all, so every
  *          apply-command (tasks, opportunities, tags, orders, …) is denied by Core with 403 and a denied audit.
  * Level B: the same reads + `siampark.work` write (tasks only): executor grants for `siampark.work.*` Actions and
@@ -34,7 +38,7 @@ import {
 } from '@app/core-runtime';
 import { toSpiceDbActionObjectId } from '@app/core-runtime/actions/runtime-wiring';
 import { commercialDemoCompany, crmDemoCompany } from '@app/core-runtime/demo-company-profiles';
-import { inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import {
   Config,
   ConfigProvider,
@@ -293,13 +297,13 @@ const upsertAiPrincipalRows = (selected: readonly AiPrincipal[]) =>
         .insert(principals)
         .values({
           displayName: principal.displayName,
-          kind: 'service',
+          kind: 'agent',
           principalId: principal.principalId,
           status: 'active',
           tenantId: demoTenantId,
         })
         .onConflictDoUpdate({
-          set: { displayName: principal.displayName, status: 'active' },
+          set: { displayName: principal.displayName, kind: 'agent', status: 'active' },
           target: principals.principalId,
         });
     }
@@ -474,15 +478,16 @@ const liftAiKeyRateLimit = (selected: readonly AiPrincipal[]) =>
       return;
     }
     const { executor } = yield* AuthDatabase;
-    yield* executor
-      .update(apikey)
-      .set({ rateLimitEnabled: false, requestCount: 0 })
-      .where(
-        inArray(
-          apikey.name,
-          selected.map(({ apiKeyName }) => apiKeyName),
-        ),
-      );
+    for (const principal of selected) {
+      yield* executor
+        .update(apikey)
+        .set({
+          metadata: JSON.stringify({ ontosLegalEntityId: principal.company.legalEntityId }),
+          rateLimitEnabled: false,
+          requestCount: 0,
+        })
+        .where(eq(apikey.name, principal.apiKeyName));
+    }
   });
 
 /** Principals, grants and (unless skipped) API keys for the AI agent levels A and B. */
