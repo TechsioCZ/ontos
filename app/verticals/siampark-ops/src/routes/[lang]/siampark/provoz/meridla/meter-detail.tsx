@@ -15,6 +15,7 @@ import { useState } from 'react';
 import { readingRows } from '../../../../../../shared/domain/meters.ts';
 import type { Meter, MeterReading, ReadingRow } from '../../../../../../shared/domain/meters.ts';
 import { CommentThread } from '../../../../../ui/comment-thread.tsx';
+import { ChangeHistory } from '../../../../../ui/change-history.tsx';
 import { LinkedDocuments } from '../../../../../ui/linked-documents.tsx';
 import { loadRecords } from '../../../../../ui/use-agenda.ts';
 import type { FailureReason } from '../../../../../ui/use-agenda.ts';
@@ -395,6 +396,9 @@ export const MeterDetail = ({
 
       <CommentThread subject={{ id: meter.id, kind: 'meter', label: meter.serialNumber }} />
       <LinkedDocuments hideWhenForbidden subject={{ id: meter.id, kind: 'meter', label: meter.serialNumber }} />
+      <SectionCard>
+        <ChangeHistory entityId={meter.id} refreshKey={iso(meter.updatedAt)} />
+      </SectionCard>
 
       <SectionCard title={t(`${k}.detail.masterData`)}>
         <DetailList

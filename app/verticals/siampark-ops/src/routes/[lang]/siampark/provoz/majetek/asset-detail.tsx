@@ -40,6 +40,7 @@ import {
   todayIsoDate,
 } from './assets-model.ts';
 import { CommentThread } from '../../../../../ui/comment-thread.tsx';
+import { ChangeHistory } from '../../../../../ui/change-history.tsx';
 import { LinkedDocuments } from '../../../../../ui/linked-documents.tsx';
 import { AssetDepreciation, ConnectionBadge } from './depreciation.tsx';
 import { usePropertyTree } from './property-tree.ts';
@@ -597,6 +598,7 @@ export const AssetDetailPanel = ({
               <CommentThread
                 subject={{ id: asset.id, kind: 'asset', label: `${asset.inventoryNumber} · ${asset.name}` }}
               />
+              <ChangeHistory entityId={asset.id} refreshKey={asset.updatedAt} />
             </Tabs.Content>
           </Tabs>
         );

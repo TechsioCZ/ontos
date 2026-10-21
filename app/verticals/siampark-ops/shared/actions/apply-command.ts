@@ -22,6 +22,12 @@ export type { OpsCommand } from '../agendas.ts';
 export const ApplyCommandPayloadSchema = Schema.Struct({
   command: OpsCommandSchema,
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  /**
+   * `updatedAt` of the agenda envelope the client built the command from. When present and the agenda revision has
+   * moved on, the command is re-applied to the current state unless a record it changes was itself changed after
+   * this instant (per-record conflicts instead of whole-agenda conflicts).
+   */
+  baseUpdatedAt: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(40))),
 });
 export type ApplyCommandPayload = typeof ApplyCommandPayloadSchema.Type;
 /** Identifiers of the entities the command created or changed, the new revision of the owning agenda. */

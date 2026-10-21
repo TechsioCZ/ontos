@@ -5,6 +5,7 @@ import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref'
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 import { AgendaIdSchema, FileIdSchema } from '../domain/common.ts';
 import { AgendaStateSchema } from '../domain/agenda.ts';
+import { ChangeEntrySchema } from '../domain/change-log.ts';
 import { AssetsStateSchema } from '../domain/assets.ts';
 import { DocumentsStateSchema } from '../domain/documents.ts';
 import { MetersStateSchema } from '../domain/meters.ts';
@@ -18,6 +19,8 @@ import { SecurityStateSchema } from '../domain/security.ts';
 export const RecordsRequestSchema = Schema.Struct({
   agendas: Schema.optionalKey(Schema.Array(AgendaIdSchema).check(Schema.isMaxLength(6))),
   fileId: Schema.optionalKey(FileIdSchema),
+  /** Also return the change history of this record id (only entries of agendas the principal may read). */
+  historyFor: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
 });
 export type RecordsRequest = typeof RecordsRequestSchema.Type;
 export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
@@ -71,6 +74,8 @@ export const RecordsResponseSchema = Schema.Struct({
   }),
   /** Present when `fileId` was requested, exists and is readable. */
   file: Schema.optionalKey(StoredFileSchema),
+  /** Present when `historyFor` was requested: newest first. */
+  history: Schema.optionalKey(Schema.Array(ChangeEntrySchema)),
 });
 export type RecordsResponse = typeof RecordsResponseSchema.Type;
 export type RecordsAgendas = RecordsResponse['agendas'];

@@ -18,6 +18,7 @@ import type {
   SecurityIncident,
 } from '../../../../../../shared/domain/security.ts';
 import { CommentThread } from '../../../../../ui/comment-thread.tsx';
+import { ChangeHistory } from '../../../../../ui/change-history.tsx';
 import { LinkedDocuments } from '../../../../../ui/linked-documents.tsx';
 import { downloadFile, MAX_UPLOAD_BYTES, uploadFile } from '../../../../../ui/use-agenda.ts';
 import type { RunCommand } from './device-forms.tsx';
@@ -502,6 +503,10 @@ export const DeviceDetailPanel = ({
 
         <SectionCard>
           <CommentThread subject={{ id: device.id, kind: 'device', label: device.name }} title={k('detail.comments')} />
+        </SectionCard>
+
+        <SectionCard>
+          <ChangeHistory entityId={device.id} refreshKey={DateTime.toEpochMillis(device.updatedAt)} />
         </SectionCard>
 
         <SectionCard title={k('detail.history')}>

@@ -4,7 +4,7 @@
 //   ops.data?.agendas.assets?.state.assets         -> typed agenda state
 //   await ops.run({ _tag: 'AssetCreate', ... })     -> picks the owning agenda's revision, reloads on success
 //   await uploadFile(file) / await downloadFile(fileId)
-import { Effect, Match, Random } from 'effect';
+import { DateTime, Effect, Match, Random } from 'effect';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { executeApplyCommand } from '../api/apply-command-action-client.ts';
 import { executeRecords } from '../api/records-client.ts';
@@ -58,7 +58,7 @@ const commandReason = (error: CommandFailure): FailureReason =>
 
 /** Runs the governed records read once. */
 export const loadRecords = (
-  request: { readonly agendas?: readonly AgendaId[]; readonly fileId?: string } = {},
+  request: { readonly agendas?: readonly AgendaId[]; readonly fileId?: string; readonly historyFor?: string } = {},
 ): Promise<{ readonly ok: true; readonly data: RecordsResponse } | { readonly ok: false; readonly reason: FailureReason }> =>
   browserRuntime.runPromise(
     newId.pipe(
@@ -67,6 +67,7 @@ export const loadRecords = (
           {
             ...(request.agendas === undefined ? {} : { agendas: [...request.agendas] }),
             ...(request.fileId === undefined ? {} : { fileId: request.fileId }),
+            ...(request.historyFor === undefined ? {} : { historyFor: request.historyFor }),
           },
           correlation,
         ),
@@ -78,12 +79,24 @@ export const loadRecords = (
     ),
   );
 
-/** One command through the single governed apply-command Action (fresh idempotency key per call). */
-export const runCommand = (command: OpsCommand, expectedRevision: number): Promise<CommandOutcome> =>
+/**
+ * One command through the single governed apply-command Action (fresh idempotency key per call).
+ * `baseUpdatedAt` = `updatedAt` of the agenda data the command was built from: the server then reports a conflict
+ * only when a record this command changes was edited by someone else in the meantime (per-record conflicts).
+ */
+export const runCommand = (
+  command: OpsCommand,
+  expectedRevision: number,
+  baseUpdatedAt?: string,
+): Promise<CommandOutcome> =>
   browserRuntime.runPromise(
     newId.pipe(
       Effect.flatMap((idempotencyKey) =>
-        executeApplyCommand({ command, expectedRevision }, idempotencyKey, { idempotencyKey }),
+        executeApplyCommand(
+          { command, expectedRevision, ...(baseUpdatedAt === undefined ? {} : { baseUpdatedAt }) },
+          idempotencyKey,
+          { idempotencyKey },
+        ),
       ),
       Effect.match({
         onFailure: (error): CommandOutcome => ({ ok: false, reason: commandReason(error) }),
@@ -180,8 +193,10 @@ export const useAgendaRecords = (agendas: readonly AgendaId[]) => {
   const run = useCallback(
     async (command: OpsCommand): Promise<CommandOutcome> => {
       const agenda = agendaOfCommand(command)?.id;
-      const revision = agenda === undefined ? 0 : (data?.agendas[agenda]?.revision ?? 0);
-      const outcome = await runCommand(command, revision);
+      const envelope = agenda === undefined ? undefined : data?.agendas[agenda];
+      const revision = envelope?.revision ?? 0;
+      const base = envelope === undefined ? undefined : DateTime.formatIso(envelope.updatedAt);
+      const outcome = await runCommand(command, revision, base);
       if (outcome.ok || outcome.reason === 'conflict') {
         await reload();
       }

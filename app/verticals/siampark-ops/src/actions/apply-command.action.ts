@@ -21,7 +21,7 @@ const handleApplyCommand = (
   Effect.Success<ReturnType<Services['apply']>>,
   Effect.Error<ReturnType<Services['apply']>>,
   Effect.Services<ReturnType<typeof persistenceService>>
-> => context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId);
+> => context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId, payload.baseUpdatedAt);
 
 export const applyCommandAction = defineAction(
   {

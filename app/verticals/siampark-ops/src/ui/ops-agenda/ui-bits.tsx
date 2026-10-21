@@ -241,6 +241,8 @@ export const exportCsv = async (input: {
         ...(input.filter === undefined || input.filter === '' ? {} : { filter: input.filter.slice(0, 500) }),
       },
       input.revision,
+      // An export log entry is a new record: it never conflicts with other people's changes.
+      new Date().toISOString(),
     );
   }
 };

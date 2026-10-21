@@ -14,6 +14,7 @@ import type { OpsCommand } from '../../../../../../shared/agendas.ts';
 import type { DocumentRecord, StoredFileRef, SubjectRef } from '../../../../../../shared/domain/documents.ts';
 import { documentLinks } from '../../../../../../shared/domain/documents.ts';
 import { CommentThread } from '../../../../../ui/comment-thread.tsx';
+import { ChangeHistory } from '../../../../../ui/change-history.tsx';
 import {
   CategoryBadge,
   FileTypeIcon,
@@ -522,6 +523,10 @@ export const DocumentDetailPanel = ({
             subject={{ id: document.id, kind: 'document', label: document.title }}
             title={t(`${k}.detail.comments`)}
           />
+        </SectionCard>
+
+        <SectionCard>
+          <ChangeHistory entityId={document.id} refreshKey={document.updatedAt} />
         </SectionCard>
       </div>
       <FilePreviewDialog file={preview} onClose={() => setPreview(undefined)} />

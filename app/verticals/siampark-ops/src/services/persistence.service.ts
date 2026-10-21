@@ -21,6 +21,14 @@ import type { AgendaState } from '../../shared/domain/agenda.ts';
 import { canApplyMeterCommand, meterAccess, operationalMetersState } from '../../shared/domain/meters-access.ts';
 import type { MetersState } from '../../shared/domain/meters.ts';
 import { FileIdSchema, entityIdOf, mintId, opsConflict } from '../../shared/domain/common.ts';
+import {
+  CHANGE_LOG_ROW,
+  ChangeLogStateSchema,
+  MAX_CHANGE_LOG_ENTRIES,
+  changeEntries,
+  touchedSince,
+} from '../../shared/domain/change-log.ts';
+import type { ChangeEntry } from '../../shared/domain/change-log.ts';
 import type { AgendaId, AgendaSensitivity } from '../../shared/domain/common.ts';
 import { agendaStates, files } from '../database/schema.ts';
 
@@ -148,18 +156,14 @@ export const persistenceService = Effect.fn('SiamparkOps.persistenceService')(
         Effect.mapError(unavailable),
       );
       const updatedAt = row === undefined ? yield* DateTime.now : DateTime.fromDateUnsafe(row.updatedAt);
-      return { exists: row !== undefined, revision: row?.revision ?? 0, state, updatedAt };
+      return { exists: row !== undefined, raw, revision: row?.revision ?? 0, state, updatedAt };
     });
 
     const save = Effect.fn('SiamparkOps.save')(function* save(
       agenda: AgendaId,
       snapshot: { readonly exists: boolean; readonly revision: number },
-      state: unknown,
+      encoded: unknown,
     ) {
-      const definition = agendaDefinitions[agenda];
-      const encoded = yield* Schema.encodeUnknownEffect(definition.stateSchema)(state).pipe(
-        Effect.mapError(unavailable),
-      );
       const now = DateTime.toDateUtc(yield* DateTime.now);
       const next = snapshot.revision + 1;
       if (!snapshot.exists) {
@@ -263,10 +267,54 @@ export const persistenceService = Effect.fn('SiamparkOps.persistenceService')(
       return file;
     });
 
+    /** Appends change entries to the company's change-log row in the same transaction (row lock via upsert). */
+    const appendHistory = Effect.fn('SiamparkOps.appendHistory')(function* appendHistory(entries: readonly unknown[]) {
+      if (entries.length === 0) {
+        return;
+      }
+      const now = DateTime.toDateUtc(yield* DateTime.now);
+      const fresh = yield* Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(entries).pipe(
+        Effect.mapError(unavailable),
+      );
+      yield* transaction
+        .insert(agendaStates)
+        .values({
+          agenda: CHANGE_LOG_ROW,
+          legalEntityId,
+          revision: 1,
+          state: { entries },
+          tenantId: scope.tenantId,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          set: {
+            revision: sql`${agendaStates.revision} + 1`,
+            state: sql`jsonb_build_object('entries', (
+              select coalesce(jsonb_agg(entry order by position), '[]'::jsonb)
+              from (
+                select entry, position
+                from jsonb_array_elements(coalesce(${agendaStates.state}->'entries', '[]'::jsonb) || ${fresh}::jsonb)
+                  with ordinality as items(entry, position)
+                order by position desc
+                limit ${MAX_CHANGE_LOG_ENTRIES}
+              ) kept
+            ))`,
+            updatedAt: now,
+          },
+          target: [agendaStates.tenantId, agendaStates.legalEntityId, agendaStates.agenda],
+        })
+        .pipe(Effect.mapError(unavailable));
+    });
+
+    /** Personal inbox, preferences and export log are not record history. */
+    const loggedCommand = (tag: string) =>
+      !tag.startsWith('AgendaNotifications') && tag !== 'AgendaExportRecord' && tag !== 'AgendaPreferencesSet';
+
     const apply = Effect.fn('SiamparkOps.apply')(function* apply(
       command: OpsCommand,
       expectedRevision: number,
       resourceId: string,
+      baseUpdatedAt?: string,
     ) {
       if (command._tag === 'FileUpload') {
         return yield* uploadFile(command, resourceId);
@@ -288,15 +336,63 @@ export const persistenceService = Effect.fn('SiamparkOps.persistenceService')(
         return yield* permissionDenied(`Changes in agenda ${definition.id} require write permission`);
       }
       const snapshot = yield* load(definition.id);
-      if (snapshot.revision !== expectedRevision) {
+      const stale = snapshot.revision !== expectedRevision;
+      if (stale && baseUpdatedAt === undefined) {
         return yield* revisionConflict();
       }
       const now = yield* DateTime.now;
+      // The reducer always runs against the CURRENT state, so every business rule sees the latest data.
       const change = yield* definition.evolve(snapshot.state, command, { actor, now, resourceId });
-      const revision = yield* save(definition.id, snapshot, change.state);
+      if (stale && baseUpdatedAt !== undefined && touchedSince(snapshot.raw, change.entityIds, baseUpdatedAt)) {
+        return yield* revisionConflict();
+      }
+      const encoded = yield* Schema.encodeUnknownEffect(definition.stateSchema)(change.state).pipe(
+        Effect.mapError(unavailable),
+      );
+      const revision = yield* save(definition.id, snapshot, encoded);
+      if (loggedCommand(command._tag)) {
+        yield* appendHistory(
+          changeEntries({
+            after: encoded,
+            agenda: definition.id,
+            at: DateTime.formatIso(now),
+            before: snapshot.raw,
+            by: actor,
+            command: command._tag,
+            entityIds: change.entityIds,
+          }),
+        );
+      }
       const result: ApplyCommandResult = { agenda: definition.id, entityIds: [...change.entityIds], revision };
       return result;
     });
+
+    /** History of one record id, newest first, limited to agendas the principal may read. */
+    const historyOf = Effect.fn('SiamparkOps.historyOf')(function* historyOf(
+      entityId: string,
+      readable: ReadonlySet<string>,
+    ) {
+      const rows = yield* transaction
+        .select({ state: agendaStates.state })
+        .from(agendaStates)
+        .where(
+          and(
+            eq(agendaStates.tenantId, scope.tenantId),
+            eq(agendaStates.legalEntityId, legalEntityId),
+            eq(agendaStates.agenda, CHANGE_LOG_ROW),
+          ),
+        )
+        .limit(1);
+      const raw = rows[0]?.state;
+      if (raw === undefined) {
+        return [] as readonly ChangeEntry[];
+      }
+      const log = yield* Schema.decodeUnknownEffect(ChangeLogStateSchema)(raw);
+      return log.entries
+        .filter((entry) => entry.entityId === entityId && readable.has(entry.agenda))
+        .toReversed()
+        .slice(0, 200);
+    }, Effect.mapError(unavailable));
 
     const records = Effect.fn('SiamparkOps.records')(function* records(request: RecordsRequest) {
       const granted = yield* grants();
@@ -331,12 +427,15 @@ export const persistenceService = Effect.fn('SiamparkOps.persistenceService')(
       }
       const documentsReadable = accessList.find((entry) => entry.agenda === 'documents')?.canRead === true;
       const file = request.fileId !== undefined && documentsReadable ? yield* readFile(request.fileId) : undefined;
+      const readable = new Set(accessList.filter((entry) => entry.canRead).map((entry) => entry.agenda as string));
+      const history = request.historyFor === undefined ? undefined : yield* historyOf(request.historyFor, readable);
       // The read definition validates the result against RecordsResponseSchema (agenda states are typed values).
       const response: RecordsResponse = {
         access: accessList,
         actorPrincipalRef: actor as RecordsResponse['actorPrincipalRef'],
         agendas: agendas as RecordsResponse['agendas'],
         ...(file === undefined ? {} : { file }),
+        ...(history === undefined ? {} : { history }),
       };
       return response;
     });
