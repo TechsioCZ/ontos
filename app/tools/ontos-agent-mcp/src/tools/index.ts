@@ -4,6 +4,7 @@ import { registerBillingTools } from './billing.ts';
 import { registerCustomerTools } from './customers.ts';
 import { registerMerchandiseTools } from './merchandise.ts';
 import { registerMetricTools } from './metrics.ts';
+import { registerSalesAiTools } from './sales-ai.ts';
 import { registerSalesTools } from './sales.ts';
 import { registerTaggingTools } from './tagging.ts';
 import { registerWorkTools } from './work.ts';
@@ -19,6 +20,7 @@ export const registerDomainTools = (server: McpServer): void => {
   registerCustomerTools(server);
   registerWorkforceTools(server);
   registerSalesTools(server);
+  registerSalesAiTools(server);
   registerMerchandiseTools(server);
   registerBillingTools(server);
   registerWorkTools(server);

@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { getConfig } from './config.ts';
 import { getAssertion } from './gateway.ts';
 import { readRecords } from './ontos-client.ts';
-import { PROFILE_LABEL, PROFILE_TOOLS, restrictToProfile } from './profiles.ts';
+import { profileLabel, profileTools, restrictToProfile } from './profiles.ts';
 import { registerDomainTools } from './tools/index.ts';
 
 const SERVER_NAME = 'ontos-sales-agent';
@@ -33,8 +33,11 @@ const mcpServer = new McpServer({
   name: config.profile === undefined ? SERVER_NAME : `${SERVER_NAME}-${config.profile.toLowerCase()}`,
   version: SERVER_VERSION,
 });
-// With ONTOS_AGENT_PROFILE=A|B only that level's tools are registered (see profiles.ts).
-const server = restrictToProfile(mcpServer, config.profile);
+// With ONTOS_AGENT_PROFILE=A|B|C only that level's tools for that company are registered (see profiles.ts).
+const server = restrictToProfile(mcpServer, config.profile, config.company);
+/** Audience whose assertion proves the key works: the module the level actually uses. */
+const probeAudience =
+  config.profile === 'C' ? (config.company === 'obchod' ? 'sales-pipeline' : 'crm') : PROBE_AUDIENCE;
 
 const profileInfo = () =>
   config.profile === undefined
@@ -44,23 +47,23 @@ const profileInfo = () =>
         company: config.company,
         legalEntityId: config.legalEntityId,
         profile: config.profile,
-        profileLabel: PROFILE_LABEL[config.profile],
-        tools: [...PROFILE_TOOLS[config.profile]],
+        profileLabel: profileLabel(config.profile, config.company),
+        tools: [...profileTools(config.profile, config.company)],
       };
 
 server.registerTool(
   'whoami',
   {
     description:
-      'Show the AI agent level (A = read-only, B = reads + tasks), its company, the shell URL and whether a gateway assertion for the siampark-work audience can be obtained. Never returns the API key or the token.',
+      'Show the AI agent level (A = read-only, B = reads + tasks, C = proposals a person approves), its company, its tools, the shell URL and whether a gateway assertion can be obtained. Never returns the API key or the token.',
     inputSchema: {},
   },
   async () => {
     try {
-      await getAssertion(config.profile === 'C' ? 'crm' : PROBE_AUDIENCE);
+      await getAssertion(probeAudience);
       return textResult({
         ...profileInfo(),
-        assertionAudience: config.profile === 'C' ? 'crm' : PROBE_AUDIENCE,
+        assertionAudience: probeAudience,
         assertionObtained: true,
         legalEntityIdConfigured: config.legalEntityId !== undefined,
         shellUrl: config.shellUrl,
@@ -69,7 +72,7 @@ server.registerTool(
       return textResult(
         {
           ...profileInfo(),
-          assertionAudience: config.profile === 'C' ? 'crm' : PROBE_AUDIENCE,
+          assertionAudience: probeAudience,
           assertionObtained: false,
           error: errorMessage(error),
           legalEntityIdConfigured: config.legalEntityId !== undefined,

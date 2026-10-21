@@ -14,11 +14,15 @@
  * Level B: the same reads + `siampark.work` write (tasks only): executor grants for `siampark.work.*` Actions and
  *          `siampark.work.write_all`. Every other module stays read-only, so pipeline/tagging/order writes fail.
  *
- * Level C: (Hanák CRM only) the same reads + `demo.crm` apply-command/write_all; the CRM command guard restricts the
- *          key to `AiProposeChanges`, so changes are proposals approved by a person on /crm/schvalovani-ai.
+ * Level C: proposals that a person approves in the app, with a bulk revert.
+ *          Hanák: the same reads + `demo.crm` apply-command/write_all; the CRM command guard restricts the key to
+ *          `AiProposeChanges` (clients, contacts, order pairing) approved on /crm/schvalovani-ai.
+ *          Obchodní firma: the same reads + executor grants for `demo.sales-pipeline.apply-command` and
+ *          `demo.merchandise.apply-command` but NO write_all, so the modules accept only `AiProposeChanges`
+ *          (opportunities, orders) approved on /prodej/schvalovani-ai; every direct change is refused.
  *
- * Keys land in `app/.env.demo.local` as `ONTOS_AGENT_<A|B|C>_<COMPANY>_API_KEY` (COMPANY = OBCHOD, HANAK; C: HANAK).
- * The MCP server picks one with `ONTOS_AGENT_PROFILE=A|B` and `ONTOS_AGENT_COMPANY=obchod|hanak`.
+ * Keys land in `app/.env.demo.local` as `ONTOS_AGENT_<A|B|C>_<COMPANY>_API_KEY` (COMPANY = OBCHOD, HANAK).
+ * The MCP server picks one with `ONTOS_AGENT_PROFILE=A|B|C` and `ONTOS_AGENT_COMPANY=obchod|hanak`.
  */
 import { randomUUID } from 'node:crypto';
 
@@ -88,6 +92,8 @@ export const aiCompanies: readonly AiCompany[] = [
       'demo.tagging',
       'demo.workforce',
       'siampark.work',
+      // Invoices (list_invoices, revenue metrics). Billing has no business permissions: module access is the read.
+      'siampark.billing-finance',
     ],
     requiresAction: undefined,
   },
@@ -109,11 +115,21 @@ export const AI_TASKS_MODULE = 'siampark.work';
  * (every item requires a human decision). Everything outside demo.crm stays read-only.
  */
 export const AI_PROPOSALS_MODULE = 'demo.crm';
-const writableModuleOf = (level: AiProfileLevel): string | undefined =>
-  level === 'B' ? AI_TASKS_MODULE : level === 'C' ? AI_PROPOSALS_MODULE : undefined;
-/** Level C exists only where its proposal workflow exists (the CRM vertical). */
-const levelsOf = (company: AiCompany): readonly AiProfileLevel[] =>
-  company.key === 'hanak' ? ['A', 'B', 'C'] : ['A', 'B'];
+/**
+ * Level C in Obchodní firma: executor grants for exactly these Actions, context permissions stay read-only. Without
+ * write_all the modules refuse every direct change and accept only `AiProposeChanges` (human approval on
+ * /prodej/schvalovani-ai).
+ */
+export const AI_SALES_PROPOSAL_ACTIONS: readonly string[] = [
+  'demo.sales-pipeline.apply-command',
+  'demo.merchandise.apply-command',
+];
+const writableModuleOf = (level: AiProfileLevel, company: AiCompany): string | undefined =>
+  level === 'B' ? AI_TASKS_MODULE : level === 'C' && company.key === 'hanak' ? AI_PROPOSALS_MODULE : undefined;
+const proposalActionsOf = (level: AiProfileLevel, company: AiCompany): readonly string[] =>
+  level === 'C' && company.key === 'obchod' ? AI_SALES_PROPOSAL_ACTIONS : [];
+/** Every company has all three levels; level C always works through a human approval workflow. */
+const levelsOf = (_company: AiCompany): readonly AiProfileLevel[] => ['A', 'B', 'C'];
 
 /** Modules gated by generated `<module>.read_all` / `.write_all` context permissions (see permissions.mts). */
 const contextPermissionModules: ReadonlySet<string> = new Set([
@@ -142,7 +158,7 @@ export interface AiPrincipal {
 const levelLabel = {
   A: 'A · jen čtení',
   B: 'B · čtení + úkoly',
-  C: 'C · návrhy změn CRM',
+  C: 'C · návrhy změn ke schválení',
 } as const satisfies Record<AiProfileLevel, string>;
 
 export const aiPrincipals: readonly AiPrincipal[] = aiCompanies.flatMap((company) =>
@@ -197,7 +213,7 @@ export const aiPrincipalRelationships = (
   add('tenant', demoTenantId, 'member', 'principal', principalId);
   add('legal_entity', legal, 'member', 'principal', principalId);
   for (const moduleId of ['core.shell', ...principal.company.reads]) {
-    const access: Access = writableModuleOf(principal.level) === moduleId ? 'write' : 'read';
+    const access: Access = writableModuleOf(principal.level, principal.company) === moduleId ? 'write' : 'read';
     add('module_access', moduleAccess(moduleId), 'legal_entity', 'legal_entity', legal);
     add('module_access', moduleAccess(moduleId), 'accessor', 'principal', principalId);
     if (contextPermissionModules.has(moduleId)) {
@@ -216,9 +232,12 @@ export const aiPrincipalRelationships = (
     if (principal.level === 'C' && moduleId === AI_PROPOSALS_MODULE) {
       grantContextPermission(moduleId, 'demo.crm.assign');
     }
-    if (access === 'write') {
-      for (const { actionKey, provisioning } of actions.filter((action) =>
-        action.actionKey.startsWith(`${moduleId}.`),
+    const proposalActions = proposalActionsOf(principal.level, principal.company);
+    if (access === 'write' || proposalActions.some((actionKey) => actionKey.startsWith(`${moduleId}.`))) {
+      for (const { actionKey, provisioning } of actions.filter(
+        (action) =>
+          action.actionKey.startsWith(`${moduleId}.`) &&
+          (access === 'write' || proposalActions.includes(action.actionKey)),
       )) {
         const action = toSpiceDbActionObjectId(actionKey);
         if (provisioning === 'explicit') {

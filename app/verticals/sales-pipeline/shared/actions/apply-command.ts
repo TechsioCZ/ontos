@@ -40,35 +40,75 @@ export const BulkOpportunityPatchSchema = Schema.Struct({
 });
 export type BulkOpportunityPatch = typeof BulkOpportunityPatchSchema.Type;
 
+export const CreateOpportunityCommandSchema = Schema.TaggedStruct('CreateOpportunity', {
+  expectedCloseDate: CalendarDateSchema,
+  lines: OpportunityLinesSchema,
+  note: Schema.optionalKey(OpportunityNoteSchema),
+  ownerEmployeeId: Schema.optionalKey(EmployeeIdSchema),
+  partyId: PartyIdSchema,
+  probability: Schema.optionalKey(ProbabilitySchema),
+  stage: Schema.optionalKey(OpportunityStageSchema),
+  title: OpportunityTitleSchema,
+});
+export const UpdateOpportunityCommandSchema = Schema.TaggedStruct('UpdateOpportunity', {
+  id: OpportunityIdSchema,
+  patch: OpportunityPatchSchema,
+});
+export const AssignOpportunityCommandSchema = Schema.TaggedStruct('AssignOpportunity', {
+  id: OpportunityIdSchema,
+  ownerEmployeeId: Schema.OptionFromNullOr(EmployeeIdSchema),
+});
+export const ChangeOpportunityStageCommandSchema = Schema.TaggedStruct('ChangeOpportunityStage', {
+  id: OpportunityIdSchema,
+  note: Schema.optionalKey(OpportunityNoteSchema),
+  toStage: OpportunityStageSchema,
+});
+
+/** AI level C: the only opportunity operations an agent may PROPOSE. A person approves each one in the app. */
+export const SalesPipelineAiOperationSchema = Schema.Union([
+  CreateOpportunityCommandSchema,
+  UpdateOpportunityCommandSchema,
+  AssignOpportunityCommandSchema,
+  ChangeOpportunityStageCommandSchema,
+]);
+export type SalesPipelineAiOperation = typeof SalesPipelineAiOperationSchema.Type;
+
+const AiReasonSchema = Schema.Trim.check(Schema.isMinLength(3), Schema.isMaxLength(2000));
+const AiIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+
+/** AI approval commands (shared engine `@app/shared-contracts/ai-approvals`). Decide and revert are human-only. */
+export const salesPipelineAiCommandSchemas = [
+  Schema.TaggedStruct('AiProposeChanges', {
+    agentLabel: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+    changes: Schema.Array(Schema.Struct({ operation: SalesPipelineAiOperationSchema, reason: AiReasonSchema })).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(20),
+    ),
+    instruction: AiReasonSchema,
+    runId: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+  }),
+  Schema.TaggedStruct('AiDecideChanges', {
+    changeIds: Schema.Array(AiIdSchema).check(Schema.isMinLength(1), Schema.isMaxLength(50)),
+    decision: Schema.Literals(['approve', 'reject']),
+    note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
+  }),
+  Schema.TaggedStruct('AiRevertBatch', {
+    batchId: AiIdSchema,
+    note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
+  }),
+] as const;
+
 export const SalesPipelineCommandSchema = Schema.Union([
-  Schema.TaggedStruct('CreateOpportunity', {
-    expectedCloseDate: CalendarDateSchema,
-    lines: OpportunityLinesSchema,
-    note: Schema.optionalKey(OpportunityNoteSchema),
-    ownerEmployeeId: Schema.optionalKey(EmployeeIdSchema),
-    partyId: PartyIdSchema,
-    probability: Schema.optionalKey(ProbabilitySchema),
-    stage: Schema.optionalKey(OpportunityStageSchema),
-    title: OpportunityTitleSchema,
-  }),
+  CreateOpportunityCommandSchema,
   Schema.TaggedStruct('ArchiveOpportunity', { id: OpportunityIdSchema }),
-  Schema.TaggedStruct('UpdateOpportunity', {
-    id: OpportunityIdSchema,
-    patch: OpportunityPatchSchema,
-  }),
-  Schema.TaggedStruct('AssignOpportunity', {
-    id: OpportunityIdSchema,
-    ownerEmployeeId: Schema.OptionFromNullOr(EmployeeIdSchema),
-  }),
-  Schema.TaggedStruct('ChangeOpportunityStage', {
-    id: OpportunityIdSchema,
-    note: Schema.optionalKey(OpportunityNoteSchema),
-    toStage: OpportunityStageSchema,
-  }),
+  UpdateOpportunityCommandSchema,
+  AssignOpportunityCommandSchema,
+  ChangeOpportunityStageCommandSchema,
   Schema.TaggedStruct('BulkUpdateOpportunities', {
     ids: Schema.Array(OpportunityIdSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200)),
     patch: BulkOpportunityPatchSchema,
   }),
+  ...salesPipelineAiCommandSchemas,
 ]);
 export type SalesPipelineCommand = typeof SalesPipelineCommandSchema.Type;
 
@@ -93,6 +133,8 @@ export type BulkOpportunityResult = typeof BulkOpportunityResultSchema.Type;
  * `results` is present only for bulk updates and lists every requested id in command order.
  */
 export const ApplyCommandResultSchema = Schema.Struct({
+  /** AI approval commands: the batch id (propose/revert) followed by change ids, or the decided change ids. */
+  entityIds: Schema.optionalKey(Schema.Array(Schema.String)),
   opportunities: Schema.Array(OpportunitySchema),
   results: Schema.optionalKey(Schema.Array(BulkOpportunityResultSchema)),
   revision: Schema.Int,

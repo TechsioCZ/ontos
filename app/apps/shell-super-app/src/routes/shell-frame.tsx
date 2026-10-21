@@ -276,6 +276,14 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
         key: 'invoices',
         moduleId: 'siampark.billing-finance',
       },
+      {
+        // AI level C approvals of opportunity and order proposals (Obchodní firma).
+        entrypoints: ['demo.sales-pipeline.page.ai'],
+        hrefs: ['/prodej/schvalovani-ai'],
+        icon: 'icon-[mdi--robot-outline]',
+        key: 'salesAiApprovals',
+        moduleId: 'demo.sales-pipeline',
+      },
     ],
     key: 'sales',
   },

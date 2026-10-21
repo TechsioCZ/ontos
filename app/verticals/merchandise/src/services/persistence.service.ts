@@ -47,6 +47,7 @@ import { fullOrderTotals, lineGrossMinor, nextOrderNumber, orderTotals } from '.
 import { merchandiseStates } from '../database/schema.ts';
 import { AKROS_LEGAL_ENTITY_ID, staffCommandAllowed } from '../../shared/actions/command-guard.ts';
 import { loadAkrosBaseline } from './akros-demo-reset.ts';
+import { applyMerchandiseAiCommand, isMerchandiseAiCommand } from './ai-changes.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
 import { assignCategory, updateCategoryCommand, withContentHistory } from './catalog-content.ts';
 import { cachedProductRecords, getCachedState, setCachedState, stateCacheKey } from './state-cache.ts';
@@ -1075,7 +1076,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
   };
 });
 
-const describeLines = (order: {
+export const describeLines = (order: {
   readonly lines: readonly OrderLine[];
   readonly pricesIncludeVat?: boolean | undefined;
 }) =>
@@ -1086,17 +1087,17 @@ const describeLines = (order: {
     )
     .join('; ');
 
-const describeAddress = (address: Order['deliveryAddress']) =>
+export const describeAddress = (address: Order['deliveryAddress']) =>
   address === undefined
     ? 'bez adresy'
     : `${address.street}, ${address.postalCode} ${address.city}${address.country === undefined || address.country === '' ? '' : `, ${address.country}`}`;
 
-const describeContact = (contact: Order['contact']) =>
+export const describeContact = (contact: Order['contact']) =>
   contact === undefined
     ? 'bez kontaktu'
     : [contact.name, contact.email, contact.phone].filter((part) => part !== undefined && part !== '').join(', ');
 
-const describeShipping = (shipping: Order['shipping']) =>
+export const describeShipping = (shipping: Order['shipping']) =>
   shipping === undefined ? 'bez dopravy' : `${shipping.label}, ${czk(shipping.priceMinor)}`;
 
 const lineKey = (line: { readonly productId: string; readonly variantId?: string | undefined }) =>
@@ -1395,6 +1396,10 @@ export const evolveMerchandiseState = (
         };
       }),
     ),
+    // AI approval commands need the caller's identity and permission checks, so persistence runs them.
+    Match.tag('AiProposeChanges', 'AiDecideChanges', 'AiRevertBatch', () =>
+      Effect.fail(conflict('AI approval commands run only through persistence')),
+    ),
     Match.exhaustive,
   );
 
@@ -1560,11 +1565,60 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         ? { entityIds: [...change.entityIds], revision }
         : { entityIds: [...change.entityIds], revision, storefrontOrder: change.storefrontOrder };
     });
+    /**
+     * AI level C. Proposing needs only read access (the agent principal has no write grant, so it can never change an
+     * order directly); deciding and reverting need write_all and a person (command guard), in AKROS an administrator.
+     */
+    const applyAi = Effect.fn('Merchandise.applyAi')(function* applyAi(
+      command: Extract<MerchandiseCommand, { readonly _tag: 'AiDecideChanges' | 'AiProposeChanges' | 'AiRevertBatch' }>,
+      expectedRevision: number,
+      resourceId: string,
+    ) {
+      const proposing = command._tag === 'AiProposeChanges';
+      if (!(yield* contextGrant(proposing ? 'read_all' : 'write_all'))) {
+        return yield* new MerchandisePermissionDenied({
+          code: 'merchandise_permission_denied',
+          reason: proposing
+            ? 'Návrhy AI vyžadují čtení objednávek'
+            : 'Schvalovat a vracet změny AI může jen uživatel s právem zápisu do objednávek',
+        });
+      }
+      if (!proposing && !staffCommandAllowed(legalEntityId, yield* administrator(), 'EditOrder')) {
+        return yield* new MerchandisePermissionDenied({
+          code: 'merchandise_permission_denied',
+          reason: 'Schvalovat změny AI v objednávkách může jen správce',
+        });
+      }
+      const snapshot = yield* load();
+      if (snapshot.revision !== expectedRevision) {
+        return yield* new MerchandiseRevisionConflict({
+          code: 'merchandise_revision_conflict',
+          reason: 'Merchandise changed; refresh before another operation',
+        });
+      }
+      const now = yield* DateTime.now;
+      const outcome = yield* applyMerchandiseAiCommand(snapshot.state, command, {
+        actor: { principalId: scope.principalId, tenantId: scope.tenantId },
+        invocationId: resourceId,
+        now,
+      }).pipe(
+        Effect.mapError((failure) =>
+          failure.kind === 'not_found' ? notFound(failure.message) : conflict(failure.message),
+        ),
+      );
+      const revision =
+        outcome.state === snapshot.state ? snapshot.revision : yield* save(snapshot.revision, outcome.state);
+      const entityIds = yield* Effect.forEach(outcome.entityIds, entityIdOf);
+      return { entityIds, revision };
+    });
     const apply = Effect.fn('Merchandise.apply')(function* apply(
       command: MerchandiseCommand,
       expectedRevision: number,
       resourceId: string,
     ) {
+      if (isMerchandiseAiCommand(command)) {
+        return yield* applyAi(command, expectedRevision, resourceId);
+      }
       if (!(yield* contextGrant('write_all'))) {
         return yield* new MerchandisePermissionDenied({
           code: 'merchandise_permission_denied',
@@ -1687,8 +1741,13 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         : orders.filter((order) => view.orderStatus === undefined || order.status === view.orderStatus);
       const canWrite = yield* contextGrant('write_all');
       const isAdministrator = storefront ? false : yield* administrator();
+      const aiChanges =
+        !storefront && snapshot.state.aiChanges !== undefined && (canWrite || (yield* contextGrant('read_all')))
+          ? { aiChanges: snapshot.state.aiChanges }
+          : {};
       const canManageCatalog = canWrite && (legalEntityId !== AKROS_LEGAL_ENTITY_ID || isAdministrator);
       const response: RecordsResponse = {
+        ...aiChanges,
         totalProducts: matchingProducts.length,
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
         canWrite,

@@ -9,6 +9,8 @@ import {
   PartyIdSchema,
 } from '../outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import { OpportunitySchema } from '../model/opportunity.ts';
+import { makeAiApprovalSchemas } from '@app/shared-contracts/ai-approvals';
+import { SalesPipelineAiOperationSchema } from '../actions/apply-command.ts';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
 /** Server-computed summary over the filtered, visible opportunities. Amounts are minor units. */
@@ -31,7 +33,14 @@ export const OpportunityIndicatorsSchema = Schema.Struct({
 });
 export type OpportunityIndicators = typeof OpportunityIndicatorsSchema.Type;
 
+/** AI level C proposals, decisions, reverts and their log (see `@app/shared-contracts/ai-approvals`). */
+export const SalesPipelineAiSchemas = makeAiApprovalSchemas(SalesPipelineAiOperationSchema);
+export const SalesPipelineAiSliceSchema = SalesPipelineAiSchemas.slice;
+export type SalesPipelineAiSlice = typeof SalesPipelineAiSliceSchema.Type;
+export type SalesPipelineAiChange = typeof SalesPipelineAiSchemas.change.Type;
+
 export const SalesPipelineStateSchema = Schema.Struct({
+  aiChanges: Schema.optionalKey(SalesPipelineAiSliceSchema),
   opportunities: Schema.Array(OpportunitySchema),
 });
 export type SalesPipelineState = typeof SalesPipelineStateSchema.Type;
@@ -46,6 +55,8 @@ export type RecordsRequest = typeof RecordsRequestSchema.Type;
 export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
 export const RecordsResponseSchema = Schema.Struct({
   actorPrincipalRef: PrincipalRefSchema,
+  /** AI proposals of this company; present for principals with read_all. */
+  aiChanges: Schema.optionalKey(SalesPipelineAiSliceSchema),
   canWrite: Schema.Boolean,
   indicators: OpportunityIndicatorsSchema,
   items: Schema.Array(OpportunitySchema),

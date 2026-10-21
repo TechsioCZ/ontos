@@ -35,6 +35,7 @@ import {
   OpportunityStageSchema,
 } from '../../shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import { salesPipelineStates } from '../database/schema.ts';
+import { applySalesPipelineAiCommand, isSalesPipelineAiCommand } from './ai-changes.ts';
 
 const unavailable = (cause?: unknown) =>
   Object.defineProperty(
@@ -79,6 +80,7 @@ const targetIdsOf = (command: SalesPipelineCommand): readonly string[] =>
     Match.tag('UpdateOpportunity', 'AssignOpportunity', 'ChangeOpportunityStage', 'ArchiveOpportunity', ({ id }) => [
       id,
     ]),
+    Match.tag('AiProposeChanges', 'AiDecideChanges', 'AiRevertBatch', () => []),
     Match.exhaustive,
   );
 
@@ -387,6 +389,15 @@ export const evolveOpportunityState = Effect.fn('SalesPipeline.evolveState')(fun
         return singleResult(state, { ...existing, archivedAt: input.now, updatedAt: input.now }, []);
       }),
     ),
+    // AI approval commands need the caller's identity and permission checks, so persistence runs them.
+    Match.tag('AiProposeChanges', 'AiDecideChanges', 'AiRevertBatch', () =>
+      Effect.fail(
+        new SalesPipelineLifecycleConflict({
+          code: 'sales_pipeline_lifecycle_conflict',
+          reason: 'AI approval commands run only through persistence',
+        }),
+      ),
+    ),
     Match.exhaustive,
   );
 });
@@ -541,11 +552,77 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
           ),
         ),
     });
+    /**
+     * AI level C. Proposing needs only read access (the agent principal has no write grant, so it can never change an
+     * opportunity directly); deciding and reverting need write_all and a person (command guard).
+     */
+    const applyAi = Effect.fn('SalesPipeline.applyAi')(function* applyAi(
+      command: Extract<SalesPipelineCommand, { readonly _tag: 'AiDecideChanges' | 'AiProposeChanges' | 'AiRevertBatch' }>,
+      expectedRevision: number,
+      invocationId: string,
+    ) {
+      const permission = command._tag === 'AiProposeChanges' ? 'read_all' : 'write_all';
+      if (!(yield* contextGrant(scope, permission))) {
+        return yield* new SalesPipelinePermissionDenied({
+          code: 'sales_pipeline_permission_denied',
+          reason:
+            command._tag === 'AiProposeChanges'
+              ? 'Návrhy AI vyžadují čtení příležitostí'
+              : 'Schvalovat a vracet změny AI může jen uživatel s právem zápisu do příležitostí',
+        });
+      }
+      const snapshot = yield* load();
+      if (snapshot.revision !== expectedRevision) {
+        return yield* new SalesPipelineRevisionConflict({
+          code: 'sales_pipeline_revision_conflict',
+          reason: 'SalesPipeline changed; refresh before another operation',
+        });
+      }
+      const now = yield* DateTime.now;
+      const outcome = yield* applySalesPipelineAiCommand(
+        snapshot.state,
+        command,
+        { invocationId, now, principalId: scope.principalId },
+        evolveOpportunityState,
+      ).pipe(
+        Effect.mapError((failure) =>
+          failure.kind === 'not_found'
+            ? new SalesPipelineNotFound({ code: 'sales_pipeline_not_found', reason: failure.message })
+            : new SalesPipelineLifecycleConflict({ code: 'sales_pipeline_lifecycle_conflict', reason: failure.message }),
+        ),
+      );
+      if (outcome.state === snapshot.state) {
+        const unchanged: AppliedCommand = {
+          changedAt: now,
+          result: { entityIds: [...outcome.entityIds], opportunities: [], revision: expectedRevision },
+          stageChanges: [],
+        };
+        return unchanged;
+      }
+      const previous = new Map(snapshot.state.opportunities.map((entry) => [entry.id, entry] as const));
+      const affected = outcome.state.opportunities.filter((entry) => previous.get(entry.id) !== entry);
+      // Approved (or reverted) stage moves publish the same stage-changed Outbox Message as a manual move.
+      const stageChanges: StageChange[] = affected.flatMap((opportunity): StageChange[] => {
+        const before = previous.get(opportunity.id);
+        if (before === undefined) return [{ fromStage: Option.none(), opportunity }];
+        return before.stage === opportunity.stage ? [] : [{ fromStage: Option.some(before.stage), opportunity }];
+      });
+      const revision = yield* save(expectedRevision, outcome.state);
+      const applied: AppliedCommand = {
+        changedAt: now,
+        result: { entityIds: [...outcome.entityIds], opportunities: affected, revision },
+        stageChanges,
+      };
+      return applied;
+    });
     const apply = Effect.fn('SalesPipeline.apply')(function* apply(
       command: SalesPipelineCommand,
       expectedRevision: number,
       invocationId: string,
     ) {
+      if (isSalesPipelineAiCommand(command)) {
+        return yield* applyAi(command, expectedRevision, invocationId);
+      }
       const targetIds = targetIdsOf(command);
       if (!(yield* contextGrant(scope, 'write_all'))) {
         if (targetIds.length === 0) {
@@ -617,8 +694,10 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
           (request.ownerEmployeeId === undefined || opportunity.ownerEmployeeId === request.ownerEmployeeId) &&
           (request.partyId === undefined || opportunity.partyId === request.partyId),
       );
+      const canReadAll = yield* contextGrant(scope, 'read_all');
       const response: RecordsResponse = {
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
+        ...(canReadAll && snapshot.state.aiChanges !== undefined ? { aiChanges: snapshot.state.aiChanges } : {}),
         canWrite: yield* contextGrant(scope, 'write_all'),
         indicators: opportunityIndicators(items),
         items,

@@ -20,6 +20,9 @@ export const nonHumanForbiddenCommands: ReadonlySet<string> = new Set([
   'ResetDemoData',
   'ArchiveDemoProduct',
   'UpdateCategory',
+  // AI level C: an agent may only propose; a person approves or reverts in the app.
+  'AiDecideChanges',
+  'AiRevertBatch',
 ]);
 const forbidsCommand = (commandTag: string): boolean => nonHumanForbiddenCommands.has(commandTag);
 

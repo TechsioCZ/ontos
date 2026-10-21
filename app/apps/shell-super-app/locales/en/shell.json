@@ -107,6 +107,7 @@
           "crmImports": "Order imports",
           "crmPairing": "Matching",
           "crmAiApprovals": "AI changes for approval",
+          "salesAiApprovals": "AI changes for approval",
           "crmReports": "Sales overview",
           "opsOverview": "Operations overview",
           "opsAgenda": "My agenda",

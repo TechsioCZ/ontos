@@ -92,6 +92,50 @@ export const EditOrderLineSchema = Schema.Struct({
  * The server snapshots name, SKU, unit price and VAT onto each order line at creation (req. 7d).
  * ORDER stock movements are written only by CreateOrder, so RecordStockMovement accepts manual reasons only.
  */
+/** AI level C: the only order operations an agent may PROPOSE. A person approves each one in the app. */
+export const MerchandiseAiOperationSchema = Schema.Union([
+  Schema.TaggedStruct('ChangeOrderStatus', {
+    id: OrderIdSchema,
+    reason: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
+    status: OrderStatusSchema,
+  }),
+  Schema.TaggedStruct('EditOrder', {
+    contact: Schema.optionalKey(OrderContactSchema),
+    deliveryAddress: Schema.optionalKey(OrderAddressSchema),
+    id: OrderIdSchema,
+    lines: Schema.optionalKey(Schema.Array(EditOrderLineSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+    note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(1000))),
+    reason: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
+    shipping: Schema.optionalKey(Schema.Struct({ method: ShippingMethodSchema, priceMinor: MinorAmountSchema })),
+  }),
+]);
+export type MerchandiseAiOperation = typeof MerchandiseAiOperationSchema.Type;
+
+const AiReasonSchema = Schema.Trim.check(Schema.isMinLength(3), Schema.isMaxLength(2000));
+const AiIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
+
+/** AI approval commands (shared engine `@app/shared-contracts/ai-approvals`). Decide and revert are human-only. */
+export const merchandiseAiCommandSchemas = [
+  Schema.TaggedStruct('AiProposeChanges', {
+    agentLabel: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+    changes: Schema.Array(Schema.Struct({ operation: MerchandiseAiOperationSchema, reason: AiReasonSchema })).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(20),
+    ),
+    instruction: AiReasonSchema,
+    runId: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
+  }),
+  Schema.TaggedStruct('AiDecideChanges', {
+    changeIds: Schema.Array(AiIdSchema).check(Schema.isMinLength(1), Schema.isMaxLength(50)),
+    decision: Schema.Literals(['approve', 'reject']),
+    note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
+  }),
+  Schema.TaggedStruct('AiRevertBatch', {
+    batchId: AiIdSchema,
+    note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(2000))),
+  }),
+] as const;
+
 export const MerchandiseCommandSchema = Schema.Union([
   Schema.TaggedStruct('CreateProduct', {
     ...ProductMetadataSchema.fields,
@@ -190,6 +234,7 @@ export const MerchandiseCommandSchema = Schema.Union([
     reason: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(500))),
     shipping: Schema.optionalKey(Schema.Struct({ method: ShippingMethodSchema, priceMinor: MinorAmountSchema })),
   }),
+  ...merchandiseAiCommandSchemas,
 ]);
 export type MerchandiseCommand = typeof MerchandiseCommandSchema.Type;
 export const ApplyCommandPayloadSchema = Schema.Struct({

@@ -242,6 +242,10 @@
           "submit": "Uložit změny"
         },
         "unknownOwner": "Neznámý obchodník"
+      },
+      "ai": {
+        "title": "AI změny ke schválení",
+        "description": "Návrhy AI agenta úrovně C pro příležitosti a objednávky. Bez schválení člověkem se nic nezmění."
       }
     },
     "selectPlaceholder": "Vyberte…",

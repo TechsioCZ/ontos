@@ -126,10 +126,23 @@ export const applyCommandActionProblem = {
 const mapDomainProblem = (error: DomainError): ApplyCommandActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      SalesPipelineLifecycleConflict: () => applyCommandActionProblem.conflict('sales_pipeline_lifecycle_conflict'),
-      SalesPipelineNotFound: () => applyCommandActionProblem.notFound('sales_pipeline_not_found'),
+      // The reason is a readable domain text (Czech for AI approval refusals); the agent and the approver need it.
+      SalesPipelineLifecycleConflict: (failure) =>
+        ApplyCommandActionConflictProblemSchema.make({
+          ...applyCommandActionProblem.conflict('sales_pipeline_lifecycle_conflict'),
+          detail: failure.reason,
+        }),
+      SalesPipelineNotFound: (failure) =>
+        ApplyCommandActionNotFoundProblemSchema.make({
+          ...applyCommandActionProblem.notFound('sales_pipeline_not_found'),
+          detail: failure.reason,
+        }),
       SalesPipelineNotImplemented: () => applyCommandActionProblem.unavailable('sales_pipeline_not_implemented'),
-      SalesPipelinePermissionDenied: () => applyCommandActionProblem.forbidden('sales_pipeline_permission_denied'),
+      SalesPipelinePermissionDenied: (failure) =>
+        ApplyCommandActionForbiddenProblemSchema.make({
+          ...applyCommandActionProblem.forbidden('sales_pipeline_permission_denied'),
+          detail: failure.reason,
+        }),
       SalesPipelinePersistenceUnavailable: () =>
         applyCommandActionProblem.unavailable('sales_pipeline_persistence_unavailable'),
       SalesPipelineReferenceIneligible: () =>

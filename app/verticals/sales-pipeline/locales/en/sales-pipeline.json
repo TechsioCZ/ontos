@@ -242,6 +242,10 @@
           "submit": "Save changes"
         },
         "unknownOwner": "Unknown owner"
+      },
+      "ai": {
+        "title": "AI changes to approve",
+        "description": "Level C AI agent proposals for opportunities and orders. Nothing changes until a person approves."
       }
     },
     "selectPlaceholder": "Select…",

@@ -13,7 +13,8 @@
     "./server/gateway-context-api-key": "./src/gateway-context-api-key.ts",
     "./server/http-error-seam": "./src/http-error-seam.ts",
     "./external-identity": "./src/external-identity.ts",
-    "./server/external-identity-client": "./src/external-identity-client.ts"
+    "./server/external-identity-client": "./src/external-identity-client.ts",
+    "./ai-approvals": "./src/ai-approvals.ts"
   },
   "scripts": {
     "test:types": "ultramodern-create ultramodern typecheck --project tests/tsconfig.json && ultramodern-create ultramodern typecheck --project tests/client-runtime-types.tsconfig.json",

@@ -30,6 +30,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
   },
   exposes: {
     './PageRecords': './src/routes/[lang]/prodej/prilezitosti/page.tsx',
+    './PageAiApprovals': './src/routes/[lang]/prodej/schvalovani-ai/page.tsx',
     './Route': './src/federation-entry.tsx',
   },
   filename: 'remoteEntry.js',

@@ -11,6 +11,7 @@ import { Result, Schema } from 'effect';
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
 import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/prodej/prilezitosti/page.tsx';
+import { AiApprovalsPage } from './src/routes/[lang]/prodej/schvalovani-ai/page.tsx';
 import { salesPipelineReadAllPermission } from './shared/permissions/sales-pipeline-read-all.ts';
 import { salesPipelineWriteAllPermission } from './shared/permissions/sales-pipeline-write-all.ts';
 import { opportunityCollectionResourceDescriptor } from './shared/resources/opportunity-collection.ts';
@@ -27,6 +28,16 @@ const pageContribution = (value: PageContributionInput) =>
 
 const moduleKey = 'demo.sales-pipeline';
 const recordsPageKey = 'demo.sales-pipeline.page.records';
+/** AI level C approvals (opportunities + orders); only principals with write_all see the page. */
+const aiPageKey = 'demo.sales-pipeline.page.ai';
+const aiEntrypoint = {
+  access: 'read',
+  authorization: { kind: 'context_permission', permission: 'demo.sales_pipeline.write_all' },
+  entrypointKey: aiPageKey,
+  moduleKey,
+  role: 'page',
+  scope: 'tenant',
+} as const;
 
 export const salesPipelineManifest = defineOntosModuleManifest({
   activation: {
@@ -62,6 +73,7 @@ export const salesPipelineManifest = defineOntosModuleManifest({
     components: {
       // <generated-module-manifest-components>
       'page-records': RecordsPage,
+      'page-ai-approvals': AiApprovalsPage,
       // </generated-module-manifest-components>
     },
     events: [],
@@ -97,6 +109,13 @@ export const salesPipelineManifest = defineOntosModuleManifest({
           order: 100,
           pageKey: recordsPageKey,
         }),
+        navigationContribution({
+          contributionKey: 'demo.sales-pipeline.navigation.ai',
+          entrypoint: aiEntrypoint,
+          groupKey: 'shell.navigation.modules',
+          order: 101,
+          pageKey: aiPageKey,
+        }),
         // </generated-module-shell-navigation>
       ],
       pages: [
@@ -114,6 +133,13 @@ export const salesPipelineManifest = defineOntosModuleManifest({
           },
           expose: './PageRecords',
           routePath: '/prodej/prilezitosti',
+        }),
+        pageContribution({
+          componentKey: 'demo.sales-pipeline.page-ai-approvals',
+          contributionKey: aiPageKey,
+          entrypoint: aiEntrypoint,
+          expose: './PageAiApprovals',
+          routePath: '/prodej/schvalovani-ai',
         }),
         // </generated-module-shell-pages>
       ],

@@ -126,10 +126,23 @@ export const applyCommandActionProblem = {
 const mapDomainProblem = (error: DomainError): ApplyCommandActionProblem =>
   Match.value(error).pipe(
     Match.tags({
-      MerchandiseLifecycleConflict: () => applyCommandActionProblem.conflict('merchandise_lifecycle_conflict'),
-      MerchandiseNotFound: () => applyCommandActionProblem.notFound('merchandise_not_found'),
+      // The reason is a readable domain text (Czech for AI approval refusals); the agent and the approver need it.
+      MerchandiseLifecycleConflict: (failure) =>
+        ApplyCommandActionConflictProblemSchema.make({
+          ...applyCommandActionProblem.conflict('merchandise_lifecycle_conflict'),
+          detail: failure.reason,
+        }),
+      MerchandiseNotFound: (failure) =>
+        ApplyCommandActionNotFoundProblemSchema.make({
+          ...applyCommandActionProblem.notFound('merchandise_not_found'),
+          detail: failure.reason,
+        }),
       MerchandiseNotImplemented: () => applyCommandActionProblem.unavailable('merchandise_not_implemented'),
-      MerchandisePermissionDenied: () => applyCommandActionProblem.forbidden('merchandise_permission_denied'),
+      MerchandisePermissionDenied: (failure) =>
+        ApplyCommandActionForbiddenProblemSchema.make({
+          ...applyCommandActionProblem.forbidden('merchandise_permission_denied'),
+          detail: failure.reason,
+        }),
       MerchandisePersistenceUnavailable: () =>
         applyCommandActionProblem.unavailable('merchandise_persistence_unavailable'),
       MerchandiseReferenceIneligible: () => applyCommandActionProblem.ineligible('merchandise_reference_ineligible'),
