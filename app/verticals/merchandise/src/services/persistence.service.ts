@@ -339,6 +339,22 @@ const slugTaken = (products: readonly Product[], slug: string, exceptId: string)
   return products.some((entry) => entry.id !== exceptId && entry.slug?.trim().toLowerCase() === key);
 };
 
+/** Mint the public URL on creation, not as an undisclosed extra publication step. Never change it on rename. */
+const newProductSlug = (products: readonly Product[], name: string, sku: string) => {
+  const fold = (value: string) =>
+    normalizeSearchText(value)
+      .replaceAll(/[^a-z0-9]+/gu, '-')
+      .replaceAll(/^-|-$/gu, '');
+  const base = (fold(name) || fold(sku) || 'produkt').slice(0, 110).replace(/-$/u, '');
+  const taken = new Set(
+    products.flatMap((product) => (product.slug === undefined ? [] : [product.slug.trim().toLowerCase()])),
+  );
+  let slug = base;
+  let suffix = 2;
+  while (taken.has(slug)) slug = `${base}-${suffix++}`;
+  return slug;
+};
+
 const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
   state: MerchandiseState,
   value: CommandOf<'CreateProduct'>,
@@ -358,6 +374,7 @@ const addProduct = Effect.fn('Merchandise.addProduct')(function* addProduct(
   void _tag;
   const product: Product = {
     ...fields,
+    slug: value.slug ?? newProductSlug(state.products, value.name, value.sku),
     createdAt: input.now,
     currentPriceMinor: priceMinor,
     id,

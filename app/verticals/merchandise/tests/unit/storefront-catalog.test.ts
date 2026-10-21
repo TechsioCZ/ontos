@@ -221,23 +221,39 @@ it('keeps the card projection free of raw variants', () => {
 });
 
 it('ranks exact/name/SKU matches before descriptions and variant-only matches', () => {
-  const records = state.products
-    .slice(0, 3)
-    .map((product, i) =>
-      toProductRecord(
-        {
-          ...product,
-          name: ['BITY', 'Šroub DIN 933/A2', 'DIN 933'][i]!,
-          sku: ['BITY', 'SROUB', 'DIN933'][i]!,
-          shortDescription: 'DIN 933',
-        },
-        state.movements,
-      ),
-    );
+  const records = state.products.slice(0, 3).map((product, i) =>
+    toProductRecord(
+      {
+        ...product,
+        name: ['BITY', 'Šroub DIN 933/A2', 'DIN 933'][i]!,
+        sku: ['BITY', 'SROUB', 'DIN933'][i]!,
+        shortDescription: 'DIN 933',
+      },
+      state.movements,
+    ),
+  );
   const page = storefrontCatalogPage({ state, records, query: { q: 'din 933', sort: 'name' } });
   expect(page.products.map((p) => p.name)).toEqual(['DIN 933', 'Šroub DIN 933/A2', 'BITY']);
   const price = storefrontCatalogPage({ state, records, query: { q: 'din 933', sort: 'price-asc' } });
   expect(price.products[0]?.name).toBe('DIN 933');
+});
+
+it('prefers photography only within the same search relevance tier, not over exact matches or price sorting', () => {
+  const records = [
+    { id: 'exact', name: 'DIN 933', imageSrc: '/akros/products/image-unavailable.svg' },
+    { id: 'missing', name: 'DIN 933 A', imageSrc: '/akros/products/image-unavailable.svg' },
+    { id: 'photo', name: 'Šroub DIN 933', imageSrc: '/akros/products/sroub.jpg' },
+    { id: 'gallery', name: 'Šroub DIN 933 B', images: ['/akros/products/sroub-b.jpg'] },
+    { id: 'loose', name: 'BITY', shortDescription: 'DIN 933', imageSrc: '/akros/products/bity.jpg' },
+  ].map((product, i) =>
+    toProductRecord({ ...state.products[0]!, images: [], ...product, sku: product.id, currentPriceMinor: i + 1 }, []),
+  );
+  const names = (query: StorefrontCatalogQuery) =>
+    storefrontCatalogPage({ state, records, query }).products.map((product) => product.id);
+  expect(names({ q: 'DIN 933' })).toEqual(['exact', 'photo', 'gallery', 'missing', 'loose']);
+  expect(names({ q: 'DIN 933', sort: 'name' })).toEqual(['exact', 'photo', 'gallery', 'missing', 'loose']);
+  expect(names({ sort: 'name' })).toEqual(['loose', 'exact', 'missing', 'photo', 'gallery']);
+  expect(names({ q: 'DIN 933', sort: 'price-asc' })).toEqual(['exact', 'missing', 'photo', 'gallery', 'loose']);
 });
 
 it('hides an unpublished category and its descendants from the public navigation only', () => {

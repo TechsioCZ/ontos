@@ -181,7 +181,19 @@ export const storefrontCatalogPage = (input: {
       if (words.every((word) => `${name} ${sku}`.includes(word))) return 2;
       return 3;
     };
-    list = list.toSorted((a, b) => (words.length === 0 ? 0 : rank(a) - rank(b)) || a.name.localeCompare(b.name, 'cs'));
+    const hasPhoto = (record: ProductRecord) => {
+      const image = record.images?.[0] ?? record.imageSrc;
+      return image !== undefined && image !== '' && !image.includes('image-unavailable.svg');
+    };
+    list = list.toSorted((a, b) => {
+      if (words.length > 0) {
+        const relevance = rank(a) - rank(b);
+        if (relevance !== 0) return relevance;
+        const photography = Number(hasPhoto(b)) - Number(hasPhoto(a));
+        if (photography !== 0) return photography;
+      }
+      return a.name.localeCompare(b.name, 'cs');
+    });
   }
   if (query.sort === 'price-asc') list = list.toSorted((a, b) => priceOf(a) - priceOf(b));
   if (query.sort === 'price-desc') list = list.toSorted((a, b) => priceOf(b) - priceOf(a));

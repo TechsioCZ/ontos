@@ -4,6 +4,7 @@ import { MerchandiseCommandSchema, MerchandiseLifecycleConflict } from '../../sh
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { assertStorefrontScope } from '../../shared/actions/command-guard.ts';
 import { evolveMerchandiseState, toProductRecord } from '../../src/services/persistence.service.ts';
+import { storefrontCatalogPage } from '../../src/services/storefront-catalog.ts';
 
 const actor = {
   principalId: '20000000-0000-4000-8000-000000000002',
@@ -210,6 +211,75 @@ it.effect('a product with variants refuses a stock movement without a variant', 
       apply(state, { _tag: 'RecordStockMovement', delta: 10, productId: 'p1', reason: 'RECEIPT' }, 'm2'),
     );
     expect(isConflict(failure)).toBe(true);
+  }),
+);
+
+it.effect('CreateProduct generates a public, unique slug without extra storefront configuration', () =>
+  Effect.gen(function* automaticSlugs() {
+    const command: CommandInput = {
+      _tag: 'CreateProduct',
+      active: true,
+      category: 'Šrouby',
+      lowStockThreshold: 0,
+      name: 'Šroub DIN 933 / nerez M8',
+      priceMinor: 1_200,
+      sku: 'AKR-M8',
+      unit: 'ks',
+      vatRate: 21,
+    };
+    const first = yield* apply(empty, command, 'p1');
+    const second = yield* apply(first.state, { ...command, sku: 'AKR-M8-2' }, 'p2');
+    const third = yield* apply(second.state, { ...command, sku: 'AKR-M8-3' }, 'p3');
+    expect(third.state.products.map((product) => product.slug)).toEqual([
+      'sroub-din-933-nerez-m8',
+      'sroub-din-933-nerez-m8-2',
+      'sroub-din-933-nerez-m8-3',
+    ]);
+    for (const product of third.state.products) {
+      const page = storefrontCatalogPage({
+        state: third.state,
+        records: third.state.products.map((entry) => toProductRecord(entry, [])),
+        query: { slug: product.slug },
+      });
+      expect(page.products.map((entry) => entry.id)).toEqual([product.id]);
+    }
+    const renamed = yield* apply(third.state, { _tag: 'UpdateProduct', id: 'p1', patch: { name: 'Nový název' } }, 'u1');
+    expect(renamed.state.products[0]?.slug).toBe('sroub-din-933-nerez-m8');
+    const explicit = yield* apply(renamed.state, { ...command, sku: 'AKR-M8-4', slug: 'moje-adresa' }, 'p4');
+    expect(explicit.state.products[3]?.slug).toBe('moje-adresa');
+    const duplicate = yield* Effect.flip(
+      apply(explicit.state, { ...command, sku: 'AKR-M8-5', slug: 'moje-adresa' }, 'p5'),
+    );
+    expect(isConflict(duplicate)).toBe(true);
+  }),
+);
+
+it.effect('generated slugs stay URL-safe and bounded even for punctuation or long names', () =>
+  Effect.gen(function* safeSlugs() {
+    const state = yield* seeded;
+    const source = state.products[0]!;
+    const command = {
+      _tag: 'CreateProduct' as const,
+      active: true,
+      category: source.category,
+      lowStockThreshold: 0,
+      priceMinor: 100,
+      unit: 'ks',
+      vatRate: 21,
+    };
+    const punctuation = yield* apply(state, { ...command, name: '🔩', sku: 'M8/Č' }, 'p2');
+    expect(punctuation.state.products[1]?.slug).toBe('m8-c');
+    const fallback = yield* apply(punctuation.state, { ...command, name: '🔩', sku: '---' }, 'p3');
+    expect(fallback.state.products[2]?.slug).toBe('produkt');
+    const long = yield* apply(fallback.state, { ...command, name: 'Š'.repeat(200), sku: 'LONG' }, 'p4');
+    expect(long.state.products[3]?.slug).toMatch(/^[a-z0-9-]{1,120}$/u);
+    Schema.encodeSync(MerchandiseCommandSchema)(
+      decodeCommand({
+        _tag: 'UpdateProduct',
+        id: 'p4',
+        patch: { slug: long.state.products[3]?.slug },
+      }),
+    );
   }),
 );
 
