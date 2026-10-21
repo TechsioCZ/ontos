@@ -2,7 +2,7 @@ import type { AgentModuleGrant, AgentWritePolicy } from '@app/shared-contracts/a
 import type { ConnectDraftSummary } from '@app/shared-contracts/oauth-connections';
 
 /** Why a connect call failed; the screens map it to Czech copy. */
-export type ConnectFailure = 'signedOut' | 'expired' | 'forbidden' | 'connected' | 'error';
+export type ConnectFailure = 'signedOut' | 'expired' | 'forbidden' | 'agentGone' | 'connected' | 'error';
 
 export type PolicyReasonKey = 'shell.connect.policy.agentApprovalOnly' | 'shell.connect.policy.agentReadOnly';
 
@@ -75,6 +75,9 @@ export const failureKey = (reason: ConnectFailure) => {
   }
   if (reason === 'forbidden') {
     return 'shell.connect.error.forbidden';
+  }
+  if (reason === 'agentGone') {
+    return 'shell.connect.error.agentGone';
   }
   if (reason === 'connected') {
     return 'shell.connect.error.connected';

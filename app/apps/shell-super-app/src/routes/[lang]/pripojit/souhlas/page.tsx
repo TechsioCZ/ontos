@@ -97,7 +97,7 @@ const ConsentPage = () => {
           {summary === undefined || labels === undefined ? null : (
             <>
               <h1 className="font-semibold text-xl">{t('shell.connect.consent.title', { client: clientName })}</h1>
-              <div className="flex flex-wrap items-center gap-150 rounded-lg border border-border-primary p-200">
+              <div className="flex flex-wrap items-center gap-150 rounded-lg bg-surface p-200">
                 {summary.client.logoUri === null || summary.client.logoUri === '' ? (
                   <Icon icon="icon-[mdi--application-outline]" size="md" />
                 ) : (
@@ -120,7 +120,7 @@ const ConsentPage = () => {
                 </div>
               </div>
 
-              <ul className="grid gap-150 rounded-lg border border-border-primary p-200 text-sm">
+              <ul className="grid gap-150 rounded-lg bg-surface p-200 text-sm">
                 <li>
                   {t('shell.connect.consent.companyLabel')}: <strong>{summary.legalName}</strong>
                 </li>

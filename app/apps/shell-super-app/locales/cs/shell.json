@@ -254,6 +254,7 @@
         "approvalHint": "Každou změnu nejdřív schválí člověk v Nastavení › Ke schválení.",
         "direct": "Provádět změny přímo",
         "directHint": "Změny se projeví hned, jako byste je udělal(a) vy.",
+        "directHintAgent": "Změny se projeví hned a v deníku se zapíšou jako změny agenta.",
         "agentApprovalOnly": "Agent smí jen navrhovat změny (nastavení agenta).",
         "agentReadOnly": "Agent smí jen číst (nastavení agenta)."
       },
@@ -263,6 +264,7 @@
         "expired": "Odkaz pro připojení vypršel. Začněte připojení znovu v {{client}}.",
         "signedOut": "Vaše přihlášení vypršelo. Začněte připojení znovu v {{client}}.",
         "forbidden": "Toto nastavení připojení není povoleno.",
+        "agentGone": "Agent byl mezitím deaktivován nebo smazán, nebo ho už nesmíte připojit. Připojení se nevytvořilo; spusťte ho znovu v {{client}}.",
         "connected": "Připojení je hotové. Toto okno můžete zavřít.",
         "failed": "Připojení se nepodařilo. Zkuste to prosím znovu."
       },

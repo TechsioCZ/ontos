@@ -254,6 +254,7 @@
         "approvalHint": "A person approves every change first in Administration › Approvals.",
         "direct": "Make changes directly",
         "directHint": "Changes take effect immediately, as if you made them.",
+        "directHintAgent": "Changes take effect immediately and are logged as changes by the agent.",
         "agentApprovalOnly": "The agent may only propose changes (agent settings).",
         "agentReadOnly": "The agent may only read (agent settings)."
       },
@@ -263,6 +264,7 @@
         "expired": "The connection link has expired. Start connecting again in {{client}}.",
         "signedOut": "Your sign-in has expired. Start connecting again in {{client}}.",
         "forbidden": "This connection setting is not allowed.",
+        "agentGone": "The agent was deactivated or deleted in the meantime, or you may no longer connect it. No connection was created; start again in {{client}}.",
         "connected": "The connection is done. You can close this window.",
         "failed": "Connecting failed. Please try again."
       },

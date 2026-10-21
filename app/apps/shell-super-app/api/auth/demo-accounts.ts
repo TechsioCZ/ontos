@@ -582,6 +582,7 @@ export const auditForbiddenAttempt = (
   caller: DemoAccountCaller,
   operation: string,
   principalKind: 'agent' | null = null,
+  targetPrincipalId: string | null = null,
 ) =>
   AuthDatabase.pipe(
     Effect.flatMap(({ executor }) =>
@@ -595,6 +596,7 @@ export const auditForbiddenAttempt = (
           operation,
           principalKind,
           reason: 'company_administrator_required',
+          ...(targetPrincipalId === null ? {} : { targetPrincipalId }),
         },
         legalEntityId: caller.principal.legalEntityId,
         outcome: 'denied',

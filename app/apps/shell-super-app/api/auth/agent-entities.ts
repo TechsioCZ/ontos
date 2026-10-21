@@ -4,8 +4,10 @@
  * `core.identity.manage-demo-account` (create-agent / configure-agent / change-status / delete (archives the principal), sensitive
  * audit); then the agent's SpiceDB grants are rebuilt from the company's role templates (same relationships human
  * roles use, `agentGrantRelationships`) and its operators are written with principal#tenant. Deactivation and
- * deletion revoke the agent's active OAuth connections at once. No tokens or API keys: agents connect only through
- * the OAuth consent ('Za agenta'). Errors are Connections* errors with Czech reasons.
+ * deletion revoke the agent's active OAuth connections at once and withdraw its waiting proposals. Changes of one
+ * company's agents run one at a time (transaction-scoped advisory lock), so two parallel creates cannot both pass the
+ * unique-name check. No tokens or API keys: agents connect only through the OAuth consent ('Za agenta'). Errors are
+ * Connections* errors with Czech reasons.
  */
 import {
   ActionRuntime,
@@ -22,7 +24,10 @@ import type {
   ManageAgentEntityResponse,
 } from '@app/shared-contracts/agent-access';
 import { AgentModuleGrantSchema } from '@app/shared-contracts/agent-access';
+import { sql } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
+
+import { withdrawPendingOfAgent } from '../agent-platform/proposal-store.ts';
 
 import {
   ConnectionsForbidden,
@@ -40,6 +45,7 @@ import {
   derivedUuid,
   requireAdministrator,
 } from './demo-accounts.ts';
+import { AuthDatabase } from './db/client.ts';
 import type {
   DemoAccountCaller,
   DemoAccountConflict,
@@ -112,11 +118,18 @@ export const listAgentEntities = <R>(caller: DemoAccountCaller, deps: Connection
   Effect.gen(function* listAgentEntities() {
     const { legalEntityId, tenantId } = caller.principal;
     const grants = yield* openDemoAccountGrants.pipe(Effect.mapError(unavailable));
-    yield* requireAdministrator(caller, grants).pipe(Effect.mapError(fromDemoAccountError));
-    const catalog = yield* companyCatalog(tenantId, legalEntityId, grants);
-    const agents = (yield* deps.directory.agents(tenantId, legalEntityId)).filter(
-      (agent) => agent.status !== 'archived',
+    yield* requireAdministrator(caller, grants).pipe(
+      Effect.mapError((error) =>
+        error._tag === 'DemoAccountForbidden'
+          ? new ConnectionsForbidden({ reason: 'Agenty spravuje jen správce firmy.' })
+          : fromDemoAccountError(error),
+      ),
     );
+    const catalog = yield* companyCatalog(tenantId, legalEntityId, grants);
+    // Agents someone answers for first (the ones the company set up), then technical ones without an owner.
+    const agents = (yield* deps.directory.agents(tenantId, legalEntityId))
+      .filter((agent) => agent.status !== 'archived')
+      .toSorted((left, right) => Number(left.ownerPrincipalId === null) - Number(right.ownerPrincipalId === null));
     const people = yield* deps.directory.people(tenantId, legalEntityId);
     const active = yield* deps.grants.list({ legalEntityId, statuses: ['active'], tenantId });
     const entries = yield* Effect.forEach(agents, (agent) =>
@@ -147,23 +160,29 @@ export const listAgentEntities = <R>(caller: DemoAccountCaller, deps: Connection
     return overview;
   }).pipe(Effect.scoped);
 
-export const manageAgentEntity = <R>(
+/** Runs `effect` while holding the company's agent-change lock (released when the surrounding transaction ends). */
+const withCompanyAgentLock = <A, E, R>(tenantId: string, legalEntityId: string, effect: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* withCompanyAgentLock() {
+    const { executor } = yield* AuthDatabase;
+    const lockKey = `agent-entities:${tenantId}:${legalEntityId}`;
+    return yield* executor
+      .transaction((transaction) =>
+        transaction
+          .execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`)
+          .pipe(Effect.mapError(unavailable), Effect.andThen(effect)),
+      )
+      .pipe(Effect.catchTag('SqlError', (error) => Effect.fail(unavailable(error))));
+  });
+
+const changeAgent = <R>(
   caller: DemoAccountCaller,
   request: ManageAgentEntityRequest,
   transport: { readonly correlationId: string; readonly idempotencyKey: string },
   deps: ConnectionsAdminDeps<R>,
+  grants: DemoAccountGrants,
 ) =>
-  Effect.gen(function* manageAgentEntity() {
+  Effect.gen(function* changeAgent() {
     const { legalEntityId, principalId: actorPrincipalId, tenantId } = caller.principal;
-    const grants = yield* openDemoAccountGrants.pipe(Effect.mapError(unavailable));
-    yield* requireAdministrator(caller, grants).pipe(
-      Effect.tapError((error) =>
-        error._tag === 'DemoAccountForbidden'
-          ? auditForbiddenAttempt(caller, `${request.operation}-agent`, 'agent')
-          : Effect.void,
-      ),
-      Effect.mapError(fromDemoAccountError),
-    );
     const runtime = yield* ActionRuntime;
     const run = (payload: ManageDemoAccountPayload) =>
       runtime
@@ -189,12 +208,18 @@ export const manageAgentEntity = <R>(
           ).pipe(Effect.as(connections.length)),
         ),
       );
+    const withdrawProposals = (agentPrincipalId: string, note: string) =>
+      withdrawPendingOfAgent({ agentPrincipalId, by: actorPrincipalId, legalEntityId, note, tenantId }).pipe(
+        Effect.mapError(unavailable),
+      );
 
     if (request.operation === 'create') {
+      // Same idempotency key = same principal id: a retry replays the Core Action instead of failing the name check.
+      const principalId = derivedUuid(`${tenantId}:${legalEntityId}:${transport.idempotencyKey}:agent`);
       const catalog = yield* companyCatalog(tenantId, legalEntityId, grants);
       const problem = agentDraftProblem({
         displayName: request.displayName,
-        existingNames: agents.map((agent) => agent.displayName),
+        existingNames: agents.filter((agent) => agent.principalId !== principalId).map((agent) => agent.displayName),
         memberIds,
         modules: request.modules,
         operatorPrincipalIds: request.operatorPrincipalIds,
@@ -210,7 +235,7 @@ export const manageAgentEntity = <R>(
         modulesJson: modulesJsonOf(request.modules),
         operation: 'create-agent',
         ownerPrincipalId: request.ownerPrincipalId,
-        principalId: derivedUuid(`${tenantId}:${legalEntityId}:${transport.idempotencyKey}:agent`),
+        principalId,
         writePolicy: request.writePolicy,
       });
       const written = yield* grants
@@ -227,8 +252,10 @@ export const manageAgentEntity = <R>(
       yield* deps.directory.replaceOperators({
         actorPrincipalId,
         agentPrincipalId: result.principalId,
+        context: 'agent-created',
         legalEntityId,
         operatorPrincipalIds: [...new Set(request.operatorPrincipalIds)],
+        revokedConnections: 0,
         tenantId,
       });
       const created: ManageAgentEntityResponse = {
@@ -317,6 +344,9 @@ export const manageAgentEntity = <R>(
         ...(reason === '' ? {} : { reason }),
       });
       const revokedConnections = request.newStatus === 'disabled' ? yield* revokeActive(agent.principalId, reason) : 0;
+      if (request.newStatus === 'disabled') {
+        yield* withdrawProposals(agent.principalId, `Agent byl deaktivován: ${reason}`);
+      }
       const changed: ManageAgentEntityResponse = {
         grantsGranted: 0,
         grantsRevoked: 0,
@@ -340,14 +370,17 @@ export const manageAgentEntity = <R>(
       reason,
     });
     const revokedConnections = yield* revokeActive(agent.principalId, reason);
+    yield* withdrawProposals(agent.principalId, `Agent byl smazán: ${reason}`);
     const removed = yield* grants
       .replaceAgentGrants({ desired: [], principalId: agent.principalId })
       .pipe(Effect.mapError(unavailable));
     yield* deps.directory.replaceOperators({
       actorPrincipalId,
       agentPrincipalId: agent.principalId,
+      context: 'agent-deleted',
       legalEntityId,
       operatorPrincipalIds: [],
+      revokedConnections: 0,
       tenantId,
     });
     const deleted: ManageAgentEntityResponse = {
@@ -359,4 +392,29 @@ export const manageAgentEntity = <R>(
       status: 'archived',
     };
     return deleted;
+  });
+
+export const manageAgentEntity = <R>(
+  caller: DemoAccountCaller,
+  request: ManageAgentEntityRequest,
+  transport: { readonly correlationId: string; readonly idempotencyKey: string },
+  deps: ConnectionsAdminDeps<R>,
+) =>
+  Effect.gen(function* manageAgentEntity() {
+    const { legalEntityId, tenantId } = caller.principal;
+    const grants = yield* openDemoAccountGrants.pipe(Effect.mapError(unavailable));
+    yield* requireAdministrator(caller, grants).pipe(
+      Effect.tapError((error) =>
+        error._tag === 'DemoAccountForbidden'
+          ? auditForbiddenAttempt(
+              caller,
+              `${request.operation}-agent`,
+              'agent',
+              request.operation === 'create' ? null : request.principalId,
+            )
+          : Effect.void,
+      ),
+      Effect.mapError(fromDemoAccountError),
+    );
+    return yield* withCompanyAgentLock(tenantId, legalEntityId, changeAgent(caller, request, transport, deps, grants));
   }).pipe(Effect.scoped);

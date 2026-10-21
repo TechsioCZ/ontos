@@ -153,13 +153,6 @@ export const replaceAgentOperators = <R>(
       });
     }
     const before = yield* deps.directory.operatorsOf(agentPrincipalId);
-    yield* deps.directory.replaceOperators({
-      actorPrincipalId: caller.principalId,
-      agentPrincipalId,
-      legalEntityId: caller.legalEntityId,
-      operatorPrincipalIds: wanted,
-      tenantId: caller.tenantId,
-    });
     const removed = before.filter((id) => !wanted.includes(id));
     const agentGrants = yield* deps.grants.list({
       actingPrincipalId: agentPrincipalId,
@@ -170,6 +163,15 @@ export const replaceAgentOperators = <R>(
     const affected = agentGrants.filter(
       (connection) => connection.delegatedBy !== null && removed.includes(connection.delegatedBy.principalId),
     );
+    yield* deps.directory.replaceOperators({
+      actorPrincipalId: caller.principalId,
+      agentPrincipalId,
+      context: 'operators-edited',
+      legalEntityId: caller.legalEntityId,
+      operatorPrincipalIds: wanted,
+      revokedConnections: affected.length,
+      tenantId: caller.tenantId,
+    });
     yield* Effect.forEach(
       affected,
       (connection) =>

@@ -104,12 +104,19 @@ export interface CompanyDirectoryPort<R> {
   ) => Effect.Effect<readonly CompanyAgent[], ConnectionsUnavailable, R>;
   /** Principal ids with `principal:{agent}#operator`. */
   readonly operatorsOf: (agentPrincipalId: string) => Effect.Effect<readonly string[], ConnectionsUnavailable, R>;
-  /** Makes `operatorPrincipalIds` the complete operator set of the agent and audits the change. */
+  /**
+   * Makes `operatorPrincipalIds` the complete operator set of the agent. An actual change is audited once
+   * (`context` says whether it came with the agent's creation or an operator edit, `revokedConnections` how many
+   * connections of removed operators it cut); an unchanged set and the clean-up of a deleted agent (whose own audit
+   * row states it) write no row.
+   */
   readonly replaceOperators: (input: {
     readonly actorPrincipalId: string;
     readonly agentPrincipalId: string;
+    readonly context: 'agent-created' | 'agent-deleted' | 'operators-edited';
     readonly legalEntityId: string;
     readonly operatorPrincipalIds: readonly string[];
+    readonly revokedConnections: number;
     readonly tenantId: string;
   }) => Effect.Effect<void, ConnectionsUnavailable, R>;
 }

@@ -483,6 +483,37 @@ export const closePendingInBatch = Effect.fn('AgentStore.closePendingInBatch')(f
     .pipe(Effect.mapError(unavailable));
 });
 
+/**
+ * A deactivated or deleted agent's waiting proposals are withdrawn (rejected with the given note), so nobody approves
+ * a change of an agent that no longer acts. Proposals an approver is applying right now (claimed) stay with them.
+ */
+export const withdrawPendingOfAgent = Effect.fn('AgentStore.withdrawPendingOfAgent')(
+  function* withdrawPendingOfAgent(input: {
+    readonly agentPrincipalId: string;
+    readonly by: string;
+    readonly legalEntityId: string;
+    readonly note: string;
+    readonly tenantId: string;
+  }) {
+    const { executor } = yield* AuthDatabase;
+    const rows = yield* executor
+      .update(coreAgentProposals)
+      .set({ decidedAt: sql`now()`, decidedByPrincipalId: input.by, decisionNote: input.note, status: 'rejected' })
+      .where(
+        and(
+          eq(coreAgentProposals.tenantId, input.tenantId),
+          eq(coreAgentProposals.legalEntityId, input.legalEntityId),
+          eq(coreAgentProposals.agentPrincipalId, input.agentPrincipalId),
+          eq(coreAgentProposals.status, 'pending'),
+          unclaimed(),
+        ),
+      )
+      .returning({ proposalId: coreAgentProposals.proposalId })
+      .pipe(Effect.mapError(unavailable));
+    return rows.length;
+  },
+);
+
 /** Did someone revert this batch (checked right after an approval, to undo a change that raced the revert)? */
 export const isBatchReverted = Effect.fn('AgentStore.isBatchReverted')(function* isBatchReverted(batchId: string) {
   const { executor } = yield* AuthDatabase;

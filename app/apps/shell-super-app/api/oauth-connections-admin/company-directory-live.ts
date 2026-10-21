@@ -117,10 +117,19 @@ const operatorsOf = (agentPrincipalId: string) =>
 const replaceOperators = Effect.fn('CompanyDirectory.replaceOperators')(function* replaceOperators(input: {
   readonly actorPrincipalId: string;
   readonly agentPrincipalId: string;
+  readonly context: 'agent-created' | 'agent-deleted' | 'operators-edited';
   readonly legalEntityId: string;
   readonly operatorPrincipalIds: readonly string[];
+  readonly revokedConnections: number;
   readonly tenantId: string;
 }) {
+  const before = yield* operatorsOf(input.agentPrincipalId);
+  const unchanged =
+    before.length === input.operatorPrincipalIds.length &&
+    before.every((id) => input.operatorPrincipalIds.includes(id));
+  if (unchanged) {
+    return;
+  }
   yield* Effect.scoped(
     Effect.flatMap(openPrincipalOperators, (operators) =>
       operators.replaceOperators({
@@ -130,6 +139,9 @@ const replaceOperators = Effect.fn('CompanyDirectory.replaceOperators')(function
       }),
     ),
   ).pipe(Effect.mapError(unavailable));
+  if (input.context === 'agent-deleted') {
+    return;
+  }
   const { executor } = yield* AuthDatabase;
   yield* executor
     .insert(coreAuditEventsWrite)
@@ -140,7 +152,10 @@ const replaceOperators = Effect.fn('CompanyDirectory.replaceOperators')(function
       eventType: 'identity.agent_operators_changed',
       evidenceJson: {
         agentPrincipalId: input.agentPrincipalId,
+        context: input.context,
         operatorPrincipalIds: input.operatorPrincipalIds.join(','),
+        previousOperatorPrincipalIds: before.join(','),
+        revokedConnections: String(input.revokedConnections),
       },
       legalEntityId: input.legalEntityId,
       outcome: 'succeeded',

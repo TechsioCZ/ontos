@@ -1,7 +1,8 @@
 /**
- * Pure: whether a connect POST comes from the shell itself (design §3.4, CSRF). Browsers send `Origin` on every POST;
- * it must name the request host or the OAuth issuer origin. `Sec-Fetch-Site: cross-site` is refused outright. A
- * request without `Origin` (non-browser client) still needs the session cookie and a JSON body.
+ * Pure: whether a state-changing POST comes from the shell itself (design §3.4, CSRF). Browsers send `Origin` on every
+ * POST; it must name the request host or the OAuth issuer origin. `Sec-Fetch-Site: cross-site` is refused outright.
+ * Without `Origin`, only `Sec-Fetch-Site: same-origin` is accepted, so a cookie-carrying request that names no origin
+ * at all is refused too.
  */
 export const isSameOriginRequest = (
   headers: Readonly<Record<string, string | undefined>>,
@@ -12,7 +13,7 @@ export const isSameOriginRequest = (
   }
   const origin = headers['origin'];
   if (origin === undefined) {
-    return true;
+    return headers['sec-fetch-site'] === 'same-origin';
   }
   if (origin === issuerOrigin) {
     return true;

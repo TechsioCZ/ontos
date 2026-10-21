@@ -108,6 +108,20 @@ const canOperateAgent = (agentPrincipalId: string, operatorPrincipalId: string) 
     Effect.flatMap(openPrincipalOperators, (operators) => operators.canOperate(agentPrincipalId, operatorPrincipalId)),
   ).pipe(Effect.mapError(toUnavailable));
 
+/** The agent is active, belongs to the company and the session person may operate it (`principal#operate`). */
+const mayActAsAgent = Effect.fn('OAuthConnectService.mayActAsAgent')(function* (
+  session: ConnectSession,
+  agentPrincipalId: string,
+  legalEntityId: string,
+) {
+  const active = (yield* listAgentPrincipals(session.tenantId)).some((agent) => agent.principalId === agentPrincipalId);
+  return (
+    active &&
+    (yield* companiesOfAgent(agentPrincipalId)).includes(legalEntityId) &&
+    (yield* canOperateAgent(agentPrincipalId, session.principalId))
+  );
+});
+
 /** Verified OAuth query and the client it names (unknown client = invalid query). */
 const verifiedClient = Effect.fn('OAuthConnectService.verifiedClient')(function* (oauthQuery: string) {
   const flow = yield* OAuthFlow;
@@ -218,12 +232,7 @@ export const createDraft = Effect.fn('OAuthConnectService.createDraft')(function
   let actingPrincipalId = session.principalId;
   if (request.actingPrincipalId !== null) {
     const agentId = request.actingPrincipalId;
-    const active = (yield* listAgentPrincipals(session.tenantId)).some((agent) => agent.principalId === agentId);
-    const allowed =
-      active &&
-      (yield* companiesOfAgent(agentId)).includes(request.legalEntityId) &&
-      (yield* canOperateAgent(agentId, session.principalId));
-    if (!allowed) {
+    if (!(yield* mayActAsAgent(session, agentId, request.legalEntityId))) {
       return yield* new ConnectionForbidden({
         code: 'acting_principal_forbidden',
         reason: 'Za tohoto agenta nesmíte jednat.',
@@ -295,7 +304,10 @@ export const draftSummary = Effect.fn('OAuthConnectService.draftSummary')(functi
     return yield* new ConnectionInvalid({ code: 'draft_not_found' });
   }
   const agent = grant.actingKind === 'agent';
-  const names = yield* loadPrincipals(grant.tenantId, [grant.actingPrincipalId, session.principalId]);
+  const actingName = agent
+    ? ((yield* loadPrincipals(grant.tenantId, [grant.actingPrincipalId])).get(grant.actingPrincipalId)?.displayName ??
+      '')
+    : session.displayName;
   const legalName = (yield* loadLegalNames(grant.tenantId, [grant.legalEntityId])).get(grant.legalEntityId);
   const authority = yield* loadActingAuthority({
     actingKind: grant.actingKind,
@@ -305,7 +317,7 @@ export const draftSummary = Effect.fn('OAuthConnectService.draftSummary')(functi
   });
   return {
     acting: {
-      displayName: names.get(grant.actingPrincipalId)?.displayName ?? '',
+      displayName: actingName,
       kind: grant.actingKind,
       principalId: grant.actingPrincipalId,
     },
@@ -316,12 +328,7 @@ export const draftSummary = Effect.fn('OAuthConnectService.draftSummary')(functi
       logoUri: grant.clientLogoUri,
       name: grant.clientName,
     },
-    delegatedBy: agent
-      ? {
-          displayName: names.get(session.principalId)?.displayName ?? session.displayName,
-          principalId: session.principalId,
-        }
-      : null,
+    delegatedBy: agent ? { displayName: session.displayName, principalId: session.principalId } : null,
     grantId: grant.grantId,
     legalName: legalName ?? grant.legalEntityId,
     modules:
@@ -354,6 +361,20 @@ export const approve = Effect.fn('OAuthConnectService.approve')(function* (
   const now = yield* Clock.currentTimeMillis;
   if (grant === undefined || !isOwnFreshDraft(grant, session, verified.clientId, now)) {
     return yield* new ConnectionInvalid({ code: 'draft_not_found' });
+  }
+  // The agent may have been deactivated, deleted or the person removed from its operators since the draft.
+  if (grant.actingKind === 'agent' && !(yield* mayActAsAgent(session, grant.actingPrincipalId, grant.legalEntityId))) {
+    yield* setGrantStatus({
+      grantId: grant.grantId,
+      revokeReason: null,
+      revokedByPrincipalId: session.principalId,
+      status: 'denied',
+    });
+    return yield* new ConnectionForbidden({
+      code: 'acting_principal_forbidden',
+      reason:
+        'Agent byl mezitím deaktivován nebo smazán, nebo ho už nesmíte připojit. Připojení se nevytvořilo; spusťte ho znovu.',
+    });
   }
   const approved = yield* approveDraftGrant({ actorPrincipalId: session.principalId, grant });
   if (approved === undefined) {

@@ -188,7 +188,7 @@ const ConnectPage = () => {
           {options === undefined ? null : (
             <>
               <h1 className="font-semibold text-xl">{t('shell.connect.title', { client: clientName })}</h1>
-              <div className="flex flex-wrap items-center gap-150 rounded-lg border border-border-primary p-200">
+              <div className="flex flex-wrap items-center gap-150 rounded-lg bg-surface p-200">
                 {options.client.logoUri === null || options.client.logoUri === '' ? (
                   <Icon icon="icon-[mdi--application-outline]" size="md" />
                 ) : (
@@ -244,7 +244,7 @@ const ConnectPage = () => {
                   {company.agents.length === 0 ? null : (
                     <fieldset className="grid gap-100">
                       <legend className="mb-100 font-semibold">{t('shell.connect.acting.title')}</legend>
-                      <label className="flex items-start gap-150 rounded border border-border-primary px-150 py-100">
+                      <label className="flex items-start gap-150 rounded bg-surface px-150 py-100">
                         <input
                           checked={acting === ME}
                           className="mt-050 accent-primary"
@@ -261,7 +261,7 @@ const ConnectPage = () => {
                       </label>
                       {company.agents.map((candidate) => (
                         <label
-                          className="flex items-start gap-150 rounded border border-border-primary px-150 py-100"
+                          className="flex items-start gap-150 rounded bg-surface px-150 py-100"
                           key={candidate.principalId}
                         >
                           <input
@@ -284,7 +284,7 @@ const ConnectPage = () => {
 
                   <fieldset className="grid gap-100">
                     <legend className="mb-100 font-semibold">{t('shell.connect.access.title')}</legend>
-                    <label className="flex items-center gap-150 rounded border border-border-primary px-150 py-100">
+                    <label className="flex items-center gap-150 rounded bg-surface px-150 py-100">
                       <input
                         checked={mode === 'all'}
                         className="accent-primary"
@@ -296,7 +296,7 @@ const ConnectPage = () => {
                         {agent === undefined ? t('shell.connect.access.allMe') : t('shell.connect.access.allAgent')}
                       </span>
                     </label>
-                    <label className="flex items-center gap-150 rounded border border-border-primary px-150 py-100">
+                    <label className="flex items-center gap-150 rounded bg-surface px-150 py-100">
                       <input
                         checked={mode === 'pick'}
                         className="accent-primary"
@@ -313,7 +313,7 @@ const ConnectPage = () => {
                           const writeBlocked = !module.write || policy === 'read_only';
                           return (
                             <li
-                              className="flex flex-wrap items-center justify-between gap-150 rounded border border-border-primary px-150 py-100"
+                              className="flex flex-wrap items-center justify-between gap-150 rounded bg-surface px-150 py-100"
                               key={module.moduleId}
                             >
                               <span className="grid min-w-0 gap-050">
@@ -368,10 +368,7 @@ const ConnectPage = () => {
                     {POLICIES.map((candidate) => {
                       const state = policyOptionState(candidate, cap);
                       return (
-                        <label
-                          className="grid gap-050 rounded border border-border-primary px-150 py-100"
-                          key={candidate}
-                        >
+                        <label className="grid gap-050 rounded bg-surface px-150 py-100" key={candidate}>
                           <span className="flex items-start gap-150">
                             <input
                               checked={policy === candidate}
@@ -388,7 +385,9 @@ const ConnectPage = () => {
                                   {t(
                                     candidate === 'approval'
                                       ? 'shell.connect.policy.approvalHint'
-                                      : 'shell.connect.policy.directHint',
+                                      : agent === undefined
+                                        ? 'shell.connect.policy.directHint'
+                                        : 'shell.connect.policy.directHintAgent',
                                   )}
                                 </span>
                               )}

@@ -13,6 +13,7 @@ import { AuthenticationService } from '../auth/service.ts';
 import { type ConnectSession, approve, connectOptions, createDraft, deny, draftSummary } from './connect-service.ts';
 import { ConnectionForbidden, ConnectionUnauthorized, ConnectionUnavailable } from './errors.ts';
 import type { ConnectionInvalid } from './errors.ts';
+import { demoDisplayName } from '../../src/routes/shell-demo-presentation.ts';
 import { isSameOriginRequest } from './request-origin.ts';
 import { loadOAuthServerConfig } from './server-config.ts';
 
@@ -141,7 +142,7 @@ const connectSession = Effect.fn('shell.oauthConnect.session')(function* connect
     activeLegalEntityId: context.state === 'authenticated' ? context.identity.legalEntityId : null,
     authBindingId: principal.authBindingId,
     companies: context.availableLegalEntities,
-    displayName: context.identity.displayName,
+    displayName: demoDisplayName(context.identity),
     principalId: principal.principalId,
     sessionId,
     tenantId: principal.tenantId,

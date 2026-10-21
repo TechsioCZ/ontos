@@ -39,6 +39,9 @@ const failureOf = (status: number, code: unknown): ConnectFailure => {
   if (status === 400 || status === 404) {
     return 'expired';
   }
+  if (status === 403 && code === 'acting_principal_forbidden') {
+    return 'agentGone';
+  }
   if (status === 403) {
     return 'forbidden';
   }
