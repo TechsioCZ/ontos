@@ -686,6 +686,19 @@ const PeoplePageContent = () => {
         ? (identityLabels[person.displayName] ?? person.displayName)
         : person.displayName,
   }));
+  // Agent section and both histories use the same person labels as the table.
+  const labelByName = new Map(
+    (data?.accounts ?? []).map((account, index) => [
+      account.displayName,
+      people[index]?.displayName ?? account.displayName,
+    ]),
+  );
+  const personLabel = (name: string) => labelByName.get(name) ?? name;
+  const audit = (data?.audit ?? []).map((entry) => ({
+    ...entry,
+    actorName: entry.actorName === null ? null : personLabel(entry.actorName),
+    targetName: entry.targetName === null ? null : personLabel(entry.targetName),
+  }));
   const opened = people.find((person) => person.principalId === openId);
   const crmToast = (crm: CommandResult['crm']) => {
     if (crm === undefined || crm.sync.kind === 'unchanged') {
@@ -833,7 +846,7 @@ const PeoplePageContent = () => {
           <div className="grid grid-cols-1 gap-250 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
             <SectionCard title={t(`${key}.audit.title`)}>
               <p className="text-fg-secondary text-xs">{t(`${key}.audit.source`)}</p>
-              <AuditList entries={allAudit ? data.audit : data.audit.slice(0, 8)} />
+              <AuditList entries={allAudit ? audit : audit.slice(0, 8)} />
               {data.audit.length > 8 && (
                 <Button size="sm" theme="outlined" variant="secondary" onClick={() => setAllAudit((value) => !value)}>
                   {t(allAudit ? `${key}.audit.less` : `${key}.audit.more`, { count: data.audit.length })}
@@ -847,6 +860,7 @@ const PeoplePageContent = () => {
         {data !== undefined && (
           <AgentEntitiesSection
             onNotify={(title, description) => toaster.create({ description, title, type: 'success' })}
+            personLabel={personLabel}
           />
         )}
       </div>
@@ -869,7 +883,7 @@ const PeoplePageContent = () => {
       )}
       {opened !== undefined && data !== undefined && (
         <PersonPanel
-          audit={data.audit}
+          audit={audit}
           key={`${opened.principalId}:${opened.status}:${opened.roleKey ?? ''}`}
           onChanged={(message, result, crm) => {
             toaster.create({ description: grantsToast(result), title: message, type: 'success' });

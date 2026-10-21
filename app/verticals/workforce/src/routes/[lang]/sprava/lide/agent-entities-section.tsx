@@ -51,13 +51,38 @@ interface AgentStatusAction {
 
 export interface AgentEntitiesSectionProps {
   readonly onNotify: (title: string, description?: string) => void;
+  /** Person name as the people table shows it (Lidé a role labels some demo principals in Czech). */
+  readonly personLabel: (displayName: string) => string;
 }
+
+/** Same person names as the people table for owners, operators, members, connections and history. */
+const labelled = (overview: AgentEntityOverview, label: (name: string) => string): AgentEntityOverview => {
+  const ref = (person: PrincipalRef): PrincipalRef => ({ ...person, displayName: label(person.displayName) });
+  return {
+    ...overview,
+    agents: overview.agents.map((agent) => ({
+      ...agent,
+      connections: agent.connections.map((connection) => ({
+        ...connection,
+        delegatedBy: connection.delegatedBy === null ? null : ref(connection.delegatedBy),
+        user: ref(connection.user),
+      })),
+      operators: agent.operators.map(ref),
+      owner: agent.owner === null ? null : ref(agent.owner),
+    })),
+    audit: overview.audit.map((entry) => ({
+      ...entry,
+      actorName: entry.actorName === null ? null : label(entry.actorName),
+    })),
+    members: overview.members.map(ref),
+  };
+};
 
 const sameIds = (left: readonly string[], right: readonly string[]) =>
   left.length === right.length && left.every((id) => right.includes(id));
 
 /** Agents of the selected company: list, create/edit panel, activate/deactivate/delete, operators, connections and history. */
-export const AgentEntitiesSection = ({ onNotify }: AgentEntitiesSectionProps) => {
+export const AgentEntitiesSection = ({ onNotify, personLabel }: AgentEntitiesSectionProps) => {
   const { t } = useModernI18n();
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [editing, setEditing] = useState<EditingState | null>(null);
@@ -84,7 +109,7 @@ export const AgentEntitiesSection = ({ onNotify }: AgentEntitiesSectionProps) =>
     fetchOverview();
   };
 
-  const overview = state.status === 'ready' ? state.overview : null;
+  const overview = state.status === 'ready' ? labelled(state.overview, personLabel) : null;
 
   return (
     <>
@@ -706,7 +731,7 @@ const AuditBlock = ({ audit }: { readonly audit: readonly AgentAuditEntry[] }) =
       ) : (
         <ul className="flex min-w-0 flex-col">
           {audit.slice(0, AUDIT_LIMIT).map((entry) => {
-            const reason = entry.details['reason'];
+            const reason = entry.outcome === 'denied' ? undefined : entry.details['reason'];
             return (
               <li
                 className="flex flex-col gap-50 border-border-primary/60 border-b py-100 last:border-b-0"
