@@ -39,7 +39,7 @@ export const akrosGuide: DemoGuide = {
         },
         {
           click:
-            'Osobní odběr → Dodací údaje → fiktivní kontakt Pavel Dvořák, pavel.dvorak@example.invalid → Souhrn objednávky → jednou Potvrdit DEMO objednávku → opište číslo objednávky.',
+            'Osobní odběr → Dodací údaje → fiktivní kontakt Pavel Dvořák, pavel.dvorak@dvorak-stavby.demo → Souhrn objednávky → jednou Potvrdit DEMO objednávku → opište číslo objednávky.',
           id: 'akros-objednavka',
           persona: null,
           say: 'Objednávka se skutečně uloží do OntOS a dostane číslo. Nic se ale neplatí a nic se nepředává dopravci.',

@@ -4,6 +4,8 @@
 // over real SMTP exactly once (ledger demo_email.deliveries), plus a read-only receipts API on 127.0.0.1 that checks
 // who is asking and GET /v1/provider (is an e-mail provider configured at all).
 // EMAIL_PROVIDER=none = no provider configured: nothing is sent and the UI offers only copy/download.
+// Test/QA recipients (*.invalid, *.test, audit/critic/fixer/test addresses) are sent to a separate test capture
+// (EMAIL_TEST_SMTP_HOST/PORT, default the second Mailpit 127.0.0.1:1026), so the presented demo inbox stays clean.
 import { createServer } from 'node:http';
 import type { ServerResponse } from 'node:http';
 import { PgClient } from '@effect/sql-pg';
@@ -14,6 +16,7 @@ import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID, EMAIL_DISPATCHER_DEFAULT_PORT, e
 import type { DeliveryOutcome, EmailDeliverySource, EmailProviderView, PlannedEmail } from './contract.ts';
 import type { DeliveryReadScope } from './ledger.ts';
 import { claim, ensureLedger, finish, listDeliveries, listSettledKeys, readEnabledSince, recoverInterrupted } from './ledger.ts';
+import { isTestRecipient, testCaptureFromEnvironment } from './recipients.ts';
 import { agendaSenderFor, senderFor } from './senders.ts';
 import { deliveryOutcomeOf, planAgendaEmails, planAkrosOrderEmails, planSiamparkReminderEmail } from './plan.ts';
 import { readAgendaRecipients, readAkrosOrders, readSiamparkReminders } from './sources.ts';
@@ -31,13 +34,20 @@ const providerConfigured = (env['EMAIL_PROVIDER'] ?? 'smtp').trim().toLowerCase(
 const provider: EmailProviderView = providerConfigured
   ? { configured: true, label: `SMTP server ${smtp.host}:${smtp.port}${smtp.port === 1025 ? ' (Mailpit)' : ''}` }
   : { configured: false, label: null };
-/** One SMTP transport per sender (From), created on first use. */
+const testCapture = testCaptureFromEnvironment(env);
+/** One SMTP transport per sender (From) and route (main server / test capture), created on first use. */
 const transports = new Map<string, ReturnType<typeof makeSmtpEmailDelivery>>();
-const transportFor = (from: string) => {
-  let transport = transports.get(from);
+const transportFor = (from: string, recipient: string) => {
+  const test = testCapture !== null && isTestRecipient(recipient);
+  const key = `${test ? 'test' : 'main'}\u0000${from}`;
+  let transport = transports.get(key);
   if (transport === undefined) {
-    transport = makeSmtpEmailDelivery({ ...smtp, from });
-    transports.set(from, transport);
+    transport = makeSmtpEmailDelivery(
+      test
+        ? { from, host: testCapture.host, port: testCapture.port, secure: false, ...(smtp.timeoutMs === undefined ? {} : { timeoutMs: smtp.timeoutMs }) }
+        : { ...smtp, from },
+    );
+    transports.set(key, transport);
   }
   return transport;
 };
@@ -52,7 +62,7 @@ const deliver = async (planned: OutgoingEmail): Promise<void> => {
   if (settled.has(planned.dedupeKey)) return;
   if (!(await runtime.runPromise(claim(planned)))) return;
   const outcome: DeliveryOutcome = await Effect.runPromise(
-    transportFor(planned.from)
+    transportFor(planned.from, planned.recipient)
       .send({ html: Redacted.make(planned.html), idempotencyKey: planned.dedupeKey, subject: planned.subject, text: Redacted.make(planned.text), to: planned.recipient })
       .pipe(
         Effect.map((receipt): DeliveryOutcome => ({ messageId: receipt.id, status: 'SENT' })),
@@ -61,7 +71,8 @@ const deliver = async (planned: OutgoingEmail): Promise<void> => {
   );
   await runtime.runPromise(finish(planned.dedupeKey, outcome));
   if (outcome.status !== 'RETRY') settled.add(planned.dedupeKey);
-  console.log(`[email] ${planned.dedupeKey} -> ${outcome.status}${outcome.status === 'SENT' ? '' : ` (${outcome.errorTag})`}`);
+  const route = testCapture !== null && isTestRecipient(planned.recipient) ? ' [test capture]' : '';
+  console.log(`[email] ${planned.dedupeKey} -> ${outcome.status}${outcome.status === 'SENT' ? '' : ` (${outcome.errorTag})`}${route}`);
 };
 
 const cycle = async (enabledSince: string): Promise<void> => {
@@ -174,7 +185,7 @@ const main = async (): Promise<void> => {
   const enabledSince = await runtime.runPromise(readEnabledSince);
   for (const key of await runtime.runPromise(listSettledKeys)) settled.add(key);
   await new Promise<void>((resolve) => { server.listen(port, '127.0.0.1', () => resolve()); });
-  console.log(`[email] dispatcher on http://127.0.0.1:${port}; ${providerConfigured ? `SMTP ${smtp.host}:${smtp.port}` : 'NO e-mail provider (EMAIL_PROVIDER=none): nothing is sent'}; e-mails for events since ${enabledSince}`);
+  console.log(`[email] dispatcher on http://127.0.0.1:${port}; ${providerConfigured ? `SMTP ${smtp.host}:${smtp.port}` : 'NO e-mail provider (EMAIL_PROVIDER=none): nothing is sent'}; test recipients -> ${testCapture === null ? 'main SMTP' : `test capture ${testCapture.host}:${testCapture.port}`}; e-mails for events since ${enabledSince}`);
   let stopping = false;
   const stop = (): void => { stopping = true; server.close(); setTimeout(() => process.exit(0), 8000).unref(); };
   process.on('SIGTERM', stop);

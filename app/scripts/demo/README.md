@@ -72,6 +72,7 @@ The composition publisher reads the same list through `ONTOS_DEMO_VERTICALS`.
 | 4118            | siampark-billing-finance                                                                               |
 | 4114–4116, 4119 | siampark property / occupancy / agreements (started by default), relationships (not started)                    |
 | 1025 / 8025     | Mailpit: SMTP (127.0.0.1 only) / web UI + API http://localhost:8025 |
+| 1026 / 8026     | Test Mailpit (test/QA recipients only): SMTP / web UI + API http://localhost:8026 |
 | 3096            | E-mail dispatcher: read-only delivery receipts (127.0.0.1) |
 | 5433            | Postgres (`siampark_demo` database, admin `ontos_admin`)                                               |
 | 50051 / 8443    | SpiceDB gRPC / HTTP (TLS)                                                                              |
@@ -102,10 +103,15 @@ e-mailem“ and offers only „Kopírovat text“ / „Stáhnout návrh“ (noth
 „E-mail není nastaven“. To show it: `EMAIL_PROVIDER=none scripts/demo/email-dispatcher/restart.sh`, then
 `scripts/demo/email-dispatcher/restart.sh` again to switch e-mail back on.
 
-Presentable Mailpit inbox after test runs: `node --env-file=.env scripts/demo/email-dispatcher/tidy-inbox.mts`
-(dry run) and `… --apply` deletes only messages about removed (soft-deleted) AKROS orders and messages to
-test/audit addresses (`*.invalid`, `*.test`, `*audit*`, `*critic*`, `*fixer*`, `*test*@…`); the ledger and the
-domain data stay untouched.
+Presentable demo inbox: e-mails to test/QA addresses (`*.invalid`, `*.test`, `*audit*`, `*critic*`, `*fixer*`,
+`*test*@…`, see `recipients.ts`) are still really sent over SMTP, but to the separate test Mailpit
+(container `ontos-demo-mailpit-test`, SMTP 127.0.0.1:1026, http://localhost:8026), never to the demo inbox on :8025.
+Test and proof scripts must use such an address and check delivery on `http://localhost:8026/api/v1/messages`;
+the ledger and the receipts („Odesláno e-mailem“) are the same as for real recipients. Demo-story orders use a
+presentable fictitious address (guide: `pavel.dvorak@dvorak-stavby.demo`). `EMAIL_TEST_SMTP_HOST=none` turns the
+separation off. To clear leftovers from older runs: `node --env-file=.env scripts/demo/email-dispatcher/tidy-inbox.mts`
+(dry run) and `… --apply` deletes from the demo inbox only messages about removed (soft-deleted) AKROS orders and
+messages to test/audit addresses; the ledger and the domain data stay untouched.
 
 The dispatcher claims each e-mail in its own ledger `demo_email.deliveries` (primary key = dedupe key) before
 sending. SMTP unreachable before any data was sent → `RETRY` with backoff (10 s, 20 s, 40 s, then every 60 s,
@@ -132,6 +138,7 @@ Who may read receipts (`GET /v1/deliveries`, never addresses or bodies):
 | `AKROS_EMAIL_FROM` | `AKROS e-shop <eshop@akros.demo>` | Sender of AKROS order e-mails |
 | `SIAMPARK_EMAIL_FROM` | `Siampark – finanční oddělení <finance@siampark.demo>` | Sender of Siampark payment reminders |
 | `OBCHODNI_FIRMA_EMAIL_FROM` | `Obchodní firma – účtárna <ucetni@demo.ontos>` | Sender of Obchodní firma payment reminders |
+| `EMAIL_TEST_SMTP_HOST` / `EMAIL_TEST_SMTP_PORT` | `127.0.0.1` / `1026` | Test capture for test/QA recipients (second Mailpit); `none` = send them to `SMTP_HOST` too |
 | `EMAIL_PROVIDER` | `smtp` | `none` = no e-mail provider configured: nothing is sent, the UI offers only copy/download |
 | `SIAMPARK_AGENDA_EMAIL_FROM` | `Siampark – upozornění <provoz@siampark.demo>` | Sender of Siampark agenda notifications |
 | `ONTOS_PUBLIC_URL` | `http://localhost:3020` | Links to the staff app in agenda e-mails |

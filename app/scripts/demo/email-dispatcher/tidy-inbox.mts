@@ -2,13 +2,15 @@
 // Keeps the demo Mailpit inbox presentable after test runs. Deletes ONLY Mailpit copies of
 //   - e-mails about AKROS orders that were removed from the demo (soft-deleted, `demoCleanup`), and
 //   - e-mails to test/audit recipients (*.invalid, *.test, or audit/critic/fixer/test markers in the address).
-// The delivery ledger (demo_email.deliveries) and all domain data stay untouched.
+// The delivery ledger (demo_email.deliveries) and all domain data stay untouched. Since the dispatcher routes test
+// recipients to the separate test capture (:8026), this only clears mails from before that change or from foreign senders.
 //   node --env-file=.env scripts/demo/email-dispatcher/tidy-inbox.mts           dry run (lists what would go)
 //   node --env-file=.env scripts/demo/email-dispatcher/tidy-inbox.mts --apply   deletes
 import { PgClient } from '@effect/sql-pg';
 import { Config, Effect, Layer, ManagedRuntime } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID } from './contract.ts';
+import { isTestRecipient } from './recipients.ts';
 
 const mailpit = (process.env['MAILPIT_URL'] ?? 'http://127.0.0.1:8025').replace(/\/+$/u, '');
 const apply = process.argv.includes('--apply');
@@ -19,18 +21,6 @@ interface MailpitMessage {
   readonly Subject: string;
   readonly To: readonly { readonly Address: string }[];
 }
-
-/** Reserved test domains and the markers QA personas use in their addresses. */
-export const isTestRecipient = (address: string): boolean => {
-  const value = address.trim().toLowerCase();
-  const domain = value.slice(value.lastIndexOf('@') + 1);
-  return (
-    domain.endsWith('.invalid') ||
-    domain.endsWith('.test') ||
-    domain === 'audit.example' ||
-    /(audit|critic|kritik|fixer|reqsol|reqx|test)/u.test(value.slice(0, value.lastIndexOf('@')))
-  );
-};
 
 const Database = Layer.effect(
   PgClient.PgClient,

@@ -119,7 +119,7 @@ step env-local-ensure pnpm_ env:local:ensure
 step spicedb-tls pnpm_ spicedb:tls:local
 load_env
 
-# 2. Containers (OrbStack). Isolated project/volume: ontos-demo-db + ontos-demo-spicedb on 5433/50051/8443, ontos-demo-mailpit on 1025/8025.
+# 2. Containers (OrbStack). Isolated project/volume: ontos-demo-db + ontos-demo-spicedb on 5433/50051/8443, ontos-demo-mailpit on 1025/8025, ontos-demo-mailpit-test (test/QA recipients) on 1026/8026.
 step containers "${COMPOSE[@]}" up -d --wait
 
 # 3. Schema, base context, Siampark baseline, authorization. SpiceDB is in-memory: grants are re-written
@@ -276,7 +276,7 @@ step akros-storefront "$APP/akros-storefront/scripts/demo-restart.sh"
 cat <<EOF
 
 [demo] AKROS: http://localhost:3070 (OntOS-backed standalone Next.js storefront)
-[demo] E-maily (Mailpit): http://localhost:8025   SMTP 127.0.0.1:1025   dispatcher: http://127.0.0.1:${EMAIL_DISPATCHER_PORT:-3096}/healthz
+[demo] E-maily (Mailpit): http://localhost:8025   SMTP 127.0.0.1:1025   testovací adresy: http://localhost:8026   dispatcher: http://127.0.0.1:${EMAIL_DISPATCHER_PORT:-3096}/healthz
 [demo] UP. Shell: http://localhost:$SHELL_PORT/cs   (composition :$COMPOSITION_PORT)
 [demo] Storefront: http://localhost:$STOREFRONT_PORT (Kavárna Doma, customer-facing DEMO)
 [demo] Verticals: ${VERTICALS[*]}

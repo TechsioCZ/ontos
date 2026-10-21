@@ -1,7 +1,8 @@
 # Sales-demo override for app/docker-compose.yml. It isolates the demo containers and the Postgres
 # volume from the primary OntOS checkout (which uses ontos-db / ontos_postgres_data) while keeping
 # the same host ports (5433, 50051, 8443). It also runs Mailpit for real e-mail capture (SMTP 1025,
-# web UI and API 8025). Use through scripts/demo/up.sh.
+# web UI and API 8025) and a second, separate Mailpit for test/QA recipients (SMTP 1026, UI and API 8026),
+# so test runs never land in the presented demo inbox. Use through scripts/demo/up.sh.
 name: ontos-demo
 
 services:
@@ -33,8 +34,34 @@ services:
       timeout: 3s
       retries: 20
 
+  # Separate capture for test/QA recipients (*.invalid, *.test, audit/critic/fixer/test addresses): the e-mail
+  # dispatcher routes them here, never to the demo inbox above. SMTP 127.0.0.1:1026, UI + API http://localhost:8026.
+  ontos-mailpit-test:
+    image: axllent/mailpit:v1.31.6
+    container_name: ontos-demo-mailpit-test
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:1026:1025'
+      - '127.0.0.1:8026:8025'
+    environment:
+      MP_DATABASE: /data/mailpit.db
+      MP_MAX_MESSAGES: '2000'
+      MP_SMTP_AUTH_ACCEPT_ANY: '1'
+      MP_SMTP_AUTH_ALLOW_INSECURE: '1'
+      MP_SMTP_DISABLE_RDNS: '1'
+      TZ: Europe/Prague
+    volumes:
+      - ontos_mailpit_test_data:/data
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
 volumes:
   ontos_postgres_data:
     name: ontos_demo_postgres_data
   ontos_mailpit_data:
     name: ontos_demo_mailpit_data
+  ontos_mailpit_test_data:
+    name: ontos_demo_mailpit_test_data

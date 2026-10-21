@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Restart only the demo e-mail dispatcher and make sure Mailpit runs. No data resets, no other servers.
+# Restart only the demo e-mail dispatcher and make sure both Mailpits (demo :8025, test :8026) run. No data resets, no other servers.
 #   scripts/demo/email-dispatcher/restart.sh
 set -euo pipefail
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -30,7 +30,7 @@ load_env() {
 load_env
 PORT="${EMAIL_DISPATCHER_PORT:-3096}" # after load_env so app/.env can override it
 
-docker --context orbstack compose -f docker-compose.yml -f scripts/demo/compose.demo.yml up -d --wait ontos-mailpit
+docker --context orbstack compose -f docker-compose.yml -f scripts/demo/compose.demo.yml up -d --wait ontos-mailpit ontos-mailpit-test
 if [ -f "$PID_DIR/email-dispatcher.pid" ]; then
   pid="$(cat "$PID_DIR/email-dispatcher.pid")"
   kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true

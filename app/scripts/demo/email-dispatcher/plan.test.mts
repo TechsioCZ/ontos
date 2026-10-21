@@ -2,6 +2,7 @@
 import { describe, expect, test } from '@rstest/core';
 import type { AgendaRecipientInput, AkrosOrderInput, SiamparkReminderInput } from './contract.ts';
 import { deliveryOutcomeOf, orderEmailEvents, planAgendaEmails, planAkrosOrderEmails, planSiamparkReminderEmail } from './plan.ts';
+import { isTestRecipient, testCaptureFromEnvironment } from './recipients.ts';
 import { addressOf, agendaSenderFor, senderFor } from './senders.ts';
 import { akrosOrderEmail, formatCzk } from './templates.ts';
 
@@ -293,5 +294,23 @@ describe('agenda notification e-mails', () => {
     expect(planAgendaEmails({ ...person, preference: { ...person.preference, emailOptIn: false } }, options)).toEqual([]);
     expect(planAgendaEmails({ ...person, email: null }, options)).toEqual([]);
     expect(agendaSenderFor(person, {})).toBe('Siampark – upozornění <provoz@siampark.demo>');
+  });
+});
+
+describe('test recipients go to the separate test capture, never the demo inbox', () => {
+  test('reserved test domains and QA markers are test recipients', () => {
+    for (const address of ['jan.novak@example.invalid', 'Marek.Hruska@EXAMPLE.INVALID', 'x@shop.test', 'fakturace.audit@firma.cz', 'critic1@siampark.demo', 'fixer@hanak.demo', 'qa-test@akros.demo', 'a@audit.example']) {
+      expect(isTestRecipient(address)).toBe(true);
+    }
+  });
+  test('demo-story recipients stay in the demo inbox', () => {
+    for (const address of ['operations@siampark.demo', 'pavel.dvorak@dvorak-stavby.demo', 'fakturace@kavarnauparku.cz', 'fakturace@odberatel.example', 'obchodnik.a@hanak.demo']) {
+      expect(isTestRecipient(address)).toBe(false);
+    }
+  });
+  test('test capture defaults to the second Mailpit and can be switched off', () => {
+    expect(testCaptureFromEnvironment({})).toEqual({ host: '127.0.0.1', port: 1026 });
+    expect(testCaptureFromEnvironment({ EMAIL_TEST_SMTP_HOST: 'mail-test', EMAIL_TEST_SMTP_PORT: '2525' })).toEqual({ host: 'mail-test', port: 2525 });
+    expect(testCaptureFromEnvironment({ EMAIL_TEST_SMTP_HOST: 'none' })).toBeNull();
   });
 });
