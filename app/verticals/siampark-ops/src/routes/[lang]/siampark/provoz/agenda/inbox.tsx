@@ -136,8 +136,8 @@ export const NotificationCenter = ({
                 data-unread={isUnread}
                 key={entry.id}
                 style={{
-                  background: isUnread ? toneColors(tone).bg : '#ffffff',
-                  border: `1px solid ${isUnread ? toneColors(tone).ring : 'var(--color-border-primary, #e5e7eb)'}`,
+                  background: isUnread ? toneColors(tone).bg : 'var(--color-surface)',
+                  border: `1px solid ${isUnread ? toneColors(tone).ring : 'transparent'}`,
                 }}
               >
                 <IconBadge name={notificationIcon[entry.category]} size={36} tone={tone} />

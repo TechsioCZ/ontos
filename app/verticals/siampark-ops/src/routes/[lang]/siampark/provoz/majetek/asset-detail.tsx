@@ -1,6 +1,6 @@
 // Asset card (S02) in a resizable SidePanel: card, value/event timeline, revisions and depreciation (S03).
 // Every action switches the panel body to its form; the footer carries Zpět + the submit button. Owned by ops-assets.
-import { DetailList, SidePanel, formatMoney } from '@app/admin-ui';
+import { DetailList, SidePanel, formatMoney, surfaceTileClassName } from '@app/admin-ui';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -253,7 +253,7 @@ const BuildingContents = ({
     (entry) => entry.id !== asset.id && entry.propertyId === propertyId && isActiveAsset(entry),
   );
   return (
-    <div className="flex flex-col gap-150 rounded-lg border border-border-primary p-200">
+    <div className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
       <p className="font-semibold text-sm">{k('card.inProperty')}</p>
       {units.length > 0 && (
         <div className="flex flex-wrap items-center gap-100 text-sm">
@@ -321,14 +321,14 @@ const CardTab = ({
   return (
     <div className="flex flex-col gap-250">
       <div className="grid grid-cols-1 gap-150 sm:grid-cols-3">
-        <div className="rounded-lg border border-border-primary bg-surface p-200">
+        <div className={`${surfaceTileClassName} p-200`}>
           <p className="text-fg-secondary text-xs">{k('fields.acquisitionValue')}</p>
           <p className="font-semibold text-lg tabular-nums">{money(asset.acquisitionValueMinor, missing)}</p>
           <p className="text-fg-secondary text-xs">
             {asset.acquisitionDate === undefined ? missing : isoDateLabel(asset.acquisitionDate)}
           </p>
         </div>
-        <div className="rounded-lg border border-border-primary bg-surface p-200">
+        <div className={`${surfaceTileClassName} p-200`}>
           <p className="text-fg-secondary text-xs">{k('fields.currentValue')}</p>
           <p className="font-semibold text-lg tabular-nums">{money(asset.currentValueMinor, missing)}</p>
           <p className="text-fg-secondary text-xs">
@@ -337,7 +337,7 @@ const CardTab = ({
               : k('card.confirmedOn', { date: isoDateLabel(asset.currentValueDate) })}
           </p>
         </div>
-        <div className="rounded-lg border border-border-primary bg-surface p-200">
+        <div className={`${surfaceTileClassName} p-200`}>
           <p className="text-fg-secondary text-xs">{k('card.bookValues')}</p>
           <p className="text-sm tabular-nums">
             {k('depreciation.accountingShort')}: <span className="font-semibold">{money(accounting, missing)}</span>
@@ -409,7 +409,7 @@ const CardTab = ({
         ]}
       />
       {asset.disposal !== undefined && (
-        <div className="flex flex-col gap-50 rounded-lg border border-border-primary bg-surface-secondary p-200 text-sm">
+        <div className={`${surfaceTileClassName} flex flex-col gap-50 p-200 text-sm`}>
           <p className="font-medium">
             {k(`disposal.${asset.disposal.kind}`)} · {isoDateLabel(asset.disposal.date)}
           </p>
@@ -428,7 +428,7 @@ const CardTab = ({
         </div>
       )}
       {asset.archive !== undefined && (
-        <div className="flex flex-col gap-50 rounded-lg border border-border-primary bg-surface-secondary p-200 text-sm">
+        <div className={`${surfaceTileClassName} flex flex-col gap-50 p-200 text-sm`}>
           <p className="font-medium">
             {k('archive.title', {
               at: instantLabel(asset.archive.at),

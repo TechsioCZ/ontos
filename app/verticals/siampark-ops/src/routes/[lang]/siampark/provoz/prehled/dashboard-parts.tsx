@@ -31,8 +31,8 @@ import type { IconName } from '../../../../../ui/ops-agenda/ui-bits.tsx';
 const k = 'siampark-ops.agenda';
 const muted = { color: 'var(--color-fg-secondary, #6b7280)' } as const;
 const card = {
-  background: '#ffffff',
-  border: '1px solid var(--color-border-primary, #e5e7eb)',
+  background: 'var(--color-surface)',
+  border: '1px solid transparent',
 } as const;
 
 const useLang = () => {
@@ -120,7 +120,6 @@ export const Hero = ({
       style={{
         background:
           'radial-gradient(1200px 300px at 0% 0%, var(--color-primary-100, #fef3c7) 0%, transparent 60%), linear-gradient(135deg, #ffffff 0%, var(--color-surface-subtle, #f8fafc) 100%)',
-        border: '1px solid var(--color-border-primary, #e5e7eb)',
       }}
     >
       <div className="siamparkops:flex siamparkops:min-w-0 siamparkops:flex-col siamparkops:gap-4">
@@ -285,8 +284,8 @@ export const KpiGrid = ({
             onClick={() => onSelect(kpi.id)}
             style={{
               ...card,
-              borderColor: active ? colors.accent : 'var(--color-border-primary, #e5e7eb)',
-              boxShadow: active ? `0 0 0 3px ${colors.ring}` : '0 1px 2px rgba(0,0,0,.04)',
+              borderColor: active ? colors.accent : 'transparent',
+              boxShadow: active ? `0 0 0 3px ${colors.ring}` : 'none',
               color: 'inherit',
               font: 'inherit',
             }}

@@ -1,6 +1,6 @@
 // S03 depreciation evidence: per-asset plan cards with the approved-amounts schedule, and the portfolio overview
 // with reusable templates. Nothing here computes legal or tax depreciation. Owned by ops-assets.
-import { SectionCard, formatMoney } from '@app/admin-ui';
+import { SectionCard, formatMoney, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -20,7 +20,7 @@ const useK = () => {
 export const EvidenceBanner = () => {
   const k = useK();
   return (
-    <div className="flex flex-wrap items-center gap-100 rounded-md border border-border-warning bg-bg-light-warning-base px-200 py-150 text-sm">
+    <div className="flex flex-wrap items-center gap-100 rounded-lg bg-bg-light-warning-base px-200 py-150 text-sm">
       <Badge size="sm" variant="warning">
         {k('depreciation.evidenceBadge')}
       </Badge>
@@ -320,15 +320,15 @@ export const DepreciationOverview = ({
     <div className="flex flex-col gap-250">
       <EvidenceBanner />
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-3">
-        <div className="rounded-lg border border-border-primary bg-surface p-200">
+        <div className={`${surfaceTileClassName} p-200`}>
           <p className="text-fg-secondary text-sm">{k('depreciation.yearAccounting', { year })}</p>
           <p className="font-semibold text-xl tabular-nums">{formatMoney(sumFor('accounting'))}</p>
         </div>
-        <div className="rounded-lg border border-border-primary bg-surface p-200">
+        <div className={`${surfaceTileClassName} p-200`}>
           <p className="text-fg-secondary text-sm">{k('depreciation.yearTax', { year })}</p>
           <p className="font-semibold text-xl tabular-nums">{formatMoney(sumFor('tax'))}</p>
         </div>
-        <div className="rounded-lg border border-border-primary bg-surface p-200">
+        <div className={`${surfaceTileClassName} p-200`}>
           <p className="text-fg-secondary text-sm">{k('depreciation.draftPlans')}</p>
           <p className="font-semibold text-xl tabular-nums">
             {rows.filter((row) => row.plan.status === 'draft').length}
@@ -402,7 +402,7 @@ export const DepreciationOverview = ({
           <ul className="grid grid-cols-1 gap-150 sm:grid-cols-3">
             {(state.templates ?? []).map((template) => (
               <li
-                className="flex flex-col gap-50 rounded-md border border-border-primary p-150 text-sm"
+                className={`${surfaceTileClassName} flex flex-col gap-50 p-150 text-sm`}
                 key={template.id}
               >
                 <span className="font-medium">{template.name}</span>
