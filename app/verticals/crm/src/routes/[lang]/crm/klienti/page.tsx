@@ -1,7 +1,7 @@
 // AREA: clients (C00/C01) — owned by the crm-clients lane.
 // Klienti (Správce, Vedoucí) / Mí klienti (Obchodník): search, filters, list, and the client card in a SidePanel
 // opened from `?klient=<id>` (drill-down links from other CRM pages use the same param).
-import { PageHeader, StatCard, StatRow, formatDate, formatNumber } from '@app/admin-ui';
+import { PageHeader, StatCard, StatRow, formatDate, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -286,7 +286,7 @@ const ClientsList = ({
         )}
       </StatRow>
       {records.viewer.writeAll && (active.length > linkedCount || pendingCorrelations > 0) && (
-        <div className="flex flex-wrap items-center justify-between gap-150 rounded-lg border border-border-warning bg-surface-secondary px-200 py-150">
+        <div className="flex flex-wrap items-center justify-between gap-150 rounded-lg bg-bg-light-warning-base px-200 py-150">
           <p className="text-sm">
             {active.length > linkedCount
               ? `${formatNumber(active.length - linkedCount)} aktivních klientů zatím nemá identitu v Party Registry.`
@@ -375,7 +375,7 @@ const ClientsList = ({
         title={manager ? t('crm.pages.clients.title') : 'Mí klienti'}
       />
       <div className="hidden flex-col gap-250 md:flex">{summaries}</div>
-      <details className="rounded-lg border border-border-primary bg-surface p-150 md:hidden">
+      <details className={`${surfaceTileClassName} p-150 md:hidden`}>
         <summary className="cursor-pointer font-medium text-sm">
           Souhrny klientů a prodejů
           <span className="mt-50 block text-fg-secondary text-xs">Aktivní klienti: {formatNumber(active.length)}</span>
@@ -492,7 +492,7 @@ const ClientsList = ({
         {visible.slice(0, 100).map((row) => (
           <li key={row.client.id}>
             <button
-              className="flex w-full flex-col gap-50 rounded-lg border border-border-primary bg-surface p-200 text-start"
+              className={`${surfaceTileClassName} flex w-full flex-col gap-50 p-200 text-start`}
               onClick={() => onOpen(row.client.id)}
               type="button"
             >

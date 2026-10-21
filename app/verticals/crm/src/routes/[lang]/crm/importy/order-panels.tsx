@@ -1,6 +1,6 @@
 // AREA: imports — owned by the crm-imports lane. Order detail side panel (state history, lines, pairing history,
 // review decisions) and the manual pairing form (C03/C04). Every action is a governed CRM command.
-import { DetailList, SidePanel, formatDateTime } from '@app/admin-ui';
+import { DetailList, SidePanel, formatDateTime, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
@@ -138,7 +138,7 @@ export const PairingForm = ({
   return (
     <div className="flex flex-col gap-150">
       {candidates.length > 0 && (
-        <div className="flex flex-col gap-100 rounded-lg border border-border-warning bg-bg-light-warning-base p-150">
+        <div className="flex flex-col gap-100 rounded-lg bg-bg-light-warning-base p-150">
           <span className="font-medium text-sm">Možní kandidáti – nepotvrzeno</span>
           <span className="text-fg-secondary text-xs">
             Shoda IČO, e-mailu nebo názvu není důkaz identity. Systém je sám nepřiřadí; vyberte klienta až po ověření.
@@ -220,7 +220,7 @@ const DecisionForm = ({
 }) => {
   const [reason, setReason] = useState('');
   return (
-    <div className="flex flex-col gap-150 rounded-lg border border-border-warning bg-bg-light-warning-base p-150">
+    <div className="flex flex-col gap-150 rounded-lg bg-bg-light-warning-base p-150">
       <div className="text-sm">{intro}</div>
       <ReasonField id={id} onChange={setReason} value={reason} />
       <div className="flex flex-wrap justify-end gap-100">
@@ -268,7 +268,7 @@ const StatusTimeline = ({
         const current = !flagged && event.rawStatus === order.rawStatus && event.eventAt === order.lastEventAt;
         return (
           <li
-            className={`flex flex-col gap-100 rounded-lg border p-150 ${open ? 'border-border-warning bg-bg-light-warning-base' : 'border-border-primary'}`}
+            className={`flex flex-col gap-100 p-150 ${open ? 'rounded-lg bg-bg-light-warning-base' : surfaceTileClassName}`}
             key={`${event.batchId}-${String(index)}`}
           >
             <div className="flex flex-wrap items-center gap-100">

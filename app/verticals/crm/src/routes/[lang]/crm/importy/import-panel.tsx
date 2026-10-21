@@ -1,6 +1,6 @@
 // AREA: imports — owned by the crm-imports lane. CSV import: choose / drop / paste a file or take a sample, see a
 // row-by-row preview computed by the same engine the server runs, then import (C03).
-import { SidePanel, formatNumber } from '@app/admin-ui';
+import { SidePanel, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
@@ -22,7 +22,7 @@ export interface ImportDraft {
 }
 
 const SummaryChip = ({ count, outcome }: { readonly count: number; readonly outcome: ImportRowOutcome }) => (
-  <div className="flex min-w-28 flex-col gap-50 rounded-lg border border-border-primary bg-surface p-150">
+  <div className={`${surfaceTileClassName} flex min-w-28 flex-col gap-50 p-150`}>
     <span className="text-fg-secondary text-xs">{outcomeMeta[outcome].label}</span>
     <span className="font-semibold text-lg tabular-nums">{formatNumber(count)}</span>
   </div>
@@ -264,7 +264,7 @@ export const ImportPanel = ({
                 <RowResults results={preview.batch.results ?? []} />
               </>
             ) : (
-              <div className="rounded-lg border border-border-danger bg-bg-danger-subtle p-150 text-sm">
+              <div className="rounded-lg bg-bg-danger-subtle p-150 text-sm">
                 {preview.parsed.fileError}
               </div>
             )}
@@ -281,7 +281,7 @@ export const RowResults = ({
 }: {
   readonly results: readonly { row: number; outcome: ImportRowOutcome; externalId?: string; message: string }[];
 }) => (
-  <div className="max-h-[50dvh] overflow-auto rounded-lg border border-border-primary">
+  <div className="max-h-[50dvh] overflow-auto">
     <table className="w-full text-sm">
       <thead className="sticky top-0 bg-surface text-fg-secondary text-xs">
         <tr>

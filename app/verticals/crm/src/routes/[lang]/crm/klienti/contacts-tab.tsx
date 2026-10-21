@@ -1,6 +1,6 @@
 // "Kontakty" tab of the client card: contact persons with work role, phone, e-mail and note (C01). Add / edit
 // inline; "Odebrat" archives the person (kept in history, never deleted). One person can be the main contact.
-import { EmptyState, dialogCloseLabel, formatDate } from '@app/admin-ui';
+import { EmptyState, dialogCloseLabel, formatDate, surfaceTileClassName } from '@app/admin-ui';
 import { ActionIcon } from '@techsio/ui-kit/atoms/action-icon';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -57,7 +57,7 @@ const ContactForm = ({
   const emailError = draft.email.trim() !== '' && !EMAIL.test(draft.email.trim()) ? 'Neplatný e-mail' : undefined;
   return (
     <form
-      className="flex flex-col gap-150 rounded-lg border border-primary bg-surface p-200"
+      className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}
       onSubmit={(event) => {
         event.preventDefault();
         setTouched(true);
@@ -150,7 +150,7 @@ const ContactCard = ({
   const archived = contact.status === 'archived';
   return (
     <li
-      className={`flex flex-col gap-100 rounded-lg border border-border-primary p-200 ${archived ? 'opacity-60' : 'bg-surface'}`}
+      className={`${surfaceTileClassName} flex flex-col gap-100 p-200 ${archived ? 'opacity-60' : ''}`}
     >
       <div className="flex items-start justify-between gap-100">
         <div className="flex min-w-0 items-center gap-150">

@@ -1,6 +1,6 @@
 // Create / edit a client (company or person). On create, contact persons can be entered right away (C01-01) and
 // someone with demo.crm.assign may pick the salesperson; a salesperson always creates the client for themself.
-import { SidePanel, dialogCloseLabel, foldSearchText } from '@app/admin-ui';
+import { SidePanel, dialogCloseLabel, foldSearchText, surfaceTileClassName } from '@app/admin-ui';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { ActionIcon } from '@techsio/ui-kit/atoms/action-icon';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -397,7 +397,7 @@ export const ClientFormDialog = ({
             </div>
             {contacts.map((entry, index) => (
               <div
-                className="relative grid grid-cols-1 gap-150 rounded-lg border border-border-primary p-200 sm:grid-cols-2"
+                className={`${surfaceTileClassName} relative grid grid-cols-1 gap-150 p-200 sm:grid-cols-2`}
                 key={entry.key}
               >
                 <FormInput
