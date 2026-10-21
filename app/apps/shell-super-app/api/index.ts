@@ -115,6 +115,7 @@ import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-
 import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-namespace-registry.ts';
 import { AuthConfigLive } from './auth/config.ts';
 import { OAuthFlowLive } from './auth/oauth-server/oauth-flow-live.ts';
+import { oauthConnectGroupLive } from './oauth-connections/connect-http.ts';
 import { OAuthServerTransportLive } from './auth/oauth-server/transport.ts';
 import {
   CommerceExternalIdentityContextAccessLive,
@@ -2395,6 +2396,7 @@ export const makeShellAuthenticationApiRuntime = (
     compositionGroupLive,
     resourcesGroupLive,
     gatewayContextGroupLive,
+    oauthConnectGroupLive,
     // @ontos-codesmith-core-read-server-layers:start
 
     // @ontos-core-read legal-entity-detail

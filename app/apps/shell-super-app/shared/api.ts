@@ -24,6 +24,7 @@ import {
   ConnectionRevokeRequestSchema,
   ConnectionUpdateRequestSchema,
 } from '@app/shared-contracts/agent-access';
+import { OAuthConnectApiGroup } from './oauth-connect-api.ts';
 // @ontos-codesmith-core-read-contract-imports:start
 
 // @ontos-core-read legal-entity-detail
@@ -1091,7 +1092,8 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
       ),
   )
   .add(GatewayContextApiGroup)
-  .add(ExternalIdentityApiGroup);
+  .add(ExternalIdentityApiGroup)
+  .add(OAuthConnectApiGroup);
 
 const authenticationEndpointPath = (endpoint: { readonly path: string }) =>
   `/shell-super-app-api${endpoint.path}` as const;
