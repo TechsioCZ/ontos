@@ -158,7 +158,7 @@ export const obchodGuide: DemoGuide = {
           click: 'U připojení Upravit přístup: zúžit moduly nebo přepnout na Jen čtení. Potom Odpojit.',
           id: 'obchod-mcp-upravit',
           persona: obchodnik,
-          say: 'Přístup jde kdykoli zúžit nebo odebrat bez nového přihlášení. Aplikace ztratí přístup do 30 sekund.',
+          say: 'Přístup jde kdykoli zúžit nebo odebrat bez nového přihlášení. Aplikace ztratí přístup hned při dalším požadavku.',
           target: { kind: 'app', path: '/profil' },
           title: 'Upravit nebo odpojit',
         },

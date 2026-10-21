@@ -129,7 +129,7 @@ const RevokeDialog = ({
       }
       closeLabel="Zavřít dialog"
       customTrigger
-      description={`Aplikace ztratí přístup do 30 sekund. Znovu ji připojíte v ${name}.`}
+      description={`Aplikace ztratí přístup hned při dalším požadavku. Znovu ji připojíte v ${name}.`}
       onOpenChange={(details) => {
         if (!details.open) {
           onCancel();

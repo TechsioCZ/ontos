@@ -33,7 +33,6 @@ type Reply = { status: number; body?: unknown } | 'network';
 
 const harness = (replies: Reply[]) => {
   const calls: Array<{ url: string; headers: Headers }> = [];
-  let clock = 1_000_000;
   const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push({ url: String(input), headers: new Headers(init?.headers) });
     const reply = replies[Math.min(calls.length - 1, replies.length - 1)];
@@ -42,14 +41,8 @@ const harness = (replies: Reply[]) => {
     }
     return Response.json(reply.body ?? {}, { status: reply.status });
   }) as typeof fetch;
-  const describeConnection = createConnectionDescriber({ config: CONFIG, fetchFn, now: () => clock });
-  return {
-    advance: (ms: number) => {
-      clock += ms;
-    },
-    calls,
-    describeConnection,
-  };
+  const describeConnection = createConnectionDescriber({ config: CONFIG, fetchFn });
+  return { calls, describeConnection };
 };
 
 const errorOf = async (promise: Promise<unknown>): Promise<unknown> => {
@@ -62,26 +55,10 @@ const errorOf = async (promise: Promise<unknown>): Promise<unknown> => {
 };
 
 describe('connection describer', () => {
-  it('caches a success for 30 s', async () => {
-    const h = harness([{ status: 200, body: DESCRIPTION }]);
+  it('asks the shell on every request, so a change applies to the next one', async () => {
+    const h = harness([{ status: 200, body: DESCRIPTION }, { status: 401 }]);
     expect(await h.describeConnection(TOKEN)).toEqual(DESCRIPTION);
-    expect(h.calls.length).toBe(1);
-    h.advance(29_999);
-    await h.describeConnection(TOKEN);
-    expect(h.calls.length).toBe(1);
-    h.advance(2);
-    await h.describeConnection(TOKEN);
-    expect(h.calls.length).toBe(2);
-  });
-
-  it('caches an inactive grant for at most 5 s', async () => {
-    const h = harness([{ status: 401 }]);
     expect(await errorOf(h.describeConnection(TOKEN))).toBeInstanceOf(ConnectionInactiveError);
-    h.advance(4_999);
-    expect(await errorOf(h.describeConnection(TOKEN))).toBeInstanceOf(ConnectionInactiveError);
-    expect(h.calls.length).toBe(1);
-    h.advance(2);
-    await errorOf(h.describeConnection(TOKEN));
     expect(h.calls.length).toBe(2);
   });
 

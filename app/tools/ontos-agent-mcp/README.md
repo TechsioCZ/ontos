@@ -9,7 +9,7 @@ Stačí vložit URL serveru. Žádný token ani hlavičku `Authorization` nezad�
 - Claude Code: `claude mcp add --transport http ontos http://localhost:3090/mcp`, pak v relaci `/mcp` › Authenticate
 - VS Code, Cursor: přidejte server podle URL (typ HTTP, bez hlaviček)
 
-Odpojení: Můj profil › Připojené aplikace › Odpojit. Přístup skončí do 30 sekund.
+Odpojení: Můj profil › Připojené aplikace › Odpojit. Přístup skončí hned při dalším požadavku.
 
 ## Nástroje
 

@@ -168,7 +168,7 @@ export const ConnectionsAdminPanel = () => {
       )}
       <p className="text-fg-secondary">
         Všechna připojení ChatGPT, Claude a dalších aplikací ve firmě {company.legalName.replace(/\.$/u, '')}. Odpojená
-        aplikace ztratí přístup do 30 sekund.{' '}
+        aplikace ztratí přístup hned při dalším požadavku.{' '}
         <a className="font-medium text-fg-primary underline" href="/cs/sprava/aktivita-agentu">
           Zobrazit aktivitu agentů
         </a>
@@ -340,7 +340,7 @@ export const ConnectionsAdminPanel = () => {
         }
         closeLabel="Zavřít dialog"
         customTrigger
-        description="Aplikace ztratí přístup do 30 sekund. Uveďte důvod: zapíše se do auditu a ukáže se u připojení ve filtru Odpojené."
+        description="Aplikace ztratí přístup hned při dalším požadavku. Uveďte důvod: zapíše se do auditu a ukáže se u připojení ve filtru Odpojené."
         onOpenChange={({ open }) => {
           if (!open) {
             closeRevoke();

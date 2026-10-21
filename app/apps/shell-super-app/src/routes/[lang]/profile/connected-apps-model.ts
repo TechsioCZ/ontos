@@ -169,7 +169,7 @@ const policyCeiling = (c: ConnectionSummary): AgentWritePolicy =>
 
 /** Panel description: why nothing above the approved access can be chosen. */
 export const widenHint =
-  'Přístup můžete jen zúžit. Pro větší přístup aplikaci odpojte a připojte znovu. Změna platí do 30 sekund bez nového přihlášení.';
+  'Přístup můžete jen zúžit. Pro větší přístup aplikaci odpojte a připojte znovu. Změna platí hned od dalšího požadavku, bez nového přihlášení.';
 
 /** Why an option is greyed out; null when only the approved grant limits it (the panel says so once). */
 const policyDisabledReason = (c: ConnectionSummary, value: AgentWritePolicy): string | null => {
