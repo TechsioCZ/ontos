@@ -4,6 +4,7 @@ import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 
 import { SignInRedirect } from '../../sign-in-redirect.tsx';
+import { ConnectedAppsSection } from './connected-apps-section.tsx';
 import { ShellContentLayout } from '../../shell-content-layout.tsx';
 import { useShellControls } from '../../use-shell-controls.ts';
 
@@ -35,10 +36,11 @@ const ProfilePage = () => {
   return (
     <ShellContentLayout controls={controls} shell={model.shell} title={t('shell.profile.title')}>
       <div className="grid w-full min-w-0 gap-300">
-        <section className="grid max-w-3xl gap-100 rounded-lg border border-border-primary bg-base p-300">
+        <section className="grid max-w-5xl gap-100 rounded-lg border border-border-primary bg-base p-300">
           <h2 className="font-semibold text-lg">{t('shell.profile.identity')}</h2>
           <p className="text-sm">{model.shell.identity.displayName}</p>
         </section>
+        <ConnectedAppsSection />
       </div>
     </ShellContentLayout>
   );
