@@ -432,6 +432,7 @@ const RecordsPageContent = () => {
     return t(`${key}.outOfService`);
   };
   const handleCancelEditor = editor.cancel;
+  const [showClosed, setShowClosed] = useState(false);
   return (
     <>
       <UltramodernRouteHead />
@@ -469,6 +470,7 @@ const RecordsPageContent = () => {
             {editor.draft !== undefined && (
               <form
                 className={`${detailCardClass} sp-property-editor`}
+                noValidate
                 onSubmit={(event) => {
                   event.preventDefault();
                   editor.save();
@@ -486,6 +488,9 @@ const RecordsPageContent = () => {
                     onChange={(event) => editor.change(field, event.target.value)}
                     required={field !== 'note'}
                     value={editor.draft?.[field] ?? ''}
+                    {...(editor.errors[field] === undefined
+                      ? {}
+                      : { helpText: editor.errors[field], validateStatus: 'error' as const })}
                   />
                 ))}
                 {editor.draft.unitFor === undefined && (
@@ -514,6 +519,10 @@ const RecordsPageContent = () => {
                 </div>
               </form>
             )}
+            <label className={secondaryTextClass}>
+              <input checked={showClosed} onChange={(event) => setShowClosed(event.target.checked)} type="checkbox" />{' '}
+              Zobrazit i neaktivní a vyřazené nemovitosti a jednotky
+            </label>
             {model.tables.flatMap((group) =>
               (group.kind !== 'properties' && model.property === undefined) ||
               (group.kind === 'assets' && group.rows.length === 0)
@@ -530,46 +539,57 @@ const RecordsPageContent = () => {
                           </Table.Row>
                         </Table.Header>
                         <Table.Body>
-                          {group.rows.map((item) => (
-                            <Table.Row key={item.id}>
-                              <Table.Cell>{item.code}</Table.Cell>
-                              <Table.Cell>{item.name}</Table.Cell>
-                              <Table.Cell>
-                                <span className="siamparkproperty:inline-flex siamparkproperty:flex-wrap siamparkproperty:items-center siamparkproperty:gap-2">
-                                  <Badge size="sm" variant={item.state === 'ACTIVE' ? 'success' : 'outline'}>
-                                    {t(`${key}.states.${item.state}`)}
-                                  </Badge>
-                                  {group.kind === 'units' && (
-                                    <span className={secondaryTextClass}>{availabilityLabel(item.id, item.state)}</span>
-                                  )}
-                                </span>
-                              </Table.Cell>
-                              <Table.Cell>
-                                <div className="sp-property-row-actions">
-                                  <Button
-                                    disabled={model.pending || editor.busy}
-                                    onClick={() => group.select(item.id)}
-                                    size="sm"
-                                    theme="outlined"
-                                    variant="secondary"
-                                  >
-                                    {t(`${key}.detail`)}
-                                  </Button>
-                                  {item.property !== null && (
+                          {group.rows
+                            .filter(
+                              (item) =>
+                                showClosed ||
+                                group.kind === 'assets' ||
+                                ['ACTIVE', 'PLANNED', 'OUT_OF_SERVICE'].includes(item.state) ||
+                                item.id === model.property?.propertyRef.resourceId ||
+                                item.id === unit?.unitRef.resourceId,
+                            )
+                            .map((item) => (
+                              <Table.Row key={item.id}>
+                                <Table.Cell>{item.code}</Table.Cell>
+                                <Table.Cell>{item.name}</Table.Cell>
+                                <Table.Cell>
+                                  <span className="siamparkproperty:inline-flex siamparkproperty:flex-wrap siamparkproperty:items-center siamparkproperty:gap-2">
+                                    <Badge size="sm" variant={item.state === 'ACTIVE' ? 'success' : 'outline'}>
+                                      {t(`${key}.states.${item.state}`)}
+                                    </Badge>
+                                    {group.kind === 'units' && (
+                                      <span className={secondaryTextClass}>
+                                        {availabilityLabel(item.id, item.state)}
+                                      </span>
+                                    )}
+                                  </span>
+                                </Table.Cell>
+                                <Table.Cell>
+                                  <div className="sp-property-row-actions">
                                     <Button
-                                      disabled={editor.busy}
-                                      onClick={() => editor.begin(item.property)}
+                                      disabled={model.pending || editor.busy}
+                                      onClick={() => group.select(item.id)}
                                       size="sm"
                                       theme="outlined"
                                       variant="secondary"
                                     >
-                                      {t(`${key}.editor.edit`)}
+                                      {t(`${key}.detail`)}
                                     </Button>
-                                  )}
-                                </div>
-                              </Table.Cell>
-                            </Table.Row>
-                          ))}
+                                    {item.property !== null && (
+                                      <Button
+                                        disabled={editor.busy}
+                                        onClick={() => editor.begin(item.property)}
+                                        size="sm"
+                                        theme="outlined"
+                                        variant="secondary"
+                                      >
+                                        {t(`${key}.editor.edit`)}
+                                      </Button>
+                                    )}
+                                  </div>
+                                </Table.Cell>
+                              </Table.Row>
+                            ))}
                         </Table.Body>
                       </Table>
                     </div>,
@@ -659,6 +679,53 @@ const RecordsPageContent = () => {
                       {availabilityLabel(unit.unitRef.resourceId, unit.lifecycleState)}
                     </p>
                     {unit.note !== null && <p className={secondaryTextClass}>{unit.note}</p>}
+                    {model.property?.lifecycleState !== 'ACTIVE' && unit.lifecycleState === 'ACTIVE' && (
+                      <p className={secondaryTextClass}>
+                        Budova není aktivní, jednotku proto nelze pronajmout ani rezervovat.
+                      </p>
+                    )}
+                    <div className="siamparkproperty:flex siamparkproperty:flex-wrap siamparkproperty:gap-2">
+                      {unit.lifecycleState === 'ACTIVE' && (
+                        <Button
+                          disabled={editor.busy}
+                          onClick={() => editor.changeUnitLifecycle(unit, 'OUT_OF_SERVICE')}
+                          size="sm"
+                          theme="outlined"
+                          variant="secondary"
+                        >
+                          Dočasně mimo provoz
+                        </Button>
+                      )}
+                      {unit.lifecycleState === 'OUT_OF_SERVICE' && model.property?.lifecycleState !== 'DISPOSED' && (
+                        <Button
+                          disabled={editor.busy}
+                          onClick={() => editor.changeUnitLifecycle(unit, 'ACTIVE')}
+                          size="sm"
+                          theme="outlined"
+                          variant="secondary"
+                        >
+                          Vrátit do provozu
+                        </Button>
+                      )}
+                      {unit.lifecycleState !== 'RETIRED' && (
+                        <Button
+                          disabled={editor.busy}
+                          onClick={() => {
+                            if (
+                              globalThis.confirm(
+                                `Vyřadit jednotku ${unit.code}? Jednotka se přestane nabízet k pronájmu, historie nájmů a smluv zůstane zachována.`,
+                              )
+                            )
+                              editor.changeUnitLifecycle(unit, 'RETIRED');
+                          }}
+                          size="sm"
+                          theme="outlined"
+                          variant="danger"
+                        >
+                          Vyřadit jednotku
+                        </Button>
+                      )}
+                    </div>
                     <UnitStory
                       agreements={model.agreements}
                       language={model.language}
@@ -676,11 +743,13 @@ const RecordsPageContent = () => {
                   <section aria-label={t(`${key}.financialSummary`)} className={relatedCardClass}>
                     <h3 className={detailHeadingClass}>{t(`${key}.financialSummary`)}</h3>
                     <p className={secondaryTextClass}>
-                      {t(`${key}.financialValues`, {
-                        cost: model.money(model.finance.indicators.costMinor),
-                        outstanding: model.money(model.finance.indicators.grossOutstandingMinor),
-                        revenue: model.money(model.finance.indicators.revenueMinor),
-                      })}
+                      {model.finance.state.invoices.length === 0
+                        ? 'Bez dat – k této nemovitosti zatím nejsou evidované žádné faktury ani platby.'
+                        : t(`${key}.financialValues`, {
+                            cost: model.money(model.finance.indicators.costMinor),
+                            outstanding: model.money(model.finance.indicators.grossOutstandingMinor),
+                            revenue: model.money(model.finance.indicators.revenueMinor),
+                          })}
                     </p>
                     <ul className="siamparkproperty:space-y-2 siamparkproperty:text-sm">
                       {model.finance.state.invoices.map((invoice) => (

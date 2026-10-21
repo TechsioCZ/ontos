@@ -23,6 +23,23 @@ const missing = () => new PropertyNotFound({ code: 'property_not_found', reason:
 
 type PropertyTransitionContext = Readonly<{ legalEntityId: string; now: string; resourceId: string; tenantId: string }>;
 
+/** S02: a disposed building takes its units out of the register; they keep their history as RETIRED. */
+const retireUnitsOfDisposed = (state: PropertyState): PropertyState => {
+  const disposed = new Set(
+    state.properties
+      .filter((record) => record.lifecycleState === 'DISPOSED')
+      .map((record) => record.propertyRef.resourceId),
+  );
+  return {
+    ...state,
+    units: state.units.map((unit) =>
+      disposed.has(unit.propertyRef.resourceId) && unit.lifecycleState !== 'RETIRED'
+        ? { ...unit, lifecycleState: 'RETIRED' as const }
+        : unit,
+    ),
+  };
+};
+
 export const applyPropertyCommand = Effect.fn('Property.applyCommand')(function* applyPropertyCommandEffect(
   state: PropertyState,
   command: PropertyCommand,
@@ -79,9 +96,16 @@ export const applyPropertyCommand = Effect.fn('Property.applyCommand')(function*
         ? Effect.fail(ineligible('Asset Unit belongs to another Property'))
         : Effect.void,
     ),
+    Match.tag('ChangeUnitLifecycle', (input) => {
+      const unit = state.units.find((record) => record.unitRef.resourceId === input.unitRef.resourceId);
+      const parent = state.properties.find((record) => record.propertyRef.resourceId === unit?.propertyRef.resourceId);
+      return parent?.lifecycleState === 'DISPOSED' && input.lifecycleState !== 'RETIRED'
+        ? Effect.fail(ineligible('Units of a disposed Property stay retired'))
+        : Effect.void;
+    }),
     Match.orElse(() => Effect.void),
   );
-  return yield* Match.value(command).pipe(
+  const transition = yield* Match.value(command).pipe(
     Match.tags({
       ChangeAssetLifecycle: (input) =>
         Effect.succeed({
@@ -226,6 +250,7 @@ export const applyPropertyCommand = Effect.fn('Property.applyCommand')(function*
     }),
     Match.exhaustive,
   );
+  return { ...transition, state: retireUnitsOfDisposed(transition.state) };
 });
 
 export const persistenceService = (transaction: ScopedTransaction, scope: OperationalScope) => {

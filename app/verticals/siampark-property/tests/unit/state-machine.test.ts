@@ -111,3 +111,39 @@ it.effect('persists property operational metadata on creation and updates withou
     });
   }),
 );
+
+describe('Units of disposed properties', () => {
+  it.effect('S02: disposing a Property retires its Units and keeps them from being reactivated', () =>
+    Effect.gen(function* disposeScenario() {
+      const first = yield* applyPropertyCommand(empty, create, context);
+      const { propertyRef } = yield* Effect.fromNullishOr(first.state.properties[0]);
+      const unitContext = { ...context, resourceId: '76000000-0000-4000-8000-000000000020' };
+      const unit = yield* applyPropertyCommand(
+        first.state,
+        { _tag: 'CreateUnit', capacity: null, code: 'SD01', name: 'Servisní místnost', propertyRef },
+        unitContext,
+      );
+      const disposed = yield* applyPropertyCommand(
+        unit.state,
+        { _tag: 'ChangePropertyLifecycle', lifecycleState: 'DISPOSED', propertyRef },
+        context,
+      );
+      expect(disposed.state.units[0]?.lifecycleState).toBe('RETIRED');
+      const unitRef = yield* Effect.fromNullishOr(disposed.state.units[0]?.unitRef);
+      const reactivate = yield* Effect.exit(
+        applyPropertyCommand(
+          disposed.state,
+          { _tag: 'ChangeUnitLifecycle', lifecycleState: 'ACTIVE', unitRef },
+          context,
+        ),
+      );
+      expect(Exit.isFailure(reactivate)).toBe(true);
+      const outOfService = yield* applyPropertyCommand(
+        unit.state,
+        { _tag: 'ChangeUnitLifecycle', lifecycleState: 'RETIRED', unitRef },
+        context,
+      );
+      expect(outOfService.state.units[0]?.lifecycleState).toBe('RETIRED');
+    }),
+  );
+});

@@ -15,6 +15,27 @@ import csResource from '../../../../../locales/cs/siampark-agreements.json';
 import enResource from '../../../../../locales/en/siampark-agreements.json';
 import '../../../index.css';
 
+/**
+ * A signed document is either a reachable file (shown as a link) or a paper original recorded only by its
+ * reference; internal reference schemes such as `demo://` are never shown raw.
+ */
+const SignedDocumentReference = ({
+  fallback,
+  reference,
+}: {
+  readonly fallback: string;
+  readonly reference: string | null;
+}) => {
+  if (reference === null) return <span>{fallback}</span>;
+  if (/^https?:\/\//u.test(reference))
+    return (
+      <a className="siamparkagreements:underline" href={reference} rel="noreferrer" target="_blank">
+        Otevřít podepsaný dokument
+      </a>
+    );
+  return <span>Podepsaný originál evidovaný ve spisu smlouvy (elektronická kopie není nahraná)</span>;
+};
+
 const LABEL_DETAIL = 'siampark-agreements.demo.detail';
 const LABEL_OTHER = 'siampark-agreements.demo.kinds.OTHER';
 const LABEL_CREATE = 'siampark-agreements.demo.create';
@@ -135,8 +156,12 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
                 <Badge size="sm" variant={record.lifecycleState === 'FINAL' ? 'success' : 'outline'}>
                   {t(`siampark-agreements.demo.documentLabels.${record.lifecycleState}`)}
                 </Badge>{' '}
-                {record.signedDocumentReference ?? t('siampark-agreements.demo.metadataOnly')} {record.signedBy ?? ''}{' '}
-                {record.signedOn ?? ''}
+                <SignedDocumentReference
+                  reference={record.signedDocumentReference}
+                  fallback={t('siampark-agreements.demo.metadataOnly')}
+                />
+                {record.signedBy === undefined ? '' : ` · podepsal(a) ${record.signedBy}`}
+                {record.signedOn === undefined ? '' : ` · ${formatDate(record.signedOn)}`}
                 {record.lifecycleState !== 'ARCHIVED' && (
                   <Button
                     disabled={busy}

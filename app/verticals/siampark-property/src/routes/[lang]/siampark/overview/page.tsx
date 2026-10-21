@@ -197,7 +197,15 @@ const OverviewPageContent = () => {
   const agreements = sources === undefined ? undefined : readyData(sources.agreements);
   const finance = sources === undefined ? undefined : readyData(sources.finance);
   const work = sources === undefined ? undefined : readyData(sources.work);
-  const units = property?.units.filter((unit) => unit.lifecycleState === 'ACTIVE') ?? [];
+  // Only buildings in operation make up the portfolio; planned and archived ones stay in the register.
+  const activeBuildings = property?.properties.filter((building) => building.lifecycleState === 'ACTIVE') ?? [];
+  const closedBuildings = (property?.properties.length ?? 0) - activeBuildings.length;
+  const units =
+    property?.units.filter(
+      (unit) =>
+        unit.lifecycleState === 'ACTIVE' &&
+        activeBuildings.some((building) => building.propertyRef.resourceId === unit.propertyRef.resourceId),
+    ) ?? [];
   const occupied = units.filter((unit) => unitAvailability(unit, occupancy, today) === 'OCCUPIED');
   const available = units.filter((unit) => unitAvailability(unit, occupancy, today) === 'AVAILABLE');
   const activeLeases = occupancy?.occupancies.filter(
@@ -382,10 +390,10 @@ const OverviewPageContent = () => {
                   <span className="sp-muted">
                     {property === undefined
                       ? 'Data nejsou dostupná'
-                      : `${property.properties.length} budovy · ${units.length} aktivních jednotek`}
+                      : `${activeBuildings.length} ${activeBuildings.length === 1 ? 'budova' : activeBuildings.length < 5 ? 'budovy' : 'budov'} v provozu · ${units.length} aktivních jednotek`}
                   </span>
                 </div>
-                {(property?.properties ?? []).map((building) => (
+                {activeBuildings.map((building) => (
                   <article className="sp-property" key={building.propertyRef.resourceId}>
                     <div className="sp-heading">
                       <div className="sp-stack">
@@ -400,7 +408,11 @@ const OverviewPageContent = () => {
                     </div>
                     <div className="sp-units">
                       {property?.units
-                        .filter((unit) => unit.propertyRef.resourceId === building.propertyRef.resourceId)
+                        .filter(
+                          (unit) =>
+                            unit.propertyRef.resourceId === building.propertyRef.resourceId &&
+                            unit.lifecycleState !== 'RETIRED',
+                        )
                         .map((unit) => {
                           const state = unitAvailability(unit, occupancy, today);
                           const next = occupancy?.occupancies
@@ -432,6 +444,12 @@ const OverviewPageContent = () => {
                 ))}
                 {property !== undefined && property.properties.length === 0 && (
                   <p className="sp-muted">Zatím nejsou evidovány žádné nemovitosti.</p>
+                )}
+                {closedBuildings > 0 && (
+                  <p className="sp-muted">
+                    Plánované a archivované nemovitosti ({closedBuildings}) najdete v{' '}
+                    <a href={href('properties')}>evidenci nemovitostí →</a>
+                  </p>
                 )}
               </section>
               <aside className="sp-panel">
