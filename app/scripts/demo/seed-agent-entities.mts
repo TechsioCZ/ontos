@@ -157,12 +157,14 @@ class Session {
   }
 }
 
-const expectOk = <T>(result: Result, what: string): T => {
+function expectOk<T>(result: Result, what: string): T {
   if (result.status !== 200) {
     throw new Error(`${what}: HTTP ${result.status} ${result.text.slice(0, 300)}`);
   }
+  // Trusted local shell responses; the shapes are declared above, not validated.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion
   return result.json as T;
-};
+}
 
 const idempotencyHeaders = () => ({ 'idempotency-key': `seed-agent-entity-${randomUUID()}` });
 
