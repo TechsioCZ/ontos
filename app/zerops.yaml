@@ -836,6 +836,50 @@ zerops:
           path: '/'
       start: sh -c 'cd app/.zerops/runtime/shell-super-app && PATH="$PWD/node/bin:$PATH" exec npm run serve'
 
+  # OntOS MCP OAuth resource server (v2/research/ONTOS-MCP-AUTH-DESIGN.md §5, §8.2): stateless Streamable HTTP on
+  # mcp.<domain>, verifies OAuth JWTs locally and talks to shellsuperapp over the private network. Configuration only.
+  # Project variables required before the first deploy: ONTOS_MCP_RESOURCE_URL (https://mcp.<domain>/mcp),
+  # ONTOS_OAUTH_ISSUER (https://app.<domain>/shell-super-app-api/oauth), ONTOS_SHELL_PUBLIC_URL (https://app.<domain>)
+  # and the secret ONTOS_MCP_CONNECTOR_SECRET (same value as shellsuperapp). No sticky sessions needed.
+  - setup: 'ontosmcp'
+    build:
+      base: 'alpine@3.23'
+      prepareCommands:
+        - sudo apk add --no-cache curl libstdc++
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+      buildCommands:
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
+        - mkdir -p 'app/.zerops/runtime/ontosmcp-node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/ontosmcp-node/'
+      deployFiles:
+        - 'app'
+    deploy:
+      temporaryShutdown: false
+      readinessCheck:
+        httpGet:
+          port: 3090
+          path: '/healthz'
+        failureTimeout: 3m
+        retryPeriod: 10s
+    run:
+      base: 'nodejs@24'
+      ports:
+        - port: 3090
+          protocol: tcp
+          httpSupport: true
+      envVariables:
+        NODE_ENV: production
+        ONTOS_MCP_HTTP_HOST: '0.0.0.0'
+        ONTOS_MCP_HTTP_PORT: '3090'
+        ONTOS_SHELL_INTERNAL_URL: 'http://shellsuperapp:3020'
+        ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL}
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+        ULTRAMODERN_ZEROPS_SERVICE: 'ontosmcp'
+      healthCheck:
+        httpGet:
+          port: 3090
+          path: '/healthz'
+      start: sh -c 'cd app && PATH="$PWD/.zerops/runtime/ontosmcp-node/bin:$PATH" exec node --experimental-strip-types tools/ontos-agent-mcp/src/http-main.ts'
+
   # <generated-outbox-worker-deployments>
   - setup: 'party-registry-worker'
     build:

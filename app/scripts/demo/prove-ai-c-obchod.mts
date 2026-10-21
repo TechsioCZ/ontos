@@ -193,8 +193,7 @@ const mcp = await startMcp();
 const runId = `proof-c-obchod-${randomUUID()}`;
 try {
   const tools = await mcp.tools();
-  const legacyTools = tools.filter((name) => !name.startsWith('ontos_') && !name.includes('__'));
-  assert.deepEqual(legacyTools, [
+  assert.deepEqual(tools, [
     'list_ai_proposals',
     'list_customers',
     'list_employees',
@@ -204,19 +203,6 @@ try {
     'propose_sales_changes',
     'whoami',
   ]);
-  for (const name of ['ontos_describe', 'ontos_execute', 'ontos_list_capabilities', 'ontos_read']) {
-    assert.ok(tools.includes(name), `chybí ${name}`);
-  }
-  const typedWrites = tools.filter((name) => name.includes('__') && !name.includes('__read_'));
-  assert.ok(
-    typedWrites.length > 0 &&
-      typedWrites.every((name) => name.startsWith('sales_pipeline__') || name.startsWith('merchandise__')),
-    typedWrites.join(', '),
-  );
-  assert.ok(!typedWrites.some((name) => /ai_decide_changes|ai_revert_batch|reset_demo_data/u.test(name)), typedWrites.join(', '));
-  const capabilities = await mcp.call('ontos_list_capabilities');
-  assert.equal((capabilities.value as { writePolicy?: string }).writePolicy, 'approval', JSON.stringify(capabilities.value));
-  pass('Zásada zápisu C: jen přes schválení');
   pass('MCP C nabízí čtení a návrhy; žádný přímý zápis, schválení ani vrácení');
   const identity = await mcp.call('whoami');
   assert.equal(identity.isError, false, JSON.stringify(identity.value));
