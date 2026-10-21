@@ -146,11 +146,27 @@ describe("OntOS source-of-truth boundary", () => {
     });
   });
   it("never backfills an absent owner price or stock from JSON", () => {
-    for (const field of ["grossPriceMinor", "priceMinor", "stockOnHand", "minimumQuantity"]) {
+    for (const field of ["grossPriceMinor", "priceMinor", "stockOnHand"]) {
       const p = live();
       delete (p.variantRecords[0] as Record<string, unknown>)[field];
       expect(project({ products: [p] }).catalog.products).toEqual([]);
     }
+  });
+  it("sells products created in OntOS without a minimum quantity from 1 unit, like the owner", () => {
+    // Shape of a product made via "Nový produkt": no variants, no minimum/package quantity.
+    const created = {
+      id: "fa73896a-c9d6-47f4-b092-e8f0955cd4f8",
+      name: "Ověřovací produkt",
+      slug: "overovaci-produkt",
+      active: true,
+      published: true,
+      currentPriceMinor: 1000,
+      grossPriceMinor: 1210,
+      stockOnHand: 0,
+      variantRecords: [],
+    };
+    const [product] = project({ products: [created] }).catalog.products;
+    expect(product).toMatchObject({ priceMinor: 1210, minimumQuantity: 1, stockCount: 0 });
   });
   it("keeps tier net/gross values and filters inactive variants", () => {
     const p = live();

@@ -88,7 +88,8 @@ export function project(body: Raw): CatalogSnapshot {
       const gross = number(v.grossPriceMinor);
       const net = number(v.priceMinor);
       const stock = number(v.stockOnHand);
-      const minimum = number(v.minimumQuantity) ?? number(p.minimumQuantity);
+      // Same default as the owner order rules (merchandise order-quantity: minimumQuantity ?? 1).
+      const minimum = number(v.minimumQuantity) ?? number(p.minimumQuantity) ?? 1;
       if (
         gross === undefined ||
         net === undefined ||
@@ -136,7 +137,8 @@ export function project(body: Raw): CatalogSnapshot {
     const gross = number(p.grossPriceMinor);
     const net = number(p.currentPriceMinor);
     const stock = number(p.stockOnHand);
-    const minimum = number(p.minimumQuantity);
+    // Products created in OntOS (not imported) carry no minimumQuantity; the owner then sells from 1 unit.
+    const minimum = number(p.minimumQuantity) ?? 1;
     if (
       !variants.length &&
       (gross === undefined || net === undefined || stock === undefined || minimum === undefined)
