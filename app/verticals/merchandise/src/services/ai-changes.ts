@@ -139,17 +139,27 @@ const adapterFor = (
           try: () => decodeOrder(snapshot.before),
         });
         const current = state.orders.find((order) => order.id === snapshot.id);
-        const entry: OrderHistoryEntry = {
-          actor,
-          after: orderStatusLabels[before.status],
-          at: now,
-          before: current === undefined ? '' : orderStatusLabels[current.status],
-          kind: current !== undefined && current.status !== before.status ? 'STATUS' : 'NOTE',
-          reason: `Vráceno: ${note}`.slice(0, 500),
-        };
+        const reason = `Vrácení změny AI: ${note}`.slice(0, 500);
+        const aspects: readonly [OrderHistoryEntry['kind'], (order: Order) => string][] = [
+          ['STATUS', (order) => orderStatusLabels[order.status]],
+          ['LINES', (order) => describeLines(order)],
+          ['SHIPPING', (order) => describeShipping(order.shipping)],
+          ['ADDRESS', (order) => describeAddress(order.deliveryAddress)],
+          ['CONTACT', (order) => describeContact(order.contact)],
+          ['NOTE', (order) => order.note ?? 'bez poznámky'],
+        ];
+        // One audited entry per aspect the revert changes back, exactly like a manual edit.
+        const entries: OrderHistoryEntry[] =
+          current === undefined
+            ? []
+            : aspects.flatMap(([kind, text]) =>
+                text(current) === text(before)
+                  ? []
+                  : [{ actor, after: text(before), at: now, before: text(current), kind, reason }],
+              );
         const restored: Order = {
           ...before,
-          history: [...(current?.history ?? before.history ?? []), entry],
+          history: [...(current?.history ?? before.history ?? []), ...entries],
           updatedAt: now,
         };
         return { ...state, orders: state.orders.map((order) => (order.id === restored.id ? restored : order)) };
