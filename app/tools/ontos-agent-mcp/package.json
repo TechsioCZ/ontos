@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node --experimental-strip-types src/server.ts",
+    "start:http": "node --experimental-strip-types src/http-main.ts",
     "typecheck": "tsc --noEmit",
     "test": "pnpm test:unit",
     "test:unit": "rstest run"
