@@ -102,7 +102,7 @@ export const productColumns = (
     accessorKey: 'stockValueMinor',
     cell: (info) => <span className="tabular-nums">{formatKc(info.getValue<number>())}</span>,
     header: label('columns.stockValue'),
-    meta: { align: 'end', type: 'number', width: 110 },
+    meta: { align: 'end', type: 'number', width: 140 },
   },
   {
     cell: (info) => <TagsCell tags={tagsOf(info.row.original.id)} />,

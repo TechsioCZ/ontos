@@ -57,10 +57,17 @@
 }
 .sp-overview .sp-stat,
 .sp-overview .sp-panel {
-  background: var(--color-surface);
   border-radius: 12px;
   padding: 20px;
   min-width: 0;
+}
+/* KPI tiles are tinted; panels are the one outlined surface, the same as SectionCard in every other module. */
+.sp-overview .sp-stat {
+  background: var(--color-surface);
+}
+.sp-overview .sp-panel {
+  background: var(--color-base);
+  border: 1px solid color-mix(in oklab, var(--color-border-primary) 60%, transparent);
 }
 .sp-overview .sp-stat {
   display: grid;
@@ -75,9 +82,11 @@
   font-weight: 650;
   font-variant-numeric: tabular-nums;
 }
-.sp-overview .sp-stat:hover,
+.sp-overview .sp-stat:hover {
+  background: color-mix(in oklab, var(--color-surface) 88%, var(--color-fg-secondary));
+}
 .sp-overview .sp-unit:hover {
-  background: var(--color-base);
+  background: var(--color-surface);
 }
 .sp-overview .sp-columns {
   display: grid;

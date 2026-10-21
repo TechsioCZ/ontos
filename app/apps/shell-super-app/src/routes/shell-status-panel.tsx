@@ -3,22 +3,28 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 
-/** Safe, distinct recovery states. Never display a backend error body or a record identifier. */
+/**
+ * Page title of a recovery state, shown once as the page heading by the shell frame. A record page says "Záznam nebyl
+ * nalezen" instead of "Stránka nebyla nalezena".
+ */
+export const shellStatusTitleKey = (status: string, missingTitleKey: 'missing' | 'recordMissing' = 'missing') =>
+  `shell.recovery.${status === 'not_found' ? missingTitleKey : status === 'forbidden' ? 'forbidden' : 'unavailable'}`;
+
+/**
+ * Safe, distinct recovery states under the page heading (see `shellStatusTitleKey`). Never display a backend error body
+ * or a record identifier.
+ */
 export const ShellStatusPanel = ({
   messageKey,
-  missingTitleKey = 'missing',
   status,
 }: {
-  /** Explanation under the title; defaults to the module wording for `status`. */
+  /** Explanation of the state; defaults to the module wording for `status`. */
   readonly messageKey?: string;
-  /** Title of the "not found" state; a record page says "Záznam nebyl nalezen" instead of "Stránka…". */
-  readonly missingTitleKey?: 'missing' | 'recordMissing';
   readonly status: string;
 }) => {
   const { t } = useModernI18n();
   const missing = status === 'not_found';
   const forbidden = status === 'forbidden';
-  const titleKey = missing ? missingTitleKey : forbidden ? 'forbidden' : 'unavailable';
   return (
     <section
       aria-live="polite"
@@ -36,8 +42,7 @@ export const ShellStatusPanel = ({
           size="md"
         />
       </span>
-      <h1 className="font-semibold text-xl">{t(`shell.recovery.${titleKey}`)}</h1>
-      <p className="text-fg-secondary text-sm">{t(messageKey ?? `shell.moduleTarget.${status}`)}</p>
+      <p className="text-sm">{t(messageKey ?? `shell.moduleTarget.${status}`)}</p>
       <div className="flex flex-wrap gap-150">
         <LinkButton as={LocalizedLink} icon="icon-[mdi--home-outline]" size="sm" theme="solid" to="/" variant="primary">
           {t('shell.recovery.home')}

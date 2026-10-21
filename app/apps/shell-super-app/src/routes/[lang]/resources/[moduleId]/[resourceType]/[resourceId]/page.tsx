@@ -10,7 +10,7 @@ import { ShellReloadRequiredProblemSchema } from '../../../../../../../shared/ap
 import { attachResourceMedia } from '../../../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime.ts';
 import { ShellContentLayout } from '../../../../../shell-content-layout.tsx';
-import { ShellStatusPanel } from '../../../../../shell-status-panel.tsx';
+import { ShellStatusPanel, shellStatusTitleKey } from '../../../../../shell-status-panel.tsx';
 import { SignInRedirect } from '../../../../../sign-in-redirect.tsx';
 import { useShellControls } from '../../../../../use-shell-controls.ts';
 import type { ResourcePageModel } from './resource-page-model.ts';
@@ -156,11 +156,7 @@ const ResourcePage = () => {
   const content =
     model.state !== 'ready' ? (
       // Distinct states: forbidden (lock), not found (search), temporarily unavailable (retry).
-      <ShellStatusPanel
-        messageKey={`shell.resource.${model.state}`}
-        missingTitleKey="recordMissing"
-        status={model.state}
-      />
+      <ShellStatusPanel messageKey={`shell.resource.${model.state}`} status={model.state} />
     ) : (
       <ResourceDetails
         mediaState={mediaState}
@@ -173,7 +169,9 @@ const ResourcePage = () => {
       controls={controls}
       shell={model.shell}
       {...(model.state === 'ready' ? { currentModuleId: model.resource.ref.moduleId } : {})}
-      title={model.state === 'ready' ? model.resource.detail.title : t('shell.resource.title')}
+      title={
+        model.state === 'ready' ? model.resource.detail.title : t(shellStatusTitleKey(model.state, 'recordMissing'))
+      }
     >
       {content}
     </ShellContentLayout>

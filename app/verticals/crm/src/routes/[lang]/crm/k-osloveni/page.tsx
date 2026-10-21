@@ -1,7 +1,16 @@
 // AREA: visits (C06) — owned by the crm-visits lane. "K oslovení": the salesperson's manual contact plan
 // (Můj plán), the lead's team overview (Tým) and completed items (Vyřízené). Only manually planned contacts appear
 // here; automatic recommendations (C07) are parked until their rules are approved.
-import { EmptyState, PageHeader, SectionCard, StatCard, StatRow, formatNumber } from '@app/admin-ui';
+import {
+  EmptyState,
+  PageHeader,
+  SectionCard,
+  StatCard,
+  StatRow,
+  dividedListClassName,
+  formatNumber,
+  surfaceTileClassName,
+} from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -36,13 +45,13 @@ import { CompletePlanPanel, PlanContactPanel } from './plan-panels.tsx';
 const ALL = '__all__';
 
 type Bucket = 'overdue' | 'today' | 'tomorrow' | 'week' | 'later';
-const bucketMeta: Record<Bucket, { readonly label: string; readonly tone: 'danger' | 'warning' | 'info' | 'outline' }> =
+const bucketMeta: Record<Bucket, { readonly label: string; readonly tone: 'danger' | 'warning' | 'info' | 'plain' }> =
   {
-    later: { label: 'Později', tone: 'outline' },
+    later: { label: 'Později', tone: 'plain' },
     overdue: { label: 'Po termínu', tone: 'danger' },
     today: { label: 'Dnes', tone: 'warning' },
     tomorrow: { label: 'Zítra', tone: 'info' },
-    week: { label: 'Do 7 dní', tone: 'outline' },
+    week: { label: 'Do 7 dní', tone: 'plain' },
   };
 const bucketOrder: readonly Bucket[] = ['overdue', 'today', 'tomorrow', 'week', 'later'];
 
@@ -61,14 +70,12 @@ const bucketOf = (item: PlanItem, today: string): Bucket => {
 };
 
 const RecommendationsParked = () => (
-  <div className="flex items-start gap-200 rounded-lg border border-border-primary border-dashed bg-surface p-250">
+  <div className={`${surfaceTileClassName} flex items-start gap-200 p-250`}>
     <span aria-hidden="true" className="icon-[mdi--lightbulb-off-outline] mt-50 size-300 shrink-0 text-fg-secondary" />
     <div className="flex flex-col gap-50">
       <span className="flex flex-wrap items-center gap-100 font-semibold text-sm">
         Doporučení – připravujeme
-        <Badge size="sm" variant="outline">
-          Pravidla nebyla schválena
-        </Badge>
+        <span className="font-normal text-fg-secondary">· pravidla nebyla schválena</span>
       </span>
       <p className="max-w-prose text-fg-secondary text-sm">
         Automatický výběr klientů k oslovení (C07) zatím není zapnutý, protože obchodní pravidla opakovaných objednávek
@@ -96,13 +103,14 @@ const PlanRow = ({
   const { language } = useModernI18n();
   const today = localDay(records.now);
   const bucket = bucketOf(item, today);
+  const { tone } = bucketMeta[bucket];
   const last = lastVisitOf(records.state.visits.items, item.clientId);
   const source = records.state.visits.items.find((visit) => visit.id === item.sourceVisitId);
   return (
-    <li className="flex flex-wrap items-center gap-200 border-border-primary border-t px-250 py-200 first:border-t-0">
+    <li className="flex flex-wrap items-center gap-200 px-250 py-200">
       <div
-        className={`flex w-700 shrink-0 flex-col items-center whitespace-nowrap rounded-md border px-100 py-50 ${
-          bucket === 'overdue' ? 'border-danger text-danger' : 'border-border-primary'
+        className={`flex w-700 shrink-0 flex-col items-center whitespace-nowrap rounded-md bg-surface px-100 py-50 ${
+          bucket === 'overdue' ? 'text-danger' : ''
         }`}
       >
         <span className="font-semibold text-sm tabular-nums">{formatShortDay(item.dueDate)}</span>
@@ -116,13 +124,15 @@ const PlanRow = ({
           >
             {clientLabel(records, item.clientId)}
           </a>
-          <Badge size="sm" variant={bucketMeta[bucket].tone}>
-            {relativeDay(item.dueDate, today)}
-          </Badge>
-          {showSalesperson && (
-            <Badge size="sm" variant="outline">
-              {salespersonLabel(records, item.salespersonId)}
+          {tone === 'plain' ? (
+            <span className="text-fg-secondary text-xs">{relativeDay(item.dueDate, today)}</span>
+          ) : (
+            <Badge size="sm" variant={tone}>
+              {relativeDay(item.dueDate, today)}
             </Badge>
+          )}
+          {showSalesperson && (
+            <span className="text-fg-secondary text-xs">{`· ${salespersonLabel(records, item.salespersonId)}`}</span>
           )}
         </span>
         {item.note !== undefined && <span className="text-sm">{item.note}</span>}
@@ -175,42 +185,41 @@ const Agenda = ({
     );
   }
   return (
-    <div className="flex flex-col gap-250">
-      {bucketOrder.map((bucket) => {
-        const inBucket = sortPlanAsc(items.filter((item) => bucketOf(item, today) === bucket));
-        if (inBucket.length === 0) {
-          return null;
-        }
-        return (
-          <SectionCard
-            flush
-            key={bucket}
-            title={
-              <span className="flex items-center gap-100">
+    <SectionCard flush>
+      <div className={`flex flex-col ${dividedListClassName}`}>
+        {bucketOrder.map((bucket) => {
+          const inBucket = sortPlanAsc(items.filter((item) => bucketOf(item, today) === bucket));
+          if (inBucket.length === 0) {
+            return null;
+          }
+          return (
+            <section aria-label={bucketMeta[bucket].label} key={bucket}>
+              <h3
+                className={`flex items-baseline gap-100 px-250 pt-250 pb-50 font-semibold text-sm ${
+                  bucket === 'overdue' ? 'text-danger' : ''
+                }`}
+              >
                 {bucketMeta[bucket].label}
-                <Badge size="sm" variant={bucketMeta[bucket].tone}>
-                  {String(inBucket.length)}
-                </Badge>
-              </span>
-            }
-          >
-            <ul className="flex flex-col pb-50">
-              {inBucket.map((item) => (
-                <PlanRow
-                  canWrite={writable.has(item.clientId)}
-                  item={item}
-                  key={item.id}
-                  onComplete={onComplete}
-                  onReschedule={onReschedule}
-                  records={records}
-                  showSalesperson={showSalesperson}
-                />
-              ))}
-            </ul>
-          </SectionCard>
-        );
-      })}
-    </div>
+                <span className="font-normal text-fg-secondary tabular-nums">{String(inBucket.length)}</span>
+              </h3>
+              <ul className={`flex flex-col pb-50 ${dividedListClassName}`}>
+                {inBucket.map((item) => (
+                  <PlanRow
+                    canWrite={writable.has(item.clientId)}
+                    item={item}
+                    key={item.id}
+                    onComplete={onComplete}
+                    onReschedule={onReschedule}
+                    records={records}
+                    showSalesperson={showSalesperson}
+                  />
+                ))}
+              </ul>
+            </section>
+          );
+        })}
+      </div>
+    </SectionCard>
   );
 };
 
@@ -274,14 +283,14 @@ const DoneList = ({ items, records }: { readonly items: readonly PlanItem[]; rea
   }
   return (
     <SectionCard flush>
-      <ul className="flex flex-col">
+      <ul className={`flex flex-col ${dividedListClassName}`}>
         {items
           .toSorted((left, right) => (right.doneAt ?? '').localeCompare(left.doneAt ?? ''))
           .map((item) => {
             const visit = records.state.visits.items.find((entry) => entry.id === item.doneVisitId);
             return (
               <li
-                className="flex flex-wrap items-start gap-200 border-border-primary border-t px-250 py-200 first:border-t-0"
+                className="flex flex-wrap items-start gap-200 px-250 py-200"
                 key={item.id}
               >
                 <span aria-hidden="true" className="icon-[mdi--check-circle] mt-50 size-250 shrink-0 text-success" />
@@ -296,9 +305,7 @@ const DoneList = ({ items, records }: { readonly items: readonly PlanItem[]; rea
                     <Badge size="sm" variant="success">
                       Vyřízeno
                     </Badge>
-                    <Badge size="sm" variant="outline">
-                      {salespersonLabel(records, item.salespersonId)}
-                    </Badge>
+                    <span className="text-fg-secondary text-xs">{`· ${salespersonLabel(records, item.salespersonId)}`}</span>
                   </span>
                   {item.note !== undefined && <span className="text-sm">{item.note}</span>}
                   {item.doneNote !== undefined && <span className="text-sm">{`Výsledek: ${item.doneNote}`}</span>}

@@ -1,5 +1,5 @@
 // Tables of the sales report (crm-reports lane): grouped summary, order rows, status mapping, items by SKU.
-import { EmptyState, SectionCard, formatDate, formatNumber } from '@app/admin-ui';
+import { EmptyState, SectionCard, formatDate, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
@@ -126,7 +126,7 @@ export const SummaryTable = ({
         <>
           <fieldset
             aria-label="Seskupit podle"
-            className="inline-flex flex-wrap rounded-button-sm border border-border-primary p-50"
+            className="inline-flex flex-wrap rounded-button-sm bg-surface p-50"
           >
             {(Object.keys(groupingLabels) as GroupingKey[]).map((key) => (
               <Button
@@ -193,7 +193,7 @@ export const SummaryTable = ({
               {groups.map((group) => {
                 const clientFacts = grouping === 'client' ? clientSalesFacts(state, group.key) : undefined;
                 return (
-                  <tr className="border-border-primary border-b last:border-b-0" key={group.key}>
+                  <tr className="border-border-primary/60 border-b last:border-b-0" key={group.key}>
                     <th className="py-100 pr-200 text-left font-normal" scope="row">
                       {grouping === 'client' ? (
                         <a className={linkClass} href={clientCardHref(lang, group.key)}>
@@ -344,9 +344,7 @@ const orderColumns = (lang: string): ColumnDef<ReportOrderRow>[] => [
     accessorFn: (row) => row.order.rawStatus,
     cell: (info) => (
       <span className="flex flex-wrap items-center gap-100">
-        <Badge size="sm" variant="outline">
-          {orderStatusLabel(info.getValue<string>())}
-        </Badge>
+        <span>{orderStatusLabel(info.getValue<string>())}</span>
         {info.row.original.meaning === 'unmapped' &&
         reportStatusMeaning(info.row.original.order.rawStatus) !== 'unmapped' ? (
           <Badge size="sm" variant="outline">
@@ -452,9 +450,7 @@ export const StatusMappingCard = ({
       })`}
     >
       <div
-        className={`mb-200 flex flex-wrap items-center justify-between gap-150 rounded-lg p-150 text-sm ${
-          approved ? 'bg-surface-secondary' : 'border border-border-primary border-dashed'
-        }`}
+        className={`${surfaceTileClassName} mb-200 flex flex-wrap items-center justify-between gap-150 p-150 text-sm`}
       >
         <span>
           <strong>R04 – význam stavů:</strong> {customerInputStatusLabels[r04.status]}.{' '}
@@ -495,7 +491,7 @@ export const StatusMappingCard = ({
             </thead>
             <tbody>
               {statuses.map((status) => (
-                <tr className="border-border-primary border-b last:border-b-0" key={status.raw}>
+                <tr className="border-border-primary/60 border-b last:border-b-0" key={status.raw}>
                   <th className="py-100 pr-200 text-left font-normal" scope="row">
                     <code className="rounded-sm bg-surface-secondary px-50 text-xs">{status.raw}</code>
                   </th>
@@ -581,7 +577,7 @@ export const ItemsCard = ({ report }: { readonly report: SalesReport }) => (
             </thead>
             <tbody>
               {report.items.rows.map((item) => (
-                <tr className="border-border-primary border-b last:border-b-0" key={item.key}>
+                <tr className="border-border-primary/60 border-b last:border-b-0" key={item.key}>
                   <td className="py-100 pr-200">
                     {item.sku === undefined ? (
                       <span className="text-fg-secondary">neuvedeno</span>

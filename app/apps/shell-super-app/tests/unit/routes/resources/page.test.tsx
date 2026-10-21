@@ -261,14 +261,19 @@ it.each(closedStates)(
     renderResourcePage({ shell, state });
 
     expect(screen.getByText(closedText)).toBeTruthy();
-    if (state === 'not_found') {
-      // A record page names the missing record, not a missing page.
-      expect(screen.getByRole('heading', { level: 1, name: 'shell.recovery.recordMissing' })).toBeTruthy();
-    }
+    // The frame shows the state once as the page heading; the panel below it has no second heading.
+    expect(screen.getAllByRole('heading')).toHaveLength(1);
     expect(screen.queryByRole('button', { name: 'Attach media' })).toBeNull();
     expect(screen.queryByText('Media')).toBeNull();
     expect(screen.queryByText('Timeline')).toBeNull();
-    expect(lastDashboardProps().title).toBe('Resource');
+    // A record page names the missing record, not a missing page.
+    expect(lastDashboardProps().title).toBe(
+      state === 'not_found'
+        ? 'shell.recovery.recordMissing'
+        : state === 'forbidden'
+          ? 'shell.recovery.forbidden'
+          : 'shell.recovery.unavailable',
+    );
     expect(lastDashboardProps().currentModuleId).toBeUndefined();
     expect(shellControlsMock).toHaveBeenCalledWith(shell);
     expect(attachResourceMediaMock).not.toHaveBeenCalled();
