@@ -120,6 +120,7 @@ export const InvoiceDraftForm = ({
         />
       </div>
       <Select
+        placeholder="Vyberte sazbu DPH"
         label="DPH podle dokladu dodavatele"
         name="invoice-vat-rate"
         items={([0, 10, 12, 21] as const).map((value) => ({

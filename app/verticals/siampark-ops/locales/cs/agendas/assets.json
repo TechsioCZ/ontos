@@ -67,7 +67,9 @@
     "register": "Evidence majetku",
     "services": "Revize a termíny ({{count}})",
     "inventories": "Inventury",
-    "depreciation": "Odpisové plány"
+    "depreciation": "Odpisové plány",
+    "summary": "Souhrn hodnot",
+    "investments": "Investiční plán ({{count}})"
   },
   "kind": {
     "building": "Budova",
@@ -170,7 +172,9 @@
     "missingValues": "bez hodnoty: {{count}} položek",
     "overdue": "Revize po termínu",
     "soonHint": "do 30 dnů: {{count}}",
-    "openFollowUps": "Otevřené úkoly z inventur"
+    "openFollowUps": "Otevřené úkoly z inventur",
+    "filteredHint": "podle zvolených filtrů",
+    "allHint": "celé portfolio"
   },
   "filters": {
     "search": "Hledat majetek",
@@ -181,7 +185,11 @@
     "allStatuses": "Vše",
     "allKinds": "Všechny druhy",
     "property": "Nemovitost",
-    "allProperties": "Obě nemovitosti"
+    "allProperties": "Všechny nemovitosti",
+    "allResponsible": "Všechny odpovědné osoby",
+    "acquiredFrom": "Pořízeno od",
+    "acquiredTo": "Pořízeno do",
+    "scopedTotals": "Souhrnné karty, souhrn hodnot i export CSV počítají jen s vyfiltrovanými záznamy ({{count}})."
   },
   "states": {
     "noDisposed": "Žádný majetek zatím nebyl vyřazen."
@@ -256,9 +264,8 @@
     "emptyTitle": "Zatím žádná inventura.",
     "emptyDescription": "Založte inventuru pro jednu nemovitost nebo celou firmu.",
     "createIntro": "Inventurní soupis obsahuje veškerý aktivní majetek vybrané nemovitosti. Položky pak označíte jako nalezené, nenalezené nebo s rozdílem.",
-    "wholeCompany": "Celá firma (obě nemovitosti)",
+    "wholeCompany": "Celá firma (všechny nemovitosti)",
     "defaultTitlePrefix": "Inventura",
-    "candidates": "Do soupisu bude zařazeno {{count}} položek:",
     "noCandidates": "Vybraná nemovitost nemá žádný aktivní majetek.",
     "status": {
       "open": "Probíhá",
@@ -291,7 +298,11 @@
     "followUpDefault": "Vyřešit inventurní rozdíl: {{name}}",
     "resolveFollowUp": "Úkol vyřešen",
     "followUpDone": "Vyřešeno",
-    "followUpDue": "termín {{date}}"
+    "followUpDue": "termín {{date}}",
+    "candidates_one": "Do soupisu bude zařazena {{count}} položka:",
+    "candidates_few": "Do soupisu budou zařazeny {{count}} položky:",
+    "candidates_many": "Do soupisu bude zařazeno {{count}} položek:",
+    "candidates_other": "Do soupisu bude zařazeno {{count}} položek:"
   },
   "form": {
     "required": "Vyplňte povinná pole.",
@@ -344,5 +355,89 @@
   "table": {
     "range": "{{start}}–{{end}} z {{total}}",
     "pageSize": "Řádků na stránku"
+  },
+  "summary": {
+    "intro": "Souhrn evidovaných hodnot celého portfolia podle druhu a nemovitosti, vyřazený a prodaný majetek a porovnání po letech. Počítá se z uložených karet a změn hodnot, nejde o účetní výkaz.",
+    "introFiltered": "Souhrn odpovídá filtrům v záložce Evidence majetku (druh, nemovitost, odpovědná osoba, datum pořízení, hledání).",
+    "byKind": "Hodnota podle druhu",
+    "byProperty": "Hodnota podle nemovitosti",
+    "activeCount": "Aktivní",
+    "disposedCount": "Vyřazené",
+    "acquisition": "Pořizovací hodnota",
+    "current": "Evidovaná hodnota",
+    "total": "Celkem",
+    "noProperty": "Bez nemovitosti",
+    "years": "Porovnání po letech",
+    "yearsHint": "Hodnota ke 31. 12. = poslední potvrzená hodnota každé položky k tomuto dni (pořízení nebo změna hodnoty); vyřazené položky se počítají nulou.",
+    "year": "Rok",
+    "acquired": "Pořízeno",
+    "acquiredValue": "Hodnota pořízení",
+    "disposedInYear": "Vyřazeno / prodáno",
+    "proceeds": "Výnos z prodeje",
+    "endValue": "Hodnota ke 31. 12.",
+    "endChange": "Meziroční změna",
+    "endCount_one": "{{count}} položka",
+    "endCount_few": "{{count}} položky",
+    "endCount_many": "{{count}} položek",
+    "endCount_other": "{{count}} položek",
+    "disposedList": "Prodaný a vyřazený majetek ({{count}})",
+    "disposalKind": "Způsob",
+    "disposalDate": "Datum",
+    "reason": "Důvod"
+  },
+  "investments": {
+    "intro": "Jednoduchý plán budoucích investic: popis, plánovaná částka, termín a priorita. Po realizaci zapište skutečnou částku – rozdíl proti plánu se dopočítá. Nejde o rozpočet účetnictví.",
+    "new": "Nová investice",
+    "edit": "Upravit investici",
+    "saved": "Investice uložena.",
+    "empty": "Žádné investice neodpovídají filtru.",
+    "footnote": "Zobrazeno investic: {{count}}. Zrušené investice se do součtů nezapočítávají.",
+    "fields": {
+      "title": "Investice",
+      "description": "Popis",
+      "planned": "Plánovaná částka (Kč)",
+      "plannedDate": "Plánovaný termín",
+      "priority": "Priorita",
+      "status": "Stav",
+      "actual": "Skutečná částka (Kč)",
+      "actualDate": "Datum realizace",
+      "difference": "Rozdíl",
+      "location": "Nemovitost / jednotka",
+      "asset": "Související majetek"
+    },
+    "priority": {
+      "high": "Vysoká",
+      "medium": "Střední",
+      "low": "Nízká"
+    },
+    "status": {
+      "planned": "Plánováno",
+      "approved": "Schváleno",
+      "in_progress": "Probíhá",
+      "done": "Dokončeno",
+      "cancelled": "Zrušeno"
+    },
+    "filters": {
+      "open": "Nedokončené",
+      "allPriorities": "Všechny priority"
+    },
+    "form": {
+      "actualHelp": "Vyplňte po realizaci; rozdíl = skutečnost − plán.",
+      "actualRequired": "Dokončená investice musí mít skutečnou částku.",
+      "noAsset": "Bez vazby na majetek"
+    },
+    "stats": {
+      "planned": "Plánováno celkem",
+      "count_one": "{{count}} investice",
+      "count_few": "{{count}} investice",
+      "count_many": "{{count}} investic",
+      "count_other": "{{count}} investic",
+      "year": "Plán na letošní rok",
+      "yearHint": "termín v roce {{year}}",
+      "actual": "Skutečně vynaloženo",
+      "actualHint": "u {{count}} realizovaných (plán {{planned}})",
+      "difference": "Rozdíl skutečnost − plán",
+      "overdueHint": "po plánovaném termínu: {{count}}"
+    }
   }
 }

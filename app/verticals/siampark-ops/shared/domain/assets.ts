@@ -245,10 +245,43 @@ export const DepreciationTemplateSchema = Schema.Struct({
 });
 export type DepreciationTemplate = typeof DepreciationTemplateSchema.Type;
 
+/** S15 plán budoucích investic: planned item with priority; the actual amount is recorded later (difference shown). */
+export const InvestmentPrioritySchema = Schema.Literals(['high', 'medium', 'low']);
+export type InvestmentPriority = typeof InvestmentPrioritySchema.Type;
+export const investmentPriorities: readonly InvestmentPriority[] = ['high', 'medium', 'low'];
+export const InvestmentStatusSchema = Schema.Literals(['planned', 'approved', 'in_progress', 'done', 'cancelled']);
+export type InvestmentStatus = typeof InvestmentStatusSchema.Type;
+export const investmentStatuses: readonly InvestmentStatus[] = ['planned', 'approved', 'in_progress', 'done', 'cancelled'];
+
+export const InvestmentSchema = Schema.Struct({
+  ...AuditFieldsSchema.fields,
+  id: TextSchema(300),
+  title: TextSchema(200),
+  description: Schema.optionalKey(NoteSchema),
+  plannedAmountMinor: MinorAmountSchema,
+  plannedDate: IsoDateSchema,
+  priority: InvestmentPrioritySchema,
+  status: InvestmentStatusSchema,
+  actualAmountMinor: Schema.optionalKey(MinorAmountSchema),
+  actualDate: Schema.optionalKey(IsoDateSchema),
+  location: Schema.optionalKey(PropertyRefSchema),
+  /** siampark-property property id (also when `location` is a unit), for filtering and summaries. */
+  propertyId: Schema.optionalKey(TextSchema(300)),
+  /** Optional asset the investment improves or replaces. */
+  assetId: Schema.optionalKey(AssetIdSchema),
+  responsible: Schema.optionalKey(TextSchema(200)),
+});
+export type Investment = typeof InvestmentSchema.Type;
+
+/** Actual − planned (positive = over plan); `undefined` until the actual amount is recorded. */
+export const investmentDifference = (investment: Investment): number | undefined =>
+  investment.actualAmountMinor === undefined ? undefined : investment.actualAmountMinor - investment.plannedAmountMinor;
+
 export const AssetsStateSchema = Schema.Struct({
   assets: Schema.Array(AssetSchema),
   inventories: Schema.optionalKey(Schema.Array(InventorySchema)),
   templates: Schema.optionalKey(Schema.Array(DepreciationTemplateSchema)),
+  investments: Schema.optionalKey(Schema.Array(InvestmentSchema)),
 });
 export type AssetsState = typeof AssetsStateSchema.Type;
 export type AssetsStateEncoded = typeof AssetsStateSchema.Encoded;

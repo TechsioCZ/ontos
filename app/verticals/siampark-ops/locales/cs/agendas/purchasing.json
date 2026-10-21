@@ -335,5 +335,12 @@
     "orders": "Zatím žádné nákupní objednávky.",
     "quotes": "Zatím žádné nabídky dodavatelů.",
     "suppliers": "Zatím žádní dodavatelé."
+  },
+  "placeholders": {
+    "supplier": "Vyberte dodavatele",
+    "warehouse": "Vyberte sklad",
+    "item": "Vyberte položku",
+    "batch": "Vyberte šarži",
+    "option": "Vyberte možnost"
   }
 }

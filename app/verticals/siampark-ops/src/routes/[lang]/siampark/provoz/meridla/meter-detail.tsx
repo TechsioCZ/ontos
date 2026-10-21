@@ -80,12 +80,15 @@ export const MeterDetail = ({
   const okRows = rows.filter((row) => row.status === 'ok' && row.consumption !== undefined);
   const normalLabel = t(`${k}.detail.series.normal`);
   const anomalyLabel = t(`${k}.detail.series.anomaly`);
-  const chartData: ChartDatum[] = okRows.map((row) => ({
+  // One chart axis = one unit: periods measured in an earlier unit are not drawn on the current unit's axis.
+  const chartRows = okRows.filter((row) => row.reading.unit === meter.unit);
+  const otherUnits = [...new Set(okRows.filter((row) => row.reading.unit !== meter.unit).map((row) => row.reading.unit))];
+  const chartData: ChartDatum[] = chartRows.map((row) => ({
     consumption: row.consumption ?? 0,
     period: formatDate(row.reading.date),
     series: row.anomaly ? anomalyLabel : normalLabel,
   }));
-  const hasAnomaly = okRows.some((row) => row.anomaly);
+  const hasAnomaly = chartRows.some((row) => row.anomaly);
   const who = (principal: PrincipalRef) => personLabel(t, principal, actor);
 
   const showPhoto = async (reading: MeterReading) => {
@@ -211,6 +214,11 @@ export const MeterDetail = ({
             x="period"
             y="consumption"
           />
+        )}
+        {otherUnits.length > 0 && (
+          <p className="text-fg-secondary text-xs">
+            {t(`${k}.detail.chartOtherUnits`, { units: otherUnits.join(', '), unit: meter.unit })}
+          </p>
         )}
       </SectionCard>
 

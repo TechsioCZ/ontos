@@ -219,6 +219,7 @@ export const MovementsTab = ({
         </div>
         <div className="w-full max-w-xs">
           <Select
+            placeholder={k('placeholders.option')}
             items={['all', 'receipt', 'issue', 'transfer', 'adjustment'].map((value) => ({
               displayValue: value === 'all' ? k('movements.allKinds') : k(`movementKind.${value}`),
               label: value === 'all' ? k('movements.allKinds') : k(`movementKind.${value}`),
@@ -404,6 +405,7 @@ export const QuotePanel = ({
             <p className="text-fg-secondary text-sm">{k('quotes.toOrderHint')}</p>
             <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
               <Select
+                placeholder={k('placeholders.warehouse')}
                 items={state.warehouses.map((entry) => ({
                   displayValue: entry.name,
                   label: entry.name,

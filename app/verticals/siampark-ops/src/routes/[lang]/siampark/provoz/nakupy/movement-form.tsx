@@ -204,6 +204,7 @@ export const MovementForm = ({ item, kind, onDone, planned, run, state }: Props)
         <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
           {kind !== 'planned' && (
             <Select
+              placeholder={k('placeholders.warehouse')}
               items={warehouseItems}
               label={kind === 'transfer' ? k('movement.fromWarehouse') : k('fields.warehouse')}
               name="warehouse"
@@ -218,6 +219,7 @@ export const MovementForm = ({ item, kind, onDone, planned, run, state }: Props)
           )}
           {kind === 'transfer' && (
             <Select
+              placeholder={k('placeholders.warehouse')}
               items={warehouseItems}
               label={k('movement.toWarehouse')}
               name="target"
@@ -330,6 +332,7 @@ export const MovementForm = ({ item, kind, onDone, planned, run, state }: Props)
         {(kind === 'issue' || kind === 'receipt' || kind === 'planned') && (
           <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
             <Select
+              placeholder={k('placeholders.option')}
               items={[
                 { displayValue: k('refs.noTask'), label: k('refs.noTask'), value: NONE },
                 ...(tasks.status === 'ready'
@@ -347,6 +350,7 @@ export const MovementForm = ({ item, kind, onDone, planned, run, state }: Props)
               value={[task]}
             />
             <Select
+              placeholder={k('placeholders.option')}
               items={[
                 { displayValue: k('refs.noPlace'), label: k('refs.noPlace'), value: NONE },
                 ...(properties.status === 'ready'

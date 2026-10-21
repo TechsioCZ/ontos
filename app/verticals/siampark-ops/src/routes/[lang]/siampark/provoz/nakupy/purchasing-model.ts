@@ -26,7 +26,9 @@ export const usePurchasingT = () => {
   return (key: string, options?: Record<string, unknown>) => t(`siampark-ops.purchasing.${key}`, options);
 };
 
-export const todayIso = () => DateTime.formatIsoDate(DateTime.nowUnsafe());
+const pragueDate = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Prague' });
+/** Business date in Europe/Prague (`YYYY-MM-DD`); UTC would be one day early between 00:00 and 02:00. */
+export const todayIso = () => pragueDate.format(DateTime.toEpochMillis(DateTime.nowUnsafe()));
 
 export const formatQuantity = (value: number, unit: string) =>
   `${formatNumber(value)} ${quantityUnitLabel(value, unit)}`;

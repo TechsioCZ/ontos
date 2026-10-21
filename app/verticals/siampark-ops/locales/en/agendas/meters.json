@@ -154,7 +154,8 @@
     "series": {
       "normal": "Normal consumption",
       "anomaly": "Unusual increase"
-    }
+    },
+    "chartOtherUnits": "The chart shows only periods in the current unit {{unit}}. Earlier periods in {{units}} are listed in the reading history below (units are never mixed or converted)."
   },
   "byUnit": {
     "title": "Consumption and costs by location",

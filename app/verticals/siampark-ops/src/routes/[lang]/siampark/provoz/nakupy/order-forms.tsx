@@ -65,6 +65,7 @@ const LinesEditor = ({
         <div className="flex flex-col gap-100 rounded-md border border-border-primary p-150" key={line.key}>
           <div className="flex flex-col gap-100">
             <Select
+              placeholder={k('placeholders.item')}
               items={[
                 { displayValue: k('lines.free'), label: k('lines.free'), value: FREE },
                 ...state.items.map((item) => ({
@@ -279,6 +280,7 @@ export const PurchaseDocumentPanel = ({
         )}
         <div className="grid grid-cols-1 gap-200 sm:grid-cols-2">
           <Select
+            placeholder={k('placeholders.supplier')}
             items={state.suppliers.map((entry) => ({ displayValue: entry.name, label: entry.name, value: entry.id }))}
             label={k('fields.supplier')}
             name="supplier"
@@ -288,6 +290,7 @@ export const PurchaseDocumentPanel = ({
           />
           {kind === 'order' ? (
             <Select
+              placeholder={k('placeholders.warehouse')}
               items={state.warehouses.map((entry) => ({
                 displayValue: entry.name,
                 label: entry.name,
@@ -463,6 +466,7 @@ export const ItemCreatePanel = ({
     items: readonly { readonly label: string; readonly value: string }[],
   ) => (
     <Select
+      placeholder={k('placeholders.option')}
       items={items.map((entry) => ({ displayValue: entry.label, label: entry.label, value: entry.value }))}
       label={label}
       name={name}

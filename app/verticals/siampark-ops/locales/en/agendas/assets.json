@@ -67,7 +67,9 @@
     "register": "Asset register",
     "services": "Revisions and deadlines ({{count}})",
     "inventories": "Inventory counts",
-    "depreciation": "Depreciation plans"
+    "depreciation": "Depreciation plans",
+    "summary": "Value summary",
+    "investments": "Investment plan ({{count}})"
   },
   "kind": {
     "building": "Building",
@@ -170,7 +172,9 @@
     "missingValues": "without value: {{count}}",
     "overdue": "Overdue revisions",
     "soonHint": "within 30 days: {{count}}",
-    "openFollowUps": "Open inventory follow-ups"
+    "openFollowUps": "Open inventory follow-ups",
+    "filteredHint": "for the selected filters",
+    "allHint": "whole portfolio"
   },
   "filters": {
     "search": "Search assets",
@@ -181,7 +185,11 @@
     "allStatuses": "All",
     "allKinds": "All kinds",
     "property": "Property",
-    "allProperties": "Both properties"
+    "allProperties": "All properties",
+    "allResponsible": "All responsible people",
+    "acquiredFrom": "Acquired from",
+    "acquiredTo": "Acquired to",
+    "scopedTotals": "Totals, the value summary and the CSV export use only the filtered records ({{count}})."
   },
   "states": {
     "noDisposed": "No asset has been disposed yet."
@@ -256,9 +264,8 @@
     "emptyTitle": "No inventory count yet.",
     "emptyDescription": "Create an inventory count for one property or the whole company.",
     "createIntro": "The count list contains every active asset of the chosen property. Mark each item as found, missing or with a difference.",
-    "wholeCompany": "Whole company (both properties)",
+    "wholeCompany": "Whole company (all properties)",
     "defaultTitlePrefix": "Inventory",
-    "candidates": "{{count}} items will be listed:",
     "noCandidates": "The chosen property has no active assets.",
     "status": {
       "open": "In progress",
@@ -291,7 +298,9 @@
     "followUpDefault": "Resolve inventory difference: {{name}}",
     "resolveFollowUp": "Task resolved",
     "followUpDone": "Resolved",
-    "followUpDue": "due {{date}}"
+    "followUpDue": "due {{date}}",
+    "candidates_one": "{{count}} item will be listed:",
+    "candidates_other": "{{count}} items will be listed:"
   },
   "form": {
     "required": "Fill in the required fields.",
@@ -344,5 +353,89 @@
   "table": {
     "range": "{{start}}–{{end}} of {{total}}",
     "pageSize": "Rows per page"
+  },
+  "summary": {
+    "intro": "Summary of recorded values by kind and property, disposed and sold assets and a year-by-year comparison. Computed from stored cards and value changes; not an accounting statement.",
+    "introFiltered": "The summary follows the filters on the register tab (kind, property, responsible person, acquisition date, search).",
+    "byKind": "Value by kind",
+    "byProperty": "Value by property",
+    "activeCount": "Active",
+    "disposedCount": "Disposed",
+    "acquisition": "Acquisition value",
+    "current": "Recorded value",
+    "total": "Total",
+    "noProperty": "No property",
+    "years": "Year-by-year comparison",
+    "yearsHint": "Value at 31 Dec = the last confirmed value of each item on that day (acquisition or value change); disposed items count as zero.",
+    "year": "Year",
+    "acquired": "Acquired",
+    "acquiredValue": "Acquisition value",
+    "disposedInYear": "Disposed / sold",
+    "proceeds": "Sale proceeds",
+    "endValue": "Value at 31 Dec",
+    "endChange": "Year-on-year change",
+    "endCount_one": "{{count}} item",
+    "endCount_few": "{{count}} items",
+    "endCount_many": "{{count}} items",
+    "endCount_other": "{{count}} items",
+    "disposedList": "Sold and disposed assets ({{count}})",
+    "disposalKind": "Kind",
+    "disposalDate": "Date",
+    "reason": "Reason"
+  },
+  "investments": {
+    "intro": "A simple plan of future investments: description, planned amount, date and priority. After completion record the actual amount; the difference to plan is computed. Not an accounting budget.",
+    "new": "New investment",
+    "edit": "Edit investment",
+    "saved": "Investment saved.",
+    "empty": "No investments match the filter.",
+    "footnote": "Investments shown: {{count}}. Cancelled investments are excluded from totals.",
+    "fields": {
+      "title": "Investment",
+      "description": "Description",
+      "planned": "Planned amount (CZK)",
+      "plannedDate": "Planned date",
+      "priority": "Priority",
+      "status": "Status",
+      "actual": "Actual amount (CZK)",
+      "actualDate": "Completion date",
+      "difference": "Difference",
+      "location": "Property / unit",
+      "asset": "Related asset"
+    },
+    "priority": {
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "status": {
+      "planned": "Planned",
+      "approved": "Approved",
+      "in_progress": "In progress",
+      "done": "Done",
+      "cancelled": "Cancelled"
+    },
+    "filters": {
+      "open": "Open",
+      "allPriorities": "All priorities"
+    },
+    "form": {
+      "actualHelp": "Fill in after completion; difference = actual − planned.",
+      "actualRequired": "A completed investment needs its actual amount.",
+      "noAsset": "No related asset"
+    },
+    "stats": {
+      "planned": "Planned total",
+      "count_one": "{{count}} investment",
+      "count_few": "{{count}} investments",
+      "count_many": "{{count}} investments",
+      "count_other": "{{count}} investments",
+      "year": "Plan for this year",
+      "yearHint": "due in {{year}}",
+      "actual": "Actually spent",
+      "actualHint": "for {{count}} completed (plan {{planned}})",
+      "difference": "Actual − planned",
+      "overdueHint": "past planned date: {{count}}"
+    }
   }
 }

@@ -156,7 +156,8 @@
     "series": {
       "normal": "Běžná spotřeba",
       "anomaly": "Neobvyklý nárůst"
-    }
+    },
+    "chartOtherUnits": "Graf ukazuje jen období v aktuální jednotce {{unit}}. Starší období v jednotce {{units}} najdete v historii odečtů níže (jednotky se nesčítají ani nepřepočítávají)."
   },
   "byUnit": {
     "title": "Spotřeba a náklady podle místa",

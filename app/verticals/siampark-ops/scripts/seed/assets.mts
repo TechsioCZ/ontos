@@ -10,6 +10,7 @@ type EncodedEvent = NonNullable<EncodedAsset['events']>[number];
 type EncodedService = NonNullable<EncodedAsset['services']>[number];
 type EncodedPlan = NonNullable<EncodedAsset['depreciationPlans']>[number];
 type EncodedInventory = NonNullable<AssetsStateEncoded['inventories']>[number];
+type EncodedInvestment = NonNullable<AssetsStateEncoded['investments']>[number];
 
 const tenantId = '70000000-0000-4000-8000-000000000020';
 const management = { principalId: '72000000-0000-4000-8000-000000000021', tenantId };
@@ -1226,7 +1227,88 @@ const buildTemplates = (): NonNullable<AssetsStateEncoded['templates']> => [
   },
 ];
 
+/** S15 plán investic: plausible investments of both properties (two completed with actual amounts). */
+export const seedInvestments = (): EncodedInvestment[] => {
+  const stamp = (date: string, by = management) => ({
+    createdAt: ts(date, '08:30:00'),
+    createdBy: by,
+    updatedAt: ts(date, '08:30:00'),
+    updatedBy: by,
+  });
+  return [
+    {
+      ...stamp('2026-01-20'),
+      ...atProperty(parkova),
+      actualAmountMinor: kc(412_600),
+      actualDate: '2026-06-18',
+      assetId: assetId(4),
+      description: 'Výměna hořáků a regulace plynové kotelny, nová ekvitermní regulace.',
+      id: 'seed-investment-001',
+      plannedAmountMinor: kc(380_000),
+      plannedDate: '2026-06-30',
+      priority: 'high',
+      responsible: 'Ing. Pavel Dvořák',
+      status: 'done',
+      title: 'Modernizace kotelny Rezidence Parková',
+    },
+    {
+      ...stamp('2026-02-03'),
+      ...atProperty(riverside),
+      actualAmountMinor: kc(168_900),
+      actualDate: '2026-08-29',
+      description: 'LED svítidla s čidly pohybu v garážích a na chodbách, snížení spotřeby elektřiny.',
+      id: 'seed-investment-002',
+      plannedAmountMinor: kc(185_000),
+      plannedDate: '2026-09-15',
+      priority: 'medium',
+      responsible: 'Provoz Siampark',
+      status: 'done',
+      title: 'LED osvětlení garáží Riverside',
+    },
+    {
+      ...stamp('2026-03-11'),
+      ...atProperty(riverside),
+      description: 'Výměna řídicí jednotky a lan osobního výtahu po revizní zprávě.',
+      id: 'seed-investment-003',
+      plannedAmountMinor: kc(640_000),
+      plannedDate: '2026-11-30',
+      priority: 'high',
+      responsible: 'Ing. Pavel Dvořák',
+      status: 'approved',
+      title: 'Rekonstrukce výtahu Riverside',
+    },
+    {
+      ...stamp('2026-04-07'),
+      ...atUnit('A102'),
+      description: 'Nová koupelna a podlahy před dalším pronájmem bytu A102.',
+      id: 'seed-investment-004',
+      plannedAmountMinor: kc(295_000),
+      plannedDate: '2027-02-28',
+      priority: 'medium',
+      status: 'planned',
+      title: 'Rekonstrukce bytu A102',
+    },
+    {
+      ...stamp('2026-05-19', finance),
+      ...atProperty(parkova),
+      description: 'Fotovoltaika 30 kWp na střeše bytového domu, varianta s baterií.',
+      id: 'seed-investment-005',
+      plannedAmountMinor: kc(1_150_000),
+      plannedDate: '2027-06-30',
+      priority: 'low',
+      responsible: 'Management Siampark',
+      status: 'planned',
+      title: 'Fotovoltaická elektrárna na střeše',
+    },
+  ];
+};
+
 export const seedAssetsState = (): AssetsStateEncoded => {
   sequence = 0;
-  return { assets: buildAssets(), inventories: buildInventories(), templates: buildTemplates() };
+  return {
+    assets: buildAssets(),
+    inventories: buildInventories(),
+    investments: seedInvestments(),
+    templates: buildTemplates(),
+  };
 };

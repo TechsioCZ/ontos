@@ -326,5 +326,12 @@
     "orders": "No purchase orders yet.",
     "quotes": "No supplier quotes yet.",
     "suppliers": "No suppliers yet."
+  },
+  "placeholders": {
+    "supplier": "Choose a supplier",
+    "warehouse": "Choose a warehouse",
+    "item": "Choose an item",
+    "batch": "Choose a batch",
+    "option": "Choose an option"
   }
 }

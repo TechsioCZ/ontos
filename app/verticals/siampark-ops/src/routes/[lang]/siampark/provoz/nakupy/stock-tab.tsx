@@ -214,6 +214,7 @@ export const StockTab = ({ onOpen, state }: StockTabProps) => {
         </div>
         <div className="w-full max-w-xs">
           <Select
+            placeholder={k('placeholders.warehouse')}
             items={[
               { displayValue: k('filters.allWarehouses'), label: k('filters.allWarehouses'), value: ALL },
               ...state.warehouses.map((entry) => ({ displayValue: entry.name, label: entry.name, value: entry.id })),
@@ -729,6 +730,7 @@ const ItemEditForm = ({
       </div>
       {input('price', k('fields.lastPriceCzk'), true)}
       <Select
+        placeholder={k('placeholders.supplier')}
         items={state.suppliers.map((entry) => ({ displayValue: entry.name, label: entry.name, value: entry.id }))}
         label={k('fields.supplier')}
         name="item-edit-supplier"

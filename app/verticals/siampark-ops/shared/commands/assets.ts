@@ -27,6 +27,8 @@ import {
   DepreciationTypeSchema,
   DisposalKindSchema,
   InventoryResultSchema,
+  InvestmentPrioritySchema,
+  InvestmentStatusSchema,
   ManualEventKindSchema,
   PeriodSchema,
   PermitStateSchema,
@@ -46,6 +48,7 @@ import type {
   DepreciationTemplate,
   Inventory,
   InventoryItem,
+  Investment,
   ServiceRecord,
 } from '../domain/assets.ts';
 
@@ -63,6 +66,21 @@ const assetCardFields = {
   propertyId: optionalText(300),
   responsible: optionalText(200),
   serialNumber: optionalText(120),
+};
+
+const investmentFields = {
+  actualAmountMinor: Schema.optionalKey(MinorAmountSchema),
+  actualDate: Schema.optionalKey(IsoDateSchema),
+  assetId: Schema.optionalKey(AssetIdSchema),
+  description: Schema.optionalKey(NoteSchema),
+  location: Schema.optionalKey(PropertyRefSchema),
+  plannedAmountMinor: MinorAmountSchema,
+  plannedDate: IsoDateSchema,
+  priority: InvestmentPrioritySchema,
+  propertyId: optionalText(300),
+  responsible: optionalText(200),
+  status: InvestmentStatusSchema,
+  title: TextSchema(200),
 };
 
 export const assetsCommandSchemas = [
@@ -178,6 +196,10 @@ export const assetsCommandSchemas = [
     resolution: Schema.optionalKey(NoteSchema),
   }),
   Schema.TaggedStruct('AssetInventoryClose', { inventoryId: RefTextSchema }),
+  /** S15 plán investic: new planned investment. */
+  Schema.TaggedStruct('AssetInvestmentCreate', investmentFields),
+  /** Replaces the investment fields (absent optional fields are cleared), e.g. to record the actual amount. */
+  Schema.TaggedStruct('AssetInvestmentUpdate', { ...investmentFields, investmentId: RefTextSchema }),
 ] as const;
 
 export const AssetsCommandSchema = Schema.Union(assetsCommandSchemas);
@@ -678,6 +700,65 @@ const closeInventory = Effect.fn('SiamparkOps.Assets.closeInventory')(function* 
   );
 });
 
+const investmentOf = (value: CommandOf<'AssetInvestmentCreate'> | CommandOf<'AssetInvestmentUpdate'>) => {
+  const fields = Object.entries(value).filter(
+    ([key, entry]) => key !== '_tag' && key !== 'investmentId' && entry !== undefined,
+  );
+  return Object.fromEntries(fields) as Omit<
+    Investment,
+    'createdAt' | 'createdBy' | 'id' | 'updatedAt' | 'updatedBy'
+  >;
+};
+
+const requireInvestmentRules = (fields: ReturnType<typeof investmentOf>, state: AssetsState) =>
+  Effect.gen(function* requireInvestmentRulesEffect() {
+    if (fields.status === 'done' && fields.actualAmountMinor === undefined) {
+      return yield* opsConflict('A completed investment needs its actual amount');
+    }
+    if (fields.assetId !== undefined && !state.assets.some((asset) => asset.id === fields.assetId)) {
+      return yield* opsNotFound('Asset not found');
+    }
+  });
+
+const createInvestment = Effect.fn('SiamparkOps.Assets.createInvestment')(function* createInvestment(
+  state: AssetsState,
+  value: CommandOf<'AssetInvestmentCreate'>,
+  input: OpsCommandInput,
+) {
+  const fields = investmentOf(value);
+  yield* requireInvestmentRules(fields, state);
+  const record: Investment = { ...auditCreated(input), ...fields, id: input.resourceId };
+  return yield* changed({ ...state, investments: [...(state.investments ?? []), record] }, record.id);
+});
+
+const updateInvestment = Effect.fn('SiamparkOps.Assets.updateInvestment')(function* updateInvestment(
+  state: AssetsState,
+  value: CommandOf<'AssetInvestmentUpdate'>,
+  input: OpsCommandInput,
+) {
+  const current = (state.investments ?? []).find((entry) => entry.id === value.investmentId);
+  if (current === undefined) {
+    return yield* opsNotFound('Investment not found');
+  }
+  const fields = investmentOf(value);
+  yield* requireInvestmentRules(fields, state);
+  const next: Investment = auditUpdated(
+    {
+      createdAt: current.createdAt,
+      createdBy: current.createdBy,
+      id: current.id,
+      updatedAt: current.updatedAt,
+      updatedBy: current.updatedBy,
+      ...fields,
+    },
+    input,
+  );
+  return yield* changed(
+    { ...state, investments: (state.investments ?? []).map((entry) => (entry.id === next.id ? next : entry)) },
+    next.id,
+  );
+});
+
 /** Pure reducer: applies one command to the `assets` state. Persistence decides when it is saved. */
 export const evolveAssets = (state: AssetsState, command: AssetsCommand, input: OpsCommandInput) =>
   Match.value(command).pipe(
@@ -696,6 +777,8 @@ export const evolveAssets = (state: AssetsState, command: AssetsCommand, input: 
     Match.tag('AssetInventoryFollowUp', (value) => followUp(state, value, input)),
     Match.tag('AssetInventoryFollowUpResolve', (value) => resolveFollowUp(state, value, input)),
     Match.tag('AssetInventoryClose', (value) => closeInventory(state, value, input)),
+    Match.tag('AssetInvestmentCreate', (value) => createInvestment(state, value, input)),
+    Match.tag('AssetInvestmentUpdate', (value) => updateInvestment(state, value, input)),
     Match.exhaustive,
   );
 

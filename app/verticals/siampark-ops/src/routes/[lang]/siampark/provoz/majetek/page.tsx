@@ -25,7 +25,13 @@ import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { useState } from 'react';
 import type { OpsCommand } from '../../../../../../shared/agendas.ts';
-import type { Asset, AssetsState, Inventory, InventoryItem } from '../../../../../../shared/domain/assets.ts';
+import type {
+  Asset,
+  AssetsState,
+  Inventory,
+  InventoryItem,
+  Investment,
+} from '../../../../../../shared/domain/assets.ts';
 import { assetKinds, isActiveAsset, upcomingServiceDue } from '../../../../../../shared/domain/assets.ts';
 import { AgendaFrame, AgendaGate } from '../../../../../ui/agenda-frame.tsx';
 import { useAgendaRecords } from '../../../../../ui/use-agenda.ts';
@@ -41,7 +47,10 @@ import {
   portfolioStats,
   todayIsoDate,
 } from './assets-model.ts';
+import { AssetSummary } from './asset-summary.tsx';
 import { DepreciationOverview } from './depreciation.tsx';
+import { InvestmentForm, InvestmentPlan } from './investments.tsx';
+import { TextField } from './form-kit.tsx';
 import { InventoryTab } from './inventory.tsx';
 
 const CREATE_FORM_ID = 'siampark-assets-create-form';
@@ -51,6 +60,7 @@ type CreatePanel =
   | { readonly kind: 'asset' }
   | { readonly kind: 'inventory' }
   | { readonly kind: 'template' }
+  | { readonly kind: 'investment'; readonly investment?: Investment }
   | { readonly kind: 'followUp'; readonly inventory: Inventory; readonly item: InventoryItem };
 
 const csvCell = (value: string) => (/[";\n]/u.test(value) ? `"${value.replaceAll('"', '""')}"` : value);
@@ -117,6 +127,9 @@ const AssetsView = () => {
   const [kindFilter, setKindFilter] = useState(ALL);
   const [propertyFilter, setPropertyFilter] = useState(ALL);
   const [statusFilter, setStatusFilter] = useState('active');
+  const [responsibleFilter, setResponsibleFilter] = useState(ALL);
+  const [acquiredFrom, setAcquiredFrom] = useState('');
+  const [acquiredTo, setAcquiredTo] = useState('');
   // Deep link from the calendar / overview: /cs/siampark/provoz/majetek?asset=<id>
   const [openId, setOpenId] = useState<string | undefined>(
     () => new URLSearchParams(globalThis.location?.search ?? '').get('asset') ?? undefined,
@@ -136,7 +149,25 @@ const AssetsView = () => {
     return false;
   };
 
-  const stats = portfolioStats(state, today);
+  const query = foldSearchText(search.trim());
+  // Every filter except the status filter: the KPI cards and the value summary follow these rows.
+  const scoped = state.assets.filter(
+    (asset) =>
+      (kindFilter === ALL || (asset.kind ?? 'equipment') === kindFilter) &&
+      (propertyFilter === ALL || asset.propertyId === propertyFilter) &&
+      (responsibleFilter === ALL || (asset.responsible ?? '') === responsibleFilter) &&
+      (acquiredFrom === '' || (asset.acquisitionDate !== undefined && asset.acquisitionDate >= acquiredFrom)) &&
+      (acquiredTo === '' || (asset.acquisitionDate !== undefined && asset.acquisitionDate <= acquiredTo)) &&
+      (query === '' ||
+        foldSearchText(
+          `${asset.inventoryNumber} ${asset.name} ${asset.category} ${asset.location?.label ?? ''} ${asset.serialNumber ?? ''} ${asset.responsible ?? ''}`,
+        ).includes(query)),
+  );
+  const filtered = scoped.length !== state.assets.length;
+  const stats = portfolioStats({ ...state, assets: scoped }, today);
+  const responsibles = [
+    ...new Set(state.assets.flatMap((asset) => (asset.responsible === undefined ? [] : [asset.responsible]))),
+  ].toSorted((left, right) => left.localeCompare(right, 'cs'));
   const properties = [
     ...new Map(
       state.assets.flatMap((asset) =>
@@ -151,17 +182,11 @@ const AssetsView = () => {
       ),
     ).entries(),
   ];
-  const query = foldSearchText(search.trim());
-  const rows = state.assets.filter(
-    (asset) =>
-      (statusFilter === ALL || (statusFilter === 'active') === isActiveAsset(asset)) &&
-      (kindFilter === ALL || (asset.kind ?? 'equipment') === kindFilter) &&
-      (propertyFilter === ALL || asset.propertyId === propertyFilter) &&
-      (query === '' ||
-        foldSearchText(
-          `${asset.inventoryNumber} ${asset.name} ${asset.category} ${asset.location?.label ?? ''} ${asset.serialNumber ?? ''}`,
-        ).includes(query)),
+  const rows = scoped.filter(
+    (asset) => statusFilter === ALL || (statusFilter === 'active') === isActiveAsset(asset),
   );
+  const propertyName = (asset: Asset) =>
+    properties.find(([id]) => id === asset.propertyId)?.[1] ?? k('summary.noProperty');
   const opened = state.assets.find((asset) => asset.id === openId);
   const dues = upcomingServiceDue(state);
 
@@ -257,7 +282,11 @@ const AssetsView = () => {
           ? k('actions.newInventory')
           : panel.kind === 'template'
             ? k('actions.newTemplate')
-            : k('inventory.createFollowUp');
+            : panel.kind === 'investment'
+              ? panel.investment === undefined
+                ? k('investments.new')
+                : k('investments.edit')
+              : k('inventory.createFollowUp');
   const createSuccess =
     panel === undefined
       ? ''
@@ -267,7 +296,9 @@ const AssetsView = () => {
           ? 'messages.inventoryCreated'
           : panel.kind === 'template'
             ? 'messages.templateCreated'
-            : 'messages.followUpCreated';
+            : panel.kind === 'investment'
+              ? 'investments.saved'
+              : 'messages.followUpCreated';
   const submitCreate = (command: OpsCommand) => {
     void submit(command, createSuccess).then((ok) => {
       if (!ok) {
@@ -327,7 +358,11 @@ const AssetsView = () => {
             label={k('stats.active')}
             value={formatNumber(stats.active)}
           />
-          <StatCard label={k('stats.acquisitionTotal')} value={formatMoney(stats.acquisitionTotal)} />
+          <StatCard
+            hint={filtered ? k('stats.filteredHint') : k('stats.allHint')}
+            label={k('stats.acquisitionTotal')}
+            value={formatMoney(stats.acquisitionTotal)}
+          />
           <StatCard
             hint={
               stats.missingValues > 0
@@ -354,6 +389,12 @@ const AssetsView = () => {
             </Tabs.Trigger>
             <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="inventories">
               {k('tabs.inventories')}
+            </Tabs.Trigger>
+            <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="summary">
+              {k('tabs.summary')}
+            </Tabs.Trigger>
+            <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="investments">
+              {k('tabs.investments', { count: (state.investments ?? []).length })}
             </Tabs.Trigger>
             <Tabs.Trigger style={{ flexShrink: 0, whiteSpace: 'nowrap' }} value="depreciation">
               {k('tabs.depreciation')}
@@ -411,7 +452,41 @@ const AssetsView = () => {
                   value={[propertyFilter]}
                 />
               </div>
+              <div className="w-[13rem]">
+                <Select
+                  items={filterItems([
+                    { label: k('filters.allResponsible'), value: ALL },
+                    ...responsibles.map((name) => ({ label: name, value: name })),
+                  ])}
+                  label={k('fields.responsible')}
+                  name="responsibleFilter"
+                  onValueChange={({ value }) => setResponsibleFilter(value[0] ?? ALL)}
+                  size="md"
+                  value={[responsibleFilter]}
+                />
+              </div>
+              <div className="w-[10rem]">
+                <TextField
+                  id="assets-acquired-from"
+                  label={k('filters.acquiredFrom')}
+                  onChange={setAcquiredFrom}
+                  type="date"
+                  value={acquiredFrom}
+                />
+              </div>
+              <div className="w-[10rem]">
+                <TextField
+                  id="assets-acquired-to"
+                  label={k('filters.acquiredTo')}
+                  onChange={setAcquiredTo}
+                  type="date"
+                  value={acquiredTo}
+                />
+              </div>
             </div>
+            {filtered && (
+              <p className="text-fg-secondary text-xs">{k('filters.scopedTotals', { count: scoped.length })}</p>
+            )}
             <DataTable
               columns={columns}
               data={[...rows]}
@@ -501,6 +576,27 @@ const AssetsView = () => {
               state={state}
             />
           </Tabs.Content>
+          <Tabs.Content className="py-250" value="summary">
+            <AssetSummary
+              filtered={filtered}
+              k={k}
+              onOpen={(asset) => setOpenId(asset.id)}
+              propertyName={propertyName}
+              rows={scoped}
+              today={today}
+            />
+          </Tabs.Content>
+          <Tabs.Content className="py-250" value="investments">
+            <InvestmentPlan
+              canWrite={canWrite}
+              k={k}
+              onEdit={(investment) => setPanel({ investment, kind: 'investment' })}
+              onNew={() => setPanel({ kind: 'investment' })}
+              propertyFilter={propertyFilter}
+              state={state}
+              today={today}
+            />
+          </Tabs.Content>
           <Tabs.Content className="py-250" value="depreciation">
             <DepreciationOverview
               canWrite={canWrite}
@@ -551,6 +647,14 @@ const AssetsView = () => {
           <InventoryCreateForm formId={CREATE_FORM_ID} onSubmit={submitCreate} state={state} />
         )}
         {panel?.kind === 'template' && <TemplateForm formId={CREATE_FORM_ID} onSubmit={submitCreate} />}
+        {panel?.kind === 'investment' && (
+          <InvestmentForm
+            formId={CREATE_FORM_ID}
+            onSubmit={submitCreate}
+            state={state}
+            {...(panel.investment === undefined ? {} : { investment: panel.investment })}
+          />
+        )}
         {panel?.kind === 'followUp' && (
           <FollowUpForm
             assetId={panel.item.assetId}
