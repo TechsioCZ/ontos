@@ -132,9 +132,13 @@ const decideLegacyBatch = Effect.fn('AgentPlatform.decideLegacyBatch')(function*
   if (module === undefined || !module.legacyEngine) {
     return yield* new AgentPlatformInvalid({ reason: BATCH_NOT_FOUND });
   }
-  const changeIds = request.itemKeys.flatMap((key) => {
+  const changeIdOf = (key: string) => {
     const parsed = parseLegacyKey(key);
-    return parsed !== undefined && parsed.appId === batch.appId ? [parsed.id] : [];
+    return parsed !== undefined && parsed.appId === batch.appId ? parsed.id : undefined;
+  };
+  const changeIds = request.itemKeys.flatMap((key) => {
+    const id = changeIdOf(key);
+    return id === undefined ? [] : [id];
   });
   if (changeIds.length === 0) {
     return yield* new AgentPlatformInvalid({ reason: 'Vyberte alespoň jednu změnu z této dávky.' });
@@ -148,9 +152,11 @@ const decideLegacyBatch = Effect.fn('AgentPlatform.decideLegacyBatch')(function*
   const outcome = yield* decideLegacy(caller.principal, module.appId, changeIds, request.decision, request.note);
   return {
     results: request.itemKeys.map((itemKey) =>
-      outcome.ok
-        ? result(itemKey, request.decision === 'approve' ? 'applied' : 'rejected')
-        : result(itemKey, outcome.status === 403 ? 'forbidden' : 'failed', outcome.message),
+      changeIdOf(itemKey) === undefined
+        ? result(itemKey, 'skipped', 'Změna do této dávky nepatří.')
+        : outcome.ok
+          ? result(itemKey, request.decision === 'approve' ? 'applied' : 'rejected')
+          : result(itemKey, outcome.status === 403 ? 'forbidden' : 'failed', outcome.message),
     ),
   } satisfies AgentDecideResponse;
 });
@@ -185,7 +191,9 @@ const revertCoreBatch = Effect.fn('AgentPlatform.revertCoreBatch')(function* rev
     return { message: 'Dávka už byla vrácena.', outcome: 'failed' } satisfies AgentRevertResponse;
   }
   const modules = yield* callerModuleAccess(caller);
-  const applied = rows.filter((row) => row.status === 'applied').toSorted((left, right) => right.position - left.position);
+  const applied = rows
+    .filter((row) => row.status === 'applied')
+    .toSorted((left, right) => right.position - left.position);
   if (applied.some((row) => !modules.write.has(row.moduleKey))) {
     return yield* new AgentPlatformForbidden({
       reason: 'Dávku může vrátit jen člověk s oprávněním k zápisu ve všech jejích modulech.',
@@ -241,7 +249,10 @@ const revertLegacyBatch = Effect.fn('AgentPlatform.revertLegacyBatch')(function*
   }
   const outcome = yield* revertLegacy(caller.principal, module.appId, batch.id, request.note);
   return outcome.ok
-    ? ({ message: 'Změny dávky byly vráceny. Historie zůstala zachována.', outcome: 'reverted' } satisfies AgentRevertResponse)
+    ? ({
+        message: 'Změny dávky byly vráceny. Historie zůstala zachována.',
+        outcome: 'reverted',
+      } satisfies AgentRevertResponse)
     : ({ message: outcome.message, outcome: 'failed' } satisfies AgentRevertResponse);
 });
 
