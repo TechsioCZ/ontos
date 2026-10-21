@@ -65,6 +65,7 @@ export const withCommandGuard =
     handler: (payload: Payload, context: Context) => Effect.Effect<Success, Failure, Requirements>,
   ) =>
   (payload: Payload, context: Context): Effect.Effect<Success, Failure | CrmPermissionDenied, Requirements> =>
-    assertCommandAllowed(principalKindOf(context.scope.authMethod, context.scope.delegatedByPrincipalId, payload.command._tag), payload.command._tag).pipe(
-      Effect.flatMap(() => handler(payload, context)),
-    );
+    assertCommandAllowed(
+      principalKindOf(context.scope.authMethod, context.scope.delegatedByPrincipalId, payload.command._tag),
+      payload.command._tag,
+    ).pipe(Effect.flatMap(() => handler(payload, context)));
