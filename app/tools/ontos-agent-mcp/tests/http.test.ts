@@ -74,8 +74,6 @@ const send = (handler: (request: Request) => Promise<Response>, path: string, in
 const json = async (response: Response): Promise<Record<string, unknown>> =>
   (await response.json()) as Record<string, unknown>;
 
-const bearer = (token: string): HeadersInit => ({ authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' });
-
 describe('createOntosMcpFetch: discovery and public routes', () => {
   const handler = createOntosMcpFetch(deps());
 
