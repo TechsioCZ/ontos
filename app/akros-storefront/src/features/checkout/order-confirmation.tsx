@@ -73,7 +73,7 @@ export function OrderConfirmation() {
   return (
     <section
       data-akros-checkout
-      className="mx-auto grid max-w-4xl gap-8"
+      className="mx-auto grid max-w-4xl grid-cols-1 gap-8"
       aria-labelledby="confirmation-title"
     >
       <header className="grid justify-items-center gap-3 text-center">
@@ -168,7 +168,7 @@ export function OrderConfirmation() {
           <h2 className="mb-3 text-md font-medium">Fakturační údaje</h2>
           <AddressText address={order.draft.billing} />
           <p>{order.draft.company}</p>
-          <p>{order.draft.email}</p>
+          <p className="wrap-anywhere">{order.draft.email}</p>
         </section>
         <section>
           <h2 className="mb-3 text-md font-medium">Dodací údaje</h2>

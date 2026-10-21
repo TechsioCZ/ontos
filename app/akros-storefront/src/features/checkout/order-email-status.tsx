@@ -62,12 +62,14 @@ export function OrderEmailStatus({ email, orderNumber }: { email: string; orderN
   return (
     <section
       aria-labelledby="order-emails-title"
-      className="grid gap-2 rounded-sm border border-(--color-border-primary) p-4 text-sm"
+      className="grid grid-cols-1 gap-2 rounded-sm border border-(--color-border-primary) p-4 text-sm"
     >
       <h2 id="order-emails-title" className="font-bold">
         E-maily k objednávce
       </h2>
-      <p className="text-(--color-fg-secondary)">Potvrzení a změny stavu posíláme na {email}.</p>
+      <p className="wrap-anywhere text-(--color-fg-secondary)">
+        Potvrzení a změny stavu posíláme na {email}.
+      </p>
       {state.kind === "loading" && <p>Ověřuji odeslání potvrzovacího e-mailu…</p>}
       {state.kind === "unavailable" && <p>Stav e-mailů se nepodařilo ověřit.</p>}
       {state.kind === "ready" && state.deliveries.length === 0 && (
