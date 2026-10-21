@@ -421,7 +421,7 @@ export const TaskFormDialog = ({
   readonly onArchive?: ((archived: boolean) => void) | undefined;
   /** Names of properties, units and contracts by resourceId, for the change history. */
   readonly contextLabels?: ReadonlyMap<string, string>;
-  readonly actorName: (principalId: string) => string;
+  readonly actorName: (principalId: string, displayName?: string) => string;
   readonly opportunities: readonly OpportunityOption[];
   readonly opportunitiesLoading: boolean;
   /** `undefined` creates a task. Mount this component only while it is open. */

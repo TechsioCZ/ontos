@@ -39,6 +39,8 @@ export type Change = typeof ChangeSchema.Type;
 export const HistoryEntrySchema = Schema.Struct({
   action: Schema.Literals(['created', 'updated', 'archived', 'restored']),
   actorPrincipalRef: PrincipalRefSchema,
+  /** Core display name of the acting account at write time, e.g. "AI agent B · čtení + úkoly (Obchodní firma)". */
+  actorDisplayName: Schema.optionalKey(Schema.String),
   at: Schema.DateTimeUtcFromString,
   changes: Schema.Array(ChangeSchema),
 });

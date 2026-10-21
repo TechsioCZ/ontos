@@ -5,7 +5,7 @@ import { executeRecordsWithAuthorization as executeAgreementRecords } from '@app
 import { executeRecordsWithAuthorization as executePropertyRecords } from '@app/siampark-property/clients/records';
 import { executeRecordsWithAuthorization as executeWorkforceRecords } from '@app/workforce/clients/records';
 import type { ContextAccessService, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { Context, DateTime, Effect, Match, Option, Predicate, Result, Schema, Struct } from 'effect';
 
 import {
@@ -28,10 +28,19 @@ import type {
   WorkCommand,
 } from '../../shared/actions/apply-command.ts';
 import { WorkStateSchema } from '../../shared/apis/records.ts';
-import type { ContextRef, RecordsRequest, Task, TaskState, WorkState } from '../../shared/apis/records.ts';
+import type {
+  ContextRef,
+  HistoryEntry,
+  RecordsRequest,
+  Task,
+  TaskState,
+  WorkProject,
+  WorkState,
+} from '../../shared/apis/records.ts';
 import { TaskRefSchema } from '../../shared/resources/task.ts';
 import type { TaskRef } from '../../shared/resources/task.ts';
 import { legalTransitions } from '../../shared/actions/task-transitions.ts';
+import { corePrincipals } from '../database/core-principals-view.ts';
 import { workStates } from '../database/schema.ts';
 import { taskLookupAccess } from './task-lookup-access.ts';
 import { withHistory } from './work-history.ts';
@@ -528,6 +537,63 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
       return employee;
     });
     const actor = { principalId: scope.principalId, tenantId: scope.tenantId };
+    /**
+     * Core display names of the given principals in this tenant. Best-effort: an unreadable principal table leaves
+     * the names out and history falls back to a generic label instead of failing the command or the read.
+     */
+    const principalNames = Effect.fn('Work.principalNames')(function* principalNames(ids: ReadonlySet<string>) {
+      if (ids.size === 0) return new Map<string, string>();
+      const rows = yield* transaction
+        .select({ displayName: corePrincipals.displayName, principalId: corePrincipals.principalId })
+        .from(corePrincipals)
+        .where(and(eq(corePrincipals.tenantId, scope.tenantId), inArray(corePrincipals.principalId, [...ids])))
+        .pipe(Effect.catchCause(() => Effect.succeed([])));
+      return new Map(rows.map((row) => [row.principalId, row.displayName] as const));
+    });
+    /** The acting account's Core display name, snapshotted into every history entry and comment it writes. */
+    const actorDisplayName = Effect.fn('Work.actorDisplayName')(function* actorDisplayName() {
+      return (yield* principalNames(new Set([scope.principalId]))).get(scope.principalId);
+    });
+    /** Older entries written before the snapshot existed get the current Core display name at read time. */
+    const withActorNames = Effect.fn('Work.withActorNames')(function* withActorNames(
+      tasks: readonly Task[],
+      projects: readonly WorkProject[],
+    ) {
+      const unnamed = new Set<string>();
+      const collect = (history: readonly HistoryEntry[] | undefined) => {
+        for (const entry of history ?? [])
+          if (entry.actorDisplayName === undefined) unnamed.add(entry.actorPrincipalRef.principalId);
+      };
+      for (const task of tasks) {
+        collect(task.history);
+        for (const comment of task.comments ?? [])
+          if (comment.authorDisplayName === undefined) unnamed.add(comment.authorPrincipalRef.principalId);
+      }
+      for (const project of projects) collect(project.history);
+      const names = yield* principalNames(unnamed);
+      if (names.size === 0) return { projects, tasks };
+      const named = (history: readonly HistoryEntry[] | undefined) =>
+        history?.map((entry) => {
+          const name = entry.actorDisplayName ?? names.get(entry.actorPrincipalRef.principalId);
+          return name === undefined ? entry : { ...entry, actorDisplayName: name };
+        });
+      return {
+        projects: projects.map((project) =>
+          project.history === undefined ? project : { ...project, history: named(project.history) ?? [] },
+        ),
+        tasks: tasks.map((task): Task => {
+          const comments = task.comments?.map((comment) => {
+            const name = comment.authorDisplayName ?? names.get(comment.authorPrincipalRef.principalId);
+            return name === undefined ? comment : { ...comment, authorDisplayName: name };
+          });
+          return {
+            ...task,
+            ...(task.history === undefined ? {} : { history: named(task.history) ?? [] }),
+            ...(comments === undefined ? {} : { comments }),
+          };
+        }),
+      };
+    });
     const whereScope = and(eq(workStates.tenantId, scope.tenantId), eq(workStates.legalEntityId, legalEntityId));
     const load = Effect.fn('Work.load')(function* load() {
       const rows = yield* transaction.select().from(workStates).where(whereScope).limit(1);
@@ -663,7 +729,10 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
           }),
         };
       }
-      const revision = yield* save(expectedRevision, withHistory(snapshot.state, updatedState, actor, now));
+      const revision = yield* save(
+        expectedRevision,
+        withHistory(snapshot.state, updatedState, actor, now, yield* actorDisplayName()),
+      );
       return { results: change.results, revision };
     });
     const apply = Effect.fn('Work.apply')(function* apply(
@@ -699,9 +768,9 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
             baseUrl: credential.apiBaseUrl,
             compositionRevision: credential.compositionRevision,
           }).pipe(Effect.mapError(referenceUnavailable));
-          const authorDisplayName = workforce.items.find(
-            (employee) => employee.principalRef?.principalId === scope.principalId,
-          )?.fullName;
+          const authorDisplayName =
+            workforce.items.find((employee) => employee.principalRef?.principalId === scope.principalId)?.fullName ??
+            (yield* actorDisplayName());
           const updated = {
             ...task,
             updatedAt: now,
@@ -756,6 +825,7 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
           { ...snapshot.state, projects: [...projects.filter((item) => item.id !== project.id), project] },
           actor,
           now,
+          yield* actorDisplayName(),
         );
         const revision = yield* save(expectedRevision, recorded);
         return { revision, project: recorded.projects?.find((item) => item.id === project.id) ?? project };
@@ -857,7 +927,7 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
         resourceId,
         tenantId: scope.tenantId,
       });
-      const recorded = withHistory(snapshot.state, change.state, actor, now);
+      const recorded = withHistory(snapshot.state, change.state, actor, now, yield* actorDisplayName());
       const revision = yield* save(expectedRevision, recorded);
       return {
         revision,
@@ -887,6 +957,10 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
           (request.contextResourceId === undefined ||
             task.contextRefs.some((ref) => ref.resourceId === request.contextResourceId)),
       );
+      const named = yield* withActorNames(
+        items,
+        (yield* contextGrant(scope, 'read_all')) ? (snapshot.state.projects ?? []) : [],
+      );
       const referenceDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Prague' }).format(
         DateTime.toDateUtc(yield* DateTime.now),
       );
@@ -895,13 +969,13 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
         lookupAccess: yield* taskLookupAccess(scope),
         canWrite: yield* contextGrant(scope, 'write_all'),
         collection: snapshot.state.collection,
-        projects: (yield* contextGrant(scope, 'read_all')) ? (snapshot.state.projects ?? []) : [],
+        projects: named.projects,
         indicators: {
           open: items.filter((task) => taskStatusGroup(task.state) !== 'DONE').length,
           openByAssignee: openByAssignee(items),
           overdue: items.filter((task) => taskIsOverdue(task, referenceDate)).length,
         },
-        items,
+        items: named.tasks,
         referenceDate,
         revision: snapshot.revision,
       };

@@ -28,7 +28,7 @@ export const ChangeHistory = ({
   formatValue,
   updatedAt,
 }: {
-  readonly actorName: (principalId: string) => string;
+  readonly actorName: (principalId: string, displayName?: string) => string;
   readonly createdAt: DateTime.Utc;
   readonly entries: readonly HistoryEntry[] | undefined;
   readonly fieldLabel: (field: string) => string;
@@ -55,7 +55,7 @@ export const ChangeHistory = ({
               <span className="font-medium">{actionLabels[entry.action]}</span>
               <span className="text-fg-secondary">
                 {' '}
-                · {actorName(entry.actorPrincipalRef.principalId)} · {formatTimestamp(entry.at)}
+                · {actorName(entry.actorPrincipalRef.principalId, entry.actorDisplayName)} · {formatTimestamp(entry.at)}
               </span>
             </p>
             {entry.changes.length > 0 && (

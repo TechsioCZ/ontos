@@ -64,9 +64,16 @@ const append = (history: readonly HistoryEntry[] | undefined, entry: HistoryEntr
 
 /**
  * The state with one history entry on every task and project the command created or changed. Entries carry the
- * acting principal, the time and each changed field before → after. A change that only adds a comment adds none.
+ * acting principal (with its Core display name when known), the time and each changed field before → after. A change that only adds a comment adds none.
  */
-export const withHistory = (before: WorkState, after: WorkState, actor: PrincipalRef, now: DateTime.Utc): WorkState => {
+export const withHistory = (
+  before: WorkState,
+  after: WorkState,
+  actor: PrincipalRef,
+  now: DateTime.Utc,
+  actorDisplayName?: string,
+): WorkState => {
+  const who = actorDisplayName === undefined ? { actorPrincipalRef: actor } : { actorDisplayName, actorPrincipalRef: actor };
   const previousTasks = new Map(before.tasks.map((task) => [task.ref.resourceId, task] as const));
   const tasks = after.tasks.map((task): Task => {
     const previous = previousTasks.get(task.ref.resourceId);
@@ -82,7 +89,7 @@ export const withHistory = (before: WorkState, after: WorkState, actor: Principa
             ? ('restored' as const)
             : ('archived' as const)
           : ('updated' as const);
-    return { ...task, history: append(previous?.history, { action, actorPrincipalRef: actor, at: now, changes }) };
+    return { ...task, history: append(previous?.history, { action, ...who, at: now, changes }) };
   });
   const previousProjects = new Map((before.projects ?? []).map((project) => [project.id, project] as const));
   const projects = after.projects?.map((project): WorkProject => {
@@ -95,7 +102,7 @@ export const withHistory = (before: WorkState, after: WorkState, actor: Principa
       ...project,
       history: append(previous?.history, {
         action: previous === undefined ? 'created' : 'updated',
-        actorPrincipalRef: actor,
+        ...who,
         at: now,
         changes,
       }),

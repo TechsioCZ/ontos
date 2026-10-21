@@ -502,9 +502,11 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     (objects ?? []).flatMap((item) => (item.propertyId === undefined ? [] : [[item.id, item.propertyId] as const])),
   );
   const contextLabels = new Map<string, string>((objects ?? []).map((item) => [item.id, item.label] as const));
-  const actorName = (principalId: string) =>
+  // Employees by name; other accounts (AI agents, service accounts) by their Core display name from the server.
+  const actorName = (principalId: string, displayName?: string) =>
     employees.find((employee) => employee.principalRef?.principalId === principalId)?.fullName ??
-    (principalId === records?.actorPrincipalRef.principalId ? 'Vy' : 'Účet mimo seznam zaměstnanců (např. AI agent)');
+    displayName ??
+    (principalId === records?.actorPrincipalRef.principalId ? 'Vy' : 'Účet mimo seznam zaměstnanců');
   const mineEmployeeId =
     records === undefined ? undefined : employeeIdOf(records.actorPrincipalRef.principalId, employees);
   // "Mine" narrows by the employee linked to this login; until the employees settle the table stays in its loading

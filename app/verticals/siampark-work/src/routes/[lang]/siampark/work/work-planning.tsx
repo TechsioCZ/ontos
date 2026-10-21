@@ -53,7 +53,7 @@ const ProjectEditor = ({
   readonly project: WorkProject | undefined;
   readonly employees: readonly Employee[];
   readonly apply: Apply;
-  readonly actorName: (principalId: string) => string;
+  readonly actorName: (principalId: string, displayName?: string) => string;
   readonly close: () => void;
 }) => {
   const historyValue = (field: string, value: string | undefined): string => {
@@ -257,7 +257,7 @@ export const WorkPlanning = ({
   readonly records: RecordsResponse;
   readonly employees: readonly Employee[];
   readonly apply: Apply;
-  readonly actorName: (principalId: string) => string;
+  readonly actorName: (principalId: string, displayName?: string) => string;
   readonly openTask: (task: RecordsResponse['items'][number]) => void;
 }) => {
   const [editor, setEditor] = useState<{ project: WorkProject | undefined }>();
