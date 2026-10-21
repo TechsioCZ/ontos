@@ -35,6 +35,45 @@
     },
     {
       "appId": "privacy"
+    },
+    {
+      "appId": "property-portfolio"
+    },
+    {
+      "appId": "property-leasing"
+    },
+    {
+      "appId": "legal-agreements"
+    },
+    {
+      "appId": "work-tasks"
+    },
+    {
+      "appId": "workforce"
+    },
+    {
+      "appId": "tagging"
+    },
+    {
+      "appId": "crm"
+    },
+    {
+      "appId": "sales-pipeline"
+    },
+    {
+      "appId": "merchandise"
+    },
+    {
+      "appId": "sales-insights"
+    },
+    {
+      "appId": "finance-billing"
+    },
+    {
+      "appId": "crm-activities"
+    },
+    {
+      "appId": "facility-operations"
     }
   ]
 }

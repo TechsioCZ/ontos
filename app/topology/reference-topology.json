@@ -7384,21 +7384,21 @@
           "identityRoot": "deliveryUnit",
           "packageName": "@app/crm",
           "ui": {
-            "manifestEnv": "VERTICAL_TAGGING_MF_MANIFEST",
+            "manifestEnv": "VERTICAL_CRM_MF_MANIFEST",
             "manifestUrl": "http://localhost:4125/mf-manifest.json",
             "buildMarker": "verticals/crm/src/routes/ultramodern-route-metadata.ts"
           },
           "api": {
             "readiness": "/crm-api/crm/readiness",
             "buildMarker": "verticals/crm/shared/ultramodern-build.ts",
-            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TAGGING"
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM"
           }
         },
         "executionSurfaces": {
           "cloudflare": {
             "kind": "cloudflare-worker-snapshot",
             "workerName": "app-crm",
-            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TAGGING",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM",
             "ssr": {
               "workerEntry": ".output/server/index.mjs",
               "workerManifest": ".output/server/modern-worker-manifest.json",
@@ -7410,16 +7410,16 @@
             "zephyr": {
               "runtime": "ssr-worker",
               "integration": "managed-cloudflare",
-              "snapshotIdEnv": "ZEPHYR_TAGGING_SNAPSHOT_ID",
-              "versionIdEnv": "ZEPHYR_TAGGING_VERSION_ID",
-              "applicationUidEnv": "ZEPHYR_TAGGING_APPLICATION_UID"
+              "snapshotIdEnv": "ZEPHYR_CRM_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_CRM_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_CRM_APPLICATION_UID"
             },
             "workerDispatch": {
               "preferred": "service-binding",
-              "serviceBinding": "VERTICAL_TAGGING_WORKER",
-              "serviceBindingEnv": "VERTICAL_TAGGING_WORKER_BINDING",
-              "dispatchNamespaceEnv": "VERTICAL_TAGGING_DISPATCH_NAMESPACE",
-              "dispatchWorkerNameEnv": "VERTICAL_TAGGING_WORKER_NAME",
+              "serviceBinding": "VERTICAL_CRM_WORKER",
+              "serviceBindingEnv": "VERTICAL_CRM_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_CRM_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_CRM_WORKER_NAME",
               "requestInterface": "fetch"
             }
           },
@@ -7427,7 +7427,7 @@
             "kind": "node-mf-runtime",
             "adapterVersion": "backend-mf-effect-v2",
             "remoteName": "verticalCrmBackend",
-            "manifestEnv": "VERTICAL_TAGGING_BACKEND_MF_MANIFEST",
+            "manifestEnv": "VERTICAL_CRM_BACKEND_MF_MANIFEST",
             "manifestUrl": "http://localhost:4125/backend-mf-manifest.json",
             "containerEntry": "http://localhost:4125/backendRemoteEntry.cjs",
             "remoteType": "commonjs-module",
@@ -7532,7 +7532,7 @@
       "cloudflare": {
         "target": "cloudflare",
         "workerName": "app-crm",
-        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TAGGING",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM",
         "compatibilityDate": "2026-06-02",
         "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
         "assetsBinding": "ASSETS",
