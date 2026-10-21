@@ -6,7 +6,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Checkbox } from '@techsio/ui-kit/atoms/checkbox';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
-import { useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 import type { KeyboardEvent, MouseEvent, PointerEvent } from 'react';
 
 import {
@@ -30,6 +30,26 @@ const desktopQuery = '(min-width: 64rem)';
 const widthStep = 32;
 
 const isDesktop = (): boolean => globalThis.matchMedia(desktopQuery).matches;
+
+/**
+ * Scroll offset of the step list per guide. Route changes remount the shell frame and closing the panel on a phone
+ * unmounts it, so the offset lives in session storage: the presenter finds the same step again after each screen.
+ */
+const scrollKey = (guideId: string): string => `ontos.demo-guide.scroll.${guideId}`;
+const readScroll = (guideId: string): number => {
+  try {
+    return Number(globalThis.sessionStorage.getItem(scrollKey(guideId))) || 0;
+  } catch {
+    return 0;
+  }
+};
+const writeScroll = (guideId: string, top: number): void => {
+  try {
+    globalThis.sessionStorage.setItem(scrollKey(guideId), String(Math.round(top)));
+  } catch {
+    // Blocked storage: the list simply starts at the top next time.
+  }
+};
 
 /** Header button that opens and closes the guide. */
 export const DemoGuideToggleButton = ({ open }: { readonly open: boolean }) => (
@@ -259,6 +279,12 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
   const doneIds = useDemoGuideProgress(guide.id);
   const summary = summarizeGuideProgress(guide, doneIds);
   const percent = summary.total === 0 ? 0 : Math.round((summary.done / summary.total) * 100);
+  const listRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (listRef.current !== null) {
+      listRef.current.scrollTop = readScroll(guide.id);
+    }
+  }, [guide.id]);
 
   return (
     <aside
@@ -286,7 +312,13 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
           tone="neutral"
         />
       </header>
-      <div className="flex min-h-0 flex-1 flex-col gap-300 overflow-y-auto p-250 lg:ps-300">
+      <div
+        className="flex min-h-0 flex-1 flex-col gap-300 overflow-y-auto p-250 lg:ps-300"
+        onScroll={(event) => {
+          writeScroll(guide.id, event.currentTarget.scrollTop);
+        }}
+        ref={listRef}
+      >
         <section aria-label="Postup ukázky" className="grid gap-150">
           <p className="text-fg-primary text-sm">{guide.intro}</p>
           <p className="flex items-start gap-100 text-fg-secondary text-xs">

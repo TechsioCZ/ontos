@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, rstest } from 'effect-rstest';
 
@@ -47,6 +47,7 @@ const guide: DemoGuide = {
 afterEach(() => {
   cleanup();
   globalThis.localStorage.clear();
+  globalThis.sessionStorage.clear();
 });
 
 it('renders chapters, steps, persona state and both kinds of links', () => {
@@ -80,4 +81,20 @@ it('opens and closes through the header button and the close button', async () =
   render(<DemoGuidePanel guide={guide} identityEmail={undefined} />);
   await user.click(screen.getByRole('button', { name: 'Zavřít průvodce' }));
   expect(globalThis.localStorage.getItem(DEMO_GUIDE_OPEN_KEY)).toBeNull();
+});
+
+it('keeps the step list scroll position when the panel mounts again', () => {
+  const stepList = () => {
+    const list = screen.getByRole('region', { name: 'Postup ukázky' }).parentElement;
+    if (list === null) {
+      throw new Error('step list not rendered');
+    }
+    return list;
+  };
+  render(<DemoGuidePanel guide={guide} identityEmail={undefined} />);
+  stepList().scrollTop = 240;
+  fireEvent.scroll(stepList());
+  cleanup();
+  render(<DemoGuidePanel guide={guide} identityEmail={undefined} />);
+  expect(stepList().scrollTop).toBe(240);
 });
