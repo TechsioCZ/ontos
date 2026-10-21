@@ -23,6 +23,7 @@ import {
   checkoutPickupPoints,
 } from "@/mock-storefront/fixtures/checkout";
 import { formatCheckoutPrice } from "./checkout-format";
+import { useCartQuote } from "@/ontos/cart-revalidation";
 
 export function DeliveryPaymentStep() {
   const { draft, updateDraft } = useCheckout();
@@ -32,12 +33,15 @@ export function DeliveryPaymentStep() {
   const formRef = useRef<HTMLFormElement>(null);
   const [attempted, setAttempted] = useState(false);
   const errors = attempted ? validateMethods(draft) : {};
+  const quote = useCartQuote();
+  const blocked = quote ? !quote.canContinue : false;
   return (
     <form
       ref={formRef}
       noValidate
       onSubmit={(event) => {
         event.preventDefault();
+        if (blocked) return;
         setAttempted(true);
         const invalid = validateMethods(draft);
         if (Object.keys(invalid).length) {
@@ -223,16 +227,25 @@ export function DeliveryPaymentStep() {
         >
           Vrátit se o krok zpět
         </LinkButton>
-        <Button
-          type="submit"
-          variant="primary"
-          size="sm"
-          data-akros-checkout-action
-          className="leading-(--akros-checkout-heading-leading)"
-          uppercase
-        >
-          Dodací údaje
-        </Button>
+        <div className="grid gap-2">
+          <Button
+            type="submit"
+            variant="primary"
+            size="sm"
+            data-akros-checkout-action
+            className="leading-(--akros-checkout-heading-leading)"
+            uppercase
+            disabled={blocked}
+            aria-describedby={blocked ? "methods-blocked" : undefined}
+          >
+            Dodací údaje
+          </Button>
+          {blocked && (
+            <p id="methods-blocked" className="max-w-xs text-xs text-(--color-fg-secondary)">
+              {quote?.blockedReason}
+            </p>
+          )}
+        </div>
       </div>
     </form>
   );

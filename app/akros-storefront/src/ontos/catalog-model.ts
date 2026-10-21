@@ -74,6 +74,7 @@ export function createCatalog(catalogData: CatalogData, categoryData: CategoryDa
     const statuses = variants.map(getProductStockStatus);
     if (statuses.includes("in-stock")) return "in-stock";
     if (statuses.includes("limited-stock")) return "limited-stock";
+    if (statuses.includes("unknown")) return "unknown";
     return "out-of-stock";
   };
 
@@ -124,6 +125,10 @@ export function createCatalog(catalogData: CatalogData, categoryData: CategoryDa
     isRecommended: product.isRecommended,
     isSale: product.isSale,
     isNew: product.isNew,
+    ...(product.availabilityUnknown ? { availabilityUnknown: true } : {}),
+    ...(product.priceUnavailableReason
+      ? { priceUnavailableReason: product.priceUnavailableReason }
+      : {}),
     hasVariants: product.detail.variants.length > 0,
     priceIsFrom: product.detail.variants.length > 0,
     stock: summarizeProductStock(product),

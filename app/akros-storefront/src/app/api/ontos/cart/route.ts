@@ -4,9 +4,11 @@ import { assertCart, quoteCart } from "@/ontos/quote";
 export async function POST(request: Request) {
   try {
     guard(request);
-    const { cart } = await jsonBody(request);
+    const { cart, deliveryId } = await jsonBody(request);
     assertCart(cart);
-    return Response.json(await quoteCart(cart), { headers: { "cache-control": "no-store" } });
+    return Response.json(await quoteCart(cart, deliveryId), {
+      headers: { "cache-control": "no-store" },
+    });
   } catch (e) {
     return problem(e);
   }

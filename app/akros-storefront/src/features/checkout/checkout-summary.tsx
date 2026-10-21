@@ -4,12 +4,15 @@ import { useCart } from "@/features/cart/cart-provider";
 import { useCheckout } from "./checkout-provider";
 import { getCheckoutTotals } from "@/mock-storefront/checkout";
 import { formatCheckoutPrice } from "./checkout-format";
+import { useServerTotals } from "./server-totals";
 
 export function CheckoutSummary() {
   const ontos = useDataSource() === "ontos";
   const { cart } = useCart();
   const { draft } = useCheckout();
-  const totals = getCheckoutTotals(cart, draft, ontos);
+  const local = getCheckoutTotals(cart, draft, ontos);
+  const server = useServerTotals(local);
+  const totals = server.totals;
   return (
     <aside
       className="rounded-sm bg-(--color-base) px-(--dimension-32) py-(--dimension-24)"
@@ -68,7 +71,12 @@ export function CheckoutSummary() {
       </dl>
       {totals.net === null && (
         <p className="mt-3 text-xs text-(--color-fg-secondary)">
-          U dříve uložených položek není dostupná cena bez DPH.
+          {ontos ? server.note : "U dříve uložených položek není dostupná cena bez DPH."}
+        </p>
+      )}
+      {ontos && totals.net !== null && (
+        <p className="mt-3 text-xs text-(--color-fg-secondary)">
+          DPH a částky bez daně spočítal OntOS při ověření košíku.
         </p>
       )}
     </aside>

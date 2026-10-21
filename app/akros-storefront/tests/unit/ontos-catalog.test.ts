@@ -19,6 +19,7 @@ const live = () => ({
       priceMinor: 100,
       grossPriceMinor: 121,
       stockOnHand: 40,
+      availability: "IN_STOCK",
       minimumQuantity: 2,
       packageQuantity: 10,
       priceTiers: [{ minimumQuantity: 20, priceMinor: 110, priceExcludingVatMinor: 91 }],
@@ -166,12 +167,76 @@ describe("OntOS source-of-truth boundary", () => {
       ],
     });
   });
-  it("never backfills an absent owner price or stock from JSON", () => {
-    for (const field of ["grossPriceMinor", "priceMinor", "stockOnHand"]) {
+  it("never backfills an absent owner price from JSON: shows 'cena není dostupná' instead", () => {
+    for (const field of ["grossPriceMinor", "priceMinor"]) {
       const p = live();
       delete (p.variantRecords[0] as Record<string, unknown>)[field];
-      expect(project({ products: [p] }).catalog.products).toEqual([]);
+      const [product] = project({ products: [p] }).catalog.products;
+      expect(product.priceUnavailableReason).toBe("OntOS pro tuto položku nevrátil cenu.");
+      expect(product.detail.variants[0]).toMatchObject({ priceMinor: 0, priceTiers: [] });
     }
+  });
+  it("treats a zero or non-CZK owner price as unavailable, with a reason", () => {
+    const zero = live();
+    zero.variantRecords[0].grossPriceMinor = 0;
+    zero.variantRecords[0].priceMinor = 0;
+    expect(project({ products: [zero] }).catalog.products[0].priceUnavailableReason).toMatch(
+      /nulová/,
+    );
+    const eur = { ...live(), currency: "EUR" };
+    expect(project({ products: [eur] }).catalog.products[0].priceUnavailableReason).toMatch(
+      /nepodporované měně \(EUR\)/,
+    );
+  });
+  it("never derives 'skladem' from the raw ledger: UNKNOWN or untracked availability is not sellable", () => {
+    for (const patch of [{ availability: "UNKNOWN" }, { availability: undefined }]) {
+      const p = live();
+      Object.assign(p.variantRecords[0], patch);
+      const [product] = project({ products: [p] }).catalog.products;
+      expect(product.detail.variants[0]).toMatchObject({
+        availabilityUnknown: true,
+        stockCount: 0,
+      });
+      expect(product.availabilityUnknown).toBe(true);
+    }
+    const untracked = { ...live(), stockTracked: false };
+    expect(project({ products: [untracked] }).catalog.products[0].availabilityUnknown).toBe(true);
+    const simple = {
+      id: "s",
+      slug: "s",
+      name: "S",
+      active: true,
+      currentPriceMinor: 100,
+      grossPriceMinor: 121,
+      stockOnHand: 50,
+      availability: "UNKNOWN",
+    };
+    expect(project({ products: [simple] }).catalog.products[0]).toMatchObject({
+      availabilityUnknown: true,
+      stockCount: 0,
+    });
+  });
+  it("applies owner quantity price tiers of a product without variants", () => {
+    const simple = {
+      id: "s",
+      slug: "s",
+      name: "S",
+      active: true,
+      currentPriceMinor: 1000,
+      grossPriceMinor: 1210,
+      stockOnHand: 5000,
+      availability: "IN_STOCK",
+      priceTiers: [
+        { minimumQuantity: 1, priceMinor: 1210, priceExcludingVatMinor: 1000 },
+        { minimumQuantity: 100, priceMinor: 1150, priceExcludingVatMinor: 950 },
+        { minimumQuantity: 500, priceMinor: 1089, priceExcludingVatMinor: 900 },
+      ],
+    };
+    expect(
+      project({ products: [simple] }).catalog.products[0].detail.priceTiers.map(
+        (tier) => tier.minimumQuantity,
+      ),
+    ).toEqual([1, 100, 500]);
   });
   it("sells products created in OntOS without a minimum quantity from 1 unit, like the owner", () => {
     // Shape of a product made via "Nový produkt": no variants, no minimum/package quantity.
@@ -197,7 +262,7 @@ describe("OntOS source-of-truth boundary", () => {
     p.variantRecords[0].active = false;
     expect(project({ products: [p] }).catalog.products).toEqual([]);
   });
-  it("matches the owner's gross-line VAT rounding instead of multiplying a rounded net unit", () => {
+  it("leaves OntOS net/VAT to the server and keeps prototype net from the tiers", () => {
     const draft = { ...createCheckoutDraft(), deliveryId: "osobni", paymentId: "store-card" };
     const cart = {
       version: 3 as const,
@@ -219,9 +284,10 @@ describe("OntOS source-of-truth boundary", () => {
         },
       ],
     };
+    // OntOS mode never computes tax in the browser: net/VAT come from the server quote.
     expect(getCheckoutTotals(cart, draft, true)).toMatchObject({
-      net: 16033,
-      vat: 3367,
+      net: null,
+      vat: null,
       total: 19400,
     });
     expect(getCheckoutTotals(cart, draft, false)).toMatchObject({ net: 16000, total: 19400 });

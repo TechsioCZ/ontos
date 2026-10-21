@@ -1,5 +1,6 @@
 import type { MerchandiseState } from '../shared/apis/records.ts';
 import type { CatalogCategory, Product } from '../shared/domain/merchandise-model.ts';
+import { applyDemoPriceTiers } from './akros-price-tiers.ts';
 
 const namedEntities: Readonly<Record<string, string>> = {
   amp: '&',
@@ -153,7 +154,9 @@ export const mergeSeed = (current: MerchandiseState, seed: MerchandiseState): Me
     products: [
       ...seed.products.map((entry) => {
         const existing = currentProducts.get(entry.id);
-        return existing === undefined ? entry : repairDiscountPromise(backfillProduct(existing, entry));
+        return existing === undefined
+          ? entry
+          : applyDemoPriceTiers(repairDiscountPromise(backfillProduct(existing, entry)));
       }),
       ...current.products.filter((entry) => !seedProductIds.has(entry.id)),
     ],

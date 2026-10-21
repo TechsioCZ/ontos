@@ -1,6 +1,8 @@
 "use client";
 import NextLink from "next/link";
+import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
+import { useCartQuote } from "@/ontos/cart-revalidation";
 import { useCart } from "./cart-provider";
 import { CartItemsTable } from "@/features/checkout/cart-items-table";
 import { CartServices } from "@/features/checkout/cart-services";
@@ -41,6 +43,8 @@ export function CartContent() {
 }
 
 export function CartNavigation() {
+  const quote = useCartQuote();
+  const blocked = quote ? !quote.canContinue : false;
   return (
     <div
       data-akros-cart-navigation
@@ -56,16 +60,35 @@ export function CartNavigation() {
       >
         Zpět do obchodu
       </LinkButton>
-      <LinkButton
-        as={NextLink}
-        href="/kosik/doprava-platba"
-        variant="primary"
-        size="sm"
-        className="w-full sm:w-(--akros-checkout-continue-width)"
-        uppercase
-      >
-        Vybrat dopravu a platbu
-      </LinkButton>
+      {blocked ? (
+        <div className="grid w-full gap-2 sm:w-(--akros-checkout-continue-width)">
+          <Button
+            type="button"
+            variant="primary"
+            size="sm"
+            className="w-full"
+            uppercase
+            disabled
+            aria-describedby="cart-continue-blocked"
+          >
+            Vybrat dopravu a platbu
+          </Button>
+          <p id="cart-continue-blocked" className="text-xs text-(--color-fg-secondary)">
+            {quote?.blockedReason}
+          </p>
+        </div>
+      ) : (
+        <LinkButton
+          as={NextLink}
+          href="/kosik/doprava-platba"
+          variant="primary"
+          size="sm"
+          className="w-full sm:w-(--akros-checkout-continue-width)"
+          uppercase
+        >
+          Vybrat dopravu a platbu
+        </LinkButton>
+      )}
     </div>
   );
 }

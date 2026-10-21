@@ -206,6 +206,13 @@ const formatVariantLabel = (variant: CatalogProductVariant) => {
   return `M ${dimension[1]} × ${dimension[2]}`;
 };
 
+const variantAvailabilityLabel = (variant: CatalogProductVariant) =>
+  variant.availabilityUnknown
+    ? "Nelze ověřit"
+    : variant.stockCount >= variant.minimumQuantity
+      ? "Skladem"
+      : "Není skladem";
+
 const getVariantCartItem = (product: CatalogProduct, variant: CatalogProductVariant) => ({
   vatRate: product.vatRate,
   productId: product.id,
@@ -251,7 +258,11 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
     ? Math.max(selectedQuantity, 1) * packageQuantity
     : selectedQuantity;
   const label = formatVariantLabel(variant);
-  const disabled = maximum <= 0 || variant.priceMinor <= 0;
+  const disabled =
+    maximum <= 0 ||
+    variant.priceMinor <= 0 ||
+    !!variant.priceUnavailableReason ||
+    !!variant.availabilityUnknown;
 
   return (
     <div
@@ -470,14 +481,21 @@ export function ProductPurchaseForm({
         header: "Dostupnost",
         meta: { width: "9%" },
         cell: ({ row }) => {
-          const isAvailable = row.original.stockCount >= row.original.minimumQuantity;
+          const isAvailable =
+            !row.original.availabilityUnknown &&
+            row.original.stockCount >= row.original.minimumQuantity;
 
           return (
             <strong
               className="akros-variant-table__availability @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal"
               data-available={isAvailable}
+              title={
+                row.original.availabilityUnknown
+                  ? "OntOS nyní nemůže potvrdit dostupnost této varianty."
+                  : undefined
+              }
             >
-              {isAvailable ? "Skladem" : "Není skladem"}
+              {variantAvailabilityLabel(row.original)}
             </strong>
           );
         },
@@ -494,24 +512,36 @@ export function ProductPurchaseForm({
               <div className={`${variantListOnlyClassName} mb-(--dimension-8)`}>
                 <span
                   className="akros-variant-table__availability text-xs font-normal"
-                  data-available={row.original.stockCount >= row.original.minimumQuantity}
+                  data-available={
+                    !row.original.availabilityUnknown &&
+                    row.original.stockCount >= row.original.minimumQuantity
+                  }
                 >
-                  {row.original.stockCount >= row.original.minimumQuantity
-                    ? "Skladem"
-                    : "Není skladem"}
+                  {variantAvailabilityLabel(row.original)}
                 </span>
               </div>
-              <strong className="min-w-0 whitespace-normal! wrap-anywhere @max-akros-variant-table/akros-variants:text-(length:--text-base)!">
-                {formatPrice(row.original.priceMinor).replace(/\s(?=\S+$)/u, " ")}
-                <span className="akros-variant-table__mobile-label @max-akros-variant-table/akros-variants:inline! @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal">
-                  {" "}
-                  / {row.original.unit}
+              {row.original.priceUnavailableReason ? (
+                <span className="grid gap-1">
+                  <strong className="whitespace-normal!">Cena není dostupná</strong>
+                  <small className="whitespace-normal! text-xs font-normal text-fg-secondary">
+                    {row.original.priceUnavailableReason}
+                  </small>
                 </span>
-              </strong>
-              {basePriceTier && (
-                <small className="@max-akros-variant-table/akros-variants:text-xs! @max-akros-variant-table/akros-variants:font-normal">
-                  {formatPrice(basePriceTier.priceExcludingVatMinor)} bez DPH
-                </small>
+              ) : (
+                <>
+                  <strong className="min-w-0 whitespace-normal! wrap-anywhere @max-akros-variant-table/akros-variants:text-(length:--text-base)!">
+                    {formatPrice(row.original.priceMinor).replace(/\s(?=\S+$)/u, " ")}
+                    <span className="akros-variant-table__mobile-label @max-akros-variant-table/akros-variants:inline! @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal">
+                      {" "}
+                      / {row.original.unit}
+                    </span>
+                  </strong>
+                  {basePriceTier && (
+                    <small className="@max-akros-variant-table/akros-variants:text-xs! @max-akros-variant-table/akros-variants:font-normal">
+                      {formatPrice(basePriceTier.priceExcludingVatMinor)} bez DPH
+                    </small>
+                  )}
+                </>
               )}
             </div>
           );
@@ -621,7 +651,19 @@ export function ProductPurchaseForm({
         </NumericInput>
         <Button
           block
-          disabled={maximumQuantity <= 0 || purchaseItem.priceMinor <= 0}
+          disabled={
+            maximumQuantity <= 0 ||
+            purchaseItem.priceMinor <= 0 ||
+            !!purchaseItem.priceUnavailableReason ||
+            !!purchaseItem.availabilityUnknown
+          }
+          title={
+            purchaseItem.priceUnavailableReason
+              ? `Cena není dostupná: ${purchaseItem.priceUnavailableReason}`
+              : purchaseItem.availabilityUnknown
+                ? "Dostupnost nyní nelze ověřit."
+                : undefined
+          }
           icon="token-icon-cart"
           onClick={() => {
             dispatch({

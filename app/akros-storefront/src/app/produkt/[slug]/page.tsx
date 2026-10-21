@@ -66,8 +66,14 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
     purchasePriceTiers[0];
   const packageQuantity = purchaseItem.packageQuantity ?? purchaseItem.minimumQuantity;
   const availableVariantCount = detail.variants.filter(
-    (variant) => variant.stockCount >= variant.minimumQuantity,
+    (variant) => !variant.availabilityUnknown && variant.stockCount >= variant.minimumQuantity,
   ).length;
+  const unknownVariantCount = detail.variants.filter(
+    (variant) => variant.availabilityUnknown,
+  ).length;
+  const priceUnavailableReason =
+    purchaseItem.priceUnavailableReason ??
+    (purchaseItem.priceMinor > 0 ? undefined : "OntOS pro tuto položku nevrátil platnou cenu.");
   const variantSearch = Array.isArray(requestedVariantSearch)
     ? requestedVariantSearch[0]
     : requestedVariantSearch;
@@ -103,14 +109,16 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
     )
     .slice(0, 3);
 
-  const simpleStockLabel =
-    purchaseItem.stockCount >= purchaseItem.minimumQuantity
+  const simpleStockLabel = purchaseItem.availabilityUnknown
+    ? "Dostupnost nyní nelze ověřit"
+    : purchaseItem.stockCount >= purchaseItem.minimumQuantity
       ? `Skladem ${purchaseItem.stockCount.toLocaleString("cs-CZ")} ${purchaseItem.unit}`
       : purchaseItem.stockCount > 0
         ? `Omezené množství: ${purchaseItem.stockCount.toLocaleString("cs-CZ")} ${purchaseItem.unit}`
         : "Není skladem";
-  const stockState =
-    purchaseItem.stockCount >= purchaseItem.minimumQuantity
+  const stockState = purchaseItem.availabilityUnknown
+    ? "limited"
+    : purchaseItem.stockCount >= purchaseItem.minimumQuantity
       ? "available"
       : purchaseItem.stockCount > 0
         ? "limited"
@@ -252,7 +260,9 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
               >
                 {availableVariantCount > 0
                   ? `Skladem ${availableVariantCount.toLocaleString("cs-CZ")} z ${detail.variants.length.toLocaleString("cs-CZ")} variant`
-                  : "Momentálně není skladem žádná varianta"}
+                  : unknownVariantCount > 0
+                    ? "Dostupnost variant nyní nelze ověřit"
+                    : "Momentálně není skladem žádná varianta"}
               </p>
             ) : (
               <>
@@ -263,7 +273,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                 </p>
 
                 <div className="akros-product-detail__buying">
-                  {purchasePriceTiers.length > 1 && (
+                  {purchasePriceTiers.length > 1 && !priceUnavailableReason && (
                     <dl className="akros-price-tiers" aria-label={cs.product.quantityPricing}>
                       {purchasePriceTiers.map((tier) => (
                         <div key={tier.minimumQuantity}>
@@ -276,16 +286,36 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                     </dl>
                   )}
 
-                  {basePriceTier && (
-                    <p className="akros-product-detail__price-row">
-                      <span>Cena bez DPH</span>
-                      <strong>{formatPrice(basePriceTier.priceExcludingVatMinor)}</strong>
+                  {priceUnavailableReason ? (
+                    <div className="akros-product-detail__price-unavailable" role="note">
+                      <p className="akros-product-detail__price-row akros-product-detail__price-row--total">
+                        <span>Cena</span>
+                        <strong>Cena není dostupná</strong>
+                      </p>
+                      <p className="akros-product-detail__price-reason">
+                        {priceUnavailableReason} Koupit ji proto nyní nelze.
+                      </p>
+                    </div>
+                  ) : (
+                    <>
+                      {basePriceTier && (
+                        <p className="akros-product-detail__price-row">
+                          <span>Cena bez DPH</span>
+                          <strong>{formatPrice(basePriceTier.priceExcludingVatMinor)}</strong>
+                        </p>
+                      )}
+                      <p className="akros-product-detail__price-row akros-product-detail__price-row--total">
+                        <span>Cena s DPH</span>
+                        <strong>{formatPrice(purchaseItem.priceMinor, product.currency)}</strong>
+                      </p>
+                    </>
+                  )}
+                  {purchaseItem.availabilityUnknown && !priceUnavailableReason && (
+                    <p className="akros-product-detail__price-reason" role="note">
+                      OntOS nyní nemůže potvrdit skladovou dostupnost, proto položku nelze vložit do
+                      košíku.
                     </p>
                   )}
-                  <p className="akros-product-detail__price-row akros-product-detail__price-row--total">
-                    <span>Cena s DPH</span>
-                    <strong>{formatPrice(purchaseItem.priceMinor, product.currency)}</strong>
-                  </p>
 
                   <div className="akros-product-detail__purchase-row">
                     <ProductPurchaseForm product={product} variant={singleVariant} />

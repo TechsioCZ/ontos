@@ -151,14 +151,17 @@ function CheckoutCartProvider({
           const checkResponse = await fetch("/api/ontos/cart", {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ cart }),
+            body: JSON.stringify({ cart, deliveryId: draft.deliveryId }),
           });
           const check = await readCheckoutQuote(checkResponse);
           if (!check.canCheckout)
             throw new Error(
               check.priceChanged
                 ? "Cena se změnila – přijmout novou cenu v ověření košíku a zkusit znovu."
-                : "Košík nyní nelze ověřit. Vraťte se do košíku a zkontrolujte dostupnost a množství.",
+                : `Košík nyní nelze ověřit. ${check.issues.join(" ")} Vraťte se do košíku a zkontrolujte dostupnost a množství.`.replace(
+                    /\s+/g,
+                    " ",
+                  ),
             );
         }
         pending.sent = true;
@@ -251,6 +254,11 @@ function CheckoutCartProvider({
 export function CheckoutProvider(props: { children: ReactNode; storage?: CheckoutStorage }) {
   const { activeCartId } = useCart();
   return <CheckoutCartProvider key={activeCartId} {...props} />;
+}
+
+/** Chosen delivery id, or "" outside the checkout (the cart quote also runs in isolated tests). */
+export function useCheckoutDeliveryId(): string {
+  return useContext(CheckoutContext)?.draft.deliveryId ?? "";
 }
 
 export function useCheckout() {

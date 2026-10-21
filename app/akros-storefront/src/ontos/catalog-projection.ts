@@ -4,6 +4,7 @@ import type {
   CategoryData,
   CatalogCategory,
   CatalogParameter,
+  CatalogPriceTier,
   CatalogProduct,
   CatalogProductVariant,
 } from "@/mock-storefront/types";
@@ -69,6 +70,35 @@ const paragraphsOf = (record: Raw): string[] => {
     .filter(Boolean);
 };
 
+/** Only CZK prices are sold here; anything else is shown as „cena není dostupná“. */
+const SUPPORTED_CURRENCY = "CZK";
+/** Why an owner price cannot be sold, or undefined when it can (positive CZK gross and net). */
+export const priceUnavailableReason = (
+  gross: number | undefined,
+  net: number | undefined,
+  currency: unknown,
+): string | undefined => {
+  if (
+    typeof currency === "string" &&
+    currency.trim() &&
+    currency.trim().toUpperCase() !== SUPPORTED_CURRENCY
+  )
+    return `Cena je v nepodporované měně (${currency.trim().toUpperCase()}); e-shop prodává jen v Kč.`;
+  if (gross === undefined || net === undefined) return "OntOS pro tuto položku nevrátil cenu.";
+  if (gross <= 0 || net <= 0) return "Cena v OntOS je nulová, položku proto nelze objednat.";
+  return undefined;
+};
+/** Owner availability: UNKNOWN, untracked stock or a missing value is never shown as „skladem“. */
+export const isAvailabilityUnknown = (availability: unknown, stockTracked: unknown): boolean =>
+  stockTracked === false || !["IN_STOCK", "LOW_STOCK", "OUT_OF_STOCK"].includes(text(availability));
+/** Sellable quantity from the owner ledger; OUT_OF_STOCK is 0 whatever the raw count says. */
+const stockOf = (stockOnHand: unknown, availability: unknown): number =>
+  text(availability) === "OUT_OF_STOCK" ? 0 : Math.max(0, number(stockOnHand) ?? 0);
+const dedupeTiers = (tiers: CatalogPriceTier[]): CatalogPriceTier[] =>
+  [...new Map(tiers.map((tier) => [tier.minimumQuantity, tier] as const)).values()].sort(
+    (a, b) => a.minimumQuantity - b.minimumQuantity,
+  );
+
 export interface CatalogSnapshot {
   catalog: CatalogData;
   categories: CategoryData;
@@ -87,24 +117,20 @@ export function project(body: Raw): CatalogSnapshot {
     const convert = (v: Raw): CatalogProductVariant | null => {
       const gross = number(v.grossPriceMinor);
       const net = number(v.priceMinor);
-      const stock = number(v.stockOnHand);
       // Same default as the owner order rules (merchandise order-quantity: minimumQuantity ?? 1).
       const minimum = number(v.minimumQuantity) ?? number(p.minimumQuantity) ?? 1;
-      if (
-        gross === undefined ||
-        net === undefined ||
-        stock === undefined ||
-        minimum === undefined ||
-        !text(v.id)
-      )
-        return null;
-      const tiers = rows(v.priceTiers)
-        .map((t) => ({
-          minimumQuantity: number(t.minimumQuantity)!,
-          priceMinor: number(t.priceMinor)!,
-          priceExcludingVatMinor: number(t.priceExcludingVatMinor)!,
-        }))
-        .filter((t) => Object.values(t).every(Number.isFinite));
+      if (!text(v.id)) return null;
+      const priceIssue = priceUnavailableReason(gross, net, p.currency);
+      const availabilityUnknown = isAvailabilityUnknown(v.availability, p.stockTracked);
+      const tiers = priceIssue
+        ? []
+        : rows(v.priceTiers)
+            .map((t) => ({
+              minimumQuantity: number(t.minimumQuantity)!,
+              priceMinor: number(t.priceMinor)!,
+              priceExcludingVatMinor: number(t.priceExcludingVatMinor)!,
+            }))
+            .filter((t) => Object.values(t).every(Number.isFinite) && t.priceMinor > 0);
       const packageQuantity = number(v.packageQuantity) ?? number(p.packageQuantity);
       return {
         id: text(v.id),
@@ -113,14 +139,20 @@ export function project(body: Raw): CatalogSnapshot {
         label: text(v.name, text(v.label, text(v.sku))),
         unit: text(v.sourceUnit, text(v.unit, text(p.sourceUnit, text(p.unit, "ks")))),
         vatRate: number(p.vatRate),
-        priceMinor: gross,
-        stockCount: stock,
+        // An unpriced variant is shown (with the reason) but can never be bought: price 0 disables buying.
+        priceMinor: priceIssue ? 0 : gross!,
+        // Unknown availability is never sold from the raw ledger count.
+        stockCount: availabilityUnknown ? 0 : stockOf(v.stockOnHand, v.availability),
+        ...(availabilityUnknown ? { availabilityUnknown: true } : {}),
+        ...(priceIssue ? { priceUnavailableReason: priceIssue } : {}),
         ...purchaseConstraints(minimum, packageQuantity),
         packageQuantity,
-        priceTiers: [
-          { minimumQuantity: minimum, priceMinor: gross, priceExcludingVatMinor: net },
-          ...tiers,
-        ].sort((a, b) => a.minimumQuantity - b.minimumQuantity),
+        priceTiers: priceIssue
+          ? []
+          : dedupeTiers([
+              { minimumQuantity: minimum, priceMinor: gross!, priceExcludingVatMinor: net! },
+              ...tiers,
+            ]),
         parameters: parameters(v.parameters),
         imageSrc: safeImage(v.imageSrc),
         ...flags(v),
@@ -136,18 +168,33 @@ export function project(body: Raw): CatalogSnapshot {
     if (variantRecords.length && !variants.length) continue;
     const gross = number(p.grossPriceMinor);
     const net = number(p.currentPriceMinor);
-    const stock = number(p.stockOnHand);
     // Products created in OntOS (not imported) carry no minimumQuantity; the owner then sells from 1 unit.
     const minimum = number(p.minimumQuantity) ?? 1;
-    if (
-      !variants.length &&
-      (gross === undefined || net === undefined || stock === undefined || minimum === undefined)
-    )
-      continue;
-    const first = variants.reduce<CatalogProductVariant | undefined>(
+    const productPriceIssue = variants.length
+      ? variants.every((v) => v.priceUnavailableReason)
+        ? variants[0]!.priceUnavailableReason
+        : undefined
+      : priceUnavailableReason(gross, net, p.currency);
+    const productAvailabilityUnknown = variants.length
+      ? variants.every((v) => v.availabilityUnknown)
+      : isAvailabilityUnknown(p.availability, p.stockTracked);
+    const priced = variants.filter((v) => !v.priceUnavailableReason);
+    const first = priced.reduce<CatalogProductVariant | undefined>(
       (a, b) => (!a || b.priceMinor < a.priceMinor ? b : a),
       undefined,
     );
+    const productTiers = productPriceIssue
+      ? []
+      : dedupeTiers([
+          { minimumQuantity: minimum, priceMinor: gross!, priceExcludingVatMinor: net! },
+          ...rows(p.priceTiers)
+            .map((t) => ({
+              minimumQuantity: number(t.minimumQuantity)!,
+              priceMinor: number(t.priceMinor)!,
+              priceExcludingVatMinor: number(t.priceExcludingVatMinor)!,
+            }))
+            .filter((t) => Object.values(t).every(Number.isFinite) && t.priceMinor > 0),
+        ]);
     const gallery = strings(p.gallery).flatMap((src) => safeImage(src) ?? []);
     // Staff edit the ordered gallery in OntOS ("Hlavní" = first image); imageSrc is only the import-time copy.
     const primaryImage = gallery[0] ?? safeImage(p.imageSrc) ?? imagePlaceholder;
@@ -163,13 +210,19 @@ export function project(body: Raw): CatalogSnapshot {
       currency: "CZK",
       unit: text(p.sourceUnit, text(p.unit, "ks")),
       vatRate: number(p.vatRate),
-      priceMinor: first?.priceMinor ?? gross!,
+      priceMinor: first?.priceMinor ?? (productPriceIssue ? 0 : gross!),
+      ...(productAvailabilityUnknown ? { availabilityUnknown: true } : {}),
+      ...(productPriceIssue ? { priceUnavailableReason: productPriceIssue } : {}),
       ...purchaseConstraints(
-        first?.minimumQuantity ?? minimum!,
+        first?.minimumQuantity ?? minimum,
         first?.packageQuantity ?? number(p.packageQuantity),
       ),
       packageQuantity: first?.packageQuantity ?? number(p.packageQuantity),
-      stockCount: variants.length ? variants.reduce((sum, v) => sum + v.stockCount, 0) : stock!,
+      stockCount: variants.length
+        ? variants.reduce((sum, v) => sum + v.stockCount, 0)
+        : productAvailabilityUnknown
+          ? 0
+          : stockOf(p.stockOnHand, p.availability),
       imageSrc: primaryImage,
       imageAlt: text(p.imageAlt, text(p.name)),
       secondaryImageSrc: gallery.find((src) => src !== primaryImage),
@@ -180,9 +233,7 @@ export function project(body: Raw): CatalogSnapshot {
         descriptionParagraphs: paragraphs,
         parameters: parameters(p.parameters ?? detail.parameters),
         variants,
-        priceTiers: first?.priceTiers ?? [
-          { minimumQuantity: minimum!, priceMinor: gross!, priceExcludingVatMinor: net! },
-        ],
+        priceTiers: first?.priceTiers ?? productTiers,
       },
     });
   }

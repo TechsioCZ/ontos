@@ -20,6 +20,8 @@ import {
   getPayment,
 } from "@/mock-storefront/checkout";
 import { formatPrice } from "@/lib/format";
+import { useCartQuote } from "@/ontos/cart-revalidation";
+import { useServerTotals } from "./server-totals";
 
 export function ReviewStep() {
   const ontos = useDataSource() === "ontos";
@@ -28,7 +30,10 @@ export function ReviewStep() {
   const router = useRouter();
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
-  const totals = getCheckoutTotals(cart, draft, ontos);
+  const server = useServerTotals(getCheckoutTotals(cart, draft, ontos));
+  const totals = server.totals;
+  const quote = useCartQuote();
+  const blocked = quote ? !quote.canContinue : false;
   return (
     <form
       data-akros-checkout-review
@@ -74,7 +79,11 @@ export function ReviewStep() {
           <div className="flex justify-between gap-4 py-4">
             <dt>Cena bez DPH</dt>
             <dd>
-              {totals.net === null ? "Není dostupná pro starší položky" : formatPrice(totals.net)}
+              {totals.net !== null
+                ? formatPrice(totals.net)
+                : ontos
+                  ? "Spočítá OntOS po ověření košíku"
+                  : "Není dostupná pro starší položky"}
             </dd>
           </div>
           {totals.extendedReturn > 0 && (
@@ -165,7 +174,8 @@ export function ReviewStep() {
             variant="primary"
             size="sm"
             uppercase
-            disabled={sending || submitted || !cart.lines.length}
+            disabled={sending || submitted || !cart.lines.length || blocked}
+            aria-describedby={blocked ? "review-blocked" : undefined}
           >
             {sending
               ? "Odesílám do OntOS…"
@@ -173,6 +183,11 @@ export function ReviewStep() {
                 ? "Potvrdit DEMO objednávku"
                 : "Objednat s povinností platby"}
           </Button>
+          {blocked && (
+            <p id="review-blocked" className="text-center text-xs text-(--color-fg-secondary)">
+              {quote?.blockedReason}
+            </p>
+          )}
           {!ontos && (
             <p className="text-center text-xs leading-(--akros-checkout-body-leading)">
               Kliknutím na tlačítko Objednat s povinností platby souhlasíte s{" "}

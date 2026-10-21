@@ -2,10 +2,10 @@ export const mockCustomer = {
   initials: "JN",
   name: "Jan Novák",
   customerNumber: "84210",
-  email: "novak@stavebniny.cz",
-  phone: "+420 777 123 456",
-  company: "Stavebniny s.r.o.",
-  address: "Průmyslová 1420, Praha 10, 102 00",
+  email: "jan.novak@example.invalid",
+  phone: "+420 600 000 000",
+  company: "Ukázková firma s.r.o. (DEMO)",
+  address: "Ukázková 1, Praha 1, 110 00",
 } as const;
 
 export const mockOrders = [

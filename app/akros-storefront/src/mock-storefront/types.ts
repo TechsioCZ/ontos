@@ -26,6 +26,10 @@ export interface CatalogProductVariant {
   priceMinor: number;
   originalPriceMinor?: number;
   stockCount: number;
+  /** OntOS reports availability UNKNOWN (or untracked stock): shown as „nelze ověřit“, never sold. */
+  availabilityUnknown?: boolean;
+  /** Set when the OntOS price is missing, zero or in an unsupported currency: „cena není dostupná“ + reason. */
+  priceUnavailableReason?: string;
   unit: string;
   priceTiers: CatalogPriceTier[];
   parameters: CatalogParameter[];
@@ -72,6 +76,11 @@ export interface CatalogProduct {
   quantityStep?: number;
   netWeight?: number;
   stockCount: number;
+  /** OntOS reports availability UNKNOWN (or untracked stock): shown as „nelze ověřit“, never sold. */
+  availabilityUnknown?: boolean;
+  /** Set when the OntOS price is missing, zero or in an unsupported currency: „cena není dostupná“ + reason. */
+  priceUnavailableReason?: string;
+
   imageSrc: string;
   imageAlt: string;
   secondaryImageSrc?: string;

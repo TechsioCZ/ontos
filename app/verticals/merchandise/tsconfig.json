@@ -20,6 +20,7 @@
     "api",
     "scripts/akros-baseline.ts",
     "scripts/akros-merge.ts",
+    "scripts/akros-price-tiers.ts",
     "scripts/order-presentation.ts",
     "vertical.manifest.ts",
     "vertical.registration.ts"

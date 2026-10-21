@@ -15,6 +15,46 @@ import {
 } from "@/mock-storefront/cart";
 import { formatCheckoutPrice } from "./checkout-format";
 import { formatCartProductName } from "./cart-product-name";
+import { useCartQuote, type CartQuoteState } from "@/ontos/cart-revalidation";
+
+const blockedLabels: Record<string, string> = {
+  AVAILABILITY_UNKNOWN: "Nelze ověřit",
+  PRICE_UNAVAILABLE: "Cena není dostupná",
+  NOT_AVAILABLE: "Není v nabídce",
+  OUT_OF_STOCK: "Není skladem",
+  INSUFFICIENT_STOCK: "Nedostatek kusů",
+  MINIMUM_QUANTITY: "Upravte množství",
+  PACKAGE_QUANTITY: "Upravte množství",
+};
+
+function LineAvailability({ line, quote }: { line: CartLine; quote: CartQuoteState | null }) {
+  const base =
+    "text-(length:--akros-cart-secondary-size) font-(weight:--akros-cart-primary-weight) uppercase";
+  if (!quote?.enabled)
+    return <span className={`${base} text-(--color-fg-status-success)`}>Skladem</span>;
+  if (quote.status !== "ready")
+    return (
+      <span className={`${base} text-(--color-fg-secondary)`} data-akros-line-state="unverified">
+        {quote.status === "error" ? "Neověřeno" : "Ověřuji…"}
+      </span>
+    );
+  const [issue] = quote.lineIssues(line.productId, line.variantId);
+  if (issue)
+    return (
+      <span
+        className={`${base} text-(--color-danger)`}
+        data-akros-line-state="blocked"
+        title={issue.message}
+      >
+        {blockedLabels[issue.code] ?? "Nelze objednat"}
+      </span>
+    );
+  return (
+    <span className={`${base} text-(--color-fg-status-success)`} data-akros-line-state="verified">
+      Skladem
+    </span>
+  );
+}
 
 function CartQuantity({ line }: { line: CartLine }) {
   const id = useId();
@@ -92,6 +132,7 @@ function CartQuantity({ line }: { line: CartLine }) {
 
 export function CartItemsTable({ showHeader = false }: { showHeader?: boolean }) {
   const { cart, dispatch } = useCart();
+  const quote = useCartQuote();
   const columns = useMemo<ColumnDef<CartLine, unknown>[]>(
     () => [
       {
@@ -111,6 +152,15 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
                 {line.variantLabel}
               </span>
             )}
+            {quote?.status === "ready" &&
+              quote.lineIssues(line.productId, line.variantId).map((issue) => (
+                <span
+                  key={issue.message}
+                  className="basis-full wrap-anywhere text-(length:--akros-cart-secondary-size) text-(--color-danger)"
+                >
+                  {issue.message}
+                </span>
+              ))}
           </div>
         ),
       },
@@ -118,11 +168,7 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
         id: "stock",
         header: "Dostupnost",
         meta: { width: "var(--akros-cart-stock-width)", align: "start" },
-        cell: () => (
-          <span className="text-(length:--akros-cart-secondary-size) font-(weight:--akros-cart-primary-weight) text-(--color-fg-status-success) uppercase">
-            Skladem
-          </span>
-        ),
+        cell: ({ row: { original: line } }) => <LineAvailability line={line} quote={quote} />,
       },
       {
         id: "quantity",
@@ -158,7 +204,7 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
         ),
       },
     ],
-    [dispatch],
+    [dispatch, quote],
   );
 
   return (

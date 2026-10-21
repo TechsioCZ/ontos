@@ -10,6 +10,7 @@ import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { useCheckout } from "./checkout-provider";
 import { AddressFields } from "./address-fields";
 import { validateAddresses } from "@/mock-storefront/checkout";
+import { useCartQuote } from "@/ontos/cart-revalidation";
 
 export function AddressStep() {
   const ontos = useDataSource() === "ontos";
@@ -18,6 +19,8 @@ export function AddressStep() {
   const formRef = useRef<HTMLFormElement>(null);
   const [editing, setEditing] = useState(false);
   const [attempted, setAttempted] = useState(false);
+  const quote = useCartQuote();
+  const blocked = quote ? !quote.canContinue : false;
   const errors = attempted ? validateAddresses(draft) : {};
   const focusError = () =>
     requestAnimationFrame(() =>
@@ -41,6 +44,7 @@ export function AddressStep() {
       noValidate
       onSubmit={(event) => {
         event.preventDefault();
+        if (blocked) return;
         setAttempted(true);
         const invalid = validateAddresses(draft);
         if (Object.keys(invalid).length) {
@@ -195,16 +199,25 @@ export function AddressStep() {
         >
           Zpět k dopravě a platbě
         </LinkButton>
-        <Button
-          type="submit"
-          variant="primary"
-          size="sm"
-          data-akros-checkout-action
-          className="leading-(--akros-checkout-heading-leading)"
-          uppercase
-        >
-          Souhrn objednávky
-        </Button>
+        <div className="grid gap-2">
+          <Button
+            type="submit"
+            variant="primary"
+            size="sm"
+            data-akros-checkout-action
+            className="leading-(--akros-checkout-heading-leading)"
+            uppercase
+            disabled={blocked}
+            aria-describedby={blocked ? "address-blocked" : undefined}
+          >
+            Souhrn objednávky
+          </Button>
+          {blocked && (
+            <p id="address-blocked" className="max-w-xs text-xs text-(--color-fg-secondary)">
+              {quote?.blockedReason}
+            </p>
+          )}
+        </div>
       </div>
     </form>
   );

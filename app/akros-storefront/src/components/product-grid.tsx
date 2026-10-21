@@ -9,6 +9,7 @@ import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 import { AddToCartButton } from "@/features/cart/add-to-cart-button";
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
+import { productStockLabels, productStockTone } from "@/lib/product-stock";
 import type { CatalogProductSummary } from "@/mock-storefront/types";
 
 export interface ProductGridItem extends CatalogProductSummary {
@@ -18,12 +19,6 @@ export interface ProductGridItem extends CatalogProductSummary {
   variantLabel?: string;
   productName?: string;
 }
-
-const stockLabels = {
-  "in-stock": "Skladem",
-  "limited-stock": "Omezeně skladem",
-  "out-of-stock": "Není skladem",
-} as const;
 
 export function ProductGrid({
   products,
@@ -52,13 +47,14 @@ export function ProductGrid({
         const canAddToCart =
           action === "purchase" &&
           !product.hasVariants &&
+          !product.priceUnavailableReason &&
           product.priceMinor > 0 &&
           product.stock.kind === "quantity" &&
           product.stock.status === "in-stock";
-        const priceLabel =
-          product.priceMinor > 0
-            ? `${product.priceIsFrom ? `${cs.product.from} ` : ""}${formatPrice(product.priceMinor, product.currency)}`
-            : "Cena na dotaz";
+        const priceUnavailable = !!product.priceUnavailableReason || product.priceMinor <= 0;
+        const priceLabel = priceUnavailable
+          ? "Cena není dostupná"
+          : `${product.priceIsFrom ? `${cs.product.from} ` : ""}${formatPrice(product.priceMinor, product.currency)}`;
         const supportingText = product.description.trim() || `Kód produktu: ${product.sku}`;
         const comparisonPrice = product.originalPriceMinor;
         const hasDiscount =
@@ -146,9 +142,9 @@ export function ProductGrid({
               <div className="akros-product-card__stock-row flex flex-wrap items-center justify-between gap-2 py-1">
                 <ProductCard.Stock
                   className="akros-catalog-product-card__stock m-0 uppercase"
-                  status={product.stock.status}
+                  status={productStockTone(product.stock.status)}
                 >
-                  {stockLabels[product.stock.status]}
+                  {productStockLabels[product.stock.status]}
                 </ProductCard.Stock>
                 {product.hasVariants && (
                   <Badge className="whitespace-nowrap" size="sm" variant="secondary">
@@ -180,6 +176,16 @@ export function ProductGrid({
                       </del>
                     </span>
                   </>
+                ) : priceUnavailable ? (
+                  <span
+                    className="akros-product-card__price-unavailable"
+                    title={
+                      product.priceUnavailableReason ??
+                      "OntOS pro tuto položku nevrátil platnou cenu."
+                    }
+                  >
+                    {priceLabel}
+                  </span>
                 ) : (
                   priceLabel
                 )}

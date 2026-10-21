@@ -15,8 +15,8 @@ export function CatalogProvider({
     <Context.Provider value={snapshot}>
       {snapshot.mode === "ontos" && (
         <p role="note" className="bg-base-dark p-2 text-center text-sm text-base-light">
-          DEMO – objednávka nebude doručena. Katalog, ceny a sklad: OntOS. Účet a přihlášení:
-          simulace.
+          DEMO – objednávky se jen ukládají pro ukázku; nic neplatíte a nic vám nedoručíme. Katalog,
+          ceny a sklad: OntOS. Účet a přihlášení: simulace.
         </p>
       )}
       {children}

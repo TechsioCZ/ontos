@@ -2,6 +2,7 @@
 import type { MerchandiseStateSchema } from '../shared/apis/records.ts';
 import { decodeCategoryText, orderCategoryPositions, stripUnbackedDiscount } from './akros-merge.ts';
 import { akrosSampleContacts } from './order-presentation.ts';
+import { applyDemoPriceTiers } from './akros-price-tiers.ts';
 
 export type AkrosEncodedState = typeof MerchandiseStateSchema.Encoded;
 type Encoded = AkrosEncodedState;
@@ -108,7 +109,7 @@ export const buildAkrosEncodedFrom = (source: AkrosSource, demoId: DemoId): Enco
     }
     return path;
   };
-  const products: Encoded['products'] = akrosSourceProducts.map((product) => ({
+  const sourceProducts: Encoded['products'] = akrosSourceProducts.map((product) => ({
     ...fieldsFor({ ...product, ...product.detail }),
     active: true,
     category: byCategory.get(product.categoryId)?.name ?? 'Spojovací materiál',
@@ -160,6 +161,7 @@ export const buildAkrosEncodedFrom = (source: AkrosSource, demoId: DemoId): Enco
       isNew: variant.isNew,
     })),
   }));
+  const products = sourceProducts.map(applyDemoPriceTiers);
   const movements: Encoded['movements'] = akrosSourceProducts.flatMap((product) => {
     const units = product.detail.variants.length > 0 ? product.detail.variants : [{ ...product, id: undefined }];
     return units

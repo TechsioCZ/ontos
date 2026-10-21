@@ -58,6 +58,16 @@ this app's npm install/build/start. PID: `app/.scratch/demo-pids/akros-storefron
 logs: `app/.scratch/demo-logs/{build-akros-storefront,akros-storefront}.log`.
 `up.sh` includes the helper; `down.sh` already stops every registered process group.
 
+## OntOS identities
+
+| Identity        | Value in the demo                                                                                                                                                                                                                                          |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tenant          | Demo tenant `70000000-0000-4000-8000-000000000020` (shared by all demo companies; data is separated per Legal Entity).                                                                                                                                     |
+| Legal Entity    | AKROS `71000000-0000-4000-8000-000000000024` (`ONTOS_AKROS_STOREFRONT_LEGAL_ENTITY_ID`). Every read/action carries it; Core rejects other companies.                                                                                                       |
+| Storefront      | Service principal `akros-storefront` (`35de81d2-adc3-5ca7-bcbb-319267a218ce`, `ONTOS_AKROS_STOREFRONT_PRINCIPAL_ID`, role `storefront`) with its own API key held only by this BFF. Staff links open it at `storefrontOrigin` `http://localhost:3070`.     |
+| Channel         | `STOREFRONT`: every order the BFF places is stored by merchandise with `channel: "STOREFRONT"`, author „Zákazník – e-shop (DEMO)“ and `demo: true`. Staff-created orders use `channel: "STAFF"`.                                                           |
+| Commerce Market | Not a separate `commerce.market-catalog` record in this demo. The AKROS merchandise aggregate is the one market: Czech Republic, CZK, gross prices with 21 % VAT, Czech copy. A non-CZK owner price is shown as „cena není dostupná“ and cannot be bought. |
+
 ## Safety and data model
 
 `config`, `gateway`, `catalog-server`, `quote`, `http`, and every API route import `server-only`.
@@ -87,8 +97,10 @@ Every response carries the published category tree, `total`, `page`, `pageSize`,
 `homepageFeaturedProductIds`. `catalog-projection.ts` maps only owner fields: names, slugs, SKUs,
 `description` (authoritative; split on blank lines into detail paragraphs), gallery/images,
 parameters, labels (`flags`), prices/tiers, stock and minimums. Unknown/new owner products are
-offered; unpublished or inactive ones never are. Missing price, stock or minimum means not offered,
-never a mock fallback. Images that `next/image` cannot serve (non-https or a host outside
+offered; unpublished or inactive ones never are. A missing, zero or non-CZK owner price is shown as
+**cena není dostupná** with its reason and an inactive buy button; owner availability `UNKNOWN`,
+untracked stock (`stockTracked:false`) or a missing availability is shown as **dostupnost nyní nelze
+ověřit** and is never sold (the raw `stockOnHand` alone never means „skladem“). Never a mock fallback. Images that `next/image` cannot serve (non-https or a host outside
 `www.akros.cz/data/**` + `STOREFRONT_IMAGE_HOSTS`) become the honest "image unavailable" placeholder.
 Navigation payload: the browser never receives the whole category tree or product data from the
 layout. The root layout ships only Kai's curated sidebar sections (2 roots + their listed children,
@@ -101,10 +113,18 @@ but is listed after real goods (search page and header suggestions).
 Kai's homepage banner carousel and content pages are static marketing content, not catalog data.
 The sidebar keeps Kai's curated section order by category slug; renamed categories update live,
 a category whose slug changes in OntOS drops out of that curated sidebar but stays reachable.
-Outage shows a Czech error, never prototype stock.
+Outage shows a Czech error, never prototype stock. Header search shows a failed OntOS search as an
+error with **Zkusit znovu**, never as „0 produktů“; pages use the error boundary with a retry button.
 
-Cart remains Kai's browser-local named cart storage. `POST /api/ontos/cart` revalidates fresh
-owner prices, applicable quantity tiers, stock, minimum and package multiples. Price changes
+Cart remains Kai's browser-local named cart storage, labelled **Demonstrační košík – nejde o skutečný
+nákup**. `POST /api/ontos/cart` (`{cart, deliveryId?}`) revalidates fresh owner prices, applicable
+quantity tiers, availability, stock, minimum and package multiples, then asks OntOS itself to validate
+the same lines without saving (`PlaceStorefrontOrder` with `dryRun:true`). The response is
+`{cart, priceChanged, issues, lineIssues[{productId,variantId,code,message}], canCheckout, totals}`;
+`totals` (`totalMinor`, `totalVatMinor`, `netMinor`, `shippingMinor`) are the owner's dry-run totals,
+so the browser never computes VAT. A blocked line names product and variant and shows its state
+instead of „Skladem“; every continue/confirm action stays disabled (with the reason) until the quote
+succeeds. A failed quote shows an error with **Zkusit znovu**. Price changes
 require the visible **Přijmout nové ceny** action; they are never silently accepted.
 Before consent, the quote lists old → new gross unit prices, each changed line total and the
 cart merchandise subtotal. The cart itself keeps its original amounts until the customer accepts.
@@ -141,8 +161,10 @@ customer data or order-search endpoint is exposed to the public browser.
 
 ## Honest demo boundaries
 
-**DEMO – objednávka nebude doručena.** Orders are real in OntOS; carriers, payment, email,
-account/login and tracking are simulated. The top banner labels this on every live page.
+**DEMO – objednávky se jen ukládají pro ukázku; nic neplatíte a nic vám nedoručíme.** Orders are
+real in OntOS and order e-mails are really sent (local Mailpit inbox `http://localhost:8025`, order
+confirmation and every status change, receipts on the confirmation page). Carriers, payment,
+account/login and parcel tracking are simulated. The top banner labels this on every live page.
 Live checkout offers owner-supported personal pickup (0 Kč) or Zásilkovna (79 Kč).
 Prototype-only free-shipping threshold/paid extended returns are not applied in ontos mode.
 Connected checkout has only the inactive **Nic neplatíte (DEMO)** method. Old saved payment
@@ -177,6 +199,22 @@ Edit a product name, description, image, label, category or variant net price, s
 shows a price-change acceptance state; new additions use the fresh price. Orders appear in
 `http://localhost:3020/cs/prodej/objednavky`; moving an order through the workflow there updates
 the open confirmation page within 10 seconds.
+
+## Screen matrix
+
+Result column: unit/component tests in `tests/` (vitest) plus the live headless check on
+2026-10-21 (screenshots in `techsio-demo/v2/shots/reqfix-akros-storefront/`).
+
+| Screen                        | Data shown                                                       | Read / Action                                                                               | Typed owner response                                                                         | Error states                                                                                                                             | Test result                                                      |
+| ----------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Home `/`                      | featured products, curated sidebar                               | read `records` `{featured:true,pageSize:20}`                                                | `ProductRecord[]` + categories, `revision`                                                   | OntOS down → error page + „Zkusit znovu“                                                                                                 | PASS (catalog tests, live)                                       |
+| Category `/kategorie/[slug]`  | cards, filters, pagination                                       | read `{categorySlug,page,pageSize:24,sort,q,min,max,availability}`                          | page of `ProductRecord` + `total`                                                            | unknown slug 404; outage → error page; empty filter → „Nic nenalezeno“                                                                   | PASS (category filter tests, live)                               |
+| Search `/vyhledavani`, header | results, suggestions                                             | read `{q,page,pageSize}`; `POST /api/ontos/search`                                          | page of `ProductRecord` + `categories[{id,slug,name,trail}]`                                 | header: error + „Zkusit znovu“ (never 0 results); page: error boundary                                                                   | PASS (search route test, live fault injection)                   |
+| Product `/produkt/[slug]`     | gallery, texts, parameters, variants, tiers, price, availability | read `{slug,pageSize:1}`                                                                    | `ProductRecord` with `variantRecords[{availability,grossPriceMinor,priceTiers,stockOnHand}]` | 404; „cena není dostupná“ + reason, buy disabled; „dostupnost nyní nelze ověřit“, buy disabled                                           | PASS (projection tests, live product-34459 zero price / UNKNOWN) |
+| Cart `/kosik`                 | lines, line state, demo label, verification                      | `POST /api/ontos/cart` → fresh read `{productIds}` + action `PlaceStorefrontOrder` `dryRun` | `StorefrontOrderResult` `VALID`/`REJECTED` with `issues[{code,message,productId,variantId}]` | price change → accept; blocked line (UNKNOWN, no price, stock, minimum, package) → named reason, continue disabled; 503 → „Zkusit znovu“ | PASS (quote + cart component tests, live)                        |
+| Delivery / address steps      | methods, contact (fictitious prefill), summary with owner VAT    | same cart quote with `deliveryId`                                                           | dry-run `totalMinor`, `totalVatMinor`, `shippingPriceMinor`                                  | quote blocked/failed → continue disabled with reason                                                                                     | PASS (live)                                                      |
+| Review `/kosik/shrnuti`       | lines, totals, exact demo notice                                 | action `PlaceStorefrontOrder` (`POST /api/ontos/orders`)                                    | `StorefrontOrderResult` `PLACED`/`REPLAYED` (number, id, totals) or `REJECTED` 409           | 409 owner issues shown; 503 → retry with the same `clientRequestId`; confirm disabled while the quote is blocked                         | PASS (order route test, live)                                    |
+| Confirmation                  | order number, live status, e-mail receipts                       | read `storefrontOrderStatus`; dispatcher receipts                                           | `{id,number,status,statusLabel,updatedAt,final}`                                             | 404/400/503 → Czech message, polling continues                                                                                           | PASS (order-status tests, live)                                  |
 
 ## OntOS owner side (merchandise, two-way)
 

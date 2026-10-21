@@ -46,13 +46,19 @@ export function HeaderSearch() {
   // OntOS mode: the browser only holds featured products, so product suggestions come from the BFF.
   const ontos = useDataSource() === "ontos";
   const [remote, setRemote] = useState<
-    RemoteSearchResponse & { query: string; categories: RemoteCategorySuggestion[] }
+    RemoteSearchResponse & {
+      query: string;
+      categories: RemoteCategorySuggestion[];
+      /** Set when the OntOS search failed: shown as an error with „Zkusit znovu“, never as 0 results. */
+      error?: string;
+    }
   >({
     query: "",
     items: [],
     total: 0,
     categories: [],
   });
+  const [searchAttempt, setSearchAttempt] = useState(0);
   useEffect(() => {
     if (!ontos || !ready) return;
     const controller = new AbortController();
@@ -63,22 +69,50 @@ export function HeaderSearch() {
         body: JSON.stringify({ q: trimmedQuery }),
         signal: controller.signal,
       })
-        .then((response) => (response.ok ? response.json() : { items: [], total: 0 }))
-        .then((body: Partial<RemoteSearchResponse>) =>
+        .then(async (response) => {
+          const body = (await response
+            .json()
+            .catch(() => ({}))) as Partial<RemoteSearchResponse> & {
+            message?: unknown;
+          };
+          if (!response.ok || !Array.isArray(body.items))
+            throw new Error(
+              typeof body.message === "string" && body.message
+                ? body.message
+                : "Vyhledávání v OntOS je teď nedostupné.",
+            );
+          return body;
+        })
+        .then((body) =>
           setRemote({
             query: trimmedQuery,
-            items: Array.isArray(body.items) ? body.items : [],
+            items: body.items ?? [],
             total: typeof body.total === "number" ? body.total : 0,
             categories: Array.isArray(body.categories) ? body.categories : [],
           }),
         )
-        .catch(() => undefined);
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) return;
+          setRemote({
+            query: trimmedQuery,
+            items: [],
+            total: 0,
+            categories: [],
+            error:
+              error instanceof Error && error.name !== "TypeError" && error.message
+                ? error.message
+                : "Vyhledávání v OntOS je teď nedostupné.",
+          });
+        });
     }, 200);
     return () => {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [ontos, ready, trimmedQuery]);
+  }, [ontos, ready, trimmedQuery, searchAttempt]);
+  const remoteCurrent = ontos && remote.query === trimmedQuery;
+  const searchError = remoteCurrent ? remote.error : undefined;
+  const searchLoading = ontos && ready && !remoteCurrent;
   const remoteItems = useMemo(
     () => (ontos && remote.query === trimmedQuery ? remote.items : []),
     [ontos, remote, trimmedQuery],
@@ -223,6 +257,20 @@ export function HeaderSearch() {
               router.push(`${destination.pathname}${destination.search}${destination.hash}`);
             }}
             noResultsMessage={cs.search.noSuggestions}
+            loading={searchLoading}
+            loadingMessage="Hledám v katalogu OntOS…"
+            error={
+              searchError ? (
+                <span data-akros-search-error="">
+                  <strong>Vyhledávání se nepodařilo.</strong> {searchError}
+                </span>
+              ) : undefined
+            }
+            retryLabel="Zkusit znovu"
+            onRetry={() => {
+              setRemote((current) => ({ ...current, query: "", error: undefined }));
+              setSearchAttempt((attempt) => attempt + 1);
+            }}
             onInputValueChange={(value) => {
               setQuery(value);
               setOpen(value.trim().length >= 2);
@@ -232,9 +280,11 @@ export function HeaderSearch() {
             placeholder={cs.search.placeholder}
             size="md"
             allResultsLink={
-              <Link as={NextLink} href={resultsHref} onClick={() => setOpen(false)}>
-                {cs.search.allResults(ontos ? remoteTotal : results.length)}
-              </Link>
+              searchError || searchLoading ? undefined : (
+                <Link as={NextLink} href={resultsHref} onClick={() => setOpen(false)}>
+                  {cs.search.allResults(ontos ? remoteTotal : results.length)}
+                </Link>
+              )
             }
             resultSlot={(item) =>
               item.data && (
