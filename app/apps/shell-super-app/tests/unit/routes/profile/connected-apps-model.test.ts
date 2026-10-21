@@ -135,9 +135,8 @@ test('the panel never offers more than the connection was approved for', () => {
   expect(moduleChoices(narrowed)).toEqual([{ canRead: true, canWrite: false, label: 'CRM', moduleId: 'crm' }]);
   const policies = policyChoices(narrowed);
   expect(policies.map((choice) => choice.disabled)).toEqual([false, true, true]);
-  expect(policies[1]?.disabledReason).toBe(
-    'Víc jste při připojení nepovolil(a). Pro větší přístup aplikaci odpojte a připojte znovu.',
-  );
+  // Limited by the approved grant only: the panel description explains it once, no per-option text.
+  expect(policies[1]?.disabledReason).toBeNull();
   const everything = connection({ allModules: true, granted: { modules: [], writePolicy: 'direct' } });
   expect(moduleChoices(everything).map((module) => module.moduleId)).toEqual(['crm', 'sklad']);
 });

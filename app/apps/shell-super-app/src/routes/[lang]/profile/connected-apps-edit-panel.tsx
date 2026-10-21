@@ -84,7 +84,7 @@ export const ConnectedAppsEditPanel = ({
       closeLabel="Zavřít"
       closeOnInteractOutside={false}
       customTrigger
-      description="Přístup můžete jen zúžit. Změna platí do 30 sekund bez nového přihlášení."
+      description={widenHint}
       onOpenChange={(details) => {
         if (!details.open) {
           onClose();
@@ -106,11 +106,8 @@ export const ConnectedAppsEditPanel = ({
               onChange={() => setDraft((current) => ({ ...current, allModules: true }))}
               type="radio"
             />
-            <span className="grid min-w-0 gap-50">
-              <span className="text-sm">
-                {connection.acting.kind === 'human' ? 'Vše, co smíte' : 'Vše, co agent smí'}
-              </span>
-              {connection.allModules ? null : <span className="text-fg-secondary text-xs">{widenHint}</span>}
+            <span className="text-sm">
+              {connection.acting.kind === 'human' ? 'Vše, co smíte' : 'Vše, co agent smí'}
             </span>
           </label>
           <label className="flex items-start gap-150">

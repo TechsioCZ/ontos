@@ -66,7 +66,7 @@ const post = (path: string, body: unknown) =>
       return { status: 'ok' as const, json };
     }
     const reason = failureOf(response.status);
-    if (response.status === 403 || response.status === 404 || response.status === 422) {
+    if (response.status === 403 || response.status === 404 || response.status === 409 || response.status === 422) {
       // The problem body carries `detail` for the person; anything else leaves it null.
       const detail = yield* response.json.pipe(
         Effect.flatMap((json) => decodeDetail(json)),

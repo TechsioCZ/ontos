@@ -97,7 +97,7 @@ export const formatWhen = (iso: string | null): string => {
 };
 
 const failureMessages: Record<ConnectionsFailure, string> = {
-  conflict: 'Mezitím se něco změnilo. Načtěte stránku znovu.',
+  conflict: 'Připojení se mezitím změnilo.',
   error: 'Služba je nedostupná. Zkuste to znovu.',
   forbidden: 'Tuto akci nemůžete provést.',
   invalid: 'Údaje nejsou platné.',
@@ -167,12 +167,14 @@ const policyCeiling = (c: ConnectionSummary): AgentWritePolicy =>
     ? c.granted.writePolicy
     : c.limits.maxWritePolicy;
 
-/** Why something above the approved access is greyed out. */
-export const widenHint = 'Víc jste při připojení nepovolil(a). Pro větší přístup aplikaci odpojte a připojte znovu.';
+/** Panel description: why nothing above the approved access can be chosen. */
+export const widenHint =
+  'Přístup můžete jen zúžit. Pro větší přístup aplikaci odpojte a připojte znovu. Změna platí do 30 sekund bez nového přihlášení.';
 
-const policyDisabledReason = (c: ConnectionSummary, value: AgentWritePolicy): string => {
+/** Why an option is greyed out; null when only the approved grant limits it (the panel says so once). */
+const policyDisabledReason = (c: ConnectionSummary, value: AgentWritePolicy): string | null => {
   if (policyRank[value] > policyRank[c.granted.writePolicy]) {
-    return widenHint;
+    return null;
   }
   if (c.acting.kind === 'human') {
     return 'Víc vaše oprávnění nedovolují.';
