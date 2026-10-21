@@ -11,6 +11,8 @@ export const resetEnvironment = Config.all({
   BETTER_AUTH_URL: Config.String('BETTER_AUTH_URL'),
   DATABASE_ADMIN_URL: Config.Redacted('DATABASE_ADMIN_URL'),
   DATABASE_URL: Config.Redacted('DATABASE_URL'),
+  // The stage demo seed reaches stage's `db` through loopback forwarders and names it explicitly.
+  ONTOS_DEMO_DATABASE_NAME: Config.String('ONTOS_DEMO_DATABASE_NAME').pipe(Config.withDefault('siampark_demo')),
   SPICEDB_CA_CERT: Config.String('SPICEDB_CA_CERT'),
   SPICEDB_ENDPOINT: Config.String('SPICEDB_ENDPOINT'),
   SPICEDB_PRESHARED_KEY: Config.Redacted('SPICEDB_PRESHARED_KEY'),
@@ -34,8 +36,7 @@ export const validateResetEnvironment = Effect.fn('SiamparkDemo.validateLocalCon
     if (!loopbackHosts.has(pair.admin.host) || !loopbackHosts.has(pair.runtime.host)) {
       return yield* new DemoResetConfigurationError({ reason: 'Both PostgreSQL endpoints must be local' });
     }
-    // The stage demo seed reaches stage's `db` through loopback forwarders and names it explicitly.
-    const demoDatabase = process.env['ONTOS_DEMO_DATABASE_NAME'] ?? 'siampark_demo';
+    const demoDatabase = environment.ONTOS_DEMO_DATABASE_NAME;
     if (
       pair.admin.database !== demoDatabase ||
       pair.runtime.database !== demoDatabase ||
