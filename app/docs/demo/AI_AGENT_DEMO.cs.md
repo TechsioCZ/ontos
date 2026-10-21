@@ -157,7 +157,7 @@ data. Druhé volání vrátí `deduplicated: true` a existující úkol. Důkaz:
 
 **Firma:** Velkoobchod Hanák s.r.o. (LE 0022). **Schvalovatel:** `spravce@hanak.demo` nebo
 `vedouci@hanak.demo`, heslo `password1234`. **Stránka:**
-<http://localhost:3020/cs/crm/schvalovani-ai> — CRM → **AI změny ke schválení**.
+<http://localhost:3020/cs/sprava/ke-schvaleni> — Nastavení → **Ke schválení**.
 
 C je samostatný servisní principal se samostatným klíčem `ONTOS_AGENT_C_HANAK_API_KEY`. Na backendu smí
 v CRM spustit **pouze `AiProposeChanges`**. Přímá úprava, schválení i vrácení týmž klíčem skončí HTTP 403;
@@ -228,7 +228,7 @@ mise exec -- pnpm demo:prove:ai      # původní A/B musí zůstat zelené
 ## Úroveň C — Obchodní firma: příležitosti a objednávky ke schválení
 
 **Firma:** Obchodní firma (LE 0020). **Schvalovatel:** `obchod@demo.ontos` (vedoucí obchodu), heslo
-`password1234`. **Stránka:** <http://localhost:3020/cs/prodej/schvalovani-ai> — Prodej → **AI změny ke schválení**.
+`password1234`. **Stránka:** <http://localhost:3020/cs/sprava/ke-schvaleni> — Nastavení → **Ke schválení**.
 
 C je samostatný servisní principal `ai-agent-c-obchod` s klíčem `ONTOS_AGENT_C_OBCHOD_API_KEY`. Smí spustit
 Actions příležitostí a objednávek, ale **nemá právo zápisu** (`write_all`). Moduly proto přijmou jen
@@ -283,3 +283,16 @@ mise exec -- pnpm demo:prove:ai:c:obchod    # MCP → pending → vedoucí schv�
 - Návrh a jeho výsledek žijí v modulu, kterého se týkají (příležitosti / objednávky); stránka je zobrazuje
   společně. Vrácení celé dávky proběhne v každém modulu atomicky.
 
+## Platforma: Ke schválení a Aktivita agentů
+
+Návrhy AI agentů ze všech modulů schvaluje člověk na jednom místě: **Nastavení › Ke schválení**
+(<http://localhost:3020/cs/sprava/ke-schvaleni>). Schválení provede uložený příkaz modulu jménem schvalujícího
+člověka a s jeho oprávněními; zamítnutí nic nemění. **Vrátit vše** vrátí provedené změny dávky (úkoly, ceny
+a produkty, nájmy; CRM a obchodní případy vlastním vrácením modulu). Změny, které vrátit nejde, jsou označené
+„Nelze automaticky vrátit“. Každé čtení, zápis, odmítnutí i návrh agentů je v **Nastavení › Aktivita agentů**
+(<http://localhost:3020/cs/sprava/aktivita-agentu>). Staré adresy `/cs/crm/schvalovani-ai`
+a `/cs/prodej/schvalovani-ai` přesměrují na novou stránku.
+
+Ukázková dávka pro Obchodní firmu (změna ceny produktu + nový úkol), z adresáře `app/`:
+
+    node scripts/demo/prepare-agent-platform-batch.mts

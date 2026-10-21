@@ -16,7 +16,12 @@ import {
   currentSession,
   shellComposition,
 } from '../../api/auth-client.ts';
-import { demoDisplayName, presentableDemoNavigation } from '../shell-demo-presentation.ts';
+import {
+  demoDisplayName,
+  hasLegacyAiApprovals,
+  presentableDemoNavigation,
+  withAgentPlatformNavigation,
+} from '../shell-demo-presentation.ts';
 import { loadHomeContribution } from './home-contribution-model.ts';
 import type { HomeContribution } from './home-contribution-model.ts';
 import type { AvailableTenantsClientError, ShellAuthenticationClientOptions } from '../../api/auth-client.ts';
@@ -243,8 +248,12 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       }
       const hasPeoplePage = composition.navigation.some(({ href }) => href === '/sprava/lide');
       const canManagePeople = hasPeoplePage ? yield* peopleCapabilityFor(session.identity, options) : false;
+      const showAgentPlatform = canManagePeople || hasLegacyAiApprovals(composition.navigation);
       navigation = {
-        items: presentableDemoNavigation(composition.navigation, canManagePeople, session.identity.legalEntityId),
+        items: withAgentPlatformNavigation(
+          presentableDemoNavigation(composition.navigation, canManagePeople, session.identity.legalEntityId),
+          showAgentPlatform,
+        ),
         state: 'available',
         unavailableDeployments: composition.unavailableDeployments,
       };

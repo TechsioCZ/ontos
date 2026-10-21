@@ -122,11 +122,11 @@ export const hanakGuide: DemoGuide = {
       id: 'ai',
       steps: [
         {
-          click: 'Ukažte stránku Schvalování AI.',
+          click: 'Otevřete Nastavení › Ke schválení.',
           id: 'hanak-ai-urovne',
           persona: vedouci,
           say: 'Úroveň A jen čte, B smí navíc založit úkol a C navrhuje změny dat klientů. Každá úroveň je samostatná identita s vlastními oprávněními.',
-          target: { kind: 'app', path: '/crm/schvalovani-ai' },
+          target: { kind: 'app', path: '/sprava/ke-schvaleni' },
           title: 'Tři úrovně AI agenta',
         },
         {
@@ -135,7 +135,7 @@ export const hanakGuide: DemoGuide = {
           id: 'hanak-ai-navrh',
           persona: vedouci,
           say: 'AI agent úrovně C poslal přes MCP konkrétní návrh. Dokud ho člověk neschválí, data klienta se nemění.',
-          target: { kind: 'app', path: '/crm/schvalovani-ai' },
+          target: { kind: 'app', path: '/sprava/ke-schvaleni' },
           title: 'Návrh AI čeká na člověka',
         },
         {
@@ -143,7 +143,7 @@ export const hanakGuide: DemoGuide = {
           id: 'hanak-ai-rozhodnuti',
           persona: vedouci,
           say: 'Člověk rozhoduje po jednotlivých změnách a deník rozhodnutí zůstane i po obnovení stránky.',
-          target: { kind: 'app', path: '/crm/schvalovani-ai' },
+          target: { kind: 'app', path: '/sprava/ke-schvaleni' },
           title: 'Schválit jednu změnu, zamítnout druhou',
         },
         {
@@ -152,15 +152,15 @@ export const hanakGuide: DemoGuide = {
           id: 'hanak-ai-vraceni',
           persona: vedouci,
           say: 'Změny AI jde hromadně vrátit a vrácení se trvale zapíše. AI tedy není cesta kolem oprávnění ani kolem historie.',
-          target: { kind: 'app', path: '/crm/schvalovani-ai' },
+          target: { kind: 'app', path: '/sprava/ke-schvaleni' },
           title: 'Vrátit celou dávku',
         },
         {
-          click: 'Počkejte na tabulku zaměstnanců a odrolujte pod ni do sekce AI aktivita.',
+          click: 'Otevřete Nastavení › Aktivita agentů a ve filtru Agent vyberte AI agenta C.',
           id: 'hanak-ai-audit',
-          persona: spravce,
-          say: 'Provedené i zamítnuté akce AI agentů zůstávají v jednom auditu.',
-          target: { kind: 'app', path: '/prodej/zamestnanci' },
+          persona: vedouci,
+          say: 'Čtení, zápisy, odmítnutí i návrhy AI agentů ze všech modulů jsou v jednom auditu.',
+          target: { kind: 'app', path: '/sprava/aktivita-agentu' },
           title: 'Audit aktivit AI',
         },
       ],

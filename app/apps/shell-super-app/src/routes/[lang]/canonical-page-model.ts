@@ -3,6 +3,11 @@ import type { NotFoundError } from '@modern-js/plugin-tanstack/runtime';
 import { Effect } from 'effect';
 
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
+import {
+  agentPlatformPageByPath,
+  loadAgentPlatformPageModel,
+} from '../agent-platform/agent-platform-page-model.ts';
+import type { AgentPlatformPageModel } from '../agent-platform/agent-platform-page-model.ts';
 import { loadModulePageModel, preloadModuleTarget } from './modules/[moduleId]/module-page-model.ts';
 import type { ModuleTargetPageModel } from './modules/[moduleId]/module-page-model.ts';
 import { routeMeta } from './route.meta.ts';
@@ -22,13 +27,20 @@ export const canonicalPathFromRequest = (request: Request, language: string): st
   return Object.hasOwn(routeMeta.localisedPaths, language) && pathname.startsWith(prefix) ? normalizedPath : undefined;
 };
 
-/** Czech alias paths that open another module's canonical page. The tasks nav item accepts `/provoz/ukoly`. */
-const canonicalPathAliases: ReadonlyMap<string, string> = new Map([['/provoz/ukoly', '/siampark/work']]);
+/**
+ * Czech alias paths that redirect to another canonical page. The tasks nav item accepts `/provoz/ukoly`; the old
+ * AI approval pages of CRM and sales (`/crm/schvalovani-ai`, `/prodej/schvalovani-ai`) moved to the platform page.
+ */
+const canonicalPathAliases: ReadonlyMap<string, string> = new Map([
+  ['/provoz/ukoly', '/siampark/work'],
+  ['/crm/schvalovani-ai', '/sprava/ke-schvaleni'],
+  ['/prodej/schvalovani-ai', '/sprava/ke-schvaleni'],
+]);
 
 export const loader = ({
   params,
   request,
-}: CanonicalPageLoaderArguments): Promise<ModuleTargetPageModel | NotFoundError> => {
+}: CanonicalPageLoaderArguments): Promise<ModuleTargetPageModel | AgentPlatformPageModel | NotFoundError> => {
   const canonicalPath = canonicalPathFromRequest(request, params.lang);
   if (canonicalPath === undefined) {
     return Promise.resolve().then(() => notFound({ throw: true }));
@@ -36,6 +48,10 @@ export const loader = ({
   const aliasTarget = canonicalPathAliases.get(canonicalPath);
   if (aliasTarget !== undefined) {
     return Promise.resolve().then(() => throwTanstackRedirect(`/${encodeURIComponent(params.lang)}${aliasTarget}`));
+  }
+  const platformPage = agentPlatformPageByPath.get(canonicalPath);
+  if (platformPage !== undefined) {
+    return loadAgentPlatformPageModel(request, platformPage);
   }
   return browserRuntime.runPromise(
     loadModulePageModel({ canonicalPath, request }).pipe(
