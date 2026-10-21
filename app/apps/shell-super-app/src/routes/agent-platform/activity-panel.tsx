@@ -77,7 +77,7 @@ export const ActivityPanel = () => {
   return (
     <div className="ai-review">
       <p className="text-fg-secondary text-sm">
-        Každé čtení, zápis, odmítnutí i návrh AI agentů a integrací napříč moduly firmy.
+        Každé čtení, zápis, odmítnutí i návrh AI agentů v modulech, ve kterých schvalujete jejich změny.
       </p>
       <div className="agent-filters">
         <label>
