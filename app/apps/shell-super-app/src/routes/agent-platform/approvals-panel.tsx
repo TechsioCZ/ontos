@@ -21,6 +21,16 @@ const moduleApprovalPageFor = (batch: AgentQueueBatch) =>
   batch.source === 'legacy' ? moduleApprovalPage[batch.key.split(':')[1] ?? ''] : undefined;
 
 type Decision = 'approve' | 'reject';
+
+/** Neutral outline for settled items; the theme's secondary badge is the brand green and reads as success. */
+const itemBadgeVariant = (status: AgentQueueItem['status']) =>
+  status === 'pending'
+    ? 'warning'
+    : status === 'applied'
+      ? 'success'
+      : status === 'failed' || status === 'revert_failed'
+        ? 'danger'
+        : 'outline';
 type QueueState =
   | { readonly status: 'loading' }
   | { readonly response: AgentQueueResponse; readonly status: 'ready' }
@@ -52,9 +62,7 @@ const ChangeCard = ({
         <p className="text-fg-secondary text-sm">{item.targetLabel}</p>
       </div>
       <div className="ai-review-actions">
-        <Badge variant={item.status === 'pending' ? 'warning' : item.status === 'applied' ? 'success' : 'secondary'}>
-          {agentItemStatusLabel[item.status]}
-        </Badge>
+        <Badge variant={itemBadgeVariant(item.status)}>{agentItemStatusLabel[item.status]}</Badge>
         <span className="text-fg-secondary text-xs">{agentRiskLabel[item.risk]}</span>
         <span className="text-fg-secondary text-xs">{item.moduleLabel}</span>
       </div>
@@ -97,7 +105,7 @@ const ChangeCard = ({
       </p>
     )}
     {item.status === 'applied' && item.revertUnavailableReason !== undefined && (
-      <Badge title={item.revertUnavailableReason} variant="secondary">
+      <Badge title={item.revertUnavailableReason} variant="outline">
         Nelze automaticky vrátit
       </Badge>
     )}
@@ -146,12 +154,12 @@ const BatchCard = ({
   const modulePage = moduleApprovalPageFor(batch);
   const badge =
     batch.revertedAt !== undefined
-      ? { label: 'Dávka vrácena', variant: 'secondary' as const }
+      ? { label: 'Dávka vrácena', variant: 'outline' as const }
       : pending.length > 0
         ? { label: `${pending.length} ke schválení`, variant: 'warning' as const }
         : applied.length > 0
           ? { label: 'Změny provedeny', variant: 'success' as const }
-          : { label: 'Vyřízeno', variant: 'secondary' as const };
+          : { label: 'Vyřízeno', variant: 'outline' as const };
   return (
     <section className="ai-review-batch" data-batch-key={batch.key}>
       <header className="ai-review-batch-header">

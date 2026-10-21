@@ -13,6 +13,19 @@ import {
   AgentRevertRequestSchema,
   AgentRevertResponseSchema,
 } from '@app/shared-contracts/agent-proposals';
+import {
+  AgentConnectionsOverviewSchema,
+  AgentOperatorsRequestSchema,
+  AgentOperatorsResponseSchema,
+  ConnectionAdminListRequestSchema,
+  ConnectionAdminListResponseSchema,
+  ConnectionListResponseSchema,
+  ConnectionMutationResponseSchema,
+  ConnectionRevokeRequestSchema,
+  ConnectionUpdateRequestSchema,
+} from '@app/shared-contracts/agent-access';
+import { OAuthConnectApiGroup } from './oauth-connect-api.ts';
+import { OAuthConnectorApiGroup } from './oauth-connector-api.ts';
 // @ontos-codesmith-core-read-contract-imports:start
 
 // @ontos-core-read legal-entity-detail
@@ -667,7 +680,11 @@ const identityErrors = [
 ] as const;
 
 /** Agent endpoints authenticate with the agent's API key (Better Auth), like /auth/api-key/gateway-context. */
-const AgentApiKeyHeadersSchema = Schema.Struct({ 'x-api-key': Schema.optionalKey(Schema.String) });
+const AgentApiKeyHeadersSchema = Schema.Struct({
+  authorization: Schema.optionalKey(Schema.String),
+  'x-api-key': Schema.optionalKey(Schema.String),
+  'x-ontos-connector-key': Schema.optionalKey(Schema.String),
+});
 export const AgentOwnProposalsRequestSchema = Schema.Struct({ legalEntityId: Schema.String.check(Schema.isUUID()) });
 const AgentQueueRequestSchema = Schema.Struct({});
 
@@ -1033,8 +1050,56 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
         }),
       ),
   )
+  // "Připojené aplikace" management (lane mcp-connections-ui); paths equal CONNECTION_MANAGEMENT_PATHS.
+  .add(
+    HttpApiGroup.make('oauthConnectionsAdmin')
+      .add(
+        HttpApiEndpoint.post('listMyConnections', '/auth/oauth-connections/mine', {
+          error: identityErrors,
+          payload: Schema.Struct({}),
+          success: ConnectionListResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listCompanyConnections', '/auth/oauth-connections/admin-list', {
+          error: identityErrors,
+          payload: ConnectionAdminListRequestSchema,
+          success: ConnectionAdminListResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('updateConnectionAccess', '/auth/oauth-connections/update', {
+          error: identityErrors,
+          payload: ConnectionUpdateRequestSchema,
+          success: ConnectionMutationResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('revokeConnection', '/auth/oauth-connections/revoke', {
+          error: identityErrors,
+          payload: ConnectionRevokeRequestSchema,
+          success: ConnectionMutationResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listAgentConnections', '/auth/identity/agent-entities/connections', {
+          error: identityErrors,
+          payload: Schema.Struct({}),
+          success: AgentConnectionsOverviewSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('replaceAgentOperators', '/auth/identity/agent-entities/operators', {
+          error: identityErrors,
+          payload: AgentOperatorsRequestSchema,
+          success: AgentOperatorsResponseSchema,
+        }),
+      ),
+  )
   .add(GatewayContextApiGroup)
-  .add(ExternalIdentityApiGroup);
+  .add(ExternalIdentityApiGroup)
+  .add(OAuthConnectApiGroup)
+  .add(OAuthConnectorApiGroup);
 
 const authenticationEndpointPath = (endpoint: { readonly path: string }) =>
   `/shell-super-app-api${endpoint.path}` as const;

@@ -139,7 +139,7 @@ export const replaceAgentOperators = <R>(
     const personIds = people.map((person) => person.principalId);
     if (wanted.some((id) => !personIds.includes(id))) {
       return yield* new ConnectionsInvalid({
-        reason: `Agenta mohou připojit jen aktivní lidé z firmy ${caller.legalName}.`,
+        reason: `Agenta mohou připojit jen aktivní lidé z firmy ${caller.legalName.replace(/\.$/u, '')}.`,
       });
     }
     const before = yield* deps.directory.operatorsOf(agentPrincipalId);
