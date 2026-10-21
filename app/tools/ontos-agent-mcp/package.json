@@ -6,20 +6,25 @@
   "scripts": {
     "start": "node --experimental-strip-types src/server.ts",
     "start:http": "node --experimental-strip-types src/http-main.ts",
+    "prove:oauth": "node --experimental-strip-types scripts/oauth-e2e/prove.mts",
     "typecheck": "tsc --noEmit",
     "test": "pnpm test:unit",
     "test:unit": "rstest run"
   },
   "dependencies": {
+    "@effect/platform-node": "4.0.0-rc.117",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@modelcontextprotocol/node": "2.1.1",
     "@modelcontextprotocol/sdk": "^1.32.1",
+    "@modelcontextprotocol/server": "2.3.1",
     "effect": "4.0.0-rc.117",
-    "zod": "4.6.5",
-    "@effect/platform-node": "4.0.0-rc.117"
+    "jose": "6.2.5",
+    "zod": "4.6.5"
   },
   "devDependencies": {
-    "@types/node": "^24.19.2",
-    "typescript": "^7.0.2",
     "@rstest/core": "0.11.12",
-    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597"
+    "@types/node": "^24.19.2",
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
+    "typescript": "^7.0.2"
   }
 }
