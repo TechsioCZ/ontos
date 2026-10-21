@@ -15,7 +15,7 @@ const agentPlatformItem = (
   label: string,
   order: number,
 ): ShellNavigationItem =>
-  Schema.decodeUnknownSync(ShellNavigationItemSchema)({
+  Schema.decodeSync(ShellNavigationItemSchema)({
     appId: 'shell-super-app',
     enabled: true,
     groupKey: 'settings',

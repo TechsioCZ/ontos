@@ -144,14 +144,14 @@ export const mcpScopeOfMetadata = (metadata: string | null | undefined): string 
   if (metadata === null || metadata === undefined) {
     return undefined;
   }
-  const direct = Schema.decodeUnknownOption(MetadataScope)(metadata);
+  const direct = Schema.decodeOption(MetadataScope)(metadata);
   if (Option.isSome(direct)) {
     return direct.value.ontosLegalEntityId;
   }
-  const inner = Schema.decodeUnknownOption(MetadataString)(metadata);
+  const inner = Schema.decodeOption(MetadataString)(metadata);
   if (Option.isNone(inner)) {
     return undefined;
   }
-  const nested = Schema.decodeUnknownOption(MetadataScope)(inner.value);
+  const nested = Schema.decodeOption(MetadataScope)(inner.value);
   return Option.isSome(nested) ? nested.value.ontosLegalEntityId : undefined;
 };
