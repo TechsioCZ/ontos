@@ -3,10 +3,7 @@ import type { NotFoundError } from '@modern-js/plugin-tanstack/runtime';
 import { Effect } from 'effect';
 
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
-import {
-  agentPlatformPageByPath,
-  loadAgentPlatformPageModel,
-} from '../agent-platform/agent-platform-page-model.ts';
+import { agentPlatformPageByPath, loadAgentPlatformPageModel } from '../agent-platform/agent-platform-page-model.ts';
 import type { AgentPlatformPageModel } from '../agent-platform/agent-platform-page-model.ts';
 import { loadModulePageModel, preloadModuleTarget } from './modules/[moduleId]/module-page-model.ts';
 import type { ModuleTargetPageModel } from './modules/[moduleId]/module-page-model.ts';
@@ -27,15 +24,8 @@ export const canonicalPathFromRequest = (request: Request, language: string): st
   return Object.hasOwn(routeMeta.localisedPaths, language) && pathname.startsWith(prefix) ? normalizedPath : undefined;
 };
 
-/**
- * Czech alias paths that redirect to another canonical page. The tasks nav item accepts `/provoz/ukoly`; the old
- * AI approval pages of CRM and sales (`/crm/schvalovani-ai`, `/prodej/schvalovani-ai`) moved to the platform page.
- */
-const canonicalPathAliases: ReadonlyMap<string, string> = new Map([
-  ['/provoz/ukoly', '/siampark/work'],
-  ['/crm/schvalovani-ai', '/sprava/ke-schvaleni'],
-  ['/prodej/schvalovani-ai', '/sprava/ke-schvaleni'],
-]);
+/** Czech alias paths that open another module's canonical page. The tasks nav item accepts `/provoz/ukoly`. */
+const canonicalPathAliases: ReadonlyMap<string, string> = new Map([['/provoz/ukoly', '/siampark/work']]);
 
 export const loader = ({
   params,
@@ -53,10 +43,12 @@ export const loader = ({
   if (platformPage !== undefined) {
     return loadAgentPlatformPageModel(request, platformPage);
   }
-  return browserRuntime.runPromise(
-    loadModulePageModel({ canonicalPath, request }).pipe(
-      Effect.tap((model) => preloadModuleTarget(model, new URL(request.url).pathname)),
-    ),
-    { signal: request.signal },
-  ).then((model) => requireSignedIn(request, model));
+  return browserRuntime
+    .runPromise(
+      loadModulePageModel({ canonicalPath, request }).pipe(
+        Effect.tap((model) => preloadModuleTarget(model, new URL(request.url).pathname)),
+      ),
+      { signal: request.signal },
+    )
+    .then((model) => requireSignedIn(request, model));
 };

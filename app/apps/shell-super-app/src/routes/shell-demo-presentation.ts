@@ -5,16 +5,19 @@ import { ShellNavigationItemSchema } from '../../shared/api.ts';
 
 /** Legal entity of „Velkoobchod Hanák s.r.o.“, the wholesale CRM company (order imports, pairing, sales reports). */
 const wholesaleCrmLegalEntityId = '71000000-0000-4000-8000-000000000022';
+/** Legal entity of „Obchodní firma“, the only company with an opportunity/order AI agent of level C. */
+const commercialLegalEntityId = '71000000-0000-4000-8000-000000000020';
 /** CRM pages that only make sense for the wholesale company; elsewhere CRM is the entrusted-contact register. */
-const wholesaleOnlyCrmHrefs: ReadonlySet<string> = new Set(['/crm/importy', '/crm/parovani', '/crm/prehled-prodeju']);
-/** Per-module AI approval pages replaced by the platform approval layer under Nastavení. */
-const legacyAiApprovalHrefs: ReadonlySet<string> = new Set(['/crm/schvalovani-ai', '/prodej/schvalovani-ai']);
+const wholesaleOnlyCrmHrefs: ReadonlySet<string> = new Set([
+  '/crm/importy',
+  '/crm/parovani',
+  '/crm/prehled-prodeju',
+  '/crm/schvalovani-ai',
+]);
+/** In-module AI approval pages; they stay in their modules, the platform approval layer aggregates them. */
+const moduleAiApprovalHrefs: ReadonlySet<string> = new Set(['/crm/schvalovani-ai', '/prodej/schvalovani-ai']);
 
-const agentPlatformItem = (
-  href: string,
-  label: string,
-  order: number,
-): ShellNavigationItem =>
+const agentPlatformItem = (href: string, label: string, order: number): ShellNavigationItem =>
   Schema.decodeSync(ShellNavigationItemSchema)({
     appId: 'shell-super-app',
     enabled: true,
@@ -31,13 +34,13 @@ const agentPlatformItem = (
 const agentApprovalsItem = agentPlatformItem('/sprava/ke-schvaleni', 'Ke schválení', 9000);
 const agentActivityItem = agentPlatformItem('/sprava/aktivita-agentu', 'Aktivita agentů', 9001);
 
-/** True when a module still exposes its own AI approval page, which the platform approval layer replaces. */
-export const hasLegacyAiApprovals = (navigation: readonly ShellNavigationItem[]): boolean =>
-  navigation.some(({ href }) => href !== undefined && legacyAiApprovalHrefs.has(href));
+/** True when the person can open an in-module AI approval page, whose batches the platform layer also shows. */
+export const hasModuleAiApprovals = (navigation: readonly ShellNavigationItem[]): boolean =>
+  navigation.some(({ href }) => href !== undefined && moduleAiApprovalHrefs.has(href));
 
 /**
- * Platform pages of the approval layer: shown to company administrators and to people who could open an old module
- * AI approval page.
+ * Platform pages of the approval layer: shown to company administrators and to people who can open an in-module AI
+ * approval page.
  */
 export const withAgentPlatformNavigation = (
   items: readonly ShellNavigationItem[],
@@ -62,7 +65,7 @@ export const presentableDemoNavigation = (
       href !== '/contacts' &&
       (href !== '/sprava/lide' || canManagePeople) &&
       (wholesaleCrm || moduleId !== 'demo.crm' || href === undefined || !wholesaleOnlyCrmHrefs.has(href)) &&
-      (href === undefined || !legacyAiApprovalHrefs.has(href)) &&
+      (href !== '/prodej/schvalovani-ai' || legalEntityId === undefined || legalEntityId === commercialLegalEntityId) &&
       !(
         wholesaleCrm &&
         hasCrmClients &&

@@ -106,6 +106,8 @@
           "crmVisits": "Visits",
           "crmImports": "Order imports",
           "crmPairing": "Matching",
+          "crmAiApprovals": "AI changes for approval",
+          "salesAiApprovals": "AI changes for approval",
           "agentApprovals": "Approvals",
           "agentActivity": "Agent activity",
           "crmReports": "Sales overview",

@@ -227,6 +227,13 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
         key: 'crmReports',
         moduleId: 'demo.crm',
       },
+      {
+        entrypoints: ['demo.crm.page.ai'],
+        hrefs: ['/crm/schvalovani-ai'],
+        icon: 'icon-[mdi--robot-outline]',
+        key: 'crmAiApprovals',
+        moduleId: 'demo.crm',
+      },
     ],
     key: 'crm',
   },
@@ -268,6 +275,14 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
         icon: 'icon-[mdi--receipt-text-outline]',
         key: 'invoices',
         moduleId: 'siampark.billing-finance',
+      },
+      {
+        // AI level C approvals of opportunity and order proposals (Obchodní firma).
+        entrypoints: ['demo.sales-pipeline.page.ai'],
+        hrefs: ['/prodej/schvalovani-ai'],
+        icon: 'icon-[mdi--robot-outline]',
+        key: 'salesAiApprovals',
+        moduleId: 'demo.sales-pipeline',
       },
     ],
     key: 'sales',

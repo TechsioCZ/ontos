@@ -18,7 +18,7 @@ import {
 } from '../../api/auth-client.ts';
 import {
   demoDisplayName,
-  hasLegacyAiApprovals,
+  hasModuleAiApprovals,
   presentableDemoNavigation,
   withAgentPlatformNavigation,
 } from '../shell-demo-presentation.ts';
@@ -248,12 +248,13 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       }
       const hasPeoplePage = composition.navigation.some(({ href }) => href === '/sprava/lide');
       const canManagePeople = hasPeoplePage ? yield* peopleCapabilityFor(session.identity, options) : false;
-      const showAgentPlatform = canManagePeople || hasLegacyAiApprovals(composition.navigation);
+      const presentable = presentableDemoNavigation(
+        composition.navigation,
+        canManagePeople,
+        session.identity.legalEntityId,
+      );
       navigation = {
-        items: withAgentPlatformNavigation(
-          presentableDemoNavigation(composition.navigation, canManagePeople, session.identity.legalEntityId),
-          showAgentPlatform,
-        ),
+        items: withAgentPlatformNavigation(presentable, canManagePeople || hasModuleAiApprovals(presentable)),
         state: 'available',
         unavailableDeployments: composition.unavailableDeployments,
       };
