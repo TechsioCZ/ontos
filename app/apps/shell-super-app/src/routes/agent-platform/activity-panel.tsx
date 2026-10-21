@@ -4,10 +4,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { agentActivityKindLabel } from '@app/shared-contracts/agent-proposals';
-import type {
-  AgentActivityKind,
-  AgentActivityResponse,
-} from '@app/shared-contracts/agent-proposals';
+import type { AgentActivityKind, AgentActivityResponse } from '@app/shared-contracts/agent-proposals';
 import { useEffect, useState } from 'react';
 
 import { formatAgentTime, loadAgentActivity } from './agent-platform-client.ts';
@@ -169,7 +166,7 @@ export const ActivityPanel = () => {
           </>
         ))}
       <div>
-        <LinkButton as={LocalizedLink} to="/sprava/ke-schvaleni" variant="secondary">
+        <LinkButton as={LocalizedLink} size="sm" theme="outlined" to="/sprava/ke-schvaleni" variant="primary">
           Přejít na Ke schválení
         </LinkButton>
       </div>
