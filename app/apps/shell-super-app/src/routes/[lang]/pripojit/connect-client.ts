@@ -96,7 +96,14 @@ export const approveDraft = (grantId: string, oauthQuery: string) =>
 
 /** `grantId` null when the person cancels on screen 2 before any draft exists. */
 export const denyConnection = (grantId: string | null, oauthQuery: string) =>
-  callDecoded(OAUTH_CONNECTION_PATHS.connectDeny, { grantId, oauthQuery }, decodeDeny);
+  callDecoded(OAUTH_CONNECTION_PATHS.connectDeny, { grantId, oauthQuery }, decodeDeny).pipe(
+    // The page navigates to `redirectTo`, so it gets the same http(s)-or-path guard as Better Auth targets.
+    Effect.map((outcome) =>
+      outcome.status === 'ok' && navigationTarget({ url: outcome.value.redirectTo }, false, '') === undefined
+        ? failed('error')
+        : outcome,
+    ),
+  );
 
 const navigateTo = (path: string, body: unknown): Effect.Effect<ConnectOutcome<string>> =>
   postJson(path, body).pipe(
