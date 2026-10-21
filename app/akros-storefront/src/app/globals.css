@@ -1,6 +1,7 @@
 @import "@techsio/ui-kit/tokens-with-tailwind";
 @import "@techsio/ui-kit/tokens/figma/akros/variables";
 /* App-wide mappings precede the component-specific overrides. */
+@import "../tokens/_akros-semantic.css";
 @import "../tokens/_akros-typography.css";
 @import "../tokens/_akros-layout.css";
 @import "../tokens/components/atoms/_akros-icon.css";
@@ -26,6 +27,9 @@
 @import "../tokens/components/templates/_akros-account.css";
 @import "../tokens/components/templates/_akros-auth.css";
 @import "../tokens/components/templates/_akros-content-pages.css";
+@import "../tokens/components/molecules/_akros-favorites.css";
+@import "../styles/favorites.css";
+@import "../styles/product-print.css";
 @import "../styles/content-pages.css";
 @import "../styles/account-checkout.css";
 @source "../../node_modules/@techsio/ui-kit/dist";

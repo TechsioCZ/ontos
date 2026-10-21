@@ -3,13 +3,16 @@ import Image from "next/image";
 import { notFound } from "next/navigation";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
 
-import { ProductDetailActions, ProductFavoriteButton } from "@/components/product-detail-actions";
+import { ProductDetailActions } from "@/components/product-detail-actions";
+import { FavoriteButton } from "@/features/favorites/favorite-button";
 import { ProductGrid } from "@/components/product-grid";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
+import { parseVariantIds, resolveVariantSelection } from "@/lib/product-variant-links";
+import { ContentLink } from "@/components/content-link";
 import {
   matchesProductVariantSearch,
   normalizeCatalogSearchTerm,
@@ -24,7 +27,7 @@ import {
 
 interface ProductPageProps {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ variant?: string | string[] }>;
+  searchParams: Promise<{ variant?: string | string[]; variantIds?: string | string[] }>;
 }
 
 const isQuantityPricingCopy = (paragraph: string) =>
@@ -39,15 +42,19 @@ export async function generateMetadata({ params }: ProductPageProps): Promise<Me
 
 export default async function ProductPage({ params, searchParams }: ProductPageProps) {
   const { slug } = await params;
-  const { variant: requestedVariantSearch } = await searchParams;
+  const { variant: requestedVariantSearch, variantIds: requestedVariantIds } = await searchParams;
   const product = getProductBySlug(slug);
   if (!product) notFound();
 
   const category = getCategoryById(product.categoryId);
   const categoryTrail = category ? getCategoryTrail(category) : [];
   const detail = product.detail;
+  const sharedIds = parseVariantIds(requestedVariantIds);
+  const sharedVariants = resolveVariantSelection(detail.variants, requestedVariantIds);
   const singleVariant = detail.variants.length === 1 ? detail.variants[0] : undefined;
   const hasMultipleVariants = detail.variants.length > 1;
+  const invalidSingleSelection =
+    sharedIds.length > 0 && !hasMultipleVariants && !sharedVariants.length;
   const purchaseItem = singleVariant ?? product;
   const purchasePriceTiers = singleVariant?.priceTiers.length
     ? singleVariant.priceTiers
@@ -64,6 +71,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
     : requestedVariantSearch;
   const normalizedVariantSearch = normalizeCatalogSearchTerm(variantSearch ?? "");
   const initialVariantSearch =
+    !sharedIds.length &&
     normalizedVariantSearch &&
     detail.variants.some((variant) => matchesProductVariantSearch(variant, normalizedVariantSearch))
       ? variantSearch?.trim()
@@ -120,6 +128,12 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
       />
 
       <article className="akros-product-detail">
+        {invalidSingleSelection && (
+          <div data-shared-variant-selection>
+            <p>Sdílené varianty již nejsou v katalogu.</p>
+            <ContentLink href={`/produkt/${product.slug}`}>Zobrazit aktuální produkt</ContentLink>
+          </div>
+        )}
         <section className="akros-product-detail__overview" aria-labelledby="product-title">
           <div className="akros-product-detail__gallery">
             <Image
@@ -232,40 +246,52 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                   {simpleStockLabel}
                 </p>
 
-                <div className="akros-product-detail__buying">
-                  {purchasePriceTiers.length > 1 && (
-                    <dl className="akros-price-tiers" aria-label={cs.product.quantityPricing}>
-                      {purchasePriceTiers.map((tier) => (
-                        <div key={tier.minimumQuantity}>
-                          <dt>
-                            od {tier.minimumQuantity.toLocaleString("cs-CZ")} {purchaseItem.unit}
-                          </dt>
-                          <dd>{formatPrice(tier.priceMinor, product.currency)}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                  )}
+                {!invalidSingleSelection && (
+                  <div className="akros-product-detail__buying">
+                    {purchasePriceTiers.length > 1 && (
+                      <dl className="akros-price-tiers" aria-label={cs.product.quantityPricing}>
+                        {purchasePriceTiers.map((tier) => (
+                          <div key={tier.minimumQuantity}>
+                            <dt>
+                              od {tier.minimumQuantity.toLocaleString("cs-CZ")} {purchaseItem.unit}
+                            </dt>
+                            <dd>{formatPrice(tier.priceMinor, product.currency)}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    )}
 
-                  {basePriceTier && (
-                    <p className="akros-product-detail__price-row">
-                      <span>Cena bez DPH</span>
-                      <strong>{formatPrice(basePriceTier.priceExcludingVatMinor)}</strong>
+                    {basePriceTier && (
+                      <p className="akros-product-detail__price-row">
+                        <span>Cena bez DPH</span>
+                        <strong>{formatPrice(basePriceTier.priceExcludingVatMinor)}</strong>
+                      </p>
+                    )}
+                    <p className="akros-product-detail__price-row akros-product-detail__price-row--total">
+                      <span>Cena s DPH</span>
+                      <strong>{formatPrice(purchaseItem.priceMinor, product.currency)}</strong>
                     </p>
-                  )}
-                  <p className="akros-product-detail__price-row akros-product-detail__price-row--total">
-                    <span>Cena s DPH</span>
-                    <strong>{formatPrice(purchaseItem.priceMinor, product.currency)}</strong>
-                  </p>
 
-                  <div className="akros-product-detail__purchase-row">
-                    <ProductPurchaseForm product={product} variant={singleVariant} />
-                    <ProductFavoriteButton productId={product.id} productName={product.name} />
+                    <div className="akros-product-detail__purchase-row">
+                      <ProductPurchaseForm product={product} variant={singleVariant} />
+                      <FavoriteButton
+                        productId={product.id}
+                        productName={product.name}
+                        productSlug={product.slug}
+                        variantId={singleVariant?.id ?? null}
+                      />
+                    </div>
                   </div>
-                </div>
+                )}
               </>
             )}
 
-            <ProductDetailActions productId={product.id} productName={product.name} />
+            <ProductDetailActions
+              productId={product.id}
+              productName={product.name}
+              productSlug={product.slug}
+              showVariantFavorites={hasMultipleVariants}
+            />
           </div>
         </section>
 
@@ -290,11 +316,29 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
 
         {hasMultipleVariants && (
           <section id="product-variants" aria-label="Varianty produktu">
-            <ProductPurchaseForm
-              initialVariantSearch={initialVariantSearch}
-              product={product}
-              variants={detail.variants}
-            />
+            {sharedIds.length > 0 && (
+              <div className="akros-shared-selection" data-shared-variant-selection>
+                <p>
+                  {sharedVariants.length
+                    ? `Sdílený výběr: ${sharedVariants.length} variant.`
+                    : "Sdílené varianty již nejsou v katalogu."}
+                  {sharedVariants.length > 0 &&
+                    sharedVariants.length < sharedIds.length &&
+                    " Část sdílených variant již není v katalogu."}
+                </p>
+                <ContentLink href={`/produkt/${product.slug}#product-variants`}>
+                  Zobrazit všechny varianty
+                </ContentLink>
+              </div>
+            )}
+            {(!sharedIds.length || sharedVariants.length > 0) && (
+              <ProductPurchaseForm
+                key={sharedIds.join(",") || "all"}
+                initialVariantSearch={initialVariantSearch}
+                product={product}
+                variants={sharedIds.length ? sharedVariants : detail.variants}
+              />
+            )}
           </section>
         )}
 
@@ -312,6 +356,48 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
           </section>
         )}
       </article>
+
+      <section className="akros-print-sheet" aria-label="Produktový list pro tisk">
+        <p>AKROS — produktový list</p>
+        <h1>{product.name}</h1>
+        <Image
+          src={product.imageSrc}
+          alt={product.imageAlt}
+          width={1000}
+          height={824}
+          sizes="(max-width: 760px) 100vw, 50vw"
+          loading="eager"
+        />
+        <p>Kód produktu: {purchaseItem.sku}</p>
+        {!hasMultipleVariants && (
+          <p>
+            Cena s DPH:{" "}
+            {purchaseItem.priceMinor > 0
+              ? `${formatPrice(purchaseItem.priceMinor)} / ${purchaseItem.unit}`
+              : "Cena na dotaz"}
+          </p>
+        )}
+        {hasMultipleVariants && (
+          <p>
+            Počet variant: {detail.variants.length}. Ceny a dostupnost jednotlivých variant najdete
+            v e-shopu.
+          </p>
+        )}
+        {productDescriptionParagraphs.map((paragraph) => (
+          <p key={paragraph}>{paragraph}</p>
+        ))}
+        <dl>
+          {detail.parameters.map((parameter) => (
+            <div key={parameter.label}>
+              <dt>{parameter.label}</dt>
+              <dd>
+                {parameter.value} {parameter.unit}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        <p>Odkaz v e-shopu: /produkt/{product.slug}</p>
+      </section>
     </StorefrontShell>
   );
 }

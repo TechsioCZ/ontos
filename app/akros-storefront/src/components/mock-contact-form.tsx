@@ -5,7 +5,15 @@ import { Button } from "@techsio/ui-kit/atoms/button";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { FormTextarea } from "@techsio/ui-kit/molecules/form-textarea";
 
-export function MockContactForm({ compact = false }: { compact?: boolean }) {
+export function MockContactForm({
+  compact = false,
+  defaultSubject,
+  defaultMessage,
+}: {
+  compact?: boolean;
+  defaultSubject?: string;
+  defaultMessage?: string;
+}) {
   const [submitted, setSubmitted] = useState(false);
 
   return (
@@ -43,6 +51,7 @@ export function MockContactForm({ compact = false }: { compact?: boolean }) {
           id="contact-subject"
           label="Předmět"
           name="subject"
+          defaultValue={defaultSubject}
           placeholder="S čím vám můžeme pomoci?"
           size="md"
         />
@@ -52,6 +61,7 @@ export function MockContactForm({ compact = false }: { compact?: boolean }) {
           id={compact ? "faq-message" : "contact-message"}
           label="Zpráva"
           name="message"
+          defaultValue={defaultMessage}
           placeholder={
             compact ? "Zde podrobně popište váš dotaz…" : "Popište detail vašeho požadavku"
           }

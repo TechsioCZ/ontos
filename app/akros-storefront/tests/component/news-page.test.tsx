@@ -30,7 +30,7 @@ describe("NewsPage shared product cards", () => {
     expect(container.querySelector(".akros-news-product-card")).toBeNull();
     expect(container.querySelector("del")).toBeNull();
     expect(screen.queryByText(/^-\d+%$/)).toBeNull();
-    expect(screen.getAllByRole("link", { name: "Zobrazit oblíbené produkty" })).toHaveLength(8);
+    expect(screen.getAllByRole("button", { name: /oblíbených|oblíbené varianty/ })).toHaveLength(8);
     expect(screen.getByText("Doprodej")).toBeDefined();
   });
 

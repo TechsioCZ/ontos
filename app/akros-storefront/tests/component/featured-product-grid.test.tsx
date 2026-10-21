@@ -24,7 +24,7 @@ describe("FeaturedProductGrid", () => {
       expect(card.getByRole("img").getAttribute("loading")).toBe(index < 4 ? "eager" : "lazy");
     }
     expect(screen.getAllByRole("link", { name: "Vybrat variantu" })).toHaveLength(products.length);
-    expect(screen.getAllByRole("link", { name: "Zobrazit oblíbené produkty" })).toHaveLength(
+    expect(screen.getAllByRole("button", { name: /^Vybrat oblíbené varianty:/ })).toHaveLength(
       products.length,
     );
     expect(screen.getByText(/^od 0,08 Kč$/)).toBeDefined();

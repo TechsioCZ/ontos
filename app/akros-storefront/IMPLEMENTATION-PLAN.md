@@ -17,7 +17,16 @@ potvrzené mezery a nejasnosti; navrhnout konkrétní zbývající změnu a jej�
 Teprve po společném ujasnění zadání přejít k implementaci daného úkolu.
 
 [TASK 01](plans/akros-task-01-review.md) je lokálně implementovaný a ověřený.
-Další je rozbor TASK 02; jeho implementace tímto nezačíná. GitHub issues zůstávají beze změny.
+[Rozbor TASK 02](plans/akros-task-02-review.md) navrhuje dialog pro výběr oblíbených
+variant, vhodné komponenty kitu a návaznost na stránku oblíbených. Zahrnuje také nové
+upřesnění z 21. 10. 2026: přejmenování „Poslat kamarádovi“ na „Sdílet“ a přidání tisku.
+Po souhlasu s realizací používáme „Uložit výběr“ a produktový list bez seznamu variant.
+TASK 02 a doplňkové akce jsou lokálně implementované a ověřené; podrobnosti vlastní
+odkazovaný rozbor. Následné upřesnění rozšiřuje stejný výběr na hlídání, dotaz a sdílení
+více variant; [záznam úpravy](plans/akros-task-03-actions-review.md) popisuje také přesné
+odkazy a sjednocení stínu. Základ stránky oblíbených pokrývá část TASK 13; samostatný
+modální detail varianty z TASK 07 a finální návaznosti TASK 03/13 zůstávají další prací.
+GitHub issues zůstávají beze změny.
 
 ## Zadání a porovnání s GitHubem
 
@@ -125,16 +134,16 @@ udržovat jako druhý nezávislý seznam hotových položek.
 
 ## Rozhodnutí potřebná před příslušným krokem
 
-| ID  | Co je potřeba určit                                                                                                                                                       | Které úkoly to podmiňuje    |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| D1  | Pro TASK 01 potvrzeno kompaktní černé „Koupit celé balení“ z rámce `8:1377`, tlačítko `8:1717` (desktop 128 × 38 px). Finální rozložení TASK 07–08 se upřesní samostatně. | 01 vyjasněné; 07–08 později |
-| D2  | Přesný výběr varianty v URL a chování u samostatně prodejného SKU bez variant; odlišit jej od dnešního volného hledání přes `?variant=`.                                  | 02–03, 07, 11–13            |
-| D3  | Jednotka `net_weight`, vazba na kus/metr/balení a zdroj váhy konkrétní varianty. V katalogu jsou i nejednoznačné hodnoty měrných jednotek.                                | 07, 16                      |
-| D4  | Zda mají být profil a adresy nadále lokální demo, nebo připojené k zákaznickému účtu; zda „uložené adresy“ znamenají dvě současná pole, nebo více adres.                  | 14, návaznost 17            |
-| D5  | Cílová autentizační služba a veřejný kontrakt změny hesla včetně ověření uživatele. Bez něj TASK 15 není implementačně připravený.                                        | 15                          |
-| D6  | Konečný seznam textových odkazů v horní liště, zejména ponechání „Domů“ a oddělené přihlašovací akce. Katalogové odkazy do tohoto seznamu nepatří.                        | 09                          |
-| D7  | Potvrdit odklad TASK 11 a případný Meilisearch kontrakt; samotný komentář neurčuje index, API ani způsob nasazení.                                                        | 11                          |
-| D8  | Dostupný publikovaný kontrakt vlastní adresní databáze versus FoxEntry; pokrytí, autentizace, data, provoz a chování při nedostupnosti.                                   | 17                          |
+| ID  | Co je potřeba určit                                                                                                                                                                                                                  | Které úkoly to podmiňuje                   |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------ |
+| D1  | Pro TASK 01 potvrzeno kompaktní černé „Koupit celé balení“ z rámce `8:1377`, tlačítko `8:1717` (desktop 128 × 38 px). Finální rozložení TASK 07–08 se upřesní samostatně.                                                            | 01 vyjasněné; 07–08 později                |
+| D2  | Pro výběr je zavedeno `variantIds` s přesnými ID; `variant` zůstává volným hledáním. Samostatná položka má referenci `variantId: null` a produktový odkaz. Otevření samotného variantního modalu a jeho historii ještě řeší TASK 07. | 02–03 vyřešené odkazy; návaznost 07, 11–13 |
+| D3  | Jednotka `net_weight`, vazba na kus/metr/balení a zdroj váhy konkrétní varianty. V katalogu jsou i nejednoznačné hodnoty měrných jednotek.                                                                                           | 07, 16                                     |
+| D4  | Zda mají být profil a adresy nadále lokální demo, nebo připojené k zákaznickému účtu; zda „uložené adresy“ znamenají dvě současná pole, nebo více adres.                                                                             | 14, návaznost 17                           |
+| D5  | Cílová autentizační služba a veřejný kontrakt změny hesla včetně ověření uživatele. Bez něj TASK 15 není implementačně připravený.                                                                                                   | 15                                         |
+| D6  | Konečný seznam textových odkazů v horní liště, zejména ponechání „Domů“ a oddělené přihlašovací akce. Katalogové odkazy do tohoto seznamu nepatří.                                                                                   | 09                                         |
+| D7  | Potvrdit odklad TASK 11 a případný Meilisearch kontrakt; samotný komentář neurčuje index, API ani způsob nasazení.                                                                                                                   | 11                                         |
+| D8  | Dostupný publikovaný kontrakt vlastní adresní databáze versus FoxEntry; pokrytí, autentizace, data, provoz a chování při nedostupnosti.                                                                                              | 17                                         |
 
 Tyto body jsou cílené vstupní brány pro konkrétní úkoly, nikoli důvod zastavit psaní
 plánu nebo nezávislé části. Návrhy v tomto plánu nejsou automaticky schválenými

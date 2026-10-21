@@ -48,6 +48,7 @@
 .akros-product-actions {
   --akros-product-actions-column-gap: var(--dimension-30);
   --akros-product-actions-min-height: var(--dimension-40);
+  --height-form-control-sm: var(--akros-product-actions-min-height);
   --akros-product-actions-offset: var(--dimension-0);
   --text-button-sm: var(--text-base);
   --spacing-button-sm: var(--dimension-8);
@@ -71,8 +72,10 @@
   --text-icon-sm: 22px;
 }
 
-.akros-product-actions__email {
-  --text-icon-sm: 15px;
+.akros-product-actions__favorite,
+.akros-product-actions__share,
+.akros-product-actions__print {
+  --text-icon-sm: var(--dimension-20);
 }
 
 .akros-variant-filter-range {

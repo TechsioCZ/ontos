@@ -26,6 +26,12 @@ the build. `npm run test:audit` checks 31 routes at 19 widths from 320 to 2560px
 breakpoint edges, actual favorite-button tokens and payment validation after delivery changes.
 Its compact report is written to `test-results/ui-audit/report.json`.
 
+`npm run test:favorites` checks variant selection, filtered bulk selection, cancellation,
+reload persistence, removal, storage failures and independent products. It checks the full
+386-variant group and nine widths from 320 to 1920 px, the card trigger, native/fallback
+sharing and the product print sheet. Screenshots and a sample PDF are saved under
+`test-results/favorites/`.
+
 `npm run test:catalog` checks catalog/variant token consumption and purchase/filter/pagination
 flows at 1920, 1024 and 390px. It covers minimum quantities, whole packages, empty filter results,
 keyboard slider changes and preservation of the search query when paging through results.
@@ -121,7 +127,9 @@ remains the existing static prototype field; contact forms only show local confi
 
 Keep remaining appearance utilities tied to a verified kit limitation. In UI kit `0.56.1`,
 ProductCard uses a static `shadow-sm`, so its app shadow still needs an explicit variable utility.
-Popover's shadow alias is also resolved during compilation, so the mini-cart keeps `shadow-md`.
+Dialog and Popover shadow aliases resolve directly to `--shadow-primary`. The app semantic
+mapping sets this base token to `--shadow-md` (0 4px 6px at 10% black). Shared variant dialogs
+and share popovers use their defaults; the mini-cart retains its explicit shadow choice.
 NumericInput hardcodes a borderless, square input and a transparent trigger; the cart's separate
 input border/radius and trigger surface still need slot utilities. Button has a font-weight token
 but no component line-height token, so checkout actions retain their line-height utility.
@@ -186,7 +194,20 @@ in `src/mock-storefront/fixtures/checkout.ts`; they are not live AKROS business 
   the cart. `/potvrzeni-objednavky` displays that snapshot, never a fictitious paid order.
 - Existing cart snapshots remain readable. New items carry catalog net prices; for old
   snapshots without them the UI explicitly marks the tax breakdown unavailable.
-- No API, database, authentication, checkout submission, or OntOS application module is used.
+- Favorites are browser-local under `akros-demo-favorites-v1`, using product and variant
+  references. A product heart opens the variant chooser; a heart on a concrete variant
+  toggles that variant. The header heart remains a link to `/oblibene`. Older container
+  booleans are not expanded into all variants. `/api/favorites/catalog/[slug]` is a read-only
+  view of the public demo catalog, loaded on demand; it stores no account data.
+- Product actions reuse `VariantSelectionDialog` for favorites, watching, questions and sharing.
+  Watching saves independent references under `akros-demo-watched-variants-v1`; it does not
+  activate actual e-mail notifications. Questions prefill the local contact form with selected SKUs.
+- Sharing supports multiple selected variants through `?variantIds=item-1,item-2` (URL encoded),
+  resolved against the product's exact IDs. The existing `?variant=` free-text search still works.
+  Favorites use the same exact links. Native sharing has copy/e-mail fallback; the individual
+  variant detail modal remains a subsequent task. Print creates a
+  clean product sheet without the variant list; it does not print only the current purchase page.
+- No account backend, database, authentication, checkout submission, or OntOS application module is used.
 - `npm run check` runs formatting, linting, type checking, tests, and the production build.
 
 Original checkout implementation history: [CHECKOUT-PLAN.md](CHECKOUT-PLAN.md).

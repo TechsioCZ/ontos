@@ -56,8 +56,10 @@ describe("ProductGrid", () => {
       `/produkt/${product!.slug}`,
     );
     expect(
-      screen.getByRole("link", { name: "Zobrazit oblíbené produkty" }).getAttribute("href"),
-    ).toBe("/oblibene");
+      screen
+        .getByRole("button", { name: /^Vybrat oblíbené varianty:/ })
+        .getAttribute("aria-haspopup"),
+    ).toBe("dialog");
     expect(screen.queryByText(/2[\s\u00a0]?929,4\s+ks/)).toBeNull();
   });
 

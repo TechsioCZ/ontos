@@ -1,9 +1,8 @@
 import type { Metadata } from "next";
 import { AccountLink } from "@/features/account/account-link";
 import { AccountShell } from "@/components/account-shell";
-import { ProductGrid } from "@/components/product-grid";
+import { FavoritesList } from "@/features/favorites/favorites-list";
 import { AccountHeading } from "@/features/account/account-content";
-import { getProducts, toProductSummary } from "@/mock-storefront/catalog";
 
 export const metadata: Metadata = { title: "Oblíbené produkty" };
 export default function FavoritesPage() {
@@ -11,7 +10,7 @@ export default function FavoritesPage() {
     <AccountShell active="favorites">
       <AccountHeading
         title="Oblíbené produkty"
-        description="Ukázkový seznam často nakupovaných produktů."
+        description="Vaše uložené varianty produktů v tomto prohlížeči."
       >
         <AccountLink
           href="/muj-ucet/prehled"
@@ -23,12 +22,7 @@ export default function FavoritesPage() {
           Zpět na přehled
         </AccountLink>
       </AccountHeading>
-      <div data-account-products>
-        <ProductGrid
-          products={getProducts().slice(0, 6).map(toProductSummary)}
-          columns="featured"
-        />
-      </div>
+      <FavoritesList />
     </AccountShell>
   );
 }

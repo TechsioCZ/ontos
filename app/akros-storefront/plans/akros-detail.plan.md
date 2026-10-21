@@ -4,13 +4,13 @@ overview: Doplnit modální detail, akce a oblíbené konkrétních variant podl
 todos:
   - id: task-03-07-variant-detail
     content: TASK 03 a 07 – dodat modální detail s popisem, hmotností, náhledem obrázku a hlídáním, dotazem i sdílením konkrétní varianty.
-    status: pending
+    status: in_progress
   - id: task-08-detail-information
     content: TASK 08 – ověřit a upravit rozmístění popisu a informací o dopravě v detailu.
     status: pending
   - id: task-02-favorite-state
-    content: TASK 02 – zavést skutečné ukládání oblíbené varianty a jednotný stav jejího srdíčka.
-    status: pending
+    content: TASK 02 – výběr oblíbených variant v dialogu, skutečné ukládání a jednotný stav srdíčka.
+    status: completed
   - id: task-13-favorites-page
     content: TASK 13 – zobrazit uložené varianty, umožnit jejich odebrání a otevřít přes odkaz správnou variantu.
     status: pending
@@ -25,7 +25,19 @@ Navazuje na `akros-variants` a ověřenou hmotnost z `akros-weight`. Mapování 
 a rozhodnutí jsou v [hlavním plánu](../IMPLEMENTATION-PLAN.md). TASK 03 a 07 tvoří
 jeden atomický celek: modal a jeho akce potřebují tutéž identitu, data a návratový stav.
 
+Aktuální [rozbor TASK 02](akros-task-02-review.md) obsahuje uživatelův požadavek na
+tabulku pro výběr variant po kliknutí na srdíčko a ověřený inventář komponent kitu.
+Nové upřesnění z 21. 10. 2026 mění název akce „Poslat kamarádovi“ na „Sdílet“ a
+přidává „Tisk“. Po souhlasu s realizací se implementuje potvrzování tlačítkem
+„Uložit výběr“ a tisk produktového listu bez seznamu variant. Navazující TASK 03,
+07 a 13 tím nejsou automaticky dokončené.
+
 ### TASK 03 + 07 – detail a akce varianty · #1301, #1305
+
+Uživatelské upřesnění po TASK 02 dodává společný výběr pro hlídání, dotaz a sdílení
+více variant, přesné odkazy a předvyplněný dotaz. Stav tohoto dílčího kroku je v
+[záznamu akcí](akros-task-03-actions-review.md). Samostatný detail varianty s popisem,
+obrázkem a váhou zatím dokončený není; společný úkol 03/07 proto zůstává rozpracovaný.
 
 - Doplnit požadovaný modální detail přes kit `Dialog`. Aktuální produktová stránka
   pouze filtruje varianty přes URL; existenci hotového modalu tato větev nepotvrzuje.
@@ -51,7 +63,7 @@ správné SKU. Modal projde klávesnicí i dotykem, zobrazuje popis a správně 
 
 - Posoudit současný popis pod obrázky a před úpravou připravit konkrétní návrh
   rozmístění pro desktop i mobil. Ověřit jej vůči přesnému návrhu z D1.
-- Prověřit blok dopravy pod „Poslat kamarádovi“ nebo jinou srozumitelnou pozici.
+- Prověřit blok dopravy pod „Sdílet“ (původně „Poslat kamarádovi“) nebo jinou srozumitelnou pozici.
   Prezentovat jen doložené informace; neslibovat skutečnou dostupnost dopravce.
 - Zachovat dostupnost popisu a akcí i při dlouhém textu; nevytvářet dva rozdílné
   popisy varianty na stránce a v modalu.
@@ -60,6 +72,14 @@ Dokončeno: přijaté rozmístění je zapsané a vizuálně ověřené na poža
 
 ### TASK 02 – oblíbená varianta · #1300
 
+Lokálně dokončeno a ověřeno 21. 10. 2026; implementace, testy a zbývající návaznosti
+jsou v [záznamu TASK 02](akros-task-02-review.md#realizovaný-výsledek-a-ověření).
+
+- Vycházet z [rozboru výběrového dialogu](akros-task-02-review.md): hledání, checkboxy,
+  zachování výběru při filtrování, české popisky a mobilní kompozice řádků. Návrh
+  hromadného potvrzení používá „Uložit výběr“ a zrušení bez zápisu.
+- Doporučené základní napojení stránky oblíbených v tomto kroku pokrývá část TASK 13;
+  přesné otevření varianty a finální prezentaci nadále vlastní TASK 13.
 - Zavést skutečný seznam referencí na konkrétní prodejné položky; vícevariantový
   kontejner se neukládá místo vybrané varianty. Ošetřit opakované přidání.
 - Stav srdíčka odpovídá téže variantě napříč výpisem, modalem a oblíbenými a obnoví

@@ -6,10 +6,33 @@ import { MockContactForm } from "@/components/mock-contact-form";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { branches } from "@/mock-storefront/fixtures/content";
+import { getProductBySlug } from "@/mock-storefront/catalog";
+import { resolveVariantSelection } from "@/lib/product-variant-links";
 
 export const metadata: Metadata = { title: "Kontakty" };
 
-export default function ContactsPage() {
+export default async function ContactsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ product?: string | string[]; variantIds?: string | string[] }>;
+}) {
+  const query = await searchParams;
+  const slug = Array.isArray(query.product) ? query.product[0] : query.product;
+  const product = slug ? getProductBySlug(slug) : undefined;
+  const variants = product
+    ? resolveVariantSelection(product.detail.variants, query.variantIds)
+    : [];
+  const defaultSubject = product ? `Dotaz na produkt: ${product.name}` : undefined;
+  const defaultMessage = product
+    ? [
+        `Produkt: ${product.name}`,
+        `Kód produktu: ${product.sku}`,
+        ...variants.map((variant) => `Varianta: ${variant.sku} — ${variant.label}`),
+        "",
+        "Můj dotaz:",
+        "",
+      ].join("\n")
+    : undefined;
   return (
     <StorefrontShell>
       <StorefrontBreadcrumbs items={[{ href: "/", label: "Domů" }, { label: "Kontakty" }]} />
@@ -64,7 +87,11 @@ export default function ContactsPage() {
 
         <section className="akros-content-section" id="primy-kontakt">
           <h2>Kontaktní formulář</h2>
-          <MockContactForm />
+          <MockContactForm
+            key={`${product?.id ?? "general"}:${variants.map((item) => item.id).join(",")}`}
+            defaultSubject={defaultSubject}
+            defaultMessage={defaultMessage}
+          />
         </section>
       </article>
     </StorefrontShell>

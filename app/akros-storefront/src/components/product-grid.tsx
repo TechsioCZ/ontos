@@ -7,6 +7,7 @@ import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 
 import { AddToCartButton } from "@/features/cart/add-to-cart-button";
+import { FavoriteButton } from "@/features/favorites/favorite-button";
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
 import type { CatalogProductSummary } from "@/mock-storefront/types";
@@ -15,6 +16,7 @@ export interface ProductGridItem extends CatalogProductSummary {
   detailHref?: string;
   searchMatchLabel?: string;
   variantId?: string;
+  favoriteVariantId?: string | null;
   variantLabel?: string;
   productName?: string;
 }
@@ -124,16 +126,16 @@ export function ProductGrid({
                     </div>
                   )}
                 </NextLink>
-                <LinkButton
-                  aria-label="Zobrazit oblíbené produkty"
-                  as={NextLink}
-                  className="akros-product-card__favorite absolute top-0 right-0 w-11"
-                  href="/oblibene"
-                  icon="icon-[mdi--heart-outline]"
-                  iconSize="lg"
-                  size="sm"
-                  theme="borderless"
-                  variant="secondary"
+                <FavoriteButton
+                  productId={product.id}
+                  productName={product.name}
+                  productSlug={product.slug}
+                  variantId={
+                    product.favoriteVariantId !== undefined
+                      ? product.favoriteVariantId
+                      : product.variantId
+                  }
+                  placement="card"
                 />
               </div>
 
