@@ -219,3 +219,37 @@ it('keeps the card projection free of raw variants', () => {
   expect('variants' in card).toBe(false);
   expect('contentHistory' in card).toBe(false);
 });
+
+it('ranks exact/name/SKU matches before descriptions and variant-only matches', () => {
+  const records = state.products
+    .slice(0, 3)
+    .map((product, i) =>
+      toProductRecord(
+        {
+          ...product,
+          name: ['BITY', 'Šroub DIN 933/A2', 'DIN 933'][i]!,
+          sku: ['BITY', 'SROUB', 'DIN933'][i]!,
+          shortDescription: 'DIN 933',
+        },
+        state.movements,
+      ),
+    );
+  const page = storefrontCatalogPage({ state, records, query: { q: 'din 933', sort: 'name' } });
+  expect(page.products.map((p) => p.name)).toEqual(['DIN 933', 'Šroub DIN 933/A2', 'BITY']);
+  const price = storefrontCatalogPage({ state, records, query: { q: 'din 933', sort: 'price-asc' } });
+  expect(price.products[0]?.name).toBe('DIN 933');
+});
+
+it('hides an unpublished category and its descendants from the public navigation only', () => {
+  const hidden = {
+    ...state,
+    categories: state.categories!.map((c) => (c.id === 'r' ? { ...c, published: false } : c)),
+  };
+  const page = storefrontCatalogPage({
+    state: hidden,
+    records: hidden.products.map((p) => toProductRecord(p, hidden.movements)),
+    query: {},
+  });
+  expect(page.categories).toEqual([]);
+  expect(page.products.length).toBeGreaterThan(0);
+});

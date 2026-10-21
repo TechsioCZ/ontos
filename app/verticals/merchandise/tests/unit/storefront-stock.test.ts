@@ -126,8 +126,81 @@ it.effect('removing an already cancelled order does not return stock twice', () 
   Effect.gen(function* () {
     const placed = yield* run(state, order(100, 'akros-stock-order-1'), 'order-1');
     const orderId = placed.storefrontOrder!.orderId!;
-    const cancelled = yield* run(placed.state, { _tag: 'ChangeOrderStatus', id: orderId, status: 'CANCELLED' }, 'cancel-1');
-    const removed = yield* run(cancelled.state, { _tag: 'RemoveDemoOrder', id: orderId, reason: 'Ukázka skončila' }, 'remove-1');
+    const cancelled = yield* run(
+      placed.state,
+      { _tag: 'ChangeOrderStatus', id: orderId, status: 'CANCELLED' },
+      'cancel-1',
+    );
+    const removed = yield* run(
+      cancelled.state,
+      { _tag: 'RemoveDemoOrder', id: orderId, reason: 'Ukázka skončila' },
+      'remove-1',
+    );
     expect(stockOf(removed.state)).toBe(500);
+  }),
+);
+
+for (const status of ['SHIPPED', 'DELIVERED'] as const) {
+  for (const action of ['remove', 'cancel'] as const) {
+    it.effect(`${action} ${status} DEMO order nets the ledger to zero, without double returns`, () =>
+      Effect.gen(function* () {
+        const placed = yield* run(state, order(100, `terminal-${status}-${action}`), 'terminal-order');
+        const id = placed.storefrontOrder!.orderId!;
+        let current = placed.state;
+        for (const next of ['CONFIRMED', 'SHIPPED', ...(status === 'DELIVERED' ? ['DELIVERED'] : [])]) {
+          current = (yield* run(current, { _tag: 'ChangeOrderStatus', id, status: next }, `step-${next}`)).state;
+        }
+        if (action === 'cancel')
+          current = (yield* run(current, { _tag: 'ChangeOrderStatus', id, status: 'CANCELLED' }, 'cancel-terminal'))
+            .state;
+        current = (yield* run(current, { _tag: 'RemoveDemoOrder', id, reason: 'Ukázka skončila' }, 'remove-terminal'))
+          .state;
+        expect(stockOf(current)).toBe(500);
+        expect(current.movements.filter((m) => m.reason === 'ORDER').reduce((sum, m) => sum + m.delta, 0)).toBe(0);
+        const replay = yield* run(current, { _tag: 'RemoveDemoOrder', id, reason: 'Ukázka skončila' }, 'remove-replay');
+        expect(replay.state).toBe(current);
+      }),
+    );
+  }
+}
+
+it.effect('staff image changes synchronize imageSrc, including empty galleries', () =>
+  Effect.gen(function* () {
+    const changed = yield* run(
+      state,
+      { _tag: 'UpdateProduct', id: 'product-1', patch: { images: ['/first.png', '/second.png'] } },
+      'image-update',
+    );
+    expect(changed.state.products[0]?.imageSrc).toBe('/first.png');
+    const cleared = yield* run(
+      changed.state,
+      { _tag: 'UpdateProduct', id: 'product-1', patch: { images: [] } },
+      'image-clear',
+    );
+    expect(cleared.state.products[0]?.imageSrc).toBe('');
+  }),
+);
+
+it.effect('archives only inactive unpublished products and retains the ledger and actor audit', () =>
+  Effect.gen(function* () {
+    const refused = yield* run(
+      state,
+      { _tag: 'ArchiveDemoProduct', id: 'product-1', reason: 'Úklid DEMO katalogu' },
+      'archive',
+    ).pipe(Effect.flip);
+    expect(refused._tag).toBe('MerchandiseLifecycleConflict');
+    const hidden = yield* run(
+      state,
+      { _tag: 'UpdateProduct', id: 'product-1', patch: { active: false, published: false } },
+      'hide',
+    );
+    const archived = yield* run(
+      hidden.state,
+      { _tag: 'ArchiveDemoProduct', id: 'product-1', reason: 'Úklid DEMO katalogu' },
+      'archive',
+    );
+    expect(archived.state.products[0]?.demoArchive?.actor).toEqual(actor);
+    expect(archived.state.products[0]?.demoArchive?.reason).toBe('Úklid DEMO katalogu');
+    expect(archived.state.movements).toBe(state.movements);
   }),
 );

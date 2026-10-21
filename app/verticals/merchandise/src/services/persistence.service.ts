@@ -382,7 +382,12 @@ const updateProduct = Effect.fn('Merchandise.updateProduct')(function* updatePro
   void _clientPath;
   const variants =
     patchVariants === undefined ? product.variants : yield* normalizeVariants(product, patchVariants, input);
-  const merged: Product = { ...product, ...patch, updatedAt: input.now };
+  const merged: Product = {
+    ...product,
+    ...patch,
+    ...(patch.images === undefined ? {} : { imageSrc: patch.images[0] ?? '' }),
+    updatedAt: input.now,
+  };
   const categorized =
     patchCategoryId === undefined || patchCategoryId === product.categoryId
       ? merged
@@ -675,7 +680,41 @@ export const orderTransitions = {
 const orderMovesStock = (state: MerchandiseState, order: Order) =>
   state.movements.some((movement) => movement.reason === 'ORDER' && movement.reference === order.number);
 
-/** Cancelling returns each snapshot line to stock with a positive compensating ORDER movement. */
+/** Return only the outstanding ORDER debit per product/variant; cancel + remove never double-credits. */
+const returnOrderStock = (state: MerchandiseState, order: Order, input: MerchandiseCommandInput, note: string) => {
+  const balances = new Map<
+    string,
+    { productId: StockMovement['productId']; variantId?: NonNullable<StockMovement['variantId']>; delta: number }
+  >();
+  for (const movement of state.movements) {
+    if (movement.reason !== 'ORDER' || movement.reference !== order.number) continue;
+    const key = JSON.stringify([movement.productId, movement.variantId]);
+    const previous = balances.get(key);
+    balances.set(key, {
+      productId: movement.productId,
+      ...(movement.variantId === undefined ? {} : { variantId: movement.variantId }),
+      delta: (previous?.delta ?? 0) + movement.delta,
+    });
+  }
+  return Effect.forEach(
+    [...balances.values()].filter((balance) => balance.delta < 0),
+    (balance, index) =>
+      movementIdOf(input.resourceId, index).pipe(
+        Effect.map((id): StockMovement => ({
+          ...balance,
+          id,
+          at: input.now,
+          delta: -balance.delta,
+          note,
+          reason: 'ORDER',
+          reference: order.number,
+        })),
+      ),
+    { concurrency: 1 },
+  );
+};
+
+/** Cancelling returns the order's outstanding stock debit. */
 const changeOrderStatus = Effect.fn('Merchandise.changeOrderStatus')(function* changeOrderStatus(
   state: MerchandiseState,
   value: CommandOf<'ChangeOrderStatus'>,
@@ -687,7 +726,12 @@ const changeOrderStatus = Effect.fn('Merchandise.changeOrderStatus')(function* c
   }
   if (existing.demoCleanup !== undefined) return yield* conflict('Odstraněnou DEMO objednávku nelze dále zpracovávat');
   const allowed: readonly OrderStatus[] = orderTransitions[existing.status];
-  if (!allowed.includes(value.status)) {
+  const terminalDemoCancel =
+    existing.demo === true &&
+    existing.channel === 'STOREFRONT' &&
+    (existing.status === 'SHIPPED' || existing.status === 'DELIVERED') &&
+    value.status === 'CANCELLED';
+  if (!allowed.includes(value.status) && !terminalDemoCancel) {
     return yield* conflict('The requested order transition is not allowed');
   }
   const updated: Order = {
@@ -709,23 +753,7 @@ const changeOrderStatus = Effect.fn('Merchandise.changeOrderStatus')(function* c
   if (value.status !== 'CANCELLED' || !orderMovesStock(state, existing)) {
     return { entityIds: [entity], state: { ...state, orders } };
   }
-  const restored = yield* Effect.forEach(
-    existing.lines,
-    (line, index) =>
-      movementIdOf(input.resourceId, index).pipe(
-        Effect.map((id): StockMovement => ({
-          at: input.now,
-          delta: line.quantity,
-          id,
-          note: `Storno objednávky ${existing.number}`,
-          productId: line.productId,
-          reason: 'ORDER',
-          reference: existing.number,
-          ...(line.variantId === undefined ? {} : { variantId: line.variantId }),
-        })),
-      ),
-    { concurrency: 1 },
-  );
+  const restored = yield* returnOrderStock(state, existing, input, `Storno objednávky ${existing.number}`);
   return { entityIds: [entity], state: { ...state, movements: [...state.movements, ...restored], orders } };
 });
 
@@ -1249,6 +1277,27 @@ export const evolveMerchandiseState = (
     Match.tag('PlaceStorefrontOrder', (value) => placeStorefrontOrder(state, value, input)),
     Match.tag('EditOrder', (value) => editOrder(state, value, input)),
     Match.tag('UpdateCategory', (value) => updateCategoryCommand(state, value, input)),
+    Match.tag('ArchiveDemoProduct', (value) =>
+      Effect.gen(function* () {
+        const product = yield* findProduct(state.products, value.id);
+        const entity = yield* entityIdOf(product.id);
+        if (product.active || product.published !== false)
+          return yield* conflict('Před archivací produkt deaktivujte a skryjte v e-shopu');
+        if (product.demoArchive !== undefined) return { entityIds: [entity], state };
+        const archived = withContentHistory(
+          product,
+          {
+            ...product,
+            active: false,
+            published: false,
+            updatedAt: input.now,
+            demoArchive: { at: input.now, actor: input.actor, reason: value.reason },
+          },
+          input,
+        );
+        return { entityIds: [entity], state: withProduct(state, archived) };
+      }),
+    ),
     Match.tag('RemoveDemoOrder', (value) =>
       Effect.gen(function* removeDemoOrder() {
         const order = state.orders.find((entry) => entry.id === value.id);
@@ -1257,7 +1306,35 @@ export const evolveMerchandiseState = (
           return yield* conflict('Odstranit lze pouze DEMO objednávku z e-shopu');
         }
         const entity = yield* entityIdOf(order.id);
-        if (order.demoCleanup !== undefined) return { entityIds: [entity], state };
+        if (order.demoCleanup !== undefined) {
+          const returned = yield* returnOrderStock(
+            state,
+            order,
+            input,
+            `Dorovnání skladu odstraněné DEMO objednávky ${order.number}`,
+          );
+          if (returned.length === 0) return { entityIds: [entity], state };
+          const repaired: Order = {
+            ...order,
+            updatedAt: input.now,
+            history: [
+              ...(order.history ?? []),
+              historyEntry(input, {
+                kind: 'NOTE',
+                after: 'Dorovnán sklad odstraněné DEMO objednávky',
+                reason: value.reason,
+              }),
+            ],
+          };
+          return {
+            entityIds: [entity],
+            state: {
+              ...state,
+              movements: [...state.movements, ...returned],
+              orders: state.orders.map((entry) => (entry.id === order.id ? repaired : entry)),
+            },
+          };
+        }
         const removed: Order = {
           ...order,
           updatedAt: input.now,
@@ -1272,29 +1349,13 @@ export const evolveMerchandiseState = (
             }),
           ],
         };
-        // An open order that already moved stock gives it back when it is removed from the presentation.
-        const returnsStock =
-          (order.status === 'NEW' || order.status === 'CONFIRMED' || order.status === 'PACKING') &&
-          orderMovesStock(state, order);
-        const returned = returnsStock
-          ? yield* Effect.forEach(
-              order.lines,
-              (line, index) =>
-                movementIdOf(input.resourceId, index).pipe(
-                  Effect.map((id): StockMovement => ({
-                    at: input.now,
-                    delta: line.quantity,
-                    id,
-                    note: `Vráceno – odstraněná DEMO objednávka ${order.number}`,
-                    productId: line.productId,
-                    reason: 'ORDER',
-                    reference: order.number,
-                    ...(line.variantId === undefined ? {} : { variantId: line.variantId }),
-                  })),
-                ),
-              { concurrency: 1 },
-            )
-          : [];
+        // All DEMO statuses, including shipped/delivered; the ledger prevents duplicate returns.
+        const returned = yield* returnOrderStock(
+          state,
+          order,
+          input,
+          `Vráceno – odstraněná DEMO objednávka ${order.number}`,
+        );
         return {
           entityIds: [entity],
           state: {
@@ -1530,7 +1591,9 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         };
         return storefrontResponse;
       }
-      const allProducts = cachedProductRecords(snapshot.state, computeProductRecords);
+      const allProducts = cachedProductRecords(snapshot.state, computeProductRecords).filter(
+        (record) => record.demoArchive === undefined,
+      );
       const matchingProducts = allProducts.filter(
         (record) =>
           (!storefront || (record.active && record.published !== false)) &&
@@ -1582,6 +1645,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
         canWrite,
         canManageCatalog: !storefront && canManageCatalog,
+        storefrontOrigin: legalEntityId === AKROS_LEGAL_ENTITY_ID ? 'http://localhost:3070' : 'http://localhost:3060',
         canEditOrders: !storefront && canManageCatalog,
         canCleanupDemo: !storefront && canWrite && isAdministrator,
         // The storefront view never reveals staff totals: its indicators cover only what the view returns.

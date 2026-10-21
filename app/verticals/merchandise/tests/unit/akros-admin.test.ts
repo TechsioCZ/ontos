@@ -98,7 +98,11 @@ it.effect('cleans a terminal DEMO order with retained audit and submission repla
     expect(changed.state.orders[0]?.clientRequestId).toBe('akros-admin-proof-1');
     expect(changed.state.orders[0]?.history?.at(-1)?.reason).toBe('Úklid prezentace');
     expect(changed.state.orders[0]?.status).toBe('DELIVERED');
-    expect(changed.state.movements).toBe(state.movements);
+    expect(
+      changed.state.movements
+        .filter((movement) => movement.reason === 'ORDER')
+        .reduce((sum, movement) => sum + movement.delta, 0),
+    ).toBe(0);
     const repeat = yield* apply(changed.state, {
       _tag: 'RemoveDemoOrder',
       id: terminal.orders[0]!.id,

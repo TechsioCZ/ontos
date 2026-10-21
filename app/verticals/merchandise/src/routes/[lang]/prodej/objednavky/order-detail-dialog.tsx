@@ -166,7 +166,13 @@ export const OrderDetailDialog = ({
   const transitions = canWrite && !editing ? transitionsFrom(order.status) : [];
   // One forward step at a time keeps the footer short; the stepper shows the whole path.
   const forward = transitions.filter((status) => status !== 'CANCELLED').slice(0, 1);
-  const cancel = transitions.includes('CANCELLED');
+  const cancel =
+    transitions.includes('CANCELLED') ||
+    (canWrite &&
+      !editing &&
+      order.demo === true &&
+      storefront &&
+      (order.status === 'SHIPPED' || order.status === 'DELIVERED'));
   const label = (status: OrderStatus) => {
     const labelKey = actionLabelKey(status);
     return labelKey === null ? status : t(labelKey);
@@ -188,6 +194,7 @@ export const OrderDetailDialog = ({
         <Button
           disabled={busy}
           onClick={() => onStatus(order, 'CANCELLED')}
+          className="shrink-0 whitespace-nowrap"
           size="sm"
           theme="outlined"
           variant="danger"

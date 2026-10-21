@@ -1,5 +1,6 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
@@ -17,6 +18,7 @@ type Loaded =
   | { readonly status: 'ready'; readonly categories: readonly CatalogCategory[]; readonly revision: number };
 
 interface CategoryDraft {
+  readonly published: boolean;
   readonly name: string;
   readonly heading: string;
   readonly description: string;
@@ -31,6 +33,7 @@ const byStorefrontOrder = (a: CatalogCategory, b: CatalogCategory) =>
   a.position - b.position || a.name.localeCompare(b.name, 'cs');
 
 const draftOf = (c: CatalogCategory): CategoryDraft => ({
+  published: c.published !== false,
   name: c.name,
   heading: c.heading,
   description: c.description,
@@ -139,6 +142,7 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
           description: draft.description.trim(),
           longDescription: draft.longDescription.trim(),
           position,
+          published: draft.published,
         },
       },
       loaded.revision,
@@ -234,7 +238,10 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
                       type="button"
                       variant="secondary"
                     >
-                      {`${c.name} · /${c.slug} · pořadí ${c.position}`}
+                      <span
+                        className="block w-full text-left"
+                        style={{ textAlign: 'left' }}
+                      >{`${c.name} · /${c.slug} · pořadí ${c.position}${c.published === false ? ' · Skryto' : ' · Zveřejněno'}`}</span>
                     </Button>
                   </li>
                 ))}
@@ -246,6 +253,13 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
               <p className="text-fg-secondary text-sm">
                 {`Adresa v e-shopu: /${selected.slug}${parentName === undefined ? '' : ` · nadřazená kategorie: ${parentName}`}`}
               </p>
+              <Switch
+                name="categoryPublished"
+                checked={draft.published}
+                onCheckedChange={(published) => patchDraft({ published })}
+              >
+                Zobrazit v navigaci e-shopu
+              </Switch>
               <FormInput
                 id="category-name"
                 label="Název"

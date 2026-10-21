@@ -118,6 +118,7 @@ export const RecordsResponseSchema = Schema.Struct({
   actorPrincipalRef: PrincipalRefSchema,
   canWrite: Schema.Boolean,
   canManageCatalog: Schema.optionalKey(Schema.Boolean),
+  storefrontOrigin: Schema.optionalKey(Schema.String),
   canEditOrders: Schema.optionalKey(Schema.Boolean),
   canCleanupDemo: Schema.optionalKey(Schema.Boolean),
   indicators: Schema.Struct({

@@ -136,6 +136,7 @@ export const CatalogCategorySchema = Schema.Struct({
   imageSrc: Schema.String,
   imageAlt: Schema.String,
   hasChildren: Schema.Boolean,
+  published: Schema.optionalKey(Schema.Boolean),
   history: Schema.optionalKey(Schema.Array(CatalogChangeSchema)),
 });
 export type CatalogCategory = typeof CatalogCategorySchema.Type;
@@ -170,6 +171,13 @@ export const ProductMetadataSchema = Schema.Struct({
 export type ProductMetadata = typeof ProductMetadataSchema.Type;
 
 export const ProductSchema = Schema.Struct({
+  demoArchive: Schema.optionalKey(
+    Schema.Struct({
+      at: Schema.DateTimeUtcFromString,
+      actor: PrincipalRefSchema,
+      reason: Schema.String,
+    }),
+  ),
   /** Catalog-content audit (name, descriptions, images, category, parameters, labels…), oldest first, max 50. */
   contentHistory: Schema.optionalKey(Schema.Array(CatalogChangeSchema)),
   ...ProductMetadataSchema.fields,

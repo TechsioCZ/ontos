@@ -110,7 +110,9 @@ export const storefrontCatalogPage = (input: {
   readonly query: StorefrontCatalogQuery;
 }): StorefrontCatalogPage => {
   const { state, records, query } = input;
-  const visible = records.filter((record) => record.active && record.published !== false);
+  const visible = records.filter(
+    (record) => record.active && record.published !== false && record.demoArchive === undefined,
+  );
   const categories = state.categories ?? [];
   const featuredIds = state.homepageFeaturedProductIds ?? [];
 
@@ -169,7 +171,18 @@ export const storefrontCatalogPage = (input: {
   }
   if (query.availability === 'in-stock') list = list.filter((record) => isInStock(record.availability));
   if (query.availability === 'out-of-stock') list = list.filter((record) => !isInStock(record.availability));
-  if (query.sort === 'name') list = list.toSorted((a, b) => a.name.localeCompare(b.name, 'cs'));
+  if (query.sort === 'name' || (query.sort === undefined && words.length > 0)) {
+    const needle = normalizeSearchText(query.q ?? '');
+    const rank = (record: ProductRecord) => {
+      const name = normalizeSearchText(record.name);
+      const sku = normalizeSearchText(record.sku);
+      if (name === needle || sku === needle) return 0;
+      if (name.includes(needle) || sku.includes(needle)) return 1;
+      if (words.every((word) => `${name} ${sku}`.includes(word))) return 2;
+      return 3;
+    };
+    list = list.toSorted((a, b) => (words.length === 0 ? 0 : rank(a) - rank(b)) || a.name.localeCompare(b.name, 'cs'));
+  }
   if (query.sort === 'price-asc') list = list.toSorted((a, b) => priceOf(a) - priceOf(b));
   if (query.sort === 'price-desc') list = list.toSorted((a, b) => priceOf(b) - priceOf(a));
 
@@ -189,10 +202,23 @@ export const storefrontCatalogPage = (input: {
       : {
           // Slim tree: heading and long description only for the requested category (the storefront shows them
           // nowhere else), which keeps every read about 250 kB lighter with the full AKROS tree.
-          categories: categories.map(({ history: _history, ...category }) => {
-            void _history;
-            return category.slug === query.categorySlug ? category : { ...category, heading: '', longDescription: '' };
-          }),
+          categories: categories
+            .filter((category) => {
+              const seen = new Set<string>();
+              let current: CatalogCategory | undefined = category;
+              while (current !== undefined && !seen.has(current.id)) {
+                if (current.published === false) return false;
+                seen.add(current.id);
+                current = categories.find((parent) => parent.id === current?.parentId);
+              }
+              return true;
+            })
+            .map(({ history: _history, ...category }) => {
+              void _history;
+              return category.slug === query.categorySlug
+                ? category
+                : { ...category, heading: '', longDescription: '' };
+            }),
         }),
   };
 };

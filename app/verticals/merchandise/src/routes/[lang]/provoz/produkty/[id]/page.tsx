@@ -89,6 +89,9 @@ const ProductDetailPageContent = ({ routeParams }: ProductDetailPageProps) => {
         <ProductDetailView
           canWrite={state.response.canManageCatalog ?? state.response.canWrite}
           canMoveStock={state.response.canWrite}
+          {...(state.response.storefrontOrigin === undefined
+            ? {}
+            : { storefrontOrigin: state.response.storefrontOrigin })}
           categories={state.response.categories ?? []}
           key={state.product.id}
           movements={state.response.movements.filter((movement) => movement.productId === state.product.id)}

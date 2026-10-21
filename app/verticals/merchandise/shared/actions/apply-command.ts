@@ -47,6 +47,7 @@ export type BulkProductPatch = typeof BulkProductPatchSchema.Type;
 
 /** Editable storefront category content. Slug and parent stay fixed (they are public URLs / the tree). */
 export const CategoryPatchSchema = Schema.Struct({
+  published: Schema.optionalKey(Schema.Boolean),
   name: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
   heading: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(300))),
   description: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(5000))),
@@ -134,6 +135,10 @@ export const MerchandiseCommandSchema = Schema.Union([
     lines: Schema.Array(OrderLineRequestSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200)),
     opportunityId: Schema.optionalKey(OpportunityIdSchema),
     partyId: PartyIdSchema,
+  }),
+  Schema.TaggedStruct('ArchiveDemoProduct', {
+    id: ProductIdSchema,
+    reason: Schema.Trim.check(Schema.isMinLength(5), Schema.isMaxLength(500)),
   }),
   Schema.TaggedStruct('RemoveDemoOrder', {
     id: OrderIdSchema,

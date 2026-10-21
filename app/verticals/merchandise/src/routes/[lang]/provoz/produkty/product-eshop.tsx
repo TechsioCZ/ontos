@@ -79,6 +79,8 @@ const variantDraftsOf = (product: ProductRecord): readonly VariantDraft[] =>
   }));
 
 interface PanelProps {
+  readonly storefrontOrigin?: string;
+  readonly onArchived?: () => void;
   readonly canWrite: boolean;
   readonly canMoveStock?: boolean;
   readonly onCommitted: (message: string) => void;
@@ -600,7 +602,15 @@ export const VariantPriceHistory = ({ product }: { readonly product: ProductReco
 };
 
 /** Storefront presentation: images, publication, slug and how availability is reported. */
-export const EshopPanel = ({ canWrite, onCommitted, onReload, product, revision }: PanelProps) => {
+export const EshopPanel = ({
+  canWrite,
+  onCommitted,
+  onReload,
+  onArchived,
+  storefrontOrigin = STOREFRONT_ORIGIN,
+  product,
+  revision,
+}: PanelProps) => {
   const failure = useCommandFailure();
   const [images, setImages] = useState<readonly string[]>(() => product.images ?? []);
   const [newImage, setNewImage] = useState('');
@@ -610,7 +620,8 @@ export const EshopPanel = ({ canWrite, onCommitted, onReload, product, revision 
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [broken, setBroken] = useState<ReadonlySet<string>>(new Set());
-  const storefrontHref = `${product.sourceGroupId === undefined ? STOREFRONT_ORIGIN : AKROS_STOREFRONT_ORIGIN}/produkt/${product.slug ?? product.id}`;
+  const storefrontHref = `${storefrontOrigin}/produkt/${product.slug ?? product.id}`;
+  const [archiveReason, setArchiveReason] = useState('');
   const slugInvalid = slug.trim() !== '' && !/^[a-z0-9-]{1,120}$/u.test(slug.trim());
   // The slug the server refused because another product uses it; editing the field clears the message.
   const [takenSlug, setTakenSlug] = useState<string | null>(null);
@@ -677,6 +688,44 @@ export const EshopPanel = ({ canWrite, onCommitted, onReload, product, revision 
         </div>
       </SectionCard>
 
+      {canWrite && !product.active && product.published === false && (
+        <SectionCard title="Archivace DEMO produktu">
+          <p className="text-fg-secondary text-sm">
+            Produkt zmizí ze seznamu i e-shopu. Skladové pohyby, objednávky a audit zůstanou zachovány.
+          </p>
+          <FormInput
+            id="demo-archive-reason"
+            name="archiveReason"
+            label="Důvod archivace"
+            value={archiveReason}
+            onChange={(event) => setArchiveReason(event.target.value)}
+            maxLength={500}
+          />
+          <Button
+            variant="danger"
+            theme="outlined"
+            disabled={busy || archiveReason.trim().length < 5}
+            onClick={() => {
+              setBusy(true);
+              runCommand(
+                { _tag: 'ArchiveDemoProduct', id: product.id, reason: archiveReason.trim() },
+                revision,
+                (outcome) => {
+                  setBusy(false);
+                  if (!outcome.ok) {
+                    setServerError(failure(outcome.reason, onReload));
+                    return;
+                  }
+                  onCommitted('DEMO produkt archivován. Audit a skladové pohyby zachovány.');
+                  onArchived?.();
+                },
+              );
+            }}
+          >
+            Archivovat DEMO produkt
+          </Button>
+        </SectionCard>
+      )}
       <SectionCard title={`Obrázky (${images.length})`}>
         {images.length === 0 ? (
           <div className="flex h-32 items-center justify-center rounded-md border border-border-primary border-dashed text-fg-secondary text-sm">

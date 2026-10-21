@@ -34,6 +34,7 @@ type ContentField = keyof typeof CONTENT_FIELDS;
 const contentFields = Object.keys(CONTENT_FIELDS) as ContentField[];
 
 const CATEGORY_FIELDS = {
+  published: 'Zveřejnění v navigaci',
   name: 'Název',
   heading: 'Nadpis',
   description: 'Krátký popis',
@@ -104,7 +105,10 @@ export const assignCategory = (
   const category = all.find((candidate) => candidate.id === categoryId);
   if (category === undefined) {
     return Effect.fail(
-      new MerchandiseLifecycleConflict({ code: 'merchandise_lifecycle_conflict', reason: 'Vybraná kategorie neexistuje' }),
+      new MerchandiseLifecycleConflict({
+        code: 'merchandise_lifecycle_conflict',
+        reason: 'Vybraná kategorie neexistuje',
+      }),
     );
   }
   return Effect.succeed({

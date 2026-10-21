@@ -47,6 +47,7 @@ import type { CatalogCategory } from '../../../../../shared/domain/merchandise-m
 import type { MovementDraft } from './product-movements.tsx';
 
 export interface ProductDetailViewProps {
+  readonly storefrontOrigin?: string;
   readonly canWrite: boolean;
   readonly canMoveStock?: boolean;
   readonly categories?: readonly CatalogCategory[];
@@ -621,6 +622,7 @@ const DetailForm = (props: DetailFormProps) => {
  * Full-page product editor, keyed by product id. Refreshes retain the active tab and unsaved fields.
  */
 export const ProductDetailView = ({
+  storefrontOrigin,
   canWrite,
   canMoveStock = canWrite,
   categories = [],
@@ -768,6 +770,8 @@ export const ProductDetailView = ({
           </Tabs.Content>
           <Tabs.Content className="py-200" value="eshop">
             <EshopPanel
+              {...(storefrontOrigin === undefined ? {} : { storefrontOrigin })}
+              onArchived={onBack}
               canWrite={canWrite}
               key={`eshop-${DateTime.formatIso(product.updatedAt)}`}
               onCommitted={onCommitted}
