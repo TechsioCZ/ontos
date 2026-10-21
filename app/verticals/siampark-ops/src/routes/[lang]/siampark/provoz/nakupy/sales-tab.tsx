@@ -387,7 +387,7 @@ export const SalesQuoteFormPanel = ({
                 placeholder={k('sales.form.descriptionPlaceholder')}
                 value={line.description}
               />
-              <div className="grid grid-cols-2 items-end gap-100 sm:grid-cols-[6rem_minmax(9rem,1fr)_7rem_auto]">
+              <div className="grid grid-cols-[4.5rem_minmax(6rem,1fr)_6.5rem] items-end gap-100">
               <FormInput
                 id={`sales-line-${index}-quantity`}
                 inputMode="numeric"
@@ -411,7 +411,8 @@ export const SalesQuoteFormPanel = ({
                 size="md"
                 value={[String(line.vat)]}
               />
-              <div className="flex items-end">
+              </div>
+              <div className="flex justify-end">
                 <Button
                   disabled={lines.length === 1}
                   onClick={() => setLines((current) => current.filter((_, at) => at !== index))}
@@ -421,7 +422,6 @@ export const SalesQuoteFormPanel = ({
                 >
                   {k('sales.form.removeLine')}
                 </Button>
-              </div>
               </div>
             </div>
           ))}

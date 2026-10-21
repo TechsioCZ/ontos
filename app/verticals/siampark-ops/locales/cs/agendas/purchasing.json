@@ -398,7 +398,7 @@
       "lines": "Položky a služby",
       "description": "Položka / služba",
       "quantity": "Množství",
-      "unitPrice": "Cena za jednotku bez DPH (Kč)",
+      "unitPrice": "Cena/j. bez DPH (Kč)",
       "vat": "DPH",
       "note": "Poznámka",
       "deliveryDate": "Datum dodání",

@@ -387,7 +387,7 @@
       "lines": "Items and services",
       "description": "Item / service",
       "quantity": "Quantity",
-      "unitPrice": "Unit price excl. VAT (CZK)",
+      "unitPrice": "Unit price excl. VAT",
       "vat": "VAT",
       "note": "Note",
       "deliveryDate": "Delivery date",

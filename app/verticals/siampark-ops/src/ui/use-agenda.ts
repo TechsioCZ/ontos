@@ -4,7 +4,7 @@
 //   ops.data?.agendas.assets?.state.assets         -> typed agenda state
 //   await ops.run({ _tag: 'AssetCreate', ... })     -> picks the owning agenda's revision, reloads on success
 //   await uploadFile(file) / await downloadFile(fileId)
-import { DateTime, Effect, Match, Random } from 'effect';
+import { DateTime, Effect, Match, Random, Schedule } from 'effect';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { executeApplyCommand } from '../api/apply-command-action-client.ts';
 import { executeRecords } from '../api/records-client.ts';
@@ -56,7 +56,13 @@ const commandReason = (error: CommandFailure): FailureReason =>
     Match.orElse((): FailureReason => 'unavailable'),
   );
 
-/** Runs the governed records read once. */
+/** Gateway / assertion hiccups (e.g. while the composition is republished) are retried before reporting „forbidden“. */
+const transientAuthFailure = (error: RecordsFailure) =>
+  /^(RecordsAuthentication|GatewayAuthenticationRequired|GatewayReloadRequired|GatewayUnavailable|RecordsUnavailable)/u.test(
+    error._tag,
+  );
+
+/** Runs the governed records read (transient gateway failures are retried twice). */
 export const loadRecords = (
   request: { readonly agendas?: readonly AgendaId[]; readonly fileId?: string; readonly historyFor?: string } = {},
 ): Promise<{ readonly ok: true; readonly data: RecordsResponse } | { readonly ok: false; readonly reason: FailureReason }> =>
@@ -70,7 +76,7 @@ export const loadRecords = (
             ...(request.historyFor === undefined ? {} : { historyFor: request.historyFor }),
           },
           correlation,
-        ),
+        ).pipe(Effect.retry({ schedule: Schedule.spaced('700 millis'), times: 2, while: transientAuthFailure })),
       ),
       Effect.match({
         onFailure: (error) => ({ ok: false as const, reason: recordsReason(error) }),
