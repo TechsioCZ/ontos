@@ -268,6 +268,9 @@ if [ "${DEMO_RESET:-1}" != 0 ]; then
     ONTOS_DEMO_SEED_EMAIL=management@siampark.demo \
     "ONTOS_DEMO_SEED_PASSWORD=${ONTOS_DEMO_PASSWORD:-password1234}" \
     mise exec -- pnpm demo:seed:rental --apply
+  # S00: Siampark business cases; the three owned by „Externí obchodník“ are entrusted to external@siampark.demo.
+  step demo-seed-siampark-cases env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" \
+    node scripts/demo/seed-siampark-cases.mts
 fi
 # Config reads app/.env.demo.local server-side; start only after the storefront managed key exists.
 start eshop-storefront env "ESHOP_STOREFRONT_PORT=$STOREFRONT_PORT" "${WITH_ENV[@]}" \

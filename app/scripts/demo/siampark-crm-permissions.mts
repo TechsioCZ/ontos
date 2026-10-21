@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** LOCAL ONLY: add the Siampark (0021) CRM grants without resetting other demo identities or data.
- * Vedení: demo.crm read_all + write_all + assign; Externí obchodník: demo.crm read_assigned only (no write).
+ * Vedení: demo.crm read_all + write_all + assign; Externí obchodník: demo.crm read_assigned only (no write) and
+ * demo.sales-pipeline read without read_all (only cases granted by scripts/demo/seed-siampark-cases.mts).
  * Run from app/: node scripts/demo/siampark-crm-permissions.mts
  * Set ONTOS_DEMO_ENV_FILE to the running runtime's .env when its local TLS certificate differs.
  * Writes (touches) the full permissions.mts relationship set of both personas, as reset-permissions.mts would;

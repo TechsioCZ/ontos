@@ -397,8 +397,11 @@ export const siamparkRentalPersonas = [
   {
     email: 'external@siampark.demo',
     principalId: '72000000-0000-4000-8000-000000000024',
-    // S00: reads only the CRM clients entrusted to him (`demo.crm.read_assigned`, no write, no read_all);
-    // billing/finance, agreements and occupancy stay closed. Siampark CRM data: scripts/demo/seed-siampark-crm.mts.
+    // S00: reads only the CRM clients entrusted to him (`demo.crm.read_assigned`, no write, no read_all) and the
+    // business cases entrusted to him: `demo.sales-pipeline` opened read-only WITHOUT `read_all`, so the owner's
+    // governed records read returns only opportunities with a per-case reader grant (scripts/demo/
+    // seed-siampark-cases.mts grants exactly the cases owned by his employee record). No write Action, no
+    // billing/finance, agreements, occupancy or party registry. Siampark CRM data: scripts/demo/seed-siampark-crm.mts.
     role: {
       contextPermissions: {
         'demo.crm': ['demo.crm.read_assigned'],
@@ -406,8 +409,8 @@ export const siamparkRentalPersonas = [
       },
       identityAdmin: false,
       label: 'Externí partner',
-      modules: { 'demo.crm': 'read', 'demo.siampark-ops': 'write' },
-      restrictedModules: ['demo.crm', 'demo.siampark-ops'],
+      modules: { 'demo.crm': 'read', 'demo.sales-pipeline': 'read', 'demo.siampark-ops': 'write' },
+      restrictedModules: ['demo.crm', 'demo.sales-pipeline', 'demo.siampark-ops'],
     },
   },
 ] as const satisfies readonly { readonly email: string; readonly principalId: string; readonly role: DemoRole }[];
