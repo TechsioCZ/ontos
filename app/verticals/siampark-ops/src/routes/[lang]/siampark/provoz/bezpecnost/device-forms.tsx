@@ -1,6 +1,6 @@
 // @effect-diagnostics asyncFunction:off
 // Side panels of the security agenda: device card create/edit, fault report (+ linked task), inspection, resolve.
-import { SidePanel } from '@app/admin-ui';
+import { SidePanel, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -493,7 +493,7 @@ export const ReportFaultPanel = ({
         rows={3}
         value={description}
       />
-      <div className="flex flex-col gap-150 rounded-lg border border-border-primary bg-surface p-200">
+      <div className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
         <FormCheckbox
           checked={withTask}
           helpText={k('report.withTaskHint')}

@@ -1,6 +1,6 @@
 // @effect-diagnostics asyncFunction:off
 // S06: purchase orders list + detail panel (lines with delivered/remaining, deliveries, invoices, history).
-import { DetailList, EmptyState, SectionCard, SidePanel, formatDate, formatDateTime } from '@app/admin-ui';
+import { DetailList, EmptyState, SectionCard, SidePanel, formatDate, formatDateTime, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -471,7 +471,7 @@ export const OrderPanel = ({
             <ul className="flex flex-col gap-150">
               {order.deliveries.map((delivery) => (
                 <li
-                  className="flex flex-col gap-50 rounded-md border border-border-primary p-150 text-sm"
+                  className={`${surfaceTileClassName} flex flex-col gap-50 p-150 text-sm`}
                   key={delivery.id}
                 >
                   <span className="font-medium">
@@ -730,7 +730,7 @@ const ReceiveForm = ({
           const item = lookup.item(line.itemId);
           return (
             <div
-              className="grid grid-cols-1 gap-100 rounded-md border border-border-primary p-150 sm:grid-cols-[2fr_1fr]"
+              className={`${surfaceTileClassName} grid grid-cols-1 gap-100 p-150 sm:grid-cols-[2fr_1fr]`}
               key={line.id}
             >
               <div className="flex flex-col justify-center">

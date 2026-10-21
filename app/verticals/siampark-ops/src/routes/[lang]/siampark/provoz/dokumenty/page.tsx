@@ -541,7 +541,7 @@ const DocumentsView = () => {
               title={t('siampark-ops.common.states.emptyTitle')}
             />
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-border-primary bg-surface">
+            <div className="overflow-x-auto">
               <table className="w-full text-sm" data-testid="contract-register">
                 <thead>
                   <tr className="border-border-primary border-b text-left text-fg-secondary text-xs">

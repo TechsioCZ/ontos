@@ -1,6 +1,6 @@
 // @effect-diagnostics asyncFunction:off
 // Device card (S11): facts, faults with their linked service task, attachments and the change history.
-import { SectionCard, SidePanel, formatDate, formatDateTime } from '@app/admin-ui';
+import { SectionCard, SidePanel, formatDate, formatDateTime, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -91,7 +91,7 @@ const IncidentCard = ({
   const k = useSecurityLabel();
   return (
     <li
-      className="flex flex-col gap-150 rounded-lg border border-border-primary bg-surface p-200"
+      className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}
       data-testid="security-incident"
     >
       <div className="flex flex-wrap items-start justify-between gap-100">

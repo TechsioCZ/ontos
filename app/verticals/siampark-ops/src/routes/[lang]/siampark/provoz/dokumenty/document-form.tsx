@@ -1,7 +1,7 @@
 // @effect-diagnostics asyncFunction:off
 // Create / edit / amendment form for the documents agenda (S12). Upload goes through the governed FileUpload command
 // first; the returned file snapshot becomes version 1 of the new document.
-import { SidePanel } from '@app/admin-ui';
+import { SidePanel, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -392,7 +392,7 @@ export const DocumentFormPanel = ({
           value={description}
         />
 
-        <fieldset className="siampark-document-fieldset flex flex-col gap-150 rounded-lg border border-border-primary p-200">
+        <fieldset className={`${surfaceTileClassName} siampark-document-fieldset flex flex-col gap-150 p-200`}>
           <legend className="px-50 font-semibold text-sm">{t(`${k}.fields.links`)}</legend>
           <p className="text-fg-secondary text-xs">{t(`${k}.create.linksHelp`)}</p>
           {links.length > 0 && (
@@ -510,7 +510,7 @@ export const DocumentFormPanel = ({
         </fieldset>
 
         {isContractCategory(category) && (
-          <fieldset className="siampark-document-fieldset flex flex-col gap-150 rounded-lg border border-border-primary p-200">
+          <fieldset className={`${surfaceTileClassName} siampark-document-fieldset flex flex-col gap-150 p-200`}>
             <legend className="px-50 font-semibold text-sm">{t(`${k}.contract.section`)}</legend>
             {category === 'amendment' && (
               <Select

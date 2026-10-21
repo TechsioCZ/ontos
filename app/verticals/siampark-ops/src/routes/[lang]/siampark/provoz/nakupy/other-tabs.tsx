@@ -235,7 +235,7 @@ export const MovementsTab = ({
         </div>
         <span className="text-fg-secondary text-sm">{k('movements.count', { count: rows.length })}</span>
       </div>
-      <div className="overflow-x-auto rounded-lg border border-border-primary bg-surface">
+      <div className="overflow-x-auto">
         <MovementTable lookup={lookup} me={me} movements={rows} onOpenOrder={onOpenOrder} showItem />
       </div>
     </div>

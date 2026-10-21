@@ -1,6 +1,6 @@
 // @effect-diagnostics asyncFunction:off
 // S06 forms: new supplier quote, new purchase order (direct or from replenishment), supplier. ops-purchasing lane.
-import { SidePanel } from '@app/admin-ui';
+import { SidePanel, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -62,7 +62,7 @@ const LinesEditor = ({
     <div className="flex flex-col gap-150">
       <span className="font-medium text-sm">{k('fields.lines')}</span>
       {lines.map((line, index) => (
-        <div className="flex flex-col gap-100 rounded-md border border-border-primary p-150" key={line.key}>
+        <div className={`${surfaceTileClassName} flex flex-col gap-100 p-150`} key={line.key}>
           <div className="flex flex-col gap-100">
             <Select
               placeholder={k('placeholders.item')}

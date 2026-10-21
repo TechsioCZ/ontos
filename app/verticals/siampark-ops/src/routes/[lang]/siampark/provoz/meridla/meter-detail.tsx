@@ -1,7 +1,15 @@
 // @effect-diagnostics asyncFunction:off missedPipeableOpportunity:off
 // Meter detail (ops-meters lane): master data, consumption chart, full reading history with truthful differences,
 // anomaly highlight, photo preview and voiding. Rendered inside the page's SidePanel.
-import { DetailList, SectionCard, formatDate, formatDateTime, formatMoney } from '@app/admin-ui';
+import {
+  DetailList,
+  SectionCard,
+  dividedListClassName,
+  formatDate,
+  formatDateTime,
+  formatMoney,
+  surfaceTileClassName,
+} from '@app/admin-ui';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -225,7 +233,7 @@ export const MeterDetail = ({
       <SectionCard title={t(`${k}.detail.history`)}>
         <p className="text-fg-secondary text-xs">{t(`${k}.detail.historyHint`)}</p>
         {voiding !== undefined && (
-          <div className="flex flex-col gap-150 rounded-md border border-border-primary bg-surface-subtle p-200">
+          <div className={`${surfaceTileClassName} flex flex-col gap-150 p-200`}>
             <strong className="text-sm">{t(`${k}.void.title`, { date: formatDate(voiding.date) })}</strong>
             {voidError !== undefined && (
               <StatusText showIcon status="error">
@@ -271,14 +279,14 @@ export const MeterDetail = ({
         {history.length === 0 ? (
           <p className="text-fg-secondary text-sm">{t(`${k}.row.noReadings`)}</p>
         ) : (
-          <ol className="flex flex-col divide-y divide-border-primary rounded-md border border-border-primary">
+          <ol className={`flex flex-col ${dividedListClassName}`}>
             {history.map((reading) => {
               const row = rowById.get(reading.id);
               const voided = reading.voided;
               const struck = voided === undefined ? '' : 'line-through';
               return (
                 <li
-                  className={`flex flex-col gap-100 p-150 ${row?.anomaly === true ? 'bg-danger-light' : ''} ${voided === undefined ? '' : 'bg-surface-subtle'}`}
+                  className={`flex flex-col gap-100 p-150 ${row?.anomaly === true ? 'bg-bg-danger-subtle' : ''} ${voided === undefined ? '' : 'bg-surface'}`}
                   data-testid={`reading-${reading.date}`}
                   key={reading.id}
                 >
