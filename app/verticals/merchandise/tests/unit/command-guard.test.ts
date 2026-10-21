@@ -4,7 +4,6 @@ import {
   AKROS_LEGAL_ENTITY_ID,
   assertCommandAllowed,
   assertStorefrontScope,
-  connectionAllowsWrite,
   ESHOP_LEGAL_ENTITY_ID,
   isStorefrontServiceKey,
   principalKindOf,
@@ -99,20 +98,4 @@ it('limits only the storefront API key to the public catalog', () => {
   expect(storefrontReadRequest('api_key', AKROS_LEGAL_ENTITY_ID, {})).toEqual({ view: { storefront: true } });
   expect(isStorefrontServiceKey('oauth_connection', AKROS_LEGAL_ENTITY_ID)).toBe(false);
   expect(isStorefrontServiceKey('api_key', AKROS_LEGAL_ENTITY_ID)).toBe(true);
-});
-
-it('reports write ability only for a direct connection with module write', () => {
-  expect(connectionAllowsWrite({ authMethod: 'session' }, 'demo.merchandise')).toBe(true);
-  expect(
-    connectionAllowsWrite(
-      { authMethod: 'oauth_connection', connection: { clientId: 'c', clientName: 'Claude', grantId: '11111111-1111-4111-8111-111111111111', modules: 'all', writePolicy: 'read_only' } },
-      'demo.merchandise',
-    ),
-  ).toBe(false);
-  expect(
-    connectionAllowsWrite(
-      { authMethod: 'oauth_connection', connection: { clientId: 'c', clientName: 'Claude', grantId: '11111111-1111-4111-8111-111111111111', modules: [{ access: 'write', moduleId: 'demo.merchandise' }], writePolicy: 'direct' } },
-      'demo.merchandise',
-    ),
-  ).toBe(true);
 });

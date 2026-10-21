@@ -66,23 +66,6 @@ export const isStorefrontServiceKey = (
   legalEntityId: string | undefined,
 ): boolean => authMethod === 'api_key' && isStorefrontCompany(legalEntityId);
 
-/** An MCP connection may change the module directly only with write policy 'direct' and module write. */
-export const connectionAllowsWrite = (
-  scope: Partial<Pick<TrustedPrincipalContext, 'authMethod' | 'connection'>>,
-  moduleKey: string,
-): boolean => {
-  if (scope.authMethod !== 'oauth_connection') {
-    return true;
-  }
-  const { connection } = scope;
-  if (connection === undefined || connection.writePolicy !== 'direct') {
-    return false;
-  }
-  return (
-    connection.modules === 'all' ||
-    connection.modules.some((module) => module.moduleId === moduleKey && module.access === 'write')
-  );
-};
 /** Commands the storefront service key may run inside the e-shop company: only the guest storefront order. */
 export const storefrontOnlyCommands: ReadonlySet<string> = new Set(['PlaceStorefrontOrder']);
 
@@ -119,7 +102,9 @@ export const storefrontReadRequest = <Request extends { readonly view?: { readon
 export const withCommandGuard =
   <
     Payload extends { readonly command: { readonly _tag: string } },
-    Context extends { readonly scope: Pick<TrustedPrincipalContext, 'authMethod' | 'delegatedByPrincipalId' | 'legalEntityId'> },
+    Context extends {
+      readonly scope: Pick<TrustedPrincipalContext, 'authMethod' | 'delegatedByPrincipalId' | 'legalEntityId'>;
+    },
     Success,
     Failure,
     Requirements,
@@ -142,8 +127,8 @@ export const staffCommandAllowed = (legalEntityId: string, administrator: boolea
   commandTag === 'ResetDemoData'
     ? administrator && legalEntityId === AKROS_LEGAL_ENTITY_ID
     : commandTag === 'RemoveDemoOrder' || commandTag === 'ArchiveDemoProduct'
-    ? administrator
-    : legalEntityId !== AKROS_LEGAL_ENTITY_ID ||
-      administrator ||
-      commandTag === 'RecordStockMovement' ||
-      commandTag === 'ChangeOrderStatus';
+      ? administrator
+      : legalEntityId !== AKROS_LEGAL_ENTITY_ID ||
+        administrator ||
+        commandTag === 'RecordStockMovement' ||
+        commandTag === 'ChangeOrderStatus';

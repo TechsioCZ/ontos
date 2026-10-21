@@ -4,6 +4,7 @@ import {
   ReadHandlerUnavailable,
   defineRead,
   defineTenantModuleEntrypoint,
+  isConnectionWriteAllowed,
 } from '@app/core-runtime';
 import { ActionPermission } from '@app/core-runtime/actions/runtime-wiring';
 import { DateTime, Effect } from 'effect';
@@ -16,24 +17,6 @@ import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/r
 type Services = Effect.Success<ReturnType<typeof persistenceService>> & { readonly canWrite: boolean };
 
 const financeModuleKey = 'finance.billing';
-
-/** An MCP connection may change the module directly only with write policy 'direct' and module write. */
-export const connectionAllowsWrite = (
-  scope: Partial<Pick<OperationalScope, 'authMethod' | 'connection'>>,
-  moduleKey: string,
-): boolean => {
-  if (scope.authMethod !== 'oauth_connection') {
-    return true;
-  }
-  const { connection } = scope;
-  if (connection === undefined || connection.writePolicy !== 'direct') {
-    return false;
-  }
-  return (
-    connection.modules === 'all' ||
-    connection.modules.some((module) => module.moduleId === moduleKey && module.access === 'write')
-  );
-};
 
 const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
@@ -48,7 +31,7 @@ export const financeWriteCapability = Effect.fn('Finance.writeCapability')(funct
   scope: Pick<OperationalScope, 'principalId' | 'correlationId'> &
     Partial<Pick<OperationalScope, 'authMethod' | 'connection'>>,
 ) {
-  if (!connectionAllowsWrite(scope, financeModuleKey)) {
+  if (!isConnectionWriteAllowed(scope, financeModuleKey)) {
     return false;
   }
   const permission = yield* ActionPermission;

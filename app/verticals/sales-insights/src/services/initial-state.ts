@@ -1,4 +1,3 @@
-import type { OperationalScope } from '@app/core-runtime';
 import { Schema } from 'effect';
 
 import { SalesInsightsStateSchema } from '../../shared/apis/records.ts';
@@ -23,21 +22,3 @@ export const emptySalesInsightsState = (tenantId: string, legalEntityId: string)
     },
     metrics: [],
   });
-
-/** An MCP connection may change the module directly only with write policy 'direct' and module write. */
-export const connectionAllowsWrite = (
-  scope: Partial<Pick<OperationalScope, 'authMethod' | 'connection'>>,
-  moduleKey: string,
-): boolean => {
-  if (scope.authMethod !== 'oauth_connection') {
-    return true;
-  }
-  const { connection } = scope;
-  if (connection === undefined || connection.writePolicy !== 'direct') {
-    return false;
-  }
-  return (
-    connection.modules === 'all' ||
-    connection.modules.some((module) => module.moduleId === moduleKey && module.access === 'write')
-  );
-};

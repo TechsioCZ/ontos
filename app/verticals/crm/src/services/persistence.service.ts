@@ -1,7 +1,7 @@
 // CRM persistence + ACL (owned by crm-scaffold). One JSONB document per (tenant, legal entity), optimistic
 // revision. The viewer (principal + context permissions + salesperson record) is computed here for every read
 // and command; projections and reducers in shared/ enforce it (C00).
-import { ContextAccess, OperationContextUnavailable } from '@app/core-runtime';
+import { ContextAccess, isConnectionWriteAllowed, OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
 import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/api/client';
@@ -158,6 +158,25 @@ export const viewerFor = (
   return salesperson === undefined ? base : { ...base, salespersonId: salesperson.id };
 };
 
+/**
+ * The viewer a records read reports. A read-only or approval-only MCP connection cannot change CRM directly, so its
+ * write flags are off; read reach stays exactly as before (write_assigned alone also lets a salesperson read).
+ */
+export const reportedViewer = (
+  viewer: CrmViewer,
+  scope: Pick<OperationalScope, 'authMethod' | 'connection'>,
+): CrmViewer =>
+  isConnectionWriteAllowed(scope, moduleId)
+    ? viewer
+    : {
+        ...viewer,
+        assign: false,
+        readAll: viewer.readAll || viewer.writeAll,
+        readAssigned: viewer.readAssigned || viewer.writeAssigned,
+        writeAll: false,
+        writeAssigned: false,
+      };
+
 export { partyLinksOf } from '../../shared/commands/index.ts';
 
 export const persistenceService = Effect.fn('Crm.persistenceService')(
@@ -311,7 +330,7 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
         now: DateTime.formatIso(yield* DateTime.now),
         revision: snapshot.revision,
         state: narrowed,
-        viewer,
+        viewer: reportedViewer(viewer, scope),
       } satisfies RecordsResponse;
     });
     return { apply, records };

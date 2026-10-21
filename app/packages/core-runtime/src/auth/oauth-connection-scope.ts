@@ -18,8 +18,11 @@ export const isConnectionReadAllowed = (principal: ScopedPrincipal, moduleKey: s
   return connection.modules === 'all' || connection.modules.some((module) => module.moduleId === moduleKey);
 };
 
-/** A connection may run write Actions only with policy 'direct' and module write. */
-export const isConnectionWriteAllowed = (principal: ScopedPrincipal, moduleKey: string): boolean => {
+/**
+ * A connection may run write Actions only with policy 'direct' and module write. Verticals use the same rule for
+ * the `canWrite` they report, so a read-only connection never sees write ability.
+ */
+export const isConnectionWriteAllowed = (principal: Partial<ScopedPrincipal>, moduleKey: string): boolean => {
   if (principal.authMethod !== 'oauth_connection') {
     return true;
   }

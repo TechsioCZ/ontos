@@ -93,6 +93,7 @@ export {
 } from './auth/principal-management-errors.ts';
 export type { PrincipalManagementError } from './auth/principal-management-errors.ts';
 export { managedPrincipalsRead, selfApiKeyBindingsRead } from './auth/principal-administration-reads.ts';
+export { isConnectionWriteAllowed } from './auth/oauth-connection-scope.ts';
 // @ontos-codesmith-core-read-exports:start
 
 // @ontos-core-read legal-entity-detail
@@ -829,7 +830,10 @@ export {
   ManageDemoAccountAuditEvidenceSchema,
   ManageDemoAccountPayloadSchema,
 } from './modules/actions/manage-demo-account.action.ts';
-export type { ManageDemoAccountPayload, ManageDemoAccountResult } from './modules/actions/manage-demo-account.action.ts';
+export type {
+  ManageDemoAccountPayload,
+  ManageDemoAccountResult,
+} from './modules/actions/manage-demo-account.action.ts';
 export { demoAccountObjectIdParts, openDemoAccountGrants } from './install/demo-account-administration.ts';
 export type { DemoAccountGrants } from './install/demo-account-administration.ts';
 export type { DemoAccountRelationship } from './install/demo-account-administration.ts';
