@@ -2,6 +2,17 @@ import { GatewayContextApiGroup } from '@app/shared-contracts';
 import { ExternalIdentityApiGroup } from '@app/shared-contracts/external-identity';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
+import {
+  AgentActivityRequestSchema,
+  AgentActivityResponseSchema,
+  AgentDecideRequestSchema,
+  AgentDecideResponseSchema,
+  AgentProposalSubmitRequestSchema,
+  AgentProposalSubmitResponseSchema,
+  AgentQueueResponseSchema,
+  AgentRevertRequestSchema,
+  AgentRevertResponseSchema,
+} from '@app/shared-contracts/agent-proposals';
 // @ontos-codesmith-core-read-contract-imports:start
 
 // @ontos-core-read legal-entity-detail
@@ -655,6 +666,11 @@ const identityErrors = [
   ShellInternalProblemSchema,
 ] as const;
 
+/** Agent endpoints authenticate with the agent's API key (Better Auth), like /auth/api-key/gateway-context. */
+const AgentApiKeyHeadersSchema = Schema.Struct({ 'x-api-key': Schema.optionalKey(Schema.String) });
+export const AgentOwnProposalsRequestSchema = Schema.Struct({ legalEntityId: Schema.String.check(Schema.isUUID()) });
+const AgentQueueRequestSchema = Schema.Struct({});
+
 export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   .add(
     HttpApiGroup.make('authentication')
@@ -970,6 +986,53 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
     ),
   )
   // @ontos-codesmith-core-read-api-groups:end
+  .add(
+    HttpApiGroup.make('agentPlatform')
+      .add(
+        HttpApiEndpoint.post('submitAgentProposals', '/agent-platform/proposals', {
+          error: identityErrors,
+          headers: AgentApiKeyHeadersSchema,
+          payload: AgentProposalSubmitRequestSchema,
+          success: AgentProposalSubmitResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listOwnAgentProposals', '/agent-platform/proposals/list', {
+          error: identityErrors,
+          headers: AgentApiKeyHeadersSchema,
+          payload: AgentOwnProposalsRequestSchema,
+          success: AgentQueueResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('agentQueue', '/agent-platform/queue', {
+          error: identityErrors,
+          payload: AgentQueueRequestSchema,
+          success: AgentQueueResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('agentDecide', '/agent-platform/decide', {
+          error: identityErrors,
+          payload: AgentDecideRequestSchema,
+          success: AgentDecideResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('agentRevert', '/agent-platform/revert', {
+          error: identityErrors,
+          payload: AgentRevertRequestSchema,
+          success: AgentRevertResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('agentActivity', '/agent-platform/activity', {
+          error: identityErrors,
+          payload: AgentActivityRequestSchema,
+          success: AgentActivityResponseSchema,
+        }),
+      ),
+  )
   .add(GatewayContextApiGroup)
   .add(ExternalIdentityApiGroup);
 

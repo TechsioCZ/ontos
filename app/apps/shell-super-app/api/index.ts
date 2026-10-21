@@ -152,6 +152,15 @@ import { validateAuthorizedLegalEntity } from './auth/legal-entity-selection.ts'
 import { AuthPersistenceLive } from './auth/runtime-infrastructure.ts';
 import { AuthenticationService, AuthenticationServiceLive } from './auth/service.ts';
 import type { ShellContextResult } from './auth/service.ts';
+import type { AgentPlatformCaller, AgentPlatformForbidden, AgentPlatformInvalid } from './agent-platform/caller.ts';
+import type { AgentStoreUnavailable } from './agent-platform/proposal-store.ts';
+import { decideAgentItems, revertAgentBatch } from './agent-platform/service-decide.ts';
+import {
+  listOwnAgentBatches,
+  loadAgentActivity,
+  loadAgentQueue,
+  submitAgentProposals,
+} from './agent-platform/service-queue.ts';
 import { ShellInstalledModuleCatalog, ShellInstalledModuleCatalogLive } from './modules/installed-module-catalog.ts';
 import type { ShellInstalledCatalog, InstalledModuleCatalogError } from './modules/installed-module-catalog.ts';
 import { InstalledOutboxMatcherLive } from './modules/installed-outbox-matcher.ts';
@@ -1844,6 +1853,147 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
     ),
 );
 
+// Platform approval layer for AI agents (lane approvals-platform). Agents use their API key; people their session.
+const agentPlatformFailure = (error: AgentPlatformForbidden | AgentPlatformInvalid | AgentStoreUnavailable) => {
+  switch (error._tag) {
+    case 'AgentPlatformForbidden':
+      return failIdentityProblem(
+        problemDetails(
+          'ShellTargetForbiddenProblem',
+          error.reason,
+          403,
+          'Module target forbidden',
+          'https://ontos.dev/problems/module-target-forbidden',
+        ),
+      );
+    case 'AgentPlatformInvalid':
+      return failIdentityProblem(
+        problemDetails(
+          'ShellPolicyUnprocessableProblem',
+          error.reason,
+          422,
+          'Policy violation',
+          'https://ontos.dev/problems/policy-violation',
+        ),
+      );
+    default:
+      return failIdentityProblem(shellCapabilityUnavailableProblem());
+  }
+};
+
+const agentPlatformSessionCaller = Effect.fn('shell.agentPlatform.sessionCaller')(function* agentPlatformSessionCaller(
+  request: RequestWithHeaders,
+) {
+  const authentication = yield* AuthenticationService;
+  const session = yield* authentication
+    .resolveShellContext(requestHeaders(request.headers))
+    .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+  yield* forwardSetCookieHeaders(session.setCookieHeaders);
+  if (session.state !== 'authenticated') {
+    return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+  }
+  const { legalEntityId } = session.identity;
+  const caller: AgentPlatformCaller = {
+    legalName:
+      session.availableLegalEntities.find((entry) => entry.legalEntityId === legalEntityId)?.legalName ??
+      legalEntityId,
+    principal: { ...session.principal, legalEntityId },
+  };
+  return caller;
+});
+
+const agentPlatformKeyCaller = Effect.fn('shell.agentPlatform.keyCaller')(function* agentPlatformKeyCaller(
+  rawKey: string | undefined,
+  legalEntityId: string,
+) {
+  if (rawKey === undefined || rawKey.trim().length === 0) {
+    return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+  }
+  const keys = yield* ApiKeyService;
+  const resolver = yield* PrincipalResolver;
+  const verified = yield* keys
+    .verify(rawKey)
+    .pipe(Effect.catch(() => failIdentityProblem(shellAuthenticationRequiredProblem())));
+  const identity = yield* resolver
+    .resolveBetterAuthApiKey(verified.providerKeyId)
+    .pipe(Effect.catch(() => failIdentityProblem(shellAuthenticationRequiredProblem())));
+  const selected = yield* validateAuthorizedLegalEntity({
+    legalEntityId,
+    principalId: identity.principalId,
+    tenantId: identity.tenantId,
+  }).pipe(Effect.catch(() => failIdentityProblem(shellTargetForbiddenProblem())));
+  const caller: AgentPlatformCaller = {
+    legalName: selected.legalName,
+    principal: {
+      authBindingId: identity.authBindingId,
+      authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
+      authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+      authMethod: 'api_key' as const,
+      legalEntityId: selected.legalEntityId,
+      principalId: identity.principalId,
+      tenantId: identity.tenantId,
+    },
+  };
+  return caller;
+});
+
+const agentPlatformDefect = (request: RequestWithHeaders) =>
+  recoverUnexpectedDefect(request, 'Unexpected agent platform defect', () =>
+    failIdentityProblem(shellInternalProblem()),
+  );
+
+const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'agentPlatform', (handlers) =>
+  handlers
+    .handle('submitAgentProposals', ({ headers, payload, request }) =>
+      Effect.gen(function* submitAgentProposalsHandler() {
+        const agent = yield* agentPlatformKeyCaller(headers['x-api-key'], payload.legalEntityId);
+        const response = yield* submitAgentProposals(agent, payload).pipe(Effect.catch(agentPlatformFailure));
+        yield* noStore;
+        return response;
+      }).pipe(agentPlatformDefect(request)),
+    )
+    .handle('listOwnAgentProposals', ({ headers, payload, request }) =>
+      Effect.gen(function* listOwnAgentProposalsHandler() {
+        const agent = yield* agentPlatformKeyCaller(headers['x-api-key'], payload.legalEntityId);
+        const response = yield* listOwnAgentBatches(agent).pipe(Effect.catch(agentPlatformFailure));
+        yield* noStore;
+        return response;
+      }).pipe(agentPlatformDefect(request)),
+    )
+    .handle('agentQueue', ({ request }) =>
+      Effect.gen(function* agentQueueHandler() {
+        const caller = yield* agentPlatformSessionCaller(request);
+        const response = yield* loadAgentQueue(caller).pipe(Effect.catch(agentPlatformFailure));
+        yield* noStore;
+        return response;
+      }).pipe(agentPlatformDefect(request)),
+    )
+    .handle('agentDecide', ({ payload, request }) =>
+      Effect.gen(function* agentDecideHandler() {
+        const caller = yield* agentPlatformSessionCaller(request);
+        const response = yield* decideAgentItems(caller, payload).pipe(Effect.catch(agentPlatformFailure));
+        yield* noStore;
+        return response;
+      }).pipe(agentPlatformDefect(request)),
+    )
+    .handle('agentRevert', ({ payload, request }) =>
+      Effect.gen(function* agentRevertHandler() {
+        const caller = yield* agentPlatformSessionCaller(request);
+        const response = yield* revertAgentBatch(caller, payload).pipe(Effect.catch(agentPlatformFailure));
+        yield* noStore;
+        return response;
+      }).pipe(agentPlatformDefect(request)),
+    )
+    .handle('agentActivity', ({ payload, request }) =>
+      Effect.gen(function* agentActivityHandler() {
+        const caller = yield* agentPlatformSessionCaller(request);
+        const response = yield* loadAgentActivity(caller, payload).pipe(Effect.catch(agentPlatformFailure));
+        yield* noStore;
+        return response;
+      }).pipe(agentPlatformDefect(request)),
+    ),
+);
+
 const corePersistenceLive = CorePersistenceLive.pipe(Layer.provide(DatabaseConfigLive));
 const defaultContextAccessLive = Layer.mergeAll(ContextAccessLive, StaffAuthenticationNamespaceRegistryLive);
 const authPersistenceLive = AuthPersistenceLive.pipe(Layer.provide(AuthConfigLive));
@@ -2097,6 +2247,8 @@ export const makeShellAuthenticationApiRuntime = (
     coreReadLegalEntityDetailGroupLive,
     // @ontos-codesmith-core-read-server-layers:end
     externalIdentityGroupLive,
+    // The agent platform calls module APIs in-process (approve/revert as the person), so it needs the active composition.
+    agentPlatformGroupLive.pipe(Layer.provide(activeApplicationCompositionLive)),
   ).pipe(
     Layer.provide(outboxMatcherLayer),
     Layer.provide(handlerDependenciesLive),
