@@ -12,12 +12,12 @@ import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { useEffect, useState } from 'react';
-import { isInspectionOverdue } from '../../../../../../shared/commands/security.ts';
-import { isOpenIncident, securityDeviceStates, securityDeviceTypes } from '../../../../../../shared/domain/security.ts';
-import type { SecurityDevice, SecurityIncident, SecurityState } from '../../../../../../shared/domain/security.ts';
-import { AgendaFrame, AgendaGate } from '../../../../../ui/agenda-frame.tsx';
-import { useAgendaRecords } from '../../../../../ui/use-agenda.ts';
-import { UltramodernRouteHead } from '../../../../ultramodern-route-head';
+import { isInspectionOverdue } from '../../../../../shared/commands/security.ts';
+import { isOpenIncident, securityDeviceStates, securityDeviceTypes } from '../../../../../shared/domain/security.ts';
+import type { SecurityDevice, SecurityIncident, SecurityState } from '../../../../../shared/domain/security.ts';
+import { AgendaFrame, AgendaGate } from '../../../../ui/agenda-frame.tsx';
+import { useAgendaRecords } from '../../../../ui/use-agenda.ts';
+import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { DeviceDetailPanel } from './device-detail.tsx';
 import { DeviceFormPanel, InspectionPanel, ReportFaultPanel, ResolvePanel } from './device-forms.tsx';
 import {

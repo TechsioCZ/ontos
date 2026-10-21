@@ -10,26 +10,26 @@ import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { useEffect, useState } from 'react';
-import type { OpsCommand } from '../../../../../../shared/agendas.ts';
+import type { OpsCommand } from '../../../../../shared/agendas.ts';
 import type {
   ContractStatus,
   ContractTerms,
   DocumentRecord,
   SubjectRef,
-} from '../../../../../../shared/domain/documents.ts';
-import { documentLinks, sameSubject } from '../../../../../../shared/domain/documents.ts';
+} from '../../../../../shared/domain/documents.ts';
+import { documentLinks, sameSubject } from '../../../../../shared/domain/documents.ts';
 import {
   documentCategories,
   FileTypeIcon,
   formatBytes,
   SubjectChip,
   useCategoryLabel,
-} from '../../../../../ui/documents-kit.tsx';
-import { usePropertyOptions } from '../../../../../ui/property-options.ts';
-import { useContactOptions, useInvoiceOptions } from '../../../../../ui/party-invoice-options.ts';
-import type { TaskOptionsState } from '../../../../../ui/task-options.ts';
-import type { CommandOutcome, FailureReason } from '../../../../../ui/use-agenda.ts';
-import { MAX_UPLOAD_BYTES, uploadFile } from '../../../../../ui/use-agenda.ts';
+} from '../../../../ui/documents-kit.tsx';
+import { usePropertyOptions } from '../../../../ui/property-options.ts';
+import { useContactOptions, useInvoiceOptions } from '../../../../ui/party-invoice-options.ts';
+import type { TaskOptionsState } from '../../../../ui/task-options.ts';
+import type { CommandOutcome, FailureReason } from '../../../../ui/use-agenda.ts';
+import { MAX_UPLOAD_BYTES, uploadFile } from '../../../../ui/use-agenda.ts';
 
 const k = 'facility-operations.documents';
 const NONE = '__none__';

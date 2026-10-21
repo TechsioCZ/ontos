@@ -1,5 +1,5 @@
 import { PropertyEquipment, RecordDiscussion } from '@app/facility-operations/ui/record-discussion';
-import { UnitRefSchema } from '../../../../../shared/resources/unit.ts';
+import { UnitRefSchema } from '../../../../shared/resources/unit.ts';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -16,13 +16,13 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { usePropertyEditor } from './use-property-editor.ts';
 import './property-editor.css';
 import { UnitStory, pragueToday } from './unit-story.tsx';
-import { executeRecords } from '../../../../api/records-client';
-import type { RecordsResponse } from '../../../../../shared/apis/records';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime';
-import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import csResource from '../../../../../locales/cs/property-portfolio.json';
-import enResource from '../../../../../locales/en/property-portfolio.json';
-import '../../../index.css';
+import { executeRecords } from '../../../api/records-client';
+import type { RecordsResponse } from '../../../../shared/apis/records';
+import { browserRuntime } from '../../../runtime/browser-effect-runtime';
+import { UltramodernRouteHead } from '../../ultramodern-route-head';
+import csResource from '../../../../locales/cs/property-portfolio.json';
+import enResource from '../../../../locales/en/property-portfolio.json';
+import '../../index.css';
 
 const currencyFormatters = {
   cs: new Intl.NumberFormat('cs-CZ', { currency: 'CZK', style: 'currency' }),

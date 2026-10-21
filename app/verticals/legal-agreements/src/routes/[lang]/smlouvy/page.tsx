@@ -18,10 +18,10 @@ import { Select } from '@techsio/ui-kit/molecules/select';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { useRecordsPage } from './use-agreements-records.ts';
 import { ContractLinksCard, ContractTermsCard, ContractTermsForm, contractMonthlyTotal } from './contract-terms.tsx';
-import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import csResource from '../../../../../locales/cs/legal-agreements.json';
-import enResource from '../../../../../locales/en/legal-agreements.json';
-import '../../../index.css';
+import { UltramodernRouteHead } from '../../ultramodern-route-head';
+import csResource from '../../../../locales/cs/legal-agreements.json';
+import enResource from '../../../../locales/en/legal-agreements.json';
+import '../../index.css';
 
 /**
  * A signed document is either a reachable file (shown as a link) or a paper original recorded only by its

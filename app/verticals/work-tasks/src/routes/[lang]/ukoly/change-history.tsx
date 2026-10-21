@@ -1,5 +1,5 @@
 import { DateTime } from 'effect';
-import type { HistoryEntry } from '../../../../../shared/apis/records.ts';
+import type { HistoryEntry } from '../../../../shared/apis/records.ts';
 import { surfaceTileClassName } from '@app/admin-ui';
 
 const actionLabels: Record<HistoryEntry['action'], string> = {

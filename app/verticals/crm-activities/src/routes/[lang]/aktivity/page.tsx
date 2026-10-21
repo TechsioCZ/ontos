@@ -1,7 +1,7 @@
-import { ActivityRefSchema } from '../../../../../shared/resources/activity.ts';
+import { ActivityRefSchema } from '../../../../shared/resources/activity.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import type { Types } from 'effect';
-import type { ActivityCommand } from '../../../../../shared/actions/apply-command.ts';
+import type { ActivityCommand } from '../../../../shared/actions/apply-command.ts';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -11,17 +11,17 @@ import { Select } from '@techsio/ui-kit/molecules/select';
 import { DateTime, Effect, Match, Option, Random, Schema } from 'effect';
 import { useState } from 'react';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { loadCounterpartiesClient, executeCounterpartyRead } from '@app/party-registry/api/client';
 import { executeRecords as executeWorkRecords } from '@app/work-tasks/clients/records';
-import { executeRecords } from '../../../../api/records-client.ts';
-import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
-import type { Activity, RecordsResponse } from '../../../../../shared/apis/records.ts';
+import { executeRecords } from '../../../api/records-client.ts';
+import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
+import type { Activity, RecordsResponse } from '../../../../shared/apis/records.ts';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import csResource from '../../../../../locales/cs/crm-activities.json';
-import enResource from '../../../../../locales/en/crm-activities.json';
-import '../../../index.css';
+import { UltramodernRouteHead } from '../../ultramodern-route-head';
+import csResource from '../../../../locales/cs/crm-activities.json';
+import enResource from '../../../../locales/en/crm-activities.json';
+import '../../index.css';
 
 const searchSchema = Schema.Struct({
   resourceId: Schema.optional(ActivityRefSchema.fields.resourceId.check(Schema.isUUID())),

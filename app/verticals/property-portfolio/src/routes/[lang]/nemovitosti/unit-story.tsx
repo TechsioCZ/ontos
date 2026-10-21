@@ -6,7 +6,7 @@ import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { DateTime } from 'effect';
 import type { Effect } from 'effect';
 
-import type { RecordsResponse } from '../../../../../shared/apis/records';
+import type { RecordsResponse } from '../../../../shared/apis/records';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 type Occupancies = Effect.Success<ReturnType<typeof readOccupancy>>;

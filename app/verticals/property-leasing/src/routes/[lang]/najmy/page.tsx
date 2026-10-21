@@ -12,8 +12,8 @@ import {
   surfaceTileClassName,
 } from '@app/admin-ui';
 import { Combobox } from '@techsio/ui-kit/molecules/combobox';
-import { failureFeedback } from '../../../../../shared/actions/apply-command.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { failureFeedback } from '../../../../shared/actions/apply-command.ts';
+import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
 import {
   createCustomer,
@@ -29,7 +29,7 @@ import { executeRecords as executeFinanceRecords } from '@app/finance-billing/cl
 import { executeRecords as executeWorkRecords } from '@app/work-tasks/clients/records';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { OccupancyRefSchema } from '../../../../../shared/resources/occupancy.ts';
+import { OccupancyRefSchema } from '../../../../shared/resources/occupancy.ts';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
@@ -38,8 +38,8 @@ import { Table } from '@techsio/ui-kit/organisms/table';
 import { Crypto, DateTime, Effect, Option, PlatformError, Schema } from 'effect';
 import { useEffect, useEffectEvent, useRef, useState } from 'react';
 
-import type { OccupancyCommand, Feedback } from '../../../../../shared/actions/apply-command.ts';
-import type { Occupancy, RecordsResponse, RentTerms } from '../../../../../shared/apis/records.ts';
+import type { OccupancyCommand, Feedback } from '../../../../shared/actions/apply-command.ts';
+import type { Occupancy, RecordsResponse, RentTerms } from '../../../../shared/apis/records.ts';
 import {
   ContractCard,
   InvoicesCard,
@@ -55,12 +55,12 @@ import {
   parseCrowns,
 } from './lease-story.tsx';
 import type { LeaseRelated, TenantDirectoryEntry } from './lease-story.tsx';
-import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
-import { executeRecords } from '../../../../api/records-client.ts';
-import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import csResource from '../../../../../locales/cs/property-leasing.json';
-import enResource from '../../../../../locales/en/property-leasing.json';
-import '../../../index.css';
+import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
+import { executeRecords } from '../../../api/records-client.ts';
+import { UltramodernRouteHead } from '../../ultramodern-route-head';
+import csResource from '../../../../locales/cs/property-leasing.json';
+import enResource from '../../../../locales/en/property-leasing.json';
+import '../../index.css';
 import { TenantDirectory, TenantDossierCard } from './tenant-dossier.tsx';
 import type { DossierChanges, NewCounterpartyInput } from './tenant-dossier.tsx';
 import { CounterpartyDossierView } from './counterparty-dossier.tsx';

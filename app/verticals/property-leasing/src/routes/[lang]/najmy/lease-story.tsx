@@ -10,7 +10,7 @@ import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import type { Effect } from 'effect';
 import type { ReactNode } from 'react';
 
-import type { Occupancy, RentTerms } from '../../../../../shared/apis/records.ts';
+import type { Occupancy, RentTerms } from '../../../../shared/apis/records.ts';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 export type TenantDirectoryEntry = Effect.Success<ReturnType<typeof listCustomers>>[number];
