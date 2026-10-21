@@ -11,8 +11,8 @@ export const demoGuideProgressKey = (guideId: DemoGuideId): string => `ontos.dem
 export const DEMO_GUIDE_DEFAULT_WIDTH = 420;
 export const DEMO_GUIDE_MIN_WIDTH = 320;
 export const DEMO_GUIDE_MAX_WIDTH = 720;
-/** Page width the panel always leaves free on desktop. */
-const MIN_PAGE_WIDTH = 480;
+/** Page width the panel always leaves free on desktop (unless that would make the guide narrower than its minimum). */
+export const DEMO_GUIDE_MIN_PAGE_WIDTH = 480;
 
 const changeEvent = 'ontos:demo-guide-change';
 
@@ -59,14 +59,24 @@ export const parseGuideWidth = (raw: string | null): number => {
     : Math.min(Math.max(decoded, DEMO_GUIDE_MIN_WIDTH), DEMO_GUIDE_MAX_WIDTH);
 };
 
-/** Width for a drag or key press: never narrower than the minimum, never covering the page below 480 px. */
-export const clampGuideWidth = (width: number, viewportWidth: number): number =>
+/**
+ * Width for a drag or key press: never narrower than the minimum, never covering the page below 480 px.
+ * `sharedWidth` is the width the page and the guide share (viewport minus the docked navigation sidebar).
+ */
+export const clampGuideWidth = (width: number, sharedWidth: number): number =>
   Math.round(
     Math.min(
       Math.max(width, DEMO_GUIDE_MIN_WIDTH),
-      Math.max(DEMO_GUIDE_MIN_WIDTH, Math.min(DEMO_GUIDE_MAX_WIDTH, viewportWidth - MIN_PAGE_WIDTH)),
+      Math.max(DEMO_GUIDE_MIN_WIDTH, Math.min(DEMO_GUIDE_MAX_WIDTH, sharedWidth - DEMO_GUIDE_MIN_PAGE_WIDTH)),
     ),
   );
+
+/**
+ * CSS width of the docked guide: the saved width re-fitted to the current screen by the browser itself, so a
+ * resize, a smaller screen or a projector never squeezes the page below 480 px (the guide keeps at least 320 px).
+ */
+export const guideWidthCss = (savedWidth: number, sidebarWidthCss: string): string =>
+  `clamp(${DEMO_GUIDE_MIN_WIDTH}px, calc(100vw - ${sidebarWidthCss} - ${DEMO_GUIDE_MIN_PAGE_WIDTH}px), ${savedWidth}px)`;
 
 /** Done step ids; anything that is not a JSON array of strings counts as no progress. */
 export const parseGuideProgress = (raw: string | null): readonly string[] =>

@@ -6,6 +6,7 @@ import {
   DEMO_GUIDE_MAX_WIDTH,
   DEMO_GUIDE_MIN_WIDTH,
   DEMO_GUIDE_OPEN_KEY,
+  guideWidthCss,
   parseGuideProgress,
   parseGuideWidth,
   readDemoGuideProgress,
@@ -66,6 +67,12 @@ it('never lets a drag cover the page', () => {
   expect(clampGuideWidth(100, 1440)).toBe(DEMO_GUIDE_MIN_WIDTH);
   expect(clampGuideWidth(600, 1024)).toBe(544);
   expect(clampGuideWidth(600, 390)).toBe(DEMO_GUIDE_MIN_WIDTH);
+});
+
+it('re-fits a saved width to the current screen beside the sidebar', () => {
+  expect(guideWidthCss(720, 'var(--width-sidebar-expanded)')).toBe(
+    'clamp(320px, calc(100vw - var(--width-sidebar-expanded) - 480px), 720px)',
+  );
 });
 
 it('summarizes done steps and the next step in guide order', () => {

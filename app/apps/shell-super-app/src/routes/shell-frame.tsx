@@ -19,9 +19,9 @@ import { useEffect, useEffectEvent, useSyncExternalStore } from 'react';
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
 
 import type { ShellUnavailableDeployment } from '../../shared/api.ts';
-import { DemoGuidePanel, DemoGuideToggleButton } from '../demo-guide/demo-guide-panel.tsx';
+import { DemoGuidePanel, DemoGuideToggleButton, demoGuidePageAttribute } from '../demo-guide/demo-guide-panel.tsx';
 import { demoGuideFor } from '../demo-guide/demo-guide-registry.ts';
-import { useDemoGuideOpen, useDemoGuideWidth } from '../demo-guide/demo-guide-store.ts';
+import { guideWidthCss, useDemoGuideOpen, useDemoGuideWidth } from '../demo-guide/demo-guide-store.ts';
 import { navigationHrefFromPath, usePendingNavigationPath } from './use-pending-navigation.ts';
 import { useIdleRoutePreload } from './use-idle-route-preload.ts';
 
@@ -1103,7 +1103,14 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
   const guideOpen = useDemoGuideOpen();
   const guideWidth = useDemoGuideWidth();
   const guideVisible = guide !== undefined && guideOpen && !props.logoutPending;
-  const sidebarStyle: SidebarOffsetStyle = { ...topBarOffsetStyle, '--demo-guide-width': `${guideWidth}px` };
+  // The saved width is re-fitted to the current screen by CSS, next to the expanded or icon-only sidebar.
+  const sidebarStyle: SidebarOffsetStyle = {
+    ...topBarOffsetStyle,
+    '--demo-guide-width': guideWidthCss(
+      guideWidth,
+      collapsed ? 'var(--width-sidebar-icon)' : 'var(--width-sidebar-expanded)',
+    ),
+  };
 
   return (
     <>
@@ -1179,7 +1186,10 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
             }
           />
           {/* On desktop the open guide docks beside the page instead of covering it. */}
-          <Sidebar.Inset className={`flex min-w-0 flex-1 flex-col ${guideVisible ? 'lg:pe-(--demo-guide-width)' : ''}`}>
+          <Sidebar.Inset
+            {...{ [demoGuidePageAttribute]: '' }}
+            className={`flex min-w-0 flex-1 flex-col ${guideVisible ? 'lg:pe-(--demo-guide-width)' : ''}`}
+          >
             <div className="isolate flex min-w-0 flex-1 flex-col gap-250 p-250">
               {pendingHref === undefined ? null : (
                 <StatusText aria-live="polite" showIcon status="default">

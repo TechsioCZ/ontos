@@ -120,12 +120,12 @@ export const siamparkGuide: DemoGuide = {
       id: 'finance',
       steps: [
         {
-          click: 'Řádek FV-2026-0007 → Úhrady. Nic nového neúčtujte ani neodesílejte.',
+          click: 'Řádek FV-2026-0007 → Úhrady, potom Upomínky. Nic nového neúčtujte ani neodesílejte.',
           id: 'siampark-castecna-uhrada',
           persona: finance,
-          say: 'Finance vidí doklad i evidovanou částečnou platbu. Evidence v ukázce není skutečné bankovní vypořádání ani odeslaná upomínka.',
+          say: 'Finance vidí doklad, evidovanou částečnou platbu i upomínky skutečně odeslané e-mailem; řádek SIMULACE je starší záznam z doby před napojením e-mailu. Platba je ruční evidence, ne napojení na banku.',
           target: { kind: 'app', path: '/siampark/finance' },
-          title: 'Částečná úhrada faktury',
+          title: 'Částečná úhrada a upomínky',
         },
         {
           click: 'Záložka Historie, potom Odpisy.',

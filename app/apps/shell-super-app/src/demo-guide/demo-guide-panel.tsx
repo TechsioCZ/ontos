@@ -31,6 +31,19 @@ const widthStep = 32;
 
 const isDesktop = (): boolean => globalThis.matchMedia(desktopQuery).matches;
 
+/** Marks the routed page column; the panel measures where it starts to keep the page readable. */
+export const demoGuidePageAttribute = 'data-demo-guide-page';
+
+/** Width the page column and the panel share: viewport minus the docked navigation sidebar. */
+const sharedWidth = (): number => {
+  const page = globalThis.document.querySelector(`[${demoGuidePageAttribute}]`);
+  return globalThis.innerWidth - (page?.getBoundingClientRect().left ?? 0);
+};
+
+/** Width the panel really has on screen; the stored width can be wider than a smaller viewport allows. */
+const renderedWidth = (handle: HTMLElement, fallback: number): number =>
+  handle.closest('aside')?.getBoundingClientRect().width ?? fallback;
+
 /**
  * Scroll offset of the step list per guide. Route changes remount the shell frame and closing the panel on a phone
  * unmounts it, so the offset lives in session storage: the presenter finds the same step again after each screen.
@@ -86,12 +99,16 @@ const ResizeHandle = () => {
     }
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    drag.current = { pointerId: event.pointerId, startWidth: width, startX: event.clientX };
+    drag.current = {
+      pointerId: event.pointerId,
+      startWidth: renderedWidth(event.currentTarget, width),
+      startX: event.clientX,
+    };
   };
   const onPointerMove = (event: PointerEvent<HTMLButtonElement>) => {
     const active = drag.current;
     if (active?.pointerId === event.pointerId) {
-      setDemoGuideWidth(clampGuideWidth(active.startWidth + active.startX - event.clientX, globalThis.innerWidth));
+      setDemoGuideWidth(clampGuideWidth(active.startWidth + active.startX - event.clientX, sharedWidth()));
     }
   };
   const onPointerUp = (event: PointerEvent<HTMLButtonElement>) => {
@@ -104,7 +121,7 @@ const ResizeHandle = () => {
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault();
       const delta = event.key === 'ArrowLeft' ? widthStep : -widthStep;
-      setDemoGuideWidth(clampGuideWidth(width + delta, globalThis.innerWidth));
+      setDemoGuideWidth(clampGuideWidth(renderedWidth(event.currentTarget, width) + delta, sharedWidth()));
     } else if (event.key === 'Home') {
       event.preventDefault();
       setDemoGuideWidth(undefined);
@@ -146,7 +163,7 @@ const PersonaLine = ({
   persona === null ? (
     <p className="flex items-center gap-100 text-fg-secondary text-xs">
       <Icon icon="icon-[mdi--incognito]" size="sm" />
-      <span>Bez přihlášení: zákazník e-shopu v anonymním okně</span>
+      <span>Bez přihlášení do OntOS: zákazník e-shopu, otevře se v nové kartě</span>
     </p>
   ) : (
     <div className="flex flex-wrap items-center gap-100 text-xs">
@@ -272,7 +289,9 @@ export interface DemoGuidePanelProps {
 
 /**
  * Non-modal guide docked to the right edge below the top bar. It is not a dialog: the page stays usable while the
- * presenter clicks along. Full width below the desktop breakpoint, resizable above it (width lives in the store and
+ * presenter clicks along. It stacks below the ui-kit dialog layers (backdrop 10, positioner 20): a drawer or dialog
+ * opened from the page covers the guide instead of hiding its own buttons under it, and the guide is back once the
+ * dialog closes. Full width below the desktop breakpoint, resizable above it (width lives in the store and
  * reaches the panel through the `--demo-guide-width` variable the shell frame sets).
  */
 export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) => {
@@ -289,7 +308,7 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
   return (
     <aside
       aria-label="Průvodce ukázkou"
-      className="fixed end-0 bottom-0 z-30 flex w-full flex-col border-border-primary border-s bg-base shadow-dialog-content lg:w-(--demo-guide-width)"
+      className="fixed end-0 bottom-0 z-5 flex w-full flex-col border-border-primary border-s bg-base shadow-dialog-content lg:w-(--demo-guide-width)"
       id={demoGuidePanelId}
       style={{ top: 'var(--spacing-700)' }}
     >

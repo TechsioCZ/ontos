@@ -3,7 +3,7 @@ import type { DemoGuide, DemoGuidePersona } from '../demo-guide-types.ts';
 const eshop: DemoGuidePersona = { email: 'eshop@akros.demo', role: 'Správce e-shopu' };
 const expedice: DemoGuidePersona = { email: 'expedice@akros.demo', role: 'Expedice' };
 
-/** Kai Uwe's standalone AKROS storefront, connected to OntOS; opened in a new tab as an anonymous customer. */
+/** Kai Uwe's standalone AKROS storefront, connected to OntOS; opened in a new tab, the customer needs no sign-in. */
 const storefront = 'http://localhost:3070';
 const productUrl = `${storefront}/produkt/srouby-s-valcovou-hlavou-s-vnitrnim-sestihranem-din-912-a2?variant=10091200010004`;
 
@@ -13,7 +13,7 @@ export const akrosGuide: DemoGuide = {
       id: 'nakup',
       steps: [
         {
-          click: 'Otevřete v novém anonymním okně prohlížeče.',
+          click: 'Tlačítko otevře e-shop v nové kartě. Zákazník nakupuje bez přihlášení, přihlášení do OntOS e-shop nepoužívá.',
           id: 'akros-katalog',
           persona: null,
           say: 'Tohle je zákaznický e-shop AKROS se zachovaným vlastním designem. Katalog, ceny a dostupnost mu dodává OntOS.',
@@ -71,7 +71,7 @@ export const akrosGuide: DemoGuide = {
           title: 'Změna ceny varianty',
         },
         {
-          click: 'Asi po 16 sekundách obnovte stránku produktu v anonymním okně.',
+          click: 'Asi po 16 sekundách obnovte kartu s produktem v e-shopu.',
           id: 'akros-cena-eshop',
           persona: null,
           say: 'E-shop převezme novou cenu po krátké cache a přepočítá ji s DPH.',

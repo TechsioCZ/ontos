@@ -104,10 +104,11 @@ export const obchodGuide: DemoGuide = {
           title: 'Úroveň A jen čte',
         },
         {
-          click: 'Karta Všechny → do Hledat úkol napište „AI: zavolat zákazníkovi kvůli nabídce“ → ukažte stav Zrušený.',
+          click:
+            'Karta Všechny → do Hledat úkol napište „AI: zavolat zákazníkovi kvůli nabídce“ → otevřete nejnovější úkol ve stavu Zrušený.',
           id: 'obchod-ai-b',
           persona: vedeni,
-          say: 'Úroveň B smí navíc založit úkol pro zaměstnance a nic jiného. Důkazový úkol vznikl přes MCP a byl zrušen řízenou akcí, historie zůstala.',
+          say: 'Úroveň B smí navíc založit úkol pro zaměstnance a nic jiného. Každá zkouška přes MCP založila jeden důkazový úkol, který byl zrušen řízenou akcí; historie zůstala.',
           target: { kind: 'app', path: '/siampark/work' },
           title: 'Úroveň B založí úkol',
         },
