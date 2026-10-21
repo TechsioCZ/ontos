@@ -23,10 +23,13 @@ export const readSiamparkReminders = (enabledSince: string) =>
     const rows = yield* sql<{
       readonly invoiceNumber: string | null;
       readonly legalEntityId: string;
+      readonly legalName: string | null;
       readonly reminder: unknown;
       readonly tenantId: string;
     }>`
       select s.tenant_id::text as "tenantId", s.legal_entity_id::text as "legalEntityId", r as "reminder",
+        (select le.legal_name from core.legal_entities le
+          where le.legal_entity_id = s.legal_entity_id and le.tenant_id = s.tenant_id) as "legalName",
         (select i->>'number' from jsonb_array_elements(coalesce(s.state->'invoices', '[]'::jsonb)) i
           where i->'ref'->>'resourceId' = r->>'invoiceResourceId' limit 1) as "invoiceNumber"
       from siampark_billing_finance.finance_states s, jsonb_array_elements(coalesce(s.state->'reminders', '[]'::jsonb)) r
@@ -35,6 +38,7 @@ export const readSiamparkReminders = (enabledSince: string) =>
       (row): SiamparkReminderInput => ({
         invoiceNumber: row.invoiceNumber,
         legalEntityId: row.legalEntityId,
+        legalName: row.legalName,
         reminder: json<SiamparkReminderInput['reminder']>(row.reminder),
         tenantId: row.tenantId,
       }),

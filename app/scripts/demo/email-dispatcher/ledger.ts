@@ -27,6 +27,7 @@ const DDL: readonly string[] = [
       updated_at timestamptz not null default now(),
       sent_at timestamptz
     )`,
+  `alter table demo_email.deliveries add column if not exists event_label text`,
   `create index if not exists deliveries_subject_idx on demo_email.deliveries (source, subject_id)`,
   `create index if not exists deliveries_number_idx on demo_email.deliveries (source, subject_number)`,
   `create table if not exists demo_email.settings (key text primary key, value text not null)`,
@@ -66,21 +67,33 @@ export const listSettledKeys = Effect.gen(function* () {
   return rows.map((row) => row.dedupe_key);
 });
 
-/** Returns true only when THIS call owns the send (fresh claim, or a due RETRY re-claimed). */
+/** A RETRY row older than this is given up: FAILED („Odeslání selhalo“), never left waiting forever. */
+export const RETRY_WINDOW_HOURS = 24;
+
+/**
+ * Returns true only when THIS call owns the send (fresh claim, or a due RETRY re-claimed).
+ * RETRY backs off 10 s, 20 s, 40 s, then every 60 s, so an SMTP outage of any length heals by itself once the
+ * server is back; after RETRY_WINDOW_HOURS the row becomes FAILED instead.
+ */
 export const claim = (planned: PlannedEmail) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient;
     const inserted = yield* sql<{ readonly dedupe_key: string }>`
-      insert into demo_email.deliveries (dedupe_key, source, event, tenant_id, legal_entity_id, subject_id, subject_number, recipient, email_subject, status, attempts, event_at)
-      values (${planned.dedupeKey}, ${planned.source}, ${planned.event}, ${planned.tenantId}::uuid, ${planned.legalEntityId}::uuid, ${planned.subjectId}, ${planned.subjectNumber}, ${planned.recipient}, ${planned.subject}, 'SENDING', 1, ${planned.eventAt}::timestamptz)
+      insert into demo_email.deliveries (dedupe_key, source, event, event_label, tenant_id, legal_entity_id, subject_id, subject_number, recipient, email_subject, status, attempts, event_at)
+      values (${planned.dedupeKey}, ${planned.source}, ${planned.event}, ${planned.eventLabel}, ${planned.tenantId}::uuid, ${planned.legalEntityId}::uuid, ${planned.subjectId}, ${planned.subjectNumber}, ${planned.recipient}, ${planned.subject}, 'SENDING', 1, ${planned.eventAt}::timestamptz)
       on conflict (dedupe_key) do nothing
       returning dedupe_key`;
     if (inserted.length === 1) {
       return true;
     }
+    yield* sql`
+      update demo_email.deliveries set status = 'FAILED', error_tag = 'retry_window_expired', updated_at = now()
+      where dedupe_key = ${planned.dedupeKey} and status = 'RETRY'
+        and created_at < now() - make_interval(hours => ${RETRY_WINDOW_HOURS})`;
     const retried = yield* sql<{ readonly dedupe_key: string }>`
       update demo_email.deliveries set status = 'SENDING', attempts = attempts + 1, updated_at = now()
-      where dedupe_key = ${planned.dedupeKey} and status = 'RETRY' and attempts < 20 and updated_at < now() - interval '10 seconds'
+      where dedupe_key = ${planned.dedupeKey} and status = 'RETRY'
+        and updated_at < now() - make_interval(secs => least(60, 10 * power(2, least(attempts - 1, 3))))
       returning dedupe_key`;
     return retried.length === 1;
   });
@@ -96,8 +109,17 @@ export const finish = (dedupeKey: string, outcome: DeliveryOutcome) =>
       where dedupe_key = ${dedupeKey} and status = 'SENDING'`;
   });
 
+/**
+ * Who may read receipts: staff of one company (verified OntOS session → tenant + selected legal entity), or the
+ * buyer of one order (order number + the e-mail address the order was placed with).
+ */
+export type DeliveryReadScope =
+  | { readonly kind: 'company'; readonly legalEntityId: string; readonly tenantId: string }
+  | { readonly kind: 'buyer'; readonly recipient: string };
+
 /** Public receipts only: never selects the e-mail address or the message body. */
 export const listDeliveries = (query: {
+  readonly scope: DeliveryReadScope;
   readonly source: EmailDeliverySource;
   readonly subjectIds: readonly string[];
   readonly subjectNumbers: readonly string[];
@@ -107,28 +129,26 @@ export const listDeliveries = (query: {
       return [] as readonly EmailDeliveryView[];
     }
     const sql = yield* PgClient.PgClient;
-    let byId: readonly EmailDeliveryView[] = [];
-    let byNumber: readonly EmailDeliveryView[] = [];
-    if (query.subjectIds.length > 0) {
-      byId = yield* sql<EmailDeliveryView>`
-        select source, event, status, subject_id as "subjectId", subject_number as "subjectNumber",
-          to_char(event_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as "eventAt",
-          to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as "createdAt",
-          case when sent_at is null then null else to_char(sent_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end as "sentAt"
-        from demo_email.deliveries
-        where source = ${query.source} and subject_id in ${sql.in(query.subjectIds)}`;
-    }
-    if (query.subjectNumbers.length > 0) {
-      byNumber = yield* sql<EmailDeliveryView>`
-        select source, event, status, subject_id as "subjectId", subject_number as "subjectNumber",
-          to_char(event_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as "eventAt",
-          to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as "createdAt",
-          case when sent_at is null then null else to_char(sent_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end as "sentAt"
-        from demo_email.deliveries
-        where source = ${query.source} and subject_number in ${sql.in(query.subjectNumbers)}`;
-    }
+    const tenantId = query.scope.kind === 'company' ? query.scope.tenantId : null;
+    const legalEntityId = query.scope.kind === 'company' ? query.scope.legalEntityId : null;
+    const recipient = query.scope.kind === 'buyer' ? query.scope.recipient.trim().toLowerCase() : null;
+    // Unused lists become a value no subject id/number can have, so each query keeps one static shape.
+    const ids = query.subjectIds.length > 0 ? query.subjectIds : [''];
+    const numbers = query.subjectNumbers.length > 0 ? query.subjectNumbers : [''];
+    const rows = yield* sql<EmailDeliveryView>`
+      select source, event, event_label as "eventLabel", status, subject_id as "subjectId", subject_number as "subjectNumber",
+        to_char(event_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as "eventAt",
+        to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as "createdAt",
+        case when sent_at is null then null else to_char(sent_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') end as "sentAt"
+      from demo_email.deliveries
+      where source = ${query.source}
+        and (subject_id in ${sql.in(ids)} or subject_number in ${sql.in(numbers)})
+        and (${tenantId}::uuid is null or tenant_id = ${tenantId}::uuid)
+        and (${legalEntityId}::uuid is null or legal_entity_id = ${legalEntityId}::uuid)
+        and (${recipient}::text is null or lower(recipient) = ${recipient}::text)
+        and (${tenantId}::uuid is not null or ${recipient}::text is not null)`;
     const merged = new Map<string, EmailDeliveryView>();
-    for (const row of [...byId, ...byNumber]) {
+    for (const row of rows) {
       merged.set(`${row.subjectId}:${row.event}`, row);
     }
     return [...merged.values()].sort((a, b) => Date.parse(a.eventAt) - Date.parse(b.eventAt)) as readonly EmailDeliveryView[];

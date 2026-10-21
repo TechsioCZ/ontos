@@ -5,7 +5,10 @@
 // demo_merchandise.merchandise_states, Siampark payment reminders in siampark_billing_finance.finance_states),
 // claims each e-mail once in its own ledger table demo_email.deliveries (primary key = dedupeKey, so an
 // e-mail is never sent twice) and submits it over real SMTP (Mailpit in the demo, any SMTP server via env).
-// It serves read-only receipts (no recipient, no content) on http://127.0.0.1:3096/v1/deliveries.
+// It serves read-only receipts (no recipient, no content) on http://127.0.0.1:3096/v1/deliveries:
+//   - staff (browser, credentials: 'include'): the OntOS session cookie is verified against the shell and only
+//     rows of the session's tenant + selected legal entity are returned;
+//   - buyer (AKROS storefront BFF): `subjectNumber` + `recipient` (the buyer's e-mail) must both match.
 //
 // UI consumers in other packages (merchandise, siampark-billing-finance, akros-storefront) must COPY the
 // view types and labels below verbatim; they must not import this file across package boundaries.
@@ -42,6 +45,8 @@ export interface PlannedEmail {
   readonly event: EmailDeliveryEvent;
   /** ISO-8601 UTC instant of the domain event (order created / status changed / reminder recorded). */
   readonly eventAt: string;
+  /** Czech receipt label, e.g. 'Předáno dopravci' or 'Připraveno k vyzvednutí' for a pickup order. */
+  readonly eventLabel: string;
   readonly html: string;
   readonly legalEntityId: string;
   readonly recipient: string;
@@ -60,6 +65,8 @@ export interface EmailDeliveryView {
   readonly createdAt: string;
   readonly event: EmailDeliveryEvent;
   readonly eventAt: string;
+  /** Czech label of the event as e-mailed (null for rows written before labels were stored). */
+  readonly eventLabel: string | null;
   /** ISO-8601 UTC instant the SMTP server accepted the message; null unless status is SENT. */
   readonly sentAt: string | null;
   readonly source: EmailDeliverySource;
@@ -88,6 +95,9 @@ export const emailStatusLabels: Readonly<Record<EmailDeliveryStatus, string>> = 
   SENT: 'Odesláno e-mailem',
   UNKNOWN: 'Výsledek odeslání nejistý – neopakuje se',
 };
+
+export const SIAMPARK_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000021';
+export const OBCHODNI_FIRMA_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000020';
 
 /** Minimal read shape of a persisted AKROS order (demo_merchandise state JSON, encoded form). */
 export interface AkrosOrderInput {
@@ -128,10 +138,14 @@ export interface AkrosOrderInput {
   readonly updatedAt: string;
 }
 
-/** Minimal read shape of a persisted Siampark payment reminder plus its invoice number. */
+/**
+ * Minimal read shape of a persisted payment reminder (finance module, any company: Siampark, Obchodní firma…) plus
+ * its invoice number and the legal name of the company that issued the invoice (core.legal_entities).
+ */
 export interface SiamparkReminderInput {
   readonly invoiceNumber: string | null;
   readonly legalEntityId: string;
+  readonly legalName: string | null;
   readonly reminder: {
     readonly createdAt: string;
     readonly deliveryMode: string;

@@ -84,14 +84,27 @@ Nothing is simulated: e-mails really go over SMTP. In the demo the SMTP server i
 What is sent, exactly once per event (after the database commit, by `scripts/demo/email-dispatcher/main.mts`):
 
 - AKROS e-shop orders (channel STOREFRONT): order received, then the status changes Potvrzená
-  (Zpracovává se), Předáno dopravci, Dokončená and Stornovaná. Only orders created after the dispatcher's first
-  start (`demo_email.settings.enabled_since`) get e-mails, so old fixtures are never mailed.
-- Siampark payment reminders („Připravit upomínku“ → „Odeslat e-mailem“ in Faktury a finance).
+  (Zpracovává se), Předáno dopravci (for Osobní odběr: „připravena k vyzvednutí“), Dokončená and Stornovaná.
+  Only orders created after the dispatcher's first start (`demo_email.settings.enabled_since`) get e-mails, so
+  old fixtures are never mailed. Customer e-mails carry no „(simulace)“ markers; their DEMO footer says that no
+  goods are shipped.
+- Payment reminders („Připravit upomínku“ → „Odeslat e-mailem“ in Faktury a finance) of every company that
+  uses the finance module. Each reminder goes out in the name of the company that issued the invoice (header,
+  subject, footer and sender: Siampark → Siampark, Obchodní firma → Obchodní firma).
 
 The dispatcher claims each e-mail in its own ledger `demo_email.deliveries` (primary key = dedupe key) before
-sending. SMTP unreachable before any data was sent → `RETRY` (up to 20 attempts); a broken connection after
-the data → `UNKNOWN` and never resent. Staff UI and the AKROS confirmation page show „Odesláno e-mailem“ with
-the time the SMTP server accepted the message.
+sending. SMTP unreachable before any data was sent → `RETRY` with backoff (10 s, 20 s, 40 s, then every 60 s,
+so it heals by itself when the server is back); still undelivered after 24 h → `FAILED` („Odeslání selhalo“).
+A broken connection after the data → `UNKNOWN` and never resent. Staff UI and the AKROS confirmation page show
+„Odesláno e-mailem“ with the time the SMTP server accepted the message.
+
+Who may read receipts (`GET /v1/deliveries`, never addresses or bodies):
+
+- staff app (browser, `credentials: 'include'`): the dispatcher checks the OntOS session cookie with the shell
+  (`EMAIL_DISPATCHER_SESSION_URL`) and returns only rows of the session's tenant and selected company; no
+  session → 401;
+- AKROS storefront (server-side BFF `/api/ontos/order-emails`): the order number AND the e-mail the order was
+  placed with (`recipient`) must both match, so other customers' orders cannot be enumerated.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
@@ -100,9 +113,11 @@ the time the SMTP server accepted the message.
 | `SMTP_SECURE` | `false` | `true` = implicit TLS (normally port 465). STARTTLS (587) is not supported. |
 | `SMTP_USER` / `SMTP_PASSWORD` | – | AUTH PLAIN; only accepted together with `SMTP_SECURE=true` |
 | `SMTP_TIMEOUT_MS` | `10000` | Socket timeout per attempt |
-| `SMTP_FROM` | `OntOS <oznameni@ontos.demo>` | Fallback sender |
+| `SMTP_FROM` | – | Sender address for every company without its own variable below (the display name stays the company's, e.g. `Obchodní firma – účtárna <noreply@vase-domena.cz>`). Unset → the built-in demo addresses. |
 | `AKROS_EMAIL_FROM` | `AKROS e-shop <eshop@akros.demo>` | Sender of AKROS order e-mails |
-| `SIAMPARK_EMAIL_FROM` | `Siampark – finanční oddělení <finance@siampark.demo>` | Sender of payment reminders |
+| `SIAMPARK_EMAIL_FROM` | `Siampark – finanční oddělení <finance@siampark.demo>` | Sender of Siampark payment reminders |
+| `OBCHODNI_FIRMA_EMAIL_FROM` | `Obchodní firma – účtárna <ucetni@demo.ontos>` | Sender of Obchodní firma payment reminders |
+| `EMAIL_DISPATCHER_SESSION_URL` | `http://127.0.0.1:3020/shell-super-app-api/auth/session` | Shell session check for staff receipt reads |
 | `AKROS_STOREFRONT_PUBLIC_URL` | `http://localhost:3070` | Link in AKROS e-mails |
 | `EMAIL_DISPATCHER_PORT` | `3096` | Receipts API (127.0.0.1 only) |
 | `EMAIL_DISPATCHER_INTERVAL_MS` | `2000` | Poll interval |
@@ -110,13 +125,15 @@ the time the SMTP server accepted the message.
 | `EMAIL_DISPATCHER_URL` | `http://127.0.0.1:3096` | Used server-side by the AKROS storefront |
 
 A real SMTP server is configuration only: put e.g. `SMTP_HOST=smtp.vase-domena.cz`, `SMTP_PORT=465`,
-`SMTP_SECURE=true`, `SMTP_USER=…`, `SMTP_PASSWORD=…`, `AKROS_EMAIL_FROM=AKROS <eshop@vase-domena.cz>` into
-`app/.env` and run `scripts/demo/email-dispatcher/restart.sh`. Recipients then receive real e-mail.
+`SMTP_SECURE=true`, `SMTP_USER=…`, `SMTP_PASSWORD=…`, `SMTP_FROM=noreply@vase-domena.cz` (one verified sender
+address for all companies) or the per-company `*_EMAIL_FROM` variables into `app/.env` and run
+`scripts/demo/email-dispatcher/restart.sh`. Recipients then receive real e-mail.
 
 Checks:
 
     curl -s http://127.0.0.1:3096/healthz
-    curl -s 'http://127.0.0.1:3096/v1/deliveries?source=akros-order&subjectNumber=OBJ-2026-0026'
+    curl -s 'http://127.0.0.1:3096/v1/deliveries?source=akros-order&subjectNumber=OBJ-2026-0026&recipient=zakaznik@example.cz'
+    curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:3096/v1/deliveries?source=akros-order&subjectNumber=OBJ-2026-0026'  # 401
     curl -s 'http://localhost:8025/api/v1/messages?limit=10'
     curl -s 'http://localhost:8025/api/v1/search?query=subject:%22OBJ-2026-0026%22'
 

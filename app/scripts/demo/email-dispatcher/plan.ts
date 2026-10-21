@@ -1,7 +1,7 @@
 // @effect-diagnostics *:off
 import type { AkrosOrderInput, DeliveryOutcome, PlannedEmail, SiamparkReminderInput } from './contract.ts';
 import type { AkrosOrderEmailEvent } from './templates.ts';
-import { akrosOrderEmail, siamparkReminderEmail } from './templates.ts';
+import { akrosOrderEmail, orderEventLabel, siamparkReminderEmail } from './templates.ts';
 
 export interface OrderEmailEvent {
   readonly at: string;
@@ -81,6 +81,7 @@ export const planAkrosOrderEmails = (
       dedupeKey: `akros-order:${order.id}:${e.event}`,
       event: e.event,
       eventAt: e.at,
+      eventLabel: orderEventLabel(order, e.event),
       html: rendered.html,
       legalEntityId: options.legalEntityId,
       recipient,
@@ -107,6 +108,7 @@ export const planSiamparkReminderEmail = (input: SiamparkReminderInput, enabledS
     dedupeKey: `siampark-reminder:${input.reminder.id}`,
     event: 'PAYMENT_REMINDER',
     eventAt: input.reminder.createdAt,
+    eventLabel: 'Upomínka k úhradě',
     recipient,
     source: 'siampark-reminder',
     subjectId: input.reminder.id,

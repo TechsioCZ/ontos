@@ -1,5 +1,6 @@
 // @effect-diagnostics *:off
 import type { AkrosOrderInput, SiamparkReminderInput } from './contract.ts';
+import { SIAMPARK_LEGAL_ENTITY_ID } from './contract.ts';
 
 export type AkrosOrderEmailEvent = 'ORDER_CREATED' | 'CONFIRMED' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED';
 
@@ -39,16 +40,44 @@ const statusLabels: Readonly<Record<AkrosOrderEmailEvent, string>> = {
   CANCELLED: 'Stornovaná',
 };
 
-const demoNote = 'Ukázkové prostředí OntOS (DEMO): tento e-mail byl skutečně odeslán přes SMTP, ale zboží nebude doručeno a nic se neplatí.';
+const demoNote =
+  'Ukázkové prostředí OntOS (DEMO): tento e-mail byl skutečně odeslán přes SMTP, ale zboží se nevychystává, ' +
+  'nepředává dopravci ani nedoručuje a nic se neplatí.';
 
-const subjectOf = (event: AkrosOrderEmailEvent, number: string): string => {
+/** Personal pickup: the SHIPPED transition means „ready for pickup“, never „handed to a carrier“. */
+export const isPickupOrder = (order: AkrosOrderInput): boolean => order.shipping?.method === 'OSOBNI_ODBER';
+
+/** Customer-facing shipping label: the staff-side „(simulace)“ marker is covered by the DEMO footer instead. */
+export const customerShippingLabel = (order: AkrosOrderInput): string =>
+  (order.shipping?.label ?? 'doprava dle objednávky').replace(/\s*\(simulace\)\s*$/u, '').trim() ||
+  'doprava dle objednávky';
+
+/** Czech receipt label of one e-mailed event (shown next to „Odesláno e-mailem“ in the shop and staff app). */
+export const orderEventLabel = (order: AkrosOrderInput, event: AkrosOrderEmailEvent): string => {
+  switch (event) {
+    case 'ORDER_CREATED':
+      return 'Přijetí objednávky';
+    case 'CONFIRMED':
+      return 'Potvrzená';
+    case 'SHIPPED':
+      return isPickupOrder(order) ? 'Připraveno k vyzvednutí' : 'Předáno dopravci';
+    case 'DELIVERED':
+      return 'Dokončená';
+    case 'CANCELLED':
+      return 'Stornovaná';
+  }
+};
+
+const subjectOf = (event: AkrosOrderEmailEvent, number: string, pickup: boolean): string => {
   switch (event) {
     case 'ORDER_CREATED':
       return `AKROS – přijali jsme vaši objednávku ${number}`;
     case 'CONFIRMED':
       return `AKROS – objednávka ${number} je potvrzená`;
     case 'SHIPPED':
-      return `AKROS – objednávka ${number} byla předána dopravci`;
+      return pickup
+        ? `AKROS – objednávka ${number} je připravena k vyzvednutí`
+        : `AKROS – objednávka ${number} byla předána dopravci`;
     case 'DELIVERED':
       return `AKROS – objednávka ${number} je dokončená`;
     case 'CANCELLED':
@@ -56,14 +85,16 @@ const subjectOf = (event: AkrosOrderEmailEvent, number: string): string => {
   }
 };
 
-const leadOf = (event: AkrosOrderEmailEvent, number: string, shippingLabel: string): string => {
+const leadOf = (event: AkrosOrderEmailEvent, number: string, shippingLabel: string, pickup: boolean): string => {
   switch (event) {
     case 'ORDER_CREATED':
       return `Děkujeme za vaši objednávku č. ${number}. Přijali jsme ji a předali ke zpracování.`;
     case 'CONFIRMED':
       return `Vaši objednávku č. ${number} jsme potvrdili a připravujeme ji k expedici.`;
     case 'SHIPPED':
-      return `Objednávku č. ${number} jsme předali dopravci (${shippingLabel}).`;
+      return pickup
+        ? `Objednávka č. ${number} je připravena k vyzvednutí (${shippingLabel}).`
+        : `Objednávku č. ${number} jsme předali dopravci (${shippingLabel}).`;
     case 'DELIVERED':
       return `Objednávka č. ${number} je dokončená. Děkujeme za nákup.`;
     case 'CANCELLED':
@@ -77,12 +108,13 @@ export const akrosOrderEmail = (
   options: { readonly reason?: string; readonly storefrontUrl: string },
 ): RenderedEmail => {
   const number = order.number;
-  const shippingLabel = order.shipping?.label ?? 'doprava dle objednávky';
-  const subject = subjectOf(event, number);
+  const pickup = isPickupOrder(order);
+  const shippingLabel = customerShippingLabel(order);
+  const subject = subjectOf(event, number, pickup);
   const reason = options.reason;
   const reasonSuffix = event === 'CANCELLED' && reason !== undefined && reason !== '' ? ` Důvod: ${reason}` : '';
-  const lead = `${leadOf(event, number, shippingLabel)}${reasonSuffix}`;
-  const status = statusLabels[event];
+  const lead = `${leadOf(event, number, shippingLabel, pickup)}${reasonSuffix}`;
+  const status = event === 'SHIPPED' && pickup ? 'Připraveno k vyzvednutí' : statusLabels[event];
   const lines = order.lines.map((line) => {
     const hasVariant = line.variantName !== undefined && line.variantName !== '';
     return {
@@ -142,17 +174,24 @@ export const akrosOrderEmail = (
   return { subject, text, html: layout('AKROS', '#c8102e', subject, body, footer) };
 };
 
+/** Display name of the issuing company: legal name without the „(demo)“ suffix. */
+export const companyDisplayName = (legalName: string | null): string =>
+  (legalName ?? '').replace(/\s*\(demo\)\s*$/iu, '').trim() || 'Finanční oddělení';
+
+/** Payment reminder in the name of the company that issued the invoice (Siampark, Obchodní firma, …). */
 export const siamparkReminderEmail = (input: SiamparkReminderInput): RenderedEmail => {
+  const company = companyDisplayName(input.legalName);
   const invoiceNumber = input.invoiceNumber;
   const subject =
     invoiceNumber !== null && invoiceNumber !== ''
-      ? `Upomínka – faktura ${invoiceNumber}`
-      : 'Upomínka k neuhrazené faktuře';
-  const footerText = 'Ukázkové prostředí OntOS (DEMO): e-mail odeslán z finančního modulu Siampark přes SMTP.';
+      ? `${company} – upomínka k faktuře ${invoiceNumber}`
+      : `${company} – upomínka k neuhrazené faktuře`;
+  const footerText = `Ukázkové prostředí OntOS (DEMO): e-mail odeslán přes SMTP z finančního modulu OntOS jménem společnosti ${company}.`;
   const text = `${input.reminder.text}\n\n—\n${footerText}`;
   const paragraphs = input.reminder.text
     .split(/\n{2,}/u)
     .map((paragraph) => `<p style="margin:0 0 12px">${escapeHtml(paragraph).replaceAll('\n', '<br>')}</p>`)
     .join('');
-  return { subject, text, html: layout('Siampark', '#0f766e', subject, paragraphs, escapeHtml(footerText)) };
+  const color = input.legalEntityId === SIAMPARK_LEGAL_ENTITY_ID ? '#0f766e' : '#1e3a8a';
+  return { subject, text, html: layout(company, color, subject, paragraphs, escapeHtml(footerText)) };
 };

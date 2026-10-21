@@ -1,6 +1,7 @@
 // @effect-diagnostics *:off
-// Demo e-mail dispatcher: after-commit worker that sends AKROS order e-mails and Siampark payment reminders over
-// real SMTP exactly once (ledger demo_email.deliveries), plus a read-only receipts API on 127.0.0.1.
+// Demo e-mail dispatcher: after-commit worker that sends AKROS order e-mails and payment reminders (Siampark,
+// Obchodní firma, …; always in the name of the issuing company) over real SMTP exactly once (ledger
+// demo_email.deliveries), plus a read-only receipts API on 127.0.0.1 that checks who is asking.
 import { createServer } from 'node:http';
 import type { ServerResponse } from 'node:http';
 import { PgClient } from '@effect/sql-pg';
@@ -9,7 +10,9 @@ import { Reactivity } from 'effect/unstable/reactivity';
 import { makeSmtpEmailDelivery, smtpConfigurationFromEnvironment } from '../../../packages/email-delivery/src/smtp.ts';
 import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID, EMAIL_DISPATCHER_DEFAULT_PORT, emailDeliverySources } from './contract.ts';
 import type { DeliveryOutcome, EmailDeliverySource, PlannedEmail } from './contract.ts';
+import type { DeliveryReadScope } from './ledger.ts';
 import { claim, ensureLedger, finish, listDeliveries, listSettledKeys, readEnabledSince, recoverInterrupted } from './ledger.ts';
+import { senderFor } from './senders.ts';
 import { deliveryOutcomeOf, planAkrosOrderEmails, planSiamparkReminderEmail } from './plan.ts';
 import { readAkrosOrders, readSiamparkReminders } from './sources.ts';
 
@@ -18,22 +21,30 @@ const port = Number(env['EMAIL_DISPATCHER_PORT'] ?? EMAIL_DISPATCHER_DEFAULT_POR
 const intervalMs = Number(env['EMAIL_DISPATCHER_INTERVAL_MS'] ?? 2000);
 const storefrontUrl = env['AKROS_STOREFRONT_PUBLIC_URL'] ?? 'http://localhost:3070';
 const allowedOrigins = new Set((env['EMAIL_DISPATCHER_ALLOWED_ORIGINS'] ?? 'http://localhost:3020,http://127.0.0.1:3020').split(',').map((value) => value.trim()).filter((value) => value.length > 0));
+const sessionUrl = env['EMAIL_DISPATCHER_SESSION_URL'] ?? 'http://127.0.0.1:3020/shell-super-app-api/auth/session';
 const smtp = smtpConfigurationFromEnvironment(env);
-const transports = {
-  'akros-order': makeSmtpEmailDelivery({ ...smtp, from: env['AKROS_EMAIL_FROM'] ?? 'AKROS e-shop <eshop@akros.demo>' }),
-  'siampark-reminder': makeSmtpEmailDelivery({ ...smtp, from: env['SIAMPARK_EMAIL_FROM'] ?? 'Siampark – finanční oddělení <finance@siampark.demo>' }),
-} as const;
+/** One SMTP transport per sender (From), created on first use. */
+const transports = new Map<string, ReturnType<typeof makeSmtpEmailDelivery>>();
+const transportFor = (from: string) => {
+  let transport = transports.get(from);
+  if (transport === undefined) {
+    transport = makeSmtpEmailDelivery({ ...smtp, from });
+    transports.set(from, transport);
+  }
+  return transport;
+};
+type OutgoingEmail = PlannedEmail & { readonly from: string };
 const AdminDatabaseLive = Layer.effect(PgClient.PgClient, Effect.gen(function* adminClient() {
   return yield* PgClient.makeClient({ url: yield* Config.Redacted('DATABASE_ADMIN_URL') });
 })).pipe(Layer.provide(Reactivity.layer));
 const runtime = ManagedRuntime.make(AdminDatabaseLive);
 const settled = new Set<string>();
 
-const deliver = async (planned: PlannedEmail): Promise<void> => {
+const deliver = async (planned: OutgoingEmail): Promise<void> => {
   if (settled.has(planned.dedupeKey)) return;
   if (!(await runtime.runPromise(claim(planned)))) return;
   const outcome: DeliveryOutcome = await Effect.runPromise(
-    transports[planned.source]
+    transportFor(planned.from)
       .send({ html: Redacted.make(planned.html), idempotencyKey: planned.dedupeKey, subject: planned.subject, text: Redacted.make(planned.text), to: planned.recipient })
       .pipe(
         Effect.map((receipt): DeliveryOutcome => ({ messageId: receipt.id, status: 'SENT' })),
@@ -46,13 +57,16 @@ const deliver = async (planned: PlannedEmail): Promise<void> => {
 };
 
 const cycle = async (enabledSince: string): Promise<void> => {
-  const planned: PlannedEmail[] = [];
+  const planned: OutgoingEmail[] = [];
+  const akrosFrom = senderFor({ legalEntityId: AKROS_LEGAL_ENTITY_ID }, 'AKROS', env);
   for (const order of await runtime.runPromise(readAkrosOrders(enabledSince))) {
-    planned.push(...planAkrosOrderEmails(order, { enabledSince, legalEntityId: AKROS_LEGAL_ENTITY_ID, storefrontUrl, tenantId: DEMO_TENANT_ID }));
+    for (const email of planAkrosOrderEmails(order, { enabledSince, legalEntityId: AKROS_LEGAL_ENTITY_ID, storefrontUrl, tenantId: DEMO_TENANT_ID })) {
+      planned.push({ ...email, from: akrosFrom });
+    }
   }
   for (const reminder of await runtime.runPromise(readSiamparkReminders(enabledSince))) {
     const email = planSiamparkReminderEmail(reminder, enabledSince);
-    if (email !== null) planned.push(email);
+    if (email !== null) planned.push({ ...email, from: senderFor(email, reminder.legalName, env) });
   }
   for (const email of planned) {
     try { await deliver(email); } catch (error) { console.error(`[email] ${email.dedupeKey} failed`, error); }
@@ -61,10 +75,37 @@ const cycle = async (enabledSince: string): Promise<void> => {
 
 const reply = (response: ServerResponse, status: number, body: unknown, origin: string | undefined): void => {
   const headers: Record<string, string> = { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' };
-  if (origin !== undefined && allowedOrigins.has(origin)) { headers['access-control-allow-origin'] = origin; headers['vary'] = 'Origin'; }
+  if (origin !== undefined && allowedOrigins.has(origin)) {
+    headers['access-control-allow-origin'] = origin;
+    headers['access-control-allow-credentials'] = 'true';
+    headers['vary'] = 'Origin';
+  }
   response.writeHead(status, headers);
   response.end(body === null ? undefined : JSON.stringify(body));
 };
+
+type SessionCheck = { readonly at: number; readonly scope: DeliveryReadScope | null };
+const sessionCache = new Map<string, SessionCheck>();
+const SESSION_TTL_MS = 15_000;
+
+/** Verifies the OntOS session cookie with the shell; returns the caller's company scope or null (not signed in). */
+const companyScopeOf = async (cookie: string): Promise<DeliveryReadScope | null> => {
+  const cached = sessionCache.get(cookie);
+  if (cached !== undefined && Date.now() - cached.at < SESSION_TTL_MS) return cached.scope;
+  const upstream = await fetch(sessionUrl, { headers: { accept: 'application/json', cookie }, signal: AbortSignal.timeout(5000) });
+  if (!upstream.ok) throw new Error(`session HTTP ${upstream.status}`);
+  const body = (await upstream.json()) as { readonly identity?: { readonly legalEntityId?: unknown; readonly tenantId?: unknown }; readonly state?: unknown };
+  const identity = body.identity;
+  const scope: DeliveryReadScope | null =
+    body.state === 'authenticated' && typeof identity?.tenantId === 'string' && typeof identity.legalEntityId === 'string'
+      ? { kind: 'company', legalEntityId: identity.legalEntityId, tenantId: identity.tenantId }
+      : null;
+  if (sessionCache.size > 500) sessionCache.clear();
+  sessionCache.set(cookie, { at: Date.now(), scope });
+  return scope;
+};
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
 
 const server = createServer((request, response) => {
   const origin = typeof request.headers.origin === 'string' ? request.headers.origin : undefined;
@@ -85,10 +126,26 @@ const server = createServer((request, response) => {
     reply(response, 400, { error: 'invalid_query' }, origin);
     return;
   }
-  runtime.runPromise(listDeliveries({ source: source as EmailDeliverySource, subjectIds, subjectNumbers })).then(
-    (deliveries) => { reply(response, 200, { deliveries }, origin); },
-    (error: unknown) => { console.error('[email] receipts read failed', error); reply(response, 503, { error: 'ledger_unavailable' }, origin); },
-  );
+  const recipient = url.searchParams.get('recipient');
+  const cookie = typeof request.headers.cookie === 'string' ? request.headers.cookie : '';
+  const resolveScope = async (): Promise<DeliveryReadScope | 'forbidden'> => {
+    // Buyer: exactly one order number plus the e-mail address the order was placed with (AKROS storefront BFF).
+    if (recipient !== null) {
+      return source === 'akros-order' && subjectIds.length === 0 && subjectNumbers.length === 1 && recipient.length <= 254 && EMAIL_PATTERN.test(recipient.trim())
+        ? { kind: 'buyer', recipient }
+        : 'forbidden';
+    }
+    // Staff: signed-in OntOS session; only rows of the session's tenant and selected company.
+    if (cookie === '') return 'forbidden';
+    return (await companyScopeOf(cookie)) ?? 'forbidden';
+  };
+  resolveScope().then(
+    async (scope) => {
+      if (scope === 'forbidden') { reply(response, 401, { error: 'authentication_required' }, origin); return; }
+      const deliveries = await runtime.runPromise(listDeliveries({ scope, source: source as EmailDeliverySource, subjectIds, subjectNumbers }));
+      reply(response, 200, { deliveries }, origin);
+    },
+  ).catch((error: unknown) => { console.error('[email] receipts read failed', error); reply(response, 503, { error: 'receipts_unavailable' }, origin); });
 });
 
 const main = async (): Promise<void> => {

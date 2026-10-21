@@ -2,6 +2,7 @@
 import { describe, expect, test } from '@rstest/core';
 import type { AkrosOrderInput, SiamparkReminderInput } from './contract.ts';
 import { deliveryOutcomeOf, orderEmailEvents, planAkrosOrderEmails, planSiamparkReminderEmail } from './plan.ts';
+import { addressOf, senderFor } from './senders.ts';
 import { akrosOrderEmail, formatCzk } from './templates.ts';
 
 const orderId = 'e8747ac9-8730-4fc5-b7ba-8ae9f9daade1';
@@ -47,7 +48,8 @@ const baseOrder: AkrosOrderInput = {
 
 const reminder: SiamparkReminderInput = {
   invoiceNumber: 'FV-2026-0007',
-  legalEntityId: '71000000-0000-4000-8000-000000000001',
+  legalEntityId: '71000000-0000-4000-8000-000000000021',
+  legalName: 'Siampark',
   reminder: {
     createdAt: '2026-10-21T09:00:00.000Z',
     deliveryMode: 'EMAIL',
@@ -137,12 +139,36 @@ describe('AKROS order e-mail planning', () => {
     const rendered = akrosOrderEmail(baseOrder, 'SHIPPED', { storefrontUrl: 'http://localhost:3070' });
     expect(rendered.text.includes('Obchod AKROS: http://localhost:3070')).toBe(true);
   });
+
+  test('a personal-pickup order is „připravena k vyzvednutí“, never „předána dopravci“, and no „simulace“', () => {
+    const shipped = planAkrosOrderEmails(baseOrder, planOptions).find((e) => e.event === 'SHIPPED');
+    expect(shipped?.subject).toBe('AKROS – objednávka OBJ-2026-0030 je připravena k vyzvednutí');
+    expect(shipped?.eventLabel).toBe('Připraveno k vyzvednutí');
+    expect(shipped?.text.includes('je připravena k vyzvednutí (Osobní odběr – AKROS)')).toBe(true);
+    expect(shipped?.text.includes('dopravci (')).toBe(false);
+    for (const email of planAkrosOrderEmails(baseOrder, planOptions)) {
+      expect(email.text.includes('simulace')).toBe(false);
+      expect(email.html.includes('simulace')).toBe(false);
+    }
+  });
+
+  test('a carrier order is „předána dopravci“ with the label without the staff-side marker', () => {
+    const order: AkrosOrderInput = {
+      ...baseOrder,
+      shipping: { label: 'PPL – doručení na adresu (simulace)', method: 'PPL', priceMinor: 12900 },
+    };
+    const shipped = planAkrosOrderEmails(order, planOptions).find((e) => e.event === 'SHIPPED');
+    expect(shipped?.subject).toBe('AKROS – objednávka OBJ-2026-0030 byla předána dopravci');
+    expect(shipped?.eventLabel).toBe('Předáno dopravci');
+    expect(shipped?.text.includes('jsme předali dopravci (PPL – doručení na adresu).')).toBe(true);
+  });
 });
 
 describe('Siampark reminder e-mail planning', () => {
   test('plans an EMAIL-mode reminder with the invoice number in the subject', () => {
     const planned = planSiamparkReminderEmail(reminder, enabledSince);
-    expect(planned?.subject).toBe('Upomínka – faktura FV-2026-0007');
+    expect(planned?.subject).toBe('Siampark – upomínka k faktuře FV-2026-0007');
+    expect(planned?.eventLabel).toBe('Upomínka k úhradě');
     expect(planned?.dedupeKey).toBe('siampark-reminder:rem-0001');
     expect(planned?.recipient).toBe('obchod@siampark.demo');
     expect(planned?.text.startsWith(reminder.reminder.text)).toBe(true);
@@ -164,8 +190,43 @@ describe('Siampark reminder e-mail planning', () => {
   test('falls back to a generic subject when the invoice number is unknown', () => {
     const noInvoice: SiamparkReminderInput = { ...reminder, invoiceNumber: null };
     const planned = planSiamparkReminderEmail(noInvoice, enabledSince);
-    expect(planned?.subject).toBe('Upomínka k neuhrazené faktuře');
+    expect(planned?.subject).toBe('Siampark – upomínka k neuhrazené faktuře');
     expect(planned?.subjectNumber).toBe('');
+  });
+});
+
+describe('reminders in the name of the issuing company', () => {
+  const obchodni: SiamparkReminderInput = {
+    ...reminder,
+    legalEntityId: '71000000-0000-4000-8000-000000000020',
+    legalName: 'Obchodní firma',
+  };
+
+  test('an Obchodní firma reminder carries the Obchodní firma header, subject and footer, never Siampark', () => {
+    const planned = planSiamparkReminderEmail(obchodni, enabledSince);
+    expect(planned?.subject).toBe('Obchodní firma – upomínka k faktuře FV-2026-0007');
+    expect(planned?.html.includes('Siampark')).toBe(false);
+    expect(planned?.text.includes('jménem společnosti Obchodní firma')).toBe(true);
+  });
+
+  test('each company sends from its own address; env overrides it; SMTP_FROM supplies the fallback address', () => {
+    expect(senderFor(obchodni, 'Obchodní firma', {})).toBe('Obchodní firma – účtárna <ucetni@demo.ontos>');
+    expect(senderFor(reminder, 'Siampark', {})).toBe('Siampark – finanční oddělení <finance@siampark.demo>');
+    expect(senderFor({ legalEntityId: '71000000-0000-4000-8000-000000000024' }, 'AKROS', {})).toBe(
+      'AKROS e-shop <eshop@akros.demo>',
+    );
+    expect(senderFor(reminder, 'Siampark', { SIAMPARK_EMAIL_FROM: 'Siampark <fakturace@siampark.cz>' })).toBe(
+      'Siampark <fakturace@siampark.cz>',
+    );
+    expect(senderFor(obchodni, 'Obchodní firma', { SMTP_FROM: 'OntOS <noreply@vase-domena.cz>' })).toBe(
+      'Obchodní firma – účtárna <noreply@vase-domena.cz>',
+    );
+    expect(senderFor({ legalEntityId: '71000000-0000-4000-8000-000000000022' }, 'Velkoobchod Hanák s.r.o.', {})).toBe(
+      'Velkoobchod Hanák s.r.o. – finanční oddělení <oznameni@ontos.demo>',
+    );
+    expect(addressOf('Name <a@b.cz>')).toBe('a@b.cz');
+    expect(addressOf('a@b.cz')).toBe('a@b.cz');
+    expect(addressOf('bez adresy')).toBeNull();
   });
 });
 
