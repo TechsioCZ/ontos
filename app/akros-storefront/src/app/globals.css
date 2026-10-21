@@ -643,14 +643,19 @@ body {
 
 .akros-variant-table__purchase-cell {
   display: grid;
-  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+  grid-template-columns: var(--akros-variant-table-minimum-order-width) var(
+      --akros-variant-table-package-order-width
+    );
   align-items: center;
+  justify-content: end;
 }
 
 .akros-variant-table__order {
   display: grid;
   min-width: 0;
-  grid-template-columns: 96px minmax(64px, 1fr);
+  grid-template-columns: var(--akros-variant-table-quantity-width) var(
+      --akros-variant-table-minimum-button-width
+    );
   gap: var(--dimension-6);
   align-items: center;
   padding-inline: var(--dimension-6);
@@ -662,7 +667,9 @@ body {
 
 .akros-variant-table__order--package {
   border-inline-start: 1px solid var(--akros-variant-table-cell-separator-color);
-  grid-template-columns: 96px minmax(132px, 1fr);
+  grid-template-columns: var(--akros-variant-table-quantity-width) var(
+      --akros-variant-table-package-button-width
+    );
   padding-inline-end: 0;
 }
 
@@ -699,6 +706,15 @@ body {
 .akros-variant-table__buy-button small {
   font-size: 8px;
   line-height: inherit;
+}
+
+.akros-variant-table__buy-button--package > span {
+  display: block;
+  line-height: var(--akros-variant-table-compact-button-line-height);
+}
+
+.akros-variant-table__buy-button--package small {
+  font-size: var(--akros-variant-table-package-button-caption-font-size);
 }
 
 .akros-variant-table__no-package {

@@ -277,8 +277,12 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
       </NumericInput>
       <Button
         aria-label={isPackage ? `Koupit celé balení ${label}` : `Koupit ${label}`}
-        block
-        className="akros-variant-table__buy-button @max-akros-variant-table/akros-variants:min-h-(--dimension-44) @max-akros-variant-table/akros-variants:whitespace-normal! @max-akros-variant-table/akros-variants:[&>span]:flex-col! @max-akros-variant-table/akros-variants:[&>span]:items-center! @max-akros-variant-table/akros-variants:[&>span]:leading-(--akros-variant-table-compact-button-line-height)! @max-akros-variant-table/akros-variants:[&_small]:text-xs!"
+        block={!isPackage}
+        className={
+          isPackage
+            ? "akros-variant-table__buy-button akros-variant-table__buy-button--package w-(--akros-variant-table-package-button-width) max-w-full justify-self-end"
+            : "akros-variant-table__buy-button @max-akros-variant-table/akros-variants:min-h-(--dimension-44) @max-akros-variant-table/akros-variants:whitespace-normal! @max-akros-variant-table/akros-variants:[&>span]:flex-col! @max-akros-variant-table/akros-variants:[&>span]:items-center! @max-akros-variant-table/akros-variants:[&>span]:leading-(--akros-variant-table-compact-button-line-height)! @max-akros-variant-table/akros-variants:[&_small]:text-xs!"
+        }
         disabled={disabled}
         onClick={() => onAdd(variant, quantityToAdd)}
         size="sm"
@@ -287,7 +291,9 @@ function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderCont
       >
         {isPackage ? (
           <span>
-            Koupit celé balení
+            Koupit celé
+            <br />
+            balení{" "}
             <small>
               ({packageQuantity.toLocaleString("cs-CZ")} {variant.unit})
             </small>
@@ -422,7 +428,7 @@ export function ProductPurchaseForm({
       {
         id: "name",
         header: "Název",
-        meta: { width: "12%" },
+        meta: { width: "auto" },
         cell: ({ row }) => {
           const label = formatVariantLabel(row.original);
 
@@ -433,7 +439,7 @@ export function ProductPurchaseForm({
                 {label}
               </strong>
               <p
-                className={`${variantListOnlyClassName} mt-(--dimension-8) text-xs font-normal text-fg-secondary`}
+                className={`${variantListOnlyClassName} mt-(--dimension-8) whitespace-nowrap text-xs font-normal text-fg-secondary`}
               >
                 Kód: {row.original.sku}
               </p>
@@ -446,7 +452,7 @@ export function ProductPurchaseForm({
         header: "Kód",
         meta: { width: "16%" },
         cell: ({ row }) => (
-          <span className="akros-variant-table__sku block whitespace-normal break-all @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal @max-akros-variant-table/akros-variants:text-fg-secondary">
+          <span className="akros-variant-table__sku block whitespace-nowrap @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal @max-akros-variant-table/akros-variants:text-fg-secondary">
             <span className="akros-variant-table__mobile-label @max-akros-variant-table/akros-variants:inline!">
               Kód:{" "}
             </span>
@@ -514,7 +520,7 @@ export function ProductPurchaseForm({
       {
         id: "quantity",
         header: "Množství",
-        meta: { align: "center", width: "47%" },
+        meta: { align: "center", width: "var(--akros-variant-table-purchase-column-width)" },
         cell: ({ row }) => {
           const item = row.original;
           const packageQuantity = item.packageQuantity ?? item.minimumQuantity;

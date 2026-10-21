@@ -6,6 +6,24 @@
 :root {
   --akros-variant-table-border-color: var(--color-base-dark);
   --akros-variant-table-button-font-size: 10px;
+  --akros-variant-table-quantity-width: var(--dimension-96);
+  --akros-variant-table-minimum-button-width: 113px;
+  --akros-variant-table-package-button-width: 128px;
+  --akros-variant-table-package-button-height: 38px;
+  --akros-variant-table-package-button-font-size: 13px;
+  --akros-variant-table-package-button-caption-font-size: var(--dimension-8);
+  --akros-variant-table-minimum-order-width: calc(
+    var(--akros-variant-table-quantity-width) + var(--akros-variant-table-minimum-button-width) +
+      var(--dimension-6) * 2
+  );
+  --akros-variant-table-package-order-width: calc(
+    var(--akros-variant-table-quantity-width) + var(--akros-variant-table-package-button-width) +
+      var(--dimension-6) * 2 + 1px
+  );
+  --akros-variant-table-purchase-column-width: calc(
+    var(--akros-variant-table-minimum-order-width) +
+      var(--akros-variant-table-package-order-width) + var(--dimension-24)
+  );
   --akros-variant-table-cell-separator-color: var(--color-border-primary);
   --akros-variant-table-header-bg: var(--color-base-dark);
   --akros-variant-table-header-fg: var(--color-base-light);
@@ -15,7 +33,10 @@
   --akros-variant-table-stock-fg: var(--color-fg-status-success);
   --akros-variant-table-compact-quantity-width: 152px;
   --akros-variant-table-compact-button-line-height: 1.2;
-  --akros-variant-table-list-order-width: 320px;
+  --akros-variant-table-list-order-width: calc(
+    var(--akros-variant-table-compact-quantity-width) + var(--dimension-8) +
+      var(--akros-variant-table-package-button-width)
+  );
   --akros-variant-table-list-columns: minmax(0, 1fr) calc(var(--dimension-96) + var(--dimension-48))
     var(--akros-variant-table-list-order-width);
 }
@@ -50,6 +71,13 @@
   --color-button-fg-secondary: var(--color-base-light);
 }
 
+.akros-variant-table__buy-button--package {
+  --height-form-control-sm: var(--akros-variant-table-package-button-height);
+  --padding-button-sm: var(--dimension-2) var(--dimension-6);
+  --text-button-sm: var(--akros-variant-table-package-button-font-size);
+  --font-weight-button: var(--font-weight-semibold);
+}
+
 /* Keep these boundaries aligned with the named container tokens above. */
 @container akros-variants (width < 1000px) {
   .akros-variant-data-table {
@@ -63,5 +91,10 @@
   .akros-variant-table__buy-button {
     --height-form-control-sm: auto;
     --padding-button-sm: var(--dimension-6);
+  }
+
+  .akros-variant-table__buy-button--package {
+    --height-form-control-sm: var(--dimension-48);
+    --padding-button-sm: var(--dimension-2) var(--dimension-6);
   }
 }
