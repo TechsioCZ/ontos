@@ -290,8 +290,8 @@ Návrhy AI agentů ze všech modulů schvaluje člověk na jednom místě: **Nas
 člověka a s jeho oprávněními; zamítnutí nic nemění. **Vrátit vše** vrátí provedené změny dávky (úkoly, ceny
 a produkty, nájmy; CRM a obchodní případy vlastním vrácením modulu). Změny, které vrátit nejde, jsou označené
 „Nelze automaticky vrátit“. Každé čtení, zápis, odmítnutí i návrh agentů je v **Nastavení › Aktivita agentů**
-(<http://localhost:3020/cs/sprava/aktivita-agentu>). Staré adresy `/cs/crm/schvalovani-ai`
-a `/cs/prodej/schvalovani-ai` přesměrují na novou stránku.
+(<http://localhost:3020/cs/sprava/aktivita-agentu>). Modulové stránky `/cs/crm/schvalovani-ai`
+a `/cs/prodej/schvalovani-ai` zůstávají v modulech; stránka Ke schválení jejich dávky zobrazuje společně s ostatními.
 
 Ukázková dávka pro Obchodní firmu (změna ceny produktu + nový úkol), z adresáře `app/`:
 

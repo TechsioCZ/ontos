@@ -17,7 +17,14 @@ export {
 } from './status-presentation.ts';
 export { TagBadge, type TagBadgeProps } from './tag-badge.tsx';
 export { Toaster } from './toaster.tsx';
-export { datePickerSegmentsClassName } from './ui-kit-classes.ts';
+export {
+  datePickerSegmentsClassName,
+  dividedListClassName,
+  dividerColorClassName,
+  sidePanelSurfaceClassName,
+  surfaceCardClassName,
+  surfaceTileClassName,
+} from './ui-kit-classes.ts';
 export {
   comboboxTranslations,
   dataTableRowLabels,

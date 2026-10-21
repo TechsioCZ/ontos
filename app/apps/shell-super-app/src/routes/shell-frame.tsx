@@ -262,6 +262,13 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
         moduleId: 'demo.crm',
       },
       {
+        entrypoints: ['demo.crm.page.ai'],
+        hrefs: ['/crm/schvalovani-ai'],
+        icon: 'icon-[mdi--robot-outline]',
+        key: 'crmAiApprovals',
+        moduleId: 'demo.crm',
+      },
+      {
         entrypoints: ['demo.sales-pipeline.page.records', 'demo.sales-pipeline.page.opportunities'],
         hrefs: ['/prodej/prilezitosti'],
         icon: 'icon-[mdi--target-account]',
@@ -295,6 +302,14 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
         icon: 'icon-[mdi--account-group-outline]',
         key: 'activities',
         moduleId: 'crm.activities',
+      },
+      {
+        // AI level C approvals of opportunity and order proposals (Obchodní firma).
+        entrypoints: ['demo.sales-pipeline.page.ai'],
+        hrefs: ['/prodej/schvalovani-ai'],
+        icon: 'icon-[mdi--robot-outline]',
+        key: 'salesAiApprovals',
+        moduleId: 'demo.sales-pipeline',
       },
       {
         entrypoints: ['demo.sales-insights.page.records', 'demo.sales-insights.page.statistics'],

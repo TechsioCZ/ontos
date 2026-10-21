@@ -3,10 +3,7 @@ import type { NotFoundError } from '@modern-js/plugin-tanstack/runtime';
 import { Effect } from 'effect';
 
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
-import {
-  agentPlatformPageByPath,
-  loadAgentPlatformPageModel,
-} from '../agent-platform/agent-platform-page-model.ts';
+import { agentPlatformPageByPath, loadAgentPlatformPageModel } from '../agent-platform/agent-platform-page-model.ts';
 import type { AgentPlatformPageModel } from '../agent-platform/agent-platform-page-model.ts';
 import { loadModulePageModel, preloadModuleTarget } from './modules/[moduleId]/module-page-model.ts';
 import type { ModuleTargetPageModel } from './modules/[moduleId]/module-page-model.ts';
@@ -49,8 +46,6 @@ export const legacyCanonicalRedirects: ReadonlyMap<string, string> = new Map([
   ['/siampark/provoz/bezpecnost', '/provoz/bezpecnost'],
   ['/siampark/provoz/dokumenty', '/provoz/dokumenty'],
   ['/provoz/ukoly', '/ukoly'],
-  ['/crm/schvalovani-ai', '/sprava/ke-schvaleni'],
-  ['/prodej/schvalovani-ai', '/sprava/ke-schvaleni'],
 ]);
 
 const redirectTo = (href: string): never => {
@@ -74,10 +69,12 @@ export const loader = ({
   if (platformPage !== undefined) {
     return loadAgentPlatformPageModel(request, platformPage);
   }
-  return browserRuntime.runPromise(
-    loadModulePageModel({ canonicalPath, request }).pipe(
-      Effect.tap((model) => preloadModuleTarget(model, new URL(request.url).pathname)),
-    ),
-    { signal: request.signal },
-  ).then((model) => requireSignedIn(request, model));
+  return browserRuntime
+    .runPromise(
+      loadModulePageModel({ canonicalPath, request }).pipe(
+        Effect.tap((model) => preloadModuleTarget(model, new URL(request.url).pathname)),
+      ),
+      { signal: request.signal },
+    )
+    .then((model) => requireSignedIn(request, model));
 };

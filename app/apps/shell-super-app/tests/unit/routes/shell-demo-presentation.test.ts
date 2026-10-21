@@ -2,7 +2,7 @@ import { expect, it } from 'effect-rstest';
 import type { ShellNavigationItem } from '../../../shared/api.ts';
 import {
   demoDisplayName,
-  hasLegacyAiApprovals,
+  hasModuleAiApprovals,
   presentableDemoNavigation,
   withAgentPlatformNavigation,
 } from '../../../src/routes/shell-demo-presentation.ts';
@@ -63,9 +63,7 @@ const crmPages = [
 ].map((href) => ({ enabled: true, href, moduleId: 'demo.crm' })) as ShellNavigationItem[];
 
 it('keeps wholesale CRM pages only in the wholesale CRM company', () => {
-  expect(presentableDemoNavigation(crmPages, false, '71000000-0000-4000-8000-000000000022')).toEqual(
-    crmPages.filter(({ href }) => href !== '/crm/schvalovani-ai'),
-  );
+  expect(presentableDemoNavigation(crmPages, false, '71000000-0000-4000-8000-000000000022')).toEqual(crmPages);
   expect(
     presentableDemoNavigation(crmPages, false, '71000000-0000-4000-8000-000000000021').map(({ href }) => href),
   ).toEqual(['/crm/klienti', '/crm/k-osloveni', '/crm/navstevy']);
@@ -81,22 +79,23 @@ it.each([
   expect(demoDisplayName({ displayName, email })).toBe(expected);
 });
 
-it.each(['71000000-0000-4000-8000-000000000022', '71000000-0000-4000-8000-000000000020', undefined])(
-  'removes per-module AI approval pages in every company (legal entity: %s)',
-  (legalEntityId) => {
-    const legacy = [
-      { href: '/prodej/schvalovani-ai', moduleId: 'demo.sales-pipeline' },
-      { href: '/crm/schvalovani-ai', moduleId: 'demo.crm' },
-      { href: '/crm/klienti', moduleId: 'demo.crm' },
-    ] as ShellNavigationItem[];
-    expect(presentableDemoNavigation(legacy, true, legalEntityId).map(({ href }) => href)).toEqual(['/crm/klienti']);
-  },
-);
+it.each([
+  ['71000000-0000-4000-8000-000000000022', ['/crm/schvalovani-ai', '/crm/klienti']],
+  ['71000000-0000-4000-8000-000000000020', ['/prodej/schvalovani-ai', '/crm/klienti']],
+  ['71000000-0000-4000-8000-000000000021', ['/crm/klienti']],
+])('keeps in-module AI approval pages where the company has the agent (legal entity: %s)', (legalEntityId, hrefs) => {
+  const pages = [
+    { href: '/prodej/schvalovani-ai', moduleId: 'demo.sales-pipeline' },
+    { href: '/crm/schvalovani-ai', moduleId: 'demo.crm' },
+    { href: '/crm/klienti', moduleId: 'demo.crm' },
+  ] as ShellNavigationItem[];
+  expect(presentableDemoNavigation(pages, true, legalEntityId).map(({ href }) => href)).toEqual(hrefs);
+});
 
-it('detects legacy AI approval pages', () => {
-  expect(hasLegacyAiApprovals([{ href: '/prodej/schvalovani-ai' }] as ShellNavigationItem[])).toBe(true);
-  expect(hasLegacyAiApprovals([{ href: '/crm/schvalovani-ai' }] as ShellNavigationItem[])).toBe(true);
-  expect(hasLegacyAiApprovals(navigation)).toBe(false);
+it('detects in-module AI approval pages', () => {
+  expect(hasModuleAiApprovals([{ href: '/prodej/schvalovani-ai' }] as ShellNavigationItem[])).toBe(true);
+  expect(hasModuleAiApprovals([{ href: '/crm/schvalovani-ai' }] as ShellNavigationItem[])).toBe(true);
+  expect(hasModuleAiApprovals(navigation)).toBe(false);
 });
 
 it('appends the platform approval pages only when shown', () => {

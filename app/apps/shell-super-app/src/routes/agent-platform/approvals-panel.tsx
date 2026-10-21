@@ -10,6 +10,16 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { decideAgentItems, formatAgentTime, loadAgentQueue, revertAgentBatch } from './agent-platform-client.ts';
 
+/** In-module AI approval pages that keep showing their own batches next to this platform page. */
+const moduleApprovalPage: Readonly<Record<string, { readonly label: string; readonly path: string }>> = {
+  crm: { label: 'Otevřít v CRM', path: '/crm/schvalovani-ai' },
+  merchandise: { label: 'Otevřít v Prodeji', path: '/prodej/schvalovani-ai' },
+  'sales-pipeline': { label: 'Otevřít v Prodeji', path: '/prodej/schvalovani-ai' },
+};
+
+const moduleApprovalPageFor = (batch: AgentQueueBatch) =>
+  batch.source === 'legacy' ? moduleApprovalPage[batch.key.split(':')[1] ?? ''] : undefined;
+
 type Decision = 'approve' | 'reject';
 type QueueState =
   | { readonly status: 'loading' }
@@ -42,9 +52,7 @@ const ChangeCard = ({
         <p className="text-fg-secondary text-sm">{item.targetLabel}</p>
       </div>
       <div className="ai-review-actions">
-        <Badge
-          variant={item.status === 'pending' ? 'warning' : item.status === 'applied' ? 'success' : 'secondary'}
-        >
+        <Badge variant={item.status === 'pending' ? 'warning' : item.status === 'applied' ? 'success' : 'secondary'}>
           {agentItemStatusLabel[item.status]}
         </Badge>
         <span className="text-fg-secondary text-xs">{agentRiskLabel[item.risk]}</span>
@@ -135,6 +143,7 @@ const BatchCard = ({
   const applied = batch.items.filter((item) => item.status === 'applied');
   const trimmedNote = note.trim();
   const decide = (keys: readonly string[], decision: Decision) => onDecide(batch, keys, decision, trimmedNote);
+  const modulePage = moduleApprovalPageFor(batch);
   const badge =
     batch.revertedAt !== undefined
       ? { label: 'Dávka vrácena', variant: 'secondary' as const }
@@ -156,6 +165,11 @@ const BatchCard = ({
                   {label}
                 </Badge>
               ))}
+              {modulePage !== undefined && (
+                <LinkButton as={LocalizedLink} size="sm" to={modulePage.path} variant="secondary">
+                  {modulePage.label}
+                </LinkButton>
+              )}
             </div>
           </div>
           <Badge variant={badge.variant}>{badge.label}</Badge>
@@ -170,12 +184,26 @@ const BatchCard = ({
               placeholder="Např. ověřeno s obchodníkem"
             />
             <div className="ai-review-actions">
-              <Button disabled={busy} onClick={() => decide(decidable.map((item) => item.key), 'approve')} size="sm">
+              <Button
+                disabled={busy}
+                onClick={() =>
+                  decide(
+                    decidable.map((item) => item.key),
+                    'approve',
+                  )
+                }
+                size="sm"
+              >
                 {`Schválit dávku (${decidable.length})`}
               </Button>
               <Button
                 disabled={busy}
-                onClick={() => decide(decidable.map((item) => item.key), 'reject')}
+                onClick={() =>
+                  decide(
+                    decidable.map((item) => item.key),
+                    'reject',
+                  )
+                }
                 size="sm"
                 theme="outlined"
                 variant="secondary"
@@ -297,9 +325,7 @@ export const ApprovalsPanel = () => {
   const onRevert = (batch: AgentQueueBatch, note: string) => {
     setBusy(true);
     void revertAgentBatch({ batchKey: batch.key, ...(note === '' ? {} : { note }) }).then((result) => {
-      finish(
-        result.status === 'ok' ? result.value.message : 'Dávku se nepodařilo vrátit. Zkuste to prosím znovu.',
-      );
+      finish(result.status === 'ok' ? result.value.message : 'Dávku se nepodařilo vrátit. Zkuste to prosím znovu.');
     });
   };
 

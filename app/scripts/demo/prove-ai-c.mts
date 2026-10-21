@@ -158,18 +158,8 @@ const mcp = await startMcp('C');
 const runId = `proof-c-${randomUUID()}`;
 try {
   const tools = await mcp.tools();
-  const legacyTools = tools.filter((name) => !name.startsWith('ontos_') && !name.includes('__'));
-  assert.deepEqual(legacyTools, ['list_crm', 'propose_crm_changes', 'whoami']);
-  for (const name of ['ontos_describe', 'ontos_execute', 'ontos_list_capabilities', 'ontos_read']) {
-    assert.ok(tools.includes(name), `chybí ${name}`);
-  }
-  const typedWrites = tools.filter((name) => name.includes('__') && !name.includes('__read_'));
-  assert.ok(typedWrites.length > 0 && typedWrites.every((name) => name.startsWith('crm__')), typedWrites.join(', '));
-  assert.ok(!typedWrites.some((name) => /ai_decide_changes|ai_revert_batch|archive_client/u.test(name)), typedWrites.join(', '));
-  pass('MCP C nabízí čtení, návrhy a obecné nástroje; žádné schvalování, vracení ani přímý zápis');
-  const capabilities = await mcp.call('ontos_list_capabilities');
-  assert.equal((capabilities.value as { writePolicy?: string }).writePolicy, 'approval', JSON.stringify(capabilities.value));
-  pass('Zásada zápisu C: jen přes schválení');
+  assert.deepEqual(tools, ['list_crm', 'propose_crm_changes', 'whoami']);
+  pass('MCP C nabízí jen čtení CRM a návrhy (nikoli přímý zápis ani schválení)');
   const identity = await mcp.call('whoami');
   assert.equal(identity.isError, false, JSON.stringify(identity.value));
   pass('Identita C / Hanák a gateway CRM fungují');
@@ -257,14 +247,8 @@ try {
   );
   pass('Vrátit vše obnovilo přesný původní záznam; deník má autora, čas i výsledek každého kroku');
   // A rejected item remains a recorded human decision without changing data.
-  const rejected = await mcp.call('ontos_execute', {
-    id: 'demo.crm/command/UpdateClient',
-    input: { id: client.id, patch: { phone } },
-    reason: 'Telefon ověřen při dnešním hovoru s klientem',
-    idempotencyKey: `${runId}-reject`,
-  });
-  assert.equal(rejected.isError, false, JSON.stringify(rejected.value));
-  assert.equal((rejected.value as { status?: string }).status, 'proposed', JSON.stringify(rejected.value));
+  const rejected = await mcp.call('propose_crm_changes', { ...proposalArgs, runId: `${runId}-reject` });
+  assert.equal(rejected.isError, false);
   current = await read();
   const rejectedBatch = current.state.aiChanges.batches.find(
     (entry: { runId: string }) => entry.runId === `${runId}-reject`,
@@ -281,7 +265,7 @@ try {
     current.state.clients.items.find((entry: { id: string }) => entry.id === client.id),
     client,
   );
-  pass('Obecný nástroj ontos_execute uložil jen návrh; zamítnutí nic nemění a zůstává v historii');
+  pass('Zamítnutí položky nic nemění a zůstává v historii');
   console.log('VŠE PROŠLO / ALL PASS — AI level C');
 } finally {
   try {

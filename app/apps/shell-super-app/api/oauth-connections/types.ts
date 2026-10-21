@@ -56,8 +56,24 @@ export interface GrantListFilter {
   readonly actingPrincipalId?: string;
   readonly clientId?: string;
   readonly legalEntityId?: string;
-  readonly status?: ConnectionGrantStatus;
+  /** Empty or absent = every status except `draft`. */
+  readonly statuses?: readonly ConnectionGrantStatus[];
   readonly tenantId: string;
   readonly userId?: string;
   readonly userPrincipalId?: string;
 }
+
+/** Insert shape of a draft grant (status `draft`, no binding yet). */
+export type NewDraftGrant = Omit<
+  GrantRow,
+  | 'authBindingId'
+  | 'consentId'
+  | 'consentedAt'
+  | 'createdAt'
+  | 'grantId'
+  | 'lastUsedAt'
+  | 'revokeReason'
+  | 'revokedAt'
+  | 'revokedByPrincipalId'
+  | 'status'
+>;
