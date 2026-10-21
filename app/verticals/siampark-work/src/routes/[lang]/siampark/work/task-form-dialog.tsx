@@ -22,7 +22,7 @@ import {
 import { TaskContextPickers } from './task-context-pickers.tsx';
 import type { ContextRef, LookupAccess, Task, WorkProject } from '../../../../../shared/apis/records.ts';
 import { isClosedTaskState } from '../../../../../shared/actions/task-transitions.ts';
-import { earliestDueDate, isPlausibleDueDate, latestDueDate } from '../../../../../shared/actions/apply-command.ts';
+import { isPlausibleDueDate } from '../../../../../shared/actions/apply-command.ts';
 import { customerOptionItems, opportunityOptionItems, selectOption, taskContextHref } from './tasks-model.ts';
 import type { CustomerOption, OpportunityOption } from './tasks-model.ts';
 
@@ -149,12 +149,10 @@ const validate = (
 });
 
 /** Calendar value for the date picker. `YYYY-MM-DD` strings are the form's storage format. */
-const fromIsoDate = (isoDate: string) =>
-  new CalendarDate(Number(isoDate.slice(0, 4)), Number(isoDate.slice(5, 7)), Number(isoDate.slice(8, 10)));
-const toCalendarDate = (isoDate: string | undefined) => (isoDate === undefined ? null : fromIsoDate(isoDate));
-/** The calendar cannot pick a day outside the years the command accepts. */
-const dueDateMin = fromIsoDate(earliestDueDate);
-const dueDateMax = fromIsoDate(latestDueDate);
+const toCalendarDate = (isoDate: string | undefined) =>
+  isoDate === undefined
+    ? null
+    : new CalendarDate(Number(isoDate.slice(0, 4)), Number(isoDate.slice(5, 7)), Number(isoDate.slice(8, 10)));
 
 /**
  * The calendar is portalled to <body>, outside the drawer. Its content has no z-index of its own, so it would sit
@@ -671,8 +669,8 @@ export const TaskFormDialog = ({
               disabled={fieldsDisabled}
               invalid={dueDateMessage !== undefined}
               locale="cs-CZ"
-              max={dueDateMax}
-              min={dueDateMin}
+              // No min/max here: the picker would show a clamped year (2000) while keeping the typed 0026, so the
+              // field shows what was typed and the form explains the allowed years instead.
               onOpenChange={onListOpenChange}
               onValueChange={(details) => set({ dueDate: details.value === null ? undefined : details.valueAsString })}
               shouldForceLeadingZeros
