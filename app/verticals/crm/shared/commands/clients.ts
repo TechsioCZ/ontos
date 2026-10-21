@@ -119,20 +119,30 @@ const requireSalesperson = (salespeople: readonly { id: string; active: boolean 
     ? Effect.void
     : invalid('Obchodník neexistuje nebo není aktivní');
 
+const icoOf = (regNo: string | undefined) => (regNo ?? '').replaceAll(/\s+/gu, '');
+
 /**
- * The verified registry link for a command's partyRef. One Party is one CRM client: a second client for the same
- * Party would be the parallel customer record CRM.md §3 forbids, so it is refused instead of silently merged.
+ * The verified registry link for a command's partyRef. A Party belongs to one CRM client unless the clients carry
+ * the same IČO: then they are one organization entered twice and share its registry identity (no new parallel
+ * identity). Any other second client for the same Party is refused instead of silently merged (CRM.md §3, l.210).
  */
-const verifiedPartyRef = (state: CrmState, context: CommandContext, input: PartyLinkInput, clientId?: string) =>
+const verifiedPartyRef = (
+  state: CrmState,
+  context: CommandContext,
+  input: PartyLinkInput,
+  subject: { readonly id?: string; readonly regNo?: string | undefined },
+) =>
   Effect.gen(function* verifiedParty() {
     const verified = context.verifiedParties?.get(input.counterpartyId);
     if (verified === undefined || verified.partyId !== input.partyId) {
       return yield* invalid('Vazbu na Party Registry se nepodařilo ověřit; vyberte zákazníka z registru znovu');
     }
+    const ico = icoOf(subject.regNo);
     const holder = state.clients.items.find(
       (entry) =>
-        entry.id !== clientId &&
-        (entry.partyRef?.counterpartyId === input.counterpartyId || entry.partyRef?.partyId === input.partyId),
+        entry.id !== subject.id &&
+        (entry.partyRef?.counterpartyId === input.counterpartyId || entry.partyRef?.partyId === input.partyId) &&
+        (ico === '' || icoOf(entry.regNo) !== ico),
     );
     if (holder !== undefined) {
       return yield* conflict(
@@ -278,7 +288,11 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
         }
         const id = newId(context, 'client');
         const partyRef =
-          value.partyRef === undefined ? undefined : yield* verifiedPartyRef(state, context, value.partyRef);
+          value.partyRef === undefined
+            ? undefined
+            : yield* verifiedPartyRef(state, context, value.partyRef, {
+                regNo: value.kind === 'organization' ? value.regNo : undefined,
+              });
         const client: Client = {
           ...(partyRef === undefined ? {} : { partyRef }),
           ...definedOnly({
@@ -491,7 +505,7 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
         if (client.partyRef?.counterpartyId !== undefined && !context.viewer.writeAll) {
           return yield* denied('Změnit vazbu na Party Registry smí jen správce nebo vedoucí obchodu');
         }
-        const partyRef = yield* verifiedPartyRef(state, context, value.partyRef, client.id);
+        const partyRef = yield* verifiedPartyRef(state, context, value.partyRef, client);
         return { entityIds: [client.id], state: withPartyRef(state, client, partyRef, context, 'party') };
       }),
     ),

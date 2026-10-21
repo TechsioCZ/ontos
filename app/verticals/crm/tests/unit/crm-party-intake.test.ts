@@ -8,7 +8,7 @@ import { dispatchCrmCommand } from '../../shared/commands/index.ts';
 import type { CrmViewer } from '../../shared/domain/access.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
 import { initialCrmState } from '../../shared/domain/state.ts';
-import { matchingRegistryCustomer, validIco } from '../../src/services/party-intake.ts';
+import { ambiguousCaseDecision, matchingRegistryCustomer, validIco } from '../../src/services/party-intake.ts';
 
 const at = '2026-10-21T08:00:00.000Z';
 const client = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -127,7 +127,77 @@ describe('Party Registry intake (CRM.md §3, C04)', () => {
     expect(matchingRegistryCustomer({ name: 'x', regNo: '27082440' }, customers, new Set())?.counterpartyId).toBe('c1');
     expect(matchingRegistryCustomer({ name: 'bistro u magnolie  s.r.o.', regNo: undefined }, customers, new Set())?.counterpartyId).toBe('c2');
     expect(matchingRegistryCustomer({ name: 'Bistro U Magnólie s.r.o.', regNo: undefined }, customers, new Set(['c2']))).toBeUndefined();
+    // The same IČO is the same organization even when another CRM client holds that customer.
+    expect(matchingRegistryCustomer({ name: 'Alza 2', regNo: '270 82 440' }, customers, new Set(['c1', 'p1']))?.counterpartyId).toBe('c1');
+    // An IČO never falls back to a name match.
+    expect(matchingRegistryCustomer({ name: 'Bistro U Magnólie s.r.o.', regNo: '25596641' }, customers, new Set())).toBeUndefined();
     expect(validIco('27082440')).toBe(true);
     expect(validIco('12345678')).toBe(false);
+  });
+
+  describe('duplicate client (same name as an existing client) still ends with a registry identity', () => {
+    const existing = linked('x', 'cp-x', 'party-x');
+    const dupState = (regNoExisting: string | undefined, regNoDuplicate: string | undefined): CrmState => ({
+      ...base,
+      clients: {
+        ...base.clients,
+        items: [
+          { ...existing, name: 'Pekárna Novák s.r.o.', ...(regNoExisting === undefined ? {} : { regNo: regNoExisting }) },
+          client('dup', { name: 'Pekárna Novák s.r.o.', ownerSalespersonId: 'a', ...(regNoDuplicate === undefined ? {} : { regNo: regNoDuplicate }) }),
+        ],
+      },
+    });
+    const customers = [
+      { companyId: '27082440', counterpartyId: 'cp-x', displayName: 'Pekárna Novák s.r.o.', partyId: 'party-x', status: 'ACTIVE' },
+    ];
+    const taken = new Set(['cp-x', 'party-x']);
+
+    it('same IČO: the intake reuses the existing Party and the CRM stores the shared link', () => {
+      const state = dupState('27082440', '27082440');
+      const match = matchingRegistryCustomer({ name: 'Pekárna Novák s.r.o.', regNo: '27082440' }, customers, taken);
+      expect(match?.partyId).toBe('party-x');
+      const exit = run(
+        state,
+        { _tag: 'LinkClientParty', clientId: 'dup', partyRef: { counterpartyId: 'cp-x', partyId: 'party-x' } },
+        intake,
+        new Map([['cp-x', { counterpartyId: 'cp-x', displayName: 'Pekárna Novák s.r.o.', partyId: 'party-x' }]]),
+      );
+      expect(Exit.isSuccess(exit)).toBe(true);
+      if (Exit.isSuccess(exit)) {
+        const items = exit.value.state.clients.items;
+        expect(items.filter((entry) => entry.status === 'active').every((entry) => entry.partyRef !== undefined)).toBe(true);
+        expect(items.find((entry) => entry.id === 'dup')?.partyRef?.partyId).toBe('party-x');
+      }
+    });
+
+    it('same name without IČO (or another IČO): no reuse, the lookalike case becomes a new Party that links', () => {
+      expect(matchingRegistryCustomer({ name: 'Pekárna Novák s.r.o.', regNo: undefined }, customers, taken)).toBeUndefined();
+      expect(matchingRegistryCustomer({ name: 'Pekárna Novák s.r.o.', regNo: '25596641' }, customers, taken)).toBeUndefined();
+      // The registry raises a duplicate case on the lookalike name only -> resolved as CREATE_NEW, not a review.
+      expect(ambiguousCaseDecision({ evaluatedEvidence: [{}], lifecycleState: 'OPEN' })).toBe('create');
+      expect(ambiguousCaseDecision({ evaluatedEvidence: [{ identifierType: 'ICO' }], lifecycleState: 'OPEN' })).toBe('review');
+      expect(ambiguousCaseDecision({ evaluatedEvidence: [], lifecycleState: 'RESOLVED' })).toBe('review');
+      const verified = new Map([['cp-new', { counterpartyId: 'cp-new', displayName: 'Pekárna Novák s.r.o.', partyId: 'party-new' }]]);
+      for (const regNo of [undefined, '25596641']) {
+        const exit = run(
+          dupState('27082440', regNo),
+          { _tag: 'LinkClientParty', clientId: 'dup', partyRef: { counterpartyId: 'cp-new', partyId: 'party-new' } },
+          intake,
+          verified,
+        );
+        expect(Exit.isSuccess(exit) && exit.value.state.clients.items.every((entry) => entry.partyRef !== undefined)).toBe(true);
+        // Sharing the existing client's Party is still refused without the same IČO.
+        expect(
+          Exit.isFailure(
+            run(
+              dupState('27082440', regNo),
+              { _tag: 'LinkClientParty', clientId: 'dup', partyRef: { counterpartyId: 'cp-x', partyId: 'party-x' } },
+              intake,
+              new Map([['cp-x', { counterpartyId: 'cp-x', partyId: 'party-x' }]]),
+            ),
+          ),
+        ).toBe(true);
+      }
+    });
   });
 });

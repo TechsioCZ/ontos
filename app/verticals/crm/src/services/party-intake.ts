@@ -115,24 +115,49 @@ export interface RegistryCustomer {
   readonly status: string;
 }
 
+/** IČO without inner whitespace ("270 82 440" = "27082440"); empty = none. */
+export const normalizedIco = (value: string | null | undefined) => (value ?? '').replaceAll(/\s+/gu, '');
+
 /**
- * The current registry customer this client already is: the same IČO, or (without IČO) the same name. Customers
- * already linked to another CRM client are skipped (one Party is one CRM client).
+ * The current registry customer this client already is. The same IČO proves the same organization, so that
+ * customer is reused even when another CRM client (a duplicate entry) already holds it. Without IČO only the same
+ * name matches, and never a customer another CRM client holds: a lookalike name alone is no evidence (CRM.md l.210),
+ * such a client gets its own Party.
  */
 export const matchingRegistryCustomer = (
   client: Pick<IntakeClient, 'name' | 'regNo'>,
   customers: readonly RegistryCustomer[],
   taken: ReadonlySet<string>,
-) =>
-  customers.find(
-    (customer) =>
-      customer.status === 'ACTIVE' &&
+) => {
+  const ico = normalizedIco(client.regNo);
+  return customers.find((customer) => {
+    if (customer.status !== 'ACTIVE') {
+      return false;
+    }
+    if (ico !== '') {
+      return normalizedIco(customer.companyId) === ico;
+    }
+    return (
       !taken.has(customer.counterpartyId) &&
       !taken.has(customer.partyId) &&
-      (client.regNo === undefined || client.regNo.trim() === ''
-        ? customer.displayName !== null && fold(customer.displayName) === fold(client.name)
-        : customer.companyId !== null && customer.companyId.replaceAll(/\s+/gu, '') === client.regNo.trim()),
-  );
+      customer.displayName !== null &&
+      fold(customer.displayName) === fold(client.name)
+    );
+  });
+};
+
+/**
+ * What the intake does with an OPEN registry duplicate case raised by its Create. Candidates found only by weak
+ * evidence (a lookalike name or contact) are not the same subject: the case is resolved as a NEW Party, never merged
+ * (C01-02). A candidate proven by an official identifier (IČO / DIČ) needs an identity reviewer.
+ */
+export const ambiguousCaseDecision = (detail: {
+  readonly evaluatedEvidence: readonly { readonly identifierType?: string | undefined }[];
+  readonly lifecycleState: string;
+}): 'create' | 'review' =>
+  detail.lifecycleState === 'OPEN' && detail.evaluatedEvidence.every((entry) => entry.identifierType === undefined)
+    ? 'create'
+    : 'review';
 
 const GatewayContextSchema = Schema.Struct({
   apiBaseUrl: Schema.String,
@@ -302,8 +327,9 @@ export const makePartyIntake = (scope: {
         correlationId,
         second.options,
       ).pipe(Effect.mapError(registryDown));
-      // A lookalike Party exists: an identity reviewer decides; never merged automatically (C01-02).
-      if (detail.lifecycleState !== 'OPEN' || detail.candidateParties.length > 0) {
+      // Only lookalikes (e.g. a client with the same name): a distinct new Party, never merged (C01-02).
+      // An official-identifier candidate waits for an identity reviewer.
+      if (ambiguousCaseDecision(detail) === 'review') {
         return Option.none<VerifiedParty>();
       }
       const third = yield* assertion(REGISTRY);
@@ -311,7 +337,7 @@ export const makePartyIntake = (scope: {
         {
           caseRef: created.caseRef,
           expectedRevision: detail.revision,
-          reason: 'New CRM client; the duplicate case lists no candidate Party',
+          reason: 'New CRM client; the candidate Parties share only a lookalike name or contact, no official identifier',
         },
         third.credential,
         { ...third.options, correlationId, idempotencyKey: `${operationKey}:resolve-create` },
@@ -480,14 +506,32 @@ export const makePartyIntake = (scope: {
     const outcome = { linked: 0, review: 0 };
     for (const client of targets) {
       const operationKey = `crm-intake:${correlationId}:${client.id}`.slice(0, 180);
-      const verified = yield* identify(client, taken, operationKey);
-      if (Option.isNone(verified)) {
+      // One client's refused registry step must not leave the remaining clients without identity.
+      const linkedRevision = yield* identify(client, taken, operationKey).pipe(
+        Effect.flatMap((verified) =>
+          Option.isNone(verified)
+            ? Effect.succeed(Option.none<number>())
+            : linkClient(client.id, verified.value, revision, operationKey).pipe(
+                Effect.tap(() =>
+                  Effect.sync(() => {
+                    taken.add(verified.value.counterpartyId);
+                    taken.add(verified.value.partyId);
+                  }),
+                ),
+                Effect.asSome,
+              ),
+        ),
+        Effect.catch((error) =>
+          Effect.logWarning('CRM Party Registry intake skipped a client', client.id, error).pipe(
+            Effect.as(Option.none<number>()),
+          ),
+        ),
+      );
+      if (Option.isNone(linkedRevision)) {
         outcome.review += 1;
         continue;
       }
-      revision = yield* linkClient(client.id, verified.value, revision, operationKey);
-      taken.add(verified.value.counterpartyId);
-      taken.add(verified.value.partyId);
+      revision = linkedRevision.value;
       outcome.linked += 1;
     }
     return outcome;

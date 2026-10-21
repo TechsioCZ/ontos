@@ -164,7 +164,9 @@ export const linkTargetClientId = (clients: readonly PartyHolder[], link: Custom
   if (counterpartyId === undefined) {
     return link.clientId;
   }
-  return clients.find((client) => client.partyRef?.counterpartyId === counterpartyId)?.id ?? link.clientId;
+  // Clients with the same IČO may share a Counterparty: the link's own client keeps its orders while it holds it.
+  const holders = clients.filter((client) => client.partyRef?.counterpartyId === counterpartyId);
+  return (holders.find((client) => client.id === link.clientId) ?? holders[0])?.id ?? link.clientId;
 };
 
 export const PairingChangeSchema = Schema.Struct({

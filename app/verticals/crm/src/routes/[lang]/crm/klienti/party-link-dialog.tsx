@@ -58,12 +58,18 @@ export const PartyLinkDialog = ({
     );
   }, []);
 
-  // A Party already linked to another CRM client is not offered again (one Party = one CRM client).
+  // A Party already linked to another CRM client is not offered again, unless that client has the same IČO
+  // (the same organization entered twice shares its registry identity).
   const taken = useMemo(
     () =>
       new Set(
         records.state.clients.items
-          .filter((entry) => entry.id !== client.id)
+          .filter(
+            (entry) =>
+              entry.id !== client.id &&
+              ((client.regNo ?? '').trim() === '' ||
+                (entry.regNo ?? '').replaceAll(/\s+/gu, '') !== (client.regNo ?? '').replaceAll(/\s+/gu, '')),
+          )
           .flatMap((entry) => (entry.partyRef?.counterpartyId === undefined ? [] : [entry.partyRef.counterpartyId])),
       ),
     [client.id, records],
