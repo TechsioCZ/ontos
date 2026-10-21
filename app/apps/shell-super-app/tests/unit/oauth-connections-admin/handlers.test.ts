@@ -425,4 +425,3 @@ it.effect('revokes the delegated connection of a removed operator', () =>
     expect(calls.operatorReplacements[0]?.operatorPrincipalIds).toEqual(['person-2']);
   }),
 );
-

@@ -187,4 +187,3 @@ export const replaceAgentOperators = <R>(
       revokedConnections: affected.length,
     };
   });
-

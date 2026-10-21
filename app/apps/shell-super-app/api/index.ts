@@ -2210,7 +2210,12 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
           }
           const caller = yield* agentPlatformSessionCaller(request);
           const deps = yield* connectionsAdminDeps;
-          const response = yield* manageAgentEntity(caller, payload, { correlationId: correlationFromRequest(request), idempotencyKey }, deps).pipe(Effect.catch(connectionsAdminFailure));
+          const response = yield* manageAgentEntity(
+            caller,
+            payload,
+            { correlationId: correlationFromRequest(request), idempotencyKey },
+            deps,
+          ).pipe(Effect.catch(connectionsAdminFailure));
           return response;
         }).pipe(connectionsAdminDefect(request)),
       )
