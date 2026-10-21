@@ -83,14 +83,29 @@ Nothing is simulated: e-mails really go over SMTP. In the demo the SMTP server i
 
 What is sent, exactly once per event (after the database commit, by `scripts/demo/email-dispatcher/main.mts`):
 
-- AKROS e-shop orders (channel STOREFRONT): order received, then the status changes Potvrzená
-  (Zpracovává se), Předáno dopravci (for Osobní odběr: „připravena k vyzvednutí“), Dokončená and Stornovaná.
+- AKROS e-shop orders (channel STOREFRONT): order received, then the status changes Zpracovává se
+  (same label as staff app and storefront), Předáno dopravci (for Osobní odběr: „připravena k vyzvednutí“), Dokončená and Stornovaná.
   Only orders created after the dispatcher's first start (`demo_email.settings.enabled_since`) get e-mails, so
   old fixtures are never mailed. Customer e-mails carry no „(simulace)“ markers; their DEMO footer says that no
   goods are shipped.
 - Payment reminders („Připravit upomínku“ → „Odeslat e-mailem“ in Faktury a finance) of every company that
   uses the finance module. Each reminder goes out in the name of the company that issued the invoice (header,
   subject, footer and sender: Siampark → Siampark, Obchodní firma → Obchodní firma).
+- Siampark agenda notifications (Provoz → Agenda) for people who switched on „Posílat upozornění i e-mailem“ in
+  Nastavení upozornění: Přiřazeno vám and Po termínu always, Blíží se termín and Změna only when chosen. Only
+  notifications created after e-mail was switched on, one e-mail per delivery batch, to the person's sign-in
+  address; the notification centre shows „odesláno e-mailem“ per notification (receipts only for one's own).
+
+No provider configured (`EMAIL_PROVIDER=none`): the dispatcher sends nothing and `GET /v1/provider` returns
+`{"configured":false}`. The reminder dialog then says „Odeslání e-mailem není dostupné“, disables „Odeslat
+e-mailem“ and offers only „Kopírovat text“ / „Stáhnout návrh“ (nothing is recorded); the agenda settings say
+„E-mail není nastaven“. To show it: `EMAIL_PROVIDER=none scripts/demo/email-dispatcher/restart.sh`, then
+`scripts/demo/email-dispatcher/restart.sh` again to switch e-mail back on.
+
+Presentable Mailpit inbox after test runs: `node --env-file=.env scripts/demo/email-dispatcher/tidy-inbox.mts`
+(dry run) and `… --apply` deletes only messages about removed (soft-deleted) AKROS orders and messages to
+test/audit addresses (`*.invalid`, `*.test`, `*audit*`, `*critic*`, `*fixer*`, `*test*@…`); the ledger and the
+domain data stay untouched.
 
 The dispatcher claims each e-mail in its own ledger `demo_email.deliveries` (primary key = dedupe key) before
 sending. SMTP unreachable before any data was sent → `RETRY` with backoff (10 s, 20 s, 40 s, then every 60 s,
@@ -117,6 +132,9 @@ Who may read receipts (`GET /v1/deliveries`, never addresses or bodies):
 | `AKROS_EMAIL_FROM` | `AKROS e-shop <eshop@akros.demo>` | Sender of AKROS order e-mails |
 | `SIAMPARK_EMAIL_FROM` | `Siampark – finanční oddělení <finance@siampark.demo>` | Sender of Siampark payment reminders |
 | `OBCHODNI_FIRMA_EMAIL_FROM` | `Obchodní firma – účtárna <ucetni@demo.ontos>` | Sender of Obchodní firma payment reminders |
+| `EMAIL_PROVIDER` | `smtp` | `none` = no e-mail provider configured: nothing is sent, the UI offers only copy/download |
+| `SIAMPARK_AGENDA_EMAIL_FROM` | `Siampark – upozornění <provoz@siampark.demo>` | Sender of Siampark agenda notifications |
+| `ONTOS_PUBLIC_URL` | `http://localhost:3020` | Links to the staff app in agenda e-mails |
 | `EMAIL_DISPATCHER_SESSION_URL` | `http://127.0.0.1:3020/shell-super-app-api/auth/session` | Shell session check for staff receipt reads |
 | `AKROS_STOREFRONT_PUBLIC_URL` | `http://localhost:3070` | Link in AKROS e-mails |
 | `EMAIL_DISPATCHER_PORT` | `3096` | Receipts API (127.0.0.1 only) |

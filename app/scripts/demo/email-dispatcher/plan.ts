@@ -1,7 +1,8 @@
 // @effect-diagnostics *:off
-import type { AkrosOrderInput, DeliveryOutcome, PlannedEmail, SiamparkReminderInput } from './contract.ts';
+import type { AgendaRecipientInput, AkrosOrderInput, DeliveryOutcome, PlannedEmail, SiamparkReminderInput } from './contract.ts';
+import { AGENDA_MANDATORY_EMAIL_CATEGORIES, AGENDA_OPTIONAL_EMAIL_CATEGORIES } from './contract.ts';
 import type { AkrosOrderEmailEvent } from './templates.ts';
-import { akrosOrderEmail, orderEventLabel, siamparkReminderEmail } from './templates.ts';
+import { agendaNotificationEmail, akrosOrderEmail, orderEventLabel, siamparkReminderEmail } from './templates.ts';
 
 export interface OrderEmailEvent {
   readonly at: string;
@@ -117,6 +118,48 @@ export const planSiamparkReminderEmail = (input: SiamparkReminderInput, enabledS
     legalEntityId: input.legalEntityId,
     ...siamparkReminderEmail(input),
   };
+};
+
+/**
+ * Agenda e-mails of one person: only with e-mail switched on, only notifications created after it was switched on (and
+ * after the dispatcher's first start), mandatory categories always, optional ones only when chosen. Older preference
+ * rows without `emailCategories` get every optional category. One e-mail per delivery batch (same createdAt).
+ */
+export const planAgendaEmails = (
+  input: AgendaRecipientInput,
+  options: { readonly appUrl: string; readonly enabledSince: string },
+): readonly PlannedEmail[] => {
+  const recipient = input.email?.trim() ?? '';
+  if (!input.preference.emailOptIn || recipient === '') return [];
+  const since = Math.max(
+    Date.parse(options.enabledSince),
+    Date.parse(input.preference.emailSince ?? input.preference.updatedAt),
+  );
+  const optional = input.preference.emailCategories ?? AGENDA_OPTIONAL_EMAIL_CATEGORIES;
+  const wanted = new Set([...AGENDA_MANDATORY_EMAIL_CATEGORIES, ...optional]);
+  const batches = new Map<string, AgendaRecipientInput['notifications'][number][]>();
+  for (const notification of input.notifications) {
+    if (!wanted.has(notification.category) || Date.parse(notification.createdAt) < since) continue;
+    const batch = batches.get(notification.createdAt) ?? [];
+    batch.push(notification);
+    batches.set(notification.createdAt, batch);
+  }
+  return [...batches.entries()].map(([createdAt, notifications]): PlannedEmail => {
+    const subjectId = `${input.principalId}:${createdAt}`;
+    return {
+      dedupeKey: `siampark-agenda:${subjectId}`,
+      event: 'AGENDA_NOTIFICATION',
+      eventAt: createdAt,
+      eventLabel: notifications.length === 1 ? 'Upozornění z agendy' : `Upozornění z agendy (${notifications.length})`,
+      legalEntityId: input.legalEntityId,
+      recipient,
+      source: 'siampark-agenda',
+      subjectId,
+      subjectNumber: '',
+      tenantId: input.tenantId,
+      ...agendaNotificationEmail({ appUrl: options.appUrl, legalName: input.legalName, notifications }),
+    };
+  });
 };
 
 export const deliveryOutcomeOf = (error: { readonly _tag: string }): DeliveryOutcome => {

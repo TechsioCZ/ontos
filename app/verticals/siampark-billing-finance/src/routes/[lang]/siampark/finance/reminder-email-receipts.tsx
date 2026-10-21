@@ -13,6 +13,41 @@ export type ReminderEmailReceipts =
 
 const dispatcherBaseUrl = () => `${window.location.protocol}//${window.location.hostname}:3096`;
 
+/** GET /v1/provider of the dispatcher (copied from app/scripts/demo/email-dispatcher/contract.ts EmailProviderView). */
+export interface EmailProviderView {
+  readonly configured: boolean;
+  readonly label: string | null;
+}
+export type EmailProviderState =
+  | { readonly kind: 'loading' }
+  | { readonly kind: 'unavailable' }
+  | { readonly kind: 'ready'; readonly provider: EmailProviderView };
+
+/** S07-R8: sending is offered only when an e-mail provider is configured; an unreachable dispatcher cannot confirm it. */
+export const useEmailProvider = (): EmailProviderState => {
+  const [state, setState] = useState<EmailProviderState>({ kind: 'loading' });
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const response = await fetch(`${dispatcherBaseUrl()}/v1/provider`, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const provider = (await response.json()) as EmailProviderView;
+        if (!cancelled) setState({ kind: 'ready', provider });
+      } catch {
+        if (!cancelled) setState({ kind: 'unavailable' });
+      }
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+  return state;
+};
+
 export const useReminderEmailReceipts = (reminderIds: readonly string[]): ReminderEmailReceipts => {
   const [state, setState] = useState<ReminderEmailReceipts>({ kind: 'loading' });
   const key = reminderIds.join(',');

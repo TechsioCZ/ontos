@@ -5,7 +5,8 @@
 //   events         own calendar entries (meetings, reminders, internal deadlines) — editable here
 //   notifications  in-app inbox, one entry per (recipient, eventKey); the reducer refuses duplicates (S13-03)
 //   exports        audit log of CSV exports (who, which list, how many rows, which filter) (S15)
-//   preferences    per-person notification preferences (lead time, optional e-mail opt-in — e-mail is simulated)
+//   preferences    per-person notification preferences (lead time, e-mail opt-in + chosen optional categories; the demo
+//                  e-mail dispatcher sends real e-mails over SMTP when a provider is configured)
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { Schema } from 'effect';
@@ -80,8 +81,12 @@ export const NotificationPreferenceSchema = Schema.Struct({
   principal: PrincipalRefSchema,
   /** Deadlines within this many days create a DEADLINE notification. */
   leadDays: LeadDaysSchema,
-  /** E-mail delivery is not configured in the demo; the preference is stored, delivery is simulated. */
+  /** Also send notifications by e-mail (real SMTP via the demo e-mail dispatcher once a provider is configured). */
   emailOptIn: Schema.Boolean,
+  /** Optional categories also e-mailed (ASSIGNED and OVERDUE are always e-mailed). Missing = every optional one. */
+  emailCategories: Schema.optionalKey(Schema.Array(NotificationCategorySchema)),
+  /** When e-mail was switched on; only notifications created afterwards are e-mailed. */
+  emailSince: Schema.optionalKey(Schema.DateTimeUtcFromString),
   updatedAt: Schema.DateTimeUtcFromString,
 });
 export type NotificationPreference = typeof NotificationPreferenceSchema.Type;
@@ -108,6 +113,12 @@ export const agendaStateForPrincipal = (state: AgendaState, actor: PrincipalRef)
     exports: (state.exports ?? []).filter((entry) => mine(entry.exportedBy)),
   };
 };
+
+/** Always e-mailed when e-mail is on (S13: e-mail notifications; preferences only for optional events). */
+export const MANDATORY_EMAIL_CATEGORIES: readonly NotificationCategory[] = ['ASSIGNED', 'OVERDUE'];
+/** The person decides whether these are e-mailed too. */
+export const OptionalEmailCategorySchema = Schema.Literals(['DEADLINE', 'CHANGE']);
+export const OPTIONAL_EMAIL_CATEGORIES: readonly (typeof OptionalEmailCategorySchema.Type)[] = ['DEADLINE', 'CHANGE'];
 
 /** Default lead time for DEADLINE notifications when a person has not set a preference. */
 export const DEFAULT_LEAD_DAYS = 14;

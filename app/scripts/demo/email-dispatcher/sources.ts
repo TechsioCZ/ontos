@@ -2,7 +2,7 @@
 // Committed-state readers: the dispatcher reads only persisted domain JSON, never in-flight transactions.
 import { PgClient } from '@effect/sql-pg';
 import { Effect } from 'effect';
-import type { AkrosOrderInput, SiamparkReminderInput } from './contract.ts';
+import type { AgendaNotificationInput, AgendaPreferenceInput, AgendaRecipientInput, AkrosOrderInput, SiamparkReminderInput } from './contract.ts';
 import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID } from './contract.ts';
 
 const json = <T>(value: unknown): T => (typeof value === 'string' ? JSON.parse(value) : value) as T;
@@ -40,6 +40,48 @@ export const readSiamparkReminders = (enabledSince: string) =>
         legalEntityId: row.legalEntityId,
         legalName: row.legalName,
         reminder: json<SiamparkReminderInput['reminder']>(row.reminder),
+        tenantId: row.tenantId,
+      }),
+    );
+  });
+
+/**
+ * Agenda notifications (siampark-ops `agenda` state) of every person whose preference has e-mail switched on, with the
+ * person's sign-in e-mail (core principal binding → auth user). Only notifications created after e-mail was switched on.
+ */
+export const readAgendaRecipients = (enabledSince: string) =>
+  Effect.gen(function* () {
+    const sql = yield* PgClient.PgClient;
+    const rows = yield* sql<{
+      readonly email: string | null;
+      readonly legalEntityId: string;
+      readonly legalName: string | null;
+      readonly notifications: unknown;
+      readonly preference: unknown;
+      readonly principalId: string;
+      readonly tenantId: string;
+    }>`
+      select s.tenant_id::text as "tenantId", s.legal_entity_id::text as "legalEntityId", p as "preference",
+        p->'principal'->>'principalId' as "principalId",
+        (select le.legal_name from core.legal_entities le
+          where le.legal_entity_id = s.legal_entity_id and le.tenant_id = s.tenant_id) as "legalName",
+        (select u.email from core.principal_auth_bindings b join auth."user" u on u.id = b.provider_subject_id
+          where b.principal_id::text = p->'principal'->>'principalId' and b.tenant_id = s.tenant_id
+            and b.status = 'active' order by b.created_at limit 1) as "email",
+        coalesce((select jsonb_agg(n) from jsonb_array_elements(coalesce(s.state->'notifications', '[]'::jsonb)) n
+          where n->'recipient'->>'principalId' = p->'principal'->>'principalId'
+            and (n->>'createdAt')::timestamptz >= greatest(${enabledSince}::timestamptz,
+              coalesce(p->>'emailSince', p->>'updatedAt')::timestamptz)), '[]'::jsonb) as "notifications"
+      from demo_siampark_ops.agenda_states s, jsonb_array_elements(coalesce(s.state->'preferences', '[]'::jsonb)) p
+      where s.agenda = 'agenda' and (p->>'emailOptIn')::boolean is true`;
+    return rows.map(
+      (row): AgendaRecipientInput => ({
+        email: row.email,
+        legalEntityId: row.legalEntityId,
+        legalName: row.legalName,
+        notifications: json<readonly AgendaNotificationInput[]>(row.notifications),
+        preference: json<AgendaPreferenceInput>(row.preference),
+        principalId: row.principalId,
         tenantId: row.tenantId,
       }),
     );

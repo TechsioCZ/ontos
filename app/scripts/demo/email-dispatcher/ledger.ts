@@ -10,7 +10,7 @@ const DDL: readonly string[] = [
   `create schema if not exists demo_email`,
   `create table if not exists demo_email.deliveries (
       dedupe_key text primary key,
-      source text not null check (source in ('akros-order', 'siampark-reminder')),
+      source text not null,
       event text not null,
       tenant_id uuid not null,
       legal_entity_id uuid not null,
@@ -28,6 +28,8 @@ const DDL: readonly string[] = [
       sent_at timestamptz
     )`,
   `alter table demo_email.deliveries add column if not exists event_label text`,
+  `alter table demo_email.deliveries drop constraint if exists deliveries_source_check`,
+  `alter table demo_email.deliveries add constraint deliveries_source_check check (source in ('akros-order', 'siampark-agenda', 'siampark-reminder'))`,
   `create index if not exists deliveries_subject_idx on demo_email.deliveries (source, subject_id)`,
   `create index if not exists deliveries_number_idx on demo_email.deliveries (source, subject_number)`,
   `create table if not exists demo_email.settings (key text primary key, value text not null)`,
@@ -114,7 +116,7 @@ export const finish = (dedupeKey: string, outcome: DeliveryOutcome) =>
  * buyer of one order (order number + the e-mail address the order was placed with).
  */
 export type DeliveryReadScope =
-  | { readonly kind: 'company'; readonly legalEntityId: string; readonly tenantId: string }
+  | { readonly kind: 'company'; readonly legalEntityId: string; readonly principalId: string; readonly tenantId: string }
   | { readonly kind: 'buyer'; readonly recipient: string };
 
 /** Public receipts only: never selects the e-mail address or the message body. */

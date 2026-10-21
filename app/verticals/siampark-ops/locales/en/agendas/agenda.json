@@ -169,7 +169,10 @@
     "readOnly": "You can read notifications but not mark them (read-only permission).",
     "empty": "No notifications yet.",
     "emptyUnread": "All read.",
-    "emptyDescription": "New notifications appear when a task or event is assigned to you or before a deadline."
+    "emptyDescription": "New notifications appear when a task or event is assigned to you or before a deadline.",
+    "emailSent": "sent by e-mail {{time}}",
+    "emailPending": "waiting to be sent by e-mail",
+    "emailFailed": "the e-mail could not be sent"
   },
   "mine": {
     "intro": "Deadlines, tasks and events assigned to {{who}}.",
@@ -194,9 +197,18 @@
     "days_one": "{{count}} day ahead",
     "days_other": "{{count}} days ahead",
     "email": "Also send notifications by e-mail",
-    "emailNote": "E-mail is not configured yet; the preference is stored, e-mail delivery is simulated.",
     "default": "Using the default: {{count}} days ahead.",
-    "savedAt": "Saved {{time}}."
+    "savedAt": "Saved {{time}}.",
+    "emailOn": "E-mail configured",
+    "emailOff": "E-mail not configured",
+    "emailChecking": "Checking e-mail…",
+    "emailReal": "Notifications are really sent by e-mail ({{provider}}) to {{address}}. Only notifications created after switching on are sent; several at once go in one e-mail.",
+    "emailNotConfigured": "No e-mail server is configured yet: the preference is stored and e-mails start once an administrator configures one. Until then notifications are in-app only.",
+    "emailUnknown": "The e-mail service cannot be checked right now; in-app notifications keep working and e-mails go out once the service is reachable.",
+    "emailEvents": "Which events to send by e-mail",
+    "mandatory": "Always – mandatory notification",
+    "optionalHint": "Assignments and overdue deadlines are always e-mailed; upcoming deadlines and changes as you choose.",
+    "yourAddress": "your sign-in address"
   },
   "exportsLog": {
     "title": "Export log",

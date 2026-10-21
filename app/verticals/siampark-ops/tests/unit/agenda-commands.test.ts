@@ -143,6 +143,23 @@ it.effect('export log and preferences are stored per person', () =>
   }),
 );
 
+it.effect('S13 e-mail: optional categories stored, switch-on instant kept while e-mail stays on', () =>
+  Effect.gen(function* () {
+    const on = yield* apply(empty, { _tag: 'AgendaPreferencesSet', emailCategories: ['CHANGE'], emailOptIn: true, leadDays: 7 }, 'e1');
+    expect(on.state.preferences?.[0]?.emailCategories).toEqual(['CHANGE']);
+    expect(DateTime.formatIso(on.state.preferences![0]!.emailSince!)).toBe(DateTime.formatIso(now));
+    const changed = yield* apply(on.state, { _tag: 'AgendaPreferencesSet', emailOptIn: true, leadDays: 30 }, 'e2-late');
+    expect(changed.state.preferences?.[0]?.emailCategories).toEqual(['CHANGE']);
+    expect(DateTime.formatIso(changed.state.preferences![0]!.emailSince!)).toBe(DateTime.formatIso(now));
+    const off = yield* apply(changed.state, { _tag: 'AgendaPreferencesSet', emailOptIn: false, leadDays: 30 }, 'e3-late');
+    expect(off.state.preferences?.[0]?.emailSince).toBeUndefined();
+    const again = yield* apply(off.state, { _tag: 'AgendaPreferencesSet', emailOptIn: true, leadDays: 30 }, 'e4-late');
+    expect(DateTime.formatIso(again.state.preferences![0]!.emailSince!)).toBe(DateTime.formatIso(later));
+    expect(Exit.isFailure(Schema.decodeUnknownExit(AgendaCommandSchema)({ _tag: 'AgendaPreferencesSet', emailCategories: ['ASSIGNED'], emailOptIn: true, leadDays: 7 }))).toBe(true);
+    expect(Schema.decodeUnknownSync(AgendaStateSchema)(Schema.encodeSync(AgendaStateSchema)(again.state)).preferences).toHaveLength(1);
+  }),
+);
+
 it('S13-02: a changed contract end date yields a new calendar key without any write in the agenda', () => {
   const contract = {
     contractRef: { resourceId: 'c1' },

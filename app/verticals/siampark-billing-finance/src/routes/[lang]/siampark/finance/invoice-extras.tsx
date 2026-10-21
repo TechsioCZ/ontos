@@ -25,7 +25,7 @@ import {
   SimulationBadge,
 } from './finance-ui.tsx';
 import type { FinanceViewModel } from './finance-ui.tsx';
-import { ReminderEmailStatus, useReminderEmailReceipts } from './reminder-email-receipts.tsx';
+import { ReminderEmailStatus, useEmailProvider, useReminderEmailReceipts } from './reminder-email-receipts.tsx';
 import { useInvoiceIssuer } from './use-invoice-issuer.ts';
 
 /** Same bound as FinanceLongTextSchema in shared/apis/records.ts (trimmed reminder text, at most 4000 characters). */
@@ -438,6 +438,8 @@ export const InvoiceReminders = ({
   const [text, setText] = useState('');
   const [message, setMessage] = useState<{ readonly kind: 'error' | 'success'; readonly text: string }>();
   const issuerName = useInvoiceIssuer();
+  const provider = useEmailProvider();
+  const canSendEmail = provider.kind === 'ready' && provider.provider.configured;
   // The contract trims the text; an untrimmed value (e.g. a trailing space or newline) fails to encode in the browser.
   const textLength = text.trim().length;
   const textTooLong = textLength > REMINDER_TEXT_MAX;
@@ -454,7 +456,20 @@ export const InvoiceReminders = ({
     setMessage(undefined);
     setEditing(true);
   };
+  const download = () => {
+    const url = URL.createObjectURL(new Blob([`${text.trim()}\n`], { type: 'text/plain;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `upominka-${invoice.number ?? invoice.documentNumber}.txt`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setMessage({ kind: 'success', text: 'Návrh upomínky stažen jako textový soubor. Upomínka se jako odeslaná nezaznamenala.' });
+  };
   const send = async () => {
+    if (!canSendEmail) {
+      setMessage({ kind: 'error', text: 'Odeslání e-mailem není dostupné – e-mailový poskytovatel není nastaven. Nic se neodeslalo.' });
+      return;
+    }
     if (!/^\S+@\S+\.\S+$/u.test(recipient.trim())) {
       setMessage({ kind: 'error', text: 'Zadejte platnou e-mailovou adresu příjemce.' });
       return;
@@ -501,11 +516,24 @@ export const InvoiceReminders = ({
       <div className="flex flex-col gap-150 print:hidden">
         {editing && (
           <div className="flex flex-col gap-150 rounded-md border border-border-primary p-200">
-            <StatusText showIcon size="sm" status="default">
-              Po uložení se upomínka skutečně odešle e-mailem přes nakonfigurovaný SMTP server (v ukázce ji zachytí
-              Mailpit) jménem {issuerName === undefined ? 'vybrané společnosti' : `společnosti ${issuerName}`}. Stav
-              odeslání se zobrazí v seznamu upomínek.
-            </StatusText>
+            {provider.kind === 'loading' ? (
+              <StatusText showIcon size="sm" status="default">
+                Zjišťuji, zda je nastaven e-mailový poskytovatel…
+              </StatusText>
+            ) : canSendEmail ? (
+              <StatusText showIcon size="sm" status="default">
+                Po uložení se upomínka skutečně odešle e-mailem ({provider.provider.label ?? 'SMTP server'}) jménem{' '}
+                {issuerName === undefined ? 'vybrané společnosti' : `společnosti ${issuerName}`}. Stav odeslání se
+                zobrazí v seznamu upomínek.
+              </StatusText>
+            ) : (
+              <StatusText showIcon size="sm" status="warning">
+                {provider.kind === 'unavailable'
+                  ? 'Odeslání e-mailem teď není dostupné – e-mailovou službu nelze ověřit.'
+                  : 'Odeslání e-mailem není dostupné – e-mailový poskytovatel (SMTP server) není nastaven.'}{' '}
+                Text upomínky zkopírujte nebo stáhněte a pošlete jinou cestou; jako odeslaná se nezaznamená.
+              </StatusText>
+            )}
             {message !== undefined && (
               <StatusText showIcon size="sm" status={message.kind}>
                 {message.text}
@@ -550,8 +578,11 @@ export const InvoiceReminders = ({
               >
                 Kopírovat text
               </Button>
+              <Button icon="icon-[mdi--download]" onClick={download} size="sm" theme="outlined" variant="secondary">
+                Stáhnout návrh
+              </Button>
               <Button
-                disabled={vm.busy || textTooLong}
+                disabled={vm.busy || textTooLong || !canSendEmail}
                 icon="icon-[mdi--send-outline]"
                 onClick={() => void send()}
                 size="sm"

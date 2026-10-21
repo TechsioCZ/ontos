@@ -179,7 +179,10 @@
     "readOnly": "Upozornění můžete číst; označovat je nemůžete (jen čtecí oprávnění).",
     "empty": "Zatím žádná upozornění.",
     "emptyUnread": "Vše přečteno.",
-    "emptyDescription": "Nová upozornění se objeví při přiřazení úkolu či události nebo před termínem."
+    "emptyDescription": "Nová upozornění se objeví při přiřazení úkolu či události nebo před termínem.",
+    "emailSent": "odesláno e-mailem {{time}}",
+    "emailPending": "čeká na odeslání e-mailem",
+    "emailFailed": "e-mail se nepodařilo odeslat"
   },
   "mine": {
     "intro": "Termíny, úkoly a události přiřazené osobě {{who}}.",
@@ -210,9 +213,18 @@
     "days_many": "{{count}} dne předem",
     "days_other": "{{count}} dní předem",
     "email": "Posílat upozornění i e-mailem",
-    "emailNote": "E-mail zatím není nastaven; preference se uloží, doručení e-mailem je simulované.",
     "default": "Používá se výchozí nastavení: {{count}} dní předem.",
-    "savedAt": "Uloženo {{time}}."
+    "savedAt": "Uloženo {{time}}.",
+    "emailOn": "E-mail nastaven",
+    "emailOff": "E-mail není nastaven",
+    "emailChecking": "Zjišťuji stav e-mailu…",
+    "emailReal": "Upozornění se skutečně odešlou e-mailem ({{provider}}) na adresu {{address}}. Posílají se jen upozornění vzniklá po zapnutí, více upozornění najednou v jednom e-mailu.",
+    "emailNotConfigured": "E-mailový server zatím není nastaven: preference se uloží a e-maily se začnou posílat, až ho správce nastaví. Do té doby chodí upozornění jen v aplikaci.",
+    "emailUnknown": "Stav e-mailové služby teď nelze ověřit; upozornění v aplikaci fungují dál a e-maily se odešlou, jakmile bude služba dostupná.",
+    "emailEvents": "Které události posílat e-mailem",
+    "mandatory": "Vždy – povinné upozornění",
+    "optionalHint": "Přiřazení a prošlé termíny chodí e-mailem vždy; blížící se termíny a změny podle vaší volby.",
+    "yourAddress": "vaši přihlašovací adresu"
   },
   "exportsLog": {
     "title": "Záznam exportů",

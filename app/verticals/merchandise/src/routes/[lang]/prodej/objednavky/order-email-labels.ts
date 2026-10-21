@@ -22,7 +22,7 @@ export interface EmailDeliveryView {
 }
 export const emailEventLabels: Readonly<Record<EmailDeliveryEvent, string>> = {
   CANCELLED: 'Stornovaná',
-  CONFIRMED: 'Potvrzená',
+  CONFIRMED: 'Zpracovává se',
   DELIVERED: 'Dokončená',
   ORDER_CREATED: 'Přijetí objednávky',
   PAYMENT_REMINDER: 'Upomínka k úhradě',

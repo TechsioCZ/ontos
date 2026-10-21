@@ -3,18 +3,20 @@
 import { EmptyState, SectionCard, StatCard, StatRow, formatNumber } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { DateTime } from 'effect';
 import { useState } from 'react';
 import type { Notification, NotificationPreference } from '../../../../../../shared/domain/agenda.ts';
 import type { AgendaState } from '../../../../../../shared/domain/agenda.ts';
-import { DEFAULT_LEAD_DAYS } from '../../../../../../shared/domain/agenda.ts';
+import { DEFAULT_LEAD_DAYS, MANDATORY_EMAIL_CATEGORIES, OPTIONAL_EMAIL_CATEGORIES } from '../../../../../../shared/domain/agenda.ts';
 import { daysUntil, urgencyOf } from '../../../../../ui/ops-agenda/deadlines.ts';
 import type { Deadline } from '../../../../../ui/ops-agenda/deadlines.ts';
 import { personaOf } from '../../../../../ui/ops-agenda/personas.ts';
 import { Icon, IconBadge, Pill, categoryTone, fmt, langOf, toneColors, urgencyTone } from '../../../../../ui/ops-agenda/ui-bits.tsx';
 import type { Tone } from '../../../../../ui/ops-agenda/model.ts';
+import { agendaEmailKey, useAgendaEmailReceipts, useEmailProvider } from './agenda-email.tsx';
 
 const k = 'siampark-ops.agenda';
 const muted = { color: 'var(--color-fg-secondary, #6b7280)' } as const;
@@ -60,6 +62,9 @@ export const NotificationCenter = ({
   const all = myNotifications(state, me);
   const unread = all.filter((entry) => entry.readAt === undefined);
   const rows = filter === 'unread' ? unread : all;
+  const emailOn = myPreference(state, me)?.emailOptIn === true;
+  const emailKeyOf = (entry: Notification) => agendaEmailKey(entry.recipient.principalId, DateTime.formatIso(entry.createdAt));
+  const receipts = useAgendaEmailReceipts(emailOn ? rows.slice(0, 100).map(emailKeyOf) : []);
   return (
     <SectionCard
       actions={
@@ -167,6 +172,22 @@ export const NotificationCenter = ({
                       {t(`${k}.notifications.markRead`)}
                     </Button>
                   )}
+                  {(() => {
+                    const receipt = receipts.get(emailKeyOf(entry));
+                    if (receipt === undefined) return null;
+                    const label =
+                      receipt.status === 'SENT' && receipt.sentAt !== null
+                        ? t(`${k}.notifications.emailSent`, { time: fmt.stamp(lang, receipt.sentAt) })
+                        : receipt.status === 'FAILED' || receipt.status === 'UNKNOWN'
+                          ? t(`${k}.notifications.emailFailed`)
+                          : t(`${k}.notifications.emailPending`);
+                    return (
+                      <span className="siamparkops:inline-flex siamparkops:items-center siamparkops:gap-1 siamparkops:text-xs" data-testid="notification-email" style={muted}>
+                        <Icon name="mail" size={14} />
+                        {label}
+                      </span>
+                    );
+                  })()}
                   {!isUnread && entry.readAt !== undefined && (
                     <span className="siamparkops:inline-flex siamparkops:items-center siamparkops:gap-1 siamparkops:text-xs" style={muted}>
                       <Icon name="check" size={14} />
@@ -303,7 +324,7 @@ export const SettingsPanel = ({
 }: {
   readonly canWrite: boolean;
   readonly me: string | undefined;
-  readonly onSave: (leadDays: number, emailOptIn: boolean) => void;
+  readonly onSave: (leadDays: number, emailOptIn: boolean, emailCategories: readonly ('DEADLINE' | 'CHANGE')[]) => void;
   readonly saving: boolean;
   readonly state: AgendaState | undefined;
 }) => {
@@ -312,6 +333,29 @@ export const SettingsPanel = ({
   const current = myPreference(state, me);
   const [leadDays, setLeadDays] = useState(String(current?.leadDays ?? DEFAULT_LEAD_DAYS));
   const [email, setEmail] = useState(current?.emailOptIn ?? false);
+  const [optional, setOptional] = useState<ReadonlySet<'DEADLINE' | 'CHANGE'>>(
+    new Set(
+      current?.emailCategories === undefined
+        ? OPTIONAL_EMAIL_CATEGORIES
+        : OPTIONAL_EMAIL_CATEGORIES.filter((category) => current.emailCategories?.includes(category) === true),
+    ),
+  );
+  const provider = useEmailProvider();
+  const address = personaOf(me)?.email ?? t(`${k}.settings.yourAddress`);
+  const providerPill =
+    provider.kind === 'ready' && provider.provider.configured ? (
+      <Pill tone="success">{t(`${k}.settings.emailOn`)}</Pill>
+    ) : provider.kind === 'loading' ? undefined : (
+      <Pill tone="warning">{t(`${k}.settings.emailOff`)}</Pill>
+    );
+  const providerText =
+    provider.kind === 'loading'
+      ? t(`${k}.settings.emailChecking`)
+      : provider.kind === 'unavailable'
+        ? t(`${k}.settings.emailUnknown`)
+        : provider.provider.configured
+          ? t(`${k}.settings.emailReal`, { address, provider: provider.provider.label ?? 'SMTP' })
+          : t(`${k}.settings.emailNotConfigured`);
   const exports = (state?.exports ?? []).toSorted((left, right) => DateTime.toEpochMillis(right.exportedAt) - DateTime.toEpochMillis(left.exportedAt)).slice(0, 25);
   return (
     <div className="siamparkops:grid siamparkops:grid-cols-1 siamparkops:gap-4 siamparkops:xl:grid-cols-5">
@@ -331,18 +375,55 @@ export const SettingsPanel = ({
               <Switch checked={email} disabled={!canWrite} onCheckedChange={setEmail}>
                 {t(`${k}.settings.email`)}
               </Switch>
-              <span className="siamparkops:inline-flex siamparkops:items-center siamparkops:gap-2 siamparkops:text-xs" style={muted}>
-                <Pill tone="warning">{t('siampark-ops.common.simulation')}</Pill>
-                {t(`${k}.settings.emailNote`)}
+              <span className="siamparkops:flex siamparkops:flex-wrap siamparkops:items-center siamparkops:gap-2 siamparkops:text-xs" data-testid="email-provider" style={muted}>
+                {providerPill}
+                <span className="siamparkops:min-w-0 siamparkops:flex-1">{providerText}</span>
               </span>
             </div>
+            {email && (
+              <fieldset className="siamparkops:m-0 siamparkops:flex siamparkops:flex-col siamparkops:gap-2 siamparkops:border-0 siamparkops:p-0" data-testid="email-events">
+                <legend className="siamparkops:mb-1 siamparkops:p-0 siamparkops:text-sm siamparkops:font-medium">{t(`${k}.settings.emailEvents`)}</legend>
+                {MANDATORY_EMAIL_CATEGORIES.map((category) => (
+                  <FormCheckbox
+                    checked
+                    disabled
+                    helpText={t(`${k}.settings.mandatory`)}
+                    id={`email-category-${category}`}
+                    key={category}
+                    label={t(`${k}.notifications.category.${category}`)}
+                    size="sm"
+                  />
+                ))}
+                {OPTIONAL_EMAIL_CATEGORIES.map((category) => (
+                  <FormCheckbox
+                    checked={optional.has(category)}
+                    disabled={!canWrite}
+                    id={`email-category-${category}`}
+                    key={category}
+                    label={t(`${k}.notifications.category.${category}`)}
+                    onCheckedChange={(checked) =>
+                      setOptional((previous) => {
+                        const next = new Set(previous);
+                        if (checked) next.add(category);
+                        else next.delete(category);
+                        return next;
+                      })
+                    }
+                    size="sm"
+                  />
+                ))}
+                <span className="siamparkops:text-xs" style={muted}>
+                  {t(`${k}.settings.optionalHint`)}
+                </span>
+              </fieldset>
+            )}
             <p className="siamparkops:m-0 siamparkops:text-xs" style={muted}>
               {current === undefined
                 ? t(`${k}.settings.default`, { count: DEFAULT_LEAD_DAYS })
                 : t(`${k}.settings.savedAt`, { time: fmt.stamp(lang, DateTime.formatIso(current.updatedAt)) })}
             </p>
             {canWrite && (
-              <Button isLoading={saving} onClick={() => onSave(Number(leadDays), email)} size="sm" variant="primary">
+              <Button isLoading={saving} onClick={() => onSave(Number(leadDays), email, OPTIONAL_EMAIL_CATEGORIES.filter((category) => optional.has(category)))} size="sm" variant="primary">
                 {t('siampark-ops.common.save')}
               </Button>
             )}

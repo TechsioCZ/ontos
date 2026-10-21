@@ -37,6 +37,7 @@ import {
   MAX_NOTIFICATIONS,
   NotificationCategorySchema,
   NotificationIdSchema,
+  OptionalEmailCategorySchema,
   emptyAgendaState,
 } from '../domain/agenda.ts';
 import type { AgendaState, CalendarEvent, ExportRecord, Notification, NotificationPreference } from '../domain/agenda.ts';
@@ -91,6 +92,8 @@ export const agendaCommandSchemas = [
   Schema.TaggedStruct('AgendaPreferencesSet', {
     leadDays: LeadDaysSchema,
     emailOptIn: Schema.Boolean,
+    /** Optional categories also e-mailed; missing keeps the stored choice. */
+    emailCategories: Schema.optionalKey(Schema.Array(OptionalEmailCategorySchema).check(Schema.isMaxLength(2))),
   }),
 ] as const;
 
@@ -324,11 +327,21 @@ const setPreferences = Effect.fn('SiamparkOps.Agenda.preferences')(function* set
   value: CommandOf<'AgendaPreferencesSet'>,
   input: OpsCommandInput,
 ) {
+  const previous = (state.preferences ?? []).find((entry) => samePrincipal(entry.principal, input.actor));
+  const emailCategories = value.emailCategories ?? previous?.emailCategories;
+  // Keep the original switch-on instant while e-mail stays on, so changing the lead time never re-sends anything.
+  const emailSince = value.emailOptIn
+    ? previous?.emailOptIn === true
+      ? (previous.emailSince ?? previous.updatedAt)
+      : input.now
+    : undefined;
   const preference: NotificationPreference = {
     emailOptIn: value.emailOptIn,
     leadDays: value.leadDays,
     principal: input.actor,
     updatedAt: input.now,
+    ...(emailCategories === undefined ? {} : { emailCategories: [...new Set(emailCategories)] }),
+    ...(emailSince === undefined ? {} : { emailSince }),
   };
   const others = (state.preferences ?? []).filter((entry) => !samePrincipal(entry.principal, input.actor));
   return {

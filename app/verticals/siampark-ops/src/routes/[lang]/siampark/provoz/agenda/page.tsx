@@ -143,9 +143,9 @@ const AgendaView = () => {
     await commands.run({ _tag: 'AgendaNotificationsMarkAllRead' });
     setBusy(false);
   };
-  const savePreferences = async (days: number, emailOptIn: boolean) => {
+  const savePreferences = async (days: number, emailOptIn: boolean, emailCategories: readonly ('DEADLINE' | 'CHANGE')[]) => {
     setSaving(true);
-    const outcome = await commands.run({ _tag: 'AgendaPreferencesSet', emailOptIn, leadDays: days });
+    const outcome = await commands.run({ _tag: 'AgendaPreferencesSet', emailCategories, emailOptIn, leadDays: days });
     setSaving(false);
     toast.create({ title: outcome.ok ? t('siampark-ops.common.saved') : t(`siampark-ops.common.errors.${outcome.reason}`), type: outcome.ok ? 'success' : 'error' });
   };
@@ -220,9 +220,9 @@ const AgendaView = () => {
       {tab === 'nastaveni' && (
         <SettingsPanel
           canWrite={commands.canWrite}
-          key={`${me ?? ''}:${myPreference(state, me)?.leadDays ?? ''}`}
+          key={`${me ?? ''}:${myPreference(state, me)?.leadDays ?? ''}:${myPreference(state, me)?.emailOptIn ?? ''}:${(myPreference(state, me)?.emailCategories ?? []).join(',')}`}
           me={me}
-          onSave={(days, email) => void savePreferences(days, email)}
+          onSave={(days, email, categories) => void savePreferences(days, email, categories)}
           saving={saving}
           state={state}
         />

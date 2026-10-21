@@ -1,8 +1,8 @@
 // @effect-diagnostics *:off
 import { describe, expect, test } from '@rstest/core';
-import type { AkrosOrderInput, SiamparkReminderInput } from './contract.ts';
-import { deliveryOutcomeOf, orderEmailEvents, planAkrosOrderEmails, planSiamparkReminderEmail } from './plan.ts';
-import { addressOf, senderFor } from './senders.ts';
+import type { AgendaRecipientInput, AkrosOrderInput, SiamparkReminderInput } from './contract.ts';
+import { deliveryOutcomeOf, orderEmailEvents, planAgendaEmails, planAkrosOrderEmails, planSiamparkReminderEmail } from './plan.ts';
+import { addressOf, agendaSenderFor, senderFor } from './senders.ts';
 import { akrosOrderEmail, formatCzk } from './templates.ts';
 
 const orderId = 'e8747ac9-8730-4fc5-b7ba-8ae9f9daade1';
@@ -239,5 +239,59 @@ describe('delivery outcome classification', () => {
       deliveryOutcomeOf({ _tag: 'SomethingElse' }).status,
     ];
     expect(statuses).toEqual(['RETRY', 'FAILED', 'FAILED', 'UNKNOWN']);
+  });
+});
+
+describe('AKROS status label in e-mails', () => {
+  test('CONFIRMED reads „Zpracovává se“ like the staff app and the storefront', () => {
+    const email = akrosOrderEmail({ ...baseOrder, status: 'CONFIRMED' }, 'CONFIRMED', { storefrontUrl: 'http://localhost:3070' });
+    expect(email.text).toContain('Aktuální stav: Zpracovává se');
+    expect(email.text).not.toContain('Potvrzená');
+    expect(email.subject).toBe('AKROS – objednávka OBJ-2026-0030 se zpracovává');
+  });
+});
+
+describe('agenda notification e-mails', () => {
+  const person: AgendaRecipientInput = {
+    email: 'operations@siampark.demo',
+    legalEntityId: '71000000-0000-4000-8000-000000000021',
+    legalName: 'Siampark',
+    principalId: '72000000-0000-4000-8000-000000000022',
+    tenantId: '70000000-0000-4000-8000-000000000020',
+    preference: { emailCategories: [], emailOptIn: true, emailSince: '2026-10-21T08:00:00.000Z', updatedAt: '2026-10-21T08:00:00.000Z' },
+    notifications: [
+      { category: 'ASSIGNED', createdAt: '2026-10-21T09:00:00.000Z', href: '/siampark/work?resourceId=w1', id: 'n1', source: 'work', title: 'Zkontrolovat osvětlení' },
+      { category: 'DEADLINE', createdAt: '2026-10-21T09:00:00.000Z', dueDate: '2026-10-31', id: 'n2', source: 'agreements', title: 'Konec smlouvy' },
+      { category: 'OVERDUE', createdAt: '2026-10-21T09:00:00.000Z', id: 'n3', source: 'work', title: 'Revize hasicích přístrojů' },
+      { category: 'ASSIGNED', createdAt: '2026-10-21T07:00:00.000Z', id: 'n0', source: 'work', title: 'Před zapnutím e-mailu' },
+    ],
+  };
+  const options = { appUrl: 'http://localhost:3020', enabledSince: '2026-10-21T06:00:00.000Z' };
+
+  test('mandatory categories always, optional only when chosen, never before e-mail was switched on', () => {
+    const planned = planAgendaEmails(person, options);
+    expect(planned).toHaveLength(1);
+    const email = planned[0]!;
+    expect(email.dedupeKey).toBe('siampark-agenda:72000000-0000-4000-8000-000000000022:2026-10-21T09:00:00.000Z');
+    expect(email.subject).toBe('Siampark – 2 nová upozornění v agendě');
+    expect(email.text).toContain('Přiřazeno vám: Zkontrolovat osvětlení');
+    expect(email.text).toContain('Otevřít: http://localhost:3020/cs/siampark/work?resourceId=w1');
+    expect(email.text).toContain('Po termínu: Revize hasicích přístrojů');
+    expect(email.text).not.toContain('Konec smlouvy');
+    expect(email.text).not.toContain('Před zapnutím e-mailu');
+  });
+
+  test('optional category chosen, old preference rows get every optional category', () => {
+    const chosen = planAgendaEmails({ ...person, preference: { ...person.preference, emailCategories: ['DEADLINE'] } }, options);
+    expect(chosen[0]!.text).toContain('Blíží se termín: Konec smlouvy');
+    expect(chosen[0]!.text).toContain('Termín: 31. 10. 2026');
+    const legacy = planAgendaEmails({ ...person, preference: { emailOptIn: true, updatedAt: '2026-10-21T08:00:00.000Z' } }, options);
+    expect(legacy[0]!.text).toContain('Konec smlouvy');
+  });
+
+  test('nothing without opt-in or without an address; sender names the company', () => {
+    expect(planAgendaEmails({ ...person, preference: { ...person.preference, emailOptIn: false } }, options)).toEqual([]);
+    expect(planAgendaEmails({ ...person, email: null }, options)).toEqual([]);
+    expect(agendaSenderFor(person, {})).toBe('Siampark – upozornění <provoz@siampark.demo>');
   });
 });

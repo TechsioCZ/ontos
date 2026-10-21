@@ -8,7 +8,7 @@ type State =
   | { kind: "ready"; deliveries: Receipt[] };
 const eventLabels: Record<string, string> = {
   ORDER_CREATED: "Potvrzení přijetí objednávky",
-  CONFIRMED: "Objednávka potvrzena",
+  CONFIRMED: "Objednávka se zpracovává",
   SHIPPED: "Předáno dopravci",
   DELIVERED: "Objednávka dokončena",
   CANCELLED: "Objednávka stornována",

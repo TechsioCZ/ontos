@@ -2,7 +2,8 @@
 // Shared contract of the demo e-mail dispatcher (app/scripts/demo/email-dispatcher).
 //
 // The dispatcher is an after-commit worker: it reads COMMITTED domain state (AKROS storefront orders in
-// demo_merchandise.merchandise_states, Siampark payment reminders in siampark_billing_finance.finance_states),
+// demo_merchandise.merchandise_states, payment reminders in siampark_billing_finance.finance_states, Siampark agenda
+// notifications in demo_siampark_ops.agenda_states for people who opted in to e-mail),
 // claims each e-mail once in its own ledger table demo_email.deliveries (primary key = dedupeKey, so an
 // e-mail is never sent twice) and submits it over real SMTP (Mailpit in the demo, any SMTP server via env).
 // It serves read-only receipts (no recipient, no content) on http://127.0.0.1:3096/v1/deliveries:
@@ -17,14 +18,15 @@ export const EMAIL_DISPATCHER_DEFAULT_PORT = 3096;
 export const DEMO_TENANT_ID = '70000000-0000-4000-8000-000000000020';
 export const AKROS_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000024';
 
-export type EmailDeliverySource = 'akros-order' | 'siampark-reminder';
+export type EmailDeliverySource = 'akros-order' | 'siampark-agenda' | 'siampark-reminder';
 export type EmailDeliveryEvent =
   | 'ORDER_CREATED'
   | 'CONFIRMED'
   | 'SHIPPED'
   | 'DELIVERED'
   | 'CANCELLED'
-  | 'PAYMENT_REMINDER';
+  | 'PAYMENT_REMINDER'
+  | 'AGENDA_NOTIFICATION';
 /**
  * SENDING: claimed, SMTP submission in progress. SENT: SMTP server accepted DATA (250).
  * RETRY: SMTP server unreachable BEFORE any data was sent; safe to retry. FAILED: rejected permanently.
@@ -32,7 +34,17 @@ export type EmailDeliveryEvent =
  */
 export type EmailDeliveryStatus = 'SENDING' | 'SENT' | 'RETRY' | 'FAILED' | 'UNKNOWN';
 
-export const emailDeliverySources: readonly EmailDeliverySource[] = ['akros-order', 'siampark-reminder'];
+export const emailDeliverySources: readonly EmailDeliverySource[] = ['akros-order', 'siampark-agenda', 'siampark-reminder'];
+
+/**
+ * E-mail provider state served on GET /v1/provider (no credentials, no cookies needed). `configured: false` when the
+ * deployment sets EMAIL_PROVIDER=none: the dispatcher then sends nothing and the UI must not offer „Odeslat e-mailem“.
+ */
+export interface EmailProviderView {
+  readonly configured: boolean;
+  /** Czech one-line description, e.g. „SMTP server 127.0.0.1:1025 (Mailpit)“; null when not configured. */
+  readonly label: string | null;
+}
 
 /** Result of one SMTP attempt as recorded in the ledger (status leaves SENDING exactly once per attempt). */
 export type DeliveryOutcome =
@@ -81,11 +93,12 @@ export interface EmailDeliveriesResponse {
 
 export const emailEventLabels: Readonly<Record<EmailDeliveryEvent, string>> = {
   CANCELLED: 'Stornovaná',
-  CONFIRMED: 'Potvrzená',
+  CONFIRMED: 'Zpracovává se',
   DELIVERED: 'Dokončená',
   ORDER_CREATED: 'Přijetí objednávky',
   PAYMENT_REMINDER: 'Upomínka k úhradě',
   SHIPPED: 'Předáno dopravci',
+  AGENDA_NOTIFICATION: 'Upozornění z agendy',
 };
 
 export const emailStatusLabels: Readonly<Record<EmailDeliveryStatus, string>> = {
@@ -154,5 +167,42 @@ export interface SiamparkReminderInput {
     readonly recipient: string;
     readonly text: string;
   };
+  readonly tenantId: string;
+}
+
+/** Notification categories (siampark-ops agenda). ASSIGNED and OVERDUE are mandatory, DEADLINE and CHANGE optional. */
+export type AgendaNotificationCategory = 'ASSIGNED' | 'CHANGE' | 'DEADLINE' | 'OVERDUE';
+export const AGENDA_MANDATORY_EMAIL_CATEGORIES: readonly AgendaNotificationCategory[] = ['ASSIGNED', 'OVERDUE'];
+export const AGENDA_OPTIONAL_EMAIL_CATEGORIES: readonly AgendaNotificationCategory[] = ['DEADLINE', 'CHANGE'];
+
+/** One persisted agenda notification (demo_siampark_ops.agenda_states, encoded JSON) of a person with a preference. */
+export interface AgendaNotificationInput {
+  readonly category: AgendaNotificationCategory;
+  /** ISO-8601 UTC; all notifications of one delivery command share this instant (one e-mail per batch). */
+  readonly createdAt: string;
+  readonly detail?: string;
+  readonly dueDate?: string;
+  readonly href?: string;
+  readonly id: string;
+  readonly source: string;
+  readonly title: string;
+}
+
+/** Encoded per-person preference (see siampark-ops shared/domain/agenda.ts NotificationPreferenceSchema). */
+export interface AgendaPreferenceInput {
+  readonly emailCategories?: readonly AgendaNotificationCategory[];
+  readonly emailOptIn: boolean;
+  /** ISO-8601 UTC instant e-mail was switched on; older rows only have updatedAt. */
+  readonly emailSince?: string;
+  readonly updatedAt: string;
+}
+
+export interface AgendaRecipientInput {
+  readonly email: string | null;
+  readonly legalEntityId: string;
+  readonly legalName: string | null;
+  readonly notifications: readonly AgendaNotificationInput[];
+  readonly preference: AgendaPreferenceInput;
+  readonly principalId: string;
   readonly tenantId: string;
 }

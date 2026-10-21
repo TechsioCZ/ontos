@@ -1,6 +1,6 @@
 // @effect-diagnostics *:off
 // Sender (From) of each e-mail: always the company the e-mail is about, configurable per company via env.
-import type { PlannedEmail } from './contract.ts';
+import type { AgendaRecipientInput, PlannedEmail } from './contract.ts';
 import { AKROS_LEGAL_ENTITY_ID, OBCHODNI_FIRMA_LEGAL_ENTITY_ID, SIAMPARK_LEGAL_ENTITY_ID } from './contract.ts';
 import { companyDisplayName } from './templates.ts';
 
@@ -48,4 +48,16 @@ export const senderFor = (
   const displayName = known?.displayName ?? `${companyDisplayName(legalName)} – finanční oddělení`;
   const fallback = env['SMTP_FROM'] === undefined ? null : addressOf(env['SMTP_FROM']);
   return `${displayName} <${fallback ?? known?.defaultAddress ?? DEFAULT_FALLBACK_ADDRESS}>`;
+};
+
+/** Agenda notifications: „<company> – upozornění <address>“; SIAMPARK_AGENDA_EMAIL_FROM overrides it for Siampark. */
+export const agendaSenderFor = (
+  person: Pick<AgendaRecipientInput, 'legalEntityId' | 'legalName'>,
+  env: Readonly<Record<string, string | undefined>>,
+): string => {
+  const explicit = person.legalEntityId === SIAMPARK_LEGAL_ENTITY_ID ? env['SIAMPARK_AGENDA_EMAIL_FROM']?.trim() : undefined;
+  if (explicit !== undefined && explicit !== '') return explicit;
+  const fallback = env['SMTP_FROM'] === undefined ? null : addressOf(env['SMTP_FROM']);
+  const defaultAddress = person.legalEntityId === SIAMPARK_LEGAL_ENTITY_ID ? 'provoz@siampark.demo' : DEFAULT_FALLBACK_ADDRESS;
+  return `${companyDisplayName(person.legalName)} – upozornění <${fallback ?? defaultAddress}>`;
 };

@@ -1,5 +1,5 @@
 // @effect-diagnostics *:off
-import type { AkrosOrderInput, SiamparkReminderInput } from './contract.ts';
+import type { AgendaNotificationInput, AkrosOrderInput, SiamparkReminderInput } from './contract.ts';
 import { SIAMPARK_LEGAL_ENTITY_ID } from './contract.ts';
 
 export type AkrosOrderEmailEvent = 'ORDER_CREATED' | 'CONFIRMED' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED';
@@ -34,7 +34,7 @@ const layout = (brand: string, color: string, title: string, bodyHtml: string, f
 
 const statusLabels: Readonly<Record<AkrosOrderEmailEvent, string>> = {
   ORDER_CREATED: 'Nová',
-  CONFIRMED: 'Potvrzená',
+  CONFIRMED: 'Zpracovává se',
   SHIPPED: 'Předáno dopravci',
   DELIVERED: 'Dokončená',
   CANCELLED: 'Stornovaná',
@@ -58,7 +58,7 @@ export const orderEventLabel = (order: AkrosOrderInput, event: AkrosOrderEmailEv
     case 'ORDER_CREATED':
       return 'Přijetí objednávky';
     case 'CONFIRMED':
-      return 'Potvrzená';
+      return 'Zpracovává se';
     case 'SHIPPED':
       return isPickupOrder(order) ? 'Připraveno k vyzvednutí' : 'Předáno dopravci';
     case 'DELIVERED':
@@ -73,7 +73,7 @@ const subjectOf = (event: AkrosOrderEmailEvent, number: string, pickup: boolean)
     case 'ORDER_CREATED':
       return `AKROS – přijali jsme vaši objednávku ${number}`;
     case 'CONFIRMED':
-      return `AKROS – objednávka ${number} je potvrzená`;
+      return `AKROS – objednávka ${number} se zpracovává`;
     case 'SHIPPED':
       return pickup
         ? `AKROS – objednávka ${number} je připravena k vyzvednutí`
@@ -90,7 +90,7 @@ const leadOf = (event: AkrosOrderEmailEvent, number: string, shippingLabel: stri
     case 'ORDER_CREATED':
       return `Děkujeme za vaši objednávku č. ${number}. Přijali jsme ji a předali ke zpracování.`;
     case 'CONFIRMED':
-      return `Vaši objednávku č. ${number} jsme potvrdili a připravujeme ji k expedici.`;
+      return `Vaši objednávku č. ${number} jsme přijali ke zpracování a připravujeme ji k expedici.`;
     case 'SHIPPED':
       return pickup
         ? `Objednávka č. ${number} je připravena k vyzvednutí (${shippingLabel}).`
@@ -194,4 +194,69 @@ export const siamparkReminderEmail = (input: SiamparkReminderInput): RenderedEma
     .join('');
   const color = input.legalEntityId === SIAMPARK_LEGAL_ENTITY_ID ? '#0f766e' : '#1e3a8a';
   return { subject, text, html: layout(company, color, subject, paragraphs, escapeHtml(footerText)) };
+};
+
+/** Same wording as the in-app notification centre (siampark-ops locales agenda.json „inbox.category“). */
+export const agendaCategoryLabels: Readonly<Record<AgendaNotificationInput['category'], string>> = {
+  ASSIGNED: 'Přiřazeno vám',
+  CHANGE: 'Změna',
+  DEADLINE: 'Blíží se termín',
+  OVERDUE: 'Po termínu',
+};
+
+const czechDate = (iso: string): string => {
+  const [year, month, day] = iso.slice(0, 10).split('-');
+  return `${Number(day)}. ${Number(month)}. ${year}`;
+};
+
+/** One e-mail per delivery batch (all notifications one person received at the same instant) from the agenda. */
+export const agendaNotificationEmail = (input: {
+  readonly appUrl: string;
+  readonly legalName: string | null;
+  readonly notifications: readonly AgendaNotificationInput[];
+}): RenderedEmail => {
+  const company = companyDisplayName(input.legalName);
+  const items = input.notifications;
+  const first = items[0];
+  const count = items.length;
+  const plural = count === 1 ? 'nové upozornění' : count < 5 ? 'nová upozornění' : 'nových upozornění';
+  const subject =
+    count === 1 && first !== undefined
+      ? `${company} – ${agendaCategoryLabels[first.category].toLowerCase()}: ${first.title}`
+      : `${company} – ${count} ${plural} v agendě`;
+  const linkOf = (item: AgendaNotificationInput) =>
+    `${input.appUrl}/cs${item.href ?? '/siampark/provoz/agenda?tab=notifikace'}`;
+  const lineOf = (item: AgendaNotificationInput) =>
+    [
+      `${agendaCategoryLabels[item.category]}: ${item.title}`,
+      ...(item.detail === undefined ? [] : [item.detail]),
+      ...(item.dueDate === undefined ? [] : [`Termín: ${czechDate(item.dueDate)}`]),
+      `Otevřít: ${linkOf(item)}`,
+    ].join('\n');
+  const footerText =
+    `Ukázkové prostředí OntOS (DEMO): e-mail odeslán přes SMTP z agendy OntOS (${company}), protože máte v nastavení ` +
+    'upozornění zapnuté posílání e-mailem. Změnit to můžete v Moje agenda → Nastavení upozornění.';
+  const agendaUrl = `${input.appUrl}/cs/siampark/provoz/agenda`;
+  const text = [
+    'Dobrý den,',
+    count === 1 ? 'v agendě máte nové upozornění:' : `v agendě máte ${count} ${plural}:`,
+    ...items.map(lineOf),
+    `Všechna upozornění: ${agendaUrl}`,
+    `—\n${footerText}`,
+  ].join('\n\n');
+  const rows = items
+    .map(
+      (item) =>
+        `<li style="margin:0 0 12px"><strong>${escapeHtml(agendaCategoryLabels[item.category])}:</strong> ` +
+        `<a href="${escapeHtml(linkOf(item))}">${escapeHtml(item.title)}</a>` +
+        (item.detail === undefined ? '' : `<br><span style="color:#52525b">${escapeHtml(item.detail)}</span>`) +
+        (item.dueDate === undefined ? '' : `<br>Termín: ${escapeHtml(czechDate(item.dueDate))}`) +
+        `</li>`,
+    )
+    .join('');
+  const body =
+    `<p>Dobrý den,</p><p>${escapeHtml(count === 1 ? 'v agendě máte nové upozornění:' : `v agendě máte ${count} ${plural}:`)}</p>` +
+    `<ul style="padding-left:20px">${rows}</ul>` +
+    `<p><a href="${escapeHtml(agendaUrl)}">Otevřít Moje agenda</a></p>`;
+  return { subject, text, html: layout(company, '#0f766e', subject, body, escapeHtml(footerText)) };
 };

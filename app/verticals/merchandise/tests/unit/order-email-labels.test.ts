@@ -33,6 +33,10 @@ describe('order e-mail labels', () => {
     expect(emailEventLabels.SHIPPED).toBe('Předáno dopravci');
   });
 
+  test('CONFIRMED receipt matches the order status label „Zpracovává se“', () => {
+    expect(emailEventLabels.CONFIRMED).toBe('Zpracovává se');
+  });
+
   test('SENT status uses success variant', () => {
     expect(emailStatusVariant.SENT).toBe('success');
   });
