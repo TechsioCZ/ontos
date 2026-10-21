@@ -1,0 +1,112 @@
+import { expect, test } from 'effect-rstest';
+
+import { agentApprovalModuleByAppId } from '@app/shared-contracts/agent-proposals';
+
+import {
+  legacyBatchKey,
+  normalizeLegacySlice,
+  parseLegacyKey,
+  sliceFromRecords,
+} from '../../../api/agent-platform/legacy-normalize.ts';
+
+const crm = agentApprovalModuleByAppId('crm');
+if (crm === undefined) throw new Error('CRM module is not registered for agent approvals');
+
+const names = new Map([['principal-jana', 'Jana Nováková']]);
+
+const slice = {
+  batches: [
+    {
+      agentLabel: 'Agent Obchod',
+      agentPrincipalId: 'principal-agent',
+      createdAt: '2026-10-20T10:00:00.000Z',
+      id: 'batch-1',
+      instruction: 'Doplň kontakt pekárny',
+    },
+  ],
+  changes: [
+    {
+      batchId: 'batch-1',
+      diff: [],
+      id: 'change-pending',
+      operation: {
+        _tag: 'CreateClient',
+        contacts: [{ email: 'jan@firma.cz', name: 'Jan', primary: true }],
+      },
+      proposedAt: '2026-10-20T10:00:01.000Z',
+      reason: 'Nový klient z e-mailu',
+      risk: 'low',
+      status: 'pending',
+      summary: 'Nový klient',
+      target: { kind: 'client', label: 'Pekárna Malá s.r.o.' },
+    },
+    {
+      batchId: 'batch-1',
+      decidedAt: '2026-10-20T11:00:00.000Z',
+      decidedBy: 'principal-jana',
+      diff: [{ after: 'Nová cena', field: 'price', label: 'Cena' }],
+      id: 'change-applied',
+      proposedAt: '2026-10-20T10:00:02.000Z',
+      reason: 'Oprava ceny',
+      risk: 'medium',
+      status: 'applied',
+      summary: 'Změna ceny',
+      target: { kind: 'product', label: 'Káva' },
+    },
+  ],
+};
+
+test('parseLegacyKey splits app id and keeps colons inside the id', () => {
+  expect(parseLegacyKey('legacy:crm:abc:ai-batch')).toEqual({ appId: 'crm', id: 'abc:ai-batch' });
+  expect(parseLegacyKey('core:x')).toBeUndefined();
+  expect(parseLegacyKey('legacy:crm:')).toBeUndefined();
+});
+
+test('sliceFromRecords reads the CRM state shape and the top-level shape', () => {
+  expect(sliceFromRecords({ state: { aiChanges: slice } })).toBe(slice);
+  expect(sliceFromRecords({ aiChanges: slice })).toBe(slice);
+  expect(sliceFromRecords({ state: {} })).toBeUndefined();
+});
+
+test('normalizeLegacySlice builds one batch with legacy keys and revert permission', () => {
+  const [batch] = normalizeLegacySlice(crm, slice, { canDecide: true, names });
+  expect(batch?.key).toBe(legacyBatchKey('crm', 'batch-1'));
+  expect(batch?.key).toBe('legacy:crm:batch-1');
+  expect(batch?.source).toBe('legacy');
+  expect(batch?.canRevertAll).toBe(true);
+  expect(batch?.items.map((item) => item.key)).toEqual(['legacy:crm:change-pending', 'legacy:crm:change-applied']);
+
+  const [readOnly] = normalizeLegacySlice(crm, slice, { canDecide: false, names });
+  expect(readOnly?.canRevertAll).toBe(false);
+
+  const [reverted] = normalizeLegacySlice(
+    crm,
+    { ...slice, batches: [{ ...slice.batches[0], revertedAt: '2026-10-20T12:00:00.000Z', revertedBy: 'principal-jana' }] },
+    { canDecide: true, names },
+  );
+  expect(reverted?.canRevertAll).toBe(false);
+  expect(reverted?.revertedByName).toBe('Jana Nováková');
+});
+
+test('normalizeLegacySlice resolves the decider name and maps unknown statuses to failed', () => {
+  const [batch] = normalizeLegacySlice(crm, slice, { canDecide: true, names });
+  const applied = batch?.items.find((item) => item.status === 'applied');
+  expect(applied?.decidedByName).toBe('Jana Nováková');
+
+  const unknown = normalizeLegacySlice(
+    crm,
+    { ...slice, changes: [{ ...slice.changes[0], status: 'something-new' }] },
+    { canDecide: true, names },
+  );
+  expect(unknown[0]?.items[0]?.status).toBe('failed');
+});
+
+test('CreateClient contacts are expanded into per-contact diff lines', () => {
+  const [batch] = normalizeLegacySlice(crm, slice, { canDecide: true, names });
+  const pending = batch?.items.find((item) => item.status === 'pending');
+  const labels = pending?.diff.map((line) => line.label) ?? [];
+  expect(labels).toContain('Kontakt 1 · Jméno');
+  expect(labels).toContain('Kontakt 1 · Hlavní kontakt');
+  const primary = pending?.diff.find((line) => line.label === 'Kontakt 1 · Hlavní kontakt');
+  expect(primary?.after).toBe('ano');
+});
