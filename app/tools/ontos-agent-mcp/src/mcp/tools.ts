@@ -53,13 +53,15 @@ const toolError = (error: unknown, deps: ToolDeps): ToolResult => {
     });
   }
   if (isOntosRequestError(error)) {
-    const detail = error.detail ?? error.title ?? 'bez podrobností';
+    const detail = (error.detail ?? error.title ?? 'bez podrobností').replace(/\.+$/u, '');
     if (error.status === 403) {
       const code = error.code === undefined ? '' : ` (kód ${error.code})`;
       return errorResult(`OntOS tuto operaci tomuto připojení nepovolil: ${detail}${code}.`);
     }
     const code = error.code === undefined ? '' : ` (${error.code})`;
-    return errorResult(`OntOS odpověděl chybou HTTP ${error.status}${code}: ${detail}`);
+    // 400 = the input does not match the read/Action schema; point the model at the schema instead of retrying blindly.
+    const hint = error.status === 400 ? ' Vstupní schéma vrátí ontos_capabilities {id}.' : '';
+    return errorResult(`OntOS odpověděl chybou HTTP ${error.status}${code}: ${detail}.${hint}`);
   }
   return errorResult(error instanceof Error ? error.message : String(error));
 };
