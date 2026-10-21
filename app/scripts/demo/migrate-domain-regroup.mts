@@ -224,6 +224,23 @@ const program = Effect.gen(function* () {
           return yield* new MigrationFailure({ reason: `both drizzle journals ${oldJournal} and ${newJournal} exist` });
         }
         yield* query(`alter table drizzle.${ident(oldJournal)} rename to ${ident(newJournal)}`);
+        // The journal's serial sequence and its pkey/not-null constraints carry the old table name too.
+        const journalConstraints = yield* query<{ readonly name: string }>(
+          `select con.conname as name from pg_constraint con
+            where con.conrelid = ${literal(`drizzle.${ident(newJournal)}`)}::regclass
+              and starts_with(con.conname, ${literal(oldJournal)})`,
+        );
+        for (const { name } of journalConstraints) {
+          yield* query(
+            `alter table drizzle.${ident(newJournal)} rename constraint ${ident(name)} to ${ident(newJournal + name.slice(oldJournal.length))}`,
+          );
+        }
+        const [sequence] = yield* query<{ readonly name: string | null }>(
+          `select to_regclass(${literal(`drizzle.${ident(`${oldJournal}_id_seq`)}`)})::text as name`,
+        );
+        if (sequence?.name !== null && sequence?.name !== undefined) {
+          yield* query(`alter sequence drizzle.${ident(`${oldJournal}_id_seq`)} rename to ${ident(`${newJournal}_id_seq`)}`);
+        }
         yield* Console.log(`journal ${oldJournal} -> ${newJournal}`);
       }
     }
