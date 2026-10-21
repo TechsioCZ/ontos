@@ -30,6 +30,14 @@ export const APPROVAL_QUEUE_MODULES: ReadonlySet<string> = new Set([
   'work.tasks',
   'property.leasing',
   'demo.tagging',
+  'crm.activities',
+  'facility.operations',
+  'legal.agreements',
+  'party.registry',
+  'commerce.customer-context',
+  'property.portfolio',
+  'finance.billing',
+  'demo.workforce',
 ]);
 export const acceptsProposals = (moduleId: string): boolean => APPROVAL_QUEUE_MODULES.has(moduleId);
 /** The grant allows writing to the module (before the approval-queue check). */

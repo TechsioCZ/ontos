@@ -292,23 +292,20 @@ describe('buildConnectionTools', () => {
     assert.ok(textOf(result).startsWith('Neplatné argumenty nástroje ontos_read: „limit“ musí být celé číslo'), textOf(result));
   });
 
-  it('approval mode does not offer writes to modules the review queue refuses', async () => {
+  it('approval mode proposes writes for every module the review queue accepts (Provoz too)', async () => {
     const { fetchFn, requests } = fakeFetch();
     const tools = await build('approval', fetchFn);
     const result = await tool(tools, 'ontos_execute').handler({
       id: 'facility.operations/command/MeterCreate',
       input: {},
+      reason: 'Důvod testu',
     });
-    assert.equal(result.isError, true);
-    assert.ok(textOf(result).includes('nepřijímá návrhy ke schválení'));
-    assert.equal(requests.length, 0);
-    assert.ok(!tools.some((spec) => spec.name === 'facility_operations__meter_create'));
+    assert.notEqual(result.isError, true, textOf(result));
+    assert.equal(result.structuredContent?.['status'], 'proposed');
+    assert.equal(requests[0]?.body.proposals[0]?.command['_tag'], 'MeterCreate');
     const whoami = await tool(tools, 'ontos_whoami').handler({});
     const modules = whoami.structuredContent?.['modules'] as readonly { moduleId: string; write: boolean }[];
-    assert.equal(modules.find((module) => module.moduleId === 'facility.operations')?.write, false);
-    assert.equal(modules.find((module) => module.moduleId === 'work.tasks')?.write, true);
-    const direct = await build('direct', fetchFn);
-    assert.ok(direct.some((spec) => spec.name === 'facility_operations__meter_create'));
+    assert.equal(modules.find((module) => module.moduleId === 'facility.operations')?.write, true);
   });
 
   it('never offers demo maintenance and marks deletions destructive', async () => {

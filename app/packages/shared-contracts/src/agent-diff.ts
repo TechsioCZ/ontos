@@ -174,6 +174,50 @@ export const agentPlatformDiff = (
   }
 };
 
+const COMMAND_SKIP: ReadonlySet<string> = new Set(['_tag', 'expectedRevision', 'idempotencyKey']);
+const COMMAND_LABELS: Readonly<Record<string, string>> = {
+  amountMinor: 'Částka',
+  city: 'Město',
+  currency: 'Měna',
+  description: 'Popis',
+  dueDate: 'Termín',
+  email: 'E-mail',
+  endDate: 'Konec',
+  issueDate: 'Datum vystavení',
+  kind: 'Druh',
+  name: 'Název',
+  note: 'Poznámka',
+  phone: 'Telefon',
+  priceMinor: 'Cena bez DPH',
+  reason: 'Důvod',
+  startDate: 'Začátek',
+  state: 'Stav',
+  status: 'Stav',
+  street: 'Ulice',
+  title: 'Název',
+  value: 'Hodnota',
+};
+const MAX_COMMAND_TEXT = 200;
+const isEmptyValue = (value: unknown): boolean =>
+  value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0);
+
+/**
+ * Lines for modules without their own diff: one line per filled field of the stored command, `after` only. The
+ * platform does not read these records, so there is no `before`. Empty when the command has no plain fields.
+ */
+export const agentCommandDiff = (command: AgentCommand): readonly AgentDiffLine[] =>
+  Object.entries(command)
+    .filter(([key, value]) => !COMMAND_SKIP.has(key) && !isEmptyValue(value))
+    .slice(0, 60)
+    .map(([key, value]) => {
+      const text = show(key, value) ?? '';
+      return {
+        after: text.length > MAX_COMMAND_TEXT ? `${text.slice(0, MAX_COMMAND_TEXT - 1)}…` : text,
+        field: key.slice(0, 300),
+        label: (COMMAND_LABELS[key] ?? key).slice(0, 300),
+      };
+    });
+
 /** Does `actual` still hold every value of `expected` (objects compared by the keys of `expected`)? */
 const holds = (expected: unknown, actual: unknown): boolean => {
   if (expected === null || expected === undefined) {

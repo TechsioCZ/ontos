@@ -50,7 +50,7 @@ export const AGENT_CREATED_ID_PLACEHOLDER = '$createdId';
 export const AgentProposalInputSchema = Schema.Struct({
   /** Stable module app id (directory under app/verticals), e.g. `work-tasks`, `merchandise`. */
   appId: ShortText,
-  /** Module action slug; every demo module uses `apply-command` with `{ command, expectedRevision }`. */
+  /** Module action slug: `apply-command` (default, body `{ command, expectedRevision }`) or a named Action such as `update-party` whose body is `command` itself (no `_tag`). */
   actionSlug: Schema.optionalKey(ShortText),
   command: AgentCommandSchema,
   diff: Schema.Array(AgentDiffLineSchema).check(Schema.isMaxLength(60)),
@@ -114,9 +114,10 @@ export const AgentQueueItemSchema = Schema.Struct({
   diff: Schema.Array(AgentDiffLineSchema),
   /**
    * `platform`: lines built by the platform from the stored command and the record (live while pending).
+   * `command`: the platform lists the stored command's values; it does not read the record, so there is no before.
    * `agent`: the platform does not understand this command; the lines are the agent's own description.
    */
-  diffSource: Schema.optionalKey(Schema.Literals(['platform', 'agent'])),
+  diffSource: Schema.optionalKey(Schema.Literals(['platform', 'command', 'agent'])),
   failure: Schema.optionalKey(Schema.String),
   /** `core:<proposalId>` or `legacy:<appId>:<changeId>`; pass back unchanged in decide requests. */
   key: Schema.String,
@@ -242,7 +243,7 @@ export interface AgentApprovalModule {
   readonly moduleKey: string;
 }
 
-/** Modules that accept agent proposals. Unknown app ids are refused on submit. */
+/** Modules that accept agent proposals (every served module with Actions except sales-insights, whose metrics no screen shows). Unknown app ids are refused on submit. */
 export const agentApprovalModules: readonly AgentApprovalModule[] = [
   { appId: 'crm', label: 'CRM', legacyEngine: true, moduleKey: 'demo.crm' },
   { appId: 'sales-pipeline', label: 'Obchodní případy', legacyEngine: true, moduleKey: 'demo.sales-pipeline' },
@@ -250,12 +251,27 @@ export const agentApprovalModules: readonly AgentApprovalModule[] = [
   { appId: 'work-tasks', label: 'Úkoly', legacyEngine: false, moduleKey: 'work.tasks' },
   { appId: 'property-leasing', label: 'Nájmy a pobyty', legacyEngine: false, moduleKey: 'property.leasing' },
   { appId: 'tagging', label: 'Štítky', legacyEngine: false, moduleKey: 'demo.tagging' },
+  { appId: 'crm-activities', label: 'Aktivity', legacyEngine: false, moduleKey: 'crm.activities' },
+  { appId: 'facility-operations', label: 'Provoz areálu', legacyEngine: false, moduleKey: 'facility.operations' },
+  { appId: 'legal-agreements', label: 'Smlouvy', legacyEngine: false, moduleKey: 'legal.agreements' },
+  { appId: 'party-registry', label: 'Zákazníci a partneři', legacyEngine: false, moduleKey: 'party.registry' },
+  {
+    appId: 'commerce-customer-context',
+    label: 'Zákaznický kontext e-shopu',
+    legacyEngine: false,
+    moduleKey: 'commerce.customer-context',
+  },
+  { appId: 'property-portfolio', label: 'Nemovitosti', legacyEngine: false, moduleKey: 'property.portfolio' },
+  { appId: 'finance-billing', label: 'Faktury a platby', legacyEngine: false, moduleKey: 'finance.billing' },
+  { appId: 'workforce', label: 'Zaměstnanci', legacyEngine: false, moduleKey: 'demo.workforce' },
 ];
 
 /** Czech labels of every module key that can appear in agent activity. Fallback: the module key itself. */
 export const agentModuleLabels: Readonly<Record<string, string>> = {
   'demo.crm': 'CRM',
   'demo.merchandise': 'Produkty, ceny a objednávky',
+  'commerce.customer-context': 'Zákaznický kontext e-shopu',
+  'crm.activities': 'Aktivity',
   'demo.sales-insights': 'Přehledy',
   'demo.sales-pipeline': 'Obchodní případy',
   'facility.operations': 'Provoz areálu',

@@ -1,6 +1,6 @@
 import { expect, it } from 'effect-rstest';
 
-import { agentChangeStillInPlace, agentPlatformDiff } from '../../src/agent-diff.ts';
+import { agentChangeStillInPlace, agentCommandDiff, agentPlatformDiff } from '../../src/agent-diff.ts';
 
 const taskRef = { moduleId: 'work.tasks', resourceId: 'T-1', resourceType: 'work.tasks.task', tenantId: 't' };
 
@@ -47,4 +47,19 @@ it('task updates compare only the fields the command set', () => {
   expect(
     agentChangeStillInPlace('work-tasks', { _tag: 'ChangeTaskState', state: 'DONE', taskRef }, { state: 'DONE' }),
   ).toBe(true);
+});
+
+it('lists the stored command fields for modules without their own diff', () => {
+  expect(
+    agentCommandDiff({
+      _tag: 'MeterCreate',
+      expectedRevision: 3,
+      name: 'Elektroměr hala A',
+      note: '',
+      readingDate: '2026-10-21',
+    }),
+  ).toEqual([
+    { after: 'Elektroměr hala A', field: 'name', label: 'Název' },
+    { after: '21. 10. 2026', field: 'readingDate', label: 'readingDate' },
+  ]);
 });
