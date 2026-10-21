@@ -387,7 +387,7 @@ export const SalesQuoteFormPanel = ({
                 placeholder={k('sales.form.descriptionPlaceholder')}
                 value={line.description}
               />
-              <div className="grid items-end gap-100" style={{ gridTemplateColumns: '4.5rem minmax(6rem, 1fr) 6.5rem' }}>
+              <div className="grid items-end gap-100" style={{ gridTemplateColumns: '7rem minmax(6rem, 1fr) 6.5rem' }}>
               <FormInput
                 id={`sales-line-${index}-quantity`}
                 inputMode="numeric"
