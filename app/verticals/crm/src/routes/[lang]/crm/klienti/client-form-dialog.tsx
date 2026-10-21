@@ -217,7 +217,7 @@ export const ClientFormDialog = ({
           </Button>
           <Button
             isLoading={busy}
-            loadingText={mode === 'create' ? 'Zakládám klienta a jeho záznam v Party Registry…' : 'Ukládám…'}
+            loadingText={mode === 'create' ? 'Zakládám klienta…' : 'Ukládám…'}
             onClick={save}
             variant="primary"
           >

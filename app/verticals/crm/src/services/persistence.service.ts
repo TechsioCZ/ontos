@@ -295,7 +295,10 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
       if (targets.length > 0) {
         const intake = yield* makePartyIntake({ ...scope, legalEntityId });
         for (const [index, client] of targets.entries()) {
-          const verified = yield* intake.identify(client, linkedIdentityIds(state), `crm-intake:${invocationId}:${index}`);
+          // Uninterruptible: a closed browser tab must not stop the registry writes half-way (Party without role).
+          const verified = yield* intake
+            .identify(client, linkedIdentityIds(state), `crm-intake:${invocationId}:${index}`)
+            .pipe(Effect.uninterruptible);
           if (Option.isSome(verified)) {
             state = linkVerifiedParty(state, client.id, verified.value, context, `party-intake-${index}`);
           }
