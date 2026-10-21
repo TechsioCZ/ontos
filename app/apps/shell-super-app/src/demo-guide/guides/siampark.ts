@@ -161,6 +161,15 @@ export const siamparkGuide: DemoGuide = {
           title: 'Jen svěřené kontakty',
         },
         {
+          click:
+            'Prodej › Příležitosti: jen tři svěřené obchodní případy (Kavárna Na Nábřeží, Horák & partneři, Ing. Šťastný), bez tlačítek pro změny. Otevřete jeden případ.',
+          id: 'siampark-externista-pripady',
+          persona: external,
+          say: 'Stejně tak obchodní případy: server vrátí jen případy, které mu Vedení svěřilo. Ordinaci Fyzioterapie Pohyb ani Lékárnu nevidí a nic nezmění.',
+          target: { kind: 'app', path: '/prodej/prilezitosti' },
+          title: 'Jen svěřené obchodní případy',
+        },
+        {
           click: 'Najděte úkol Předání nájemního prostoru R101 a ukažte omezené menu.',
           id: 'siampark-externista-prace',
           persona: external,
@@ -177,7 +186,7 @@ export const siamparkGuide: DemoGuide = {
           title: 'Přímý odkaz na finance',
         },
       ],
-      summary: 'Externí obchodník dostane svěřené kontakty a svou práci, ne účetnictví.',
+      summary: 'Externí obchodník dostane svěřené kontakty, svěřené obchodní případy a svou práci, ne účetnictví.',
       title: 'Externista a oprávnění',
     },
   ],
