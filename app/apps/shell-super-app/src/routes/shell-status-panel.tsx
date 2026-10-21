@@ -4,7 +4,14 @@ import { Icon } from '@techsio/ui-kit/atoms/icon';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 
 /** Safe, distinct recovery states. Never display a backend error body or a record identifier. */
-export const ShellStatusPanel = ({ status }: { readonly status: string }) => {
+export const ShellStatusPanel = ({
+  messageKey,
+  status,
+}: {
+  /** Explanation under the title; defaults to the module wording for `status`. */
+  readonly messageKey?: string;
+  readonly status: string;
+}) => {
   const { t } = useModernI18n();
   const missing = status === 'not_found';
   const forbidden = status === 'forbidden';
@@ -27,7 +34,7 @@ export const ShellStatusPanel = ({ status }: { readonly status: string }) => {
         />
       </span>
       <h1 className="font-semibold text-xl">{t(`shell.recovery.${titleKey}`)}</h1>
-      <p className="text-fg-secondary text-sm">{t(`shell.moduleTarget.${status}`)}</p>
+      <p className="text-fg-secondary text-sm">{t(messageKey ?? `shell.moduleTarget.${status}`)}</p>
       <div className="flex flex-wrap gap-150">
         <LinkButton as={LocalizedLink} icon="icon-[mdi--home-outline]" size="sm" theme="solid" to="/" variant="primary">
           {t('shell.recovery.home')}

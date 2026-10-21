@@ -5,7 +5,8 @@ import type { ShellResourceResponse } from '../../../../../../../shared/api.ts';
 import { resourceDetail } from '../../../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../../../../../shell-authentication-client-options.ts';
-import { loadHomePageModel } from '../../../../home-page-model.ts';
+import { loadHomePageModel, sessionEndedModel } from '../../../../home-page-model.ts';
+import { requireSignedIn } from '../../../../../sign-in-return.ts';
 import type { HomePageModel } from '../../../../home-page-model.ts';
 
 interface ResourceLoaderArguments {
@@ -59,7 +60,8 @@ export const loader = ({ params, request }: ResourceLoaderArguments): Promise<Re
           Effect.matchEffect({
             onFailure: (error) =>
               Effect.succeed<ResourcePageModel>({
-                shell,
+                // The resource read itself saying "sign in again" means the session died meanwhile.
+                shell: error._tag === 'ShellAuthenticationRequiredProblem' ? sessionEndedModel : shell,
                 state: Match.value(error).pipe(
                   Match.tag('ShellReloadRequiredProblem', () => 'reload_required' as const),
                   Match.tag(
@@ -91,4 +93,4 @@ export const loader = ({ params, request }: ResourceLoaderArguments): Promise<Re
       }),
     ),
     { signal: request.signal },
-  );
+  ).then((model) => requireSignedIn(request, model));

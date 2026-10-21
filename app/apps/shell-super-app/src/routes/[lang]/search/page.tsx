@@ -8,6 +8,7 @@ import { Match } from 'effect';
 
 import type { ShellSearchResult } from '../../../../shared/api.ts';
 import { buildShellNavigation, ShellRouteLink } from '../../shell-frame.tsx';
+import { SignInRedirect } from '../../sign-in-redirect.tsx';
 import { ShellContentLayout } from '../../shell-content-layout.tsx';
 import { useShellControls } from '../../use-shell-controls.ts';
 
@@ -106,6 +107,9 @@ const SearchPage = () => {
         </StatusText>
       </main>
     );
+  }
+  if (model.shell.state === 'anonymous') {
+    return <SignInRedirect reason={model.shell.reason} />;
   }
   if (model.shell.state !== 'authenticated') {
     return (

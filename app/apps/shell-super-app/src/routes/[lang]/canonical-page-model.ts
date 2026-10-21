@@ -6,6 +6,7 @@ import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { loadModulePageModel, preloadModuleTarget } from './modules/[moduleId]/module-page-model.ts';
 import type { ModuleTargetPageModel } from './modules/[moduleId]/module-page-model.ts';
 import { routeMeta } from './route.meta.ts';
+import { requireSignedIn } from '../sign-in-return.ts';
 
 interface CanonicalPageLoaderArguments {
   readonly params: { readonly lang: string };
@@ -41,5 +42,5 @@ export const loader = ({
       Effect.tap((model) => preloadModuleTarget(model, new URL(request.url).pathname)),
     ),
     { signal: request.signal },
-  );
+  ).then((model) => requireSignedIn(request, model));
 };

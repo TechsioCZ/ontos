@@ -193,6 +193,10 @@
         "session_ended": {
           "title": "Přihlášení vypršelo",
           "body": "Vaše relace už není platná. Přihlaste se prosím znovu."
+        },
+        "sign_in_required": {
+          "title": "Nejste přihlášeni",
+          "body": "Stránka, kterou otevíráte, vyžaduje přihlášení. Po přihlášení se na ni vrátíte."
         }
       }
     },

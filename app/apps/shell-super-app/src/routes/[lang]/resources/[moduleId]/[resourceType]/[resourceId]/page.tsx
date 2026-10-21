@@ -10,6 +10,8 @@ import { ShellReloadRequiredProblemSchema } from '../../../../../../../shared/ap
 import { attachResourceMedia } from '../../../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../../../runtime/browser-effect-runtime.ts';
 import { ShellContentLayout } from '../../../../../shell-content-layout.tsx';
+import { ShellStatusPanel } from '../../../../../shell-status-panel.tsx';
+import { SignInRedirect } from '../../../../../sign-in-redirect.tsx';
 import { useShellControls } from '../../../../../use-shell-controls.ts';
 import type { ResourcePageModel } from './resource-page-model.ts';
 
@@ -139,6 +141,9 @@ const ResourcePage = () => {
       </main>
     );
   }
+  if (model.shell.state === 'anonymous') {
+    return <SignInRedirect reason={model.shell.reason} />;
+  }
   if (model.shell.state !== 'authenticated') {
     return (
       <main className="shell:mx-auto shell:grid shell:w-full shell:max-w-5xl shell:gap-6 shell:px-4 shell:py-8">
@@ -150,9 +155,8 @@ const ResourcePage = () => {
   }
   const content =
     model.state !== 'ready' ? (
-      <StatusText aria-live="polite" showIcon status="error">
-        {t(`shell.resource.${model.state}`)}
-      </StatusText>
+      // Distinct states: forbidden (lock), not found (search), temporarily unavailable (retry).
+      <ShellStatusPanel messageKey={`shell.resource.${model.state}`} status={model.state} />
     ) : (
       <ResourceDetails
         mediaState={mediaState}

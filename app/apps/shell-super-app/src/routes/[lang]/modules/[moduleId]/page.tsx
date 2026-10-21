@@ -1,5 +1,5 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useLoaderData, useNavigate } from '@modern-js/plugin-tanstack/runtime';
+import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Effect, Predicate } from 'effect';
 import { useEffect, useState } from 'react';
@@ -11,7 +11,7 @@ import { pinBrowserModuleTarget, settleModuleEntrypointLoads } from '../../../mo
 import { remotePageIdentity } from '../../../remote-page-loader.ts';
 import { ShellStatusPanel } from '../../../shell-status-panel.tsx';
 import { ShellContentLayout } from '../../../shell-content-layout.tsx';
-import { signInHref } from '../../../sign-in-return.ts';
+import { SignInRedirect } from '../../../sign-in-redirect.tsx';
 import { useShellControls } from '../../../use-shell-controls.ts';
 import type { ModuleTargetPageModel } from './module-page-model.ts';
 
@@ -158,27 +158,16 @@ interface ModuleTargetViewProps {
 }
 
 export const ModuleTargetView = ({ initialModel }: ModuleTargetViewProps) => {
-  const { language, t } = useModernI18n();
-  const navigate = useNavigate();
+  const { t } = useModernI18n();
   const model = initialModel;
-  const anonymous = model.shell.state === 'anonymous';
-  const signInReason = model.shell.state === 'anonymous' ? model.shell.reason : undefined;
-  // A protected module opened without a session goes to sign-in rather than a dead end, and sign-in returns here.
-  // A session that died (disabled account, session no longer accepted) goes there too, with the reason shown.
-  useEffect(() => {
-    if (anonymous) {
-      void navigate({
-        href: signInHref(language, `${window.location.pathname}${window.location.search}`, signInReason),
-        replace: true,
-      });
-    }
-  }, [anonymous, language, navigate, signInReason]);
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
+  // A protected module opened without a live session goes to sign-in, and sign-in returns here.
+  if (model.shell.state === 'anonymous') {
+    return <SignInRedirect reason={model.shell.reason} />;
+  }
   if (model.shell.state !== 'authenticated') {
     let message = 'shell.moduleTarget.selection_required';
-    if (anonymous) {
-      message = 'shell.moduleTarget.sign_in_required';
-    } else if (model.shell.state === 'reload_required') {
+    if (model.shell.state === 'reload_required') {
       message = 'shell.moduleTarget.reload_required';
     } else if (model.shell.state === 'unavailable') {
       message = 'shell.dashboard.unavailable';

@@ -1,5 +1,6 @@
 // Sign-in round trip for protected deep links: the module page sends an anonymous visitor to the login page with
 // the page it asked for, and the login page returns there after a successful sign-in.
+import { throwTanstackRedirect } from '@modern-js/plugin-tanstack/runtime';
 import { Option, Schema } from 'effect';
 import { Url, UrlParams } from 'effect/unstable/http';
 
@@ -28,6 +29,30 @@ export const signInHref = (language: string, path: string, reason?: SignInReason
   };
   return Object.keys(params).length === 0 ? login : `${login}?${UrlParams.toString(params)}`;
 };
+
+/**
+ * Route loaders call this for a browser without a live session (never signed in, disabled account, session the
+ * Shell no longer accepts): every protected page goes to sign-in, during server rendering as an HTTP redirect, and
+ * sign-in returns to the page that was asked for. Throws; never returns.
+ */
+export const redirectToSignIn = (request: Request, reason?: SignInReason): never => {
+  const url = new URL(request.url);
+  const segment = url.pathname.split('/')[1] ?? '';
+  const language = /^[a-z]{2}$/u.test(segment) ? segment : 'cs';
+  // An absolute same-origin URL: TanStack keeps its query string and loads the sign-in page as a fresh document,
+  // which also drops every browser read cached for the dead session.
+  return throwTanstackRedirect(new URL(signInHref(language, `${url.pathname}${url.search}`, reason), url).href);
+};
+
+/** Throws the sign-in redirect when the Shell answered "not signed in"; any other model passes through. */
+export const requireSignedIn = <M extends { readonly shell: SignInShellState }>(request: Request, model: M): M =>
+  model.shell.state === 'anonymous' ? redirectToSignIn(request, model.shell.reason) : model;
+
+/** The part of the Shell page model that tells whether the browser still holds a live session. */
+export interface SignInShellState {
+  readonly reason?: SignInReason;
+  readonly state: string;
+}
 
 /** The sign-in notice to show, read from the login page URL or path; unknown values are ignored. */
 export const signInReason = (href: string): SignInReason | undefined =>

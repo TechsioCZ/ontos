@@ -65,6 +65,8 @@ const translations = new Map(
     'shell.search.selection_required': 'Select a legal entity first',
     'shell.search.submit': 'Search',
     'shell.search.title': 'Search',
+    'shell.search.agenda_hint': 'Open an authorized agenda and use its search.',
+    'shell.search.agenda_title': 'Search within an agenda',
     'shell.search.unavailable': 'Search unavailable',
   }),
 );
@@ -242,7 +244,7 @@ test('an empty result set exposes no resource affordance', () => {
   expect(resourceLinkCalls()).toHaveLength(0);
 });
 
-test('an unavailable search exposes no resource affordance', () => {
+test('an unavailable search points to the agendas and exposes no resource affordance', () => {
   useLoaderDataMock.mockReturnValue({
     query: 'unit',
     shell: authenticatedShell(),
@@ -250,7 +252,20 @@ test('an unavailable search exposes no resource affordance', () => {
   } satisfies SearchPageModel);
   render(<SearchPage />);
 
-  expect(screen.getByText('Search unavailable')).toBeTruthy();
+  expect(screen.getAllByText('Search within an agenda').length).toBeGreaterThan(0);
+  expect(screen.getByText('Open an authorized agenda and use its search.')).toBeTruthy();
+  expect(resourceLinkCalls()).toHaveLength(0);
+});
+
+test('a browser without a live session goes to sign-in instead of a bare error line', () => {
+  useLoaderDataMock.mockReturnValue({
+    query: 'faktura',
+    shell: { reason: 'account_forbidden', state: 'anonymous' },
+    state: 'selection_required',
+  } satisfies SearchPageModel);
+  render(<SearchPage />);
+
+  expect(navigateMock).toHaveBeenCalledWith({ href: '/en/login?reason=account_forbidden', replace: true });
   expect(resourceLinkCalls()).toHaveLength(0);
 });
 

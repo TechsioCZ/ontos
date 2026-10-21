@@ -25,12 +25,20 @@ interface DashboardPageProps {
   readonly title: string;
 }
 
-const { attachResourceMediaMock, browserRunPromiseMock, dashboardRenders, shellControlsMock, useLoaderDataMock } =
+const {
+  attachResourceMediaMock,
+  browserRunPromiseMock,
+  dashboardRenders,
+  navigateMock,
+  shellControlsMock,
+  useLoaderDataMock,
+} =
   rstest.hoisted(() => {
     const renders: DashboardPageProps[] = [];
     return {
       attachResourceMediaMock: rstest.fn(),
       browserRunPromiseMock: rstest.fn(),
+      navigateMock: rstest.fn(),
       dashboardRenders: renders,
       shellControlsMock: rstest.fn(),
       useLoaderDataMock: rstest.fn(),
@@ -63,6 +71,7 @@ const translations = new Map(
 );
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
+  Link: ({ children, to }: { readonly children: ReactNode; readonly to: string }) => <a href={to}>{children}</a>,
   useModernI18n: () => ({
     language: 'en',
     t: (key: string) => translations.get(key) ?? key,
@@ -71,6 +80,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
 
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
   useLoaderData: useLoaderDataMock,
+  useNavigate: () => navigateMock,
 }));
 
 rstest.mock('../../../../src/api/auth-client.ts', () => ({
@@ -199,10 +209,6 @@ it.each([
     blockedText: 'The dashboard is unavailable',
     shellState: 'unavailable' as const,
   },
-  {
-    blockedText: 'Select a legal entity first',
-    shellState: 'anonymous' as const,
-  },
 ])(
   'refuses the whole page for a $shellState shell without a dashboard or an attach seam',
   ({ blockedText, shellState }) => {
@@ -217,6 +223,17 @@ it.each([
     expect(browserRunPromiseMock).not.toHaveBeenCalled();
   },
 );
+
+it('sends a browser without a live session to sign-in instead of a bare error line', () => {
+  renderResourcePage({ shell: { reason: 'account_forbidden', state: 'anonymous' }, state: 'selection_required' });
+
+  expect(navigateMock).toHaveBeenCalledWith({ href: '/en/login?reason=account_forbidden', replace: true });
+  expect(screen.getByText('shell.moduleTarget.sign_in_required')).toBeTruthy();
+  expect(screen.queryByText('Select a legal entity first')).toBeNull();
+  expect(screen.queryByText('Media')).toBeNull();
+  expect(dashboardRenders).toHaveLength(0);
+  expect(attachResourceMediaMock).not.toHaveBeenCalled();
+});
 
 it('refuses media attachment when document hydration requires a reload', () => {
   shellControlsMock.mockReturnValueOnce({ reloadRequired: true });
@@ -244,7 +261,7 @@ it.each(closedStates)(
     renderResourcePage({ shell, state });
 
     expect(screen.getByText(closedText)).toBeTruthy();
-    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Attach media' })).toBeNull();
     expect(screen.queryByText('Media')).toBeNull();
     expect(screen.queryByText('Timeline')).toBeNull();
     expect(lastDashboardProps().title).toBe('Resource');

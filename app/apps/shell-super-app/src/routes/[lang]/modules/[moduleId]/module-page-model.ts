@@ -15,7 +15,8 @@ import {
 } from '../../../browser-swr-cache.ts';
 import { loadRemotePage } from '../../../remote-page-loader.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../../../shell-authentication-client-options.ts';
-import { loadHomePageModel } from '../../home-page-model.ts';
+import { loadHomePageModel, sessionEndedModel } from '../../home-page-model.ts';
+import { requireSignedIn } from '../../../sign-in-return.ts';
 import type { AuthenticatedHomePageModel, HomePageModel } from '../../home-page-model.ts';
 
 interface ModuleTargetLoaderArguments {
@@ -44,7 +45,12 @@ export type ModuleTargetPageModel =
 const safeState = (error: Config.ConfigError | ShellTargetClientError, shell: HomePageModel): ModuleTargetPageModel =>
   Match.value(error).pipe(
     Match.tag('ShellReloadRequiredProblem', () => ({ shell, state: 'reload_required' as const })),
-    Match.tag('ShellAuthenticationRequiredProblem', 'ShellSelectionRequiredProblem', () => ({
+    // The target read itself saying "sign in again" means the session died meanwhile.
+    Match.tag('ShellAuthenticationRequiredProblem', () => ({
+      shell: sessionEndedModel,
+      state: 'selection_required' as const,
+    })),
+    Match.tag('ShellSelectionRequiredProblem', () => ({
       shell,
       state: 'selection_required' as const,
     })),
@@ -160,4 +166,4 @@ export const loader = (input: ModuleTargetLoaderArguments): Promise<ModuleTarget
       Effect.tap((model) => preloadModuleTarget(model, new URL(input.request.url).pathname)),
     ),
     { signal: input.request.signal },
-  );
+  ).then((model) => requireSignedIn(input.request, model));

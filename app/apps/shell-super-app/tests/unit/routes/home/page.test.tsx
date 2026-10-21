@@ -204,18 +204,16 @@ it('anonymous home exposes only the localized login action', () => {
   expect(screen.queryByRole('banner')).toBeNull();
 });
 
-it('the anonymous login action hands a canonical target to the framework link', () => {
+it('an anonymous dashboard goes straight to sign-in instead of a bare login button', () => {
   render(<HomeView initialModel={{ state: 'anonymous' }} />);
-  const loginCall = localizedLinkCalls.find((call) => call.to === '/login');
-  expect(loginCall).toBeDefined();
-  expect(loginCall?.params).toBeUndefined();
-  expect(loginCall?.href).toBeUndefined();
+  expect(navigateMock).toHaveBeenCalledWith({ href: '/en/login', replace: true });
+  expect(screen.getByRole('link', { name: 'Login' }).getAttribute('href')).toBe('/en/login');
 });
 
-it('the anonymous login action resolves Czech from the same canonical target', () => {
+it('a dead session on the dashboard goes to Czech sign-in with the reason', () => {
   languageState.current = 'cs';
-  render(<HomeView initialModel={{ state: 'anonymous' }} />);
-  expect(localizedLinkCalls.map((call) => call.to)).toContain('/login');
+  render(<HomeView initialModel={{ reason: 'account_forbidden', state: 'anonymous' }} />);
+  expect(navigateMock).toHaveBeenCalledWith({ href: '/cs/login?reason=account_forbidden', replace: true });
   expect(screen.getByRole('link', { name: 'Login' }).getAttribute('href')).toBe('/cs/login');
 });
 
@@ -317,13 +315,12 @@ it.live('successful legal-entity switch performs a full document reload', () =>
   }),
 );
 
-it.live('search submission navigates to the localized Shell search route', () =>
-  Effect.gen(function* searchSubmissionNavigatesToTheLocalized() {
-    const user = userEvent.setup();
+it.live('the header offers no global search: search lives in each governed agenda', () =>
+  Effect.gen(function* headerOffersNoGlobalSearch() {
     render(<HomeView initialModel={authenticatedModel()} />);
-    yield* Effect.promise(() => user.type(screen.getByLabelText('Search this legal entity'), 'Unit 1'));
-    yield* Effect.promise(() => user.click(screen.getByRole('button', { name: 'Search' })));
-    expect(navigateMock).toHaveBeenCalledWith({ to: '/en/search?q=Unit%201' });
+    expect(screen.queryByLabelText('Search this legal entity')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Search' })).toBeNull();
+    yield* Effect.void;
   }),
 );
 

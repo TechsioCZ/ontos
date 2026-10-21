@@ -63,11 +63,15 @@ const LoginPage = () => {
   // Keep failures next to the form until retry; a short-lived toast is easy to miss during an outage.
   const [submissionError, setSubmissionError] = useState<string>();
   // A dead session (disabled account, session no longer accepted) arrives here with a reason; say why once.
+  // A protected page opened without signing in arrives with only the page to return to: "not signed in".
   // Read after mount: the server render has no browser URL, so both renders start without the notice.
-  const [reason, setReason] = useState<SignInReason>();
+  const [reason, setReason] = useState<SignInReason | 'sign_in_required'>();
   useEffect(() => {
-    setReason(signInReason(window.location.href));
-  }, []);
+    const { href } = window.location;
+    setReason(
+      signInReason(href) ?? (signInReturnPath(href, language) === undefined ? undefined : 'sign_in_required'),
+    );
+  }, [language]);
   const handleNavigationFailure = (error: Cause.TimeoutError | Cause.UnknownError) =>
     Effect.sync(() => {
       void error;

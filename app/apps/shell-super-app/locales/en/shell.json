@@ -193,6 +193,10 @@
         "session_ended": {
           "title": "Session ended",
           "body": "Your session is no longer valid. Please sign in again."
+        },
+        "sign_in_required": {
+          "title": "You are not signed in",
+          "body": "The page you are opening requires signing in. You will return to it after signing in."
         }
       }
     },

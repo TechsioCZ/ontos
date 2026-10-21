@@ -23,6 +23,7 @@ import type { AvailableTenantsClientError, ShellAuthenticationClientOptions } fr
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { browserBaseUrl, browserReadKey, browserStaleWhileRevalidateCache, keyPart } from '../browser-swr-cache.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../shell-authentication-client-options.ts';
+import { redirectToSignIn } from '../sign-in-return.ts';
 import type { SignInReason } from '../sign-in-return.ts';
 
 interface HomeLoaderArguments {
@@ -86,7 +87,8 @@ export type HomePageModel =
 
 const anonymousModel: AnonymousHomePageModel = { state: 'anonymous' };
 const accountForbiddenModel: AnonymousHomePageModel = { reason: 'account_forbidden', state: 'anonymous' };
-const sessionEndedModel: AnonymousHomePageModel = { reason: 'session_ended', state: 'anonymous' };
+/** A session the Shell no longer accepts; page loaders also use it when their own read answers "sign in again". */
+export const sessionEndedModel: AnonymousHomePageModel = { reason: 'session_ended', state: 'anonymous' };
 const unavailableModel: UnavailableHomePageModel = { state: 'unavailable' };
 const reloadRequiredModel: ReloadRequiredHomePageModel = { state: 'reload_required' };
 
@@ -357,6 +359,9 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
 );
 
 export const loader = ({ request }: HomeLoaderArguments): Promise<HomePageModel> =>
-  browserRuntime.runPromise(loadHomePageModel(request), {
-    signal: request.signal,
-  });
+  browserRuntime
+    .runPromise(loadHomePageModel(request), {
+      signal: request.signal,
+    })
+    // Without a live session the dashboard has nothing to show: go to sign-in (with the reason when it died).
+    .then((model) => (model.state === 'anonymous' ? redirectToSignIn(request, model.reason) : model));
