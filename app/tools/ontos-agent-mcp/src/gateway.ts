@@ -1,12 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { getEndpoints } from './config.ts';
+import { connectorHeaders } from './oauth/connector.ts';
+import { CONNECTOR_PATHS, ConnectionInactiveError } from './oauth/types.ts';
 import { currentPrincipal } from './session.ts';
 
 /**
- * Shell API-key capability issuance.
+ * Shell gateway assertion issuance.
  *
- * Endpoint: POST {ONTOS_SHELL_URL}/shell-super-app-api/auth/api-key/gateway-context
+ * API-key sessions (stdio): POST {ONTOS_SHELL_URL}/shell-super-app-api/auth/api-key/gateway-context
+ * OAuth sessions (HTTP): POST {ONTOS_SHELL_URL}/shell-super-app-api/auth/connector/gateway-context with
+ *   x-ontos-connector-key + Bearer user JWT, body {audience, compositionRevision}. The grant fixes the company.
+ *
  *   - apiPrefix + path: packages/shared-contracts/src/gateway-context.ts:222 and :240-242
  *   - headers: x-api-key (gateway-context-api-key.ts:202-204), x-correlation-id (:34)
  *   - request body: GatewayContextRequestSchema, gateway-context.ts:128-133
@@ -73,6 +78,14 @@ const requestGatewayContext = async (audience: string, compositionRevision: stri
   const { shellUrl } = getEndpoints();
   // The active principal (session.ts): the HTTP session's bearer token or the stdio environment key.
   const principal = currentPrincipal();
+  if (principal.kind === 'oauth_connection') {
+    // Design §5.1 step 5: the user JWT goes only to the shell connector; the grant fixes the company.
+    return await fetch(`${shellUrl}${CONNECTOR_PATHS.gatewayContext}`, {
+      body: JSON.stringify({ audience, compositionRevision }),
+      headers: connectorHeaders(principal.connectorSecret, principal.accessToken),
+      method: 'POST',
+    });
+  }
   const body = GatewayContextRequestSchema.parse({
     audience,
     compositionRevision,
@@ -112,6 +125,9 @@ export const getGatewayContext = async (audience: string): Promise<GatewayContex
   }
 
   if (!response.ok) {
+    if (response.status === 401 && currentPrincipal().kind === 'oauth_connection') {
+      throw new ConnectionInactiveError(`Gateway assertion for "${audience}" refused: HTTP 401`);
+    }
     const text = await response.text();
     throw new Error(`Gateway assertion for "${audience}" failed: HTTP ${response.status} ${text}`);
   }

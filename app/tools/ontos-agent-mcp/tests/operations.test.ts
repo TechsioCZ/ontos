@@ -97,6 +97,7 @@ const applyOf = (calls: readonly Call[], vertical: string) =>
 
 const SESSION: PrincipalSession = {
   apiKey: 'k',
+  kind: 'api_key',
   label: 'test',
   legalEntityId: '71000000-0000-4000-8000-000000000020',
   transport: 'http',

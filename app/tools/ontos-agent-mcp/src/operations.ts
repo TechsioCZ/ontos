@@ -110,7 +110,7 @@ export const runRead = async (
 }> => {
   const entry = findEntry(catalog, request.id);
   if (entry === undefined || entry.kind !== 'read') {
-    throw new Error(`Neznámé čtení: ${request.id}. Seznam vrací ontos_list_capabilities.`);
+    throw new Error(`Neznámé čtení: ${request.id}. Seznam vrací ontos_capabilities.`);
   }
   const limit = Math.min(Math.max(request.limit ?? 50, 1), 500);
   const offset = Math.max(request.offset ?? 0, 0);
@@ -139,9 +139,12 @@ export const runExecute = async (
   writePolicy: WritePolicy,
   request: ExecuteRequest,
 ): Promise<ExecuteOutcome> => {
+  if (writePolicy === 'read_only') {
+    throw new Error('Toto připojení smí jen číst; změny nejsou povolené.');
+  }
   const entry = findEntry(catalog, request.id);
   if (entry === undefined || entry.kind !== 'action') {
-    throw new Error(`Neznámá akce: ${request.id}. Seznam vrací ontos_list_capabilities.`);
+    throw new Error(`Neznámá akce: ${request.id}. Seznam vrací ontos_capabilities.`);
   }
   const module = findModule(catalog, entry.moduleId);
   if (module === undefined) {

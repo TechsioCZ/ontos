@@ -275,6 +275,7 @@ export const ACCESS_CS: Readonly<Record<Access, string>> = {
 };
 
 export const WRITE_POLICY_CS: Readonly<Record<WritePolicy, string>> = {
+  read_only: 'jen čtení – toto připojení nic nemění',
   direct: 'zápis přímo přes Actions (server ověří oprávnění a zapíše audit)',
   approval: 'zápis jen přes schválení – každá změna čeká na rozhodnutí člověka v aplikaci',
 };
@@ -295,6 +296,9 @@ export const entryDescriptionCs = (entry: CatalogEntry, moduleLabel: string, pol
   const title = entryTitleCs(entry, moduleLabel);
   if (entry.kind === 'read') {
     return `${title} (${moduleLabel}). Čtení přes governed read; vrací jen data, která tento účet smí vidět. Id: ${entry.id}.`;
+  }
+  if (policy === 'read_only') {
+    return `${title} (${moduleLabel}). Toto připojení smí jen číst. Id: ${entry.id}.`;
   }
   if (policy === 'approval') {
     return `${title} (${moduleLabel}). Pouze NÁVRH: data se nezmění, změnu schválí nebo zamítne člověk v aplikaci. Id: ${entry.id}.`;

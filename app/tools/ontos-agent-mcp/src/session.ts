@@ -1,24 +1,33 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { getConfig } from './config.ts';
 
-/** Write policy of a principal: run Actions directly, or only submit proposals that a person approves. */
-export type WritePolicy = 'direct' | 'approval';
+/** read_only: no writes. approval: writes become proposals a person approves. direct: governed Actions run. */
+export type WritePolicy = 'read_only' | 'approval' | 'direct';
 
-/**
- * Who an MCP session acts as. stdio: one session from the environment (ONTOS_AGENT_*). HTTP: one per MCP session,
- * built from the request's bearer token. The token is sent only as `x-api-key` to the shell; never log it.
- */
-export interface PrincipalSession {
-  /** Shell API key (agent managed key or a person's own key). */
+/** stdio internal runners only: a Better Auth API key from the environment (ONTOS_AGENT_*). Never accepted over HTTP. */
+export interface ApiKeySession {
+  readonly kind: 'api_key';
   readonly apiKey: string;
-  /** Company the calls are scoped to; `ontos_switch_company` replaces it. Undefined: the key's default. */
   legalEntityId: string | undefined;
   /** Short human label for logs and whoami, never the key, e.g. "profil B (Obchodní firma)" or "API klíč abc…". */
   readonly label: string;
   readonly transport: 'stdio' | 'http';
-  /** Set by legacy profile C (and the C keys over HTTP); the capability endpoint may decide otherwise. */
   readonly writePolicyOverride: WritePolicy | undefined;
 }
+
+/** HTTP: one OAuth connection grant. The user JWT is sent only to the shell connector endpoints, never to verticals. */
+export interface OAuthConnectionSession {
+  readonly kind: 'oauth_connection';
+  readonly accessToken: string;
+  readonly connectorSecret: string;
+  readonly grantId: string;
+  readonly legalEntityId: string;
+  readonly label: string;
+  readonly transport: 'http';
+  readonly writePolicyOverride: undefined;
+}
+
+export type PrincipalSession = ApiKeySession | OAuthConnectionSession;
 
 const storage = new AsyncLocalStorage<PrincipalSession>();
 let defaultSession: PrincipalSession | undefined;
@@ -32,17 +41,16 @@ export const setDefaultPrincipal = (session: PrincipalSession): void => {
 export const runWithPrincipal = <A>(session: PrincipalSession, body: () => Promise<A>): Promise<A> =>
   storage.run(session, body);
 
-/** Same principal, another company, for one call (does not change the session). */
-export const withCompany = (session: PrincipalSession, legalEntityId: string | undefined): PrincipalSession => ({
-  ...session,
-  legalEntityId,
-});
+/** Same principal, another company, for one call (does not change the session). An OAuth connection is fixed to one company. */
+export const withCompany = (session: PrincipalSession, legalEntityId: string | undefined): PrincipalSession =>
+  session.kind === 'oauth_connection' ? session : { ...session, legalEntityId };
 
 /** Session from the environment (legacy stdio behaviour: ONTOS_AGENT_API_KEY or the A/B/C profile key). */
-export const sessionFromConfig = (): PrincipalSession => {
+export const sessionFromConfig = (): ApiKeySession => {
   const config = getConfig();
   return {
     apiKey: config.apiKey,
+    kind: 'api_key',
     label:
       config.profile === undefined
         ? `API klíč z ${config.apiKeySource}`

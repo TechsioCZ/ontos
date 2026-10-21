@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import type { RsConfig } from './oauth/types.ts';
 
 /**
  * AI agent levels (specs AGENT.md). A: read-only. B: reads + tasks. C: proposals approved by a person in the app
@@ -153,4 +154,57 @@ let cachedConfig: AgentConfig | undefined;
 export const getConfig = (): AgentConfig => {
   cachedConfig ??= loadConfig();
   return cachedConfig;
+};
+
+export const DEFAULT_OAUTH_ISSUER = 'http://localhost:3020/shell-super-app-api/oauth';
+export const DEFAULT_MCP_RESOURCE_URL = 'http://localhost:3090/mcp';
+/** Browser-based MCP clients that may send an Origin header (MCP Inspector runs on :6274). */
+export const DEFAULT_ALLOWED_ORIGINS: readonly string[] = [
+  'https://chatgpt.com',
+  'https://claude.ai',
+  'https://claude.com',
+  'https://vscode.dev',
+  'http://localhost:6274',
+  'http://127.0.0.1:6274',
+];
+
+const withoutTrailingSlash = (value: string): string => value.replace(/\/+$/u, '');
+
+/** OAuth resource-server settings (design §8.1). Throws on a missing connector secret or a trailing slash. */
+export const loadRsConfig = (env: NodeJS.ProcessEnv = process.env): RsConfig => {
+  const read = (key: string): string | undefined => readSetting(key, env);
+  const list = (key: string): string[] =>
+    (read(key) ?? '').split(',').map((entry) => entry.trim()).filter((entry) => entry !== '');
+  const issuer = read('ONTOS_OAUTH_ISSUER') ?? DEFAULT_OAUTH_ISSUER;
+  const resourceUrl = read('ONTOS_MCP_RESOURCE_URL') ?? DEFAULT_MCP_RESOURCE_URL;
+  if (issuer.endsWith('/')) {
+    throw new Error('ONTOS_OAUTH_ISSUER must not end with a slash.');
+  }
+  if (resourceUrl.endsWith('/')) {
+    throw new Error('ONTOS_MCP_RESOURCE_URL must not end with a slash.');
+  }
+  const connectorSecret = read('ONTOS_MCP_CONNECTOR_SECRET');
+  if (connectorSecret === undefined) {
+    throw new Error('ONTOS_MCP_CONNECTOR_SECRET is required (app/.env.demo.local; the shell reads the same value).');
+  }
+  const port = Number(read('ONTOS_MCP_HTTP_PORT') ?? '3090');
+  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
+    throw new Error('ONTOS_MCP_HTTP_PORT must be a port number.');
+  }
+  const resource = new URL(resourceUrl);
+  const shellPublicUrl = withoutTrailingSlash(read('ONTOS_SHELL_PUBLIC_URL') ?? new URL(issuer).origin);
+  return {
+    allowedHosts: [...new Set([resource.host, `localhost:${port}`, `127.0.0.1:${port}`, ...list('ONTOS_MCP_ALLOWED_HOSTS')])],
+    allowedOrigins: [...new Set([shellPublicUrl, ...DEFAULT_ALLOWED_ORIGINS, ...list('ONTOS_MCP_ALLOWED_ORIGINS')])],
+    connectGuideUrl: `${shellPublicUrl}/cs/profil`,
+    connectorSecret,
+    host: read('ONTOS_MCP_HTTP_HOST') ?? '127.0.0.1',
+    issuer,
+    jwksUrl: read('ONTOS_OAUTH_JWKS_URL') ?? `${issuer}/jwks`,
+    port,
+    prmUrl: `${resource.origin}/.well-known/oauth-protected-resource${resource.pathname === '/' ? '' : resource.pathname}`,
+    resourceUrl,
+    shellInternalUrl: withoutTrailingSlash(read('ONTOS_SHELL_INTERNAL_URL') ?? read('ONTOS_SHELL_URL') ?? DEFAULT_SHELL_URL),
+    shellPublicUrl,
+  };
 };

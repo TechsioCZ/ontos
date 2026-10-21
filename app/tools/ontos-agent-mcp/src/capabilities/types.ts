@@ -3,11 +3,10 @@
  * tools and HTTP tasks can be built in parallel. Keep it free of runtime code.
  *
  *   catalog   (src/catalog/discover.ts)      active composition + vertical shared/apis HttpApi contracts -> Catalog
- *   grants    (src/capabilities/grants.ts)   principal (API key) -> PrincipalCapabilities per company/module
+ *   connection(src/oauth/connector.ts)       OAuth grant -> ConnectionDescription
  *   operations(src/operations.ts)            ontos_read / ontos_execute bodies (direct Action or proposal)
- *   tools     (src/tools/generic.ts)         MCP tools filtered by PrincipalCapabilities
+ *   tools     (src/mcp/tools.ts)             MCP tools filtered by the ConnectionDescription
  */
-import type { WritePolicy } from '../session.ts';
 
 /** JSON Schema (draft 2020-12) object, from Effect `Schema.toJsonSchemaDocument` with `$defs` inlined. */
 export type JsonSchema = { readonly [key: string]: unknown };
@@ -75,35 +74,6 @@ export interface Catalog {
 }
 
 export type Access = 'allowed' | 'denied' | 'unknown';
-
-export interface ModuleCapability {
-  readonly moduleId: string;
-  readonly read: Access;
-  readonly write: Access;
-  /** Short Czech reason, e.g. `čtení ověřeno`, `zápis: canWrite=false`, `HTTP 403 action_permission_denied`. */
-  readonly note: string;
-}
-
-export interface CompanyCapabilities {
-  readonly legalEntityId: string;
-  /** Czech company label, e.g. `Obchodní firma`. */
-  readonly label: string;
-  readonly modules: readonly ModuleCapability[];
-}
-
-export interface PrincipalCapabilities {
-  /** From the capability endpoint or the gateway assertion claim `principal.principalId`. */
-  readonly principalId: string | undefined;
-  readonly displayName: string | undefined;
-  readonly kind: 'human' | 'agent' | 'unknown';
-  readonly writePolicy: WritePolicy;
-  /** `endpoint`: shell capability endpoint answered; `probe`: derived by gateway + read probes. */
-  readonly source: 'endpoint' | 'probe';
-  /** Only companies the principal belongs to. */
-  readonly companies: readonly CompanyCapabilities[];
-  /** ISO timestamp. */
-  readonly resolvedAt: string;
-}
 
 /** Result of ontos_execute and typed write tools. */
 export type ExecuteOutcome =
