@@ -31,7 +31,7 @@ mise exec -- node scripts/demo/prove-ai-levels.mts   # důkaz A/B proti běžíc
 ```
 
 `ai-profiles.mts` se spouští i automaticky v `scripts/demo/reset-permissions.mts`, takže po `up.sh` jsou agenti
-a jejich oprávnění obvykle připravené. Připojení se dělá přes OAuth (viz výše); tokeny se do dokumentace ani do
+a jejich oprávnění obvykle připravené. Připojení se dělá přes OAuth (viz níže); tokeny se do dokumentace ani do
 aplikací nekopírují.
 
 Výstup důkazu (zkráceně, 20. 10. 2026 02:57):
