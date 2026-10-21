@@ -465,6 +465,9 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
     }
 
     await rec.step(k, 'nový access token funguje', async () => {
+      if (rotated === undefined) {
+        return { pass: false, detail: 'rotace selhala, nový access token chybí' };
+      }
       const { client: fresh } = await connectMcp(E2E.mcpUrl, access, 'modern');
       open.push(fresh);
       try {
