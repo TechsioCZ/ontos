@@ -19,6 +19,7 @@ import { SalesInsightsStateSchema } from '../../shared/apis/records.ts';
 import type { ContextRef, RecordsRequest, Metric, MetricState, SalesInsightsState } from '../../shared/apis/records.ts';
 import { MetricRefSchema } from '../../shared/resources/metric.ts';
 import { salesInsightsStates } from '../database/schema.ts';
+import { connectionAllowsWrite, emptySalesInsightsState } from './initial-state.ts';
 
 const unavailable = (cause?: unknown) =>
   Object.defineProperty(
@@ -295,6 +296,8 @@ export const persistenceService = Effect.fn('SalesInsights.persistenceService')(
       eq(salesInsightsStates.tenantId, scope.tenantId),
       eq(salesInsightsStates.legalEntityId, legalEntityId),
     );
+    const emptyState = () =>
+      emptySalesInsightsState(scope.tenantId, legalEntityId).pipe(Effect.mapError(unavailable));
     const load = Effect.fn('SalesInsights.load')(function* load() {
       const rows = yield* transaction
         .select()
@@ -304,7 +307,8 @@ export const persistenceService = Effect.fn('SalesInsights.persistenceService')(
         .pipe(Effect.mapError(unavailable));
       const [row] = rows;
       if (row === undefined) {
-        return yield* unavailable();
+        // No metric stored yet for this company: an empty collection at revision 0 (the first write inserts the row).
+        return { revision: 0, state: yield* emptyState() };
       }
       const state = yield* Schema.decodeUnknownEffect(SalesInsightsStateSchema)(row.state).pipe(
         Effect.mapError(unavailable),
@@ -314,6 +318,23 @@ export const persistenceService = Effect.fn('SalesInsights.persistenceService')(
     const save = Effect.fn('SalesInsights.save')(function* save(expectedRevision: number, state: SalesInsightsState) {
       const encoded = yield* Schema.encodeEffect(SalesInsightsStateSchema)(state).pipe(Effect.mapError(unavailable));
       const updatedAt = yield* DateTime.now;
+      if (expectedRevision === 0) {
+        const inserted = yield* transaction
+          .insert(salesInsightsStates)
+          .values({
+            legalEntityId,
+            revision: 1,
+            state: encoded,
+            tenantId: scope.tenantId,
+            updatedAt: DateTime.toDateUtc(updatedAt),
+          })
+          .onConflictDoNothing()
+          .returning({ revision: salesInsightsStates.revision })
+          .pipe(Effect.mapError(unavailable));
+        if (inserted.length === 1) {
+          return 1;
+        }
+      }
       const rows = yield* transaction
         .update(salesInsightsStates)
         .set({ revision: expectedRevision + 1, state: encoded, updatedAt: DateTime.toDateUtc(updatedAt) })
@@ -411,7 +432,7 @@ export const persistenceService = Effect.fn('SalesInsights.persistenceService')(
       );
       return {
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
-        canWrite: yield* contextGrant(scope, 'write_all'),
+        canWrite: (yield* contextGrant(scope, 'write_all')) && connectionAllowsWrite(scope, 'demo.sales-insights'),
         collection: snapshot.state.collection,
         indicators: {
           open: items.filter((metric) => metricStatusGroup(metric.state) !== 'DONE').length,
