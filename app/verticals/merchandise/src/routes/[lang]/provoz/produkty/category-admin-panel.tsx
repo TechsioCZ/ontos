@@ -170,10 +170,10 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
           selected !== undefined ? (
             <>
               <Button onClick={backToList} theme="outlined" variant="secondary">
-                Zpět na seznam
+                Zpět
               </Button>
               <Button isLoading={busy} loadingText="Ukládám…" onClick={save} variant="primary">
-                Uložit kategorii
+                Uložit
               </Button>
             </>
           ) : (
