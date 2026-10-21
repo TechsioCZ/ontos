@@ -600,8 +600,8 @@ const RecordsPageContent = () => {
                 {t('legal-agreements.demo.empty')}
               </p>
             )}
-            <div className="legalagreements:overflow-x-auto legalagreements:rounded-lg legalagreements:bg-(--color-surface)">
-              <Table size="sm" variant="outline">
+            <div className="legalagreements:overflow-x-auto">
+              <Table size="sm" variant="line">
                 <Table.Caption>{t('legal-agreements.demo.list')}</Table.Caption>
                 <Table.Header>
                   <Table.Row>

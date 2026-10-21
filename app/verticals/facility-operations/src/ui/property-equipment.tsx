@@ -40,7 +40,7 @@ export const PropertyEquipment = ({
         </p>
       ) : (
         <div style={{ overflowX: 'auto', maxWidth: '100%' }}>
-          <Table size="sm" variant="outline">
+          <Table size="sm" variant="line">
             <Table.Header>
               <Table.Row>
                 {[

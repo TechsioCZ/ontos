@@ -303,7 +303,7 @@ const RecordsPageContent = () => {
         {records !== undefined && (
           <>
             <div className="crmactivities:overflow-x-auto">
-              <Table size="sm" variant="outline">
+              <Table size="sm" variant="line">
                 <Table.Caption>{t(`${key}.timeline`)}</Table.Caption>
                 <Table.Header>
                   <Table.Row>

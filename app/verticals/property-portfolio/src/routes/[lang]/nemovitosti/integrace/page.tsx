@@ -104,8 +104,8 @@ const IntegrationsPageContent = () => {
             >
               <h2 className="propertyportfolio:text-lg propertyportfolio:font-semibold">{t(`${key}.accounting`)}</h2>
 
-              <div className="propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto propertyportfolio:rounded-lg propertyportfolio:bg-(--color-surface)">
-                <Table className="propertyportfolio:w-full" size="sm" variant="outline">
+              <div className="propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto">
+                <Table className="propertyportfolio:w-full" size="sm" variant="line">
                   <Table.Caption>{t(`${key}.accounting`)}</Table.Caption>
                   <Table.Header>
                     <Table.Row>
@@ -163,8 +163,8 @@ const IntegrationsPageContent = () => {
                   {t(`${key}.empty`)}
                 </p>
               )}
-              <div className="propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto propertyportfolio:rounded-lg propertyportfolio:bg-(--color-surface)">
-                <Table className="propertyportfolio:w-full" size="sm" variant="outline">
+              <div className="propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto">
+                <Table className="propertyportfolio:w-full" size="sm" variant="line">
                   <Table.Caption>{t(`${key}.booking`)}</Table.Caption>
                   <Table.Header>
                     <Table.Row>
@@ -223,8 +223,8 @@ const IntegrationsPageContent = () => {
                   {t(`${key}.empty`)}
                 </p>
               )}
-              <div className="propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto propertyportfolio:rounded-lg propertyportfolio:bg-(--color-surface)">
-                <Table className="propertyportfolio:w-full" size="sm" variant="outline">
+              <div className="propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto">
+                <Table className="propertyportfolio:w-full" size="sm" variant="line">
                   <Table.Caption>{t(`${key}.signature`)}</Table.Caption>
                   <Table.Header>
                     <Table.Row>
@@ -273,8 +273,8 @@ const IntegrationsPageContent = () => {
                   {t(`${key}.empty`)}
                 </p>
               )}
-              <div className="propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto propertyportfolio:rounded-lg propertyportfolio:bg-(--color-surface)">
-                <Table className="propertyportfolio:w-full" size="sm" variant="outline">
+              <div className="propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto">
+                <Table className="propertyportfolio:w-full" size="sm" variant="line">
                   <Table.Caption>{t(`${key}.email`)}</Table.Caption>
                   <Table.Header>
                     <Table.Row>

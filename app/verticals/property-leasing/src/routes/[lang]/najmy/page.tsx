@@ -1787,8 +1787,8 @@ const RecordsPageContent = () => {
                 {t('property-leasing.demo.empty')}
               </p>
             )}
-            <div className="propertyleasing:overflow-x-auto propertyleasing:rounded-lg propertyleasing:bg-(--color-surface)">
-              <Table size="sm" variant="outline">
+            <div className="propertyleasing:overflow-x-auto">
+              <Table size="sm" variant="line">
                 <Table.Caption>{t('property-leasing.demo.list')}</Table.Caption>
                 <Table.Header>
                   <Table.Row>

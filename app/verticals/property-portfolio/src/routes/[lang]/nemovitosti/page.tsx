@@ -562,7 +562,7 @@ const RecordsPageContent = () => {
                 ? []
                 : [
                     <div className={tableWrapperClass} key={group.kind}>
-                      <Table className="propertyportfolio:w-full" size="sm" variant="outline">
+                      <Table className="propertyportfolio:w-full" size="sm" variant="line">
                         <Table.Caption>{t(`${key}.${group.kind}`)}</Table.Caption>
                         <Table.Header>
                           <Table.Row>
