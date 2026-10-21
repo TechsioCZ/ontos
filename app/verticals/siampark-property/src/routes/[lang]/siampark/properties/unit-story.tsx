@@ -14,6 +14,8 @@ type Agreements = Effect.Success<ReturnType<typeof readAgreements>>;
 type Unit = RecordsResponse['units'][number];
 
 const K = 'siampark-property.pages.records.unitStory';
+
+export type LeaseBlock = 'building' | 'outOfService' | 'retired';
 const cardClass =
   'siamparkproperty:min-w-0 siamparkproperty:space-y-3 siamparkproperty:rounded-lg siamparkproperty:border siamparkproperty:border-(--color-border-muted) siamparkproperty:bg-(--color-surface) siamparkproperty:p-4';
 const rowClass =
@@ -53,7 +55,7 @@ export const pragueToday = () =>
 /** Leases, contracts and service tasks of one unit, each linking to its owner's detail. */
 export const UnitStory = ({
   agreements,
-  canLease,
+  leaseBlock,
   language,
   occupancy,
   t,
@@ -61,8 +63,11 @@ export const UnitStory = ({
   unit,
 }: {
   readonly agreements: Agreements | undefined;
-  /** False for retired or archived units and units of a building out of operation: no new lease is offered. */
-  readonly canLease: boolean;
+  /**
+   * Why the unit cannot be let, or undefined when it can: retired or archived units, units out of service and units
+   * of a building out of operation get no lease-creation link and never claim to be free to let.
+   */
+  readonly leaseBlock: LeaseBlock | undefined;
   readonly language: string;
   readonly occupancy: Occupancies | undefined;
   readonly t: Translate;
@@ -85,7 +90,7 @@ export const UnitStory = ({
       <section aria-label={t(`${K}.leases`)} className={cardClass}>
         <div className="siamparkproperty:flex siamparkproperty:items-center siamparkproperty:justify-between siamparkproperty:gap-2">
           <h3 className="siamparkproperty:text-sm siamparkproperty:font-semibold">{t(`${K}.leases`)}</h3>
-          {canLease && (
+          {leaseBlock === undefined && (
             <LinkButton
               href={`/${language}/siampark/occupancy?create=lease&unitId=${unit.unitRef.resourceId}`}
               size="sm"
@@ -97,7 +102,14 @@ export const UnitStory = ({
           )}
         </div>
         {occupancy === undefined && <p className={mutedClass}>{t(`${K}.notLoaded`)}</p>}
-        {occupancy !== undefined && leases.length === 0 && <p className={mutedClass}>{t(`${K}.noLeases`)}</p>}
+        {leaseBlock !== undefined && (
+          <p className={mutedClass} data-testid="unit-lease-block">
+            {t(`${K}.leaseBlock.${leaseBlock}`)}
+          </p>
+        )}
+        {leaseBlock === undefined && occupancy !== undefined && leases.length === 0 && (
+          <p className={mutedClass}>{t(`${K}.noLeases`)}</p>
+        )}
         {leases.map((item) => (
           <div className={rowClass} key={item.occupancyRef.resourceId}>
             <div className="siamparkproperty:min-w-0">

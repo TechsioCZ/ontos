@@ -204,6 +204,11 @@
           "openTasks": "Tasks",
           "notLoaded": "Loading summary…",
           "noLeases": "No lease or stay yet – the unit is free to let.",
+          "leaseBlock": {
+            "retired": "The unit is retired – it cannot be let.",
+            "outOfService": "The unit is out of service – it cannot be let.",
+            "building": "The building is out of operation – the unit cannot be let."
+          },
           "noContracts": "No contract is recorded for this unit.",
           "noTasks": "No tasks are recorded for this unit.",
           "openEnd": "open-ended",

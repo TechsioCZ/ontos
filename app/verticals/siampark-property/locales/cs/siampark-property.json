@@ -204,6 +204,11 @@
           "openTasks": "Úkoly",
           "notLoaded": "Souhrn se načítá…",
           "noLeases": "Jednotka zatím nemá žádný nájem ani pobyt – je volná k pronájmu.",
+          "leaseBlock": {
+            "retired": "Jednotka je vyřazena – nelze ji pronajmout.",
+            "outOfService": "Jednotka je mimo provoz – nelze ji pronajmout.",
+            "building": "Budova není v provozu – jednotku nelze pronajmout."
+          },
           "noContracts": "K jednotce není evidovaná smlouva.",
           "noTasks": "K jednotce nejsou evidované úkoly.",
           "openEnd": "bez konce",

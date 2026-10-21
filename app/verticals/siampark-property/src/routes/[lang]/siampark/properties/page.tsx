@@ -842,7 +842,15 @@ const RecordsPageContent = () => {
                     </div>
                     <UnitStory
                       agreements={model.agreements}
-                      canLease={unitArchive === undefined && leasable(unit.lifecycleState)}
+                      leaseBlock={
+                        unitArchive !== undefined || unit.lifecycleState === 'RETIRED'
+                          ? 'retired'
+                          : unit.lifecycleState !== 'ACTIVE'
+                            ? 'outOfService'
+                            : leasable(unit.lifecycleState)
+                              ? undefined
+                              : 'building'
+                      }
                       language={model.language}
                       occupancy={model.occupancy}
                       t={t}
