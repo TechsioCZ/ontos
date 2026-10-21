@@ -279,6 +279,17 @@ record(
   leakedA.length === 0 ? `${toolsA.length} nástrojů, žádný zápis` : `zápis: ${leakedA.join(', ')}`,
   leakedA.length === 0,
 );
+const typedWritesA = toolsA.filter((name) => name.includes('__') && !name.includes('__read_'));
+record(
+  'A',
+  'MCP A: žádný obecný ani typovaný zápis',
+  'MCP A: no generic or typed write tool',
+  'žádný zápis',
+  typedWritesA.length === 0 && !toolsA.includes('ontos_execute')
+    ? `${toolsA.filter((name) => name.startsWith('ontos_')).join(', ')}`
+    : `zápis: ${['ontos_execute', ...typedWritesA].filter((name) => toolsA.includes(name)).join(', ')}`,
+  typedWritesA.length === 0 && !toolsA.includes('ontos_execute'),
+);
 const whoA = await mcpA.call('whoami');
 record(
   'A',
@@ -403,6 +414,15 @@ try {
     'create_task, update_task',
     `${toolsB.includes('create_task') ? 'create_task ✓' : 'create_task chybí'}${leakedB.length === 0 ? ', nic dalšího' : `, navíc: ${leakedB.join(', ')}`}`,
     toolsB.includes('create_task') && leakedB.length === 0,
+  );
+  const typedWritesB = toolsB.filter((name) => name.includes('__') && !name.includes('__read_'));
+  record(
+    'B',
+    'MCP B: typovaný zápis jen do úkolů',
+    'MCP B: typed writes only for tasks',
+    'siampark_work__*',
+    typedWritesB.join(', ') || 'žádný',
+    toolsB.includes('ontos_execute') && typedWritesB.length > 0 && typedWritesB.every((name) => name.startsWith('siampark_work__')),
   );
   const employees =
     (employeesA.value as { items?: { active: boolean; id: string; name: string; role: string }[] }).items ?? [];

@@ -832,6 +832,15 @@ export {
 export type { ManageDemoAccountPayload, ManageDemoAccountResult } from './modules/actions/manage-demo-account.action.ts';
 export { demoAccountObjectIdParts, openDemoAccountGrants } from './install/demo-account-administration.ts';
 export type { DemoAccountGrants } from './install/demo-account-administration.ts';
+export type { DemoAccountRelationship } from './install/demo-account-administration.ts';
+export {
+  actionKeyOfObjectId,
+  agentGrantRelationships,
+  agentModuleAccessOf,
+  isReadPermission,
+  relationshipModuleAccess,
+} from './install/agent-entity-grants.ts';
+export type { AgentGrantAccess, AgentGrantModule, AgentGrantWritePolicy } from './install/agent-entity-grants.ts';
 export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
 export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';
 export { reservePrincipalBindingAction } from './modules/actions/reserve-principal-binding.action.ts';

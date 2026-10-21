@@ -144,6 +144,15 @@ export interface DemoAccountGrants {
     readonly replace: boolean;
     readonly templatePrincipalId: string;
   }) => Effect.Effect<{ readonly granted: number; readonly revoked: number }, IdentityPersistenceUnavailableError>;
+  /** Role-carrying relationships whose subject is the principal (tenant, company, module, context permission, Action). */
+  readonly relationshipsOf: (
+    principalId: string,
+  ) => Effect.Effect<readonly DemoAccountRelationship[], IdentityPersistenceUnavailableError>;
+  /** Makes `desired` the agent's complete grant set; everything else is removed except the tenant membership. */
+  readonly replaceAgentGrants: (input: {
+    readonly desired: readonly DemoAccountRelationship[];
+    readonly principalId: string;
+  }) => Effect.Effect<{ readonly granted: number; readonly revoked: number }, IdentityPersistenceUnavailableError>;
 }
 
 const membershipCompanies = (relationships: readonly DemoAccountRelationship[]) =>
@@ -184,6 +193,20 @@ const makeGrants = (rpc: SpiceDbRpc): DemoAccountGrants => ({
   }),
   companiesOf: (principalId) =>
     relationshipsOf(rpc, principalId).pipe(Effect.map((relationships) => membershipCompanies(relationships))),
+  relationshipsOf: (principalId) => relationshipsOf(rpc, principalId),
+  replaceAgentGrants: Effect.fn('DemoAccountGrants.replaceAgentGrants')(function* replaceAgentGrants(input) {
+    const key = (relationship: DemoAccountRelationship) =>
+      `${relationship.resourceType}|${relationship.resourceId}|${relationship.relation}`;
+    const desiredKeys = new Set(input.desired.map(key));
+    const current = yield* relationshipsOf(rpc, input.principalId);
+    const revoke = current.filter(
+      (relationship) =>
+        !desiredKeys.has(key(relationship)) && !(relationship.resourceType === 'tenant' && relationship.relation === 'member'),
+    );
+    yield* write(rpc, v1.RelationshipUpdate_Operation.DELETE, input.principalId, revoke);
+    yield* write(rpc, v1.RelationshipUpdate_Operation.TOUCH, input.principalId, input.desired);
+    return { granted: input.desired.length, revoked: revoke.length };
+  }),
   companyMembers: (tenantId, legalEntityId) =>
     rpc
       .readRelationships(
