@@ -41,9 +41,10 @@ test('parseCoreKey strips the core prefix and rejects other keys', () => {
 test('revertBeforeLookup reads the task for siampark-work task updates only', () => {
   const lookup = revertBeforeLookup('siampark-work', { _tag: 'UpdateTask', taskRef: { resourceId: 't1' }, title: 'X' });
   expect(lookup?.query).toEqual({ includeArchived: true, resourceId: 't1' });
-  expect(
-    lookup?.pick({ items: [{ ref: { resourceId: 't2' } }, { ref: { resourceId: 't1' }, title: 'A' }] }),
-  ).toEqual({ ref: { resourceId: 't1' }, title: 'A' });
+  expect(lookup?.pick({ items: [{ ref: { resourceId: 't2' } }, { ref: { resourceId: 't1' }, title: 'A' }] })).toEqual({
+    ref: { resourceId: 't1' },
+    title: 'A',
+  });
   expect(revertBeforeLookup('siampark-work', { _tag: 'CreateTask', title: 'X' })).toBeUndefined();
 });
 

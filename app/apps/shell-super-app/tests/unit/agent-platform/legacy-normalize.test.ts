@@ -81,7 +81,10 @@ test('normalizeLegacySlice builds one batch with legacy keys and revert permissi
 
   const [reverted] = normalizeLegacySlice(
     crm,
-    { ...slice, batches: [{ ...slice.batches[0], revertedAt: '2026-10-20T12:00:00.000Z', revertedBy: 'principal-jana' }] },
+    {
+      ...slice,
+      batches: [{ ...slice.batches[0], revertedAt: '2026-10-20T12:00:00.000Z', revertedBy: 'principal-jana' }],
+    },
     { canDecide: true, names },
   );
   expect(reverted?.canRevertAll).toBe(false);

@@ -16,6 +16,7 @@ import {
   type AgentRevertPlan,
   type AgentRisk,
 } from '@app/shared-contracts/agent-proposals';
+import { DateTime } from 'effect';
 
 export interface AgentProposalRow {
   readonly proposalId: string;
@@ -98,9 +99,7 @@ const toItem = (
     summary: row.summary,
     targetLabel: row.targetLabel,
     ...(row.decidedAt === null ? {} : { decidedAt: row.decidedAt.toISOString() }),
-    ...(row.decidedByPrincipalId === null
-      ? {}
-      : { decidedByName: nameOf(options.names, row.decidedByPrincipalId) }),
+    ...(row.decidedByPrincipalId === null ? {} : { decidedByName: nameOf(options.names, row.decidedByPrincipalId) }),
     ...(row.decisionNote === null ? {} : { decisionNote: row.decisionNote }),
     ...(row.failure === null ? {} : { failure: row.failure }),
     ...(revertUnavailableReason === undefined ? {} : { revertUnavailableReason }),
@@ -122,7 +121,9 @@ export const rowsToQueueBatches = (
   }
   return [...groups.values()].map(({ head, rows: batchRows }) => {
     const items = [...batchRows].sort((a, b) => a.position - b.position).map((row) => toItem(row, options));
-    const createdAt = new Date(Math.min(...batchRows.map((row) => row.createdAt.getTime()))).toISOString();
+    const createdAt = DateTime.formatIso(
+      DateTime.makeUnsafe(Math.min(...batchRows.map((row) => row.createdAt.getTime()))),
+    );
     const canRevertAll =
       head.batchRevertedAt === null &&
       items.some((item) => item.status === 'applied' && item.revertUnavailableReason === undefined && item.canDecide);
@@ -150,9 +151,9 @@ export const moduleKeyOfAction = (actionKey: string | null): string | null =>
   actionKey === null || !actionKey.includes('.') ? null : actionKey.slice(0, actionKey.lastIndexOf('.'));
 
 export const auditRowToEntry = (row: AuditActivityRow): AgentActivityEntry => {
-  const kind: AgentActivityKind = row.outcome === 'succeeded' ? 'write' : row.outcome === 'denied' ? 'denied' : 'failed';
-  const actionLabel =
-    kind === 'write' ? 'Zápis změny' : kind === 'denied' ? 'Pokus o zápis odmítnut' : 'Zápis selhal';
+  const kind: AgentActivityKind =
+    row.outcome === 'succeeded' ? 'write' : row.outcome === 'denied' ? 'denied' : 'failed';
+  const actionLabel = kind === 'write' ? 'Zápis změny' : kind === 'denied' ? 'Pokus o zápis odmítnut' : 'Zápis selhal';
   const moduleKey = moduleKeyOfAction(row.actionKey);
   return {
     actionLabel,

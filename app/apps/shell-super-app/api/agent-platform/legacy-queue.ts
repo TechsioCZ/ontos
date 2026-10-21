@@ -22,7 +22,9 @@ export const readLegacyBatches = Effect.fn('AgentPlatform.readLegacyBatches')(fu
     Effect.result,
   );
   if (result._tag === 'Failure') {
-    return (result.failure.stage === 'assertion' ? { state: 'absent' } : { state: 'unavailable' }) as LegacyBatchesResult;
+    return (
+      result.failure.stage === 'assertion' ? { state: 'absent' } : { state: 'unavailable' }
+    ) as LegacyBatchesResult;
   }
   const response = result.success;
   if (response.status === 403 || response.status === 404) return { state: 'absent' } as const;

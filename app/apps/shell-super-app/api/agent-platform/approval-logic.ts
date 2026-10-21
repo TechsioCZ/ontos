@@ -8,8 +8,7 @@ import type { AgentRevertResponse } from '@app/shared-contracts/agent-proposals'
 
 type Rec = Readonly<Record<string, unknown>>;
 
-const isRecord = (value: unknown): value is Rec =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+const isRecord = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 export interface ModuleAccessSets {
   /** Module keys (e.g. `demo.crm`) the person can open in the company. */

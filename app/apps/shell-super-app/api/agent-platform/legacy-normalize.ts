@@ -9,8 +9,7 @@ import type {
 
 type Rec = Readonly<Record<string, unknown>>;
 
-const isRecord = (value: unknown): value is Rec =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+const isRecord = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const text = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined);
 
@@ -173,8 +172,7 @@ export const normalizeLegacySlice = (
         agentLabel,
         agentPrincipalId,
         batchId: id,
-        canRevertAll:
-          revertedAt === undefined && options.canDecide && items.some((item) => item.status === 'applied'),
+        canRevertAll: revertedAt === undefined && options.canDecide && items.some((item) => item.status === 'applied'),
         createdAt,
         instruction,
         items,
