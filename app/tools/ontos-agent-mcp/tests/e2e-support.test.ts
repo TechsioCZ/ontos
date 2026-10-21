@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from '@rstest/core';
 import { E2eOAuthProvider } from '../scripts/oauth-e2e/provider.mts';
@@ -26,25 +26,29 @@ describe('oauth e2e support', () => {
 
   it('recorder writes json and log with failing steps', async () => {
     const dir = mkdtempSync(path.join(process.env.TMPDIR ?? '/Volumes/DevWork/agent-scratch/tmp', 'e2e-'));
-    const recorder = new Recorder();
-    const value = await recorder.step('v', 'passing', async () => ({ pass: true, detail: 'ok', value: 42 }));
-    expect(value).toBe(42);
-    const failed = await recorder.step('v', 'throwing', async () => {
-      throw new Error('boom');
-    });
-    expect(failed).toBeUndefined();
-    expect(recorder.pass).toBe(false);
-    await recorder.write(dir, 'test-e2e', { run: 't' });
-    const json = JSON.parse(readFileSync(path.join(dir, 'test-e2e.json'), 'utf8')) as {
-      pass: boolean;
-      run: string;
-      steps: Array<{ detail: string }>;
-    };
-    expect(json.pass).toBe(false);
-    expect(json.run).toBe('t');
-    expect(json.steps).toHaveLength(2);
-    expect(json.steps[1]?.detail).toBe('boom');
-    expect(readFileSync(path.join(dir, 'test-e2e.log'), 'utf8')).toContain('FAIL');
+    try {
+      const recorder = new Recorder();
+      const value = await recorder.step('v', 'passing', async () => ({ pass: true, detail: 'ok', value: 42 }));
+      expect(value).toBe(42);
+      const failed = await recorder.step('v', 'throwing', async () => {
+        throw new Error('boom');
+      });
+      expect(failed).toBeUndefined();
+      expect(recorder.pass).toBe(false);
+      await recorder.write(dir, 'test-e2e', { run: 't' });
+      const json = JSON.parse(readFileSync(path.join(dir, 'test-e2e.json'), 'utf8')) as {
+        pass: boolean;
+        run: string;
+        steps: Array<{ detail: string }>;
+      };
+      expect(json.pass).toBe(false);
+      expect(json.run).toBe('t');
+      expect(json.steps).toHaveLength(2);
+      expect(json.steps[1]?.detail).toBe('boom');
+      expect(readFileSync(path.join(dir, 'test-e2e.log'), 'utf8')).toContain('FAIL');
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
   });
 
   it('provider exposes CIMD metadata and redirect uri', () => {
