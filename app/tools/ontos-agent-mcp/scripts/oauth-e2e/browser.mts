@@ -89,13 +89,14 @@ export async function approveConnection(
   // The "Za koho bude jednat" picker only renders when the person operates at least one agent; otherwise "Za mě" is implied.
   const acting = page.getByText(opts.actAs.kind === 'me' ? 'Za mě' : `Za agenta ${opts.actAs.agentName}`).first();
   await page.getByRole('button', { name: 'Pokračovat' }).waitFor({ timeout: 30_000 });
-  await page.screenshot({ path: `${opts.shotsDir}/${opts.shotPrefix}-1-pripojit.png`, fullPage: true });
   if (opts.actAs.kind === 'agent' || (await acting.count()) > 0) {
     await acting.click();
   }
   await page.getByText(WRITE_MODE_LABEL[opts.writeMode]).first().click();
+  await page.screenshot({ path: `${opts.shotsDir}/${opts.shotPrefix}-1-pripojit.png`, fullPage: true });
   await page.getByRole('button', { name: 'Pokračovat' }).click();
   await page.waitForURL((u) => u.pathname.startsWith('/cs/pripojit/souhlas'), { timeout: 30_000 });
+  await page.getByRole('button', { name: 'Povolit přístup' }).waitFor({ timeout: 30_000 });
   await page.screenshot({ path: `${opts.shotsDir}/${opts.shotPrefix}-2-souhlas.png`, fullPage: true });
   await page.getByRole('button', { name: 'Povolit přístup' }).click();
   await page.waitForURL((u) => u.pathname === '/callback', { timeout: 30_000 });
