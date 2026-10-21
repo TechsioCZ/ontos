@@ -3,7 +3,6 @@
  * are reached only through `ConnectionsAdminDeps`; these handlers never touch grant tables.
  */
 import type {
-  AgentConnectionsOverview,
   AgentOperatorsRequest,
   ConnectionAdminListRequest,
   ConnectionListResponse,
@@ -189,38 +188,3 @@ export const replaceAgentOperators = <R>(
     };
   });
 
-export const agentConnectionsOverview = <R>(caller: ConnectionsCaller, deps: ConnectionsAdminDeps<R>) =>
-  Effect.gen(function* agentConnectionsOverview() {
-    if (!caller.isCompanyAdmin) {
-      return yield* new ConnectionsForbidden({ reason: 'Agenty a jejich připojení vidí jen správce firmy.' });
-    }
-    const agents = yield* deps.directory.agents(caller.tenantId, caller.legalEntityId);
-    const people = yield* deps.directory.people(caller.tenantId, caller.legalEntityId);
-    const active = yield* deps.grants.list({
-      legalEntityId: caller.legalEntityId,
-      statuses: ['active'],
-      tenantId: caller.tenantId,
-    });
-    const entries = yield* Effect.forEach(agents, (agent) =>
-      Effect.gen(function* agentEntry() {
-        const operatorIds = yield* deps.directory.operatorsOf(agent.principalId);
-        return {
-          connections: active.filter((connection) => connection.acting.principalId === agent.principalId),
-          description: null,
-          displayName: agent.displayName,
-          modules: agent.modules,
-          operators: people.filter((person) => operatorIds.includes(person.principalId)),
-          owner: null,
-          principalId: agent.principalId,
-          seeded: agent.seeded,
-          status: agent.status,
-          writePolicy: agent.writePolicy,
-        };
-      }),
-    );
-    return {
-      agents: entries,
-      company: { legalEntityId: caller.legalEntityId, legalName: caller.legalName },
-      members: people,
-    } satisfies AgentConnectionsOverview;
-  });

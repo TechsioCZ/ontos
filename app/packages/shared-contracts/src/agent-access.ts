@@ -47,8 +47,6 @@ export const CONNECTION_MANAGEMENT_PATHS = {
   revoke: '/shell-super-app-api/auth/oauth-connections/revoke',
   /** Administrator of the selected company; body `AgentOperatorsRequest`; answers `AgentOperatorsResponse`. */
   operators: '/shell-super-app-api/auth/identity/agent-entities/operators',
-  /** Administrator of the selected company; body `{}`; answers `AgentConnectionsOverview`. */
-  agentConnections: '/shell-super-app-api/auth/identity/agent-entities/connections',
 } as const;
 
 /** Grant states shown in management (drafts are never listed). */
@@ -338,13 +336,3 @@ export const ManageAgentEntityResponseSchema = Schema.Struct({
   status: AgentStatusSchema,
 });
 export type ManageAgentEntityResponse = typeof ManageAgentEntityResponseSchema.Type;
-
-/** Agents of the selected company with who may connect them and their connections (workforce › Lidé a role). */
-export const AgentConnectionsOverviewSchema = Schema.Struct({
-  /** Agents of the company with operators and active connections. */
-  agents: Schema.Array(AgentEntitySchema),
-  company: ConnectionCompanySchema,
-  /** Active people of the company: the only allowed operators. */
-  members: Schema.Array(PrincipalRefSchema),
-});
-export type AgentConnectionsOverview = typeof AgentConnectionsOverviewSchema.Type;

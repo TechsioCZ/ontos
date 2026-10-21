@@ -14,7 +14,7 @@ import {
   AgentRevertResponseSchema,
 } from '@app/shared-contracts/agent-proposals';
 import {
-  AgentConnectionsOverviewSchema,
+  AgentEntityOverviewSchema,
   AgentOperatorsRequestSchema,
   AgentOperatorsResponseSchema,
   ConnectionAdminListRequestSchema,
@@ -23,6 +23,8 @@ import {
   ConnectionMutationResponseSchema,
   ConnectionRevokeRequestSchema,
   ConnectionUpdateRequestSchema,
+  ManageAgentEntityRequestSchema,
+  ManageAgentEntityResponseSchema,
 } from '@app/shared-contracts/agent-access';
 import { OAuthConnectApiGroup } from './oauth-connect-api.ts';
 import { OAuthConnectorApiGroup } from './oauth-connector-api.ts';
@@ -1055,7 +1057,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
         }),
       ),
   )
-  // "Připojené aplikace" management (lane mcp-connections-ui); paths equal CONNECTION_MANAGEMENT_PATHS.
+  // "Připojené aplikace" and Agentní entity management (paths equal CONNECTION_MANAGEMENT_PATHS and AGENT_ACCESS_PATHS).
   .add(
     HttpApiGroup.make('oauthConnectionsAdmin')
       .add(
@@ -1087,10 +1089,18 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
         }),
       )
       .add(
-        HttpApiEndpoint.post('listAgentConnections', '/auth/identity/agent-entities/connections', {
+        HttpApiEndpoint.post('listAgentEntities', '/auth/identity/agent-entities/list', {
           error: identityErrors,
           payload: Schema.Struct({}),
-          success: AgentConnectionsOverviewSchema,
+          success: AgentEntityOverviewSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('manageAgentEntity', '/auth/identity/agent-entities', {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: ManageAgentEntityRequestSchema,
+          success: ManageAgentEntityResponseSchema,
         }),
       )
       .add(

@@ -144,6 +144,7 @@ import type {
   DemoAccountInvalid,
   DemoAccountUnavailable,
 } from './auth/demo-accounts.ts';
+import { listAgentEntities, manageAgentEntity } from './auth/agent-entities.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
 import type { IdentityLifecycleError } from './auth/identity-lifecycle.ts';
 import {
@@ -181,7 +182,6 @@ import { isSameOriginRequest } from './oauth-connections/request-origin.ts';
 import { loadOAuthServerConfig } from './oauth-connections/server-config.ts';
 import { grantAdminPortLive } from './oauth-connections-admin/grant-port-live.ts';
 import {
-  agentConnectionsOverview,
   listForAdmin,
   listMine,
   replaceAgentOperators,
@@ -2191,12 +2191,26 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
           return response;
         }).pipe(connectionsAdminDefect(request)),
       )
-      .handle('listAgentConnections', ({ request }) =>
-        Effect.gen(function* listAgentConnectionsHandler() {
+      .handle('listAgentEntities', ({ request }) =>
+        Effect.gen(function* listAgentEntitiesHandler() {
           yield* noStore;
-          const caller = yield* connectionsCaller(request, true);
+          const caller = yield* agentPlatformSessionCaller(request);
           const deps = yield* connectionsAdminDeps;
-          const response = yield* agentConnectionsOverview(caller, deps).pipe(Effect.catch(connectionsAdminFailure));
+          const response = yield* listAgentEntities(caller, deps).pipe(Effect.catch(connectionsAdminFailure));
+          return response;
+        }).pipe(connectionsAdminDefect(request)),
+      )
+      .handle('manageAgentEntity', ({ headers, payload, request }) =>
+        Effect.gen(function* manageAgentEntityHandler() {
+          yield* noStore;
+          yield* requireShellOrigin(request);
+          const idempotencyKey = headers['idempotency-key'];
+          if (idempotencyKey === undefined) {
+            return yield* failIdentityProblem(shellPreconditionRequiredProblem());
+          }
+          const caller = yield* agentPlatformSessionCaller(request);
+          const deps = yield* connectionsAdminDeps;
+          const response = yield* manageAgentEntity(caller, payload, { correlationId: correlationFromRequest(request), idempotencyKey }, deps).pipe(Effect.catch(connectionsAdminFailure));
           return response;
         }).pipe(connectionsAdminDefect(request)),
       )

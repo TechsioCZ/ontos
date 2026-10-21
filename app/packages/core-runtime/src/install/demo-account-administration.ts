@@ -153,15 +153,6 @@ export interface DemoAccountGrants {
     readonly desired: readonly DemoAccountRelationship[];
     readonly principalId: string;
   }) => Effect.Effect<{ readonly granted: number; readonly revoked: number }, IdentityPersistenceUnavailableError>;
-  /** Principals with `operator` on `principal:{agentPrincipalId}` (who may connect the agent over OAuth). */
-  readonly agentOperators: (
-    agentPrincipalId: string,
-  ) => Effect.Effect<readonly string[], IdentityPersistenceUnavailableError>;
-  /** Makes `operatorPrincipalIds` the complete `principal:{agent}#operator` set. */
-  readonly replaceAgentOperators: (input: {
-    readonly agentPrincipalId: string;
-    readonly operatorPrincipalIds: readonly string[];
-  }) => Effect.Effect<{ readonly granted: number; readonly revoked: number }, IdentityPersistenceUnavailableError>;
 }
 
 const membershipCompanies = (relationships: readonly DemoAccountRelationship[]) =>
@@ -169,55 +160,7 @@ const membershipCompanies = (relationships: readonly DemoAccountRelationship[]) 
     .filter((relationship) => relationship.resourceType === 'legal_entity' && relationship.relation === 'member')
     .flatMap((relationship) => demoAccountObjectIdParts(relationship.resourceId).slice(1, 2));
 
-const operatorRelationship = (agentPrincipalId: string): DemoAccountRelationship => ({
-  relation: 'operator',
-  resourceId: agentPrincipalId,
-  resourceType: 'principal',
-});
-
-const agentOperators = (rpc: SpiceDbRpc, agentPrincipalId: string) =>
-  rpc
-    .readRelationships(
-      v1.ReadRelationshipsRequest.create({
-        consistency: fullyConsistent,
-        relationshipFilter: v1.RelationshipFilter.create({
-          optionalRelation: 'operator',
-          optionalResourceId: agentPrincipalId,
-          optionalSubjectFilter: v1.SubjectFilter.create({ subjectType: 'principal' }),
-          resourceType: 'principal',
-        }),
-      }),
-    )
-    .pipe(
-      Effect.map((responses) =>
-        responses.flatMap(({ relationship }) =>
-          relationship?.subject?.object === undefined ? [] : [relationship.subject.object.objectId],
-        ),
-      ),
-      Effect.mapError(unavailable),
-    );
-
 const makeGrants = (rpc: SpiceDbRpc): DemoAccountGrants => ({
-  agentOperators: (agentPrincipalId) => agentOperators(rpc, agentPrincipalId),
-  replaceAgentOperators: Effect.fn('DemoAccountGrants.replaceAgentOperators')(function* replaceAgentOperators(input) {
-    const current = yield* agentOperators(rpc, input.agentPrincipalId);
-    const wanted = [...new Set(input.operatorPrincipalIds)];
-    const add = wanted.filter((id) => !current.includes(id));
-    const remove = current.filter((id) => !wanted.includes(id));
-    yield* Effect.forEach(
-      remove,
-      (operatorId) =>
-        write(rpc, v1.RelationshipUpdate_Operation.DELETE, operatorId, [operatorRelationship(input.agentPrincipalId)]),
-      { discard: true },
-    );
-    yield* Effect.forEach(
-      add,
-      (operatorId) =>
-        write(rpc, v1.RelationshipUpdate_Operation.TOUCH, operatorId, [operatorRelationship(input.agentPrincipalId)]),
-      { discard: true },
-    );
-    return { granted: add.length, revoked: remove.length };
-  }),
   assignRole: Effect.fn('DemoAccountGrants.assignRole')(function* assignRole(input) {
     const template = yield* relationshipsOf(rpc, input.templatePrincipalId);
     const desired = template.filter(

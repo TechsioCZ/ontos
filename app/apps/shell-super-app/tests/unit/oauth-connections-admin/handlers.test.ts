@@ -15,7 +15,6 @@ import type {
   GrantAdminPort,
 } from '../../../api/oauth-connections-admin/ports.ts';
 import {
-  agentConnectionsOverview,
   listForAdmin,
   listMine,
   replaceAgentOperators,
@@ -427,17 +426,3 @@ it.effect('revokes the delegated connection of a removed operator', () =>
   }),
 );
 
-it.effect('maps operators and active connections onto each agent', () =>
-  Effect.gen(function* overviewTest() {
-    const { deps } = makeDeps(fixture());
-    const overview = yield* agentConnectionsOverview(caller({ isCompanyAdmin: true }), deps);
-    expect(overview.company).toEqual(companyA);
-    expect(overview.members.map((person) => person.principalId)).toEqual(['person-1', 'person-2']);
-    expect(overview.agents.map((agent) => agent.principalId)).toEqual(['agent-1', 'agent-2']);
-    const [sklad, ucet] = overview.agents;
-    expect(sklad?.operators.map((person) => person.displayName)).toEqual(['Jana Nováková']);
-    expect(sklad?.connections.map((connection) => connection.grantId)).toEqual(['g1']);
-    expect(ucet?.operators).toEqual([]);
-    expect(ucet?.connections.map((connection) => connection.grantId)).toEqual(['g3']);
-  }),
-);
