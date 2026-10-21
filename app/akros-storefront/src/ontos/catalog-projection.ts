@@ -147,7 +147,8 @@ export function project(body: Raw): CatalogSnapshot {
       undefined,
     );
     const gallery = strings(p.gallery).flatMap((src) => safeImage(src) ?? []);
-    const primaryImage = safeImage(p.imageSrc) ?? gallery[0] ?? imagePlaceholder;
+    // Staff edit the ordered gallery in OntOS ("Hlavní" = first image); imageSrc is only the import-time copy.
+    const primaryImage = gallery[0] ?? safeImage(p.imageSrc) ?? imagePlaceholder;
     const paragraphs = paragraphsOf(p);
     const detail = p.detail && typeof p.detail === "object" ? (p.detail as Raw) : {};
     products.push({
