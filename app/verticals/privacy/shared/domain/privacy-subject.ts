@@ -78,7 +78,7 @@ export type Representation = typeof RepresentationSchema.Type;
 export const PrincipalAttributionSchema = Schema.Struct({
   actor: PrincipalRefSchema,
   attributedAt: PrivacyIsoTimestampSchema,
-  authMethod: Schema.Literals(['session', 'api_key', 'system', 'support_impersonation']),
+  authMethod: Schema.Literals(['session', 'api_key', 'oauth_connection', 'system', 'support_impersonation']),
   impersonatedBy: Schema.toEncoded(Schema.OptionFromNullOr(PrincipalRefSchema)),
 });
 export type PrincipalAttribution = typeof PrincipalAttributionSchema.Type;
