@@ -1,0 +1,181 @@
+{
+  "title": "Bezpečnostní zařízení",
+  "description": "Soupis kamer, přístupových systémů a alarmů, servisní termíny a poruchy (S11).",
+  "evidenceOnly": "Pouze evidence",
+  "evidenceOnlyHint": "OntOS zařízení neovládá: žádné streamování kamer, ovládání alarmů, čteček ani dveří.",
+  "restrictedHint": "Citlivá agenda: dostupná jen interním rolím správce.",
+  "tabs": {
+    "devices": "Zařízení",
+    "incidents": "Poruchy a incidenty"
+  },
+  "actions": {
+    "newDevice": "Nové zařízení",
+    "reportFault": "Nahlásit poruchu",
+    "edit": "Upravit kartu",
+    "inspection": "Zaznamenat kontrolu",
+    "startWork": "Převzít do řešení",
+    "resolve": "Označit jako vyřešené",
+    "reopen": "Znovu otevřít",
+    "createTask": "Založit servisní úkol",
+    "openTasks": "Otevřít Úkoly",
+    "upload": "Připojit soubor",
+    "download": "Stáhnout",
+    "clearFilters": "Zrušit filtry"
+  },
+  "fields": {
+    "name": "Název",
+    "deviceType": "Typ zařízení",
+    "state": "Provozní stav",
+    "location": "Nemovitost / jednotka",
+    "locationDetail": "Přesné umístění",
+    "administrator": "Správce",
+    "supplier": "Dodavatel / servis",
+    "serialNumber": "Výrobní číslo",
+    "lastInspectionDate": "Poslední kontrola",
+    "nextInspectionDate": "Příští kontrola",
+    "note": "Poznámka",
+    "openIncidents": "Otevřené poruchy",
+    "device": "Zařízení",
+    "title": "Popis poruchy",
+    "description": "Podrobnosti",
+    "severity": "Závažnost",
+    "incidentState": "Stav poruchy",
+    "occurredOn": "Zjištěno dne",
+    "reportedBy": "Nahlásil",
+    "task": "Servisní úkol",
+    "resolution": "Způsob vyřešení",
+    "inspectionDate": "Datum kontroly",
+    "attachmentKind": "Druh přílohy",
+    "file": "Soubor",
+    "taskDueDate": "Termín úkolu"
+  },
+  "deviceType": {
+    "camera": "Kamera",
+    "access": "Přístupový systém",
+    "alarm": "Alarm / EZS",
+    "other": "Jiné"
+  },
+  "state": {
+    "in_operation": "V provozu",
+    "fault": "Porucha",
+    "in_service": "V servisu",
+    "decommissioned": "Vyřazeno"
+  },
+  "severity": {
+    "low": "Nízká",
+    "medium": "Střední",
+    "high": "Vysoká",
+    "critical": "Kritická"
+  },
+  "incidentState": {
+    "reported": "Nahlášeno",
+    "in_progress": "V řešení",
+    "resolved": "Vyřešeno"
+  },
+  "attachmentKind": {
+    "revision_protocol": "Revizní protokol",
+    "manual": "Manuál",
+    "contract": "Servisní smlouva",
+    "other": "Jiný dokument"
+  },
+  "taskState": {
+    "NEW": "Nový",
+    "IN_PROGRESS": "Rozpracovaný",
+    "WAITING": "Čeká",
+    "DONE": "Hotovo",
+    "CANCELLED": "Zrušeno"
+  },
+  "filters": {
+    "search": "Hledat zařízení, umístění, výrobní číslo…",
+    "allTypes": "Všechny typy",
+    "allStates": "Všechny stavy",
+    "openOnly": "Jen otevřené"
+  },
+  "stats": {
+    "count": "Zařízení",
+    "countHint": "Aktivní: {{active}}, vyřazené: {{retired}}",
+    "countSummary": "Aktivní: {{active}}, vyřazené: {{retired}}",
+    "openIncidents": "Otevřené poruchy",
+    "openIncidentsHint": "{{critical}} vysoké nebo kritické závažnosti",
+    "faulty": "Zařízení v poruše",
+    "overdue": "Kontrola po termínu",
+    "overdueHint": "Příští kontrola už měla proběhnout"
+  },
+  "detail": {
+    "card": "Karta zařízení",
+    "incidents": "Poruchy",
+    "noIncidents": "K zařízení není evidována žádná porucha.",
+    "attachments": "Revize, manuály a smlouvy",
+    "noAttachments": "Zatím není připojen žádný dokument.",
+    "history": "Historie změn",
+    "overdue": "po termínu",
+    "taskLinked": "Propojený úkol",
+    "taskMissing": "Úkol zatím nebyl založen.",
+    "taskLive": "Aktuální stav v Úkolech: {{state}}",
+    "taskLiveUnavailable": "Stav úkolu se nepodařilo načíst.",
+    "maxSize": "PDF, obrázek nebo dokument do 5 MB.",
+    "createdInfo": "Založeno {{at}} · {{by}}",
+    "updatedInfo": "Změněno {{at}} · {{by}}",
+    "comments": "Komentáře k zařízení",
+    "linkedDocuments": "Dokumenty z agendy Dokumenty"
+  },
+  "report": {
+    "title": "Nahlásit poruchu",
+    "pickDevice": "Vyberte zařízení",
+    "submit": "Nahlásit poruchu",
+    "withTask": "Současně založit servisní úkol v agendě Úkoly",
+    "withTaskHint": "Úkol dostane odkaz na zařízení a jeho nemovitost/jednotku.",
+    "taskTitle": "Servis: {{device}} – {{title}}",
+    "taskDescription": "Porucha bezpečnostního zařízení „{{device}}“ ({{location}}). Závažnost: {{severity}}. {{description}} Karta zařízení: {{url}}. Pouze evidence; OntOS zařízení neovládá.",
+    "done": "Porucha nahlášena",
+    "doneWithTask": "Porucha nahlášena a servisní úkol založen",
+    "taskFailed": "Porucha je uložená, ale úkol se nepodařilo založit včetně ověření vazby na nemovitost či jednotku. Úkol bez této vazby nevytváříme. Zkuste „Založit servisní úkol“ v detailu."
+  },
+  "create": {
+    "title": "Nové zařízení",
+    "submit": "Založit zařízení"
+  },
+  "edit": {
+    "title": "Upravit kartu zařízení",
+    "submit": "Uložit změny"
+  },
+  "inspection": {
+    "title": "Zaznamenat kontrolu",
+    "submit": "Uložit kontrolu"
+  },
+  "resolveDialog": {
+    "title": "Vyřešit poruchu",
+    "submit": "Označit jako vyřešené"
+  },
+  "created": "Zařízení založeno",
+  "saved": "Karta uložena",
+  "inspectionSaved": "Kontrola zaznamenána",
+  "stateSaved": "Stav poruchy změněn",
+  "taskCreated": "Servisní úkol založen a propojen",
+  "uploaded": "Soubor připojen k zařízení",
+  "uploadFailed": "Soubor se nepodařilo nahrát (max. 5 MB).",
+  "downloadFailed": "Soubor se nepodařilo stáhnout.",
+  "history": {
+    "created": "Založení",
+    "updated": "Úprava",
+    "inspection": "Kontrola",
+    "attachment": "Příloha",
+    "incident_reported": "Porucha",
+    "incident_state": "Stav poruchy",
+    "task_linked": "Úkol",
+    "state_changed": "Stav zařízení"
+  },
+  "states": {
+    "empty": "Zatím není evidováno žádné zařízení.",
+    "emptyDescription": "Založte první kameru, přístupový systém nebo alarm.",
+    "noResults": "Filtru neodpovídá žádné zařízení.",
+    "noIncidents": "Žádné poruchy k zobrazení."
+  },
+  "persona": {
+    "management": "Vedení Siamparku",
+    "operations": "Provoz Siamparku",
+    "finance": "Finance Siamparku",
+    "external": "Externí partner",
+    "unknown": "Uživatel {{id}}"
+  }
+}

@@ -2,7 +2,7 @@
 # Sales demo: idempotent local cold start. LOCAL ONLY, never deploys.
 #
 #   scripts/demo/up.sh                 # containers, migrate, init, demo reset, authz, build, serve
-#   DEMO_VERTICALS="party-registry siampark-work" scripts/demo/up.sh
+#   DEMO_VERTICALS="party-registry work-tasks" scripts/demo/up.sh
 #   DEMO_REBUILD=1 scripts/demo/up.sh  # force native rebuild of every selected app
 #   DEMO_RESET=0 scripts/demo/up.sh    # keep database data (SpiceDB grants are still re-written)
 # Real e-mail: Mailpit (SMTP 127.0.0.1:1025, UI http://localhost:8025) + scripts/demo/email-dispatcher (receipts :3096).
@@ -17,7 +17,7 @@ export pnpm_config_verify_deps_before_run=false
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$APP"
 
-DEFAULT_VERTICALS="party-registry siampark-property siampark-occupancy siampark-agreements siampark-work siampark-billing-finance commerce-customer-context workforce tagging sales-pipeline merchandise sales-insights crm siampark-ops"
+DEFAULT_VERTICALS="party-registry property-portfolio property-leasing legal-agreements work-tasks finance-billing commerce-customer-context workforce tagging sales-pipeline merchandise sales-insights crm facility-operations"
 read -r -a VERTICALS <<<"$(printf '%s' "${DEMO_VERTICALS:-$DEFAULT_VERTICALS}" | tr ',' ' ')"
 SCRATCH="$APP/.scratch"
 LOG_DIR="$SCRATCH/demo-logs"
@@ -128,7 +128,7 @@ step db-migrate pnpm_ db:migrate
 step local-initialize pnpm_ local:initialize
 if [ "${DEMO_RESET:-1}" != 0 ]; then
   step demo-reset pnpm_ demo:reset
-  # Sales-demo owners include crm + siampark-ops (reset-demo.mts dependency order); do not reseed them twice.
+  # Sales-demo owners include crm + facility-operations (reset-demo.mts dependency order); do not reseed them twice.
   # The bot API key is issued later, once the shell and composition are running.
   step demo-reset-sales pnpm_ demo:reset:sales
   # E-shop company (Kavárna Doma, LE …023): merges the seed, keeps live demo orders (use --reset to wipe).

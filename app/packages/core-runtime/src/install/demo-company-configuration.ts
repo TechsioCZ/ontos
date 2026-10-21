@@ -143,7 +143,7 @@ const persistenceFromTransaction = (
     })
     .pipe(Effect.mapError(persistenceFailure), Effect.asVoid),
   ensureModules: Effect.forEach(
-    ['siampark.property', 'siampark.occupancy', 'siampark.agreements'],
+    ['property.portfolio', 'property.leasing', 'legal.agreements'],
     (moduleKey, index) =>
       transaction
         .insert(tenantModuleStates)

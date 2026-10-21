@@ -1,5 +1,5 @@
 // @effect-diagnostics *:off
-import type { AgendaNotificationInput, AkrosOrderInput, SiamparkReminderInput } from './contract.ts';
+import type { AgendaNotificationInput, AkrosOrderInput, RentReminderInput } from './contract.ts';
 import { SIAMPARK_LEGAL_ENTITY_ID } from './contract.ts';
 
 export type AkrosOrderEmailEvent = 'ORDER_CREATED' | 'CONFIRMED' | 'SHIPPED' | 'DELIVERED' | 'CANCELLED';
@@ -179,7 +179,7 @@ export const companyDisplayName = (legalName: string | null): string =>
   (legalName ?? '').replace(/\s*\(demo\)\s*$/iu, '').trim() || 'Finanční oddělení';
 
 /** Payment reminder in the name of the company that issued the invoice (Siampark, Obchodní firma, …). */
-export const siamparkReminderEmail = (input: SiamparkReminderInput): RenderedEmail => {
+export const rentReminderEmail = (input: RentReminderInput): RenderedEmail => {
   const company = companyDisplayName(input.legalName);
   const invoiceNumber = input.invoiceNumber;
   const subject =
@@ -196,7 +196,7 @@ export const siamparkReminderEmail = (input: SiamparkReminderInput): RenderedEma
   return { subject, text, html: layout(company, color, subject, paragraphs, escapeHtml(footerText)) };
 };
 
-/** Same wording as the in-app notification centre (siampark-ops locales agenda.json „inbox.category“). */
+/** Same wording as the in-app notification centre (facility-operations locales agenda.json „inbox.category“). */
 export const agendaCategoryLabels: Readonly<Record<AgendaNotificationInput['category'], string>> = {
   ASSIGNED: 'Přiřazeno vám',
   CHANGE: 'Změna',
@@ -225,7 +225,7 @@ export const agendaNotificationEmail = (input: {
       ? `${company} – ${agendaCategoryLabels[first.category].toLowerCase()}: ${first.title}`
       : `${company} – ${count} ${plural} v agendě`;
   const linkOf = (item: AgendaNotificationInput) =>
-    `${input.appUrl}/cs${item.href ?? '/siampark/provoz/agenda?tab=notifikace'}`;
+    `${input.appUrl}/cs${item.href ?? '/provoz/agenda?tab=notifikace'}`;
   const lineOf = (item: AgendaNotificationInput) =>
     [
       `${agendaCategoryLabels[item.category]}: ${item.title}`,
@@ -236,7 +236,7 @@ export const agendaNotificationEmail = (input: {
   const footerText =
     `Ukázkové prostředí OntOS (DEMO): e-mail odeslán přes SMTP z agendy OntOS (${company}), protože máte v nastavení ` +
     'upozornění zapnuté posílání e-mailem. Změnit to můžete v Moje agenda → Nastavení upozornění.';
-  const agendaUrl = `${input.appUrl}/cs/siampark/provoz/agenda`;
+  const agendaUrl = `${input.appUrl}/cs/provoz/agenda`;
   const text = [
     'Dobrý den,',
     count === 1 ? 'v agendě máte nové upozornění:' : `v agendě máte ${count} ${plural}:`,

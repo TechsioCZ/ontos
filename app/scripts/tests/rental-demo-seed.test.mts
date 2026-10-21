@@ -9,7 +9,7 @@ import { connectSeedClient, DemoSeedError, validateSeedTarget } from '../demo/se
 
 const ownerApi = '/owner-api';
 const revisionFixture = 'revision-fixture';
-const propertyAudience = 'siampark-property';
+const propertyAudience = 'property-portfolio';
 const partyModule = 'party.registry';
 const target = {
   legalEntityId: '71000000-0000-4000-8000-000000000021',
@@ -191,7 +191,7 @@ it.effect('issues fresh assertions, including separate assertions for two reads 
     yield* Effect.gen(function* calls() {
       const client = yield* connect();
       yield* client.read(propertyAudience, Revision);
-      yield* client.call('siampark-agreements', '/action', Empty, {}, Revision, true, [
+      yield* client.call('legal-agreements', '/action', Empty, {}, Revision, true, [
         propertyAudience,
         propertyAudience,
       ]);

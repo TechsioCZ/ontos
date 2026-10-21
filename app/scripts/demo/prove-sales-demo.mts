@@ -10,8 +10,8 @@ import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResp
 import { demoLegalEntityId } from './fixture-ids.mts';
 
 const WON_INVOICE_TIMEOUT_MS = 30_000;
-const BILLING = 'siampark-billing-finance';
-const WORK = 'siampark-work';
+const BILLING = 'finance-billing';
+const WORK = 'work-tasks';
 const PIPELINE = 'sales-pipeline';
 const ProofLegalEntityId = Schema.toEncoded(Schema.String.pipe(Schema.brand('DemoProofLegalEntityId')));
 const ProofProductId = Schema.toEncoded(Schema.String.pipe(Schema.brand('DemoProofProductId')));
@@ -45,9 +45,9 @@ const ErrorCode = Schema.Struct({ _tag: Schema.optionalKey(Schema.String), code:
 const UnchangedResult = Schema.Struct({ changed: Schema.Literal(false) });
 const EmptyRead = Schema.Struct({});
 const InvoiceReference = Schema.Struct({
-  moduleId: Schema.Literal('siampark.billing-finance'),
+  moduleId: Schema.Literal('finance.billing'),
   resourceId: Schema.toEncoded(Schema.String.pipe(Schema.brand('DemoProofResourceId'))),
-  resourceType: Schema.Literal('siampark.billing-finance.invoice'),
+  resourceType: Schema.Literal('finance.billing.invoice'),
   tenantId: Schema.toEncoded(Schema.String.pipe(Schema.brand('DemoProofTenantId'))),
 });
 interface HttpOutcome {

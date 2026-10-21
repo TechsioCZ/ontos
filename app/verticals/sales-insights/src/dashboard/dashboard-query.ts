@@ -1,6 +1,6 @@
 import { listOpportunities } from '@app/sales-pipeline/clients/records';
-import { listInvoices } from '@app/siampark-billing-finance/clients/records';
-import { listTasks } from '@app/siampark-work/clients/records';
+import { listInvoices } from '@app/finance-billing/clients/records';
+import { listTasks } from '@app/work-tasks/clients/records';
 import { DateTime, Effect, Match, Random } from 'effect';
 import type { MetricInputs } from '../../shared/metrics.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';

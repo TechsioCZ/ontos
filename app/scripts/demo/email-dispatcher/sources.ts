@@ -2,7 +2,7 @@
 // Committed-state readers: the dispatcher reads only persisted domain JSON, never in-flight transactions.
 import { PgClient } from '@effect/sql-pg';
 import { Effect } from 'effect';
-import type { AgendaNotificationInput, AgendaPreferenceInput, AgendaRecipientInput, AkrosOrderInput, SiamparkReminderInput } from './contract.ts';
+import type { AgendaNotificationInput, AgendaPreferenceInput, AgendaRecipientInput, AkrosOrderInput, RentReminderInput } from './contract.ts';
 import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID } from './contract.ts';
 
 const json = <T>(value: unknown): T => (typeof value === 'string' ? JSON.parse(value) : value) as T;
@@ -17,7 +17,7 @@ export const readAkrosOrders = (enabledSince: string) =>
     return rows.map((row) => json<AkrosOrderInput>(row.order));
   });
 
-export const readSiamparkReminders = (enabledSince: string) =>
+export const readRentReminders = (enabledSince: string) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient;
     const rows = yield* sql<{
@@ -32,21 +32,21 @@ export const readSiamparkReminders = (enabledSince: string) =>
           where le.legal_entity_id = s.legal_entity_id and le.tenant_id = s.tenant_id) as "legalName",
         (select i->>'number' from jsonb_array_elements(coalesce(s.state->'invoices', '[]'::jsonb)) i
           where i->'ref'->>'resourceId' = r->>'invoiceResourceId' limit 1) as "invoiceNumber"
-      from siampark_billing_finance.finance_states s, jsonb_array_elements(coalesce(s.state->'reminders', '[]'::jsonb)) r
+      from finance_billing.finance_states s, jsonb_array_elements(coalesce(s.state->'reminders', '[]'::jsonb)) r
       where r->>'deliveryMode' = 'EMAIL' and (r->>'createdAt')::timestamptz >= ${enabledSince}::timestamptz`;
     return rows.map(
-      (row): SiamparkReminderInput => ({
+      (row): RentReminderInput => ({
         invoiceNumber: row.invoiceNumber,
         legalEntityId: row.legalEntityId,
         legalName: row.legalName,
-        reminder: json<SiamparkReminderInput['reminder']>(row.reminder),
+        reminder: json<RentReminderInput['reminder']>(row.reminder),
         tenantId: row.tenantId,
       }),
     );
   });
 
 /**
- * Agenda notifications (siampark-ops `agenda` state) of every person whose preference has e-mail switched on, with the
+ * Agenda notifications (facility-operations `agenda` state) of every person whose preference has e-mail switched on, with the
  * person's sign-in e-mail (core principal binding → auth user). Only notifications created after e-mail was switched on.
  */
 export const readAgendaRecipients = (enabledSince: string) =>
@@ -72,7 +72,7 @@ export const readAgendaRecipients = (enabledSince: string) =>
           where n->'recipient'->>'principalId' = p->'principal'->>'principalId'
             and (n->>'createdAt')::timestamptz >= greatest(${enabledSince}::timestamptz,
               coalesce(p->>'emailSince', p->>'updatedAt')::timestamptz)), '[]'::jsonb) as "notifications"
-      from demo_siampark_ops.agenda_states s, jsonb_array_elements(coalesce(s.state->'preferences', '[]'::jsonb)) p
+      from facility_operations.agenda_states s, jsonb_array_elements(coalesce(s.state->'preferences', '[]'::jsonb)) p
       where s.agenda = 'agenda' and (p->>'emailOptIn')::boolean is true`;
     return rows.map(
       (row): AgendaRecipientInput => ({

@@ -13,18 +13,18 @@
     "availability": "http://localhost:4111/.well-known/ontos-module-manifest.json",
     "tax": "http://localhost:4112/.well-known/ontos-module-manifest.json",
     "privacy": "http://localhost:4113/.well-known/ontos-module-manifest.json",
-    "siampark-property": "http://localhost:4114/.well-known/ontos-module-manifest.json",
-    "siampark-occupancy": "http://localhost:4115/.well-known/ontos-module-manifest.json",
-    "siampark-agreements": "http://localhost:4116/.well-known/ontos-module-manifest.json",
-    "siampark-work": "http://localhost:4117/.well-known/ontos-module-manifest.json",
+    "property-portfolio": "http://localhost:4114/.well-known/ontos-module-manifest.json",
+    "property-leasing": "http://localhost:4115/.well-known/ontos-module-manifest.json",
+    "legal-agreements": "http://localhost:4116/.well-known/ontos-module-manifest.json",
+    "work-tasks": "http://localhost:4117/.well-known/ontos-module-manifest.json",
     "workforce": "http://localhost:4120/.well-known/ontos-module-manifest.json",
     "tagging": "http://localhost:4121/.well-known/ontos-module-manifest.json",
     "sales-pipeline": "http://localhost:4122/.well-known/ontos-module-manifest.json",
     "merchandise": "http://localhost:4123/.well-known/ontos-module-manifest.json",
     "sales-insights": "http://localhost:4124/.well-known/ontos-module-manifest.json",
-    "siampark-billing-finance": "http://localhost:4118/.well-known/ontos-module-manifest.json",
-    "siampark-relationships": "http://localhost:4119/.well-known/ontos-module-manifest.json",
-    "siampark-ops": "http://localhost:4126/.well-known/ontos-module-manifest.json",
+    "finance-billing": "http://localhost:4118/.well-known/ontos-module-manifest.json",
+    "crm-activities": "http://localhost:4119/.well-known/ontos-module-manifest.json",
+    "facility-operations": "http://localhost:4126/.well-known/ontos-module-manifest.json",
     "crm": "http://localhost:4125/.well-known/ontos-module-manifest.json"
   },
   "schemaVersion": 1,
@@ -45,18 +45,18 @@
     "availability": 4111,
     "tax": 4112,
     "privacy": 4113,
-    "siampark-property": 4114,
-    "siampark-occupancy": 4115,
-    "siampark-agreements": 4116,
-    "siampark-work": 4117,
+    "property-portfolio": 4114,
+    "property-leasing": 4115,
+    "legal-agreements": 4116,
+    "work-tasks": 4117,
     "workforce": 4120,
     "tagging": 4121,
     "sales-pipeline": 4122,
     "merchandise": 4123,
     "sales-insights": 4124,
-    "siampark-billing-finance": 4118,
-    "siampark-relationships": 4119,
-    "siampark-ops": 4126,
+    "finance-billing": 4118,
+    "crm-activities": 4119,
+    "facility-operations": 4126,
     "crm": 4125
   },
   "manifests": {
@@ -66,18 +66,18 @@
     "catalog": "http://localhost:4105/mf-manifest.json",
     "inventory": "http://localhost:4110/mf-manifest.json",
     "privacy": "http://localhost:4113/mf-manifest.json",
-    "siampark-property": "http://localhost:4114/mf-manifest.json",
-    "siampark-occupancy": "http://localhost:4115/mf-manifest.json",
-    "siampark-agreements": "http://localhost:4116/mf-manifest.json",
-    "siampark-work": "http://localhost:4117/mf-manifest.json",
+    "property-portfolio": "http://localhost:4114/mf-manifest.json",
+    "property-leasing": "http://localhost:4115/mf-manifest.json",
+    "legal-agreements": "http://localhost:4116/mf-manifest.json",
+    "work-tasks": "http://localhost:4117/mf-manifest.json",
     "workforce": "http://localhost:4120/mf-manifest.json",
     "tagging": "http://localhost:4121/mf-manifest.json",
     "sales-pipeline": "http://localhost:4122/mf-manifest.json",
     "merchandise": "http://localhost:4123/mf-manifest.json",
     "sales-insights": "http://localhost:4124/mf-manifest.json",
-    "siampark-billing-finance": "http://localhost:4118/mf-manifest.json",
-    "siampark-relationships": "http://localhost:4119/mf-manifest.json",
-    "siampark-ops": "http://localhost:4126/mf-manifest.json",
+    "finance-billing": "http://localhost:4118/mf-manifest.json",
+    "crm-activities": "http://localhost:4119/mf-manifest.json",
+    "facility-operations": "http://localhost:4126/mf-manifest.json",
     "crm": "http://localhost:4125/mf-manifest.json"
   },
   "serverExecution": {
@@ -739,17 +739,17 @@
         }
       }
     },
-    "siampark-property": {
-      "apiBaseUrl": "http://localhost:4114/siampark-property-api",
+    "property-portfolio": {
+      "apiBaseUrl": "http://localhost:4114/property-portfolio-api",
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
-        "unitId": "app/siampark-property",
+        "unitId": "app/property-portfolio",
         "buildMarker": "8d48a9e1624695e8"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
-        "workerName": "app-siampark-property",
-        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SIAMPARK_PROPERTY",
+        "workerName": "app-property-portfolio",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PROPERTY_PORTFOLIO",
         "ssr": {
           "workerEntry": ".output/server/index.mjs",
           "workerManifest": ".output/server/modern-worker-manifest.json",
@@ -761,46 +761,46 @@
         "zephyr": {
           "runtime": "ssr-worker",
           "integration": "managed-cloudflare",
-          "snapshotIdEnv": "ZEPHYR_SIAMPARK_PROPERTY_SNAPSHOT_ID",
-          "versionIdEnv": "ZEPHYR_SIAMPARK_PROPERTY_VERSION_ID",
-          "applicationUidEnv": "ZEPHYR_SIAMPARK_PROPERTY_APPLICATION_UID"
+          "snapshotIdEnv": "ZEPHYR_PROPERTY_PORTFOLIO_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_PROPERTY_PORTFOLIO_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_PROPERTY_PORTFOLIO_APPLICATION_UID"
         },
         "workerDispatch": {
           "preferred": "service-binding",
-          "serviceBinding": "VERTICAL_SIAMPARK_PROPERTY_WORKER",
-          "serviceBindingEnv": "VERTICAL_SIAMPARK_PROPERTY_WORKER_BINDING",
-          "dispatchNamespaceEnv": "VERTICAL_SIAMPARK_PROPERTY_DISPATCH_NAMESPACE",
-          "dispatchWorkerNameEnv": "VERTICAL_SIAMPARK_PROPERTY_WORKER_NAME",
+          "serviceBinding": "VERTICAL_PROPERTY_PORTFOLIO_WORKER",
+          "serviceBindingEnv": "VERTICAL_PROPERTY_PORTFOLIO_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_PROPERTY_PORTFOLIO_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_PROPERTY_PORTFOLIO_WORKER_NAME",
           "requestInterface": "fetch"
         }
       },
       "node": {
         "kind": "node-mf-runtime",
         "adapterVersion": "backend-mf-effect-v2",
-        "remoteName": "verticalSiamparkPropertyBackend",
-        "manifestEnv": "VERTICAL_SIAMPARK_PROPERTY_BACKEND_MF_MANIFEST",
+        "remoteName": "verticalPropertyPortfolioBackend",
+        "manifestEnv": "VERTICAL_PROPERTY_PORTFOLIO_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4114/backend-mf-manifest.json",
         "containerEntry": "http://localhost:4114/backendRemoteEntry.cjs",
         "remoteType": "commonjs-module",
         "expose": "./effect-api",
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
-          "unitId": "app/siampark-property",
+          "unitId": "app/property-portfolio",
           "buildMarker": "8d48a9e1624695e8"
         }
       }
     },
-    "siampark-occupancy": {
-      "apiBaseUrl": "http://localhost:4115/siampark-occupancy-api",
+    "property-leasing": {
+      "apiBaseUrl": "http://localhost:4115/property-leasing-api",
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
-        "unitId": "app/siampark-occupancy",
+        "unitId": "app/property-leasing",
         "buildMarker": "9bdafd234cf26e8e"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
-        "workerName": "app-siampark-occupancy",
-        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SIAMPARK_OCCUPANCY",
+        "workerName": "app-property-leasing",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_PROPERTY_LEASING",
         "ssr": {
           "workerEntry": ".output/server/index.mjs",
           "workerManifest": ".output/server/modern-worker-manifest.json",
@@ -812,46 +812,46 @@
         "zephyr": {
           "runtime": "ssr-worker",
           "integration": "managed-cloudflare",
-          "snapshotIdEnv": "ZEPHYR_SIAMPARK_OCCUPANCY_SNAPSHOT_ID",
-          "versionIdEnv": "ZEPHYR_SIAMPARK_OCCUPANCY_VERSION_ID",
-          "applicationUidEnv": "ZEPHYR_SIAMPARK_OCCUPANCY_APPLICATION_UID"
+          "snapshotIdEnv": "ZEPHYR_PROPERTY_LEASING_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_PROPERTY_LEASING_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_PROPERTY_LEASING_APPLICATION_UID"
         },
         "workerDispatch": {
           "preferred": "service-binding",
-          "serviceBinding": "VERTICAL_SIAMPARK_OCCUPANCY_WORKER",
-          "serviceBindingEnv": "VERTICAL_SIAMPARK_OCCUPANCY_WORKER_BINDING",
-          "dispatchNamespaceEnv": "VERTICAL_SIAMPARK_OCCUPANCY_DISPATCH_NAMESPACE",
-          "dispatchWorkerNameEnv": "VERTICAL_SIAMPARK_OCCUPANCY_WORKER_NAME",
+          "serviceBinding": "VERTICAL_PROPERTY_LEASING_WORKER",
+          "serviceBindingEnv": "VERTICAL_PROPERTY_LEASING_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_PROPERTY_LEASING_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_PROPERTY_LEASING_WORKER_NAME",
           "requestInterface": "fetch"
         }
       },
       "node": {
         "kind": "node-mf-runtime",
         "adapterVersion": "backend-mf-effect-v2",
-        "remoteName": "verticalSiamparkOccupancyBackend",
-        "manifestEnv": "VERTICAL_SIAMPARK_OCCUPANCY_BACKEND_MF_MANIFEST",
+        "remoteName": "verticalPropertyLeasingBackend",
+        "manifestEnv": "VERTICAL_PROPERTY_LEASING_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4115/backend-mf-manifest.json",
         "containerEntry": "http://localhost:4115/backendRemoteEntry.cjs",
         "remoteType": "commonjs-module",
         "expose": "./effect-api",
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
-          "unitId": "app/siampark-occupancy",
+          "unitId": "app/property-leasing",
           "buildMarker": "9bdafd234cf26e8e"
         }
       }
     },
-    "siampark-agreements": {
-      "apiBaseUrl": "http://localhost:4116/siampark-agreements-api",
+    "legal-agreements": {
+      "apiBaseUrl": "http://localhost:4116/legal-agreements-api",
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
-        "unitId": "app/siampark-agreements",
+        "unitId": "app/legal-agreements",
         "buildMarker": "a9140e920b13357f"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
-        "workerName": "app-siampark-agreements",
-        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SIAMPARK_AGREEMENTS",
+        "workerName": "app-legal-agreements",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_LEGAL_AGREEMENTS",
         "ssr": {
           "workerEntry": ".output/server/index.mjs",
           "workerManifest": ".output/server/modern-worker-manifest.json",
@@ -863,46 +863,46 @@
         "zephyr": {
           "runtime": "ssr-worker",
           "integration": "managed-cloudflare",
-          "snapshotIdEnv": "ZEPHYR_SIAMPARK_AGREEMENTS_SNAPSHOT_ID",
-          "versionIdEnv": "ZEPHYR_SIAMPARK_AGREEMENTS_VERSION_ID",
-          "applicationUidEnv": "ZEPHYR_SIAMPARK_AGREEMENTS_APPLICATION_UID"
+          "snapshotIdEnv": "ZEPHYR_LEGAL_AGREEMENTS_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_LEGAL_AGREEMENTS_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_LEGAL_AGREEMENTS_APPLICATION_UID"
         },
         "workerDispatch": {
           "preferred": "service-binding",
-          "serviceBinding": "VERTICAL_SIAMPARK_AGREEMENTS_WORKER",
-          "serviceBindingEnv": "VERTICAL_SIAMPARK_AGREEMENTS_WORKER_BINDING",
-          "dispatchNamespaceEnv": "VERTICAL_SIAMPARK_AGREEMENTS_DISPATCH_NAMESPACE",
-          "dispatchWorkerNameEnv": "VERTICAL_SIAMPARK_AGREEMENTS_WORKER_NAME",
+          "serviceBinding": "VERTICAL_LEGAL_AGREEMENTS_WORKER",
+          "serviceBindingEnv": "VERTICAL_LEGAL_AGREEMENTS_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_LEGAL_AGREEMENTS_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_LEGAL_AGREEMENTS_WORKER_NAME",
           "requestInterface": "fetch"
         }
       },
       "node": {
         "kind": "node-mf-runtime",
         "adapterVersion": "backend-mf-effect-v2",
-        "remoteName": "verticalSiamparkAgreementsBackend",
-        "manifestEnv": "VERTICAL_SIAMPARK_AGREEMENTS_BACKEND_MF_MANIFEST",
+        "remoteName": "verticalLegalAgreementsBackend",
+        "manifestEnv": "VERTICAL_LEGAL_AGREEMENTS_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4116/backend-mf-manifest.json",
         "containerEntry": "http://localhost:4116/backendRemoteEntry.cjs",
         "remoteType": "commonjs-module",
         "expose": "./effect-api",
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
-          "unitId": "app/siampark-agreements",
+          "unitId": "app/legal-agreements",
           "buildMarker": "a9140e920b13357f"
         }
       }
     },
-    "siampark-work": {
-      "apiBaseUrl": "http://localhost:4117/siampark-work-api",
+    "work-tasks": {
+      "apiBaseUrl": "http://localhost:4117/work-tasks-api",
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
-        "unitId": "app/siampark-work",
+        "unitId": "app/work-tasks",
         "buildMarker": "175a72e2a12e76df"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
-        "workerName": "app-siampark-work",
-        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SIAMPARK_WORK",
+        "workerName": "app-work-tasks",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_WORK_TASKS",
         "ssr": {
           "workerEntry": ".output/server/index.mjs",
           "workerManifest": ".output/server/modern-worker-manifest.json",
@@ -914,31 +914,31 @@
         "zephyr": {
           "runtime": "ssr-worker",
           "integration": "managed-cloudflare",
-          "snapshotIdEnv": "ZEPHYR_SIAMPARK_WORK_SNAPSHOT_ID",
-          "versionIdEnv": "ZEPHYR_SIAMPARK_WORK_VERSION_ID",
-          "applicationUidEnv": "ZEPHYR_SIAMPARK_WORK_APPLICATION_UID"
+          "snapshotIdEnv": "ZEPHYR_WORK_TASKS_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_WORK_TASKS_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_WORK_TASKS_APPLICATION_UID"
         },
         "workerDispatch": {
           "preferred": "service-binding",
-          "serviceBinding": "VERTICAL_SIAMPARK_WORK_WORKER",
-          "serviceBindingEnv": "VERTICAL_SIAMPARK_WORK_WORKER_BINDING",
-          "dispatchNamespaceEnv": "VERTICAL_SIAMPARK_WORK_DISPATCH_NAMESPACE",
-          "dispatchWorkerNameEnv": "VERTICAL_SIAMPARK_WORK_WORKER_NAME",
+          "serviceBinding": "VERTICAL_WORK_TASKS_WORKER",
+          "serviceBindingEnv": "VERTICAL_WORK_TASKS_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_WORK_TASKS_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_WORK_TASKS_WORKER_NAME",
           "requestInterface": "fetch"
         }
       },
       "node": {
         "kind": "node-mf-runtime",
         "adapterVersion": "backend-mf-effect-v2",
-        "remoteName": "verticalSiamparkWorkBackend",
-        "manifestEnv": "VERTICAL_SIAMPARK_WORK_BACKEND_MF_MANIFEST",
+        "remoteName": "verticalWorkTasksBackend",
+        "manifestEnv": "VERTICAL_WORK_TASKS_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4117/backend-mf-manifest.json",
         "containerEntry": "http://localhost:4117/backendRemoteEntry.cjs",
         "remoteType": "commonjs-module",
         "expose": "./effect-api",
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
-          "unitId": "app/siampark-work",
+          "unitId": "app/work-tasks",
           "buildMarker": "175a72e2a12e76df"
         }
       }
@@ -1198,17 +1198,17 @@
         }
       }
     },
-    "siampark-billing-finance": {
-      "apiBaseUrl": "http://localhost:4118/siampark-billing-finance-api",
+    "finance-billing": {
+      "apiBaseUrl": "http://localhost:4118/finance-billing-api",
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
-        "unitId": "app/siampark-billing-finance",
+        "unitId": "app/finance-billing",
         "buildMarker": "0601eb5c20ee2712"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
-        "workerName": "app-siampark-billing-finance",
-        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SIAMPARK_BILLING_FINANCE",
+        "workerName": "app-finance-billing",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_FINANCE_BILLING",
         "ssr": {
           "workerEntry": ".output/server/index.mjs",
           "workerManifest": ".output/server/modern-worker-manifest.json",
@@ -1220,46 +1220,46 @@
         "zephyr": {
           "runtime": "ssr-worker",
           "integration": "managed-cloudflare",
-          "snapshotIdEnv": "ZEPHYR_SIAMPARK_BILLING_FINANCE_SNAPSHOT_ID",
-          "versionIdEnv": "ZEPHYR_SIAMPARK_BILLING_FINANCE_VERSION_ID",
-          "applicationUidEnv": "ZEPHYR_SIAMPARK_BILLING_FINANCE_APPLICATION_UID"
+          "snapshotIdEnv": "ZEPHYR_FINANCE_BILLING_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_FINANCE_BILLING_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_FINANCE_BILLING_APPLICATION_UID"
         },
         "workerDispatch": {
           "preferred": "service-binding",
-          "serviceBinding": "VERTICAL_SIAMPARK_BILLING_FINANCE_WORKER",
-          "serviceBindingEnv": "VERTICAL_SIAMPARK_BILLING_FINANCE_WORKER_BINDING",
-          "dispatchNamespaceEnv": "VERTICAL_SIAMPARK_BILLING_FINANCE_DISPATCH_NAMESPACE",
-          "dispatchWorkerNameEnv": "VERTICAL_SIAMPARK_BILLING_FINANCE_WORKER_NAME",
+          "serviceBinding": "VERTICAL_FINANCE_BILLING_WORKER",
+          "serviceBindingEnv": "VERTICAL_FINANCE_BILLING_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_FINANCE_BILLING_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_FINANCE_BILLING_WORKER_NAME",
           "requestInterface": "fetch"
         }
       },
       "node": {
         "kind": "node-mf-runtime",
         "adapterVersion": "backend-mf-effect-v2",
-        "remoteName": "verticalSiamparkBillingFinanceBackend",
-        "manifestEnv": "VERTICAL_SIAMPARK_BILLING_FINANCE_BACKEND_MF_MANIFEST",
+        "remoteName": "verticalFinanceBillingBackend",
+        "manifestEnv": "VERTICAL_FINANCE_BILLING_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4118/backend-mf-manifest.json",
         "containerEntry": "http://localhost:4118/backendRemoteEntry.cjs",
         "remoteType": "commonjs-module",
         "expose": "./effect-api",
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
-          "unitId": "app/siampark-billing-finance",
+          "unitId": "app/finance-billing",
           "buildMarker": "0601eb5c20ee2712"
         }
       }
     },
-    "siampark-relationships": {
-      "apiBaseUrl": "http://localhost:4119/siampark-relationships-api",
+    "crm-activities": {
+      "apiBaseUrl": "http://localhost:4119/crm-activities-api",
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
-        "unitId": "app/siampark-relationships",
+        "unitId": "app/crm-activities",
         "buildMarker": "34118b88515b135e"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
-        "workerName": "app-siampark-relationships",
-        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SIAMPARK_RELATIONSHIPS",
+        "workerName": "app-crm-activities",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_CRM_ACTIVITIES",
         "ssr": {
           "workerEntry": ".output/server/index.mjs",
           "workerManifest": ".output/server/modern-worker-manifest.json",
@@ -1271,46 +1271,46 @@
         "zephyr": {
           "runtime": "ssr-worker",
           "integration": "managed-cloudflare",
-          "snapshotIdEnv": "ZEPHYR_SIAMPARK_RELATIONSHIPS_SNAPSHOT_ID",
-          "versionIdEnv": "ZEPHYR_SIAMPARK_RELATIONSHIPS_VERSION_ID",
-          "applicationUidEnv": "ZEPHYR_SIAMPARK_RELATIONSHIPS_APPLICATION_UID"
+          "snapshotIdEnv": "ZEPHYR_CRM_ACTIVITIES_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_CRM_ACTIVITIES_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_CRM_ACTIVITIES_APPLICATION_UID"
         },
         "workerDispatch": {
           "preferred": "service-binding",
-          "serviceBinding": "VERTICAL_SIAMPARK_RELATIONSHIPS_WORKER",
-          "serviceBindingEnv": "VERTICAL_SIAMPARK_RELATIONSHIPS_WORKER_BINDING",
-          "dispatchNamespaceEnv": "VERTICAL_SIAMPARK_RELATIONSHIPS_DISPATCH_NAMESPACE",
-          "dispatchWorkerNameEnv": "VERTICAL_SIAMPARK_RELATIONSHIPS_WORKER_NAME",
+          "serviceBinding": "VERTICAL_CRM_ACTIVITIES_WORKER",
+          "serviceBindingEnv": "VERTICAL_CRM_ACTIVITIES_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_CRM_ACTIVITIES_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_CRM_ACTIVITIES_WORKER_NAME",
           "requestInterface": "fetch"
         }
       },
       "node": {
         "kind": "node-mf-runtime",
         "adapterVersion": "backend-mf-effect-v2",
-        "remoteName": "verticalSiamparkRelationshipsBackend",
-        "manifestEnv": "VERTICAL_SIAMPARK_RELATIONSHIPS_BACKEND_MF_MANIFEST",
+        "remoteName": "verticalCrmActivitiesBackend",
+        "manifestEnv": "VERTICAL_CRM_ACTIVITIES_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4119/backend-mf-manifest.json",
         "containerEntry": "http://localhost:4119/backendRemoteEntry.cjs",
         "remoteType": "commonjs-module",
         "expose": "./effect-api",
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
-          "unitId": "app/siampark-relationships",
+          "unitId": "app/crm-activities",
           "buildMarker": "34118b88515b135e"
         }
       }
     },
-    "siampark-ops": {
-      "apiBaseUrl": "http://localhost:4126/siampark-ops-api",
+    "facility-operations": {
+      "apiBaseUrl": "http://localhost:4126/facility-operations-api",
       "versionBoundary": "web-and-api-same-build",
       "deliveryUnit": {
-        "unitId": "app/siampark-ops",
+        "unitId": "app/facility-operations",
         "buildMarker": "5af5cbe964140fbe"
       },
       "cloudflare": {
         "kind": "cloudflare-worker-snapshot",
-        "workerName": "app-siampark-ops",
-        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_SIAMPARK_OPS",
+        "workerName": "app-facility-operations",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_FACILITY_OPERATIONS",
         "ssr": {
           "workerEntry": ".output/server/index.mjs",
           "workerManifest": ".output/server/modern-worker-manifest.json",
@@ -1322,31 +1322,31 @@
         "zephyr": {
           "runtime": "ssr-worker",
           "integration": "managed-cloudflare",
-          "snapshotIdEnv": "ZEPHYR_SIAMPARK_OPS_SNAPSHOT_ID",
-          "versionIdEnv": "ZEPHYR_SIAMPARK_OPS_VERSION_ID",
-          "applicationUidEnv": "ZEPHYR_SIAMPARK_OPS_APPLICATION_UID"
+          "snapshotIdEnv": "ZEPHYR_FACILITY_OPERATIONS_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_FACILITY_OPERATIONS_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_FACILITY_OPERATIONS_APPLICATION_UID"
         },
         "workerDispatch": {
           "preferred": "service-binding",
-          "serviceBinding": "VERTICAL_SIAMPARK_OPS_WORKER",
-          "serviceBindingEnv": "VERTICAL_SIAMPARK_OPS_WORKER_BINDING",
-          "dispatchNamespaceEnv": "VERTICAL_SIAMPARK_OPS_DISPATCH_NAMESPACE",
-          "dispatchWorkerNameEnv": "VERTICAL_SIAMPARK_OPS_WORKER_NAME",
+          "serviceBinding": "VERTICAL_FACILITY_OPERATIONS_WORKER",
+          "serviceBindingEnv": "VERTICAL_FACILITY_OPERATIONS_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_FACILITY_OPERATIONS_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_FACILITY_OPERATIONS_WORKER_NAME",
           "requestInterface": "fetch"
         }
       },
       "node": {
         "kind": "node-mf-runtime",
         "adapterVersion": "backend-mf-effect-v2",
-        "remoteName": "verticalSiamparkOpsBackend",
-        "manifestEnv": "VERTICAL_SIAMPARK_OPS_BACKEND_MF_MANIFEST",
+        "remoteName": "verticalFacilityOperationsBackend",
+        "manifestEnv": "VERTICAL_FACILITY_OPERATIONS_BACKEND_MF_MANIFEST",
         "manifestUrl": "http://localhost:4126/backend-mf-manifest.json",
         "containerEntry": "http://localhost:4126/backendRemoteEntry.cjs",
         "remoteType": "commonjs-module",
         "expose": "./effect-api",
         "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
         "expected": {
-          "unitId": "app/siampark-ops",
+          "unitId": "app/facility-operations",
           "buildMarker": "5af5cbe964140fbe"
         }
       }
@@ -1417,18 +1417,18 @@
     "availability": "http://localhost:4111/availability-api",
     "tax": "http://localhost:4112/tax-api",
     "privacy": "http://localhost:4113/privacy-api",
-    "siampark-property": "http://localhost:4114/siampark-property-api",
-    "siampark-occupancy": "http://localhost:4115/siampark-occupancy-api",
-    "siampark-agreements": "http://localhost:4116/siampark-agreements-api",
-    "siampark-work": "http://localhost:4117/siampark-work-api",
+    "property-portfolio": "http://localhost:4114/property-portfolio-api",
+    "property-leasing": "http://localhost:4115/property-leasing-api",
+    "legal-agreements": "http://localhost:4116/legal-agreements-api",
+    "work-tasks": "http://localhost:4117/work-tasks-api",
     "workforce": "http://localhost:4120/workforce-api",
     "tagging": "http://localhost:4121/tagging-api",
     "sales-pipeline": "http://localhost:4122/sales-pipeline-api",
     "merchandise": "http://localhost:4123/merchandise-api",
     "sales-insights": "http://localhost:4124/sales-insights-api",
-    "siampark-billing-finance": "http://localhost:4118/siampark-billing-finance-api",
-    "siampark-relationships": "http://localhost:4119/siampark-relationships-api",
-    "siampark-ops": "http://localhost:4126/siampark-ops-api",
+    "finance-billing": "http://localhost:4118/finance-billing-api",
+    "crm-activities": "http://localhost:4119/crm-activities-api",
+    "facility-operations": "http://localhost:4126/facility-operations-api",
     "crm": "http://localhost:4125/crm-api"
   }
 }

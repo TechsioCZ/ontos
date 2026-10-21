@@ -24,7 +24,7 @@ export const listInvoices = async (input: {
   readonly payment?: (typeof PAYMENT_STATES)[number] | undefined;
   readonly state?: (typeof INVOICE_STATES)[number] | undefined;
 }) => {
-  const response = await readRecordsOf(VERTICAL.siamparkBilling, BillingRecordsWire, {});
+  const response = await readRecordsOf(VERTICAL.financeBilling, BillingRecordsWire, {});
   const items = response.state.invoices
     .filter((invoice) => input.state === undefined || invoice.businessState === input.state)
     .filter((invoice) => input.payment === undefined || invoice.paymentState === input.payment)

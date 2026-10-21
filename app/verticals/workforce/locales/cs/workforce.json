@@ -152,13 +152,13 @@
             "reason": "Důvod"
           },
           "modules": {
-            "siampark_work": "Úkoly",
+            "work_tasks": "Úkoly",
             "demo_sales-pipeline": "Příležitosti",
             "demo_tagging": "Štítky",
             "demo_merchandise": "Objednávky a produkty",
             "demo_workforce": "Zaměstnanci",
             "party_registry": "Zákazníci",
-            "siampark_billing-finance": "Faktury",
+            "finance_billing": "Faktury",
             "demo_crm": "CRM"
           },
           "outcomes": {

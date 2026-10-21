@@ -149,9 +149,9 @@ const loadMetricInputs = async (): Promise<{
     readCustomers(),
     readRecordsOf(VERTICAL.workforce, EmployeesWire, {}),
     readRecordsOf(VERTICAL.salesPipeline, PipelineRows, {}),
-    readRecordsOf(VERTICAL.siamparkBilling, BillingRows, {}),
+    readRecordsOf(VERTICAL.financeBilling, BillingRows, {}),
     readRecordsOf(VERTICAL.merchandise, MerchandiseRows, {}),
-    readRecordsOf(VERTICAL.siamparkWork, WorkRows, {}),
+    readRecordsOf(VERTICAL.workTasks, WorkRows, {}),
     readRecordsOf(VERTICAL.tagging, TaggingRows, {}),
   ]);
 

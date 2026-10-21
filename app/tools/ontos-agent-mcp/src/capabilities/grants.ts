@@ -63,7 +63,7 @@ export const detectWrite = (moduleId: string, body: unknown): { readonly write: 
     const allowed = viewer['writeAll'] === true || viewer['writeAssigned'] === true;
     return { note: 'zápis: CRM viewer', write: allowed ? 'allowed' : 'denied' };
   }
-  if (moduleId === 'demo.siampark-ops' && isRecord(body) && Array.isArray(body['access'])) {
+  if (moduleId === 'facility.operations' && isRecord(body) && Array.isArray(body['access'])) {
     const access: readonly unknown[] = body['access'];
     const allowed = access.some((entry) => isRecord(entry) && entry['canWrite'] === true);
     return { note: 'zápis: agendy provozu', write: allowed ? 'allowed' : 'denied' };

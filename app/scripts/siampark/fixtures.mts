@@ -1,11 +1,11 @@
 import { CoreSearchProjectionDocumentSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
-import { PropertyStateSchema } from '@app/siampark-property/contracts/records';
-import { OccupancyStateSchema } from '@app/siampark-occupancy/contracts/records';
-import { AgreementsStateSchema } from '@app/siampark-agreements/contracts/records';
-import { WorkStateSchema } from '@app/siampark-work/contracts/records';
-import { RelationshipsStateSchema } from '@app/siampark-relationships/contracts/records';
-import { FinanceStateSchema } from '@app/siampark-billing-finance/contracts/records';
+import { PropertyStateSchema } from '@app/property-portfolio/contracts/records';
+import { OccupancyStateSchema } from '@app/property-leasing/contracts/records';
+import { AgreementsStateSchema } from '@app/legal-agreements/contracts/records';
+import { WorkStateSchema } from '@app/work-tasks/contracts/records';
+import { RelationshipsStateSchema } from '@app/crm-activities/contracts/records';
+import { FinanceStateSchema } from '@app/finance-billing/contracts/records';
 
 /** Public operator inputs. Owners validate and persist their own fixture independently. */
 export const demoTenantId = '70000000-0000-4000-8000-000000000020';
@@ -40,15 +40,15 @@ const fixtureTaskExternalAgentAssigned = 'task.external-agent-assigned';
 const fixturePartyRegistry = 'party.registry';
 const fixturePartyResourceType = 'party.registry.party';
 const fixtureCounterpartyResourceType = 'party.registry.counterparty';
-const fixtureSiamparkProperty = 'siampark.property';
-const fixtureSiamparkAgreements = 'siampark.agreements';
-const fixtureSiamparkBillingFinance = 'siampark.billing-finance';
+const fixturePropertyPortfolio = 'property.portfolio';
+const fixtureLegalAgreements = 'legal.agreements';
+const fixtureFinanceBilling = 'finance.billing';
 const fixtureBookingConflict = 'booking.conflict';
 const fixtureSignatureA102 = 'signature.a102';
 const fixtureActivityFollowup = 'activity.followup';
 const fixture20260101 = '2026-01-01';
 const fixture20261015 = '2026-10-15';
-const fixtureSiamparkRelationships = 'siampark.relationships';
+const fixtureCrmActivities = 'crm.activities';
 const fixtureFinancialPlanEntry = 'financial-plan-entry';
 const aliases = [
   fixturePropertyParkova,
@@ -140,15 +140,15 @@ export const demoAccounts = [
 ] as const;
 const principal = (principalId: string) => ({ principalId, tenantId: demoTenantId });
 const property = (alias: typeof fixturePropertyParkova | typeof fixturePropertyRiverside) =>
-  demoRef(fixtureSiamparkProperty, 'property', alias);
-const unit = (alias: DemoAlias) => demoRef(fixtureSiamparkProperty, 'unit', alias);
+  demoRef(fixturePropertyPortfolio, 'property', alias);
+const unit = (alias: DemoAlias) => demoRef(fixturePropertyPortfolio, 'unit', alias);
 const cp = (alias: DemoAlias) => demoRef(fixturePartyRegistry, 'counterparty', alias);
 const party = (alias: DemoAlias) => demoRef(fixturePartyRegistry, 'party', alias);
-const occupancy = (alias: DemoAlias) => demoRef('siampark.occupancy', 'occupancy', alias);
-const contract = (alias: DemoAlias) => demoRef(fixtureSiamparkAgreements, 'contract', alias);
-const invoice = (alias: DemoAlias) => demoRef(fixtureSiamparkBillingFinance, 'invoice', alias);
-const task = (alias: DemoAlias) => demoRef('siampark.work', 'task', alias);
-const collectionRef = demoRef('siampark.work', 'task-collection', 'task-collection.operations');
+const occupancy = (alias: DemoAlias) => demoRef('property.leasing', 'occupancy', alias);
+const contract = (alias: DemoAlias) => demoRef(fixtureLegalAgreements, 'contract', alias);
+const invoice = (alias: DemoAlias) => demoRef(fixtureFinanceBilling, 'invoice', alias);
+const task = (alias: DemoAlias) => demoRef('work.tasks', 'task', alias);
+const collectionRef = demoRef('work.tasks', 'task-collection', 'task-collection.operations');
 const timestamps = { createdAt: demoTimestamp, updatedAt: demoTimestamp };
 
 export const partyFixture = {
@@ -214,7 +214,7 @@ const propertyState = {
   assets: [
     {
       acquiredAt: '2025-01-01',
-      assetRef: demoRef(fixtureSiamparkProperty, 'asset', fixtureAssetParkovaHvac01),
+      assetRef: demoRef(fixturePropertyPortfolio, 'asset', fixtureAssetParkovaHvac01),
       category: 'HVAC',
       code: 'HVAC-01',
       lastServiceAt: '2026-04-01',
@@ -391,7 +391,7 @@ const agreementsState = {
   documents: [
     {
       contractRef: contract(fixtureContractA102Lease),
-      documentRef: demoRef(fixtureSiamparkAgreements, 'document', fixtureDocumentA102Lease),
+      documentRef: demoRef(fixtureLegalAgreements, 'document', fixtureDocumentA102Lease),
       fileName: 'a102-demo.pdf',
       kind: 'LEASE',
       lifecycleState: 'FINAL',
@@ -401,7 +401,7 @@ const agreementsState = {
     },
     {
       contractRef: contract(fixtureContractB201Lease),
-      documentRef: demoRef(fixtureSiamparkAgreements, 'document', 'document.b201.lease'),
+      documentRef: demoRef(fixtureLegalAgreements, 'document', 'document.b201.lease'),
       fileName: 'b201-demo.pdf',
       kind: 'LEASE',
       lifecycleState: 'FINAL',
@@ -416,7 +416,7 @@ const agreementsState = {
       completedAt: demoTimestamp,
       contractRef: contract(fixtureContractA102Lease),
       correlation: 'signature:A102:baseline',
-      documentRef: demoRef(fixtureSiamparkAgreements, 'document', fixtureDocumentA102Lease),
+      documentRef: demoRef(fixtureLegalAgreements, 'document', fixtureDocumentA102Lease),
       integrationKind: 'ELECTRONIC_SIGNATURE',
       mode: 'SIMULATED',
       observationId: demoId(fixtureSignatureA102),
@@ -450,7 +450,7 @@ const workState = {
       collectionRef,
       contextRefs: [
         property(fixturePropertyParkova),
-        demoRef(fixtureSiamparkProperty, 'asset', fixtureAssetParkovaHvac01),
+        demoRef(fixturePropertyPortfolio, 'asset', fixtureAssetParkovaHvac01),
       ],
       dueDate: '2026-10-04',
       ownerPrincipalRef: principal(demoAccounts[1].principalId),
@@ -505,7 +505,7 @@ const relationshipsState = {
       occurredAt: demoTimestamp,
       ownerPrincipalRef: principal(demoAccounts[1].principalId),
       partyRef: party(fixtureCustomerA102Tenant),
-      ref: demoRef(fixtureSiamparkRelationships, 'activity', 'activity.completed'),
+      ref: demoRef(fixtureCrmActivities, 'activity', 'activity.completed'),
       summary: 'Nájem A102 potvrzen',
     },
     {
@@ -517,7 +517,7 @@ const relationshipsState = {
       occurredAt: demoTimestamp,
       ownerPrincipalRef: principal(demoAccounts[1].principalId),
       partyRef: party(fixtureCustomerB201Tenant),
-      ref: demoRef(fixtureSiamparkRelationships, 'activity', fixtureActivityFollowup),
+      ref: demoRef(fixtureCrmActivities, 'activity', fixtureActivityFollowup),
       summary: 'Připravit prodloužení B201',
     },
     {
@@ -529,7 +529,7 @@ const relationshipsState = {
       occurredAt: demoTimestamp,
       ownerPrincipalRef: principal(demoAccounts[3].principalId),
       partyRef: party(fixtureCustomerB201Tenant),
-      ref: demoRef(fixtureSiamparkRelationships, 'activity', 'activity.external'),
+      ref: demoRef(fixtureCrmActivities, 'activity', 'activity.external'),
       summary: 'Přiřazená návštěva B201',
     },
   ],
@@ -541,7 +541,7 @@ const relationshipsState = {
       integrationKind: 'EMAIL',
       mode: 'SIMULATED',
       observationId: demoId('email.followup'),
-      ownerResourceRef: demoRef(fixtureSiamparkRelationships, 'activity', fixtureActivityFollowup),
+      ownerResourceRef: demoRef(fixtureCrmActivities, 'activity', fixtureActivityFollowup),
       providerLabel: 'DEMO',
       receipt: 'DEMO-NOTIFICATION:activity.b201.followup',
       requestSummary: 'Notification for the recorded B201 renewal follow-up',
@@ -634,28 +634,28 @@ const financeState = {
       kind: 'REVENUE',
       plannedMinor: 3_600_000,
       propertyRef: property(fixturePropertyParkova),
-      ref: demoRef(fixtureSiamparkBillingFinance, fixtureFinancialPlanEntry, 'plan.parkova.revenue'),
+      ref: demoRef(fixtureFinanceBilling, fixtureFinancialPlanEntry, 'plan.parkova.revenue'),
     },
     {
       category: 'Provoz',
       kind: 'COST',
       plannedMinor: 500_000,
       propertyRef: property(fixturePropertyParkova),
-      ref: demoRef(fixtureSiamparkBillingFinance, fixtureFinancialPlanEntry, 'plan.parkova.cost'),
+      ref: demoRef(fixtureFinanceBilling, fixtureFinancialPlanEntry, 'plan.parkova.cost'),
     },
     {
       category: 'Nájemné',
       kind: 'REVENUE',
       plannedMinor: 2_000_000,
       propertyRef: property(fixturePropertyRiverside),
-      ref: demoRef(fixtureSiamparkBillingFinance, fixtureFinancialPlanEntry, 'plan.riverside.revenue'),
+      ref: demoRef(fixtureFinanceBilling, fixtureFinancialPlanEntry, 'plan.riverside.revenue'),
     },
     {
       category: 'Provoz',
       kind: 'COST',
       plannedMinor: 300_000,
       propertyRef: property(fixturePropertyRiverside),
-      ref: demoRef(fixtureSiamparkBillingFinance, fixtureFinancialPlanEntry, 'plan.riverside.cost'),
+      ref: demoRef(fixtureFinanceBilling, fixtureFinancialPlanEntry, 'plan.riverside.cost'),
     },
   ].map((row) => ({
     ...row,
@@ -691,22 +691,22 @@ const financeState = {
   ],
 };
 export const demoOwnerStates = {
-  'siampark-agreements': agreementsState,
-  'siampark-billing-finance': financeState,
-  'siampark-occupancy': occupancyState,
-  'siampark-property': propertyState,
-  'siampark-relationships': relationshipsState,
-  'siampark-work': workState,
+  'legal-agreements': agreementsState,
+  'finance-billing': financeState,
+  'property-leasing': occupancyState,
+  'property-portfolio': propertyState,
+  'crm-activities': relationshipsState,
+  'work-tasks': workState,
 };
 
 // The operator serializes wire snapshots through each owner's published read contract.
 const DemoOwnerStatesSchema = Schema.Struct({
-  'siampark-agreements': Schema.toEncoded(AgreementsStateSchema),
-  'siampark-billing-finance': Schema.toEncoded(FinanceStateSchema),
-  'siampark-occupancy': Schema.toEncoded(OccupancyStateSchema),
-  'siampark-property': Schema.toEncoded(PropertyStateSchema),
-  'siampark-relationships': Schema.toEncoded(RelationshipsStateSchema),
-  'siampark-work': Schema.toEncoded(WorkStateSchema),
+  'legal-agreements': Schema.toEncoded(AgreementsStateSchema),
+  'finance-billing': Schema.toEncoded(FinanceStateSchema),
+  'property-leasing': Schema.toEncoded(OccupancyStateSchema),
+  'property-portfolio': Schema.toEncoded(PropertyStateSchema),
+  'crm-activities': Schema.toEncoded(RelationshipsStateSchema),
+  'work-tasks': Schema.toEncoded(WorkStateSchema),
 });
 const encodeOwnerFixture = <S extends Schema.Top>(schema: S, state: S['Encoded']) => {
   const fixtureSchema = Schema.Struct({
@@ -724,28 +724,28 @@ export const demoOwnerPorts = Effect.gen(function* serializeOwnerFixtures() {
   const states = yield* Schema.decodeUnknownEffect(DemoOwnerStatesSchema)(demoOwnerStates);
   return [
     {
-      encodedFixture: yield* encodeOwnerFixture(AgreementsStateSchema, states['siampark-agreements']),
-      script: 'verticals/siampark-agreements/scripts/reset-demo.mts',
+      encodedFixture: yield* encodeOwnerFixture(AgreementsStateSchema, states['legal-agreements']),
+      script: 'verticals/legal-agreements/scripts/reset-demo.mts',
     },
     {
-      encodedFixture: yield* encodeOwnerFixture(FinanceStateSchema, states['siampark-billing-finance']),
-      script: 'verticals/siampark-billing-finance/scripts/reset-demo.mts',
+      encodedFixture: yield* encodeOwnerFixture(FinanceStateSchema, states['finance-billing']),
+      script: 'verticals/finance-billing/scripts/reset-demo.mts',
     },
     {
-      encodedFixture: yield* encodeOwnerFixture(OccupancyStateSchema, states['siampark-occupancy']),
-      script: 'verticals/siampark-occupancy/scripts/reset-demo.mts',
+      encodedFixture: yield* encodeOwnerFixture(OccupancyStateSchema, states['property-leasing']),
+      script: 'verticals/property-leasing/scripts/reset-demo.mts',
     },
     {
-      encodedFixture: yield* encodeOwnerFixture(PropertyStateSchema, states['siampark-property']),
-      script: 'verticals/siampark-property/scripts/reset-demo.mts',
+      encodedFixture: yield* encodeOwnerFixture(PropertyStateSchema, states['property-portfolio']),
+      script: 'verticals/property-portfolio/scripts/reset-demo.mts',
     },
     {
-      encodedFixture: yield* encodeOwnerFixture(RelationshipsStateSchema, states['siampark-relationships']),
-      script: 'verticals/siampark-relationships/scripts/reset-demo.mts',
+      encodedFixture: yield* encodeOwnerFixture(RelationshipsStateSchema, states['crm-activities']),
+      script: 'verticals/crm-activities/scripts/reset-demo.mts',
     },
     {
-      encodedFixture: yield* encodeOwnerFixture(WorkStateSchema, states['siampark-work']),
-      script: 'verticals/siampark-work/scripts/reset-demo.mts',
+      encodedFixture: yield* encodeOwnerFixture(WorkStateSchema, states['work-tasks']),
+      script: 'verticals/work-tasks/scripts/reset-demo.mts',
     },
   ];
 });

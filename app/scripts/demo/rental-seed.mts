@@ -1,13 +1,13 @@
 import { isDeepStrictEqual } from 'node:util';
 
-import { AgreementsCommandSchema } from '@app/siampark-agreements/contracts/apply-command';
-import { RecordsResponseSchema as AgreementsRecords } from '@app/siampark-agreements/contracts/records';
-import { FinanceCommandSchema } from '@app/siampark-billing-finance/contracts/apply-command';
-import { RecordsResponseSchema as FinanceRecords } from '@app/siampark-billing-finance/contracts/records';
-import { OccupancyCommandSchema } from '@app/siampark-occupancy/contracts/apply-command';
-import { RecordsResponseSchema as OccupancyRecords } from '@app/siampark-occupancy/contracts/records';
-import { PropertyCommandSchema } from '@app/siampark-property/contracts/apply-command';
-import { PropertyDateSchema, RecordsResponseSchema as PropertyRecords } from '@app/siampark-property/contracts/records';
+import { AgreementsCommandSchema } from '@app/legal-agreements/contracts/apply-command';
+import { RecordsResponseSchema as AgreementsRecords } from '@app/legal-agreements/contracts/records';
+import { FinanceCommandSchema } from '@app/finance-billing/contracts/apply-command';
+import { RecordsResponseSchema as FinanceRecords } from '@app/finance-billing/contracts/records';
+import { OccupancyCommandSchema } from '@app/property-leasing/contracts/apply-command';
+import { RecordsResponseSchema as OccupancyRecords } from '@app/property-leasing/contracts/records';
+import { PropertyCommandSchema } from '@app/property-portfolio/contracts/apply-command';
+import { PropertyDateSchema, RecordsResponseSchema as PropertyRecords } from '@app/property-portfolio/contracts/records';
 import { Console, DateTime, Effect, Schema } from 'effect';
 
 import { demoId } from './fixture-ids.mts';
@@ -15,11 +15,11 @@ import { ensureSeedCustomer, existingSeedCustomer, seedCustomerList } from './re
 import { DemoSeedError } from './seed-client.mts';
 import type { SeedClient, SeedTarget } from './seed-client.mts';
 
-const propertyAudience = 'siampark-property';
-const occupancyAudience = 'siampark-occupancy';
-const agreementsAudience = 'siampark-agreements';
-const financeAudience = 'siampark-billing-finance';
-const workAudience = 'siampark-work';
+const propertyAudience = 'property-portfolio';
+const occupancyAudience = 'property-leasing';
+const agreementsAudience = 'legal-agreements';
+const financeAudience = 'finance-billing';
+const workAudience = 'work-tasks';
 const partyAudience = 'party-registry';
 const pipelineAudience = 'sales-pipeline';
 
@@ -265,7 +265,7 @@ const ContextRef = Schema.Struct({
   resourceType: Schema.String,
   tenantId: Schema.String,
 });
-// Bounded operator projection of the public siampark-work records contract.
+// Bounded operator projection of the public work-tasks records contract.
 const WorkRecords = Schema.Struct({
   items: Schema.Array(Schema.Struct({ contextRefs: Schema.Array(ContextRef), title: Schema.String })),
   revision: Schema.Int,
@@ -391,7 +391,7 @@ const rentTerms = (spec: LeaseSpec) => ({ currency: 'CZK' as const, ...spec.rent
 /** Creates the lease draft once, then walks it to its target state; contract activation happens in between. */
 const ensureLeaseDraft = (client: SeedClient, target: SeedTarget, spec: LeaseSpec, unit: Unit, tenant: Customer) =>
   Effect.gen(function* leaseDraft() {
-    const occupancyRef = storyRef(target, 'siampark.occupancy', 'occupancy', spec.key);
+    const occupancyRef = storyRef(target, 'property.leasing', 'occupancy', spec.key);
     let snapshot = yield* client.read(occupancyAudience, occupancyRead);
     let record = snapshot.occupancies.find((item) => item.occupancyRef.resourceId === occupancyRef.resourceId);
     if (record === undefined) {
@@ -476,7 +476,7 @@ const ensureContract = (
     if (terms === null) {
       return undefined;
     }
-    const contractRef = storyRef(target, 'siampark.agreements', 'contract', spec.key);
+    const contractRef = storyRef(target, 'legal.agreements', 'contract', spec.key);
     const find = (items: (typeof agreementsRead.Type)['contracts']) =>
       items.find((item) => item.contractRef.resourceId === contractRef.resourceId);
     let snapshot = yield* client.read(agreementsAudience, agreementsRead);
@@ -532,7 +532,7 @@ const ensureContract = (
           document: {
             contractRef: record.contractRef,
             createdAt: now,
-            documentRef: storyRef(target, 'siampark.agreements', 'document', spec.key),
+            documentRef: storyRef(target, 'legal.agreements', 'document', spec.key),
             fileName: `Najemni-smlouva-${unit.code}-podepsana.pdf`,
             kind: 'LEASE',
             lifecycleState: 'FINAL',

@@ -289,9 +289,9 @@ const CustomerDetailView = ({
               <div className="flex flex-wrap gap-150">
                 {[
                   ['opportunities', '/prodej/prilezitosti'],
-                  ['tasks', '/siampark/work'],
-                  ['invoices', '/siampark/finance'],
-                  ['documents', '/siampark/occupancy'],
+                  ['tasks', '/ukoly'],
+                  ['invoices', '/finance'],
+                  ['documents', '/najmy'],
                 ].map(([label, path]) => (
                   <Link
                     aria-disabled={busy}

@@ -39,7 +39,7 @@ Local only. Nothing here deploys. Run everything from `app/`.
    `/api/home` to return live backend data. Its managed key is read server-side from `app/.env.demo.local`.
 
 The CRM and operations seeds are already wired through `scripts/demo/reset-demo.mts`; their standalone entrypoints
-are `pnpm demo:seed:crm` and `pnpm demo:seed:siampark-ops`. Do not run full resets while other lanes are testing.
+are `pnpm demo:seed:crm` and `pnpm demo:seed:facility-operations`. Do not run full resets while other lanes are testing.
 On the shared sales-demo machine, only the orchestrator runs `up.sh`/`down.sh`; contributors commit first and use
 `rebuild-one.sh <app>` instead. Cold startup has been source-verified, not run against the live shared demo.
 
@@ -50,12 +50,12 @@ Every step and server writes a log to `app/.scratch/demo-logs/<name>.log` (gitig
 
 | Variable                | Default                                                                           | Effect                                                                                                                                         |
 | ----------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DEMO_VERTICALS`        | `party-registry siampark-property siampark-occupancy siampark-agreements siampark-work siampark-billing-finance commerce-customer-context workforce tagging sales-pipeline merchandise sales-insights crm siampark-ops` | Verticals to build, serve and compose. Takes vertical IDs from `topology/reference-topology.json`, separated by spaces or commas.              |
+| `DEMO_VERTICALS`        | `party-registry property-portfolio property-leasing legal-agreements work-tasks finance-billing commerce-customer-context workforce tagging sales-pipeline merchandise sales-insights crm facility-operations` | Verticals to build, serve and compose. Takes vertical IDs from `topology/reference-topology.json`, separated by spaces or commas.              |
 | `DEMO_REBUILD=1`        | off                                                                               | Rebuilds every selected app.                                                                                                                   |
 | `DEMO_RESET=0`          | on                                                                                | Skips all data resets and rental/CRM/operations/e-shop seeds; re-applies demo account grants and AI profiles. Use the default reset after a fresh in-memory SpiceDB restart to restore baseline resource grants. |
 | `DEMO_COMPOSITION_PORT` | `3041`                                                                            | Composition publisher port.                                                                                                                    |
 
-Example: `DEMO_VERTICALS="party-registry siampark-work siampark-billing-finance commerce-customer-context workforce tagging" ./scripts/demo/up.sh`.
+Example: `DEMO_VERTICALS="party-registry work-tasks finance-billing commerce-customer-context workforce tagging" ./scripts/demo/up.sh`.
 The composition publisher reads the same list through `ONTOS_DEMO_VERTICALS`.
 
 ## Ports
@@ -65,12 +65,12 @@ The composition publisher reads the same list through `ONTOS_DEMO_VERTICALS`.
 | 3020            | Shell: http://localhost:3020/cs                                                                        |
 | 3041            | Development composition (`/active`). Siampark used 3031, but launchd still holds 3031 on this machine. |
 | 3060            | Kavárna Doma customer storefront + server-only BFF |
-| 4125 / 4126     | CRM / Siampark operations |
+| 4125 / 4126     | CRM / facility operations |
 | 4101            | commerce-customer-context (API only)                                                                   |
 | 4102            | party-registry                                                                                         |
-| 4117            | siampark-work                                                                                          |
-| 4118            | siampark-billing-finance                                                                               |
-| 4114–4116, 4119 | siampark property / occupancy / agreements (started by default), relationships (not started)                    |
+| 4117            | work-tasks                                                                                          |
+| 4118            | finance-billing                                                                               |
+| 4114–4116, 4119 | property-portfolio / property-leasing / legal-agreements (started by default), crm-activities (not started)                    |
 | 1025 / 8025     | Mailpit: SMTP (127.0.0.1 only) / web UI + API http://localhost:8025 |
 | 1026 / 8026     | Test Mailpit (test/QA recipients only): SMTP / web UI + API http://localhost:8026 |
 | 3096            | E-mail dispatcher: read-only delivery receipts (127.0.0.1) |
@@ -317,7 +317,7 @@ sign-in as the demo users, the bot through its API key, PASS/FAIL per check, exi
 demo data on every run: one open opportunity goes to WON (and gets a draft invoice), its product gets a +10 % price,
 and the bot creates one task. The MCP session `tools/ontos-agent-mcp/scripts/demo-session.mts` (requirements 8, 9, 11) writes its transcript to `docs/demo/agent-session.md`.
 
-Pages: `/cs/siampark/work` (Úkoly) and `/cs/siampark/finance` (Faktury a finance). The business
+Pages: `/cs/ukoly` (Úkoly) and `/cs/finance` (Faktury a finance). The business
 date is 2026-10-05.
 
 ## Known issues

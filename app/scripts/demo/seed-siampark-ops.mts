@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * `pnpm demo:seed:siampark-ops`: (re)seeds every Siampark provoz agenda (demo.siampark-ops) for Siampark 0021.
- * Runs verticals/siampark-ops/scripts/reset-demo.mts with the validated local environment. Local only.
+ * `pnpm demo:seed:facility-operations`: (re)seeds every Facility operations agenda (facility.operations) for Siampark 0021.
+ * Runs verticals/facility-operations/scripts/reset-demo.mts with the validated local environment. Local only.
  */
 import { NodeServices } from '@effect/platform-node';
 import { ConfigProvider, Console, Effect, Exit, Layer, Path, Schema } from 'effect';
@@ -11,9 +11,9 @@ import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } fro
 
 class SeedError extends Schema.TaggedError<SeedError>()('SeedError', { reason: Schema.String }) {}
 
-const OWNER_SCRIPT = 'verticals/siampark-ops/scripts/reset-demo.mts';
+const OWNER_SCRIPT = 'verticals/facility-operations/scripts/reset-demo.mts';
 
-const main = Effect.gen(function* seedSiamparkOps() {
+const main = Effect.gen(function* seedFacilityOperations() {
   const path = yield* Path.Path;
   const root = yield* path.fromFileUrl(new URL('../..', import.meta.url));
   const fileProvider = yield* ConfigProvider.fromDotEnv({ path: path.join(root, '.env') });
@@ -33,12 +33,12 @@ const main = Effect.gen(function* seedSiamparkOps() {
   if (code !== ChildProcessSpawner.ExitCode(0)) {
     return yield* new SeedError({ reason: `Seed failed: ${OWNER_SCRIPT}` });
   }
-  return yield* Console.log('Siampark provoz seeded.');
+  return yield* Console.log('Facility operations seeded.');
 });
 
 const exit = await Effect.runPromiseExit(
   main.pipe(
-    Effect.tapError((failure) => Console.error(`siampark-ops seed failed (${failure._tag}).`)),
+    Effect.tapError((failure) => Console.error(`facility-operations seed failed (${failure._tag}).`)),
     Effect.scoped,
     Effect.provide(NodeServices.layer),
   ),

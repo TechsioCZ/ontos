@@ -74,15 +74,15 @@ const fail = (reason: string) => new DemoPermissionsError({ reason });
 const demoPassword = Config.Redacted('ONTOS_DEMO_PASSWORD').pipe(Config.withDefault(Redacted.make('password1234')));
 const ENV_FILE = '.env.demo.local';
 const readinessTimeout = '10 seconds';
-const BOT_KEY_AUDIENCE = 'siampark-work';
+const BOT_KEY_AUDIENCE = 'work-tasks';
 /** The storefront BFF exchanges its key for merchandise gateway assertions in the e-shop company. */
 const STOREFRONT_KEY_AUDIENCE = 'merchandise';
 /** Every human account: the Obchodní firma / Siampark accounts plus the CRM and e-shop company personas. */
 const allHumanAccounts = [...demoHumanAccounts, ...companyHumanAccounts] as const;
 /** `demo.crm` is tenant-activated here so the CRM company works whatever the Siampark reset lists. */
 const crmModuleState = { moduleId: 'demo.crm', stateId: '78000000-0000-4000-8000-000000000201' } as const;
-const siamparkOpsModuleState = {
-  moduleId: 'demo.siampark-ops',
+const facilityOperationsModuleState = {
+  moduleId: 'facility.operations',
   stateId: '78000000-0000-4000-8000-000000000202',
 } as const;
 /** Managed API keys that run unlimited (each request exchanges the key for a single-use gateway assertion). */
@@ -260,7 +260,7 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
       registrationCountry: 'CZ',
       registrationNumber: 'DEMO-SIAMPARK',
     },
-    modules: [crmModuleState, siamparkOpsModuleState],
+    modules: [crmModuleState, facilityOperationsModuleState],
     relationships,
     tenant: { defaultLocale: 'cs', displayName: 'OntOS DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
   });

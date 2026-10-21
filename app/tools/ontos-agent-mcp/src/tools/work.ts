@@ -75,7 +75,7 @@ export const listTasks = async (input: {
   readonly state?: (typeof TASK_STATES)[number] | undefined;
 }) => {
   const response = await readRecordsOf(
-    VERTICAL.siamparkWork,
+    VERTICAL.workTasks,
     WorkRecordsWire,
     withoutUndefined({ assigneeEmployeeId: input.assigneeEmployeeId, state: input.state }),
   );
@@ -118,10 +118,10 @@ export const createTask = async (input: {
   const idempotencyKey = createTaskIdempotencyKey(command, input.requestId);
   try {
     const result = await applyCommand(
-      VERTICAL.siamparkWork,
+      VERTICAL.workTasks,
       WorkCommandResultWire,
       command,
-      async () => await readRevision(VERTICAL.siamparkWork),
+      async () => await readRevision(VERTICAL.workTasks),
       undefined,
       idempotencyKey,
     );
@@ -136,7 +136,7 @@ export const createTask = async (input: {
       throw error;
     }
     // Same logical request again: Core refused a second execution. Answer with the task the first call created.
-    const current = await readRecordsOf(VERTICAL.siamparkWork, WorkRecordsWire, {});
+    const current = await readRecordsOf(VERTICAL.workTasks, WorkRecordsWire, {});
     const existing = current.items.find(
       (task) => task.title === input.title && task.assigneeEmployeeId === input.assigneeEmployeeId,
     );
@@ -182,20 +182,20 @@ export const updateTask = async (input: {
     throw new Error('Zadejte state, assigneeEmployeeId nebo dueDate.');
   }
   const query = { resourceId: input.id };
-  const current = await readRecordsOf(VERTICAL.siamparkWork, WorkRecordsWire, query);
+  const current = await readRecordsOf(VERTICAL.workTasks, WorkRecordsWire, query);
   const [existing] = current.items;
   if (existing === undefined) {
     throw new Error(`Úkol ${input.id} nebyl nalezen.`);
   }
   const taskRef = existing.ref;
-  const currentRevision = async () => await readRevision(VERTICAL.siamparkWork, query);
+  const currentRevision = async () => await readRevision(VERTICAL.workTasks, query);
 
   const changed: string[] = [];
   let { revision } = current;
   let task: Task | undefined;
   if (input.assigneeEmployeeId !== undefined || input.dueDate !== undefined) {
     const result = await applyCommand(
-      VERTICAL.siamparkWork,
+      VERTICAL.workTasks,
       WorkCommandResultWire,
       withoutUndefined({
         _tag: 'UpdateTask',
@@ -217,7 +217,7 @@ export const updateTask = async (input: {
   }
   if (input.state !== undefined) {
     const result = await applyCommand(
-      VERTICAL.siamparkWork,
+      VERTICAL.workTasks,
       WorkCommandResultWire,
       { _tag: 'ChangeTaskState', state: input.state, taskRef },
       currentRevision,

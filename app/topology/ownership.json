@@ -422,66 +422,66 @@
       }
     },
     {
-      "id": "siampark-property",
-      "package": "@app/siampark-property",
-      "path": "verticals/siampark-property",
+      "id": "property-portfolio",
+      "package": "@app/property-portfolio",
+      "path": "verticals/property-portfolio",
       "ownership": {
         "team": "super-app-platform",
         "slack": "#super-app-platform",
         "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/verticals/siampark-property.md",
-        "adrRef": "docs/super-app-rfc-adr/verticals.md#siampark-property",
+        "runbookRef": "runbooks/verticals/property-portfolio.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#property-portfolio",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#siampark-property"]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#property-portfolio"]
         }
       }
     },
     {
-      "id": "siampark-occupancy",
-      "package": "@app/siampark-occupancy",
-      "path": "verticals/siampark-occupancy",
+      "id": "property-leasing",
+      "package": "@app/property-leasing",
+      "path": "verticals/property-leasing",
       "ownership": {
         "team": "super-app-platform",
         "slack": "#super-app-platform",
         "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/verticals/siampark-occupancy.md",
-        "adrRef": "docs/super-app-rfc-adr/verticals.md#siampark-occupancy",
+        "runbookRef": "runbooks/verticals/property-leasing.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#property-leasing",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#siampark-occupancy"]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#property-leasing"]
         }
       }
     },
     {
-      "id": "siampark-agreements",
-      "package": "@app/siampark-agreements",
-      "path": "verticals/siampark-agreements",
+      "id": "legal-agreements",
+      "package": "@app/legal-agreements",
+      "path": "verticals/legal-agreements",
       "ownership": {
         "team": "super-app-platform",
         "slack": "#super-app-platform",
         "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/verticals/siampark-agreements.md",
-        "adrRef": "docs/super-app-rfc-adr/verticals.md#siampark-agreements",
+        "runbookRef": "runbooks/verticals/legal-agreements.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#legal-agreements",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#siampark-agreements"]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#legal-agreements"]
         }
       }
     },
     {
-      "id": "siampark-work",
-      "package": "@app/siampark-work",
-      "path": "verticals/siampark-work",
+      "id": "work-tasks",
+      "package": "@app/work-tasks",
+      "path": "verticals/work-tasks",
       "ownership": {
         "team": "super-app-platform",
         "slack": "#super-app-platform",
         "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/verticals/siampark-work.md",
-        "adrRef": "docs/super-app-rfc-adr/verticals.md#siampark-work",
+        "runbookRef": "runbooks/verticals/work-tasks.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#work-tasks",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#siampark-work"]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#work-tasks"]
         }
       }
     },
@@ -550,18 +550,18 @@
       }
     },
     {
-      "id": "siampark-ops",
-      "package": "@app/siampark-ops",
-      "path": "verticals/siampark-ops",
+      "id": "facility-operations",
+      "package": "@app/facility-operations",
+      "path": "verticals/facility-operations",
       "ownership": {
         "team": "super-app-platform",
         "slack": "#super-app-platform",
         "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/verticals/siampark-ops.md",
-        "adrRef": "docs/super-app-rfc-adr/verticals.md#siampark-ops",
+        "runbookRef": "runbooks/verticals/facility-operations.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#facility-operations",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#siampark-ops"]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#facility-operations"]
         }
       }
     },
@@ -582,34 +582,34 @@
       }
     },
     {
-      "id": "siampark-billing-finance",
-      "package": "@app/siampark-billing-finance",
-      "path": "verticals/siampark-billing-finance",
+      "id": "finance-billing",
+      "package": "@app/finance-billing",
+      "path": "verticals/finance-billing",
       "ownership": {
         "team": "super-app-platform",
         "slack": "#super-app-platform",
         "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/verticals/siampark-billing-finance.md",
-        "adrRef": "docs/super-app-rfc-adr/verticals.md#siampark-billing-finance",
+        "runbookRef": "runbooks/verticals/finance-billing.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#finance-billing",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#siampark-billing-finance"]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#finance-billing"]
         }
       }
     },
     {
-      "id": "siampark-relationships",
-      "package": "@app/siampark-relationships",
-      "path": "verticals/siampark-relationships",
+      "id": "crm-activities",
+      "package": "@app/crm-activities",
+      "path": "verticals/crm-activities",
       "ownership": {
         "team": "super-app-platform",
         "slack": "#super-app-platform",
         "pagerDuty": "pd-super-app-platform",
-        "runbookRef": "runbooks/verticals/siampark-relationships.md",
-        "adrRef": "docs/super-app-rfc-adr/verticals.md#siampark-relationships",
+        "runbookRef": "runbooks/verticals/crm-activities.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#crm-activities",
         "blastRadius": {
           "tier": "tier-2-vertical",
-          "references": ["docs/super-app-rfc-adr/blast-radius.md#siampark-relationships"]
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#crm-activities"]
         }
       }
     },

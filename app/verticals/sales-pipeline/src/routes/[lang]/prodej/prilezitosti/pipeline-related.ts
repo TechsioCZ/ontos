@@ -1,8 +1,8 @@
 // Records that hang off one business case (opportunity): its tasks, contracts and orders/offers in the owning modules.
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { listOrders } from '@app/merchandise/clients/records';
-import { executeRecords as executeAgreementsRecords } from '@app/siampark-agreements/clients/records';
-import { listTasks } from '@app/siampark-work/clients/records';
+import { executeRecords as executeAgreementsRecords } from '@app/legal-agreements/clients/records';
+import { listTasks } from '@app/work-tasks/clients/records';
 import { Effect, Random, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
@@ -95,7 +95,7 @@ export const loadOpportunityRelated = (opportunity: Opportunity, counterpartyId:
         {
           contracts: section(
             published,
-            'siampark.agreements',
+            'legal.agreements',
             counterpartyId === undefined
               ? Effect.succeed<readonly RelatedContract[]>([])
               : correlation('contracts').pipe(
@@ -136,7 +136,7 @@ export const loadOpportunityRelated = (opportunity: Opportunity, counterpartyId:
           ),
           tasks: section(
             published,
-            'siampark.work',
+            'work.tasks',
             Effect.all([listTasks({ opportunityId: opportunity.id }), listTasks({ partyId: opportunity.partyId })], {
               concurrency: 2,
             }).pipe(

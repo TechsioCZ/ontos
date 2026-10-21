@@ -1,0 +1,83 @@
+{
+  "facility-operations": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Facility operations: assets, meters, security, documents, agenda and purchasing."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Facility operations module unavailable",
+    "role": "facility-operations",
+    "routeSurface": "Facility operations.",
+    "title": "Facility Operations",
+    "widgetBody": "Facility operations.",
+    "common": {
+      "new": "New record",
+      "save": "Save",
+      "saving": "Saving…",
+      "cancel": "Cancel",
+      "close": "Close",
+      "retry": "Retry",
+      "loading": "Loading…",
+      "noData": "no data",
+      "notProvided": "not provided",
+      "createdAt": "Created",
+      "createdBy": "Created by",
+      "updatedAt": "Changed",
+      "location": "Location",
+      "locationPlaceholder": "Building, unit or equipment",
+      "note": "Note",
+      "simulation": "Simulation",
+      "demo": "DEMO",
+      "readOnly": "Read only",
+      "revision": "Revision {{revision}}",
+      "required": "Fill in this field.",
+      "saved": "Saved",
+      "you": "you",
+      "states": {
+        "errorTitle": "Data could not be loaded.",
+        "errorDescription": "Check your connection and try again.",
+        "forbiddenTitle": "You do not have access to this agenda.",
+        "forbiddenDescription": "This agenda is available to internal roles only.",
+        "emptyTitle": "No records yet.",
+        "emptyDescription": "Create the first record."
+      },
+      "errors": {
+        "conflict": "Someone else changed the record. We reloaded the data, please repeat the change.",
+        "forbidden": "You are not allowed to make this change.",
+        "invalid": "Check the entered values.",
+        "rejected": "The change is not possible in the current state.",
+        "unavailable": "The service is temporarily unavailable. Try again."
+      },
+      "history": {
+        "title": "Change history",
+        "description": "Who changed which values and when (before → after). Written by the server together with the change.",
+        "empty": "No recorded changes yet.",
+        "unavailable": "History could not be loaded.",
+        "created": "Created",
+        "changed": "Changed",
+        "removed": "Removed",
+        "emptyValue": "empty",
+        "items_one": "{{count}} item",
+        "items_few": "{{count}} items",
+        "items_many": "{{count}} items",
+        "items_other": "{{count}} items",
+        "more": "Show older ({{count}})"
+      }
+    },
+    "property": {
+      "property": "Property",
+      "unit": "Unit",
+      "asset": "Equipment",
+      "none": "No link",
+      "loadFailed": "Properties could not be loaded.",
+      "pick": "Choose a property or unit"
+    }
+  }
+}

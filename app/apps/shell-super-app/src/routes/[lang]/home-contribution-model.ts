@@ -20,7 +20,7 @@ const homeComponentCandidates = [
   {
     entrypointKey: 'demo.sales-insights.component.crm-dashboard',
     moduleId: 'demo.sales-insights',
-    sources: ['demo.sales-insights', 'demo.sales-pipeline', 'siampark.work', 'siampark.billing-finance'],
+    sources: ['demo.sales-insights', 'demo.sales-pipeline', 'work.tasks', 'finance.billing'],
   },
 ] as const;
 

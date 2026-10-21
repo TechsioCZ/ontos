@@ -8,7 +8,7 @@ Tools (19): `whoami`, `raw_read`, `list_customers`, `list_employees`, `list_oppo
 
 ```json
 {
-  "assertionAudience": "siampark-work",
+  "assertionAudience": "work-tasks",
   "assertionObtained": true,
   "legalEntityIdConfigured": true,
   "shellUrl": "http://localhost:3020"

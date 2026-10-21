@@ -2,7 +2,11 @@ import { createMemoryHistory, createRouter, isNotFound, isRedirect } from '@mode
 import { Effect } from 'effect';
 import { beforeEach, expect, it, rstest } from 'effect-rstest';
 
-import { canonicalPathFromRequest, loader } from '../../../../src/routes/[lang]/canonical-page-model.ts';
+import {
+  canonicalPathFromRequest,
+  legacyCanonicalRedirects,
+  loader,
+} from '../../../../src/routes/[lang]/canonical-page-model.ts';
 import { routeTree } from '../../../../src/modern-tanstack/index/router.gen.ts';
 
 const { loadHomePageModelMock, resolveModuleTargetMock } = rstest.hoisted(() => ({
@@ -146,16 +150,51 @@ it.effect('the generated catchall renders shell recovery for an unknown target',
   }),
 );
 
-it.effect('redirects the Czech tasks alias to the tasks page before target resolution', () =>
-  Effect.gen(function* redirectsTasksAlias() {
+it.effect.each([
+  ['/siampark/overview', '/nemovitosti/prehled'],
+  ['/siampark/properties', '/nemovitosti'],
+  ['/siampark/integrations', '/nemovitosti/integrace'],
+  ['/siampark/occupancy', '/najmy'],
+  ['/siampark/agreements', '/smlouvy'],
+  ['/siampark/finance', '/finance'],
+  ['/siampark/work', '/ukoly'],
+  ['/siampark/relationships', '/aktivity'],
+  ['/siampark/provoz/prehled', '/provoz/prehled'],
+  ['/siampark/provoz/agenda', '/provoz/agenda'],
+  ['/siampark/provoz/majetek', '/provoz/majetek'],
+  ['/siampark/provoz/meridla', '/provoz/meridla'],
+  ['/siampark/provoz/nakupy', '/provoz/nakupy'],
+  ['/siampark/provoz/bezpecnost', '/provoz/bezpecnost'],
+  ['/siampark/provoz/dokumenty', '/provoz/dokumenty'],
+  ['/provoz/ukoly', '/ukoly'],
+] as const)('redirects the legacy path %s to %s and keeps the query string', ([legacyPath, domainPath]) =>
+  Effect.gen(function* redirectsLegacyPath() {
     const thrown = yield* Effect.flip(
       Effect.tryPromise({
         catch: (cause) => cause,
-        try: () => loader({ params: { lang: 'cs' }, request: requestFor('/cs/provoz/ukoly/') }),
+        try: () =>
+          loader({ params: { lang: 'cs' }, request: requestFor(`/cs${legacyPath}/?resourceId=abc%20123&tab=detail`) }),
       }),
     );
     expect(isRedirect(thrown)).toBe(true);
-    expect(thrown).toMatchObject({ options: { to: '/cs/siampark/work' } });
+    expect(thrown).toMatchObject({ options: { href: `/cs${domainPath}?resourceId=abc%20123&tab=detail` } });
     expect(resolveModuleTargetMock).not.toHaveBeenCalled();
+  }),
+);
+
+it('maps every legacy path exactly once', () => {
+  expect(legacyCanonicalRedirects.get('/siampark/work')).toBe('/ukoly');
+  expect(legacyCanonicalRedirects.has('/siampark')).toBe(false);
+});
+
+it.effect('redirects a legacy path without a query string to the bare domain path', () =>
+  Effect.gen(function* redirectsBareLegacyPath() {
+    const thrown = yield* Effect.flip(
+      Effect.tryPromise({
+        catch: (cause) => cause,
+        try: () => loader({ params: { lang: 'en' }, request: requestFor('/en/siampark/finance') }),
+      }),
+    );
+    expect(thrown).toMatchObject({ options: { href: '/en/finance' } });
   }),
 );

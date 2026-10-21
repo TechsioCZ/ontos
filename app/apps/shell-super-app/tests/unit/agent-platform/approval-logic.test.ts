@@ -23,13 +23,13 @@ const permission = (moduleId: string, value: string) => ({
 
 test('moduleAccessSets separates open access from write permission', () => {
   const sets = moduleAccessSets(
-    [moduleAccess('demo.crm'), moduleAccess('siampark.work'), permission('demo.crm', 'demo.crm.write_all')],
+    [moduleAccess('demo.crm'), moduleAccess('work.tasks'), permission('demo.crm', 'demo.crm.write_all')],
     company,
   );
   expect(sets.access.has('demo.crm')).toBe(true);
-  expect(sets.access.has('siampark.work')).toBe(true);
+  expect(sets.access.has('work.tasks')).toBe(true);
   expect(sets.write.has('demo.crm')).toBe(true);
-  expect(sets.write.has('siampark.work')).toBe(false);
+  expect(sets.write.has('work.tasks')).toBe(false);
 });
 
 test('parseCoreKey strips the core prefix and rejects other keys', () => {
@@ -38,14 +38,14 @@ test('parseCoreKey strips the core prefix and rejects other keys', () => {
   expect(parseCoreKey('legacy:crm:x')).toBeUndefined();
 });
 
-test('revertBeforeLookup reads the task for siampark-work task updates only', () => {
-  const lookup = revertBeforeLookup('siampark-work', { _tag: 'UpdateTask', taskRef: { resourceId: 't1' }, title: 'X' });
+test('revertBeforeLookup reads the task for work-tasks task updates only', () => {
+  const lookup = revertBeforeLookup('work-tasks', { _tag: 'UpdateTask', taskRef: { resourceId: 't1' }, title: 'X' });
   expect(lookup?.query).toEqual({ includeArchived: true, resourceId: 't1' });
   expect(lookup?.pick({ items: [{ ref: { resourceId: 't2' } }, { ref: { resourceId: 't1' }, title: 'A' }] })).toEqual({
     ref: { resourceId: 't1' },
     title: 'A',
   });
-  expect(revertBeforeLookup('siampark-work', { _tag: 'CreateTask', title: 'X' })).toBeUndefined();
+  expect(revertBeforeLookup('work-tasks', { _tag: 'CreateTask', title: 'X' })).toBeUndefined();
 });
 
 test('revertBeforeLookup reads the product for merchandise price changes', () => {
@@ -59,7 +59,7 @@ test('revertBeforeLookup reads the product for merchandise price changes', () =>
 
 test('revertBeforeLookup reads the occupancy for rent term changes', () => {
   const occupancy = { occupancyRef: { resourceId: 'o1' }, startDate: '2026-01-01' };
-  const lookup = revertBeforeLookup('siampark-occupancy', { _tag: 'SetRentTerms', occupancyRef: { resourceId: 'o1' } });
+  const lookup = revertBeforeLookup('property-leasing', { _tag: 'SetRentTerms', occupancyRef: { resourceId: 'o1' } });
   expect(lookup?.pick({ occupancies: [occupancy] })).toEqual(occupancy);
   expect(revertBeforeLookup('crm', { _tag: 'UpdateClient' })).toBeUndefined();
 });

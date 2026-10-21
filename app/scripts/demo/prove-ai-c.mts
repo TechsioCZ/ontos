@@ -219,7 +219,7 @@ try {
   const foreign = await call(false, 'crm', '/reads/records', {}, '71000000-0000-4000-8000-000000000021');
   assert.equal(foreign.status, 403);
   pass('Cizí firma je odmítnuta serverem');
-  const deniedWork = await call(false, 'siampark-work', '/siampark-work/actions/apply-command', {
+  const deniedWork = await call(false, 'work-tasks', '/work-tasks/actions/apply-command', {
     expectedRevision: 0,
     command: { _tag: 'CreateTask', title: 'Kontaktovat klienta', priority: 'NORMAL' },
   });

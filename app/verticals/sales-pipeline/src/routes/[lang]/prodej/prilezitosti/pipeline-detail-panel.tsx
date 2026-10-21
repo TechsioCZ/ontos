@@ -98,9 +98,9 @@ export const PipelineDetailPanel = ({
     opportunity.ownerEmployeeId === undefined ? undefined : lookups.employeeById.get(opportunity.ownerEmployeeId);
   const open = isOpenStage(opportunity.stage);
   const anyRelated = [related.tasks, related.contracts, related.orders].some((section) => section.status !== 'absent');
-  const workHref = (task: RelatedTask) => `/${language}/siampark/work?resourceId=${encodeURIComponent(task.id)}`;
+  const workHref = (task: RelatedTask) => `/${language}/ukoly?resourceId=${encodeURIComponent(task.id)}`;
   const contractHref = (contract: RelatedContract) =>
-    `/${language}/siampark/agreements?resourceId=${encodeURIComponent(contract.id)}`;
+    `/${language}/smlouvy?resourceId=${encodeURIComponent(contract.id)}`;
   const orderHref = (order: RelatedOrder) => `/${language}/prodej/objednavky?orderId=${encodeURIComponent(order.id)}`;
 
   return (

@@ -95,31 +95,34 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
         'shell.dashboard.legalEntity.pending': 'Switching legal entity…',
         'shell.dashboard.legalEntity.placeholder': 'Select a legal entity',
         'shell.dashboard.legalEntity.unavailable': 'Legal entity choices are temporarily unavailable.',
-        'shell.dashboard.navigation.groups.insights': 'Insights',
-        'shell.dashboard.navigation.groups.operations': 'Operations',
+        'shell.dashboard.navigation.groups.commerce': 'E-commerce',
+        'shell.dashboard.navigation.groups.facility': 'Facility operations',
+        'shell.dashboard.navigation.groups.finance': 'Finance',
         'shell.dashboard.navigation.groups.other': 'Other modules',
-        'shell.dashboard.navigation.groups.sales': 'Sales',
+        'shell.dashboard.navigation.groups.realEstate': 'Real estate and leases',
+        'shell.dashboard.navigation.groups.sales': 'Sales and CRM',
         'shell.dashboard.navigation.groups.settings': 'Settings',
+        'shell.dashboard.navigation.groups.team': 'People and tasks',
         'shell.dashboard.navigation.home': 'Home',
         'shell.dashboard.navigation.inactive': 'Inactive',
+        'shell.dashboard.navigation.items.activities': 'Activities',
         'shell.dashboard.navigation.items.agreements': 'Contracts and signatures',
+        'shell.dashboard.navigation.items.contacts': 'Contacts',
         'shell.dashboard.navigation.items.customers': 'Customers',
         'shell.dashboard.navigation.items.employees': 'Employees',
+        'shell.dashboard.navigation.items.integrations': 'Integrations',
         'shell.dashboard.navigation.items.invoices': 'Invoices',
         'shell.dashboard.navigation.items.occupancy': 'Leases and stays',
         'shell.dashboard.navigation.items.opportunities': 'Opportunities',
         'shell.dashboard.navigation.items.orders': 'Orders',
         'shell.dashboard.navigation.items.products': 'Products and stock',
         'shell.dashboard.navigation.items.properties': 'Properties',
+        'shell.dashboard.navigation.items.rentalOverview': 'Rental overview',
         'shell.dashboard.navigation.items.statistics': 'Statistics',
         'shell.dashboard.navigation.items.tags': 'Tags',
         'shell.dashboard.navigation.items.tasks': 'Tasks',
         'shell.dashboard.navigation.label': 'Dashboard navigation',
         'shell.dashboard.navigation.pending': 'Loading page…',
-        'shell.dashboard.navigation.siampark.contacts': 'Contacts',
-        'shell.dashboard.navigation.siampark.integrations': 'Integrations',
-        'shell.dashboard.navigation.siampark.overview': 'Overview',
-        'shell.dashboard.navigation.siampark.properties': 'Properties',
         'shell.dashboard.sidebar.label': 'Dashboard sidebar',
         'shell.dashboard.tenant.accessibleLabel': 'Current tenant',
         'shell.dashboard.tenant.failed': 'Tenant switching failed. Try again.',
@@ -669,12 +672,12 @@ test('groups permitted commercial and rental destinations from the composition',
       identity={identity}
       logoutPending={false}
       navigation={[
-        demoEntry('siampark.property', '/siampark/properties'),
-        demoEntry('siampark.agreements', '/siampark/agreements'),
-        demoEntry('siampark.occupancy', '/siampark/occupancy'),
+        demoEntry('property.portfolio', '/nemovitosti'),
+        demoEntry('legal.agreements', '/smlouvy'),
+        demoEntry('property.leasing', '/najmy'),
         ...navigation,
         demoEntry('demo.merchandise', '/provoz/produkty'),
-        demoEntry('siampark.work', '/siampark/work'),
+        demoEntry('work.tasks', '/ukoly'),
         demoEntry('demo.merchandise', '/prodej/objednavky'),
         demoEntry('party.registry', '/contacts'),
       ]}
@@ -687,25 +690,25 @@ test('groups permitted commercial and rental destinations from the composition',
   const links = [...navigationElement.querySelectorAll('a')];
   expect(links.map((link) => link.textContent)).toEqual([
     'Home',
-    'Customers',
-    'Orders',
-    'Contracts and signatures',
     'Properties',
     'Leases and stays',
-    'Tasks',
+    'Contacts',
+    'Contracts and signatures',
+    'Orders',
     'Products and stock',
+    'Tasks',
     'Future generated',
     'Testing one',
   ]);
   expect(links.map((link) => link.getAttribute('href'))).toEqual([
     '/en/',
+    '/en/nemovitosti',
+    '/en/najmy',
     '/en/contacts',
+    '/en/smlouvy',
     '/en/prodej/objednavky',
-    '/en/siampark/agreements',
-    '/en/siampark/properties',
-    '/en/siampark/occupancy',
-    '/en/siampark/work',
     '/en/provoz/produkty',
+    '/en/ukoly',
     '/en/modules/future-generated',
     '/en/modules/testing.one',
   ]);
@@ -713,15 +716,17 @@ test('groups permitted commercial and rental destinations from the composition',
     'Products and stock',
   ]);
   expect([...navigationElement.querySelectorAll('h2')].map((heading) => heading.textContent)).toEqual([
-    'Sales',
-    'Operations',
+    'Real estate and leases',
+    'Sales and CRM',
+    'E-commerce',
+    'People and tasks',
     'Other modules',
   ]);
   expect(navigationElement.textContent).not.toContain('Opportunities');
   expect(navigationElement.textContent).not.toContain('Statistics');
-  expect(navigationElement.textContent).not.toContain('siampark.property');
-  expect(navigationElement.textContent).not.toContain('siampark.occupancy');
-  expect(screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent).toBe('OperationsProducts and stock');
+  expect(navigationElement.textContent).not.toContain('property.portfolio');
+  expect(navigationElement.textContent).not.toContain('property.leasing');
+  expect(screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent).toBe('E-commerceProducts and stock');
 });
 
 const navigationText = () => screen.getByRole('navigation', { name: 'Dashboard navigation' }).textContent;
@@ -734,7 +739,7 @@ test('replaces commercial destinations with rental destinations when the selecte
       navigation={[
         demoEntry('demo.merchandise', '/prodej/objednavky'),
         demoEntry('demo.merchandise', '/provoz/produkty'),
-        demoEntry('siampark.agreements', '/siampark/agreements'),
+        demoEntry('legal.agreements', '/smlouvy'),
       ]}
     >
       Content
@@ -747,9 +752,9 @@ test('replaces commercial destinations with rental destinations when the selecte
       {...props}
       currentLegalEntityId="legal-entity-rental"
       navigation={[
-        demoEntry('siampark.property', '/siampark/properties'),
-        demoEntry('siampark.agreements', '/siampark/agreements'),
-        demoEntry('siampark.billing-finance', '/siampark/finance'),
+        demoEntry('property.portfolio', '/nemovitosti'),
+        demoEntry('legal.agreements', '/smlouvy'),
+        demoEntry('finance.billing', '/finance'),
       ]}
     >
       Content
@@ -768,7 +773,7 @@ test('hides destinations the composition omits and keeps unavailable ones visibl
       {...tenantProps}
       identity={identity}
       logoutPending={false}
-      navigation={[demoEntry('siampark.billing-finance', '/siampark/finance', false)]}
+      navigation={[demoEntry('finance.billing', '/finance', false)]}
       onLogout={noopLogout}
     >
       <section>Current content</section>
@@ -779,7 +784,7 @@ test('hides destinations the composition omits and keeps unavailable ones visibl
   expect(screen.getByText('Invoices')).toBeTruthy();
   expect(screen.queryByText('Opportunities')).toBeNull();
   expect(screen.queryByText('Inactive')).toBeNull();
-  expect([...navigationElement.querySelectorAll('h2')].map((heading) => heading.textContent)).toEqual(['Sales']);
+  expect([...navigationElement.querySelectorAll('h2')].map((heading) => heading.textContent)).toEqual(['Finance']);
   expect(navigationElement.textContent).not.toContain('Overview');
   expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).toBeNull();
 });
@@ -838,7 +843,7 @@ test('hides the previous page and marks the destination while the next page load
   expect(screen.getByText('Employee list').closest('.hidden')).not.toBeNull();
   expect(screen.getByRole('heading', { level: 1, name: employeesOverviewTitle }).closest('.hidden')).not.toBeNull();
   expect(currentLinkNames()).toEqual(['Contacts']);
-  expect(screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent).toBe('Other modulesContacts');
+  expect(screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent).toBe('Sales and CRMContacts');
 });
 
 test('keeps the page visible when only search parameters or loader data refresh', () => {

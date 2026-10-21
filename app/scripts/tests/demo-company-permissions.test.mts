@@ -48,14 +48,14 @@ const hasModule = (principalId: string, legalEntityId: string, moduleId: string)
 
 it('separates commercial stock access from rental property access while sharing agreements', () => {
   expect(hasModule(administrator.principalId, demoLegalEntityId, 'demo.merchandise')).toBe(true);
-  expect(hasModule(administrator.principalId, demoLegalEntityId, 'siampark.property')).toBe(false);
+  expect(hasModule(administrator.principalId, demoLegalEntityId, 'property.portfolio')).toBe(false);
   expect(hasModule(administrator.principalId, rentalDemoLegalEntityId, 'demo.merchandise')).toBe(false);
-  expect(hasModule(administrator.principalId, rentalDemoLegalEntityId, 'siampark.property')).toBe(true);
+  expect(hasModule(administrator.principalId, rentalDemoLegalEntityId, 'property.portfolio')).toBe(true);
   for (const legalEntityId of [demoLegalEntityId, rentalDemoLegalEntityId]) {
-    expect(hasModule(administrator.principalId, legalEntityId, 'siampark.agreements')).toBe(true);
+    expect(hasModule(administrator.principalId, legalEntityId, 'legal.agreements')).toBe(true);
   }
   expect(hasModule(salesRep.principalId, rentalDemoLegalEntityId, 'demo.workforce')).toBe(true);
-  expect(hasModule(accountant.principalId, rentalDemoLegalEntityId, 'siampark.billing-finance')).toBe(true);
+  expect(hasModule(accountant.principalId, rentalDemoLegalEntityId, 'finance.billing')).toBe(true);
 });
 
 it('keeps the warehouse account out of the rental company and limits identity administration', () => {
@@ -180,18 +180,18 @@ it('gives the Siampark accounts their 0021 roles and limits the external agent t
         row.subjectId === principalId &&
         row.resourceId ===
           toContextPermissionAccessObjectId(demoTenantId, rentalDemoLegalEntityId, {
-            moduleId: 'demo.siampark-ops',
+            moduleId: 'facility.operations',
             permission,
           }),
     );
   const [management, , finance, external] = siamparkRentalPersonas;
-  expect(hasModule(management.principalId, rentalDemoLegalEntityId, 'siampark.property')).toBe(true);
-  expect(opsPermission(management.principalId, 'demo.siampark_ops.write_all')).toBe(true);
-  expect(hasModule(finance.principalId, rentalDemoLegalEntityId, 'siampark.billing-finance')).toBe(true);
-  expect(hasModule(external.principalId, rentalDemoLegalEntityId, 'demo.siampark-ops')).toBe(true);
-  expect(hasModule(external.principalId, rentalDemoLegalEntityId, 'siampark.billing-finance')).toBe(false);
-  expect(opsPermission(external.principalId, 'demo.siampark_ops.read_operational')).toBe(true);
-  expect(opsPermission(external.principalId, 'demo.siampark_ops.read_all')).toBe(false);
-  expect(opsPermission(external.principalId, 'demo.siampark_ops.write_operational')).toBe(false);
-  expect(opsPermission(external.principalId, 'demo.siampark_ops.write_all')).toBe(false);
+  expect(hasModule(management.principalId, rentalDemoLegalEntityId, 'property.portfolio')).toBe(true);
+  expect(opsPermission(management.principalId, 'facility.operations.write_all')).toBe(true);
+  expect(hasModule(finance.principalId, rentalDemoLegalEntityId, 'finance.billing')).toBe(true);
+  expect(hasModule(external.principalId, rentalDemoLegalEntityId, 'facility.operations')).toBe(true);
+  expect(hasModule(external.principalId, rentalDemoLegalEntityId, 'finance.billing')).toBe(false);
+  expect(opsPermission(external.principalId, 'facility.operations.read_operational')).toBe(true);
+  expect(opsPermission(external.principalId, 'facility.operations.read_all')).toBe(false);
+  expect(opsPermission(external.principalId, 'facility.operations.write_operational')).toBe(false);
+  expect(opsPermission(external.principalId, 'facility.operations.write_all')).toBe(false);
 });

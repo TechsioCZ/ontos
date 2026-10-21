@@ -30,7 +30,7 @@ export interface ToolResult {
 }
 
 export interface ToolSpec {
-  /** e.g. `ontos_whoami`, `siampark_work__read_records`. */
+  /** e.g. `ontos_whoami`, `work_tasks__read_records`. */
   readonly name: string;
   /** Czech title. */
   readonly title: string;

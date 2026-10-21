@@ -5853,11 +5853,11 @@ it.live(
       Effect.fn(function* runtimeLocalePageFixture(fixture) {
         yield* configureRuntimeLocaleFixture(fixture);
         const runtimeBefore = yield* readFixtureFile(fixture.root, inventoryModernRuntimeFile);
-        const args = [scaffoldFlag.vertical, inventorySlug, '--page', 'records', '--url', '/siampark/properties'];
+        const args = [scaffoldFlag.vertical, inventorySlug, '--page', 'records', '--url', '/nemovitosti'];
         yield* run(fixture, scaffoldCommand.microverticalPage, args);
         const page = yield* readFixtureFile(
           fixture.root,
-          'verticals/inventory-stock/src/routes/[lang]/siampark/properties/page.tsx',
+          'verticals/inventory-stock/src/routes/[lang]/nemovitosti/page.tsx',
         );
         expect(page).toContain("import csResource from '../../../../../locales/cs/inventory.json';");
         expect(page).toContain("import enResource from '../../../../../locales/en/inventory.json';");

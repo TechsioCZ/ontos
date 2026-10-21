@@ -1,0 +1,21 @@
+{
+  "finance-billing": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "finance-billing",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Faktury",
+    "widgetBody": "Vlastní routovanou plochu verticalu."
+  }
+}

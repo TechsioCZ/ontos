@@ -105,9 +105,9 @@ const taskWire = {
   dueDate: '2026-10-20',
   priority: 'HIGH',
   ref: {
-    moduleId: 'siampark.work',
+    moduleId: 'work.tasks',
     resourceId: 'task-1',
-    resourceType: 'siampark.work.task',
+    resourceType: 'work.tasks.task',
     tenantId: '00000000-0000-4000-8000-000000000001',
   },
   state: 'NEW',
@@ -152,7 +152,7 @@ describe('write tools map arguments onto apply-command', () => {
   it.effect('create_task sends CreateTask with the revision read first', () =>
     Effect.gen(function* testProgram() {
       const calls = installFetch({
-        'siampark-work /reads/records': {
+        'work-tasks /reads/records': {
           body: {
             canWrite: true,
             indicators: { open: 0, openByAssignee: [], overdue: 0 },
@@ -161,7 +161,7 @@ describe('write tools map arguments onto apply-command', () => {
             revision: 7,
           },
         },
-        'siampark-work /siampark-work/actions/apply-command': { body: { revision: 8, task: taskWire } },
+        'work-tasks /work-tasks/actions/apply-command': { body: { revision: 8, task: taskWire } },
       });
 
       const result = yield* Effect.tryPromise(() =>
@@ -173,7 +173,7 @@ describe('write tools map arguments onto apply-command', () => {
         }),
       );
 
-      const [apply] = applyOf(calls, 'siampark-work');
+      const [apply] = applyOf(calls, 'work-tasks');
       assert.ok(apply !== undefined);
       assert.deepEqual(apply.body, {
         command: {
@@ -185,7 +185,7 @@ describe('write tools map arguments onto apply-command', () => {
         },
         expectedRevision: 7,
       });
-      assert.equal(apply.auth, 'Bearer token-siampark-work');
+      assert.equal(apply.auth, 'Bearer token-work-tasks');
       assert.match(result.idempotencyKey, /^mcp-create-task-[0-9a-f]{32}$/u);
       assert.equal(apply.idempotencyKey, result.idempotencyKey);
       assert.deepEqual(result, {
@@ -220,8 +220,8 @@ describe('write tools map arguments onto apply-command', () => {
           revision: 8,
         };
         const calls = installFetch({
-          'siampark-work /reads/records': { body: records },
-          'siampark-work /siampark-work/actions/apply-command': {
+          'work-tasks /reads/records': { body: records },
+          'work-tasks /work-tasks/actions/apply-command': {
             body: { code: 'action_request_hash_conflict', title: 'Conflict' },
             status: 409,
           },
@@ -233,7 +233,7 @@ describe('write tools map arguments onto apply-command', () => {
           title: 'Zavolat klientovi',
         };
         const result = yield* Effect.tryPromise(() => createTask(input));
-        const [apply] = applyOf(calls, 'siampark-work');
+        const [apply] = applyOf(calls, 'work-tasks');
         assert.equal(apply?.idempotencyKey, 'mcp-create-task-chat-msg-0001');
         assert.equal(result.deduplicated, true);
         assert.equal(result.task?.id, 'task-1');
@@ -436,7 +436,7 @@ describe('get_metrics', () => {
         },
         'party-registry /reads/customer-list': { body: { items: [] } },
         'sales-pipeline /reads/records': { body: { indicators: {}, items: [], revision: 1 } },
-        'siampark-billing-finance /reads/records': {
+        'finance-billing /reads/records': {
           body: {
             canWrite: true,
             indicators: {},
@@ -459,7 +459,7 @@ describe('get_metrics', () => {
             },
           },
         },
-        'siampark-work /reads/records': {
+        'work-tasks /reads/records': {
           body: { indicators: {}, items: [], referenceDate: '2026-10-05', revision: 1 },
         },
         'tagging /reads/records': { body: { assignments: [], revision: 1, tags: [] } },

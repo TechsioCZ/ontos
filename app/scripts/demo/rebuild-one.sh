@@ -2,7 +2,7 @@
 # Rebuild and restart selected apps inside a demo started by up.sh, without touching data or other servers.
 #
 #   scripts/demo/rebuild-one.sh merchandise            # build + restart one vertical
-#   scripts/demo/rebuild-one.sh crm siampark-ops        # new verticals are added to the served set
+#   scripts/demo/rebuild-one.sh crm facility-operations        # new verticals are added to the served set
 #   scripts/demo/rebuild-one.sh shell-super-app
 #
 # Builds are serialised through two lock slots so parallel agents do not saturate the machine. The

@@ -260,7 +260,7 @@ it.effect('a committed section is never resubmitted when its refresh fails', () 
 it('keeps a dirty draft when related navigation is cancelled and confirms only the latest intended URL', () => {
   const { result } = renderHook(useDetail);
   const opportunityUrl = relatedCustomerUrl('cs', '/prodej/prilezitosti', customer, false);
-  const invoiceUrl = relatedCustomerUrl('cs', '/siampark/finance', customer, true);
+  const invoiceUrl = relatedCustomerUrl('cs', '/finance', customer, true);
   act(() => result.current.changeDraft('new-PHONE-value', '+420123456789'));
   act(() => result.current.requestNavigation(opportunityUrl));
   expect(result.current.discardOpen).toBe(true);
@@ -279,7 +279,7 @@ it('keeps a dirty draft when related navigation is cancelled and confirms only t
 
 it('navigates directly only when the customer editor is clean', () => {
   const { result } = renderHook(useDetail);
-  const href = relatedCustomerUrl('cs', '/siampark/work', customer, false);
+  const href = relatedCustomerUrl('cs', '/ukoly', customer, false);
   act(() => result.current.requestNavigation(href));
   expect(navigate).toHaveBeenCalledExactlyOnceWith(href);
   expect(result.current.discardOpen).toBe(false);
@@ -313,7 +313,7 @@ it('protects document unload while dirty, grants one confirmed navigation, and r
   const dirty = new Event('beforeunload', { cancelable: true });
   globalThis.dispatchEvent(dirty);
   expect(dirty.defaultPrevented).toBe(true);
-  act(() => result.current.requestNavigation('/cs/siampark/work?partyId=confirmed'));
+  act(() => result.current.requestNavigation('/cs/ukoly?partyId=confirmed'));
   act(() => result.current.confirmDiscard());
   const confirmed = new Event('beforeunload', { cancelable: true });
   globalThis.dispatchEvent(confirmed);

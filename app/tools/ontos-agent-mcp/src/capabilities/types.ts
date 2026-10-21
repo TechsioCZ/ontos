@@ -15,7 +15,7 @@ export type JsonSchema = { readonly [key: string]: unknown };
 /** A governed read: POST {apiBaseUrl}/reads/{slug} with a JSON body. */
 export interface CatalogRead {
   readonly kind: 'read';
-  /** `<moduleId>/read/<slug>`, e.g. `siampark.work/read/records`. */
+  /** `<moduleId>/read/<slug>`, e.g. `work.tasks/read/records`. */
   readonly id: string;
   readonly moduleId: string;
   readonly appId: string;
@@ -23,7 +23,7 @@ export interface CatalogRead {
   readonly slug: string;
   /** Object schema of the request body. */
   readonly inputSchema: JsonSchema;
-  /** Typed MCP tool name, e.g. `siampark_work__read_records` (see toolNameOf in src/catalog/json-schema.ts). */
+  /** Typed MCP tool name, e.g. `work_tasks__read_records` (see toolNameOf in src/catalog/json-schema.ts). */
   readonly toolName: string;
 }
 
@@ -51,9 +51,9 @@ export interface CatalogAction {
 export type CatalogEntry = CatalogRead | CatalogAction;
 
 export interface CatalogModule {
-  /** Manifest module id, e.g. `siampark.work`. */
+  /** Manifest module id, e.g. `work.tasks`. */
   readonly moduleId: string;
-  /** Deployment app id = gateway audience = directory under app/verticals, e.g. `siampark-work`. */
+  /** Deployment app id = gateway audience = directory under app/verticals, e.g. `work-tasks`. */
   readonly appId: string;
   /** Manifest `module.displayName` (English; Czech labels live in src/catalog/labels-cs.ts). */
   readonly displayName: string;

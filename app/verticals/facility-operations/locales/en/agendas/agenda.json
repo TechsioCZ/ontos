@@ -1,0 +1,402 @@
+{
+  "title": "My agenda",
+  "description": "Shared calendar of deadlines from contracts, leases, tasks, invoices, assets and operations, your notifications and own events (S13).",
+  "open": "Open",
+  "tabs": {
+    "kalendar": "Calendar",
+    "moje": "My agenda",
+    "notifikace": "Notifications",
+    "nastaveni": "Settings and exports"
+  },
+  "fields": {
+    "title": "Title",
+    "date": "Date",
+    "kind": "Kind",
+    "assignee": "Assigned to",
+    "nobody": "Nobody",
+    "owner": "Responsible"
+  },
+  "kind": {
+    "DEADLINE": "Deadline",
+    "INSPECTION": "Inspection",
+    "MEETING": "Meeting",
+    "REMINDER": "Reminder"
+  },
+  "eventStatus": {
+    "PLANNED": "Planned",
+    "DONE": "Done",
+    "CANCELLED": "Cancelled"
+  },
+  "create": {
+    "title": "New event",
+    "description": "Own calendar event (meeting, inspection, reminder). The assignee is notified.",
+    "submit": "Save event"
+  },
+  "created": "Event saved",
+  "stats": {
+    "count": "Events"
+  },
+  "event": {
+    "edit": "Edit",
+    "done": "Mark as done",
+    "reopen": "Reopen",
+    "cancel": "Cancel event",
+    "comments": "Event comments",
+    "openSource": "Open in {{source}}",
+    "derivedNote": "This date is read from its source ({{source}}). Change it in the original record – the calendar shows the new date on the next load, without a second entry.",
+    "draftContract": "Draft contract"
+  },
+  "personas": {
+    "management": "Management",
+    "operations": "Operations",
+    "finance": "Accountant",
+    "external": "External sales"
+  },
+  "sources": {
+    "property": "Properties",
+    "occupancy": "Leases and stays",
+    "agreements": "Contracts",
+    "work": "Tasks",
+    "finance": "Invoices",
+    "ops": "Site operations",
+    "parties": "Clients",
+    "sales": "Sales cases"
+  },
+  "state": {
+    "loading": "Loading…",
+    "ready": "loaded",
+    "forbidden": "No permission",
+    "forbiddenDescription": "You may not read this source, so it is neither shown nor counted.",
+    "unavailable": "No data – source unavailable",
+    "unavailableDescription": "The source is not responding. We do not show it as zero – try refreshing.",
+    "noData": "no data",
+    "noDataDescription": "The source holds no data needed for this figure.",
+    "loadingDescription": "Loading data from the source.",
+    "readyDescription": "",
+    "agendaUnavailable": "The calendar agenda is unavailable – own events and notifications are not shown.",
+    "readOnly": "Read-only agenda: you see only the events assigned to you. Staff create and change events."
+  },
+  "category": {
+    "contractEnd": "Contract end",
+    "contractNotice": "Notice deadline",
+    "contractStart": "Contract start",
+    "leaseStart": "Lease start",
+    "leaseEnd": "Lease end",
+    "assetService": "Asset service",
+    "inspection": "Inspection",
+    "meterReading": "Meter reading",
+    "invoiceDue": "Invoice due",
+    "task": "Task",
+    "event": "Event",
+    "opsDeadline": "Operations deadline",
+    "delivery": "Expected delivery",
+    "validity": "Validity ends"
+  },
+  "urgency": {
+    "done": "Done",
+    "overdue": "Overdue",
+    "today": "Today",
+    "soon": "Within 7 days",
+    "later": "Later"
+  },
+  "relative": {
+    "today": "today",
+    "inDays_one": "in {{count}} day",
+    "inDays_other": "in {{count}} days",
+    "daysAgo_one": "{{count}} day ago",
+    "daysAgo_other": "{{count}} days ago"
+  },
+  "columns": {
+    "title": "Title",
+    "detail": "Detail",
+    "date": "Date",
+    "status": "Status",
+    "amount": "Amount",
+    "link": "Link",
+    "type": "Type",
+    "source": "Source",
+    "category": "Kind",
+    "location": "Location"
+  },
+  "export": {
+    "csv": "Export CSV"
+  },
+  "calendar": {
+    "previous": "Previous",
+    "next": "Next",
+    "today": "Today",
+    "mode": {
+      "mesic": "Month",
+      "tyden": "Week",
+      "seznam": "List"
+    },
+    "mineOnly": "Mine only",
+    "overdueOnly": "Overdue",
+    "showDone": "Show completed",
+    "filter": "Filter deadlines…",
+    "overduePeriod": "Overdue deadlines",
+    "more_one": "+ {{count}} more",
+    "more_other": "+ {{count}} more",
+    "free": "No deadlines",
+    "empty": "No deadlines in this period.",
+    "emptyDescription": "Try another period or clear the filters.",
+    "missingSources": "The calendar does not include: {{sources}}.",
+    "readOnlyNote": "The calendar only reads dates from the original records (contracts, leases, tasks, invoices, assets, operations). They are changed there; own events can be edited here."
+  },
+  "notifications": {
+    "title": "Notifications",
+    "unreadBadge_one": "{{count}} unread notification",
+    "unreadBadge_other": "{{count}} unread notifications",
+    "filter": {
+      "all": "All ({{count}})",
+      "unread": "Unread ({{count}})"
+    },
+    "category": {
+      "ASSIGNED": "Assigned to you",
+      "DEADLINE": "Deadline approaching",
+      "OVERDUE": "Overdue",
+      "CHANGE": "Change"
+    },
+    "check": "Check deadlines",
+    "checkResult": "New notifications: {{delivered}} · already delivered events skipped: {{duplicates}}",
+    "checkDescription": "Each event with the same ID is shown only once.",
+    "newToast_one": "You have {{count}} new notification",
+    "newToast_other": "You have {{count}} new notifications",
+    "markRead": "Mark read",
+    "markAll": "Mark all as read",
+    "readAt": "read {{time}}",
+    "due": "due {{date}}",
+    "from": "from {{who}}",
+    "explain": "Opening the agenda or checking notifications loads your assigned tasks even without a due date, plus approaching and overdue deadlines from readable sources. Calendar event assignments and date changes are delivered on save. The same event is delivered only once.",
+    "readOnly": "You can read notifications but not mark them (read-only permission).",
+    "empty": "No notifications yet.",
+    "emptyUnread": "All read.",
+    "emptyDescription": "New notifications appear when a task or event is assigned to you or before a deadline.",
+    "emailSent": "sent by e-mail {{time}}",
+    "emailPending": "waiting to be sent by e-mail",
+    "emailFailed": "the e-mail could not be sent"
+  },
+  "mine": {
+    "intro": "Deadlines, tasks and events assigned to {{who}}.",
+    "you": "you",
+    "overdue": "Overdue",
+    "today": "Today",
+    "week": "Next 7 days",
+    "unread": "Unread notifications",
+    "tasks_one": "My tasks ({{count}})",
+    "tasks_other": "My tasks ({{count}})",
+    "events_one": "My events ({{count}})",
+    "events_other": "My events ({{count}})",
+    "allTasks": "All tasks",
+    "noTasks": "You have no open tasks with a due date.",
+    "noEvents": "You have no planned events.",
+    "byCategory": "My open deadlines by kind",
+    "nothing": "Nothing open."
+  },
+  "settings": {
+    "title": "Notification settings",
+    "leadDays": "Notify about a deadline in advance",
+    "days_one": "{{count}} day ahead",
+    "days_other": "{{count}} days ahead",
+    "email": "Also send notifications by e-mail",
+    "default": "Using the default: {{count}} days ahead.",
+    "savedAt": "Saved {{time}}.",
+    "emailOn": "E-mail configured",
+    "emailOff": "E-mail not configured",
+    "emailChecking": "Checking e-mail…",
+    "emailReal": "Notifications are really sent by e-mail ({{provider}}) to {{address}}. Only notifications created after switching on are sent; several at once go in one e-mail.",
+    "emailNotConfigured": "No e-mail server is configured yet: the preference is stored and e-mails start once an administrator configures one. Until then notifications are in-app only.",
+    "emailUnknown": "The e-mail service cannot be checked right now; in-app notifications keep working and e-mails go out once the service is reachable.",
+    "emailEvents": "Which events to send by e-mail",
+    "mandatory": "Always – mandatory notification",
+    "optionalHint": "Assignments and overdue deadlines are always e-mailed; upcoming deadlines and changes as you choose.",
+    "yourAddress": "your sign-in address"
+  },
+  "exportsLog": {
+    "title": "Export log",
+    "empty": "No exports yet.",
+    "emptyDescription": "Every CSV export from the calendar, overview and search is recorded here (who, when, what, how many rows).",
+    "when": "When",
+    "who": "Who",
+    "list": "List and filter",
+    "rows": "Rows",
+    "other": "Record list"
+  },
+  "search": {
+    "label": "Search records",
+    "placeholder": "Search property, unit, tenant, contract, invoice, task, device…",
+    "clear": "Clear",
+    "results_one": "Results for “{{query}}”: {{count}} record",
+    "results_other": "Results for “{{query}}”: {{count}} records",
+    "scope": "Only records you may read are searched ({{count}} records).",
+    "hidden": "Sources you cannot access are not searched: {{sources}}.",
+    "empty": "Nothing found.",
+    "emptyDescription": "Try another term; accents and letter case do not matter.",
+    "kind": {
+      "property": "Property",
+      "unit": "Unit",
+      "asset": "Asset",
+      "contract": "Contract",
+      "lease": "Lease",
+      "task": "Task",
+      "invoice": "Invoice",
+      "party": "Client",
+      "event": "Event",
+      "ops": "Operations"
+    }
+  },
+  "status": {
+    "availability": {
+      "OCCUPIED": "Occupied",
+      "RESERVED": "Reserved",
+      "AVAILABLE": "Free"
+    },
+    "lifecycle": {
+      "ACTIVE": "Active"
+    },
+    "lease": {
+      "ACTIVE": "Active",
+      "CONFIRMED": "Confirmed"
+    },
+    "direction": {
+      "OUTGOING": "Issued",
+      "INCOMING": "Received"
+    },
+    "task": {
+      "NEW": "New",
+      "IN_PROGRESS": "In progress",
+      "WAITING": "Waiting"
+    },
+    "incident": {
+      "OPEN": "Open"
+    },
+    "contract": {
+      "ENDING": "Ending",
+      "EXPIRED": "Expired"
+    },
+    "category": {
+      "contractEnd": "Contract end",
+      "contractNotice": "Notice deadline",
+      "contractStart": "Contract start",
+      "leaseStart": "Lease start",
+      "leaseEnd": "Lease end",
+      "assetService": "Asset service",
+      "inspection": "Inspection",
+      "meterReading": "Meter reading",
+      "invoiceDue": "Invoice due",
+      "task": "Task",
+      "event": "Event",
+      "opsDeadline": "Operations deadline",
+      "delivery": "Expected delivery",
+      "validity": "Validity ends"
+    },
+    "sales": {
+      "LEAD": "Lead",
+      "QUALIFIED": "Qualified",
+      "PROPOSAL": "Proposal",
+      "NEGOTIATION": "Negotiation",
+      "WON": "Won",
+      "LOST": "Lost"
+    },
+    "budget": {
+      "COST": "Cost",
+      "REVENUE": "Revenue"
+    }
+  },
+  "kpi": {
+    "occupancy": {
+      "label": "Occupancy today",
+      "definition": "Share of active units with an active lease or stay today, out of all active units. Reservations (confirmed future leases) do not count as occupied.",
+      "secondary": "{{occupied}} of {{total}} units · {{reserved}} reserved"
+    },
+    "properties": {
+      "label": "Active properties",
+      "definition": "Number of properties in state Active. Disposed and inactive ones are not counted; the drill-down lists exactly the counted properties.",
+      "secondary": "{{units}} active units · {{disposed}} disposed or inactive"
+    },
+    "leases": {
+      "label": "Active leases",
+      "definition": "Active leases running today (start on or before today, end after today). The drill-down shows exactly the counted records; future confirmed leases are a separate supporting figure.",
+      "secondary": "+ {{confirmed}} confirmed upcoming"
+    },
+    "overdueInvoices": {
+      "label": "Overdue invoices",
+      "definition": "Confirmed, non-voided invoices (issued and received) that are not fully paid and whose due date is before today (Europe/Prague). Drafts are not counted.",
+      "secondary": "Outstanding {{amount}}"
+    },
+    "openTasks": {
+      "label": "Open tasks",
+      "definition": "Tasks in state New, In progress or Waiting. “Overdue” = due before today.",
+      "secondary": "{{overdue}} of them overdue"
+    },
+    "incidents": {
+      "label": "Open incidents",
+      "definition": "Unresolved incidents and faults from the site-operations agendas (e.g. security). Requires access to internal operations agendas.",
+      "secondary": ""
+    },
+    "deadlines": {
+      "label": "Deadlines in 30 days",
+      "definition": "Open deadlines in the next 30 days from every source you may read: contract ends and notice dates, lease starts and ends, tasks, invoice due dates, asset and device inspections, meter readings and own events.",
+      "secondary": "{{week}} in the next 7 days"
+    },
+    "contracts": {
+      "label": "Contracts ending within 60 days",
+      "definition": "Active contracts whose end date is within 60 days from today (or already past).",
+      "secondary": "of {{active}} active contracts"
+    },
+    "salesCases": {
+      "label": "Open sales cases",
+      "definition": "Opportunities from Lead to Negotiation that are not won, lost or archived. Amounts excl. VAT; weighted = amount × probability.",
+      "secondary": "worth {{value}} · weighted {{weighted}}"
+    },
+    "planActual": {
+      "label": "Plan vs. actual (costs this year)",
+      "definition": "Finance budget lines from January to the current month. Actual = the manually confirmed amount of the line, otherwise confirmed invoices of the same month, category, direction and object. Value = actual costs / planned costs.",
+      "secondary": "Costs {{costActual}} of {{costPlan}} · revenue {{revenueActual}} of {{revenuePlan}}"
+    }
+  },
+  "overview": {
+    "title": "Operations overview",
+    "description": "Key figures from governed sources, upcoming deadlines and search across the records you may read (S15).",
+    "refresh": "Refresh data",
+    "openCalendar": "Calendar",
+    "dataAt": "Data as of {{time}}",
+    "greeting": {
+      "morning": "Good morning",
+      "day": "Good afternoon",
+      "evening": "Good evening"
+    },
+    "summary": "Today {{today}} deadlines, next 7 days {{week}}, overdue {{overdue}}. Unread notifications: {{unread}}.",
+    "todayLabel": "today",
+    "weekLabel": "within 7 days",
+    "overdueLabel": "overdue",
+    "unreadLabel": "unread",
+    "occupiedToday": "occupied today",
+    "legend": {
+      "occupied": "Occupied: {{count}}",
+      "reserved": "Reserved: {{count}}",
+      "free": "Free: {{count}}"
+    },
+    "sourcesLabel": "Sources:",
+    "kpiSection": "Key figures",
+    "drill": "Drill down",
+    "sourceLine": "Source: {{sources}} · updated {{time}}",
+    "definition": "Definition",
+    "records_one": "{{count}} record",
+    "records_other": "{{count}} records",
+    "noRecords": "No records",
+    "zeroConfirmed": "The source is available and holds no matching record today – so the zero is real.",
+    "upcomingTitle": "Upcoming deadlines",
+    "fullCalendar": "Full calendar",
+    "overdueBanner_one": "{{count}} deadline is overdue – show",
+    "overdueBanner_other": "{{count}} deadlines are overdue – show",
+    "noUpcoming": "No upcoming deadlines",
+    "noUpcomingDescription": "The sources you may read hold no open future deadlines.",
+    "showMore": "Show {{count}} more",
+    "showLess": "Show less",
+    "byBuilding": "Occupancy by building",
+    "buildingLine": "Occupied {{occupied}} · reserved {{reserved}} · free {{free}}",
+    "noBuildingsDescription": "No active property with units.",
+    "opsTitle": "Site operations agendas"
+  }
+}

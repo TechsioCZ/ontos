@@ -9,7 +9,7 @@ import { account, user } from '../api/auth/db/schema.ts';
 
 const AuthUserIdSchema = Schema.toEncoded(
   Schema.String.check(Schema.isPattern(/^siampark-(?:management|operations|finance|external)$/u)).pipe(
-    Schema.brand('SiamparkAuthUserId'),
+    Schema.brand('FacilityAuthUserId'),
   ),
 );
 const FixtureSchema = Schema.Struct({

@@ -10,8 +10,8 @@ export const VERTICAL = {
   merchandise: 'merchandise',
   partyRegistry: 'party-registry',
   salesPipeline: 'sales-pipeline',
-  siamparkBilling: 'siampark-billing-finance',
-  siamparkWork: 'siampark-work',
+  financeBilling: 'finance-billing',
+  workTasks: 'work-tasks',
   tagging: 'tagging',
   workforce: 'workforce',
 } as const;
@@ -109,7 +109,7 @@ export const applyCommand = async <S extends Schema.Codec<unknown>>(
       { command, expectedRevision: revision },
       schema,
       key,
-      vertical === VERTICAL.siamparkWork && typeof command['assigneeEmployeeId'] === 'string'
+      vertical === VERTICAL.workTasks && typeof command['assigneeEmployeeId'] === 'string'
         ? [VERTICAL.workforce]
         : [],
     );

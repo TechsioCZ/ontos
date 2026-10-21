@@ -1,0 +1,219 @@
+{
+  "property-leasing": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Leases and stays"
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "property-leasing",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Property Leasing",
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "records": {
+        "title": "Leases and stays",
+        "description": "Manage unit occupancy, leases and short stays."
+      }
+    },
+    "demo": {
+      "feedback": {
+        "loading": "Loading…",
+        "ready": "Ready",
+        "saving": "Saving…",
+        "forbidden": "You do not have permission for this area.",
+        "conflict": "The state has changed. Refresh data and try the operation again.",
+        "validation": "Check the input and the allowed state transition.",
+        "unavailable": "The service is temporarily unavailable. Refresh and try again."
+      },
+      "refresh": "Refresh",
+      "empty": "No records match the filter.",
+      "unit": "Unit",
+      "period": "Period",
+      "detail": "Detail",
+      "openEnd": "Open ended",
+      "customer": "Tenant",
+      "simulated": "SIMULATED — provider simulation",
+      "activate": "Activate",
+      "choose": "Choose a record",
+      "startDate": "Start",
+      "endDate": "End",
+      "kind": {
+        "ALL": "All",
+        "LONG_TERM_LEASE": "Long-term lease",
+        "SHORT_STAY": "Short stay"
+      },
+      "state": "State",
+      "stateLabels": {
+        "DRAFT": "Draft",
+        "CONFIRMED": "Confirmed",
+        "ACTIVE": "Active",
+        "COMPLETED": "Completed",
+        "CANCELLED": "Cancelled"
+      },
+      "bookingStates": {
+        "SUCCESS": "Imported successfully",
+        "FAILED": "Import failed",
+        "CONFLICT": "Booking conflict"
+      },
+      "attempts": "Attempts: {{attemptCount}}",
+      "contract": "Contract",
+      "confirm": "Confirm",
+      "complete": "Complete",
+      "cancel": "Cancel",
+      "create": "Create a lease draft",
+      "customerSearch": "Find a customer",
+      "search": "Search",
+      "bookingObservations": "Booking simulation observations",
+      "list": "Leases and stays",
+      "importBooking": "Import a short stay",
+      "bookingFormContext": "Select a unit, dates and a guest. The stay simulation is for two people.",
+      "guestSearch": "Find a guest",
+      "guest": "Guest",
+      "simulateImport": "Simulate a successful import",
+      "simulateFailure": "Simulate an import failure",
+      "retry": "Retry import with the selected details",
+      "provider": "Provider",
+      "attemptedAt": "Attempt time",
+      "completedAt": "Result time",
+      "ownerReference": "Owner record reference",
+      "requestSummary": "Request summary",
+      "resultSummary": "Result summary",
+      "editDraft": "Edit lease draft",
+      "saveDraft": "Save lease draft",
+      "newDraft": "Start a new lease",
+      "newLease": "New lease",
+      "newBooking": "New stay",
+      "close": "Close",
+      "resizePanel": "Resize panel. Use the left and right arrow keys.",
+      "customersLoading": "Loading customers…",
+      "customersEmpty": "No matching active customers.",
+      "customerPlaceholder": "Select or search for a customer"
+    },
+    "detail": {
+      "back": "Back to leases and stays",
+      "lease": "Lease details",
+      "type": "Type",
+      "customerName": "Customer name",
+      "customerUnknown": "Name unavailable",
+      "customerUnavailable": "Customer details could not be loaded.",
+      "notFound": "The lease was not found or you do not have access to it.",
+      "note": "Note",
+      "noContract": "No contract has been assigned to this lease yet.",
+      "linkedContract": "A contract is assigned to this lease."
+    },
+    "rent": {
+      "title": "Agreed rent",
+      "monthlyRent": "Monthly rent",
+      "serviceCharges": "Service charges",
+      "monthlyTotal": "Monthly total",
+      "paymentDay": "Payment day",
+      "paymentDayValue": "Day {{day}} of the month",
+      "currency": "Currency",
+      "missing": "No agreed amount recorded yet (not provided).",
+      "edit": "Edit rent",
+      "set": "Enter rent",
+      "save": "Save rent",
+      "formTitle": "Agreed rent",
+      "formHint": "Amounts in CZK per calendar month. Stored on the lease and shown to the accountant.",
+      "monthlyRentInput": "Monthly rent (CZK)",
+      "serviceChargesInput": "Service charges (CZK)",
+      "paymentDayInput": "Payment day (1–31)",
+      "contractDiffers": "The contract states a different amount: {{amount}}",
+      "contractMatches": "Matches the contract",
+      "perMonth": "{{amount}} / month",
+      "column": "Rent / month",
+      "readOnly": "Read only"
+    },
+    "story": {
+      "title": "Lease story",
+      "property": "Building",
+      "unit": "Unit",
+      "tenant": "Tenant",
+      "contract": "Contract",
+      "lease": "Lease",
+      "tasks": "Service tasks",
+      "invoice": "Invoice",
+      "unavailable": "unavailable"
+    },
+    "related": {
+      "unitCard": "Unit and building",
+      "property": "Building",
+      "address": "Address",
+      "unitCode": "Unit code",
+      "openUnit": "Unit detail",
+      "openProperty": "Building detail",
+      "tenantCard": "Tenant",
+      "companyId": "Company ID",
+      "email": "E-mail",
+      "phone": "Phone",
+      "notProvided": "not provided",
+      "tenantTasks": "Tenant tasks",
+      "tenantInvoices": "Tenant invoices",
+      "customers": "Customer directory",
+      "contractCard": "Lease contract",
+      "contractSubject": "Subject",
+      "contractPeriod": "Validity",
+      "contractState": "Contract state",
+      "signature": "Signature",
+      "responsiblePerson": "Responsible person",
+      "openContract": "Open contract",
+      "allContracts": "Go to contracts",
+      "noContract": "No contract is linked to this lease yet.",
+      "tasksCard": "Unit service tasks",
+      "noTasks": "No tasks are recorded for this unit.",
+      "tasksUnavailable": "Tasks could not be loaded or you lack access.",
+      "openTasks": "Open tasks",
+      "due": "due {{date}}",
+      "invoicesCard": "Lease invoices",
+      "noInvoices": "No invoice has been issued for this lease yet.",
+      "invoicesUnavailable": "Invoices could not be loaded or you lack access.",
+      "openInvoice": "Open invoice",
+      "allInvoices": "Go to billing",
+      "taskStates": {
+        "NEW": "New",
+        "IN_PROGRESS": "In progress",
+        "WAITING": "Waiting",
+        "DONE": "Done",
+        "CANCELLED": "Cancelled"
+      },
+      "invoiceStates": {
+        "DRAFT": "Draft",
+        "CONFIRMED": "Confirmed",
+        "VOIDED": "Voided"
+      },
+      "paymentStates": {
+        "UNPAID": "Unpaid",
+        "PARTIALLY_PAID": "Partially paid",
+        "PAID": "Paid"
+      },
+      "contractStates": {
+        "DRAFT": "Draft",
+        "ACTIVE": "Active",
+        "TERMINATED": "Terminated",
+        "EXPIRED": "Expired"
+      },
+      "signatureStates": {
+        "NOT_SENT": "Not signed",
+        "SENT": "Sent for signature",
+        "SIGNED": "Signed",
+        "DECLINED": "Declined"
+      }
+    },
+    "list": {
+      "tenant": "Tenant",
+      "upcoming": "Upcoming",
+      "summaryActive": "Active leases",
+      "summaryUpcoming": "Upcoming",
+      "summaryEnded": "Ended",
+      "summaryMonthly": "Agreed monthly rent"
+    }
+  }
+}

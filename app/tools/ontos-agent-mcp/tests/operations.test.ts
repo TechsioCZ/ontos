@@ -104,25 +104,25 @@ const SESSION: PrincipalSession = {
 };
 
 const workRead: CatalogRead = {
-  appId: 'siampark-work',
-  id: 'siampark.work/read/records',
+  appId: 'work-tasks',
+  id: 'work.tasks/read/records',
   inputSchema: { type: 'object' },
   kind: 'read',
-  moduleId: 'siampark.work',
+  moduleId: 'work.tasks',
   slug: 'records',
-  toolName: 'siampark_work__read_records',
+  toolName: 'work_tasks__read_records',
 };
 
 const createTask: CatalogAction = {
   actionSlug: 'apply-command',
-  appId: 'siampark-work',
+  appId: 'work-tasks',
   commandTag: 'CreateTask',
-  id: 'siampark.work/command/CreateTask',
+  id: 'work.tasks/command/CreateTask',
   inputSchema: { type: 'object' },
   kind: 'action',
-  moduleId: 'siampark.work',
+  moduleId: 'work.tasks',
   proposable: false,
-  toolName: 'siampark_work__create_task',
+  toolName: 'work_tasks__create_task',
 };
 
 const updateClient: CatalogAction = {
@@ -151,9 +151,9 @@ const createParty: CatalogAction = {
 
 const workModule: CatalogModule = {
   actions: [createTask],
-  appId: 'siampark-work',
+  appId: 'work-tasks',
   displayName: 'Práce',
-  moduleId: 'siampark.work',
+  moduleId: 'work.tasks',
   probeReadSlug: 'records',
   reads: [workRead],
   supportsAiProposals: false,
@@ -217,23 +217,23 @@ describe('generic read operations', () => {
   it.effect('shapes long arrays and finds reads by id or tool name', () =>
     Effect.gen(function* testProgram() {
       const calls = installFetch({
-        'siampark-work /reads/records': {
+        'work-tasks /reads/records': {
           body: { items: Array.from({ length: 120 }, (_, index) => index), revision: 3 },
         },
       });
 
       const result = yield* Effect.tryPromise(() =>
-        runRead(SESSION, BASE_CATALOG, { id: 'siampark.work/read/records', input: { state: 'NEW' } }),
+        runRead(SESSION, BASE_CATALOG, { id: 'work.tasks/read/records', input: { state: 'NEW' } }),
       );
 
       const read = calls.find((call) => call.path === '/reads/records');
       assert.deepEqual(read?.body, { state: 'NEW' });
-      assert.equal(result.id, 'siampark.work/read/records');
+      assert.equal(result.id, 'work.tasks/read/records');
       assert.equal(result.legalEntityId, SESSION.legalEntityId);
       const data = result.data as { readonly items: readonly number[] };
       assert.equal(data.items.length, 50);
       assert.deepEqual(result.truncated, [{ offset: 0, path: 'items', returned: 50, total: 120 }]);
-      assert.equal(findEntry(BASE_CATALOG, 'siampark_work__read_records')?.id, 'siampark.work/read/records');
+      assert.equal(findEntry(BASE_CATALOG, 'work_tasks__read_records')?.id, 'work.tasks/read/records');
     }),
   );
 });
@@ -242,19 +242,19 @@ describe('generic execute operations', () => {
   it.effect('executes a command directly and reads the revision first', () =>
     Effect.gen(function* testProgram() {
       const calls = installFetch({
-        'siampark-work /reads/records': { body: { revision: 7 } },
-        'siampark-work /siampark-work/actions/apply-command': { body: { revision: 8 } },
+        'work-tasks /reads/records': { body: { revision: 7 } },
+        'work-tasks /work-tasks/actions/apply-command': { body: { revision: 8 } },
       });
 
       const outcome = yield* Effect.tryPromise(() =>
         runExecute(SESSION, BASE_CATALOG, 'direct', {
-          id: 'siampark.work/command/CreateTask',
+          id: 'work.tasks/command/CreateTask',
           idempotencyKey: 'k-1',
           input: { title: 'X' },
         }),
       );
 
-      const [apply] = applyOf(calls, 'siampark-work');
+      const [apply] = applyOf(calls, 'work-tasks');
       assert.deepEqual(apply?.body, { command: { _tag: 'CreateTask', title: 'X' }, expectedRevision: 7 });
       assert.equal(apply?.idempotencyKey, 'k-1');
       assert.equal(outcome.status, 'executed');
@@ -264,18 +264,18 @@ describe('generic execute operations', () => {
   it.effect('uses input.expectedRevision without reading the revision', () =>
     Effect.gen(function* testProgram() {
       const calls = installFetch({
-        'siampark-work /siampark-work/actions/apply-command': { body: { revision: 6 } },
+        'work-tasks /work-tasks/actions/apply-command': { body: { revision: 6 } },
       });
 
       yield* Effect.tryPromise(() =>
         runExecute(SESSION, BASE_CATALOG, 'direct', {
-          id: 'siampark.work/command/CreateTask',
+          id: 'work.tasks/command/CreateTask',
           input: { expectedRevision: 5, title: 'X' },
         }),
       );
 
       assert.equal(calls.some((call) => call.path === '/reads/records'), false);
-      const [apply] = applyOf(calls, 'siampark-work');
+      const [apply] = applyOf(calls, 'work-tasks');
       assert.equal(apply?.body.expectedRevision, 5);
       assert.equal('expectedRevision' in (apply?.body.command as Record<string, unknown>), false);
     }),
@@ -316,7 +316,7 @@ describe('generic execute operations', () => {
       yield* Effect.tryPromise(() =>
         assert.rejects(
           runExecute(SESSION, BASE_CATALOG, 'approval', {
-            id: 'siampark.work/command/CreateTask',
+            id: 'work.tasks/command/CreateTask',
             input: { title: 'X' },
           }),
           /jen přes schválení/u,
@@ -348,14 +348,14 @@ describe('generic execute operations', () => {
   it.effect('submits a proposal to the platform approvals module when it is available', () =>
     Effect.gen(function* testProgram() {
       const calls = installFetch({
-        'siampark-work /reads/records': { body: { revision: 7 } },
+        'work-tasks /reads/records': { body: { revision: 7 } },
         'approvals /reads/records': { body: { revision: 2 } },
         'approvals /approvals/actions/apply-command': { body: { revision: 3 } },
       });
 
       const outcome = yield* Effect.tryPromise(() =>
         runExecute(SESSION, catalogOf([workModule, crmModule, partyModule, platformModule]), 'approval', {
-          id: 'siampark.work/command/CreateTask',
+          id: 'work.tasks/command/CreateTask',
           input: { title: 'X' },
         }),
       );
@@ -364,7 +364,7 @@ describe('generic execute operations', () => {
       assert.equal(submit?.body.command !== undefined, true);
       const command = submit?.body.command as Record<string, unknown>;
       assert.equal(command._tag, 'SubmitProposal');
-      assert.equal(command.targetModuleId, 'siampark.work');
+      assert.equal(command.targetModuleId, 'work.tasks');
       assert.equal(outcome.status === 'proposed' ? outcome.via : undefined, 'platform-approvals');
     }),
   );

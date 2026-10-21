@@ -45,13 +45,13 @@ const MERCHANDISE_MODULE = 'demo.merchandise';
 const sourceModules = {
   customers: 'party.registry',
   employees: 'demo.workforce',
-  invoices: 'siampark.billing-finance',
+  invoices: 'finance.billing',
   movements: MERCHANDISE_MODULE,
   opportunities: 'demo.sales-pipeline',
   orders: MERCHANDISE_MODULE,
   products: MERCHANDISE_MODULE,
   tags: 'demo.tagging',
-  tasks: 'siampark.work',
+  tasks: 'work.tasks',
 } as const satisfies Record<StatisticsSource, string>;
 
 const statisticsSources = Object.keys(sourceModules).filter((source): source is StatisticsSource =>

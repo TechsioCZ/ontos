@@ -43,9 +43,9 @@ const metricSource = {
   unpaid_amount: 'invoices',
 } as const satisfies Record<DashboardMetric, DashboardSource>;
 const sourcePaths = {
-  invoices: '/siampark/finance',
+  invoices: '/finance',
   opportunities: '/prodej/prilezitosti',
-  tasks: '/siampark/work',
+  tasks: '/ukoly',
 } as const satisfies Record<DashboardSource, string>;
 
 /** Current-state metrics use the existing owner semantics. All-time invoices are not silently date-filtered. */

@@ -21,6 +21,7 @@ const preferredStart = [
   'crmPlan',
   'crmClients',
   'opsOverview',
+  'rentalOverview',
   'occupancy',
   'invoices',
   'orders',
@@ -30,7 +31,7 @@ const preferredStart = [
   'products',
 ] as const;
 
-const groupDescriptionKeys = new Set(['crm', 'insights', 'operations', 'sales', 'settings', 'siamparkOps']);
+const groupDescriptionKeys = new Set(['commerce', 'facility', 'finance', 'realEstate', 'sales', 'settings', 'team']);
 
 export interface HomeWelcomeProps {
   readonly companyName: string | undefined;

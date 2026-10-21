@@ -18,8 +18,8 @@ import type { DeliveryReadScope } from './ledger.ts';
 import { claim, ensureLedger, finish, listDeliveries, listSettledKeys, readEnabledSince, recoverInterrupted } from './ledger.ts';
 import { isTestRecipient, testCaptureFromEnvironment } from './recipients.ts';
 import { agendaSenderFor, senderFor } from './senders.ts';
-import { deliveryOutcomeOf, planAgendaEmails, planAkrosOrderEmails, planSiamparkReminderEmail } from './plan.ts';
-import { readAgendaRecipients, readAkrosOrders, readSiamparkReminders } from './sources.ts';
+import { deliveryOutcomeOf, planAgendaEmails, planAkrosOrderEmails, planRentReminderEmail } from './plan.ts';
+import { readAgendaRecipients, readAkrosOrders, readRentReminders } from './sources.ts';
 
 const env = process.env;
 const port = Number(env['EMAIL_DISPATCHER_PORT'] ?? EMAIL_DISPATCHER_DEFAULT_PORT);
@@ -83,8 +83,8 @@ const cycle = async (enabledSince: string): Promise<void> => {
       planned.push({ ...email, from: akrosFrom });
     }
   }
-  for (const reminder of await runtime.runPromise(readSiamparkReminders(enabledSince))) {
-    const email = planSiamparkReminderEmail(reminder, enabledSince);
+  for (const reminder of await runtime.runPromise(readRentReminders(enabledSince))) {
+    const email = planRentReminderEmail(reminder, enabledSince);
     if (email !== null) planned.push({ ...email, from: senderFor(email, reminder.legalName, env) });
   }
   for (const person of await runtime.runPromise(readAgendaRecipients(enabledSince))) {
@@ -168,7 +168,7 @@ const server = createServer((request, response) => {
     async (scope) => {
       if (scope === 'forbidden') { reply(response, 401, { error: 'authentication_required' }, origin); return; }
       // Agenda e-mails are personal: a person reads only receipts of their own batches (`<principalId>:<createdAt>`).
-      if (source === 'siampark-agenda' && (scope.kind !== 'company' || subjectNumbers.length > 0 || subjectIds.some((id) => !id.startsWith(`${scope.principalId}:`)))) {
+      if (source === 'facility-agenda' && (scope.kind !== 'company' || subjectNumbers.length > 0 || subjectIds.some((id) => !id.startsWith(`${scope.principalId}:`)))) {
         reply(response, 403, { error: 'forbidden' }, origin);
         return;
       }

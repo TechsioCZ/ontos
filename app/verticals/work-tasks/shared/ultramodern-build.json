@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "work-tasks",
+    "buildMarker": "175a72e2a12e76df",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/work-tasks",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/work-tasks",
+    "version": "0.1.0",
+    "build": "175a72e2a12e76df"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "work-tasks",
+      "buildMarker": "175a72e2a12e76df",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/work-tasks",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/work-tasks",
+      "version": "0.1.0",
+      "build": "175a72e2a12e76df",
+      "surface": "api"
+    },
+    "ui": {
+      "appId": "work-tasks",
+      "buildMarker": "175a72e2a12e76df",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/work-tasks",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/work-tasks",
+      "version": "0.1.0",
+      "build": "175a72e2a12e76df",
+      "surface": "ui"
+    }
+  }
+}

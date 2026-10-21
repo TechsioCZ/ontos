@@ -26,7 +26,7 @@ export const MODULE_CS: Readonly<Record<string, { readonly label: string; readon
     label: 'Obchodní příležitosti',
     description: 'Příležitosti, jejich fáze, hodnoty a odpovědní obchodníci.',
   },
-  'demo.siampark-ops': {
+  'facility.operations': {
     label: 'Provoz – majetek, měřidla, agenda, nákupy',
     description: 'Majetek, měřidla a odečty, bezpečnost, dokumenty, provozní agenda, sklad, nákupy a prodej.',
   },
@@ -42,24 +42,24 @@ export const MODULE_CS: Readonly<Record<string, { readonly label: string; readon
     label: 'Registr subjektů',
     description: 'Zákazníci a partneři (firmy i osoby), kontakty, identifikátory a vztahy.',
   },
-  'siampark.agreements': {
+  'legal.agreements': {
     label: 'Smlouvy a dokumenty',
     description: 'Nájemní a jiné smlouvy, jejich podmínky, podpisy a dokumenty.',
   },
-  'siampark.billing-finance': {
+  'finance.billing': {
     label: 'Finance a fakturace',
     description:
       'Faktury vydané i přijaté, platby, upomínky, opakované fakturace, rozpočty a exporty do účetnictví.',
   },
-  'siampark.occupancy': {
+  'property.leasing': {
     label: 'Pronájmy a obsazenost',
     description: 'Nájmy jednotek, nájemníci, obsazenost, přihlašovací listy a rezervace.',
   },
-  'siampark.property': {
+  'property.portfolio': {
     label: 'Nemovitosti a jednotky',
     description: 'Nemovitosti, jednotky a jejich vybavení.',
   },
-  'siampark.work': {
+  'work.tasks': {
     label: 'Úkoly a projekty',
     description: 'Úkoly, projekty, přiřazení, stavy a komentáře.',
   },
@@ -153,13 +153,13 @@ export const COMMAND_TITLE_CS: Readonly<Record<string, string>> = {
   CreateRecurringTemplate: 'Vytvořit opakovanou fakturaci',
   GenerateRecurringInvoice: 'Vygenerovat opakovanou fakturu',
   CreateAccountingExport: 'Vytvořit export do účetnictví',
-  'siampark.occupancy/CreateDraft': 'Vytvořit návrh nájmu',
-  'siampark.occupancy/UpdateDraft': 'Upravit návrh nájmu',
+  'property.leasing/CreateDraft': 'Vytvořit návrh nájmu',
+  'property.leasing/UpdateDraft': 'Upravit návrh nájmu',
   SetRentTerms: 'Nastavit nájemní podmínky',
-  'siampark.occupancy/Confirm': 'Potvrdit nájem',
-  'siampark.occupancy/Activate': 'Zahájit nájem',
-  'siampark.occupancy/Complete': 'Ukončit nájem',
-  'siampark.occupancy/Cancel': 'Zrušit nájem',
+  'property.leasing/Confirm': 'Potvrdit nájem',
+  'property.leasing/Activate': 'Zahájit nájem',
+  'property.leasing/Complete': 'Ukončit nájem',
+  'property.leasing/Cancel': 'Zrušit nájem',
   UpdateTenantDossier: 'Upravit spis nájemníka',
   CreateRegistrationSheet: 'Vytvořit přihlašovací list',
   PrepareNotice: 'Připravit oznámení',

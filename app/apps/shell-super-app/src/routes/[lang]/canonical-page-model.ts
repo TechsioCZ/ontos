@@ -1,4 +1,4 @@
-import { notFound, throwTanstackRedirect } from '@modern-js/plugin-tanstack/runtime';
+import { notFound, redirect } from '@modern-js/plugin-tanstack/runtime';
 import type { NotFoundError } from '@modern-js/plugin-tanstack/runtime';
 import { Effect } from 'effect';
 
@@ -28,14 +28,34 @@ export const canonicalPathFromRequest = (request: Request, language: string): st
 };
 
 /**
- * Czech alias paths that redirect to another canonical page. The tasks nav item accepts `/provoz/ukoly`; the old
- * AI approval pages of CRM and sales (`/crm/schvalovani-ai`, `/prodej/schvalovani-ai`) moved to the platform page.
+ * Exact canonical redirects: legacy paths of the domain regroup (customer-named routes) and Czech alias paths,
+ * mapped to their current pages. The redirect keeps the query string, so deep links such as `?resourceId=` still
+ * open the record.
  */
-const canonicalPathAliases: ReadonlyMap<string, string> = new Map([
-  ['/provoz/ukoly', '/siampark/work'],
+export const legacyCanonicalRedirects: ReadonlyMap<string, string> = new Map([
+  ['/siampark/overview', '/nemovitosti/prehled'],
+  ['/siampark/properties', '/nemovitosti'],
+  ['/siampark/integrations', '/nemovitosti/integrace'],
+  ['/siampark/occupancy', '/najmy'],
+  ['/siampark/agreements', '/smlouvy'],
+  ['/siampark/finance', '/finance'],
+  ['/siampark/work', '/ukoly'],
+  ['/siampark/relationships', '/aktivity'],
+  ['/siampark/provoz/prehled', '/provoz/prehled'],
+  ['/siampark/provoz/agenda', '/provoz/agenda'],
+  ['/siampark/provoz/majetek', '/provoz/majetek'],
+  ['/siampark/provoz/meridla', '/provoz/meridla'],
+  ['/siampark/provoz/nakupy', '/provoz/nakupy'],
+  ['/siampark/provoz/bezpecnost', '/provoz/bezpecnost'],
+  ['/siampark/provoz/dokumenty', '/provoz/dokumenty'],
+  ['/provoz/ukoly', '/ukoly'],
   ['/crm/schvalovani-ai', '/sprava/ke-schvaleni'],
   ['/prodej/schvalovani-ai', '/sprava/ke-schvaleni'],
 ]);
+
+const redirectTo = (href: string): never => {
+  throw redirect({ href });
+};
 
 export const loader = ({
   params,
@@ -45,9 +65,10 @@ export const loader = ({
   if (canonicalPath === undefined) {
     return Promise.resolve().then(() => notFound({ throw: true }));
   }
-  const aliasTarget = canonicalPathAliases.get(canonicalPath);
-  if (aliasTarget !== undefined) {
-    return Promise.resolve().then(() => throwTanstackRedirect(`/${encodeURIComponent(params.lang)}${aliasTarget}`));
+  const legacyTarget = legacyCanonicalRedirects.get(canonicalPath);
+  if (legacyTarget !== undefined) {
+    const { search } = new URL(request.url);
+    return Promise.resolve().then(() => redirectTo(`/${encodeURIComponent(params.lang)}${legacyTarget}${search}`));
   }
   const platformPage = agentPlatformPageByPath.get(canonicalPath);
   if (platformPage !== undefined) {

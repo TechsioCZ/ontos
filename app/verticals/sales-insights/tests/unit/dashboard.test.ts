@@ -61,9 +61,9 @@ it('reuses current-state pipeline, confirmed outgoing unpaid and real calendar o
   expect(values.map(({ href }) => href)).toEqual([
     '/prodej/prilezitosti',
     '/prodej/prilezitosti',
-    '/siampark/finance',
-    '/siampark/work',
-    '/siampark/work',
+    '/finance',
+    '/ukoly',
+    '/ukoly',
   ]);
 });
 it.effect('settles independent producer states and retries a denial instead of caching authorization', () =>

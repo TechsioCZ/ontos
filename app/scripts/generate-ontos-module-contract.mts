@@ -138,7 +138,7 @@ const repositoryEsbuildPath = (): string => {
 
 const sourceOnlyReactPackages = [
   { entry: 'packages/admin-ui/src/index.ts', name: '@app/admin-ui' },
-  { entry: 'verticals/siampark-ops/src/ui/record-discussion.tsx', name: '@app/siampark-ops/ui/record-discussion' },
+  { entry: 'verticals/facility-operations/src/ui/record-discussion.tsx', name: '@app/facility-operations/ui/record-discussion' },
   { entry: 'verticals/tagging/src/components/tag-controls.tsx', name: '@app/tagging/components/tag-controls' },
 ] as const;
 

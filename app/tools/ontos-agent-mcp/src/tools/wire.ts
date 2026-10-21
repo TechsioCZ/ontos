@@ -147,7 +147,7 @@ export const MerchandiseRecordsWire = Schema.Struct({
   revision: Schema.Number,
 });
 
-/** siampark-billing-finance/shared/apis/records.ts InvoiceSchema (subset) */
+/** finance-billing/shared/apis/records.ts InvoiceSchema (subset) */
 export const InvoiceWire = Schema.Struct({
   businessState: Schema.String,
   counterpartyRef: Schema.Struct({ resourceId: Schema.String }),
@@ -173,7 +173,7 @@ export const BillingRecordsWire = Schema.Struct({
   state: BillingStateWire,
 });
 
-/** siampark-work/shared/apis/records.ts TaskSchema (subset) */
+/** work-tasks/shared/apis/records.ts TaskSchema (subset) */
 export const TaskWire = Schema.Struct({
   assigneeEmployeeId: Schema.optionalKey(Schema.String),
   description: Schema.optionalKey(Schema.String),

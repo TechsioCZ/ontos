@@ -8,29 +8,29 @@ import {
   loadCounterpartiesClientWithAuthorization as searchCounterparties,
 } from '@app/party-registry/api/client';
 import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
-import { executeApplyCommandWithAuthorization as executeAgreementCommand } from '@app/siampark-agreements/api/client';
-import { executeRecordsWithAuthorization as readAgreements } from '@app/siampark-agreements/clients/records';
-import { ApplyCommandPayloadSchema as AgreementPayloadSchema } from '@app/siampark-agreements/contracts/apply-command';
-import type { AgreementsCommand } from '@app/siampark-agreements/contracts/apply-command';
-import { ContractSchema, DocumentSchema } from '@app/siampark-agreements/contracts/records';
-import { executeApplyCommandWithAuthorization as executeFinanceCommand } from '@app/siampark-billing-finance/clients/apply-command';
-import { executeRecordsWithAuthorization as readInvoices } from '@app/siampark-billing-finance/clients/records';
-import { ApplyCommandPayloadSchema as FinancePayloadSchema } from '@app/siampark-billing-finance/contracts/apply-command';
-import type { FinanceCommand } from '@app/siampark-billing-finance/contracts/apply-command';
-import { RecordsForbiddenProblemSchema as InvoiceForbiddenSchema } from '@app/siampark-billing-finance/contracts/records';
-import { executeApplyCommandWithAuthorization as executeOccupancyCommand } from '@app/siampark-occupancy/api/client';
-import { executeRecordsWithAuthorization as readOccupancies } from '@app/siampark-occupancy/clients/records';
-import { ApplyCommandPayloadSchema as OccupancyPayloadSchema } from '@app/siampark-occupancy/contracts/apply-command';
-import type { OccupancyCommand } from '@app/siampark-occupancy/contracts/apply-command';
-import { OccupancySchema } from '@app/siampark-occupancy/contracts/records';
-import { executeRecordsWithAuthorization as readProperties } from '@app/siampark-property/clients/records';
-import { executeApplyCommandWithAuthorization as executeActivityCommand } from '@app/siampark-relationships/clients/apply-command';
-import { executeRecordsWithAuthorization as readActivities } from '@app/siampark-relationships/clients/records';
-import { ApplyCommandPayloadSchema as ActivityPayloadSchema } from '@app/siampark-relationships/contracts/apply-command';
-import { executeApplyCommandWithAuthorization } from '@app/siampark-work/clients/apply-command';
-import { executeRecordsWithAuthorization as readTasks } from '@app/siampark-work/clients/records';
-import { ApplyCommandPayloadSchema } from '@app/siampark-work/contracts/apply-command';
-import { RecordsForbiddenProblemSchema as TaskForbiddenSchema } from '@app/siampark-work/contracts/records';
+import { executeApplyCommandWithAuthorization as executeAgreementCommand } from '@app/legal-agreements/api/client';
+import { executeRecordsWithAuthorization as readAgreements } from '@app/legal-agreements/clients/records';
+import { ApplyCommandPayloadSchema as AgreementPayloadSchema } from '@app/legal-agreements/contracts/apply-command';
+import type { AgreementsCommand } from '@app/legal-agreements/contracts/apply-command';
+import { ContractSchema, DocumentSchema } from '@app/legal-agreements/contracts/records';
+import { executeApplyCommandWithAuthorization as executeFinanceCommand } from '@app/finance-billing/clients/apply-command';
+import { executeRecordsWithAuthorization as readInvoices } from '@app/finance-billing/clients/records';
+import { ApplyCommandPayloadSchema as FinancePayloadSchema } from '@app/finance-billing/contracts/apply-command';
+import type { FinanceCommand } from '@app/finance-billing/contracts/apply-command';
+import { RecordsForbiddenProblemSchema as InvoiceForbiddenSchema } from '@app/finance-billing/contracts/records';
+import { executeApplyCommandWithAuthorization as executeOccupancyCommand } from '@app/property-leasing/api/client';
+import { executeRecordsWithAuthorization as readOccupancies } from '@app/property-leasing/clients/records';
+import { ApplyCommandPayloadSchema as OccupancyPayloadSchema } from '@app/property-leasing/contracts/apply-command';
+import type { OccupancyCommand } from '@app/property-leasing/contracts/apply-command';
+import { OccupancySchema } from '@app/property-leasing/contracts/records';
+import { executeRecordsWithAuthorization as readProperties } from '@app/property-portfolio/clients/records';
+import { executeApplyCommandWithAuthorization as executeActivityCommand } from '@app/crm-activities/clients/apply-command';
+import { executeRecordsWithAuthorization as readActivities } from '@app/crm-activities/clients/records';
+import { ApplyCommandPayloadSchema as ActivityPayloadSchema } from '@app/crm-activities/contracts/apply-command';
+import { executeApplyCommandWithAuthorization } from '@app/work-tasks/clients/apply-command';
+import { executeRecordsWithAuthorization as readTasks } from '@app/work-tasks/clients/records';
+import { ApplyCommandPayloadSchema } from '@app/work-tasks/contracts/apply-command';
+import { RecordsForbiddenProblemSchema as TaskForbiddenSchema } from '@app/work-tasks/contracts/records';
 import { NodeHttpClient } from '@effect/platform-node';
 import { Effect, Predicate, Redacted, Result, Schema } from 'effect';
 import { expect, layer } from 'effect-rstest';
@@ -149,17 +149,17 @@ const referenceCredentials = Effect.fn('SiamparkLiveHttp.referenceCredentials')(
 });
 
 const readLiveAgreements = Effect.fn('SiamparkLiveHttp.readAgreements')(function* agreementsRead(session: LiveSession) {
-  const grant = yield* authorize(session, 'siampark-agreements');
+  const grant = yield* authorize(session, 'legal-agreements');
   return yield* readAgreements({}, grant.credential, correlation(), grant.options);
 });
 const readLiveOccupancies = Effect.fn('SiamparkLiveHttp.readOccupancies')(function* occupancyRead(
   session: LiveSession,
 ) {
-  const grant = yield* authorize(session, 'siampark-occupancy');
+  const grant = yield* authorize(session, 'property-leasing');
   return yield* readOccupancies({}, grant.credential, correlation(), grant.options);
 });
 const readLiveFinance = Effect.fn('SiamparkLiveHttp.readFinance')(function* financeRead(session: LiveSession) {
-  const grant = yield* authorize(session, 'siampark-billing-finance');
+  const grant = yield* authorize(session, 'finance-billing');
   return yield* readInvoices({}, grant.credential, correlation(), grant.options);
 });
 
@@ -171,11 +171,11 @@ const applyAgreementCommand = Effect.fn('SiamparkLiveHttp.applyAgreementCommand'
   const payload = yield* Schema.decodeEffect(AgreementPayloadSchema)({ command, expectedRevision });
   const providers = yield* referenceCredentials(session, [
     'party-registry',
-    'siampark-occupancy',
-    'siampark-property',
-    'siampark-property',
+    'property-leasing',
+    'property-portfolio',
+    'property-portfolio',
   ]);
-  const grant = yield* authorize(session, 'siampark-agreements');
+  const grant = yield* authorize(session, 'legal-agreements');
   return yield* executeAgreementCommand(payload, grant.credential, correlation(), {
     ...grant.options,
     idempotencyKey: correlation(),
@@ -189,12 +189,12 @@ const applyOccupancyCommand = Effect.fn('SiamparkLiveHttp.applyOccupancyCommand'
 ) {
   const payload = yield* Schema.decodeEffect(OccupancyPayloadSchema)({ command, expectedRevision });
   const providers = yield* referenceCredentials(session, [
-    'siampark-property',
-    'siampark-property',
+    'property-portfolio',
+    'property-portfolio',
     'party-registry',
-    'siampark-agreements',
+    'legal-agreements',
   ]);
-  const grant = yield* authorize(session, 'siampark-occupancy');
+  const grant = yield* authorize(session, 'property-leasing');
   return yield* executeOccupancyCommand(payload, grant.credential, correlation(), {
     ...grant.options,
     idempotencyKey: correlation(),
@@ -209,7 +209,7 @@ const applyFinanceCommand = Effect.fn('SiamparkLiveHttp.applyFinanceCommand')(fu
   providerAudiences: readonly string[] = [],
 ) {
   const payload = yield* Schema.decodeEffect(FinancePayloadSchema)({ command, expectedRevision });
-  const grant = yield* authorize(session, 'siampark-billing-finance');
+  const grant = yield* authorize(session, 'finance-billing');
   const providers = yield* referenceCredentials(session, providerAudiences);
   return yield* executeFinanceCommand(payload, grant.credential, correlation(), {
     ...grant.options,
@@ -221,7 +221,7 @@ const applyFinanceCommand = Effect.fn('SiamparkLiveHttp.applyFinanceCommand')(fu
 const prepareGoldenLease = Effect.fn('SiamparkLiveHttp.prepareGoldenLease')(function* goldenLeaseBaseline(
   session: LiveSession,
 ) {
-  const propertyGrant = yield* authorize(session, 'siampark-property');
+  const propertyGrant = yield* authorize(session, 'property-portfolio');
   const property = yield* readProperties({}, propertyGrant.credential, correlation(), propertyGrant.options);
   const occupancies = yield* readLiveOccupancies(session);
   const agreements = yield* readLiveAgreements(session);
@@ -381,10 +381,10 @@ const executeGoldenInvoice = Effect.fn('SiamparkLiveHttp.executeGoldenInvoice')(
   });
   const providers = [
     'party-registry',
-    'siampark-property',
-    'siampark-property',
-    'siampark-occupancy',
-    'siampark-agreements',
+    'property-portfolio',
+    'property-portfolio',
+    'property-leasing',
+    'legal-agreements',
   ];
   const draft = yield* applyFinanceCommand(session, prepared.finance.revision, payload.command, providers);
   const ready = yield* applyFinanceCommand(
@@ -439,7 +439,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
       expect(finance.canWrite).toBe(false);
       expect(finance.state.invoices.length).toBeGreaterThanOrEqual(4);
       expect(finance.state.invoices.some((item) => item.ref.resourceId === overdueInvoiceId)).toBe(true);
-      const relationships = yield* authorize(session, 'siampark-relationships');
+      const relationships = yield* authorize(session, 'crm-activities');
       const activities = yield* readActivities({}, relationships.credential, correlation(), relationships.options);
       expect(activities.canWrite).toBe(false);
       expect(activities.emailObservations).toHaveLength(1);
@@ -568,9 +568,9 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
   it.effect('live Operations records a canonical relationship Activity linked to one real Work Task', () =>
     Effect.gen(function* operationsRelationshipFollowUp() {
       const session = yield* signIn('operations@siampark.demo');
-      const relationshipGrant = yield* authorize(session, 'siampark-relationships');
+      const relationshipGrant = yield* authorize(session, 'crm-activities');
       const before = yield* readActivities({}, relationshipGrant.credential, correlation(), relationshipGrant.options);
-      const workGrant = yield* authorize(session, 'siampark-work');
+      const workGrant = yield* authorize(session, 'work-tasks');
       const workBefore = yield* readTasks({}, workGrant.credential, correlation(), workGrant.options);
       const agreements = yield* readLiveAgreements(session);
       const contract = agreements.contracts.find((item) => item.contractRef.resourceId === expiringContractId);
@@ -588,8 +588,8 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
         },
         expectedRevision: workBefore.revision,
       });
-      const taskProviders = yield* referenceCredentials(session, ['siampark-property']);
-      const taskGrant = yield* authorize(session, 'siampark-work');
+      const taskProviders = yield* referenceCredentials(session, ['property-portfolio']);
+      const taskGrant = yield* authorize(session, 'work-tasks');
       const task = yield* executeApplyCommandWithAuthorization(taskPayload, taskGrant.credential, correlation(), {
         ...taskGrant.options,
         idempotencyKey: correlation(),
@@ -611,14 +611,14 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
         },
         expectedRevision: before.revision,
       });
-      const activityProviders = yield* referenceCredentials(session, ['party-registry', 'siampark-work']);
-      const activityGrant = yield* authorize(session, 'siampark-relationships');
+      const activityProviders = yield* referenceCredentials(session, ['party-registry', 'work-tasks']);
+      const activityGrant = yield* authorize(session, 'crm-activities');
       const recorded = yield* executeActivityCommand(activityPayload, activityGrant.credential, correlation(), {
         ...activityGrant.options,
         idempotencyKey: correlation(),
         referenceCredentials: activityProviders,
       });
-      const finalGrant = yield* authorize(session, 'siampark-relationships');
+      const finalGrant = yield* authorize(session, 'crm-activities');
       const after = yield* readActivities(
         { counterpartyId: contract.counterpartyRef.resourceId },
         finalGrant.credential,
@@ -632,7 +632,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
         kind: 'CALL',
         ownerPrincipalRef: before.actorPrincipalRef,
       });
-      const taskReadGrant = yield* authorize(session, 'siampark-work');
+      const taskReadGrant = yield* authorize(session, 'work-tasks');
       const persistedTask = yield* readTasks(
         { resourceId: followUpTask.ref.resourceId },
         taskReadGrant.credential,
@@ -648,7 +648,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
   it.effect('live Operations applies payment independently and retries accounting on the existing Invoice', () =>
     Effect.gen(function* operationsPaymentAndAccounting() {
       const session = yield* signIn('operations@siampark.demo');
-      const initialGrant = yield* authorize(session, 'siampark-billing-finance');
+      const initialGrant = yield* authorize(session, 'finance-billing');
       const before = yield* readInvoices({}, initialGrant.credential, correlation(), initialGrant.options);
       const invoice = before.state.invoices.find((item) => item.ref.resourceId === overdueInvoiceId);
       if (invoice === undefined || invoice.accountingSyncState !== 'FAILED') {
@@ -705,7 +705,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
       const accountingReplay = yield* applyFinanceCommand(session, completed.revision, accountingCommand);
       expect(accountingReplay.changed).toBe(false);
       expect(accountingReplay.revision).toBe(completed.revision);
-      const finalGrant = yield* authorize(session, 'siampark-billing-finance');
+      const finalGrant = yield* authorize(session, 'finance-billing');
       const after = yield* readInvoices({}, finalGrant.credential, correlation(), finalGrant.options);
       expect(after.revision).toBe(completed.revision);
       expect(after.state.invoices).toHaveLength(before.state.invoices.length);
@@ -726,10 +726,10 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
   it.effect('live External reads only its assigned Task, Activity and B201 Counterparty', () =>
     Effect.gen(function* externalAssignedReads() {
       const session = yield* signIn('external@siampark.demo');
-      const work = yield* authorize(session, 'siampark-work');
+      const work = yield* authorize(session, 'work-tasks');
       const tasks = yield* readTasks({ resourceId: assignedTaskId }, work.credential, correlation(), work.options);
       expect(tasks.items.map((task) => task.ref.resourceId)).toEqual([assignedTaskId]);
-      const relationships = yield* authorize(session, 'siampark-relationships');
+      const relationships = yield* authorize(session, 'crm-activities');
       const activities = yield* readActivities(
         { resourceId: assignedActivityId },
         relationships.credential,
@@ -761,19 +761,19 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
   it.effect('live External receives typed HTTP 403 for an unrelated Task, Invoice and Counterparty', () =>
     Effect.gen(function* externalDeniedReads() {
       const session = yield* signIn('external@siampark.demo');
-      const work = yield* authorize(session, 'siampark-work');
+      const work = yield* authorize(session, 'work-tasks');
       const task = yield* Effect.result(
         readTasks({ resourceId: unrelatedTaskId }, work.credential, correlation(), work.options),
       );
       expect(Result.match(task, { onFailure: Schema.is(TaskForbiddenSchema), onSuccess: () => false })).toBe(true);
-      const finance = yield* authorize(session, 'siampark-billing-finance');
+      const finance = yield* authorize(session, 'finance-billing');
       const invoice = yield* Effect.result(
         readInvoices({ resourceId: invoiceId }, finance.credential, correlation(), finance.options),
       );
       expect(Result.match(invoice, { onFailure: Schema.is(InvoiceForbiddenSchema), onSuccess: () => false })).toBe(
         true,
       );
-      const relationships = yield* authorize(session, 'siampark-relationships');
+      const relationships = yield* authorize(session, 'crm-activities');
       const activities = yield* readActivities(
         { resourceId: assignedActivityId },
         relationships.credential,
@@ -808,7 +808,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
   it.effect('live Operations commits only one of two Task changes at the same expected revision', () =>
     Effect.gen(function* operationsConcurrentRevision() {
       const session = yield* signIn('operations@siampark.demo');
-      const initialGrant = yield* authorize(session, 'siampark-work');
+      const initialGrant = yield* authorize(session, 'work-tasks');
       const before = yield* readTasks({}, initialGrant.credential, correlation(), initialGrant.options);
       const assigned = before.items.find((task) => task.ref.resourceId === assignedTaskId);
       if (assigned === undefined) {
@@ -819,8 +819,8 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
         command: { _tag: 'ChangeTaskState', state, taskRef: assigned.ref },
         expectedRevision: before.revision,
       });
-      const firstGrant = yield* authorize(session, 'siampark-work');
-      const secondGrant = yield* authorize(session, 'siampark-work');
+      const firstGrant = yield* authorize(session, 'work-tasks');
+      const secondGrant = yield* authorize(session, 'work-tasks');
       expect(firstGrant.credential === secondGrant.credential).toBe(false);
       const firstKey = correlation();
       const secondKey = correlation();
@@ -855,7 +855,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
           status: 409,
         });
       }
-      const finalGrant = yield* authorize(session, 'siampark-work');
+      const finalGrant = yield* authorize(session, 'work-tasks');
       const after = yield* readTasks({}, finalGrant.credential, correlation(), finalGrant.options);
       expect(after.revision).toBe(before.revision + 1);
       expect(after.items).toHaveLength(before.items.length);

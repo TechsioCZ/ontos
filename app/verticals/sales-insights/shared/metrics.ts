@@ -43,7 +43,7 @@ export type Grouping = typeof GroupingSchema.Type;
 export type CalendarDay = typeof CalendarDateWireSchema.Type;
 export type Instant = typeof Schema.DateTimeUtcFromString.Type;
 
-// Producer vocabularies, mirrored structurally from sales-pipeline, billing, siampark-work, merchandise
+// Producer vocabularies, mirrored structurally from sales-pipeline, billing, work-tasks, merchandise
 // and tagging. Kept local so this module has no cross-vertical package dependency.
 const OpportunityStageSchema = Schema.Literals(['LEAD', 'QUALIFIED', 'PROPOSAL', 'NEGOTIATION', 'WON', 'LOST']);
 export type OpportunityStage = typeof OpportunityStageSchema.Type;
@@ -264,10 +264,10 @@ const STAGE_LABELS = {
   WON: 'Vyhraná',
 } as const satisfies Record<OpportunityStage, string>;
 
-const SOURCE_INVOICES = 'siampark-billing-finance · invoices';
+const SOURCE_INVOICES = 'finance-billing · invoices';
 const SOURCE_OPPORTUNITIES = 'sales-pipeline · opportunities';
 const SOURCE_ORDERS = 'merchandise · orders';
-const SOURCE_TASKS = 'siampark-work · tasks';
+const SOURCE_TASKS = 'work-tasks · tasks';
 
 // ---------------------------------------------------------------------------------------------------------
 // Date helpers (Effect DateTime for calendar arithmetic; no ambient clock)

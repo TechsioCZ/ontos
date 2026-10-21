@@ -15,8 +15,8 @@
  *
  * Level A: read-only. Module access + `read_all` context permissions; NO Action executor grant at all, so every
  *          apply-command (tasks, opportunities, tags, orders, …) is denied by Core with 403 and a denied audit.
- * Level B: the same reads + `siampark.work` write (tasks only): executor grants for `siampark.work.*` Actions and
- *          `siampark.work.write_all`. Every other module stays read-only, so pipeline/tagging/order writes fail.
+ * Level B: the same reads + `work.tasks` write (tasks only): executor grants for `work.tasks.*` Actions and
+ *          `work.tasks.write_all`. Every other module stays read-only, so pipeline/tagging/order writes fail.
  *
  * Level C: proposals that a person approves in the app, with a bulk revert.
  *          Hanák: the same reads + `demo.crm` apply-command/write_all; the CRM command guard restricts the key to
@@ -95,9 +95,9 @@ export const aiCompanies: readonly AiCompany[] = [
       'demo.sales-insights',
       'demo.tagging',
       'demo.workforce',
-      'siampark.work',
+      'work.tasks',
       // Invoices (list_invoices, revenue metrics). Billing has no business permissions: module access is the read.
-      'siampark.billing-finance',
+      'finance.billing',
     ],
     requiresAction: undefined,
   },
@@ -106,13 +106,13 @@ export const aiCompanies: readonly AiCompany[] = [
     key: 'hanak',
     label: crmDemoCompany.legalName,
     legalEntityId: crmDemoCompany.legalEntityId,
-    reads: ['party.registry', 'demo.crm', 'demo.workforce', 'demo.tagging', 'siampark.work'],
+    reads: ['party.registry', 'demo.crm', 'demo.workforce', 'demo.tagging', 'work.tasks'],
     requiresAction: 'demo.crm.apply-command',
   },
 ];
 
 /** The only module level B may write. */
-export const AI_TASKS_MODULE = 'siampark.work';
+export const AI_TASKS_MODULE = 'work.tasks';
 /**
  * Level C (Hanák CRM only): executor grant for `demo.crm.apply-command` + `demo.crm.write_all`. The CRM command guard
  * lets an API key run ONLY `AiProposeChanges` there, so every change lands as a proposal on /crm/schvalovani-ai
@@ -143,7 +143,7 @@ const contextPermissionModules: ReadonlySet<string> = new Set([
   'demo.sales-pipeline',
   'demo.tagging',
   'demo.workforce',
-  'siampark.work',
+  'work.tasks',
 ]);
 const contextPermissionKey = (moduleId: string, access: Access) =>
   `${moduleId.replaceAll('-', '_')}.${access === 'read' ? 'read_all' : 'write_all'}`;
@@ -276,7 +276,7 @@ class AiProfilesError extends Schema.TaggedError<AiProfilesError>()('AiProfilesE
 const fail = (reason: string) => new AiProfilesError({ reason });
 
 const ENV_FILE = '.env.demo.local';
-const KEY_PROBE_AUDIENCE = 'siampark-work';
+const KEY_PROBE_AUDIENCE = 'work-tasks';
 const SECURE_COOKIE_PREFIX = '__Secure-';
 const readinessTimeout = '10 seconds';
 const operatorEmail = 'obchod@demo.ontos';

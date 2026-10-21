@@ -23,10 +23,10 @@ const obchodReads = [
   'demo.tagging',
   'demo.workforce',
   'party.registry',
-  'siampark.billing-finance',
-  'siampark.work',
+  'finance.billing',
+  'work.tasks',
 ];
-const hanakReads = ['demo.crm', 'demo.tagging', 'demo.workforce', 'party.registry', 'siampark.work'];
+const hanakReads = ['demo.crm', 'demo.tagging', 'demo.workforce', 'party.registry', 'work.tasks'];
 
 const withWrites = (reads: readonly string[], writes: readonly string[]): readonly AgentModuleGrant[] =>
   reads.map((moduleId) => ({ access: writes.includes(moduleId) ? 'write' : 'read', moduleId }));
@@ -39,7 +39,7 @@ export const seededAgentProfiles: Readonly<
   // ai-agent-b-obchod
   'e931e0fd-adba-56fd-9e17-e5f3adb3efa0': {
     legalEntityId: OBCHOD,
-    modules: withWrites(obchodReads, ['siampark.work']),
+    modules: withWrites(obchodReads, ['work.tasks']),
     writePolicy: 'direct',
   },
   // ai-agent-c-obchod
@@ -53,7 +53,7 @@ export const seededAgentProfiles: Readonly<
   // ai-agent-b-hanak
   'c771c6f7-8d32-5ba7-af67-de4bd05eabc7': {
     legalEntityId: HANAK,
-    modules: withWrites(hanakReads, ['siampark.work']),
+    modules: withWrites(hanakReads, ['work.tasks']),
     writePolicy: 'direct',
   },
   // ai-agent-c-hanak
@@ -74,13 +74,13 @@ export const agentModuleLabels: Readonly<Record<string, string>> = {
   'demo.tagging': 'Štítky',
   'demo.workforce': 'Zaměstnanci a správa lidí',
   'demo.crm': 'CRM – klienti a návštěvy',
-  'siampark.work': 'Úkoly a projekty',
-  'siampark.billing-finance': 'Faktury a finance',
-  'siampark.property': 'Majetek a prostory',
-  'siampark.occupancy': 'Obsazenost a pronájmy',
-  'siampark.agreements': 'Smlouvy',
-  'demo.siampark-ops': 'Provoz',
-  'siampark.relationships': 'Nájemci a vztahy',
+  'work.tasks': 'Úkoly a projekty',
+  'finance.billing': 'Faktury a finance',
+  'property.portfolio': 'Majetek a prostory',
+  'property.leasing': 'Obsazenost a pronájmy',
+  'legal.agreements': 'Smlouvy',
+  'facility.operations': 'Provoz',
+  'crm.activities': 'Nájemci a vztahy',
   'commerce.catalog': 'Katalog',
   'commerce.inventory': 'Zásoby',
   'commerce.pricing': 'Ceny',

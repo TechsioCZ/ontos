@@ -29,7 +29,7 @@ const DDL: readonly string[] = [
     )`,
   `alter table demo_email.deliveries add column if not exists event_label text`,
   `alter table demo_email.deliveries drop constraint if exists deliveries_source_check`,
-  `alter table demo_email.deliveries add constraint deliveries_source_check check (source in ('akros-order', 'siampark-agenda', 'siampark-reminder'))`,
+  `alter table demo_email.deliveries add constraint deliveries_source_check check (source in ('akros-order', 'facility-agenda', 'rent-reminder'))`,
   `create index if not exists deliveries_subject_idx on demo_email.deliveries (source, subject_id)`,
   `create index if not exists deliveries_number_idx on demo_email.deliveries (source, subject_number)`,
   `create table if not exists demo_email.settings (key text primary key, value text not null)`,

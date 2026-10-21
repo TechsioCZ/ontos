@@ -35,7 +35,7 @@ import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadat
 // Cross-vertical clients are compiled into this remote. Invalidate persisted bundles when the producer's wire
 // contract changes (notably work.referenceDate), even when this remote's own source is otherwise unchanged.
 const workContractDigest = createHash('sha256')
-  .update(readFileSync(new URL('../siampark-work/shared/apis/records.ts', import.meta.url)))
+  .update(readFileSync(new URL('../work-tasks/shared/apis/records.ts', import.meta.url)))
   .digest('hex');
 const appId = 'sales-insights';
 const cloudflareWorkerName = 'app-sales-insights';

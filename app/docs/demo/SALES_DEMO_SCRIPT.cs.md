@@ -49,7 +49,7 @@ Lokální demo. Nic se nenasazuje. Všechny cesty jsou na `localhost:3020`.
 
 **8. Faktury: koncept, potvrzení, ruční faktura, tisk** · R2, R5
 
-- Klikněte: Faktury (/cs/siampark/finance) → najděte koncept se zdrojem Příležitost → otevřete → Potvrdit fakturu. Potom Nová faktura → zákazník, položka, splatnost → Vytvořit koncept → Potvrdit → Tisk.
+- Klikněte: Faktury (/cs/finance) → najděte koncept se zdrojem Příležitost → otevřete → Potvrdit fakturu. Potom Nová faktura → zákazník, položka, splatnost → Vytvořit koncept → Potvrdit → Tisk.
 - Řekněte: „Faktura vzniká z obchodu i ručně, potvrdíte ji a vytisknete. E-mail se neodesílá.“
 
 **9. Sklad a změna ceny** · R7, R7d
@@ -66,7 +66,7 @@ Lokální demo. Nic se nenasazuje. Všechny cesty jsou na `localhost:3020`.
 
 **11. Úkol pro zaměstnance** · R4
 
-- Klikněte: Úkoly (/cs/siampark/work) → Nový úkol → název, Řešitel (obchodník), termín, priorita, zákazník a příležitost.
+- Klikněte: Úkoly (/cs/ukoly) → Nový úkol → název, Řešitel (obchodník), termín, priorita, zákazník a příležitost.
 - Řekněte: „Úkol má konkrétního řešitele a termín, takže je jasné, kdo co dělá.“
 
 **12. Zaměstnanci: štítky, role, oprávnění** · R7b, R7c, R10

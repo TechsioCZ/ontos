@@ -1,0 +1,184 @@
+{
+  "title": "Meters and energy",
+  "description": "Utility meters of properties and units, readings, consumption and period costs. Consumption is only computed from two consecutive readings of the same meter in the same unit.",
+  "operationalDescription": "Operational meter readings and consumption. You may record readings; costs, contracts, photos and internal notes remain protected.",
+  "operationalReadOnlyDescription": "Operational meter readings and consumption, read only. Staff record readings; costs, contracts, photos and internal notes stay protected.",
+  "fields": {
+    "serialNumber": "Serial number",
+    "medium": "Medium",
+    "unit": "Unit of measure",
+    "supplyPoint": "Supply point",
+    "supplier": "Supplier",
+    "consumer": "Consumer",
+    "contract": "Contract",
+    "status": "Status",
+    "location": "Location",
+    "note": "Note"
+  },
+  "fieldHelp": {
+    "serialNumber": "Number on the meter label; must be unique.",
+    "unit": "E.g. kWh, m³ or GJ. Changing the unit starts a new comparable series of readings.",
+    "supplyPoint": "EAN, EIC or your own supply point label.",
+    "consumer": "Who the medium is re-invoiced to, e.g. the unit tenant."
+  },
+  "medium": {
+    "ELECTRICITY": "Electricity",
+    "WATER": "Water",
+    "GAS": "Gas",
+    "HEAT": "Heat",
+    "OTHER": "Other"
+  },
+  "status": {
+    "ACTIVE": "Active",
+    "RETIRED": "Retired"
+  },
+  "filters": {
+    "all": "All",
+    "mediumLabel": "Filter by medium",
+    "search": "Search meter, supply point or unit",
+    "anomaliesOnly": "Unusual increases only",
+    "noMatchTitle": "No meter matches the filter.",
+    "noMatchDescription": "Change the search or pick another medium."
+  },
+  "columns": {
+    "meter": "Meter",
+    "medium": "Medium",
+    "location": "Location",
+    "lastReading": "Last reading",
+    "consumption": "Period consumption",
+    "trend": "Consumption trend",
+    "state": "State"
+  },
+  "stats": {
+    "count": "Active meters",
+    "countHint": "{{total}} registered in total",
+    "readings30": "Readings in 30 days",
+    "readings30Hint": "Valid readings dated within the last 30 days",
+    "anomalies": "Unusual increases",
+    "anomaliesHint": "Last period more than 30 % above the previous one",
+    "anomaliesNone": "No unusual increases",
+    "cost": "Costs for {{month}}",
+    "costHint": "Sum of recorded costs of periods ending in this month",
+    "costMissing": "{{count}} periods without a recorded cost"
+  },
+  "row": {
+    "first": "no previous reading",
+    "unitChanged": "different unit, no difference",
+    "noReadings": "no reading yet",
+    "anomaly": "Up {{change}}",
+    "normal": "Normal",
+    "retired": "Retired",
+    "days_one": "over {{count}} day",
+    "days_other": "over {{count}} days",
+    "perDay": "{{value}} / day",
+    "anomalyPeriod": "period to {{date}}"
+  },
+  "actions": {
+    "newMeter": "New meter",
+    "recordReading": "Record reading",
+    "edit": "Edit meter",
+    "void": "Void",
+    "openDetail": "Meter detail",
+    "showPhoto": "Photo",
+    "openProperty": "Open in the property register"
+  },
+  "create": {
+    "title": "New meter",
+    "submit": "Create meter"
+  },
+  "created": "Meter created",
+  "edit": {
+    "title": "Edit meter {{serial}}",
+    "submit": "Save changes",
+    "saved": "Meter saved",
+    "retire": "The meter is retired (no new readings)"
+  },
+  "reading": {
+    "title": "Record reading",
+    "titleFor": "Record reading: {{serial}}",
+    "meter": "Meter",
+    "pickMeter": "Pick a meter",
+    "date": "Reading date",
+    "value": "Meter value ({{unit}})",
+    "valueHelp": "Total value on the meter display, not the consumption.",
+    "readBy": "Responsible person",
+    "cost": "Period cost (CZK)",
+    "costHelp": "Optional. Amount for the period ending with this reading; empty shows as “no data”.",
+    "note": "Note",
+    "photo": "Meter photo",
+    "photoRestricted": "Reading photos are available to internal roles only. You can save the reading without a photo.",
+    "photoHelp": "Optional, JPG or PNG up to 5 MB. Stored in company documents.",
+    "photoTooLarge": "The file is larger than 5 MB.",
+    "photoFailed": "The photo could not be uploaded; the reading was not saved.",
+    "submit": "Save reading",
+    "saved": "Reading saved",
+    "preview": "Consumption since the previous reading ({{date}}): {{value}}",
+    "previewFirst": "This will be the meter's first reading: consumption shows from the next reading on.",
+    "previewAnomaly": "Note: daily consumption is {{change}} above the previous period.",
+    "invalidValue": "Enter a non-negative number.",
+    "invalidDate": "Enter the reading date.",
+    "invalidCost": "The cost must be a non-negative amount.",
+    "problems": {
+      "future": "The reading date cannot be in the future.",
+      "duplicateDate": "The meter already has a valid reading on this date. Void the wrong reading first.",
+      "lowerThanPrevious": "The value is lower than the previous reading. For a meter exchange, create a new meter.",
+      "higherThanNext": "The value is higher than the next reading of this meter.",
+      "retired": "The meter is retired; no reading can be recorded."
+    },
+    "photoPick": "Choose photo",
+    "photoNone": "No photo selected"
+  },
+  "void": {
+    "title": "Void the reading of {{date}}",
+    "reason": "Reason",
+    "reasonHelp": "The reading stays in the history but no longer counts.",
+    "submit": "Void reading",
+    "done": "Reading voided",
+    "voided": "Voided",
+    "voidedBy": "Voided by {{who}} {{at}}: {{reason}}"
+  },
+  "detail": {
+    "masterData": "Meter data",
+    "history": "Reading history",
+    "historyHint": "A difference is only shown between two consecutive valid readings in the same unit.",
+    "chart": "Consumption per period",
+    "chartEmpty": "The chart appears after two valid readings.",
+    "chartAria": "Bar chart of the consumption of meter {{serial}} per period",
+    "date": "Date",
+    "value": "Value",
+    "consumption": "Consumption",
+    "perDay": "Daily average",
+    "cost": "Cost",
+    "readBy": "Read by",
+    "note": "Note",
+    "author": "Recorded by {{who}} {{at}}",
+    "series": {
+      "normal": "Normal consumption",
+      "anomaly": "Unusual increase"
+    },
+    "chartOtherUnits": "The chart shows only periods in the current unit {{unit}}. Earlier periods in {{units}} are listed in the reading history below (units are never mixed or converted)."
+  },
+  "byUnit": {
+    "title": "Consumption and costs by location",
+    "operationalTitle": "Consumption by location",
+    "description": "Monthly consumption of the meters of the selected property or unit. Media and units of measure are never added together.",
+    "place": "Location",
+    "allPlaces": "Whole site",
+    "medium": "Medium",
+    "chartAria": "Bar chart of monthly consumption: {{medium}} in {{unit}}, {{place}}",
+    "empty": "This location and medium has no two consecutive readings yet.",
+    "month": "Month",
+    "consumption": "Consumption",
+    "cost": "Cost",
+    "costPartial": "{{count}} periods without cost",
+    "meters": "Meters included: {{count}}"
+  },
+  "people": {
+    "you": "you",
+    "management": "Siampark management",
+    "operations": "Siampark operations",
+    "finance": "Siampark finance",
+    "external": "External partner",
+    "other": "another user"
+  }
+}

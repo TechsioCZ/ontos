@@ -93,72 +93,7 @@ interface DashboardSelectorProps {
   readonly statusText: string | null;
 }
 
-const propertyModuleId = 'siampark.property';
-const siamparkNavigationPresentation = [
-  {
-    entrypoint: 'siampark.property.page.overview',
-    href: '/siampark/overview',
-    icon: 'icon-[mdi--view-dashboard-outline]',
-    label: 'overview',
-    moduleId: propertyModuleId,
-  },
-  {
-    entrypoint: 'siampark.property.page.records',
-    href: '/siampark/properties',
-    icon: 'icon-[mdi--office-building-outline]',
-    label: 'properties',
-    moduleId: propertyModuleId,
-  },
-  {
-    entrypoint: 'siampark.occupancy.page.records',
-    href: '/siampark/occupancy',
-    icon: 'icon-[mdi--key-outline]',
-    label: 'occupancy',
-    moduleId: 'siampark.occupancy',
-  },
-  {
-    entrypoint: 'siampark.agreements.page.records',
-    href: '/siampark/agreements',
-    icon: 'icon-[mdi--file-document-outline]',
-    label: 'agreements',
-    moduleId: 'siampark.agreements',
-  },
-  {
-    entrypoint: 'siampark.billing-finance.page.records',
-    href: '/siampark/finance',
-    icon: 'icon-[mdi--receipt-text-outline]',
-    label: 'finance',
-    moduleId: 'siampark.billing-finance',
-  },
-  {
-    entrypoint: 'siampark.work.page.records',
-    href: '/siampark/work',
-    icon: 'icon-[mdi--clipboard-check-outline]',
-    label: 'work',
-    moduleId: 'siampark.work',
-  },
-  {
-    entrypoint: 'siampark.relationships.page.records',
-    href: '/siampark/relationships',
-    icon: 'icon-[mdi--account-group-outline]',
-    label: 'relationships',
-    moduleId: 'siampark.relationships',
-  },
-  {
-    entrypoint: 'party.registry.page.contacts',
-    href: '/contacts',
-    icon: 'icon-[mdi--card-account-details-outline]',
-    label: 'contacts',
-    moduleId: 'party.registry',
-  },
-  {
-    entrypoint: 'siampark.property.page.integrations',
-    href: '/siampark/integrations',
-    icon: 'icon-[mdi--connection]',
-    label: 'integrations',
-    moduleId: propertyModuleId,
-  },
-] as const;
+const propertyModuleId = 'property.portfolio';
 
 interface DemoNavigationItemPresentation {
   /** Page entrypoint keys that mark this destination as current. */
@@ -177,13 +112,112 @@ interface DemoNavigationGroupPresentation {
 }
 
 /**
- * Sales demo navigation. Destinations still come from module-contributed entries: an item links only when its
- * module publishes an enabled entry with one of the accepted hrefs (or, for single-page modules, any entry).
+ * Demo navigation grouped by functional domain. Destinations still come from module-contributed entries: an item
+ * links only when its module publishes an enabled entry with one of the accepted hrefs (or, for single-page
+ * modules, any entry). A group renders only when one of its destinations is claimed.
  */
 const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
-  // CRM company (Velkoobchod Hanák): clients, visits, contact plan, order imports and sales overview.
   {
-    icon: 'icon-[mdi--account-group-outline]',
+    // Real estate: rental overview, properties and leases.
+    icon: 'icon-[mdi--home-city-outline]',
+    items: [
+      {
+        entrypoints: ['property.portfolio.page.overview'],
+        hrefs: ['/nemovitosti/prehled'],
+        icon: 'icon-[mdi--view-dashboard-outline]',
+        key: 'rentalOverview',
+        moduleId: propertyModuleId,
+      },
+      {
+        entrypoints: ['property.portfolio.page.records'],
+        hrefs: ['/nemovitosti'],
+        icon: 'icon-[mdi--office-building-outline]',
+        key: 'properties',
+        moduleId: propertyModuleId,
+      },
+      {
+        entrypoints: ['property.leasing.page.records'],
+        hrefs: ['/najmy'],
+        icon: 'icon-[mdi--home-account]',
+        key: 'occupancy',
+        moduleId: 'property.leasing',
+      },
+    ],
+    key: 'realEstate',
+  },
+  {
+    // Facility operations: one destination per agenda; restricted agendas are listed only with read_all.
+    icon: 'icon-[mdi--cog-transfer-outline]',
+    items: [
+      {
+        entrypoints: ['facility.operations.page.overview'],
+        hrefs: ['/provoz/prehled'],
+        icon: 'icon-[mdi--view-dashboard-variant-outline]',
+        key: 'opsOverview',
+        moduleId: 'facility.operations',
+      },
+      {
+        entrypoints: ['facility.operations.page.agenda'],
+        hrefs: ['/provoz/agenda'],
+        icon: 'icon-[mdi--calendar-account-outline]',
+        key: 'opsAgenda',
+        moduleId: 'facility.operations',
+      },
+      {
+        entrypoints: ['facility.operations.page.assets'],
+        hrefs: ['/provoz/majetek'],
+        icon: 'icon-[mdi--archive-outline]',
+        key: 'opsAssets',
+        moduleId: 'facility.operations',
+      },
+      {
+        entrypoints: ['facility.operations.page.meters'],
+        hrefs: ['/provoz/meridla'],
+        icon: 'icon-[mdi--gauge]',
+        key: 'opsMeters',
+        moduleId: 'facility.operations',
+      },
+      {
+        entrypoints: ['facility.operations.page.purchasing'],
+        hrefs: ['/provoz/nakupy'],
+        icon: 'icon-[mdi--truck-delivery-outline]',
+        key: 'opsPurchasing',
+        moduleId: 'facility.operations',
+      },
+      {
+        entrypoints: ['facility.operations.page.security'],
+        hrefs: ['/provoz/bezpecnost'],
+        icon: 'icon-[mdi--shield-check-outline]',
+        key: 'opsSecurity',
+        moduleId: 'facility.operations',
+      },
+      {
+        entrypoints: ['facility.operations.page.documents'],
+        hrefs: ['/provoz/dokumenty'],
+        icon: 'icon-[mdi--folder-file-outline]',
+        key: 'opsDocuments',
+        moduleId: 'facility.operations',
+      },
+    ],
+    key: 'facility',
+  },
+  {
+    // Finance: invoices.
+    icon: 'icon-[mdi--cash-multiple]',
+    items: [
+      {
+        entrypoints: ['finance.billing.page.records'],
+        hrefs: ['/finance', '/prodej/faktury'],
+        icon: 'icon-[mdi--receipt-text-outline]',
+        key: 'invoices',
+        moduleId: 'finance.billing',
+      },
+    ],
+    key: 'finance',
+  },
+  {
+    // Sales and CRM: clients, visits, deals, customers, contacts, contracts, activities and statistics.
+    icon: 'icon-[mdi--handshake-outline]',
     items: [
       {
         entrypoints: ['demo.crm.page.clients'],
@@ -227,12 +261,6 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
         key: 'crmReports',
         moduleId: 'demo.crm',
       },
-    ],
-    key: 'crm',
-  },
-  {
-    icon: 'icon-[mdi--handshake-outline]',
-    items: [
       {
         entrypoints: ['demo.sales-pipeline.page.records', 'demo.sales-pipeline.page.opportunities'],
         hrefs: ['/prodej/prilezitosti'],
@@ -241,67 +269,53 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
         moduleId: 'demo.sales-pipeline',
       },
       {
-        // The contacts page has its own link under other modules, so it must not also mark Customers current.
         entrypoints: ['party.registry.page.customers'],
-        hrefs: ['/prodej/zakaznici', '/zakaznici', '/customers', '/contacts'],
+        hrefs: ['/prodej/zakaznici', '/zakaznici', '/customers'],
         icon: 'icon-[mdi--domain]',
         key: 'customers',
         moduleId: 'party.registry',
       },
+      {
+        entrypoints: ['party.registry.page.contacts'],
+        hrefs: ['/contacts'],
+        icon: 'icon-[mdi--card-account-details-outline]',
+        key: 'contacts',
+        moduleId: 'party.registry',
+      },
+      {
+        entrypoints: ['legal.agreements.page.records'],
+        hrefs: ['/smlouvy'],
+        icon: 'icon-[mdi--file-sign]',
+        key: 'agreements',
+        moduleId: 'legal.agreements',
+      },
+      {
+        entrypoints: ['crm.activities.page.records'],
+        hrefs: ['/aktivity'],
+        icon: 'icon-[mdi--account-group-outline]',
+        key: 'activities',
+        moduleId: 'crm.activities',
+      },
+      {
+        entrypoints: ['demo.sales-insights.page.records', 'demo.sales-insights.page.statistics'],
+        hrefs: ['/prehledy/statistiky', '/statistiky'],
+        icon: 'icon-[mdi--chart-line]',
+        key: 'statistics',
+        moduleId: 'demo.sales-insights',
+      },
+    ],
+    key: 'sales',
+  },
+  {
+    // E-commerce: orders and products.
+    icon: 'icon-[mdi--storefront-outline]',
+    items: [
       {
         entrypoints: ['demo.merchandise.page.orders'],
         hrefs: ['/prodej/objednavky'],
         icon: 'icon-[mdi--cart-outline]',
         key: 'orders',
         moduleId: 'demo.merchandise',
-      },
-      {
-        entrypoints: ['siampark.agreements.page.records'],
-        hrefs: ['/siampark/agreements'],
-        icon: 'icon-[mdi--file-sign]',
-        key: 'agreements',
-        moduleId: 'siampark.agreements',
-      },
-      {
-        entrypoints: ['siampark.billing-finance.page.records'],
-        hrefs: ['/siampark/finance', '/prodej/faktury'],
-        icon: 'icon-[mdi--receipt-text-outline]',
-        key: 'invoices',
-        moduleId: 'siampark.billing-finance',
-      },
-    ],
-    key: 'sales',
-  },
-  {
-    icon: 'icon-[mdi--cog-transfer-outline]',
-    items: [
-      {
-        entrypoints: ['siampark.property.page.records'],
-        hrefs: ['/siampark/properties'],
-        icon: 'icon-[mdi--office-building-outline]',
-        key: 'properties',
-        moduleId: propertyModuleId,
-      },
-      {
-        entrypoints: ['siampark.occupancy.page.records'],
-        hrefs: ['/siampark/occupancy'],
-        icon: 'icon-[mdi--home-account]',
-        key: 'occupancy',
-        moduleId: 'siampark.occupancy',
-      },
-      {
-        entrypoints: ['siampark.work.page.records'],
-        hrefs: ['/siampark/work', '/provoz/ukoly'],
-        icon: 'icon-[mdi--clipboard-check-outline]',
-        key: 'tasks',
-        moduleId: 'siampark.work',
-      },
-      {
-        entrypoints: ['demo.workforce.page.records', 'demo.workforce.page.employees'],
-        hrefs: ['/prodej/zamestnanci', '/provoz/zamestnanci'],
-        icon: 'icon-[mdi--badge-account-horizontal-outline]',
-        key: 'employees',
-        moduleId: 'demo.workforce',
       },
       {
         entrypoints: ['demo.merchandise.page.products'],
@@ -311,78 +325,31 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
         moduleId: 'demo.merchandise',
       },
     ],
-    key: 'operations',
+    key: 'commerce',
   },
   {
-    // Siampark provoz (demo.siampark-ops): one destination per agenda; restricted agendas are listed only with read_all.
-    icon: 'icon-[mdi--home-city-outline]',
+    // People and tasks.
+    icon: 'icon-[mdi--account-multiple-check-outline]',
     items: [
       {
-        entrypoints: ['demo.siampark-ops.page.overview'],
-        hrefs: ['/siampark/provoz/prehled'],
-        icon: 'icon-[mdi--view-dashboard-variant-outline]',
-        key: 'opsOverview',
-        moduleId: 'demo.siampark-ops',
+        entrypoints: ['work.tasks.page.records'],
+        hrefs: ['/ukoly', '/provoz/ukoly'],
+        icon: 'icon-[mdi--clipboard-check-outline]',
+        key: 'tasks',
+        moduleId: 'work.tasks',
       },
       {
-        entrypoints: ['demo.siampark-ops.page.agenda'],
-        hrefs: ['/siampark/provoz/agenda'],
-        icon: 'icon-[mdi--calendar-account-outline]',
-        key: 'opsAgenda',
-        moduleId: 'demo.siampark-ops',
-      },
-      {
-        entrypoints: ['demo.siampark-ops.page.assets'],
-        hrefs: ['/siampark/provoz/majetek'],
-        icon: 'icon-[mdi--archive-outline]',
-        key: 'opsAssets',
-        moduleId: 'demo.siampark-ops',
-      },
-      {
-        entrypoints: ['demo.siampark-ops.page.meters'],
-        hrefs: ['/siampark/provoz/meridla'],
-        icon: 'icon-[mdi--gauge]',
-        key: 'opsMeters',
-        moduleId: 'demo.siampark-ops',
-      },
-      {
-        entrypoints: ['demo.siampark-ops.page.purchasing'],
-        hrefs: ['/siampark/provoz/nakupy'],
-        icon: 'icon-[mdi--truck-delivery-outline]',
-        key: 'opsPurchasing',
-        moduleId: 'demo.siampark-ops',
-      },
-      {
-        entrypoints: ['demo.siampark-ops.page.security'],
-        hrefs: ['/siampark/provoz/bezpecnost'],
-        icon: 'icon-[mdi--shield-check-outline]',
-        key: 'opsSecurity',
-        moduleId: 'demo.siampark-ops',
-      },
-      {
-        entrypoints: ['demo.siampark-ops.page.documents'],
-        hrefs: ['/siampark/provoz/dokumenty'],
-        icon: 'icon-[mdi--folder-file-outline]',
-        key: 'opsDocuments',
-        moduleId: 'demo.siampark-ops',
+        entrypoints: ['demo.workforce.page.records', 'demo.workforce.page.employees'],
+        hrefs: ['/prodej/zamestnanci', '/provoz/zamestnanci'],
+        icon: 'icon-[mdi--badge-account-horizontal-outline]',
+        key: 'employees',
+        moduleId: 'demo.workforce',
       },
     ],
-    key: 'siamparkOps',
+    key: 'team',
   },
   {
-    icon: 'icon-[mdi--chart-box-outline]',
-    items: [
-      {
-        entrypoints: ['demo.sales-insights.page.records', 'demo.sales-insights.page.statistics'],
-        hrefs: ['/prehledy/statistiky', '/statistiky'],
-        icon: 'icon-[mdi--chart-line]',
-        key: 'statistics',
-        moduleId: 'demo.sales-insights',
-      },
-    ],
-    key: 'insights',
-  },
-  {
+    // Settings: tags, people and roles, integrations.
     icon: 'icon-[mdi--tune-variant]',
     items: [
       {
@@ -398,6 +365,13 @@ const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
         icon: 'icon-[mdi--account-key-outline]',
         key: 'people',
         moduleId: 'demo.workforce',
+      },
+      {
+        entrypoints: ['property.portfolio.page.integrations'],
+        hrefs: ['/nemovitosti/integrace'],
+        icon: 'icon-[mdi--connection]',
+        key: 'integrations',
+        moduleId: propertyModuleId,
       },
       // Platform approval layer for AI agents of every module.
       {
@@ -461,13 +435,6 @@ export const ShellRouteLink = ({
   // ("/") counts as active on every page and is marked as the current page beside the real destination.
   <LocalizedLink activeOptions={{ exact: true }} prefetch="intent" {...props} />
 );
-
-const presentationOrder = (entry: DashboardNavigationItem) => {
-  const index = siamparkNavigationPresentation.findIndex(
-    (item) => item.moduleId === entry.moduleId && item.href === entry.href,
-  );
-  return index === -1 ? siamparkNavigationPresentation.length : index;
-};
 
 const entryNotice = (entry: DashboardNavigationItem | undefined, t: Translate): string | null => {
   if (entry === undefined) {
@@ -553,26 +520,20 @@ export const buildShellNavigation = (
 
   const otherLinks = visible
     .filter((entry) => !isClaimed(entry))
-    .toSorted((left, right) => presentationOrder(left) - presentationOrder(right))
-    .map((entry): MatchedNavigationLink => {
-      const presentation = siamparkNavigationPresentation.find(
-        (item) => item.moduleId === entry.moduleId && item.href === entry.href,
-      );
-      const exact = currentEntrypointKey !== undefined && presentation !== undefined;
-      return {
+    .map(
+      (entry): MatchedNavigationLink => ({
         enabled: entry.enabled && entry.href !== undefined,
-        entrypointMatch: exact && presentation.entrypoint === currentEntrypointKey,
+        entrypointMatch: false,
         href: entry.href ?? null,
-        icon: presentation?.icon ?? 'icon-[mdi--view-grid-outline]',
+        icon: 'icon-[mdi--view-grid-outline]',
         inactive: false,
         key: entry.href ?? entry.moduleId,
-        label:
-          presentation === undefined ? entry.label : t(`shell.dashboard.navigation.siampark.${presentation.label}`),
-        moduleMatch: !exact && currentModuleId === entry.moduleId,
+        label: entry.label,
+        moduleMatch: currentModuleId === entry.moduleId,
         notice: entryNotice(entry, t),
         state: entry.state,
-      };
-    });
+      }),
+    );
   const deploymentLinks = props.unavailableDeployments.map((deployment): MatchedNavigationLink => ({
     enabled: false,
     entrypointMatch: false,

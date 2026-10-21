@@ -1,7 +1,7 @@
 // @effect-diagnostics *:off
 import { describe, expect, test } from '@rstest/core';
-import type { AgendaRecipientInput, AkrosOrderInput, SiamparkReminderInput } from './contract.ts';
-import { deliveryOutcomeOf, orderEmailEvents, planAgendaEmails, planAkrosOrderEmails, planSiamparkReminderEmail } from './plan.ts';
+import type { AgendaRecipientInput, AkrosOrderInput, RentReminderInput } from './contract.ts';
+import { deliveryOutcomeOf, orderEmailEvents, planAgendaEmails, planAkrosOrderEmails, planRentReminderEmail } from './plan.ts';
 import { isTestRecipient, testCaptureFromEnvironment } from './recipients.ts';
 import { addressOf, agendaSenderFor, senderFor } from './senders.ts';
 import { akrosOrderEmail, formatCzk } from './templates.ts';
@@ -47,7 +47,7 @@ const baseOrder: AkrosOrderInput = {
   ],
 };
 
-const reminder: SiamparkReminderInput = {
+const reminder: RentReminderInput = {
   invoiceNumber: 'FV-2026-0007',
   legalEntityId: '71000000-0000-4000-8000-000000000021',
   legalName: 'Siampark',
@@ -167,44 +167,44 @@ describe('AKROS order e-mail planning', () => {
 
 describe('Siampark reminder e-mail planning', () => {
   test('plans an EMAIL-mode reminder with the invoice number in the subject', () => {
-    const planned = planSiamparkReminderEmail(reminder, enabledSince);
+    const planned = planRentReminderEmail(reminder, enabledSince);
     expect(planned?.subject).toBe('Siampark – upomínka k faktuře FV-2026-0007');
     expect(planned?.eventLabel).toBe('Upomínka k úhradě');
-    expect(planned?.dedupeKey).toBe('siampark-reminder:rem-0001');
+    expect(planned?.dedupeKey).toBe('rent-reminder:rem-0001');
     expect(planned?.recipient).toBe('obchod@siampark.demo');
     expect(planned?.text.startsWith(reminder.reminder.text)).toBe(true);
   });
 
   test('plans nothing for SIMULATED mode or before enabledSince', () => {
-    const simulated: SiamparkReminderInput = {
+    const simulated: RentReminderInput = {
       ...reminder,
       reminder: { ...reminder.reminder, deliveryMode: 'SIMULATED' },
     };
-    const early: SiamparkReminderInput = {
+    const early: RentReminderInput = {
       ...reminder,
       reminder: { ...reminder.reminder, createdAt: '2026-10-21T06:00:00.000Z' },
     };
-    expect(planSiamparkReminderEmail(simulated, enabledSince)).toBeNull();
-    expect(planSiamparkReminderEmail(early, enabledSince)).toBeNull();
+    expect(planRentReminderEmail(simulated, enabledSince)).toBeNull();
+    expect(planRentReminderEmail(early, enabledSince)).toBeNull();
   });
 
   test('falls back to a generic subject when the invoice number is unknown', () => {
-    const noInvoice: SiamparkReminderInput = { ...reminder, invoiceNumber: null };
-    const planned = planSiamparkReminderEmail(noInvoice, enabledSince);
+    const noInvoice: RentReminderInput = { ...reminder, invoiceNumber: null };
+    const planned = planRentReminderEmail(noInvoice, enabledSince);
     expect(planned?.subject).toBe('Siampark – upomínka k neuhrazené faktuře');
     expect(planned?.subjectNumber).toBe('');
   });
 });
 
 describe('reminders in the name of the issuing company', () => {
-  const obchodni: SiamparkReminderInput = {
+  const obchodni: RentReminderInput = {
     ...reminder,
     legalEntityId: '71000000-0000-4000-8000-000000000020',
     legalName: 'Obchodní firma',
   };
 
   test('an Obchodní firma reminder carries the Obchodní firma header, subject and footer, never Siampark', () => {
-    const planned = planSiamparkReminderEmail(obchodni, enabledSince);
+    const planned = planRentReminderEmail(obchodni, enabledSince);
     expect(planned?.subject).toBe('Obchodní firma – upomínka k faktuře FV-2026-0007');
     expect(planned?.html.includes('Siampark')).toBe(false);
     expect(planned?.text.includes('jménem společnosti Obchodní firma')).toBe(true);
@@ -261,7 +261,7 @@ describe('agenda notification e-mails', () => {
     tenantId: '70000000-0000-4000-8000-000000000020',
     preference: { emailCategories: [], emailOptIn: true, emailSince: '2026-10-21T08:00:00.000Z', updatedAt: '2026-10-21T08:00:00.000Z' },
     notifications: [
-      { category: 'ASSIGNED', createdAt: '2026-10-21T09:00:00.000Z', href: '/siampark/work?resourceId=w1', id: 'n1', source: 'work', title: 'Zkontrolovat osvětlení' },
+      { category: 'ASSIGNED', createdAt: '2026-10-21T09:00:00.000Z', href: '/ukoly?resourceId=w1', id: 'n1', source: 'work', title: 'Zkontrolovat osvětlení' },
       { category: 'DEADLINE', createdAt: '2026-10-21T09:00:00.000Z', dueDate: '2026-10-31', id: 'n2', source: 'agreements', title: 'Konec smlouvy' },
       { category: 'OVERDUE', createdAt: '2026-10-21T09:00:00.000Z', id: 'n3', source: 'work', title: 'Revize hasicích přístrojů' },
       { category: 'ASSIGNED', createdAt: '2026-10-21T07:00:00.000Z', id: 'n0', source: 'work', title: 'Před zapnutím e-mailu' },
@@ -273,10 +273,10 @@ describe('agenda notification e-mails', () => {
     const planned = planAgendaEmails(person, options);
     expect(planned).toHaveLength(1);
     const email = planned[0]!;
-    expect(email.dedupeKey).toBe('siampark-agenda:72000000-0000-4000-8000-000000000022:2026-10-21T09:00:00.000Z');
+    expect(email.dedupeKey).toBe('facility-agenda:72000000-0000-4000-8000-000000000022:2026-10-21T09:00:00.000Z');
     expect(email.subject).toBe('Siampark – 2 nová upozornění v agendě');
     expect(email.text).toContain('Přiřazeno vám: Zkontrolovat osvětlení');
-    expect(email.text).toContain('Otevřít: http://localhost:3020/cs/siampark/work?resourceId=w1');
+    expect(email.text).toContain('Otevřít: http://localhost:3020/cs/ukoly?resourceId=w1');
     expect(email.text).toContain('Po termínu: Revize hasicích přístrojů');
     expect(email.text).not.toContain('Konec smlouvy');
     expect(email.text).not.toContain('Před zapnutím e-mailu');

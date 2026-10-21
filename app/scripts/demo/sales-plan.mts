@@ -1,7 +1,7 @@
 /// <reference types="node" />
 /**
  * Single source of truth for the cross-module sales-demo dataset. The sales-pipeline, merchandise and
- * siampark-billing-finance seeds all derive their rows from this plan, so WON opportunities, their orders
+ * finance-billing seeds all derive their rows from this plan, so WON opportunities, their orders
  * and their invoices always agree (same customers, products, quantities and snapshot prices).
  *
  * Keys: products p01…p25, opportunities o01…o60, orders r01…r40, invoices i01…i30, customers c01…c40,

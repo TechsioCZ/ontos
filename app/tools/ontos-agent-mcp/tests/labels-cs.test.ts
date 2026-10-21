@@ -21,20 +21,20 @@ const fakeAction: CatalogAction = {
 
 describe('labels-cs', () => {
   it('maps module ids to Czech labels and falls back for unknown ids', () => {
-    expect(moduleLabelCs('siampark.work', 'x')).toBe('Úkoly a projekty');
+    expect(moduleLabelCs('work.tasks', 'x')).toBe('Úkoly a projekty');
     expect(moduleLabelCs('nope', 'Fallback')).toBe('Fallback');
   });
 
   it('prefers module-specific command titles and falls back to verb prefixes', () => {
-    expect(commandTitleCs('siampark.work', 'CreateTask')).toBe('Vytvořit úkol');
-    expect(commandTitleCs('siampark.occupancy', 'Confirm')).toBe('Potvrdit nájem');
+    expect(commandTitleCs('work.tasks', 'CreateTask')).toBe('Vytvořit úkol');
+    expect(commandTitleCs('property.leasing', 'Confirm')).toBe('Potvrdit nájem');
     expect(commandTitleCs('x', 'CreateFoo')).toBe('Vytvořit – CreateFoo');
     expect(commandTitleCs('x', 'UnassignFoo')).toBe('Odebrat přiřazení – UnassignFoo');
     expect(commandTitleCs('x', 'Settlement')).toBe('Akce Settlement');
   });
 
   it('titles records reads with the module label', () => {
-    expect(readTitleCs('siampark.work', 'records', 'Úkoly a projekty')).toBe('Přehled: Úkoly a projekty');
+    expect(readTitleCs('work.tasks', 'records', 'Úkoly a projekty')).toBe('Přehled: Úkoly a projekty');
   });
 
   it('describes approval-only actions as proposals', () => {

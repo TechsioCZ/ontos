@@ -14,7 +14,7 @@ Generic tools (always present):
 - `ontos_switch_company`: only when the principal belongs to several companies.
 
 Typed tools exist for the current company only: `<app_id>__read_<slug>` and `<app_id>__<command>`, for example
-`siampark_work__create_task`. Ids look like `siampark.work/command/CreateTask` and `siampark.work/read/records`.
+`work_tasks__create_task`. Ids look like `work.tasks/command/CreateTask` and `work.tasks/read/records`.
 
 Write policy is `direct` or `approval`. With `approval` (zápis jen přes schválení), `ontos_execute` and the typed
 write tools only submit a proposal. The proposal goes to platform approvals when present, otherwise to the module's
@@ -126,7 +126,7 @@ Obecné nástroje (vždy dostupné):
 - `ontos_switch_company`: jen když účet patří do více firem.
 
 Typované nástroje platí jen pro aktuální firmu: `<app_id>__read_<slug>` a `<app_id>__<command>`, například
-`siampark_work__create_task`. Id mají tvar `siampark.work/command/CreateTask` a `siampark.work/read/records`.
+`work_tasks__create_task`. Id mají tvar `work.tasks/command/CreateTask` a `work.tasks/read/records`.
 
 Zásada zápisu je `direct` (přímý zápis) nebo `approval` (zápis jen přes schválení). Při `approval` nástroj `ontos_execute`
 i typované zápisové nástroje jen podají návrh. Návrh jde do platformních schválení, pokud existují, jinak do `AiProposeChanges`
@@ -267,7 +267,7 @@ mise exec -- pnpm --filter @ontos/agent-mcp typecheck
 mise exec -- pnpm --filter @ontos/agent-mcp start      # stdio server; no output on stdout until a client connects
 ```
 
-Core tools: `whoami` (shell URL and whether a `siampark-work` assertion can be obtained) and
+Core tools: `whoami` (shell URL and whether a `work-tasks` assertion can be obtained) and
 `raw_read` (vertical, readName, query: a records read through the shell).
 
 Sales tools (src/tools): reads `list_customers`, `list_employees`, `list_opportunities`, `list_orders`,

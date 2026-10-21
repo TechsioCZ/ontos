@@ -30,7 +30,7 @@ const rental: DemoCompanyRecord = {
 const fixture = (initial: readonly DemoCompanyRecord[]) => {
   const rows = [...initial];
   const calls: string[] = [];
-  const modules = new Map([['siampark.agreements', 'disabled']]);
+  const modules = new Map([['legal.agreements', 'disabled']]);
   const persistence: DemoCompanyConfigurationPersistence = {
     createCompany: ({ legalEntityId, legalName, registrationNumber }) =>
       Effect.sync(() => {
@@ -50,7 +50,7 @@ const fixture = (initial: readonly DemoCompanyRecord[]) => {
     }),
     ensureModules: Effect.sync(() => {
       calls.push('modules');
-      for (const moduleId of ['siampark.property', 'siampark.occupancy', 'siampark.agreements']) {
+      for (const moduleId of ['property.portfolio', 'property.leasing', 'legal.agreements']) {
         if (!modules.has(moduleId)) {
           modules.set(moduleId, 'active');
         }
@@ -128,8 +128,8 @@ it.effect(
         'load',
         'modules',
       ]);
-      expect(state.modules.get('siampark.agreements')).toBe('disabled');
-      expect(state.modules.get('siampark.property')).toBe('active');
+      expect(state.modules.get('legal.agreements')).toBe('disabled');
+      expect(state.modules.get('property.portfolio')).toBe('active');
       expect(second.companies).toEqual(first.companies);
     }),
 );

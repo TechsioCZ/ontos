@@ -80,9 +80,9 @@ const catalog: Catalog = {
   compositionRevision: REVISION,
   modules: [
     {
-      appId: 'siampark-work',
-      displayName: 'siampark.work',
-      moduleId: 'siampark.work',
+      appId: 'work-tasks',
+      displayName: 'work.tasks',
+      moduleId: 'work.tasks',
       actions: [],
       probeReadSlug: 'records',
       reads: [],
@@ -137,7 +137,7 @@ describe('resolveCapabilities', () => {
     installFetch({
       gateway: gatewayOnlyFor(OBCHOD),
       reads: {
-        'siampark-work /reads/records': () => json(200, { canWrite: true, revision: 1 }),
+        'work-tasks /reads/records': () => json(200, { canWrite: true, revision: 1 }),
         'crm /reads/records': () => json(403, { code: 'read_permission_denied', detail: 'x' }),
         'party-registry /reads/customer-list': () => json(200, { items: [] }),
       },
@@ -152,8 +152,8 @@ describe('resolveCapabilities', () => {
     const [company] = result.companies;
     assert.equal(company?.label, 'Obchodní firma');
     const byModule = Object.fromEntries((company?.modules ?? []).map((module) => [module.moduleId, module]));
-    assert.equal(byModule['siampark.work']?.read, 'allowed');
-    assert.equal(byModule['siampark.work']?.write, 'allowed');
+    assert.equal(byModule['work.tasks']?.read, 'allowed');
+    assert.equal(byModule['work.tasks']?.write, 'allowed');
     assert.equal(byModule['demo.crm']?.read, 'denied');
     assert.equal(byModule['demo.crm']?.write, 'denied');
     assert.equal(byModule['party.registry']?.read, 'allowed');
@@ -168,7 +168,7 @@ describe('resolveCapabilities', () => {
             {
               legalEntityId: OBCHOD,
               legalName: 'Obchodní firma',
-              modules: [{ moduleId: 'siampark.work', read: true, write: true }],
+              modules: [{ moduleId: 'work.tasks', read: true, write: true }],
             },
           ],
           principal: { displayName: 'Obchodní agent', kind: 'agent', principalId: 'p-2' },
@@ -185,7 +185,7 @@ describe('resolveCapabilities', () => {
     assert.equal(result.writePolicy, 'approval');
     const [company] = result.companies;
     const byModule = Object.fromEntries((company?.modules ?? []).map((module) => [module.moduleId, module]));
-    assert.equal(byModule['siampark.work']?.write, 'allowed');
+    assert.equal(byModule['work.tasks']?.write, 'allowed');
     assert.equal(byModule['demo.crm']?.read, 'denied');
   });
 
@@ -205,10 +205,10 @@ describe('resolveCapabilities', () => {
 
 describe('detectWrite', () => {
   it('reads canWrite, the CRM viewer grants and the operations agenda flags', () => {
-    assert.deepEqual(detectWrite('siampark.work', { canWrite: false }).write, 'denied');
+    assert.deepEqual(detectWrite('work.tasks', { canWrite: false }).write, 'denied');
     assert.deepEqual(detectWrite('demo.crm', { viewer: { writeAll: false, writeAssigned: true } }).write, 'allowed');
     assert.deepEqual(
-      detectWrite('demo.siampark-ops', { access: [{ canWrite: false }, { canWrite: true }] }).write,
+      detectWrite('facility.operations', { access: [{ canWrite: false }, { canWrite: true }] }).write,
       'allowed',
     );
     assert.deepEqual(detectWrite('party.registry', {}).write, 'unknown');

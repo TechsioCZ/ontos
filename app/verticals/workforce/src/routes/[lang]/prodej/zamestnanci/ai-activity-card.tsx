@@ -28,7 +28,7 @@ const outcomeVariant: Readonly<Record<string, BadgeVariant>> = {
   succeeded: 'success',
 };
 
-/** Module part of an Action key or a target module, e.g. `siampark.work.apply-command` → `siampark.work`. */
+/** Module part of an Action key or a target module, e.g. `work.tasks.apply-command` → `work.tasks`. */
 const moduleOf = (entry: AiActivityEntry): string =>
   entry.targetModuleKey ?? entry.actionKey?.replace(/\.[a-z0-9-]+$/u, '') ?? '';
 

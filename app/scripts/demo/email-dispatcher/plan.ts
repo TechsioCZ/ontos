@@ -1,8 +1,8 @@
 // @effect-diagnostics *:off
-import type { AgendaRecipientInput, AkrosOrderInput, DeliveryOutcome, PlannedEmail, SiamparkReminderInput } from './contract.ts';
+import type { AgendaRecipientInput, AkrosOrderInput, DeliveryOutcome, PlannedEmail, RentReminderInput } from './contract.ts';
 import { AGENDA_MANDATORY_EMAIL_CATEGORIES, AGENDA_OPTIONAL_EMAIL_CATEGORIES } from './contract.ts';
 import type { AkrosOrderEmailEvent } from './templates.ts';
-import { agendaNotificationEmail, akrosOrderEmail, orderEventLabel, siamparkReminderEmail } from './templates.ts';
+import { agendaNotificationEmail, akrosOrderEmail, orderEventLabel, rentReminderEmail } from './templates.ts';
 
 export interface OrderEmailEvent {
   readonly at: string;
@@ -96,7 +96,7 @@ export const planAkrosOrderEmails = (
   });
 };
 
-export const planSiamparkReminderEmail = (input: SiamparkReminderInput, enabledSince: string): PlannedEmail | null => {
+export const planRentReminderEmail = (input: RentReminderInput, enabledSince: string): PlannedEmail | null => {
   const recipient = input.reminder.recipient.trim();
   if (
     input.reminder.deliveryMode !== 'EMAIL' ||
@@ -106,17 +106,17 @@ export const planSiamparkReminderEmail = (input: SiamparkReminderInput, enabledS
     return null;
   }
   return {
-    dedupeKey: `siampark-reminder:${input.reminder.id}`,
+    dedupeKey: `rent-reminder:${input.reminder.id}`,
     event: 'PAYMENT_REMINDER',
     eventAt: input.reminder.createdAt,
     eventLabel: 'Upomínka k úhradě',
     recipient,
-    source: 'siampark-reminder',
+    source: 'rent-reminder',
     subjectId: input.reminder.id,
     subjectNumber: input.invoiceNumber ?? '',
     tenantId: input.tenantId,
     legalEntityId: input.legalEntityId,
-    ...siamparkReminderEmail(input),
+    ...rentReminderEmail(input),
   };
 };
 
@@ -147,13 +147,13 @@ export const planAgendaEmails = (
   return [...batches.entries()].map(([createdAt, notifications]): PlannedEmail => {
     const subjectId = `${input.principalId}:${createdAt}`;
     return {
-      dedupeKey: `siampark-agenda:${subjectId}`,
+      dedupeKey: `facility-agenda:${subjectId}`,
       event: 'AGENDA_NOTIFICATION',
       eventAt: createdAt,
       eventLabel: notifications.length === 1 ? 'Upozornění z agendy' : `Upozornění z agendy (${notifications.length})`,
       legalEntityId: input.legalEntityId,
       recipient,
-      source: 'siampark-agenda',
+      source: 'facility-agenda',
       subjectId,
       subjectNumber: '',
       tenantId: input.tenantId,

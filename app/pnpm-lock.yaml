@@ -262,24 +262,24 @@ importers:
       '@app/privacy':
         specifier: workspace:*
         version: link:verticals/privacy
-      '@app/siampark-agreements':
+      '@app/legal-agreements':
         specifier: workspace:*
-        version: link:verticals/siampark-agreements
-      '@app/siampark-billing-finance':
+        version: link:verticals/legal-agreements
+      '@app/finance-billing':
         specifier: workspace:*
-        version: link:verticals/siampark-billing-finance
-      '@app/siampark-occupancy':
+        version: link:verticals/finance-billing
+      '@app/property-leasing':
         specifier: workspace:*
-        version: link:verticals/siampark-occupancy
-      '@app/siampark-property':
+        version: link:verticals/property-leasing
+      '@app/property-portfolio':
         specifier: workspace:*
-        version: link:verticals/siampark-property
-      '@app/siampark-relationships':
+        version: link:verticals/property-portfolio
+      '@app/crm-activities':
         specifier: workspace:*
-        version: link:verticals/siampark-relationships
-      '@app/siampark-work':
+        version: link:verticals/crm-activities
+      '@app/work-tasks':
         specifier: workspace:*
-        version: link:verticals/siampark-work
+        version: link:verticals/work-tasks
       '@authzed/authzed-node':
         specifier: 1.6.1
         version: 1.6.1
@@ -486,27 +486,27 @@ importers:
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
-      '@app/siampark-agreements':
+      '@app/legal-agreements':
         specifier: workspace:*
-        version: link:../../verticals/siampark-agreements
-      '@app/siampark-billing-finance':
+        version: link:../../verticals/legal-agreements
+      '@app/finance-billing':
         specifier: workspace:*
-        version: link:../../verticals/siampark-billing-finance
-      '@app/siampark-occupancy':
+        version: link:../../verticals/finance-billing
+      '@app/property-leasing':
         specifier: workspace:*
-        version: link:../../verticals/siampark-occupancy
-      '@app/siampark-ops':
+        version: link:../../verticals/property-leasing
+      '@app/facility-operations':
         specifier: workspace:*
-        version: link:../../verticals/siampark-ops
-      '@app/siampark-property':
+        version: link:../../verticals/facility-operations
+      '@app/property-portfolio':
         specifier: workspace:*
-        version: link:../../verticals/siampark-property
-      '@app/siampark-relationships':
+        version: link:../../verticals/property-portfolio
+      '@app/crm-activities':
         specifier: workspace:*
-        version: link:../../verticals/siampark-relationships
-      '@app/siampark-work':
+        version: link:../../verticals/crm-activities
+      '@app/work-tasks':
         specifier: workspace:*
-        version: link:../../verticals/siampark-work
+        version: link:../../verticals/work-tasks
       '@app/tagging':
         specifier: workspace:*
         version: link:../../verticals/tagging
@@ -2693,12 +2693,12 @@ importers:
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
-      '@app/siampark-billing-finance':
+      '@app/finance-billing':
         specifier: workspace:*
-        version: link:../siampark-billing-finance
-      '@app/siampark-work':
+        version: link:../finance-billing
+      '@app/work-tasks':
         specifier: workspace:*
-        version: link:../siampark-work
+        version: link:../work-tasks
       '@app/tagging':
         specifier: workspace:*
         version: link:../tagging
@@ -2853,12 +2853,12 @@ importers:
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
-      '@app/siampark-agreements':
+      '@app/legal-agreements':
         specifier: workspace:*
-        version: link:../siampark-agreements
-      '@app/siampark-work':
+        version: link:../legal-agreements
+      '@app/work-tasks':
         specifier: workspace:*
-        version: link:../siampark-work
+        version: link:../work-tasks
       '@app/tagging':
         specifier: workspace:*
         version: link:../tagging
@@ -2987,7 +2987,7 @@ importers:
         specifier: 1.2.4
         version: 1.2.4(@rspack/core@2.2.8(@swc/helpers@0.5.23))(supports-color@10.2.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.3))(svgo@4.1.0))
 
-  verticals/siampark-agreements:
+  verticals/legal-agreements:
     dependencies:
       '@app/admin-ui':
         specifier: workspace:*
@@ -3007,15 +3007,15 @@ importers:
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
-      '@app/siampark-occupancy':
+      '@app/property-leasing':
         specifier: workspace:*
-        version: link:../siampark-occupancy
-      '@app/siampark-ops':
+        version: link:../property-leasing
+      '@app/facility-operations':
         specifier: workspace:*
-        version: link:../siampark-ops
-      '@app/siampark-property':
+        version: link:../facility-operations
+      '@app/property-portfolio':
         specifier: workspace:*
-        version: link:../siampark-property
+        version: link:../property-portfolio
       '@effect/opentelemetry':
         specifier: 4.0.0-rc.117
         version: 4.0.0-rc.117(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-rc.117)
@@ -3135,7 +3135,7 @@ importers:
         specifier: 1.2.4
         version: 1.2.4(@rspack/core@2.2.8(@swc/helpers@0.5.23))(supports-color@10.2.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.3))(svgo@4.1.0))
 
-  verticals/siampark-billing-finance:
+  verticals/finance-billing:
     dependencies:
       '@app/admin-ui':
         specifier: workspace:*
@@ -3161,18 +3161,18 @@ importers:
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
-      '@app/siampark-agreements':
+      '@app/legal-agreements':
         specifier: workspace:*
-        version: link:../siampark-agreements
-      '@app/siampark-occupancy':
+        version: link:../legal-agreements
+      '@app/property-leasing':
         specifier: workspace:*
-        version: link:../siampark-occupancy
-      '@app/siampark-property':
+        version: link:../property-leasing
+      '@app/property-portfolio':
         specifier: workspace:*
-        version: link:../siampark-property
-      '@app/siampark-work':
+        version: link:../property-portfolio
+      '@app/work-tasks':
         specifier: workspace:*
-        version: link:../siampark-work
+        version: link:../work-tasks
       '@effect/opentelemetry':
         specifier: 4.0.0-rc.117
         version: 4.0.0-rc.117(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-rc.117)
@@ -3295,7 +3295,7 @@ importers:
         specifier: 1.2.4
         version: 1.2.4(@rspack/core@2.2.8(@swc/helpers@0.5.23))(supports-color@10.2.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.3))(svgo@4.1.0))
 
-  verticals/siampark-occupancy:
+  verticals/property-leasing:
     dependencies:
       '@app/admin-ui':
         specifier: workspace:*
@@ -3315,21 +3315,21 @@ importers:
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
-      '@app/siampark-agreements':
+      '@app/legal-agreements':
         specifier: workspace:*
-        version: link:../siampark-agreements
-      '@app/siampark-billing-finance':
+        version: link:../legal-agreements
+      '@app/finance-billing':
         specifier: workspace:*
-        version: link:../siampark-billing-finance
-      '@app/siampark-ops':
+        version: link:../finance-billing
+      '@app/facility-operations':
         specifier: workspace:*
-        version: link:../siampark-ops
-      '@app/siampark-property':
+        version: link:../facility-operations
+      '@app/property-portfolio':
         specifier: workspace:*
-        version: link:../siampark-property
-      '@app/siampark-work':
+        version: link:../property-portfolio
+      '@app/work-tasks':
         specifier: workspace:*
-        version: link:../siampark-work
+        version: link:../work-tasks
       '@effect/opentelemetry':
         specifier: 4.0.0-rc.117
         version: 4.0.0-rc.117(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-rc.117)
@@ -3449,7 +3449,7 @@ importers:
         specifier: 1.2.4
         version: 1.2.4(@rspack/core@2.2.8(@swc/helpers@0.5.23))(supports-color@10.2.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.3))(svgo@4.1.0))
 
-  verticals/siampark-ops:
+  verticals/facility-operations:
     dependencies:
       '@app/admin-ui':
         specifier: workspace:*
@@ -3469,21 +3469,21 @@ importers:
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
-      '@app/siampark-agreements':
+      '@app/legal-agreements':
         specifier: workspace:*
-        version: link:../siampark-agreements
-      '@app/siampark-billing-finance':
+        version: link:../legal-agreements
+      '@app/finance-billing':
         specifier: workspace:*
-        version: link:../siampark-billing-finance
-      '@app/siampark-occupancy':
+        version: link:../finance-billing
+      '@app/property-leasing':
         specifier: workspace:*
-        version: link:../siampark-occupancy
-      '@app/siampark-property':
+        version: link:../property-leasing
+      '@app/property-portfolio':
         specifier: workspace:*
-        version: link:../siampark-property
-      '@app/siampark-work':
+        version: link:../property-portfolio
+      '@app/work-tasks':
         specifier: workspace:*
-        version: link:../siampark-work
+        version: link:../work-tasks
       '@app/tagging':
         specifier: workspace:*
         version: link:../tagging
@@ -3612,7 +3612,7 @@ importers:
         specifier: 1.2.4
         version: 1.2.4(@rspack/core@2.2.8(@swc/helpers@0.5.23))(supports-color@10.2.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.3))(svgo@4.1.0))
 
-  verticals/siampark-property:
+  verticals/property-portfolio:
     dependencies:
       '@app/core-runtime':
         specifier: workspace:*
@@ -3626,24 +3626,24 @@ importers:
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
-      '@app/siampark-agreements':
+      '@app/legal-agreements':
         specifier: workspace:*
-        version: link:../siampark-agreements
-      '@app/siampark-billing-finance':
+        version: link:../legal-agreements
+      '@app/finance-billing':
         specifier: workspace:*
-        version: link:../siampark-billing-finance
-      '@app/siampark-occupancy':
+        version: link:../finance-billing
+      '@app/property-leasing':
         specifier: workspace:*
-        version: link:../siampark-occupancy
-      '@app/siampark-ops':
+        version: link:../property-leasing
+      '@app/facility-operations':
         specifier: workspace:*
-        version: link:../siampark-ops
-      '@app/siampark-relationships':
+        version: link:../facility-operations
+      '@app/crm-activities':
         specifier: workspace:*
-        version: link:../siampark-relationships
-      '@app/siampark-work':
+        version: link:../crm-activities
+      '@app/work-tasks':
         specifier: workspace:*
-        version: link:../siampark-work
+        version: link:../work-tasks
       '@effect/opentelemetry':
         specifier: 4.0.0-rc.117
         version: 4.0.0-rc.117(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-rc.117)
@@ -3763,7 +3763,7 @@ importers:
         specifier: 1.2.4
         version: 1.2.4(@rspack/core@2.2.8(@swc/helpers@0.5.23))(supports-color@10.2.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.3))(svgo@4.1.0))
 
-  verticals/siampark-relationships:
+  verticals/crm-activities:
     dependencies:
       '@app/core-runtime':
         specifier: workspace:*
@@ -3780,9 +3780,9 @@ importers:
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
-      '@app/siampark-work':
+      '@app/work-tasks':
         specifier: workspace:*
-        version: link:../siampark-work
+        version: link:../work-tasks
       '@effect/opentelemetry':
         specifier: 4.0.0-rc.117
         version: 4.0.0-rc.117(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-rc.117)
@@ -3905,7 +3905,7 @@ importers:
         specifier: 1.2.4
         version: 1.2.4(@rspack/core@2.2.8(@swc/helpers@0.5.23))(supports-color@10.2.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.3))(svgo@4.1.0))
 
-  verticals/siampark-work:
+  verticals/work-tasks:
     dependencies:
       '@app/admin-ui':
         specifier: workspace:*
@@ -3928,12 +3928,12 @@ importers:
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
-      '@app/siampark-agreements':
+      '@app/legal-agreements':
         specifier: workspace:*
-        version: link:../siampark-agreements
-      '@app/siampark-property':
+        version: link:../legal-agreements
+      '@app/property-portfolio':
         specifier: workspace:*
-        version: link:../siampark-property
+        version: link:../property-portfolio
       '@app/workforce':
         specifier: workspace:*
         version: link:../workforce

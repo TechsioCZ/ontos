@@ -92,7 +92,7 @@ const siampark = '71000000-0000-4000-8000-000000000021';
 const management = '72000000-0000-4000-8000-000000000021';
 const ownTaskReaders = ['72000000-0000-4000-8000-000000000023', '72000000-0000-4000-8000-000000000024'];
 const ownTaskRelationships = ownTaskReaders.flatMap((principalId) =>
-  ['siampark.work', 'demo.workforce'].flatMap((moduleId) => {
+  ['work.tasks', 'demo.workforce'].flatMap((moduleId) => {
     const resourceId = toModuleAccessObjectId(demoTenantId, siampark, moduleId) ?? '';
     return [
       {

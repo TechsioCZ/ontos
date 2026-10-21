@@ -31,7 +31,7 @@ const program = Effect.gen(function* () {
   const relationships = principalRelationships(
     persona.principalId,
     persona.role,
-    [{ actionKey: 'demo.siampark-ops.apply-command', provisioning: 'explicit' }],
+    [{ actionKey: 'facility.operations.apply-command', provisioning: 'explicit' }],
     rentalDemoLegalEntityId,
   );
   const client = yield* Effect.acquireRelease(
@@ -39,7 +39,7 @@ const program = Effect.gen(function* () {
     (value) => Effect.sync(() => value.close()),
   );
   yield* client.writeRelationships(bootstrapRelationshipRequest(relationships));
-  const revoked = ['demo.siampark_ops.write_operational', 'demo.siampark_ops.write_all'].map((permission) =>
+  const revoked = ['facility.operations.write_operational', 'facility.operations.write_all'].map((permission) =>
     v1.RelationshipUpdate.create({
       operation: v1.RelationshipUpdate_Operation.DELETE,
       relationship: v1.Relationship.create({
@@ -47,7 +47,7 @@ const program = Effect.gen(function* () {
         resource: v1.ObjectReference.create({
           objectId:
             toContextPermissionAccessObjectId(demoTenantId, rentalDemoLegalEntityId, {
-              moduleId: 'demo.siampark-ops',
+              moduleId: 'facility.operations',
               permission,
             }) ?? '',
           objectType: 'context_permission',

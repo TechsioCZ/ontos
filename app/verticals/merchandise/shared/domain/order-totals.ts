@@ -5,7 +5,7 @@ export const ORDER_NUMBER_PREFIX = 'OBJ-2026-';
 
 /**
  * Line VAT in whole minor units, rounded half-up. Unit prices are net; VAT is computed per line from the
- * snapshot rate, matching siampark-billing-finance so an order and its invoice agree on the same arithmetic.
+ * snapshot rate, matching finance-billing so an order and its invoice agree on the same arithmetic.
  */
 export const orderLineVatMinor = (line: Pick<OrderLine, 'quantity' | 'unitPriceMinor' | 'vatRate'>): number =>
   Math.floor((line.quantity * line.unitPriceMinor * line.vatRate + 50) / 100);

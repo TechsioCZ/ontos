@@ -25,15 +25,15 @@ const tagged = (tag: string, properties: Record<string, unknown> = {}) => ({
 
 describe('capability catalog helpers', () => {
   it('builds snake_case MCP tool names', () => {
-    expect(toolNameOf('siampark-work', 'CreateTask')).toBe('siampark_work__create_task');
+    expect(toolNameOf('work-tasks', 'CreateTask')).toBe('work_tasks__create_task');
     expect(toolNameOf('party-registry', 'read_customer-list')).toBe('party_registry__read_customer_list');
   });
 
   it('shortens long tool names deterministically with a hash suffix', () => {
-    const name = toolNameOf('siampark-work', 'x'.repeat(90));
+    const name = toolNameOf('work-tasks', 'x'.repeat(90));
     expect(name.length).toBeLessThanOrEqual(64);
     expect(name).toMatch(/^[a-z0-9_]+$/u);
-    expect(toolNameOf('siampark-work', 'x'.repeat(90))).toBe(name);
+    expect(toolNameOf('work-tasks', 'x'.repeat(90))).toBe(name);
   });
 
   it('finds tagged variants through nested anyOf and $ref in source order', () => {
@@ -61,7 +61,7 @@ describe('capability catalog discovery', () => {
         composition: {
           revision: 'r1',
           modules: [
-            manifestModule('siampark.work', 'siampark-work', ['siampark.work.records'], ['siampark.work.apply-command']),
+            manifestModule('work.tasks', 'work-tasks', ['work.tasks.records'], ['work.tasks.apply-command']),
             manifestModule('demo.crm', 'crm', ['demo.crm.records'], ['demo.crm.apply-command']),
             manifestModule('party.registry', 'party-registry', ['party.registry.customer-list'], []),
           ],
@@ -75,12 +75,12 @@ describe('capability catalog discovery', () => {
 
       expect(catalog.compositionRevision).toBe('r1');
 
-      const work = catalog.modules.find((module) => module.moduleId === 'siampark.work');
-      expect(work?.reads.map((read) => read.id)).toContain('siampark.work/read/records');
+      const work = catalog.modules.find((module) => module.moduleId === 'work.tasks');
+      expect(work?.reads.map((read) => read.id)).toContain('work.tasks/read/records');
       expect(work?.probeReadSlug).toBe('records');
       expect(work?.supportsAiProposals).toBe(false);
-      const createTask = work?.actions.find((action) => action.id === 'siampark.work/command/CreateTask');
-      expect(createTask?.toolName).toBe('siampark_work__create_task');
+      const createTask = work?.actions.find((action) => action.id === 'work.tasks/command/CreateTask');
+      expect(createTask?.toolName).toBe('work_tasks__create_task');
       expect(createTask?.commandTag).toBe('CreateTask');
       const properties = createTask?.inputSchema['properties'] as Record<string, unknown>;
       expect(properties).toHaveProperty('title');

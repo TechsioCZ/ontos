@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { RecordsResponseSchema } from '@app/siampark-work/contracts/records';
+import { RecordsResponseSchema } from '@app/work-tasks/contracts/records';
 import { computeMetric, computePipelineSummary } from '../../shared/metrics.ts';
 import type { MetricInputs } from '../../shared/metrics.ts';
 

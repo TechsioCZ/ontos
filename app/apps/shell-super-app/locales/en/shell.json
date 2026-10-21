@@ -43,11 +43,12 @@
           "eshop": "Coffee and tea online shop: products, variants, orders and dispatch."
         },
         "groupHints": {
-          "crm": "Clients, visits and sales of the sales team",
-          "sales": "Customers, deals and documents",
-          "operations": "The team's everyday work",
-          "siamparkOps": "Estate operations, assets and energy",
-          "insights": "Numbers and trends",
+          "realEstate": "Properties, leases and stays",
+          "facility": "Operations, assets and energy",
+          "finance": "Invoices and payments",
+          "sales": "Clients, deals and contracts",
+          "commerce": "Orders and products",
+          "team": "Tasks and people in the team",
           "settings": "Company and access administration"
         }
       },
@@ -63,29 +64,19 @@
       "navigation": {
         "home": "Home",
         "label": "Dashboard navigation",
-        "siampark": {
-          "overview": "Overview",
-          "properties": "Properties",
-          "occupancy": "Leases and stays",
-          "agreements": "Agreements",
-          "finance": "Finance",
-          "work": "Tasks",
-          "relationships": "Activities",
-          "contacts": "Contacts",
-          "integrations": "Integrations"
-        },
         "pending": "Loading page…",
         "inactive": "Inactive",
         "close": "Close navigation",
         "toggle": "Toggle navigation",
         "groups": {
-          "sales": "Sales",
-          "operations": "Operations",
-          "insights": "Insights",
+          "realEstate": "Real estate and leases",
+          "facility": "Facility operations",
+          "finance": "Finance",
+          "sales": "Sales and CRM",
+          "commerce": "E-commerce",
+          "team": "People and tasks",
           "settings": "Settings",
-          "other": "Other modules",
-          "crm": "CRM",
-          "siamparkOps": "Site operations"
+          "other": "Other modules"
         },
         "items": {
           "opportunities": "Opportunities",
@@ -115,7 +106,11 @@
           "opsMeters": "Meters and energy",
           "opsPurchasing": "Stock and purchasing",
           "opsSecurity": "Security",
-          "opsDocuments": "Documents"
+          "opsDocuments": "Documents",
+          "activities": "Activities",
+          "contacts": "Contacts",
+          "integrations": "Integrations",
+          "rentalOverview": "Rental overview"
         }
       },
       "sidebar": {

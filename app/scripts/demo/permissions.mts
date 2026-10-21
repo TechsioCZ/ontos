@@ -24,24 +24,24 @@ import {
 } from './fixture-ids.mts';
 
 /**
- * Module IDs as declared in each `vertical.manifest.ts`. Vertical directories: party-registry, siampark-work,
- * siampark-billing-finance, workforce, tagging, sales-pipeline, merchandise, sales-insights, commerce-customer-context.
+ * Module IDs as declared in each `vertical.manifest.ts`. Vertical directories: party-registry, work-tasks,
+ * finance-billing, workforce, tagging, sales-pipeline, merchandise, sales-insights, commerce-customer-context.
  */
 export const demoModuleIds = [
   'commerce.customer-context',
   'party.registry',
-  'siampark.work',
-  'siampark.billing-finance',
+  'work.tasks',
+  'finance.billing',
   'demo.workforce',
   'demo.tagging',
   'demo.sales-pipeline',
   'demo.merchandise',
   'demo.sales-insights',
-  'siampark.property',
-  'siampark.occupancy',
-  'siampark.agreements',
+  'property.portfolio',
+  'property.leasing',
+  'legal.agreements',
   'demo.crm',
-  'demo.siampark-ops',
+  'facility.operations',
 ] as const;
 export type DemoModuleId = (typeof demoModuleIds)[number];
 export const ModuleAccessSchema = Schema.Literals(['read', 'write']);
@@ -58,8 +58,8 @@ const contextPermissionModules: ReadonlySet<DemoModuleId> = new Set([
   'demo.sales-pipeline',
   'demo.tagging',
   'demo.workforce',
-  'siampark.work',
-  'demo.siampark-ops',
+  'work.tasks',
+  'facility.operations',
 ]);
 export const contextPermissionKey = (moduleId: DemoModuleId, access: ModuleAccess) =>
   `${moduleId.replaceAll('-', '_')}.${access === 'read' ? 'read_all' : 'write_all'}`;
@@ -79,9 +79,9 @@ const everything = {
   'demo.tagging': 'write',
   'demo.workforce': 'write',
   'party.registry': 'write',
-  'siampark.agreements': 'write',
-  'siampark.billing-finance': 'write',
-  'siampark.work': 'write',
+  'legal.agreements': 'write',
+  'finance.billing': 'write',
+  'work.tasks': 'write',
 } as const satisfies Readonly<Partial<Record<DemoModuleId, ModuleAccess>>>;
 
 export interface DemoRole {
@@ -107,8 +107,8 @@ export const demoRoles = {
       // Customer lists show Štítky; without this read every tag cell fails to load for the accountant.
       'demo.tagging': 'read',
       'party.registry': 'read',
-      'siampark.agreements': 'read',
-      'siampark.billing-finance': 'write',
+      'legal.agreements': 'read',
+      'finance.billing': 'write',
     },
   },
   agentBot: {
@@ -122,9 +122,9 @@ export const demoRoles = {
       'demo.tagging': 'write',
       'demo.workforce': 'read',
       'party.registry': 'read',
-      'siampark.agreements': 'read',
-      'siampark.billing-finance': 'read',
-      'siampark.work': 'write',
+      'legal.agreements': 'read',
+      'finance.billing': 'read',
+      'work.tasks': 'write',
     },
   },
   headOfSales: { identityAdmin: true, label: 'Vedoucí obchodu', modules: everything },
@@ -140,15 +140,15 @@ export const demoRoles = {
       'demo.tagging': 'write',
       'demo.workforce': 'read',
       'party.registry': 'write',
-      'siampark.agreements': 'write',
-      'siampark.billing-finance': 'read',
-      'siampark.work': 'write',
+      'legal.agreements': 'write',
+      'finance.billing': 'read',
+      'work.tasks': 'write',
     },
   },
   warehouse: {
     identityAdmin: false,
     label: 'Skladník',
-    modules: { 'demo.merchandise': 'write', 'siampark.work': 'write' },
+    modules: { 'demo.merchandise': 'write', 'work.tasks': 'write' },
   },
 } as const satisfies Readonly<Record<string, DemoRole>>;
 export type DemoRoleKey = keyof typeof demoRoles;
@@ -302,11 +302,11 @@ export const rentalDemoRoles = {
       'commerce.customer-context': 'read',
       'demo.tagging': 'read',
       'party.registry': 'read',
-      'siampark.agreements': 'read',
-      'siampark.billing-finance': 'write',
+      'legal.agreements': 'read',
+      'finance.billing': 'write',
       // S10-03: the accountant opens the lease and sees the agreed rent and its contract.
-      'siampark.occupancy': 'read',
-      'siampark.property': 'read',
+      'property.leasing': 'read',
+      'property.portfolio': 'read',
     },
   },
   agentBot: {
@@ -318,10 +318,10 @@ export const rentalDemoRoles = {
       'demo.tagging': 'write',
       'demo.workforce': 'read',
       'party.registry': 'read',
-      'siampark.agreements': 'read',
-      'siampark.billing-finance': 'read',
-      'siampark.property': 'read',
-      'siampark.work': 'write',
+      'legal.agreements': 'read',
+      'finance.billing': 'read',
+      'property.portfolio': 'read',
+      'work.tasks': 'write',
     },
   },
   headOfSales: {
@@ -334,11 +334,11 @@ export const rentalDemoRoles = {
       'demo.tagging': 'write',
       'demo.workforce': 'read',
       'party.registry': 'write',
-      'siampark.agreements': 'write',
-      'siampark.billing-finance': 'write',
-      'siampark.occupancy': 'write',
-      'siampark.property': 'write',
-      'siampark.work': 'write',
+      'legal.agreements': 'write',
+      'finance.billing': 'write',
+      'property.leasing': 'write',
+      'property.portfolio': 'write',
+      'work.tasks': 'write',
     },
   },
   salesRep: {
@@ -351,24 +351,24 @@ export const rentalDemoRoles = {
       'demo.tagging': 'write',
       'demo.workforce': 'read',
       'party.registry': 'write',
-      'siampark.agreements': 'write',
-      'siampark.billing-finance': 'read',
+      'legal.agreements': 'write',
+      'finance.billing': 'read',
       // S01-02: the salesperson logs calls and moves the business case; Provoz books stays (S10).
-      'siampark.occupancy': 'write',
-      'siampark.property': 'read',
-      'siampark.work': 'write',
+      'property.leasing': 'write',
+      'property.portfolio': 'read',
+      'work.tasks': 'write',
     },
   },
 } as const satisfies Readonly<Partial<Record<DemoRoleKey, DemoRole>>>;
 
 /**
  * The original Siampark accounts (`scripts/siampark/fixtures.mts` demoAccounts, created by `pnpm demo:reset`) in the
- * Siampark company 0021, each with the `demo.siampark-ops` agendas. The external agent sees operational agendas only.
+ * Siampark company 0021, each with the `facility.operations` agendas. The external agent sees operational agendas only.
  */
-const withSiamparkOps = (role: DemoRole): DemoRole => ({
+const withFacilityOperations = (role: DemoRole): DemoRole => ({
   ...role,
   identityAdmin: false,
-  modules: { ...role.modules, 'demo.siampark-ops': 'write' },
+  modules: { ...role.modules, 'facility.operations': 'write' },
 });
 export const siamparkRentalPersonas = [
   {
@@ -376,7 +376,7 @@ export const siamparkRentalPersonas = [
     principalId: '72000000-0000-4000-8000-000000000021',
     // S00: Vedení keeps every CRM contact and entrusts chosen ones to the external salesperson (demo.crm.assign).
     role: (() => {
-      const base = withSiamparkOps(rentalDemoRoles.headOfSales);
+      const base = withFacilityOperations(rentalDemoRoles.headOfSales);
       return {
         ...base,
         contextPermissions: { 'demo.crm': ['demo.crm.read_all', 'demo.crm.write_all', 'demo.crm.assign'] },
@@ -387,12 +387,12 @@ export const siamparkRentalPersonas = [
   {
     email: 'operations@siampark.demo',
     principalId: '72000000-0000-4000-8000-000000000022',
-    role: withSiamparkOps(rentalDemoRoles.salesRep),
+    role: withFacilityOperations(rentalDemoRoles.salesRep),
   },
   {
     email: 'finance@siampark.demo',
     principalId: '72000000-0000-4000-8000-000000000023',
-    role: withSiamparkOps(rentalDemoRoles.accountant),
+    role: withFacilityOperations(rentalDemoRoles.accountant),
   },
   {
     email: 'external@siampark.demo',
@@ -405,15 +405,15 @@ export const siamparkRentalPersonas = [
     role: {
       contextPermissions: {
         'demo.crm': ['demo.crm.read_assigned'],
-        // S00: provoz read-only. Without read_all/write_all siampark-ops returns only the calendar events assigned
+        // S00: provoz read-only. Without read_all/write_all facility-operations returns only the calendar events assigned
         // to him and operational meter data; no agenda or meter write (the apply-command Action stays granted only
         // for his own inbox, preferences and export log). Live: scripts/demo/ops-operational-permissions.mts.
-        'demo.siampark-ops': ['demo.siampark_ops.read_operational'],
+        'facility.operations': ['facility.operations.read_operational'],
       },
       identityAdmin: false,
       label: 'Externí partner',
-      modules: { 'demo.crm': 'read', 'demo.sales-pipeline': 'read', 'demo.siampark-ops': 'write' },
-      restrictedModules: ['demo.crm', 'demo.sales-pipeline', 'demo.siampark-ops'],
+      modules: { 'demo.crm': 'read', 'demo.sales-pipeline': 'read', 'facility.operations': 'write' },
+      restrictedModules: ['demo.crm', 'demo.sales-pipeline', 'facility.operations'],
     },
   },
 ] as const satisfies readonly { readonly email: string; readonly principalId: string; readonly role: DemoRole }[];
@@ -448,7 +448,7 @@ export const crmDemoRoles = {
       'demo.tagging': 'write',
       'demo.workforce': 'write',
       'party.registry': 'write',
-      'siampark.work': 'write',
+      'work.tasks': 'write',
     },
   },
   crmManager: {
@@ -461,7 +461,7 @@ export const crmDemoRoles = {
       'demo.tagging': 'read',
       'demo.workforce': 'write',
       'party.registry': 'read',
-      'siampark.work': 'write',
+      'work.tasks': 'write',
     },
   },
   crmRep: {
@@ -469,7 +469,7 @@ export const crmDemoRoles = {
     identityAdmin: false,
     label: 'Obchodník',
     // No party.registry: its customer list is company-wide and would bypass the assigned-client filter.
-    modules: { 'demo.crm': 'write', 'demo.workforce': 'read', 'siampark.work': 'write' },
+    modules: { 'demo.crm': 'write', 'demo.workforce': 'read', 'work.tasks': 'write' },
   },
 } as const satisfies Readonly<Record<string, DemoRole>>;
 
@@ -482,7 +482,7 @@ export const eshopDemoRoles = {
       'demo.merchandise': 'write',
       'demo.tagging': 'read',
       'party.registry': 'write',
-      'siampark.work': 'write',
+      'work.tasks': 'write',
       'demo.workforce': 'write',
     },
   },
@@ -495,7 +495,7 @@ export const eshopDemoRoles = {
       'demo.tagging': 'read',
       'demo.workforce': 'write',
       'party.registry': 'write',
-      'siampark.work': 'write',
+      'work.tasks': 'write',
     },
   },
   fulfilment: { identityAdmin: false, label: 'Expedice', modules: { 'demo.merchandise': 'write' } },

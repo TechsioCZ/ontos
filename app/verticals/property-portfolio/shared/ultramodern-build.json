@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "property-portfolio",
+    "buildMarker": "8d48a9e1624695e8",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/property-portfolio",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/property-portfolio",
+    "version": "0.1.0",
+    "build": "8d48a9e1624695e8"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "property-portfolio",
+      "buildMarker": "8d48a9e1624695e8",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/property-portfolio",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/property-portfolio",
+      "version": "0.1.0",
+      "build": "8d48a9e1624695e8",
+      "surface": "api"
+    },
+    "ui": {
+      "appId": "property-portfolio",
+      "buildMarker": "8d48a9e1624695e8",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/property-portfolio",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/property-portfolio",
+      "version": "0.1.0",
+      "build": "8d48a9e1624695e8",
+      "surface": "ui"
+    }
+  }
+}

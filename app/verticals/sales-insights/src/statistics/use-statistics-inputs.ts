@@ -1,8 +1,8 @@
 import { listCustomers } from '@app/party-registry/api/client';
 import { listMovements, listOrders, listProducts } from '@app/merchandise/clients/records';
 import { listOpportunities } from '@app/sales-pipeline/clients/records';
-import { listInvoices } from '@app/siampark-billing-finance/clients/records';
-import { listTasks } from '@app/siampark-work/clients/records';
+import { listInvoices } from '@app/finance-billing/clients/records';
+import { listTasks } from '@app/work-tasks/clients/records';
 import { assignmentsForSubjects, listTags } from '@app/tagging/clients/records';
 import { listEmployees } from '@app/workforce/clients/records';
 import { Effect, Option, Random, Ref, Schema } from 'effect';

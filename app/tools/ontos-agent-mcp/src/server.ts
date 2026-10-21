@@ -10,7 +10,7 @@ import { registerDomainTools } from './tools/index.ts';
 
 const SERVER_NAME = 'ontos-sales-agent';
 const SERVER_VERSION = '0.1.0';
-const PROBE_AUDIENCE = 'siampark-work';
+const PROBE_AUDIENCE = 'work-tasks';
 
 const textResult = <A>(value: A, isError = false) => {
   const text = Predicate.isString(value) ? value : JSON.stringify(value, null, 2);
@@ -92,7 +92,7 @@ server.registerTool(
     inputSchema: {
       query: z.record(z.string(), z.string()).describe('Read query fields, sent as the JSON body.'),
       readName: z.string().min(1).describe('Read name, e.g. "records".'),
-      vertical: z.string().min(1).describe('Vertical app ID, e.g. "siampark-work".'),
+      vertical: z.string().min(1).describe('Vertical app ID, e.g. "work-tasks".'),
     },
   },
   async ({ query, readName, vertical }) => {

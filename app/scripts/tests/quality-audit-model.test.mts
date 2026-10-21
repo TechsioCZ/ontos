@@ -1477,12 +1477,12 @@ layer(NodeServices.layer)('finite dynamic quality consumers', (testing) => {
         'apps/shell-super-app/scripts/reset-demo-accounts.mts',
         'packages/core-runtime/scripts/bootstrap-development-context.mts',
         'verticals/party-registry/scripts/reset-siampark-demo.mts',
-        ...['agreements', 'billing-finance', 'occupancy', 'property', 'relationships', 'work'].map(
-          (owner) => `verticals/siampark-${owner}/scripts/reset-demo.mts`,
+        ...['legal-agreements', 'finance-billing', 'property-leasing', 'property-portfolio', 'crm-activities', 'work-tasks'].map(
+          (owner) => `verticals/${owner}/scripts/reset-demo.mts`,
         ),
       ];
-      const checked = ['agreements', 'occupancy'].map(
-        (owner) => `verticals/siampark-${owner}/scripts/verify-db-schema.mts`,
+      const checked = ['legal-agreements', 'property-leasing'].map(
+        (owner) => `verticals/${owner}/scripts/verify-db-schema.mts`,
       );
       for (const file of [...valid, ...checked]) {
         write(

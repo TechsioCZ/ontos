@@ -29,9 +29,9 @@ import type { Relationship } from './fixtures.mts';
 import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from './reset-configuration.mts';
 
 class DemoResetError extends Schema.TaggedError<DemoResetError>()('DemoResetError', { reason: Schema.String }) {}
-const workModuleId = 'siampark.work';
-const relationshipsModuleId = 'siampark.relationships';
-const financeModuleId = 'siampark.billing-finance';
+const workModuleId = 'work.tasks';
+const relationshipsModuleId = 'crm.activities';
+const financeModuleId = 'finance.billing';
 const partyModuleId = 'party.registry';
 /** Sales-demo MicroVerticals activated for the shared demo tenant (demo/sales-crm). */
 const salesDemoModuleIds = [
@@ -43,9 +43,9 @@ const salesDemoModuleIds = [
 ] as const;
 const moduleIds = [
   partyModuleId,
-  'siampark.property',
-  'siampark.occupancy',
-  'siampark.agreements',
+  'property.portfolio',
+  'property.leasing',
+  'legal.agreements',
   workModuleId,
   financeModuleId,
   relationshipsModuleId,

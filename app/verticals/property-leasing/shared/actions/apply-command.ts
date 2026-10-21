@@ -1,0 +1,130 @@
+import { OccupancyPersistenceUnavailable } from './errors/occupancy-persistence-unavailable.ts';
+import { OccupancyNotFound } from './errors/occupancy-not-found.ts';
+import { OccupancyConflict } from './errors/occupancy-conflict.ts';
+import { OccupancyRejected } from './errors/occupancy-rejected.ts';
+import { ContractRefSchema } from '@app/legal-agreements/resources/contract';
+import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { Match, Schema } from 'effect';
+
+import {
+  OccupancySchema,
+  RentTermsSchema,
+  TenantContactSchema,
+  TenantCaseStateSchema,
+  TenantCaseDetailsSchema,
+  TenantActivityInputSchema,
+  NoticeChannelSchema,
+  PreparedNoticeSchema,
+  RegistrationSheetSchema,
+} from '../apis/records.ts';
+import { OccupancyRefSchema } from '../resources/occupancy.ts';
+
+export const OccupancyCommandSchema = Schema.Union([
+  Schema.TaggedStruct('UpdateTenantDossier', {
+    occupancyRef: OccupancyRefSchema,
+    contacts: Schema.optionalKey(Schema.Array(TenantContactSchema).check(Schema.isMaxLength(50))),
+    caseState: Schema.optionalKey(TenantCaseStateSchema),
+    caseDetails: Schema.optionalKey(TenantCaseDetailsSchema),
+    archived: Schema.optionalKey(Schema.Boolean),
+    activity: Schema.optionalKey(TenantActivityInputSchema),
+  }),
+  // S01: a prospect or any customer (firm or person) gets contacts, timeline and a business case without a lease.
+  Schema.TaggedStruct('UpdateCounterpartyDossier', {
+    counterpartyRef: CounterpartyRefSchema,
+    contacts: Schema.optionalKey(Schema.Array(TenantContactSchema).check(Schema.isMaxLength(50))),
+    caseState: Schema.optionalKey(TenantCaseStateSchema),
+    caseDetails: Schema.optionalKey(TenantCaseDetailsSchema),
+    archived: Schema.optionalKey(Schema.Boolean),
+    activity: Schema.optionalKey(TenantActivityInputSchema),
+  }),
+  // S10: registration sheet (evidenční list) filled from the reservation or lease.
+  Schema.TaggedStruct('CreateRegistrationSheet', {
+    occupancyRef: OccupancyRefSchema,
+    sheetId: RegistrationSheetSchema.fields.sheetId,
+    occupants: RegistrationSheetSchema.fields.occupants,
+    purpose: RegistrationSheetSchema.fields.purpose,
+    note: RegistrationSheetSchema.fields.note,
+  }),
+  // S10: notification text prepared from a template; it is stored, never sent by this command.
+  Schema.TaggedStruct('PrepareNotice', {
+    occupancyRef: OccupancyRefSchema,
+    noticeId: PreparedNoticeSchema.fields.noticeId,
+    channel: NoticeChannelSchema,
+    templateKey: PreparedNoticeSchema.fields.templateKey,
+    recipient: PreparedNoticeSchema.fields.recipient,
+    subject: PreparedNoticeSchema.fields.subject,
+    body: PreparedNoticeSchema.fields.body,
+  }),
+  Schema.TaggedStruct('CreateDraft', { record: OccupancySchema }),
+  Schema.TaggedStruct('UpdateDraft', {
+    endDate: OccupancySchema.fields.endDate,
+    occupancyRef: OccupancyRefSchema,
+    rentTerms: Schema.optionalKey(RentTermsSchema),
+    startDate: OccupancySchema.fields.startDate,
+  }),
+  // Agreed rent can be recorded or corrected while the lease is draft, confirmed or active.
+  Schema.TaggedStruct('SetRentTerms', { occupancyRef: OccupancyRefSchema, rentTerms: RentTermsSchema }),
+  Schema.TaggedStruct('Confirm', { occupancyRef: OccupancyRefSchema }),
+  Schema.TaggedStruct('Activate', {
+    contractRef: Schema.toEncoded(Schema.OptionFromNullOr(ContractRefSchema)),
+    occupancyRef: OccupancyRefSchema,
+  }),
+  Schema.TaggedStruct('Complete', { occupancyRef: OccupancyRefSchema }),
+  Schema.TaggedStruct('Cancel', { occupancyRef: OccupancyRefSchema }),
+  Schema.TaggedStruct('ImportBooking', {
+    correlation: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+    observationId: Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('ResourceId'))),
+    outcome: Schema.Literals(['SUCCESS', 'FAILED']),
+    record: OccupancySchema,
+  }),
+  Schema.TaggedStruct('RetryBooking', {
+    observationId: Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('ResourceId'))),
+    record: OccupancySchema,
+  }),
+]);
+export type OccupancyCommand = typeof OccupancyCommandSchema.Type;
+export const ApplyCommandPayloadSchema = Schema.Struct({
+  command: OccupancyCommandSchema,
+  expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type ApplyCommandPayload = typeof ApplyCommandPayloadSchema.Type;
+export const ApplyCommandResultSchema = Schema.Struct({
+  resourceRef: Schema.toEncoded(Schema.OptionFromNullOr(OccupancyRefSchema)),
+  revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+
+export const ApplyCommandErrorSchema = Schema.Union([
+  OccupancyRejected,
+  OccupancyConflict,
+  OccupancyNotFound,
+  OccupancyPersistenceUnavailable,
+]);
+export type OccupancyError = typeof ApplyCommandErrorSchema.Type;
+
+export { OccupancyRejected } from './errors/occupancy-rejected.ts';
+
+export { OccupancyConflict } from './errors/occupancy-conflict.ts';
+
+export { OccupancyNotFound } from './errors/occupancy-not-found.ts';
+
+export { OccupancyPersistenceUnavailable } from './errors/occupancy-persistence-unavailable.ts';
+
+export const FeedbackSchema = Schema.Literals([
+  'loading',
+  'ready',
+  'saving',
+  'forbidden',
+  'conflict',
+  'validation',
+  'unavailable',
+]);
+export type Feedback = typeof FeedbackSchema.Type;
+export const failureFeedback = (failure: { readonly _tag: string; readonly status?: number }): Feedback =>
+  Match.value(failure).pipe(
+    Match.when({ status: 403 }, () => 'forbidden' as const),
+    Match.when({ status: 409 }, () => 'conflict' as const),
+    Match.when({ status: 400 }, () => 'validation' as const),
+    Match.when({ status: 422 }, () => 'validation' as const),
+    Match.when({ _tag: 'SchemaError' }, () => 'validation' as const),
+    Match.orElse(() => 'unavailable' as const),
+  );

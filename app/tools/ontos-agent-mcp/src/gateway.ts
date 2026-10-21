@@ -11,7 +11,7 @@ import { currentPrincipal } from './session.ts';
  *   - headers: x-api-key (gateway-context-api-key.ts:202-204), x-correlation-id (:34)
  *   - request body: GatewayContextRequestSchema, gateway-context.ts:128-133
  *   - response: GatewayContextResponseSchema, gateway-context.ts:135-144
- * Audience format: stable topology app ID, gateway-context.ts:29-33 (e.g. "siampark-work").
+ * Audience format: stable topology app ID, gateway-context.ts:29-33 (e.g. "work-tasks").
  * Assertions are single-use: each vertical records the redeemed `jti` (gateway_assertion_redemptions), so a second
  * request with the same token answers 401. Every vertical call therefore exchanges the key for a fresh assertion.
  */

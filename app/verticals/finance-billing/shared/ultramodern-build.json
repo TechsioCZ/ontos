@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "finance-billing",
+    "buildMarker": "0601eb5c20ee2712",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/finance-billing",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/finance-billing",
+    "version": "0.1.0",
+    "build": "0601eb5c20ee2712"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "finance-billing",
+      "buildMarker": "0601eb5c20ee2712",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/finance-billing",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/finance-billing",
+      "version": "0.1.0",
+      "build": "0601eb5c20ee2712",
+      "surface": "api"
+    },
+    "ui": {
+      "appId": "finance-billing",
+      "buildMarker": "0601eb5c20ee2712",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/finance-billing",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/finance-billing",
+      "version": "0.1.0",
+      "build": "0601eb5c20ee2712",
+      "surface": "ui"
+    }
+  }
+}

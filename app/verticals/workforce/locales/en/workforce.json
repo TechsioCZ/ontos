@@ -152,13 +152,13 @@
             "reason": "Reason"
           },
           "modules": {
-            "siampark_work": "Tasks",
+            "work_tasks": "Tasks",
             "demo_sales-pipeline": "Opportunities",
             "demo_tagging": "Tags",
             "demo_merchandise": "Orders and products",
             "demo_workforce": "Employees",
             "party_registry": "Customers",
-            "siampark_billing-finance": "Invoices",
+            "finance_billing": "Invoices",
             "demo_crm": "CRM"
           },
           "outcomes": {

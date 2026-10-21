@@ -74,16 +74,16 @@
       "path": "verticals/privacy"
     },
     {
-      "path": "verticals/siampark-property"
+      "path": "verticals/property-portfolio"
     },
     {
-      "path": "verticals/siampark-occupancy"
+      "path": "verticals/property-leasing"
     },
     {
-      "path": "verticals/siampark-agreements"
+      "path": "verticals/legal-agreements"
     },
     {
-      "path": "verticals/siampark-work"
+      "path": "verticals/work-tasks"
     },
     {
       "path": "verticals/workforce"
@@ -101,16 +101,16 @@
       "path": "verticals/merchandise"
     },
     {
-      "path": "verticals/siampark-ops"
+      "path": "verticals/facility-operations"
     },
     {
       "path": "verticals/sales-insights"
     },
     {
-      "path": "verticals/siampark-billing-finance"
+      "path": "verticals/finance-billing"
     },
     {
-      "path": "verticals/siampark-relationships"
+      "path": "verticals/crm-activities"
     }
   ]
 }

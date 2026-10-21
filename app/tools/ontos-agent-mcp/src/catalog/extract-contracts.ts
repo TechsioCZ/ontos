@@ -2,7 +2,7 @@
  * Child-process extractor for the capability catalog. Imports vertical `shared/apis/*.ts` files natively (Node type
  * stripping), so the server process never loads vertical code. Usage:
  *
- *   echo '{"modules":[{"moduleId":"siampark.work","appId":"siampark-work"}]}' \
+ *   echo '{"modules":[{"moduleId":"work.tasks","appId":"work-tasks"}]}' \
  *     | node --no-warnings src/catalog/extract-contracts.ts <verticalsRoot>
  *
  * stdout carries exactly one JSON ExtractResponse; every other message goes to stderr.

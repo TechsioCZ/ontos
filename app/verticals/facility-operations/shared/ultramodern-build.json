@@ -1,0 +1,44 @@
+{
+  "deliveryUnit": {
+    "appId": "facility-operations",
+    "buildMarker": "5af5cbe964140fbe",
+    "deployProfile": "cloudflare-ssr-mf-effect-v1",
+    "kind": "microvertical-delivery-unit",
+    "packageName": "@app/facility-operations",
+    "schemaVersion": 1,
+    "sourceRevision": "workspace",
+    "unitId": "app/facility-operations",
+    "version": "0.1.0",
+    "build": "5af5cbe964140fbe"
+  },
+  "kind": "ultramodern-build-artifact",
+  "schemaVersion": 1,
+  "surfaces": {
+    "api": {
+      "appId": "facility-operations",
+      "buildMarker": "5af5cbe964140fbe",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/facility-operations",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/facility-operations",
+      "version": "0.1.0",
+      "build": "5af5cbe964140fbe",
+      "surface": "api"
+    },
+    "ui": {
+      "appId": "facility-operations",
+      "buildMarker": "5af5cbe964140fbe",
+      "deployProfile": "cloudflare-ssr-mf-effect-v1",
+      "kind": "microvertical-delivery-unit",
+      "packageName": "@app/facility-operations",
+      "schemaVersion": 1,
+      "sourceRevision": "workspace",
+      "unitId": "app/facility-operations",
+      "version": "0.1.0",
+      "build": "5af5cbe964140fbe",
+      "surface": "ui"
+    }
+  }
+}

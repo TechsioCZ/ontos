@@ -37,9 +37,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 const taskRevert = ({ before, command, tenantId }: AgentRevertInput): AgentRevertPlan => {
   const taskRef = command['taskRef'];
   const createdRef = {
-    moduleId: 'siampark.work',
+    moduleId: 'work.tasks',
     resourceId: AGENT_CREATED_ID_PLACEHOLDER,
-    resourceType: 'siampark.work.task',
+    resourceType: 'work.tasks.task',
     tenantId,
   };
   switch (command['_tag']) {
@@ -156,9 +156,9 @@ const occupancyRevert = ({ before, command, tenantId }: AgentRevertInput): Agent
           {
             _tag: 'Cancel',
             occupancyRef: {
-              moduleId: 'siampark.occupancy',
+              moduleId: 'property.leasing',
               resourceId: AGENT_CREATED_ID_PLACEHOLDER,
-              resourceType: 'siampark.occupancy.occupancy',
+              resourceType: 'property.leasing.occupancy',
               tenantId,
             },
           },
@@ -177,11 +177,11 @@ const occupancyRevert = ({ before, command, tenantId }: AgentRevertInput): Agent
 
 export const buildAgentRevertPlan = (appId: string, input: AgentRevertInput): AgentRevertPlan => {
   switch (appId) {
-    case 'siampark-work':
+    case 'work-tasks':
       return taskRevert(input);
     case 'merchandise':
       return merchandiseRevert(input);
-    case 'siampark-occupancy':
+    case 'property-leasing':
       return occupancyRevert(input);
     default:
       return none(AGENT_REVERT_UNAVAILABLE);

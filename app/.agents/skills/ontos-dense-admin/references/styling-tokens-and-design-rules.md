@@ -7,7 +7,7 @@ OntOS is a Modern.js shell with Module Federation remotes. There are two Tailwin
 | Build | Where | Syntax |
 |---|---|---|
 | Shell ui-kit build (unprefixed) | `app/apps/shell-super-app/src/routes/ui-kit.css`: `@import '@techsio/ui-kit/tokens-with-tailwind'` + `@source` of ui-kit dist, `packages/admin-ui`, `verticals/*/src` | `gap-200 p-250 bg-surface text-fg-secondary border-border-primary` |
-| Vertical build (prefixed) | `app/verticals/<v>/src/routes/index.css`: `@import 'tailwindcss' prefix(<prefix>) source(none)` | `siamparkwork:flex siamparkwork:gap-4` |
+| Vertical build (prefixed) | `app/verticals/<v>/src/routes/index.css`: `@import 'tailwindcss' prefix(<prefix>) source(none)` | `worktasks:flex worktasks:gap-4` |
 
 Before writing classes, run:
 `grep -n '@source' app/apps/shell-super-app/src/routes/ui-kit.css`
@@ -19,7 +19,7 @@ Before writing classes, run:
 - Never mix both syntaxes for the same CSS property on one element.
 - Always verify through the shell URL. A remote opened standalone has no ui-kit styles.
 - The vertical prefix is the package name without dashes. Copy it from the vertical's `index.css`
-  (e.g. `siamparkwork`, `salespipeline`).
+  (e.g. `worktasks`, `salespipeline`).
 
 Most of the time you write almost no classes. ui-kit components and `@app/admin-ui` helpers
 style themselves. Use classes only for page layout (grid/flex/gap) and secondary text.

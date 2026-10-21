@@ -48,14 +48,14 @@ export type AgentRevertPlan = typeof AgentRevertPlanSchema.Type;
 export const AGENT_CREATED_ID_PLACEHOLDER = '$createdId';
 
 export const AgentProposalInputSchema = Schema.Struct({
-  /** Stable module app id (directory under app/verticals), e.g. `siampark-work`, `merchandise`. */
+  /** Stable module app id (directory under app/verticals), e.g. `work-tasks`, `merchandise`. */
   appId: ShortText,
   /** Module action slug; every demo module uses `apply-command` with `{ command, expectedRevision }`. */
   actionSlug: Schema.optionalKey(ShortText),
   command: AgentCommandSchema,
   diff: Schema.Array(AgentDiffLineSchema).check(Schema.isMaxLength(60)),
   reason: LongText,
-  /** Extra audiences whose assertions the module needs (siampark-work CreateTask with assignee: `workforce`). */
+  /** Extra audiences whose assertions the module needs (work-tasks CreateTask with assignee: `workforce`). */
   referenceAudiences: Schema.optionalKey(Schema.Array(ShortText).check(Schema.isMaxLength(5))),
   revert: Schema.optionalKey(AgentRevertPlanSchema),
   risk: AgentRiskSchema,
@@ -240,8 +240,8 @@ export const agentApprovalModules: readonly AgentApprovalModule[] = [
   { appId: 'crm', label: 'CRM', legacyEngine: true, moduleKey: 'demo.crm' },
   { appId: 'sales-pipeline', label: 'Obchodní případy', legacyEngine: true, moduleKey: 'demo.sales-pipeline' },
   { appId: 'merchandise', label: 'Produkty, ceny a objednávky', legacyEngine: true, moduleKey: 'demo.merchandise' },
-  { appId: 'siampark-work', label: 'Úkoly', legacyEngine: false, moduleKey: 'siampark.work' },
-  { appId: 'siampark-occupancy', label: 'Nájmy a pobyty', legacyEngine: false, moduleKey: 'siampark.occupancy' },
+  { appId: 'work-tasks', label: 'Úkoly', legacyEngine: false, moduleKey: 'work.tasks' },
+  { appId: 'property-leasing', label: 'Nájmy a pobyty', legacyEngine: false, moduleKey: 'property.leasing' },
   { appId: 'tagging', label: 'Štítky', legacyEngine: false, moduleKey: 'demo.tagging' },
 ];
 
@@ -251,15 +251,15 @@ export const agentModuleLabels: Readonly<Record<string, string>> = {
   'demo.merchandise': 'Produkty, ceny a objednávky',
   'demo.sales-insights': 'Přehledy',
   'demo.sales-pipeline': 'Obchodní případy',
-  'demo.siampark-ops': 'Provoz areálu',
+  'facility.operations': 'Provoz areálu',
   'demo.tagging': 'Štítky',
   'demo.workforce': 'Zaměstnanci',
   'party.registry': 'Zákazníci a partneři',
-  'siampark.agreements': 'Smlouvy',
-  'siampark.billing-finance': 'Faktury a platby',
-  'siampark.occupancy': 'Nájmy a pobyty',
-  'siampark.property': 'Nemovitosti',
-  'siampark.work': 'Úkoly',
+  'legal.agreements': 'Smlouvy',
+  'finance.billing': 'Faktury a platby',
+  'property.leasing': 'Nájmy a pobyty',
+  'property.portfolio': 'Nemovitosti',
+  'work.tasks': 'Úkoly',
 };
 
 export const agentModuleLabel = (moduleKey: string | null | undefined): string =>

@@ -461,8 +461,8 @@ it.effect('validates the six live owner clients with typed consumer projections 
     for (const owner of [
       'merchandise',
       'sales-pipeline',
-      'siampark-billing-finance',
-      'siampark-work',
+      'finance-billing',
+      'work-tasks',
       'tagging',
       'workforce',
     ]) {

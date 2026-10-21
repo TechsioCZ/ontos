@@ -12,7 +12,7 @@
  * Writes performed: one task created by B (+ idempotent replay), then cancelled through the same governed Action.
  * Cleanup also cancels older open tasks carrying this proof's exact title/description signature; history is retained.
  * Every cancelled proof task is then hidden from the task lists by B through the governed SetTaskArchived Action (its
- * direct link /cs/siampark/work?resourceId=… still opens it with its history), and the cancelled proof tasks of earlier
+ * direct link /cs/ukoly?resourceId=… still opens it with its history), and the cancelled proof tasks of earlier
  * runs are pruned from the stored list (Core audit stays), so no proof task clutters Úkoly.
  */
 import { spawn, spawnSync } from 'node:child_process';
@@ -353,7 +353,7 @@ record(
 mcpA.close();
 
 // Level A direct API (bypassing MCP): the backend must refuse.
-const createDirectA = await applyCommandAs(levelA, 'siampark-work', {
+const createDirectA = await applyCommandAs(levelA, 'work-tasks', {
   _tag: 'CreateTask',
   priority: 'NORMAL',
   title: 'Úroveň A — nesmí projít',
@@ -386,7 +386,7 @@ if (firstOpp !== undefined) {
     stageA.status === 403,
   );
 }
-const crossCompany = await gateway(keyOf(levelA), 'siampark-work', SIAMPARK_LEGAL_ENTITY);
+const crossCompany = await gateway(keyOf(levelA), 'work-tasks', SIAMPARK_LEGAL_ENTITY);
 record(
   'A',
   'Cizí firma (Siampark) se stejným klíčem',
@@ -420,9 +420,9 @@ try {
     'B',
     'MCP B: typovaný zápis jen do úkolů',
     'MCP B: typed writes only for tasks',
-    'siampark_work__*',
+    'work_tasks__*',
     typedWritesB.join(', ') || 'žádný',
-    toolsB.includes('ontos_execute') && typedWritesB.length > 0 && typedWritesB.every((name) => name.startsWith('siampark_work__')),
+    toolsB.includes('ontos_execute') && typedWritesB.length > 0 && typedWritesB.every((name) => name.startsWith('work_tasks__')),
   );
   const employees =
     (employeesA.value as { items?: { active: boolean; id: string; name: string; role: string }[] }).items ?? [];
@@ -540,7 +540,7 @@ try {
       );
     }
     // Hide every cancelled proof task from the lists through the governed Action (B owns these tasks).
-    const listedRecords = await readRecordsAs(levelB, 'siampark-work');
+    const listedRecords = await readRecordsAs(levelB, 'work-tasks');
     const proofItems = (
       (listedRecords.body.items ?? []) as {
         ref: { resourceId: string };
@@ -557,14 +557,14 @@ try {
         task.archivedAt === undefined,
     );
     for (const task of proofItems) {
-      const hidden = await applyCommandAs(levelB, 'siampark-work', {
+      const hidden = await applyCommandAs(levelB, 'work-tasks', {
         _tag: 'SetTaskArchived',
         archived: true,
         taskRef: task.ref,
       });
       if (hidden.status !== 200) throw new Error(`Skrytí ${task.ref.resourceId}: ${describe(hidden)}`);
       process.stdout.write(
-        `ÚKLID: důkazový úkol skryt ze seznamu přes governed Action; detail: ${shellUrl}/cs/siampark/work?resourceId=${task.ref.resourceId}\n`,
+        `ÚKLID: důkazový úkol skryt ze seznamu přes governed Action; detail: ${shellUrl}/cs/ukoly?resourceId=${task.ref.resourceId}\n`,
       );
     }
     const verified = await mcpB.call('list_tasks');
@@ -598,7 +598,7 @@ try {
 // Keep the stored list small: older cancelled proof tasks are pruned (the newest stays, hidden); Core audit keeps all.
 const pruned = spawnSync(
   process.execPath,
-  ['--no-warnings', '--env-file=.env', 'verticals/siampark-work/scripts/prune-demo-leftovers.mts', '--apply'],
+  ['--no-warnings', '--env-file=.env', 'verticals/work-tasks/scripts/prune-demo-leftovers.mts', '--apply'],
   { cwd: appRoot, encoding: 'utf-8' },
 );
 record(

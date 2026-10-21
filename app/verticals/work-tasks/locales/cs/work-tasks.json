@@ -1,0 +1,209 @@
+{
+  "work-tasks": {
+    "language": {
+      "cs": "Čeština",
+      "en": "Angličtina",
+      "switcher": "Jazyk"
+    },
+    "routes": {
+      "home": "Domů"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern plocha s lokalizovaným SSR a frameworkem řízenými public metadata."
+    },
+    "federatedSurface": "Federovaná plocha vlastněná tímto verticalem.",
+    "remoteUnavailable": "Remote vertical je nedostupný",
+    "role": "work-tasks",
+    "routeSurface": "Routovaná plocha vlastněná tímto verticalem.",
+    "title": "Úkoly",
+    "widgetBody": "Vlastní routovanou plochu verticalu.",
+    "pages": {
+      "records": {
+        "title": "Úkoly",
+        "restrictedLookups": "Související údaje z agend, ke kterým nemáte přístup, se nezobrazují.",
+        "pageDescription": "Úkoly firmy, odpovědné osoby a termíny.",
+        "newTask": "Nový úkol",
+        "create": "Nový úkol",
+        "edit": "Upravit úkol",
+        "saved": "Úkol uložen.",
+        "created": "Úkol vytvořen.",
+        "started": "Úkol zahájen.",
+        "completed": "Úkol dokončen.",
+        "start": "Zahájit",
+        "complete": "Dokončit",
+        "closedTask": "Dokončený nebo zrušený úkol nelze upravit.",
+        "loadingNames": "Načítání…",
+        "cancel": "Zrušit",
+        "saving": "Ukládám…",
+        "submitCreate": "Vytvořit úkol",
+        "submitEdit": "Uložit změny",
+        "taskTitle": "Název",
+        "titleLength": "{{length}} z {{max}} znaků",
+        "description": "Popis",
+        "assignee": "Řešitel",
+        "dueDate": "Termín",
+        "priority": "Priorita",
+        "party": "Zákazník",
+        "opportunity": "Příležitost",
+        "unassigned": "Nepřiřazeno",
+        "unknownCustomer": "Neznámý zákazník",
+        "unknownOpportunity": "Neznámá příležitost",
+        "pickCustomer": "Vyberte zákazníka",
+        "pickOpportunity": "Vyberte příležitost",
+        "companyId": "IČO {{id}}",
+        "comboboxEmpty": "Nic nenalezeno.",
+        "noOpportunities": "Žádné příležitosti k výběru.",
+        "noCustomerOpportunities": "Vybraný zákazník nemá žádné příležitosti.",
+        "tabs": {
+          "mine": "Moje úkoly",
+          "mineNamed": "Moje úkoly ({{name}})",
+          "all": "Všechny"
+        },
+        "stats": {
+          "open": "Otevřené",
+          "overdue": "Po termínu",
+          "doneThisWeek": "Hotovo tento týden",
+          "unassigned": "Nepřiřazené"
+        },
+        "filters": {
+          "search": "Hledat úkol",
+          "assignee": "Řešitel",
+          "allAssignees": "Všichni řešitelé",
+          "state": "Stav",
+          "priority": "Priorita",
+          "due": "Termín",
+          "dueOptions": {
+            "overdue": "Po termínu",
+            "today": "Dnes",
+            "none": "Bez termínu"
+          },
+          "all": "Všechny",
+          "clear": "Zrušit filtry",
+          "object": "Objekt",
+          "allObjects": "Všechny objekty",
+          "dueFrom": "Termín od",
+          "dueTo": "Termín do",
+          "showHidden": "Zobrazit skryté úkoly",
+          "rangeInverted": "Termín od je pozdější než Termín do, takže žádný úkol nevyhovuje."
+        },
+        "pagination": {
+          "label": "Stránkování",
+          "first": "První stránka",
+          "last": "Poslední stránka",
+          "next": "Další stránka",
+          "previous": "Předchozí stránka",
+          "page": "Stránka {{page}}"
+        },
+        "columns": {
+          "title": "Název",
+          "assignee": "Řešitel",
+          "party": "Zákazník",
+          "dueDate": "Termín",
+          "priority": "Priorita",
+          "state": "Stav",
+          "labels": "Štítky"
+        },
+        "bulk": {
+          "changeState": "Změnit stav",
+          "assign": "Přiřadit řešitele",
+          "busy": "Ukládám změny…",
+          "closedHint": "Dokončené a zrušené úkoly nelze vybrat pro hromadnou úpravu.",
+          "changed": "Změněno {{changed}}, přeskočeno {{skipped}}",
+          "assigned": "Přiřazeno {{changed}}, přeskočeno {{skipped}}",
+          "skipped": {
+            "closed": "Dokončené a zrušené úkoly nelze přeřadit, zůstaly beze změny.",
+            "invalid_transition": "Některé úkoly nelze přesunout do vybraného stavu.",
+            "not_found": "Některé úkoly už neexistují."
+          }
+        },
+        "discard": {
+          "createTitle": "Zahodit nový úkol?",
+          "editTitle": "Zahodit změny v úkolu „{{title}}“?",
+          "description": "Neuložené údaje se ztratí.",
+          "keep": "Pokračovat v úpravách",
+          "confirm": "Zahodit"
+        },
+        "table": {
+          "actions": "Akce",
+          "loading": "Načítání dat",
+          "pageSize": "Řádků na stránku",
+          "range": "{{start}}–{{end}} z {{total}}",
+          "selectAll": "Vybrat všechny řádky",
+          "selection": "Vybrat řádek"
+        },
+        "errors": {
+          "title": "Vyplňte název úkolu.",
+          "id": "Zadejte platné ID.",
+          "clear": "Tuto hodnotu nelze v úpravě odebrat.",
+          "mismatch": "Příležitost patří jinému zákazníkovi.",
+          "dueDate": "Zadejte termín v letech 2000–2099."
+        },
+        "empty": "Zatím tu nejsou žádné úkoly.",
+        "emptyDescription": "Založte první úkol a přiřaďte ho řešiteli.",
+        "emptyMine": "Nemáte přiřazené žádné úkoly.",
+        "mineUnlinked": "Váš účet není propojen se zaměstnancem. Zobrazují se pouze úkoly přiřazené přímo vašemu účtu; ostatní povolené úkoly najdete v záložce Všechny.",
+        "noResults": "Filtrům neodpovídá žádný úkol.",
+        "unavailable": "Data se nepodařilo načíst.",
+        "errorDescription": "Zkontrolujte připojení a zkuste to znovu.",
+        "retry": "Zkusit znovu",
+        "forbidden": "K této sekci nemáte oprávnění.",
+        "employeesUnavailable": "Seznam řešitelů se nepodařilo načíst.",
+        "referencesUnavailable": "Názvy zákazníků nebo příležitostí se nepodařilo načíst.",
+        "conflict": "Záznam mezitím upravil někdo jiný. Načtěte úkoly znovu a změnu zopakujte.",
+        "invalid": "Operaci nelze dokončit. Zkontrolujte vstup a stav úkolu.",
+        "states": {
+          "NEW": "Nový",
+          "IN_PROGRESS": "Rozpracovaný",
+          "WAITING": "Čeká",
+          "DONE": "Dokončený",
+          "CANCELLED": "Zrušený"
+        },
+        "priorities": {
+          "LOW": "Nízká",
+          "NORMAL": "Normální",
+          "HIGH": "Vysoká"
+        },
+        "invalidFilter": "Neplatný filtr zákazníka v adrese stránky.",
+        "relatedFilter": "Zobrazeny pouze záznamy tohoto zákazníka v aktuálním právním subjektu.",
+        "clearRelatedFilter": "Zobrazit všechny zákazníky",
+        "plannedHours": "Plánované hodiny",
+        "plannedHoursHint": "Odhad práce řešitele. Nejde o docházku ani mzdu.",
+        "project": "Projekt",
+        "noProject": "Bez projektu",
+        "property": "Nemovitost",
+        "unit": "Jednotka",
+        "contract": "Smlouva",
+        "close": "Zavřít",
+        "sourceRecords": "Otevřít související záznamy",
+        "openUnit": "Otevřít jednotku",
+        "openAsset": "Otevřít majetek",
+        "openContract": "Otevřít smlouvu",
+        "noContext": "Bez vazby",
+        "savedContext": "Uložená vazba",
+        "contextUnavailable": "Vazby na nemovitosti a smlouvy se teď nepodařilo načíst. Uložené vazby zůstávají zachované.",
+        "leaseContract": "Nájemní smlouva",
+        "otherContract": "Ostatní smlouva",
+        "relatedRecords": "Související záznamy",
+        "openProperty": "Otevřít nemovitost",
+        "taskDocuments": "Dokumenty úkolu · nahrát nebo připojit soubor",
+        "comments": "Komentáře",
+        "noComments": "Zatím žádné komentáře.",
+        "teamMember": "Člen týmu",
+        "newComment": "Nový komentář",
+        "addComment": "Přidat komentář",
+        "readOnly": "Tento úkol můžete pouze prohlížet.",
+        "archive": "Skrýt ze seznamu",
+        "unarchive": "Vrátit do seznamu",
+        "archivedNotice": "Úkol je skrytý ze seznamu úkolů. Otevře se přímým odkazem nebo po zapnutí volby Zobrazit skryté úkoly.",
+        "archivedToast": "Úkol je skrytý ze seznamu.",
+        "restoredToast": "Úkol je zpět v seznamu.",
+        "archiveHint": "Hotový nebo zrušený úkol můžete skrýt ze seznamu; zůstane dohledatelný i s historií.",
+        "contextRetry": "Zkusit znovu"
+      }
+    },
+    "selectPlaceholder": "Vyberte…",
+    "sidePanel": {
+      "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku."
+    }
+  }
+}

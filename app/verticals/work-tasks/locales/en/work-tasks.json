@@ -1,0 +1,209 @@
+{
+  "work-tasks": {
+    "language": {
+      "cs": "Czech",
+      "en": "English",
+      "switcher": "Language"
+    },
+    "routes": {
+      "home": "Home"
+    },
+    "seo": {
+      "description": "Route-owned UltraModern surface with localized SSR and framework-owned public metadata."
+    },
+    "federatedSurface": "Federated surface owned by this vertical.",
+    "remoteUnavailable": "Remote vertical unavailable",
+    "role": "work-tasks",
+    "routeSurface": "Route surface owned by this vertical.",
+    "title": "Work Tasks",
+    "widgetBody": "Owns a vertical route surface.",
+    "pages": {
+      "records": {
+        "title": "Tasks",
+        "restrictedLookups": "Related details from agendas you cannot access are not displayed.",
+        "pageDescription": "Company tasks, responsible people and deadlines.",
+        "newTask": "New task",
+        "create": "New task",
+        "edit": "Edit task",
+        "saved": "Task saved.",
+        "created": "Task created.",
+        "started": "Task started.",
+        "completed": "Task completed.",
+        "start": "Start",
+        "complete": "Complete",
+        "closedTask": "A completed or cancelled task cannot be edited.",
+        "loadingNames": "Loading…",
+        "cancel": "Cancel",
+        "saving": "Saving…",
+        "submitCreate": "Create task",
+        "submitEdit": "Save changes",
+        "taskTitle": "Title",
+        "titleLength": "{{length}} of {{max}} characters",
+        "description": "Description",
+        "assignee": "Assignee",
+        "dueDate": "Due date",
+        "priority": "Priority",
+        "party": "Customer",
+        "opportunity": "Opportunity",
+        "unassigned": "Unassigned",
+        "unknownCustomer": "Unknown customer",
+        "unknownOpportunity": "Unknown opportunity",
+        "pickCustomer": "Select customer",
+        "pickOpportunity": "Select opportunity",
+        "companyId": "Company ID {{id}}",
+        "comboboxEmpty": "Nothing found.",
+        "noOpportunities": "No opportunities to choose from.",
+        "noCustomerOpportunities": "The chosen customer has no opportunities.",
+        "tabs": {
+          "mine": "My tasks",
+          "mineNamed": "My tasks ({{name}})",
+          "all": "All"
+        },
+        "stats": {
+          "open": "Open",
+          "overdue": "Overdue",
+          "doneThisWeek": "Done this week",
+          "unassigned": "Unassigned"
+        },
+        "filters": {
+          "search": "Search tasks",
+          "assignee": "Assignee",
+          "allAssignees": "All assignees",
+          "state": "State",
+          "priority": "Priority",
+          "due": "Due date",
+          "dueOptions": {
+            "overdue": "Overdue",
+            "today": "Today",
+            "none": "No due date"
+          },
+          "all": "All",
+          "clear": "Clear filters",
+          "object": "Property or unit",
+          "allObjects": "All properties",
+          "dueFrom": "Due from",
+          "dueTo": "Due to",
+          "showHidden": "Show hidden tasks",
+          "rangeInverted": "Due from is later than due to, so no task matches."
+        },
+        "pagination": {
+          "label": "Pagination",
+          "first": "First page",
+          "last": "Last page",
+          "next": "Next page",
+          "previous": "Previous page",
+          "page": "Page {{page}}"
+        },
+        "columns": {
+          "title": "Title",
+          "assignee": "Assignee",
+          "party": "Customer",
+          "dueDate": "Due date",
+          "priority": "Priority",
+          "state": "State",
+          "labels": "Tags"
+        },
+        "bulk": {
+          "changeState": "Change state",
+          "assign": "Assign assignee",
+          "busy": "Saving changes…",
+          "closedHint": "Completed and cancelled tasks cannot be selected for bulk edits.",
+          "changed": "Changed {{changed}}, skipped {{skipped}}",
+          "assigned": "Assigned {{changed}}, skipped {{skipped}}",
+          "skipped": {
+            "closed": "Completed and cancelled tasks cannot be reassigned, so they were left unchanged.",
+            "invalid_transition": "Some tasks cannot move to the selected state.",
+            "not_found": "Some tasks no longer exist."
+          }
+        },
+        "discard": {
+          "createTitle": "Discard new task?",
+          "editTitle": "Discard changes to “{{title}}”?",
+          "description": "Unsaved details will be lost.",
+          "keep": "Keep editing",
+          "confirm": "Discard"
+        },
+        "table": {
+          "actions": "Actions",
+          "loading": "Loading data",
+          "pageSize": "Rows per page",
+          "range": "{{start}}–{{end}} of {{total}}",
+          "selectAll": "Select all rows",
+          "selection": "Select row"
+        },
+        "errors": {
+          "title": "Enter a task title.",
+          "id": "Enter a valid ID.",
+          "clear": "This value cannot be removed while editing.",
+          "mismatch": "The opportunity belongs to another customer.",
+          "dueDate": "Enter a due date between 2000 and 2099."
+        },
+        "empty": "No tasks yet.",
+        "emptyDescription": "Create the first task and assign it to an employee.",
+        "emptyMine": "No tasks are assigned to you.",
+        "mineUnlinked": "Your account is not linked to an employee. Only tasks owned directly by your account are shown; other permitted tasks are under All.",
+        "noResults": "No task matches the filters.",
+        "unavailable": "Data could not be loaded.",
+        "errorDescription": "Check the connection and try again.",
+        "retry": "Try again",
+        "forbidden": "You do not have permission for this section.",
+        "employeesUnavailable": "The employee list could not be loaded.",
+        "referencesUnavailable": "Customer or opportunity names could not be loaded.",
+        "conflict": "Someone else changed the record. Reload the tasks and repeat the change.",
+        "invalid": "The operation could not be completed. Check the input and task state.",
+        "states": {
+          "NEW": "New",
+          "IN_PROGRESS": "In progress",
+          "WAITING": "Waiting",
+          "DONE": "Done",
+          "CANCELLED": "Cancelled"
+        },
+        "priorities": {
+          "LOW": "Low",
+          "NORMAL": "Normal",
+          "HIGH": "High"
+        },
+        "invalidFilter": "The customer filter in the page URL is invalid.",
+        "relatedFilter": "Showing this customer’s records in the selected legal entity.",
+        "clearRelatedFilter": "Show all customers",
+        "plannedHours": "Planned hours",
+        "plannedHoursHint": "Estimated effort, not attendance or payroll.",
+        "project": "Project",
+        "noProject": "No project",
+        "property": "Property",
+        "unit": "Unit",
+        "contract": "Contract",
+        "close": "Close",
+        "sourceRecords": "Open linked records",
+        "openUnit": "Open unit",
+        "openAsset": "Open asset",
+        "openContract": "Open contract",
+        "noContext": "No link",
+        "savedContext": "Saved link",
+        "contextUnavailable": "Links to properties and contracts could not be loaded right now. Saved links are kept.",
+        "leaseContract": "Lease contract",
+        "otherContract": "Other contract",
+        "relatedRecords": "Related records",
+        "openProperty": "Open property",
+        "taskDocuments": "Task documents · upload or attach a file",
+        "comments": "Comments",
+        "noComments": "No comments yet.",
+        "teamMember": "Team member",
+        "newComment": "New comment",
+        "addComment": "Add comment",
+        "readOnly": "You can only view this task.",
+        "archive": "Hide from list",
+        "unarchive": "Show in list again",
+        "archivedNotice": "This task is hidden from the task list. It opens from a direct link or with Show hidden tasks.",
+        "archivedToast": "The task is hidden from the list.",
+        "restoredToast": "The task is back in the list.",
+        "archiveHint": "A completed or cancelled task can be hidden from the list; it stays findable with its history.",
+        "contextRetry": "Try again"
+      }
+    },
+    "selectPlaceholder": "Select…",
+    "sidePanel": {
+      "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width."
+    }
+  }
+}

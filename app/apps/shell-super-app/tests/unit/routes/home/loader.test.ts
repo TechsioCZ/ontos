@@ -330,7 +330,7 @@ it.effect('rechecks Home contribution permissions on every visit even when navig
     shellCompositionMock.mockReturnValue(
       Effect.succeed({
         compositionRevision,
-        navigation: ['demo.sales-insights', 'demo.sales-pipeline', 'siampark.work', 'siampark.billing-finance'].map(
+        navigation: ['demo.sales-insights', 'demo.sales-pipeline', 'work.tasks', 'finance.billing'].map(
           (moduleId) => ({ ...navigation[0], moduleId }),
         ),
         state: 'available',
@@ -352,7 +352,7 @@ it.effect('rechecks Home contribution permissions on every visit even when navig
 
 it.effect('does not resolve the Home component from anonymous, selection-required or non-Home routes', () =>
   Effect.gen(function* homeContributionContextGate() {
-    yield* loadModel({ request: new Request('https://shell.example.test/en/siampark/work') });
+    yield* loadModel({ request: new Request('https://shell.example.test/en/ukoly') });
     expect(resolveModuleTargetMock).not.toHaveBeenCalled();
     currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' }));
     yield* loadModel({ request: request() });

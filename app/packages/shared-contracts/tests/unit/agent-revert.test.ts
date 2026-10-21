@@ -4,7 +4,7 @@ import type { AgentCommand, AgentRevertPlan } from '../../src/agent-proposals.ts
 import { buildAgentRevertPlan, resolveAgentRevertPlan } from '../../src/agent-revert.ts';
 
 const tenantId = 'tenant-1';
-const taskRef = { moduleId: 'siampark.work', resourceId: 'T-1', resourceType: 'siampark.work.task', tenantId };
+const taskRef = { moduleId: 'work.tasks', resourceId: 'T-1', resourceType: 'work.tasks.task', tenantId };
 
 const build = (appId: string, command: AgentCommand, before?: Record<string, unknown>): AgentRevertPlan =>
   buildAgentRevertPlan(appId, before === undefined ? { command, tenantId } : { before, command, tenantId });
@@ -15,15 +15,15 @@ const commandsOf = (plan: AgentRevertPlan): readonly AgentCommand[] => {
 };
 
 it('CreateTask plans cancel and archive of the created task', () => {
-  const plan = build('siampark-work', { _tag: 'CreateTask', title: 'Nový úkol' });
+  const plan = build('work-tasks', { _tag: 'CreateTask', title: 'Nový úkol' });
   expect(commandsOf(plan)).toHaveLength(2);
   expect(plan).toMatchObject({ createdIdPath: 'task.ref.resourceId', kind: 'commands' });
 });
 
 it('resolving CreateTask replaces the created id and drops createdIdPath', () => {
-  const plan = build('siampark-work', { _tag: 'CreateTask', title: 'Nový úkol' });
+  const plan = build('work-tasks', { _tag: 'CreateTask', title: 'Nový úkol' });
   const resolved = resolveAgentRevertPlan(plan, { task: { ref: { resourceId: 'T-9' } } });
-  const created = { moduleId: 'siampark.work', resourceId: 'T-9', resourceType: 'siampark.work.task', tenantId };
+  const created = { moduleId: 'work.tasks', resourceId: 'T-9', resourceType: 'work.tasks.task', tenantId };
   expect(resolved).toEqual({
     commands: [
       { _tag: 'ChangeTaskState', state: 'CANCELLED', taskRef: created },
@@ -35,7 +35,7 @@ it('resolving CreateTask replaces the created id and drops createdIdPath', () =>
 
 it('UpdateTask restores previous fields and nulls a missing dueDate', () => {
   const plan = build(
-    'siampark-work',
+    'work-tasks',
     { _tag: 'UpdateTask', taskRef, title: 'Nový', priority: 'HIGH', dueDate: '2026-11-01' },
     { title: 'Starý', priority: 'LOW' },
   );
@@ -45,21 +45,21 @@ it('UpdateTask restores previous fields and nulls a missing dueDate', () => {
 });
 
 it('UpdateTask without before is not revertible', () => {
-  expect(build('siampark-work', { _tag: 'UpdateTask', taskRef, title: 'Nový' })).toEqual({
+  expect(build('work-tasks', { _tag: 'UpdateTask', taskRef, title: 'Nový' })).toEqual({
     kind: 'none',
     reason: 'Chybí původní hodnoty, změnu nelze automaticky vrátit.',
   });
 });
 
 it('ChangeTaskState IN_PROGRESS back to NEW is an illegal transition', () => {
-  expect(build('siampark-work', { _tag: 'ChangeTaskState', state: 'IN_PROGRESS', taskRef }, { state: 'NEW' })).toEqual({
+  expect(build('work-tasks', { _tag: 'ChangeTaskState', state: 'IN_PROGRESS', taskRef }, { state: 'NEW' })).toEqual({
     kind: 'none',
     reason: 'Úkol nelze vrátit do původního stavu.',
   });
 });
 
 it('ChangeTaskState WAITING back to IN_PROGRESS is legal', () => {
-  expect(commandsOf(build('siampark-work', { _tag: 'ChangeTaskState', state: 'WAITING', taskRef }, { state: 'IN_PROGRESS' }))).toEqual([
+  expect(commandsOf(build('work-tasks', { _tag: 'ChangeTaskState', state: 'WAITING', taskRef }, { state: 'IN_PROGRESS' }))).toEqual([
     { _tag: 'ChangeTaskState', state: 'IN_PROGRESS', taskRef },
   ]);
 });
@@ -95,13 +95,13 @@ it('UpdateProduct with a patch key missing from before is not revertible', () =>
 });
 
 it('CreateDraft cancel is filled with the created occupancy id', () => {
-  const plan = build('siampark-occupancy', { _tag: 'CreateDraft' });
+  const plan = build('property-leasing', { _tag: 'CreateDraft' });
   const resolved = resolveAgentRevertPlan(plan, { resourceRef: { resourceId: 'O-1' } });
   expect(resolved).toEqual({
     commands: [
       {
         _tag: 'Cancel',
-        occupancyRef: { moduleId: 'siampark.occupancy', resourceId: 'O-1', resourceType: 'siampark.occupancy.occupancy', tenantId },
+        occupancyRef: { moduleId: 'property.leasing', resourceId: 'O-1', resourceType: 'property.leasing.occupancy', tenantId },
       },
     ],
     kind: 'commands',
@@ -109,7 +109,7 @@ it('CreateDraft cancel is filled with the created occupancy id', () => {
 });
 
 it('occupancy state changes are not automatically revertible', () => {
-  expect(build('siampark-occupancy', { _tag: 'Confirm', occupancyRef: taskRef })).toEqual({
+  expect(build('property-leasing', { _tag: 'Confirm', occupancyRef: taskRef })).toEqual({
     kind: 'none',
     reason: 'Změnu stavu nájmu nelze automaticky vrátit.',
   });
@@ -123,7 +123,7 @@ it('unknown app ids are not revertible', () => {
 });
 
 it('resolving without the created id is not revertible', () => {
-  const plan = build('siampark-work', { _tag: 'CreateTask', title: 'Nový úkol' });
+  const plan = build('work-tasks', { _tag: 'CreateTask', title: 'Nový úkol' });
   expect(resolveAgentRevertPlan(plan, { task: {} })).toEqual({
     kind: 'none',
     reason: 'Nepodařilo se zjistit nově založený záznam, změnu nelze automaticky vrátit.',

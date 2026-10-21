@@ -2,8 +2,8 @@
 // Shared contract of the demo e-mail dispatcher (app/scripts/demo/email-dispatcher).
 //
 // The dispatcher is an after-commit worker: it reads COMMITTED domain state (AKROS storefront orders in
-// demo_merchandise.merchandise_states, payment reminders in siampark_billing_finance.finance_states, Siampark agenda
-// notifications in demo_siampark_ops.agenda_states for people who opted in to e-mail),
+// demo_merchandise.merchandise_states, payment reminders in finance_billing.finance_states, Siampark agenda
+// notifications in facility_operations.agenda_states for people who opted in to e-mail),
 // claims each e-mail once in its own ledger table demo_email.deliveries (primary key = dedupeKey, so an
 // e-mail is never sent twice) and submits it over real SMTP (Mailpit in the demo, any SMTP server via env).
 // It serves read-only receipts (no recipient, no content) on http://127.0.0.1:3096/v1/deliveries:
@@ -11,14 +11,14 @@
 //     rows of the session's tenant + selected legal entity are returned;
 //   - buyer (AKROS storefront BFF): `subjectNumber` + `recipient` (the buyer's e-mail) must both match.
 //
-// UI consumers in other packages (merchandise, siampark-billing-finance, akros-storefront) must COPY the
+// UI consumers in other packages (merchandise, finance-billing, akros-storefront) must COPY the
 // view types and labels below verbatim; they must not import this file across package boundaries.
 
 export const EMAIL_DISPATCHER_DEFAULT_PORT = 3096;
 export const DEMO_TENANT_ID = '70000000-0000-4000-8000-000000000020';
 export const AKROS_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000024';
 
-export type EmailDeliverySource = 'akros-order' | 'siampark-agenda' | 'siampark-reminder';
+export type EmailDeliverySource = 'akros-order' | 'facility-agenda' | 'rent-reminder';
 export type EmailDeliveryEvent =
   | 'ORDER_CREATED'
   | 'CONFIRMED'
@@ -34,7 +34,7 @@ export type EmailDeliveryEvent =
  */
 export type EmailDeliveryStatus = 'SENDING' | 'SENT' | 'RETRY' | 'FAILED' | 'UNKNOWN';
 
-export const emailDeliverySources: readonly EmailDeliverySource[] = ['akros-order', 'siampark-agenda', 'siampark-reminder'];
+export const emailDeliverySources: readonly EmailDeliverySource[] = ['akros-order', 'facility-agenda', 'rent-reminder'];
 
 /**
  * E-mail provider state served on GET /v1/provider (no credentials, no cookies needed). `configured: false` when the
@@ -155,7 +155,7 @@ export interface AkrosOrderInput {
  * Minimal read shape of a persisted payment reminder (finance module, any company: Siampark, Obchodní firma…) plus
  * its invoice number and the legal name of the company that issued the invoice (core.legal_entities).
  */
-export interface SiamparkReminderInput {
+export interface RentReminderInput {
   readonly invoiceNumber: string | null;
   readonly legalEntityId: string;
   readonly legalName: string | null;
@@ -170,12 +170,12 @@ export interface SiamparkReminderInput {
   readonly tenantId: string;
 }
 
-/** Notification categories (siampark-ops agenda). ASSIGNED and OVERDUE are mandatory, DEADLINE and CHANGE optional. */
+/** Notification categories (facility-operations agenda). ASSIGNED and OVERDUE are mandatory, DEADLINE and CHANGE optional. */
 export type AgendaNotificationCategory = 'ASSIGNED' | 'CHANGE' | 'DEADLINE' | 'OVERDUE';
 export const AGENDA_MANDATORY_EMAIL_CATEGORIES: readonly AgendaNotificationCategory[] = ['ASSIGNED', 'OVERDUE'];
 export const AGENDA_OPTIONAL_EMAIL_CATEGORIES: readonly AgendaNotificationCategory[] = ['DEADLINE', 'CHANGE'];
 
-/** One persisted agenda notification (demo_siampark_ops.agenda_states, encoded JSON) of a person with a preference. */
+/** One persisted agenda notification (facility_operations.agenda_states, encoded JSON) of a person with a preference. */
 export interface AgendaNotificationInput {
   readonly category: AgendaNotificationCategory;
   /** ISO-8601 UTC; all notifications of one delivery command share this instant (one e-mail per batch). */
@@ -188,7 +188,7 @@ export interface AgendaNotificationInput {
   readonly title: string;
 }
 
-/** Encoded per-person preference (see siampark-ops shared/domain/agenda.ts NotificationPreferenceSchema). */
+/** Encoded per-person preference (see facility-operations shared/domain/agenda.ts NotificationPreferenceSchema). */
 export interface AgendaPreferenceInput {
   readonly emailCategories?: readonly AgendaNotificationCategory[];
   readonly emailOptIn: boolean;

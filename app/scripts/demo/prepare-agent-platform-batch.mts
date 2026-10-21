@@ -144,7 +144,7 @@ const submitted = await post(
         targetLabel: `${product.name} (${product.sku})`,
       },
       {
-        appId: 'siampark-work',
+        appId: 'work-tasks',
         command: {
           _tag: 'CreateTask',
           description: 'Po schválení nové ceny projít otevřené nabídky a informovat stálé zákazníky.',

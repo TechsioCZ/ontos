@@ -43,7 +43,7 @@ const startFakeSmtp = (mode: Mode = 'accept') =>
     });
     server.listen(0, '127.0.0.1', () => resolve({ close: () => new Promise<void>((done) => { server.close(() => done()); }), messages, port: (server.address() as AddressInfo).port }));
   });
-const message = { html: Redacted.make('<p>Dobrý den</p>'), idempotencyKey: 'siampark-reminder:r1', subject: 'Upomínka – faktura FV-2026-0007', text: Redacted.make('Dobrý den'), to: 'fakturace@odberatel.example' };
+const message = { html: Redacted.make('<p>Dobrý den</p>'), idempotencyKey: 'rent-reminder:r1', subject: 'Upomínka – faktura FV-2026-0007', text: Redacted.make('Dobrý den'), to: 'fakturace@odberatel.example' };
 
 describe('SMTP email delivery adapter', () => {
   test('accepts a message', async () => {

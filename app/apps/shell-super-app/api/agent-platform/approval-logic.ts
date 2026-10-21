@@ -66,7 +66,7 @@ const findIn = (body: unknown, listKey: string, matches: (entry: Rec) => boolean
 /** Where to read the current state of the entity an approved command changes (undefined: no snapshot needed). */
 export const revertBeforeLookup = (appId: string, command: Rec): RevertBeforeLookup | undefined => {
   const tag = command['_tag'];
-  if (appId === 'siampark-work' && (tag === 'UpdateTask' || tag === 'ChangeTaskState' || tag === 'AssignTask')) {
+  if (appId === 'work-tasks' && (tag === 'UpdateTask' || tag === 'ChangeTaskState' || tag === 'AssignTask')) {
     const resourceId = resourceIdOf(command['taskRef']);
     return resourceId === undefined
       ? undefined
@@ -84,7 +84,7 @@ export const revertBeforeLookup = (appId: string, command: Rec): RevertBeforeLoo
           query: { view: { productId: id } },
         };
   }
-  if (appId === 'siampark-occupancy' && (tag === 'SetRentTerms' || tag === 'UpdateDraft')) {
+  if (appId === 'property-leasing' && (tag === 'SetRentTerms' || tag === 'UpdateDraft')) {
     const resourceId = resourceIdOf(command['occupancyRef']);
     return resourceId === undefined
       ? undefined

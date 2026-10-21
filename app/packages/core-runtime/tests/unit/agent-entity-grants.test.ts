@@ -35,15 +35,15 @@ const template = [
   moduleAccess(company, 'core.shell'),
   moduleAccess(company, 'core.identity'),
   moduleAccess(company, 'demo.crm'),
-  moduleAccess(company, 'siampark.work'),
+  moduleAccess(company, 'work.tasks'),
   moduleAccess(other, 'demo.crm'),
   permission('demo.crm', 'demo_crm.read_all'),
   permission('demo.crm', 'demo_crm.write_all'),
   permission('demo.crm', 'demo.crm.assign'),
-  permission('siampark.work', 'siampark_work.read_all'),
-  permission('siampark.work', 'siampark_work.write_all'),
+  permission('work.tasks', 'work_tasks.read_all'),
+  permission('work.tasks', 'work_tasks.write_all'),
   executor('demo.crm.apply-command'),
-  executor('siampark.work.apply-command'),
+  executor('work.tasks.apply-command'),
   executor('core.identity.manage-demo-account'),
 ];
 
@@ -68,7 +68,7 @@ it('classifies read and write permissions', () => {
 it('derives the highest access per non-Core company module', () => {
   expect(agentModuleAccessOf(template, company)).toEqual([
     { access: 'write', moduleId: 'demo.crm' },
-    { access: 'write', moduleId: 'siampark.work' },
+    { access: 'write', moduleId: 'work.tasks' },
   ]);
 });
 
@@ -77,7 +77,7 @@ it('keeps write grants for direct write policy and drops other modules and Core 
     legalEntityId: company,
     modules: [
       { access: 'write', moduleId: 'demo.crm' },
-      { access: 'read', moduleId: 'siampark.work' },
+      { access: 'read', moduleId: 'work.tasks' },
     ],
     template,
     writePolicy: 'direct',
@@ -85,14 +85,14 @@ it('keeps write grants for direct write policy and drops other modules and Core 
   expect(has(result, permission('demo.crm', 'demo_crm.write_all'))).toBe(true);
   expect(has(result, permission('demo.crm', 'demo.crm.assign'))).toBe(true);
   expect(has(result, executor('demo.crm.apply-command'))).toBe(true);
-  expect(has(result, permission('siampark.work', 'siampark_work.read_all'))).toBe(true);
+  expect(has(result, permission('work.tasks', 'work_tasks.read_all'))).toBe(true);
   expect(has(result, moduleAccess(company, 'core.shell'))).toBe(true);
   expect(has(result, { relation: 'member', resourceId: tenant, resourceType: 'tenant' })).toBe(true);
   expect(has(result, { relation: 'party_identity_reader', resourceId: tenant, resourceType: 'tenant' })).toBe(true);
   expect(has(result, { relation: 'member', resourceId: toLegalEntityAccessObjectId(tenant, company) ?? '', resourceType: 'legal_entity' })).toBe(true);
 
-  expect(has(result, permission('siampark.work', 'siampark_work.write_all'))).toBe(false);
-  expect(has(result, executor('siampark.work.apply-command'))).toBe(false);
+  expect(has(result, permission('work.tasks', 'work_tasks.write_all'))).toBe(false);
+  expect(has(result, executor('work.tasks.apply-command'))).toBe(false);
   expect(has(result, { relation: 'identity_admin', resourceId: tenant, resourceType: 'tenant' })).toBe(false);
   expect(has(result, moduleAccess(company, 'core.identity'))).toBe(false);
   expect(has(result, executor('core.identity.manage-demo-account'))).toBe(false);
