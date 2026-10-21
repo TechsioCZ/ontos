@@ -139,8 +139,8 @@ export const ConnectionsAdminPanel = () => {
         </StatusText>
       )}
       <p className="text-fg-secondary">
-        Všechna připojení ChatGPT, Claude a dalších aplikací ve firmě {company.legalName.replace(/\.$/u, '')}. Odpojená aplikace ztratí
-        přístup do 30 sekund. <a href="/cs/sprava/aktivita-agentu">Zobrazit aktivitu agentů</a>
+        Všechna připojení ChatGPT, Claude a dalších aplikací ve firmě {company.legalName.replace(/\.$/u, '')}. Odpojená
+        aplikace ztratí přístup do 30 sekund. <a href="/cs/sprava/aktivita-agentu">Zobrazit aktivitu agentů</a>
       </p>
 
       <div className="grid grid-cols-1 gap-200 sm:grid-cols-3">
