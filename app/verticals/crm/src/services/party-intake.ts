@@ -147,6 +147,36 @@ export const matchingRegistryCustomer = (
 };
 
 /**
+ * The registry customer of another CRM client with the same IČO (the same organization entered twice), when the
+ * registry still lists it as an ACTIVE customer. Covers IČOs the registry does not hold as an identifier.
+ */
+export const sameIcoClientCustomer = (
+  client: Pick<IntakeClient, 'id' | 'regNo'>,
+  crmClients: readonly {
+    readonly id: string;
+    readonly partyRef?: { readonly counterpartyId?: string | undefined; readonly partyId: string } | undefined;
+    readonly regNo?: string | undefined;
+  }[],
+  customers: readonly RegistryCustomer[],
+) => {
+  const ico = normalizedIco(client.regNo);
+  if (ico === '') {
+    return undefined;
+  }
+  const holders = crmClients.filter(
+    (entry) => entry.id !== client.id && entry.partyRef !== undefined && normalizedIco(entry.regNo) === ico,
+  );
+  return customers.find(
+    (customer) =>
+      customer.status === 'ACTIVE' &&
+      holders.some(
+        (entry) =>
+          entry.partyRef?.counterpartyId === customer.counterpartyId && entry.partyRef.partyId === customer.partyId,
+      ),
+  );
+};
+
+/**
  * What the intake does with an OPEN registry duplicate case raised by its Create. Candidates found only by weak
  * evidence (a lookalike name or contact) are not the same subject: the case is resolved as a NEW Party, never merged
  * (C01-02). A candidate proven by an official identifier (IČO / DIČ) needs an identity reviewer.
@@ -412,8 +442,12 @@ export const makePartyIntake = (scope: {
     client: IntakeClient,
     taken: ReadonlySet<string>,
     operationKey: string,
+    crmClients: Parameters<typeof sameIcoClientCustomer>[1] = [],
   ) {
-    const existing = matchingRegistryCustomer(client, yield* customers, taken);
+    const registryCustomers = yield* customers;
+    const existing =
+      sameIcoClientCustomer(client, crmClients, registryCustomers) ??
+      matchingRegistryCustomer(client, registryCustomers, taken);
     if (existing !== undefined) {
       return Option.some<VerifiedParty>({
         counterpartyId: existing.counterpartyId,
@@ -507,7 +541,7 @@ export const makePartyIntake = (scope: {
     for (const client of targets) {
       const operationKey = `crm-intake:${correlationId}:${client.id}`.slice(0, 180);
       // One client's refused registry step must not leave the remaining clients without identity.
-      const linkedRevision = yield* identify(client, taken, operationKey).pipe(
+      const linkedRevision = yield* identify(client, taken, operationKey, items).pipe(
         Effect.flatMap((verified) =>
           Option.isNone(verified)
             ? Effect.succeed(Option.none<number>())

@@ -8,7 +8,7 @@ import { dispatchCrmCommand } from '../../shared/commands/index.ts';
 import type { CrmViewer } from '../../shared/domain/access.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
 import { initialCrmState } from '../../shared/domain/state.ts';
-import { ambiguousCaseDecision, matchingRegistryCustomer, validIco } from '../../src/services/party-intake.ts';
+import { ambiguousCaseDecision, matchingRegistryCustomer, sameIcoClientCustomer, validIco } from '../../src/services/party-intake.ts';
 
 const at = '2026-10-21T08:00:00.000Z';
 const client = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -156,6 +156,13 @@ describe('Party Registry intake (CRM.md §3, C04)', () => {
       const state = dupState('27082440', '27082440');
       const match = matchingRegistryCustomer({ name: 'Pekárna Novák s.r.o.', regNo: '27082440' }, customers, taken);
       expect(match?.partyId).toBe('party-x');
+      // A CRM IČO the registry does not hold as identifier (no checksum): the same-IČO client's customer is reused.
+      const legacy = [{ ...customers[0], companyId: null }];
+      const items = dupState('90000101', '90000101').clients.items;
+      expect(sameIcoClientCustomer({ id: 'dup', regNo: '9000 0101' }, items, legacy)?.partyId).toBe('party-x');
+      expect(sameIcoClientCustomer({ id: 'dup', regNo: undefined }, items, legacy)).toBeUndefined();
+      expect(sameIcoClientCustomer({ id: 'dup', regNo: '25596641' }, items, legacy)).toBeUndefined();
+      expect(sameIcoClientCustomer({ id: 'dup', regNo: '90000101' }, items, [{ ...legacy[0], status: 'ARCHIVED' }])).toBeUndefined();
       const exit = run(
         state,
         { _tag: 'LinkClientParty', clientId: 'dup', partyRef: { counterpartyId: 'cp-x', partyId: 'party-x' } },
