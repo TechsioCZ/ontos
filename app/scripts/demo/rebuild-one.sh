@@ -12,13 +12,33 @@
 set -euo pipefail
 
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# take_lock <dir> <label>: mkdir lock with the owner's pid inside. A lock whose owner died (or one without a pid
+# older than a minute, left by a caller killed between mkdir and writing the pid) is taken over by renaming it
+# first: rename is atomic, so of two waiters only one removes the stale lock and neither deletes a fresh one.
+take_lock() {
+  local lock="$1" label="$2" owner waited=0 stale
+  until mkdir "$lock" 2>/dev/null; do
+    owner="$(cat "$lock/pid" 2>/dev/null || true)"
+    stale=0
+    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then stale=1; fi
+    if [ -z "$owner" ] && [ -n "$(find "$lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then stale=1; fi
+    if [ "$stale" = 1 ]; then
+      mv "$lock" "$lock.stale.$$" 2>/dev/null && rm -rf "$lock.stale.$$"
+      continue
+    fi
+    [ "$waited" = 1 ] || printf '[rebuild] waiting for another %s (pid %s) to finish\n' "$label" "${owner:-?}"
+    waited=1
+    sleep 2
+  done
+  echo $$ >"$lock/pid"
+}
 # Demo v2: the live demo is served from a separate runtime worktree that only ever contains COMMITTED code
 # from demo/sales-crm, so half-edited files in the shared development tree never break the running demo.
 RUNTIME_APP="${DEMO_RUNTIME_APP:-/Volumes/TraceDecayKingston/techsio-demo/ontos-runtime/app}"
 if [ "$APP" != "$RUNTIME_APP" ] && [ -d "$RUNTIME_APP" ]; then
   # Serialise the fast-forward so concurrent callers do not race on the runtime index.
-  until mkdir "$RUNTIME_APP/.scratch-ff.lock" 2>/dev/null; do sleep 1; done
-  trap 'rmdir "$RUNTIME_APP/.scratch-ff.lock" 2>/dev/null' EXIT
+  take_lock "$RUNTIME_APP/.scratch-ff.lock" "runtime fast-forward"
+  trap 'rm -rf "$RUNTIME_APP/.scratch-ff.lock"' EXIT
   before="$(git -C "$RUNTIME_APP" rev-parse HEAD:app/pnpm-lock.yaml)"
   git -C "$RUNTIME_APP" merge -q --ff-only demo/sales-crm || {
     echo "[rebuild] runtime fast-forward failed" >&2
@@ -28,7 +48,7 @@ if [ "$APP" != "$RUNTIME_APP" ] && [ -d "$RUNTIME_APP" ]; then
     echo "[rebuild] lockfile changed; installing in runtime"
     (cd "$RUNTIME_APP" && TMPDIR=/Volumes/TraceDecayKingston/techsio-demo/tmp mise exec -- pnpm install --frozen-lockfile >/dev/null)
   fi
-  rmdir "$RUNTIME_APP/.scratch-ff.lock" 2>/dev/null
+  rm -rf "$RUNTIME_APP/.scratch-ff.lock"
   trap - EXIT
   echo "[rebuild] runtime at $(git -C "$RUNTIME_APP" log --oneline -1) (only committed code is built)"
   exec "$RUNTIME_APP/scripts/demo/rebuild-one.sh" "$@"
@@ -135,24 +155,8 @@ release_locks() {
 }
 trap release_locks EXIT
 acquire_app_lock() { # acquire_app_lock <app-id>
-  local lock="$LOCK_ROOT/app-$1" owner waited=0
-  until mkdir "$lock" 2>/dev/null; do
-    owner="$(cat "$lock/pid" 2>/dev/null || true)"
-    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
-      rm -rf "$lock"
-      continue
-    fi
-    # A lock without a pid older than a minute was left by a killed caller.
-    if [ -z "$owner" ] && [ -n "$(find "$lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; then
-      rm -rf "$lock"
-      continue
-    fi
-    [ "$waited" = 1 ] || say "waiting for another rebuild of $1 (pid ${owner:-?}) to finish"
-    waited=1
-    sleep 3
-  done
-  echo $$ >"$lock/pid"
-  HELD_LOCKS+=("$lock")
+  take_lock "$LOCK_ROOT/app-$1" "rebuild of $1"
+  HELD_LOCKS+=("$LOCK_ROOT/app-$1")
 }
 
 # The MCP resource server is plain Node (no build step): restart it from this committed runtime tree.
@@ -163,7 +167,10 @@ if [ "$#" -eq 1 ] && [ "$1" = ontos-agent-mcp ]; then
     die "port 3090 is still held by a process up.sh did not start: $(lsof -nP -iTCP:3090 -sTCP:LISTEN | tail -1); stop it once by hand"
   fi
   set -m
+  # Same environment as up.sh's start(): the served vertical set decides which modules the RS offers.
+  SERVED_CSV="$(tr ' ' ',' <"$VERTICALS_FILE" 2>/dev/null || sed -n 's/^DEFAULT_VERTICALS="\(.*\)"$/\1/p' "$APP/scripts/demo/up.sh" | tr ' ' ',')"
   ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="http://127.0.0.1:$COMPOSITION_PORT/active" \
+    ONTOS_DEMO_VERTICALS="$SERVED_CSV" \
     nohup "${WITH_ENV[@]}" pnpm --dir tools/ontos-agent-mcp start:http >"$LOG_DIR/ontos-agent-mcp.log" 2>&1 </dev/null &
   echo $! >"$PID_DIR/ontos-agent-mcp.pid"
   wait_http "http://127.0.0.1:3090/healthz" 60 ontos-agent-mcp
@@ -199,7 +206,9 @@ until [ -n "$slot" ]; do
       break
     fi
     owner="$(cat "$LOCK_ROOT/slot-$s/pid" 2>/dev/null || true)"
-    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then rm -rf "$LOCK_ROOT/slot-$s"; fi
+    if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+      mv "$LOCK_ROOT/slot-$s" "$LOCK_ROOT/slot-$s.stale.$$" 2>/dev/null && rm -rf "$LOCK_ROOT/slot-$s.stale.$$"
+    fi
   done
   [ -n "$slot" ] || sleep 5
 done
