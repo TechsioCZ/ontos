@@ -9,7 +9,7 @@
  * Unlike `core.identity.change-principal-status`, which is limited to non-human principals, this Action targets
  * human principals, so the deactivated person is rejected by the principal resolver on the next request.
  *
- * Agent entities (kind `agent`, lane agent-entities): `create-agent` / `configure-agent` store the write policy and module access in the audit evidence; `change-status` also (de)activates agents.
+ * Agent entities (kind `agent`): `create-agent` / `configure-agent` store write policy, module access, description and owner in the audit evidence; `change-status` (de)activates agents; `archive-agent` deletes an agent (status `archived`, kept for the audit trail).
  */
 import { and, eq } from 'drizzle-orm';
 import { Config, DateTime, Effect, Schema } from 'effect';
@@ -61,34 +61,52 @@ export const ManageDemoAccountPayloadSchema = Schema.Union([
     reason: Schema.optionalKey(text(500)),
   }),
   Schema.Struct({
+    description: Schema.NullOr(text(500)),
     displayName: text(200),
     modulesJson,
     operation: Schema.Literal('create-agent'),
+    ownerPrincipalId: Schema.NullOr(uuid),
     principalId: uuid,
     writePolicy,
   }),
   Schema.Struct({
+    description: Schema.NullOr(text(500)),
     displayName: text(200),
     modulesJson,
     operation: Schema.Literal('configure-agent'),
+    ownerPrincipalId: Schema.NullOr(uuid),
     previousModulesJson: Schema.NullOr(modulesJson),
     previousWritePolicy: Schema.NullOr(writePolicy),
     principalId: uuid,
     writePolicy,
   }),
+  Schema.Struct({
+    expectedStatus: status,
+    operation: Schema.Literal('archive-agent'),
+    principalId: uuid,
+    reason: text(500),
+  }),
 ]);
 export type ManageDemoAccountPayload = typeof ManageDemoAccountPayloadSchema.Type;
 
 export const ManageDemoAccountResultSchema = Schema.Struct({
-  operation: Schema.Literals(['create', 'change-role', 'change-status', 'create-agent', 'configure-agent']),
+  operation: Schema.Literals([
+    'create',
+    'change-role',
+    'change-status',
+    'create-agent',
+    'configure-agent',
+    'archive-agent',
+  ]),
   principalId: uuid,
-  status,
+  status: Schema.Literals(['active', 'disabled', 'archived']),
 });
 export type ManageDemoAccountResult = typeof ManageDemoAccountResultSchema.Type;
 
 const nullableText = Schema.NullOr(Schema.String);
 /** Stored in `core.audit_events.evidence_json`; the admin UI renders the audit trail from it. */
 export const ManageDemoAccountAuditEvidenceSchema = Schema.Struct({
+  description: nullableText,
   displayName: nullableText,
   email: nullableText,
   modulesJson: nullableText,
@@ -96,6 +114,7 @@ export const ManageDemoAccountAuditEvidenceSchema = Schema.Struct({
   newRoleLabel: nullableText,
   newStatus: nullableText,
   operation: Schema.String,
+  ownerPrincipalId: nullableText,
   previousModulesJson: nullableText,
   previousRoleKey: nullableText,
   previousRoleLabel: nullableText,
@@ -139,6 +158,7 @@ const loadManagedPrincipal = (transaction: Transaction, tenantId: string, princi
     );
 
 const emptyEvidence = (principalId: string, operation: string): AuditEvidence => ({
+  description: null,
   displayName: null,
   email: null,
   modulesJson: null,
@@ -146,6 +166,7 @@ const emptyEvidence = (principalId: string, operation: string): AuditEvidence =>
   newRoleLabel: null,
   newStatus: null,
   operation,
+  ownerPrincipalId: null,
   previousModulesJson: null,
   previousRoleKey: null,
   previousRoleLabel: null,
@@ -240,9 +261,11 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
       .pipe(Effect.mapError(persistenceFailure));
     yield* context.recordAuditEvidence({
       ...emptyEvidence(payload.principalId, 'create-agent'),
+      description: payload.description,
       displayName: payload.displayName,
       modulesJson: payload.modulesJson,
       newStatus: 'active',
+      ownerPrincipalId: payload.ownerPrincipalId,
       principalKind: 'agent',
       writePolicy: payload.writePolicy,
     });
@@ -251,6 +274,28 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
   const target = yield* loadManagedPrincipal(transaction, tenantId, payload.principalId);
   if (payload.principalId === context.scope.principalId) {
     return yield* invalid('An administrator cannot change their own account');
+  }
+  if (payload.operation === 'archive-agent') {
+    if (target.kind !== 'agent') {
+      return yield* invalid('The target is not an agent entity');
+    }
+    if (target.status !== payload.expectedStatus) {
+      return yield* conflict('The agent status changed concurrently');
+    }
+    yield* transaction
+      .update(principals)
+      .set({ disabledAt: now, status: 'archived' })
+      .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, payload.principalId)))
+      .pipe(Effect.mapError(persistenceFailure));
+    yield* context.recordAuditEvidence({
+      ...emptyEvidence(payload.principalId, 'archive-agent'),
+      displayName: target.displayName,
+      newStatus: 'archived',
+      previousStatus: target.status,
+      principalKind: 'agent',
+      reason: payload.reason,
+    });
+    return { operation: 'archive-agent' as const, principalId: payload.principalId, status: 'archived' as const };
   }
   if (payload.operation === 'configure-agent') {
     if (target.kind !== 'agent') {
@@ -265,8 +310,10 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
     }
     yield* context.recordAuditEvidence({
       ...emptyEvidence(payload.principalId, 'configure-agent'),
+      description: payload.description,
       displayName: payload.displayName,
       modulesJson: payload.modulesJson,
+      ownerPrincipalId: payload.ownerPrincipalId,
       previousModulesJson: payload.previousModulesJson,
       previousWritePolicy: payload.previousWritePolicy,
       principalKind: 'agent',
