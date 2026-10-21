@@ -18,20 +18,10 @@ import { OntosRequestError } from '../ontos-client.ts';
 import { findEntry, findModule, ReadPathError, runExecute, runRead, toJsonObject } from '../operations.ts';
 import { czechProblem } from './errors-cs.ts';
 import { inputProblems } from './input-check.ts';
-import {
-  CAPABILITIES_OUTPUT,
-  PROPOSALS_OUTPUT,
-  READ_OUTPUT,
-  WHOAMI_OUTPUT,
-  WRITE_OUTPUT,
-} from './output-schemas.ts';
+import { CAPABILITIES_OUTPUT, PROPOSALS_OUTPUT, READ_OUTPUT, WHOAMI_OUTPUT, WRITE_OUTPUT } from './output-schemas.ts';
 import { directReplays, requestHash } from './replay.ts';
 import { matchesTokens, queryTokens } from './search.ts';
-import {
-  ProposalsEndpointMissingError,
-  listProposals,
-  submitProposals,
-} from './proposals.ts';
+import { ProposalsEndpointMissingError, listProposals, submitProposals } from './proposals.ts';
 import type { ProposalInput, ProposalsTarget } from './proposals.ts';
 import {
   acceptsProposals,
@@ -46,6 +36,16 @@ import {
 } from './tool-plan.ts';
 import type { GenericToolName } from './tool-plan.ts';
 import type { ConnectionContext, ToolAnnotationsSpec, ToolContent, ToolDeps, ToolResult, ToolSpec } from './types.ts';
+
+/** Merchandise commands that need catalog management (records `canManageCatalog`). */
+const MERCHANDISE_CATALOG_COMMANDS: ReadonlySet<string> = new Set([
+  'ArchiveDemoProduct',
+  'BulkUpdateProducts',
+  'ChangePrice',
+  'CreateProduct',
+  'UpdateCategory',
+  'UpdateProduct',
+]);
 
 export const MSG_READ_ONLY =
   'Toto připojení smí jen číst. Změnu udělejte přímo v OntOS, nebo aplikaci připojte znovu s jiným režimem zápisu.';
@@ -316,22 +316,20 @@ export const buildConnectionTools = async (
     items: readonly ProposeItem[],
     runId: string,
   ): Promise<ToolResult> => {
-    const proposals = items.map(
-      (item): ProposalInput => {
-        const fields = withoutRevision(item.input);
-        const { entry } = item;
-        return {
-          actionSlug: entry.actionSlug,
-          appId: entry.appId,
-          command: entry.commandTag === undefined ? fields : { ...fields, _tag: entry.commandTag },
-          diff: [],
-          reason: item.reason,
-          risk: annotationsFor(entry).destructiveHint === true ? 'high' : 'medium',
-          summary: item.summary.slice(0, 300),
-          targetLabel: item.targetLabel.slice(0, 300),
-        };
-      },
-    );
+    const proposals = items.map((item): ProposalInput => {
+      const fields = withoutRevision(item.input);
+      const { entry } = item;
+      return {
+        actionSlug: entry.actionSlug,
+        appId: entry.appId,
+        command: entry.commandTag === undefined ? fields : { ...fields, _tag: entry.commandTag },
+        diff: [],
+        reason: item.reason,
+        risk: annotationsFor(entry).destructiveHint === true ? 'high' : 'medium',
+        summary: item.summary.slice(0, 300),
+        targetLabel: item.targetLabel.slice(0, 300),
+      };
+    });
     try {
       const response = await submitProposals(target, {
         agentLabel: `${d.acting.displayName} přes ${d.client.name}`.slice(0, 300),
@@ -431,18 +429,58 @@ export const buildConnectionTools = async (
     );
   };
 
-  const capabilities = (args: Readonly<Record<string, unknown>>): ToolResult => {
+  /**
+   * Live rights the module reports in its records read for this connection: `canWrite`, and in merchandise the
+   * catalog/order management flags. The grant can allow a module whose single commands the person may not run
+   * (AKROS expedice: orders yes, prices no). Unknown (no probe read, read failed) counts as allowed; the Action
+   * still checks on execution.
+   */
+  const liveWriteAllowed = async (entry: CatalogAction): Promise<boolean> => {
+    const module = findModule(catalog, entry.moduleId);
+    const probe = module?.reads.find((read) => read.slug === module.probeReadSlug);
+    if (probe === undefined) {
+      return true;
+    }
+    try {
+      const { data } = await runRead(connection.session, catalog, { id: probe.id, input: {}, limit: 1 });
+      if (typeof data !== 'object' || data === null) {
+        return true;
+      }
+      const flags = data as Readonly<Record<string, unknown>>;
+      if (flags['canWrite'] === false) {
+        return false;
+      }
+      const tag = entry.commandTag ?? '';
+      if (entry.moduleId === 'demo.merchandise' && MERCHANDISE_CATALOG_COMMANDS.has(tag)) {
+        return flags['canManageCatalog'] !== false;
+      }
+      return !(entry.moduleId === 'demo.merchandise' && tag === 'EditOrder' && flags['canEditOrders'] === false);
+    } catch {
+      return true;
+    }
+  };
+
+  const capabilities = async (args: Readonly<Record<string, unknown>>): Promise<ToolResult> => {
     const id = stringArg(args, 'id');
     if (id !== undefined) {
       const entry = findEntry(catalog, id);
-      if (entry === undefined || (entry.kind === 'action' && !isOffered(entry, 'approval', d.acting.kind) && !isOffered(entry, d.writePolicy, d.acting.kind))) {
+      if (
+        entry === undefined ||
+        (entry.kind === 'action' &&
+          !isOffered(entry, 'approval', d.acting.kind) &&
+          !isOffered(entry, d.writePolicy, d.acting.kind))
+      ) {
         return errorResult(MSG_UNKNOWN(id));
       }
       if (!canRead(d, entry.moduleId)) {
         return errorResult(MSG_NO_READ(labelOf(entry.moduleId)));
       }
       const moduleCs = labelOf(entry.moduleId);
-      const writable = entry.kind === 'action' && canWrite(d, entry.moduleId) && isOffered(entry, d.writePolicy, d.acting.kind);
+      const writable =
+        entry.kind === 'action' &&
+        canWrite(d, entry.moduleId) &&
+        isOffered(entry, d.writePolicy, d.acting.kind) &&
+        (d.writePolicy !== 'direct' || (await liveWriteAllowed(entry)));
       return okResult({
         descriptionCs: entryDescriptionCs(entry, moduleCs, d.writePolicy),
         id: entry.id,
@@ -464,7 +502,9 @@ export const buildConnectionTools = async (
     const tokens = queryTokens(stringArg(args, 'query') ?? '');
     const moduleFilter = stringArg(args, 'moduleId');
     const modules = catalog.modules
-      .filter((module) => canRead(d, module.moduleId) && (moduleFilter === undefined || module.moduleId === moduleFilter))
+      .filter(
+        (module) => canRead(d, module.moduleId) && (moduleFilter === undefined || module.moduleId === moduleFilter),
+      )
       .flatMap((module) => {
         const moduleCs = labelOf(module.moduleId);
         const moduleText = `${module.moduleId} ${moduleCs} ${moduleDescriptionCs(module.moduleId)} ${moduleKeywordsCs(module.moduleId)}`;
@@ -491,7 +531,10 @@ export const buildConnectionTools = async (
           return [];
         }
         const writeNoteCs =
-          !write && grantAllowsWrite(d, module.moduleId) && d.writePolicy === 'approval' && !acceptsProposals(module.moduleId)
+          !write &&
+          grantAllowsWrite(d, module.moduleId) &&
+          d.writePolicy === 'approval' &&
+          !acceptsProposals(module.moduleId)
             ? 'Návrhy ke schválení tento modul zatím nepřijímá; změny jen přímo v OntOS.'
             : undefined;
         return [
@@ -577,7 +620,8 @@ export const buildConnectionTools = async (
           limit: { description: 'Počet položek seznamu (výchozí 25).', maximum: 500, minimum: 1, type: 'integer' },
           offset: { description: 'Od které položky seznamu.', minimum: 0, type: 'integer' },
           path: {
-            description: 'Jen tato část výsledku, např. „agendas.meters.state.meters“ nebo „items[3]“ (cesty vrací omitted).',
+            description:
+              'Jen tato část výsledku, např. „agendas.meters.state.meters“ nebo „items[3]“ (cesty vrací omitted).',
             maxLength: 300,
             type: 'string',
           },
@@ -715,9 +759,12 @@ export const buildConnectionTools = async (
           const input = objectArg(change, 'input') ?? {};
           const invalid = checkActionInput(checked.entry, input);
           if (invalid !== undefined) {
-            return errorResult(`Změna č. ${index + 1}: ${invalid.content[0]?.type === 'text' ? invalid.content[0].text : ''}`, {
-              'ontos/code': 'invalid_input',
-            });
+            return errorResult(
+              `Změna č. ${index + 1}: ${invalid.content[0]?.type === 'text' ? invalid.content[0].text : ''}`,
+              {
+                'ontos/code': 'invalid_input',
+              },
+            );
           }
           const title = entryTitleCs(checked.entry, labelOf(checked.entry.moduleId));
           const reason = (stringArg(change, 'reason') ?? '').trim() || `Změna navržená přes ${d.client.name}`;
