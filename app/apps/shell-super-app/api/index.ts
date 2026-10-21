@@ -2116,57 +2116,57 @@ const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
     handlers
       .handle('listMyConnections', ({ request }) =>
         Effect.gen(function* listMyConnectionsHandler() {
+          yield* noStore;
           const caller = yield* connectionsCaller(request, false);
           const deps = yield* connectionsAdminDeps;
           const response = yield* listMine(caller, deps).pipe(Effect.catch(connectionsAdminFailure));
-          yield* noStore;
           return response;
         }).pipe(connectionsAdminDefect(request)),
       )
       .handle('listCompanyConnections', ({ payload, request }) =>
         Effect.gen(function* listCompanyConnectionsHandler() {
+          yield* noStore;
           const caller = yield* connectionsCaller(request, true);
           const deps = yield* connectionsAdminDeps;
           const response = yield* listForAdmin(caller, deps, payload).pipe(Effect.catch(connectionsAdminFailure));
-          yield* noStore;
           return response;
         }).pipe(connectionsAdminDefect(request)),
       )
       .handle('updateConnectionAccess', ({ payload, request }) =>
         Effect.gen(function* updateConnectionAccessHandler() {
+          yield* noStore;
           const caller = yield* connectionsCaller(request, false);
           const deps = yield* connectionsAdminDeps;
           const response = yield* updateConnection(caller, deps, payload).pipe(Effect.catch(connectionsAdminFailure));
-          yield* noStore;
           return response;
         }).pipe(connectionsAdminDefect(request)),
       )
       .handle('revokeConnection', ({ payload, request }) =>
         Effect.gen(function* revokeConnectionHandler() {
+          yield* noStore;
           const caller = yield* connectionsCaller(request, true);
           const deps = yield* connectionsAdminDeps;
           const response = yield* revokeConnection(caller, deps, payload).pipe(Effect.catch(connectionsAdminFailure));
-          yield* noStore;
           return response;
         }).pipe(connectionsAdminDefect(request)),
       )
       .handle('listAgentConnections', ({ request }) =>
         Effect.gen(function* listAgentConnectionsHandler() {
+          yield* noStore;
           const caller = yield* connectionsCaller(request, true);
           const deps = yield* connectionsAdminDeps;
           const response = yield* agentConnectionsOverview(caller, deps).pipe(Effect.catch(connectionsAdminFailure));
-          yield* noStore;
           return response;
         }).pipe(connectionsAdminDefect(request)),
       )
       .handle('replaceAgentOperators', ({ payload, request }) =>
         Effect.gen(function* replaceAgentOperatorsHandler() {
+          yield* noStore;
           const caller = yield* connectionsCaller(request, true);
           const deps = yield* connectionsAdminDeps;
           const response = yield* replaceAgentOperators(caller, deps, payload).pipe(
             Effect.catch(connectionsAdminFailure),
           );
-          yield* noStore;
           return response;
         }).pipe(connectionsAdminDefect(request)),
       ),
