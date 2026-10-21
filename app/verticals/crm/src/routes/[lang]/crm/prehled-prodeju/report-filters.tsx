@@ -130,7 +130,10 @@ export interface ReportFilterBarProps {
 export const ReportFilterBar = ({ onChange, periods, query, records, scopeAll }: ReportFilterBarProps) => {
   const salespeopleItems = [
     { label: 'Všichni obchodníci', value: ALL },
-    ...records.state.salespeople.map((person) => ({ label: person.name, value: person.id })),
+    ...records.state.salespeople.map((person) => ({
+      label: person.active ? person.name : `${person.name} (vyřazen)`,
+      value: person.id,
+    })),
     { label: 'Nepřiděleno', value: UNASSIGNED },
   ];
   const clientItems = [

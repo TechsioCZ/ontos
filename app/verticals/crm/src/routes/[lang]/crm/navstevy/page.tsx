@@ -310,7 +310,10 @@ const VisitsContent = ({ initialClient }: { readonly initialClient: string | nul
                   <SelectTemplate
                     items={[
                       { label: 'Všichni obchodníci', value: ALL },
-                      ...records.state.salespeople.map((person) => ({ label: person.name, value: person.id })),
+                      ...records.state.salespeople.map((person) => ({
+                        label: person.active ? person.name : `${person.name} (vyřazen)`,
+                        value: person.id,
+                      })),
                     ]}
                     label="Obchodník"
                     name="salespersonFilter"

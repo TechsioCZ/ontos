@@ -281,7 +281,10 @@ const ClientsList = ({
           />
         )}
       </StatRow>
-      <CrmSalesKpiStrip records={records} />
+      {/* Order statistics only where the company imports orders (wholesale CRM); a firm without imports sees no empty block. */}
+      {(records.state.imports.orders.length > 0 || records.state.imports.batches.length > 0) && (
+        <CrmSalesKpiStrip records={records} />
+      )}
     </>
   );
 
@@ -358,7 +361,10 @@ const ClientsList = ({
               label="Obchodník"
               items={[
                 { label: 'Všichni obchodníci', value: ALL },
-                ...records.state.salespeople.map((person) => ({ label: person.name, value: person.id })),
+                ...records.state.salespeople.map((person) => ({
+                  label: person.active ? person.name : `${person.name} (vyřazen)`,
+                  value: person.id,
+                })),
                 { label: 'Bez obchodníka', value: UNASSIGNED },
               ]}
               name="owner"
