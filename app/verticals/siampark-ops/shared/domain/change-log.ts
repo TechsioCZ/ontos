@@ -46,19 +46,33 @@ type Json = null | boolean | number | string | readonly Json[] | { readonly [key
 const isObject = (value: unknown): value is Readonly<Record<string, Json>> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-/** Finds the first object with `id === id` anywhere in an encoded state tree. */
+/**
+ * Finds the record with `id === id` in an encoded state tree: breadth-first, so a top-level record wins over a
+ * nested reference to it (e.g. a document link `{ id, kind, label }` inside another document), and among equally
+ * deep matches an audited record (`updatedAt` / `createdAt`) wins.
+ */
 export const findRecord = (state: unknown, id: string): Readonly<Record<string, Json>> | undefined => {
-  const stack: unknown[] = [state];
-  while (stack.length > 0) {
-    const value = stack.pop();
-    if (Array.isArray(value)) {
-      stack.push(...value);
-    } else if (isObject(value)) {
-      if (value['id'] === id) {
-        return value;
+  let level: unknown[] = [state];
+  while (level.length > 0) {
+    const next: unknown[] = [];
+    let fallback: Readonly<Record<string, Json>> | undefined;
+    for (const value of level) {
+      if (Array.isArray(value)) {
+        next.push(...value);
+      } else if (isObject(value)) {
+        if (value['id'] === id) {
+          if ('updatedAt' in value || 'createdAt' in value) {
+            return value;
+          }
+          fallback ??= value;
+        }
+        next.push(...Object.values(value));
       }
-      stack.push(...Object.values(value));
     }
+    if (fallback !== undefined) {
+      return fallback;
+    }
+    level = next;
   }
   return undefined;
 };

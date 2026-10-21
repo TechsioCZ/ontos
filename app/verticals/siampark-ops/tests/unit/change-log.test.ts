@@ -51,3 +51,14 @@ it('conflicts only when a touched record changed after the client loaded', () =>
   expect(touchedSince(current, ['doc-2'], '2026-10-21T05:30:00.000Z')).toBe(false);
   expect(touchedSince(current, ['new-record'], '2026-10-21T05:30:00.000Z')).toBe(false);
 });
+
+it('finds the record itself, not a nested link that carries the same id', () => {
+  const tree = {
+    comments: [{ id: 'c1', subject: { id: 'doc-1', kind: 'document', label: 'Smlouva' }, updatedAt: 'x' }],
+    documents: [
+      { id: 'doc-2', links: [{ id: 'doc-1', kind: 'document', label: 'Smlouva' }], updatedAt: 'x' },
+      { id: 'doc-1', title: 'Smlouva', updatedAt: '2026-10-21T05:00:00.000Z' },
+    ],
+  };
+  expect(findRecord(tree, 'doc-1')?.['title']).toBe('Smlouva');
+});
