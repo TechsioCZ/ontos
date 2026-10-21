@@ -265,6 +265,8 @@ step demo-seed-work-people "${WITH_ENV[@]}" node scripts/demo/seed-work-people.m
 step company-membership-hygiene "${WITH_ENV[@]}" node scripts/demo/company-membership-hygiene.mts
 # reset-permissions deliberately logs AI errors without failing; this explicit step makes a cold start honest.
 step ai-profiles pnpm_ demo:ai-profiles
+# Agentní entity: one presentable agent per company through the shell's admin endpoint (idempotent by name).
+step seed-agent-entities env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" node scripts/demo/seed-agent-entities.mts
 # SpiceDB is in-memory: re-add the company administrators as operators of the seeded agents (MCP „Za agenta“).
 step mcp-agent-operators "${WITH_ENV[@]}" node scripts/demo/mcp-agent-operators.mts
 # CRM.md §3: key of the CRM's Party Registry intake principal (read by the crm server per intake, no restart).
