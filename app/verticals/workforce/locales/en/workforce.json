@@ -344,7 +344,7 @@
         },
         "status": {
           "active": "Active",
-          "disabled": "Paused",
+          "disabled": "Deactivated",
           "archived": "Archived"
         },
         "operators": {

@@ -344,7 +344,7 @@
         },
         "status": {
           "active": "Aktivní",
-          "disabled": "Pozastavený",
+          "disabled": "Deaktivovaný",
           "archived": "Archivovaný"
         },
         "operators": {
