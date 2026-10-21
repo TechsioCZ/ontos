@@ -13,7 +13,8 @@ export const akrosGuide: DemoGuide = {
       id: 'nakup',
       steps: [
         {
-          click: 'Tlačítko otevře e-shop v nové kartě. Zákazník nakupuje bez přihlášení, přihlášení do OntOS e-shop nepoužívá.',
+          click:
+            'Tlačítko otevře e-shop v nové kartě. Zákazník nakupuje bez přihlášení, přihlášení do OntOS e-shop nepoužívá.',
           id: 'akros-katalog',
           persona: null,
           say: 'Tohle je zákaznický e-shop AKROS se zachovaným vlastním designem. Katalog, ceny a dostupnost mu dodává OntOS.',
@@ -139,6 +140,26 @@ export const akrosGuide: DemoGuide = {
       title: 'Historie a úklid',
     },
   ],
+  boundaries: {
+    live: [
+      'Katalog, varianty, ceny, dostupnost a vyhledávání e-shopu AKROS čte server e-shopu přímo z OntOS; klíč k OntOS nikdy nepřijde do prohlížeče.',
+      'DEMO objednávka se skutečně uloží do OntOS, sníží sklad varianty a hned ji vidí správce i expedice; zákazník na potvrzení vidí živý stav.',
+      'Změna ceny, textu nebo obrázku v administraci se v e-shopu projeví po obnovení stránky (krátká cache).',
+      'E-maily k objednávce se skutečně odesílají, ale jen do lokální testovací schránky Mailpit (localhost:8025), nikdy skutečným adresátům.',
+    ],
+    simulated: [
+      'Předání dopravci: stav „Předáno dopravci (simulace)“ nevolá žádného dopravce a nic se nedoručuje.',
+      'Platba: nic se neplatí, v pokladně není platební brána; doprava a platba jsou jen ukázkové volby.',
+      'Zákaznické údaje v pokladně jsou fiktivní.',
+      'Přihlášení, registrace, Můj účet a Oblíbené jsou ukázkové obrazovky původního e-shopu bez napojení na OntOS; DEMO objednávka se dělá bez účtu.',
+    ],
+    unfinished: [
+      'Množstevní cenové úrovně (nižší cena od 100 nebo 500 ks) zdrojová data nemají, e-shop je proto nenabízí.',
+      'Produkt nejde smazat, jen vyřadit z prodeje (neaktivní a nezveřejněný).',
+      'Veřejný odkaz dostupný 24/7 zatím neexistuje: ukázka běží jen lokálně.',
+      'Daňové a účetní doklady, napojení dopravců, platební brány a kupóny nejsou součástí této verze.',
+    ],
+  },
   companyName: 'AKROS',
   id: 'akros',
   intro:

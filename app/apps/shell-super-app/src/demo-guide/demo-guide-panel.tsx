@@ -5,6 +5,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Checkbox } from '@techsio/ui-kit/atoms/checkbox';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
+import type { IconType } from '@techsio/ui-kit/atoms/icon';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { useLayoutEffect, useRef } from 'react';
 import type { KeyboardEvent, MouseEvent, PointerEvent } from 'react';
@@ -21,7 +22,7 @@ import {
   useDemoGuideWidth,
 } from './demo-guide-store.ts';
 import { demoPasswordHint } from './demo-guide-types.ts';
-import type { DemoGuide, DemoGuidePersona, DemoGuideStep } from './demo-guide-types.ts';
+import type { DemoGuide, DemoGuideBoundaries, DemoGuidePersona, DemoGuideStep } from './demo-guide-types.ts';
 
 export const demoGuidePanelId = 'demo-guide-panel';
 const guideIcon = 'icon-[mdi--presentation-play]';
@@ -287,6 +288,43 @@ export interface DemoGuidePanelProps {
   readonly identityEmail: string | undefined;
 }
 
+const boundaryGroups = [
+  { icon: 'icon-[mdi--check-circle-outline]', key: 'live', title: 'Živě z OntOS' },
+  { icon: 'icon-[mdi--theater]', key: 'simulated', title: 'Jen simulace' },
+  { icon: 'icon-[mdi--progress-wrench]', key: 'unfinished', title: 'Zatím není hotové' },
+] as const satisfies readonly {
+  readonly icon: IconType;
+  readonly key: keyof DemoGuideBoundaries;
+  readonly title: string;
+}[];
+
+/** One place that says what is real, what is simulated and what is unfinished, so nothing is promised by mistake. */
+const BoundariesSection = ({ boundaries }: { readonly boundaries: DemoGuideBoundaries }) => (
+  <section aria-labelledby="demo-guide-boundaries" className="grid gap-150 border-border-primary border-t pt-250">
+    <header className="grid gap-50">
+      <h3 className="font-semibold text-fg-primary text-sm" id="demo-guide-boundaries">
+        Co je živé, co simulace a co není hotové
+      </h3>
+      <p className="text-fg-secondary text-xs">Pro prezentujícího: tyto hranice ukázky neslibujte jinak.</p>
+    </header>
+    {boundaryGroups.map((group) =>
+      boundaries[group.key].length === 0 ? null : (
+        <div className="grid gap-50" key={group.key}>
+          <p className="flex items-center gap-100 font-medium text-fg-primary text-sm">
+            <Icon className="shrink-0" icon={group.icon} size="sm" />
+            <span>{group.title}</span>
+          </p>
+          <ul className="grid list-disc gap-50 ps-250 text-fg-secondary text-xs">
+            {boundaries[group.key].map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ),
+    )}
+  </section>
+);
+
 /**
  * Non-modal guide docked to the right edge below the top bar. It is not a dialog: the page stays usable while the
  * presenter clicks along. It stacks below the ui-kit dialog layers (backdrop 10, positioner 20): a drawer or dialog
@@ -411,6 +449,7 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
             </section>
           );
         })}
+        {guide.boundaries === undefined ? null : <BoundariesSection boundaries={guide.boundaries} />}
       </div>
     </aside>
   );
