@@ -40,6 +40,7 @@ import type {
 import { isCrmSalesRole, syncCrmSalesperson } from '../../../../api/crm-salesperson-sync.ts';
 import type { SalespersonAccount, SalespersonSync } from '../../../../api/crm-salesperson-sync.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { AgentConnectionsSection } from './agent-connections-section.tsx';
 import csResource from '../../../../../locales/cs/workforce.json';
 import enResource from '../../../../../locales/en/workforce.json';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
@@ -843,6 +844,10 @@ const PeoplePageContent = () => {
             </SectionCard>
             <RolesCard data={data} />
           </div>
+        )}
+
+        {data !== undefined && (
+          <AgentConnectionsSection onNotify={(title) => toaster.create({ title, type: 'success' })} />
         )}
       </div>
 

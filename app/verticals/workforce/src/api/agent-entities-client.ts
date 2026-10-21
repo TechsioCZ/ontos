@@ -1,5 +1,6 @@
 /**
- * Browser client of the shell's agent-entity endpoints (`AGENT_ACCESS_PATHS`). The page runs inside the shell
+ * Browser client of the shell's agent-entity endpoints (`AGENT_ACCESS_PATHS`) and of the connection-management
+ * endpoints (`CONNECTION_MANAGEMENT_PATHS`: agent operators and agent connections). The page runs inside the shell
  * origin, so the session cookie authenticates the call; the shell resolves the selected company and the Core
  * Action authorizes and audits every change.
  */
@@ -7,11 +8,20 @@ import { Effect, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import {
   AGENT_ACCESS_PATHS,
+  AgentConnectionsOverviewSchema,
   AgentEntityOverviewSchema,
+  AgentOperatorsResponseSchema,
+  CONNECTION_MANAGEMENT_PATHS,
+  ConnectionMutationResponseSchema,
   ManageAgentEntityResponseSchema,
 } from '@app/shared-contracts/agent-access';
 import type {
+  AgentConnectionsOverview,
   AgentEntityOverview,
+  AgentOperatorsRequest,
+  AgentOperatorsResponse,
+  ConnectionMutationResponse,
+  ConnectionRevokeRequest,
   ManageAgentEntityRequest,
   ManageAgentEntityResponse,
 } from '@app/shared-contracts/agent-access';
@@ -59,6 +69,9 @@ const failed = (reason: AgentFailure): { readonly reason: AgentFailure; readonly
 
 const decodeOverview = Schema.decodeUnknownEffect(AgentEntityOverviewSchema);
 const decodeManageResponse = Schema.decodeUnknownEffect(ManageAgentEntityResponseSchema);
+const decodeConnections = Schema.decodeUnknownEffect(AgentConnectionsOverviewSchema);
+const decodeOperators = Schema.decodeUnknownEffect(AgentOperatorsResponseSchema);
+const decodeMutation = Schema.decodeUnknownEffect(ConnectionMutationResponseSchema);
 
 export const loadAgentEntities: Effect.Effect<
   AgentOutcome<AgentEntityOverview>,
@@ -83,5 +96,45 @@ export const runAgentCommand = (
       return failed(answer.reason);
     }
     const value = yield* decodeManageResponse(answer.json);
+    return { status: 'ok' as const, value };
+  }).pipe(Effect.orElseSucceed(() => failed('error')));
+
+/** Agents of the selected company with their operators and active connections. */
+export const loadAgentConnections: Effect.Effect<
+  AgentOutcome<AgentConnectionsOverview>,
+  never,
+  HttpClient.HttpClient
+> = Effect.gen(function* loadAgentConnectionsCall() {
+  const answer = yield* post(CONNECTION_MANAGEMENT_PATHS.agentConnections, {});
+  if (answer.status === 'failed') {
+    return failed(answer.reason);
+  }
+  const value = yield* decodeConnections(answer.json);
+  return { status: 'ok' as const, value };
+}).pipe(Effect.orElseSucceed(() => failed('error')));
+
+/** Replaces the complete operator set of one agent; the shell answers how many connections were revoked with it. */
+export const saveAgentOperators = (
+  request: AgentOperatorsRequest,
+): Effect.Effect<AgentOutcome<AgentOperatorsResponse>, never, HttpClient.HttpClient> =>
+  Effect.gen(function* saveAgentOperatorsCall() {
+    const answer = yield* post(CONNECTION_MANAGEMENT_PATHS.operators, request);
+    if (answer.status === 'failed') {
+      return failed(answer.reason);
+    }
+    const value = yield* decodeOperators(answer.json);
+    return { status: 'ok' as const, value };
+  }).pipe(Effect.orElseSucceed(() => failed('error')));
+
+/** Revokes one connection (owner, or administrator of the company) with a reason for the audit trail. */
+export const revokeAgentConnection = (
+  request: ConnectionRevokeRequest,
+): Effect.Effect<AgentOutcome<ConnectionMutationResponse>, never, HttpClient.HttpClient> =>
+  Effect.gen(function* revokeAgentConnectionCall() {
+    const answer = yield* post(CONNECTION_MANAGEMENT_PATHS.revoke, request);
+    if (answer.status === 'failed') {
+      return failed(answer.reason);
+    }
+    const value = yield* decodeMutation(answer.json);
     return { status: 'ok' as const, value };
   }).pipe(Effect.orElseSucceed(() => failed('error')));

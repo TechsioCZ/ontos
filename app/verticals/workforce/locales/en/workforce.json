@@ -334,6 +334,50 @@
         "disabled": "Disabled accounts",
         "all": "All accounts"
       }
+    },
+    "agents": {
+      "connections": {
+        "title": "Agents and their connections",
+        "description": "Only a person you allow here can connect the agent to ChatGPT or Claude. The connection then acts as the agent, within the agent's permissions.",
+        "loading": "Loading agents…",
+        "noAgents": "This company has no agents yet.",
+        "noAgentsHint": "Agents are created by the administrator; the demo setup creates sample agents.",
+        "retry": "Try again",
+        "policy": {
+          "read_only": "Read only",
+          "approval": "Needs approval",
+          "direct": "Direct"
+        },
+        "status": {
+          "active": "Active",
+          "disabled": "Paused",
+          "archived": "Archived"
+        },
+        "operators": {
+          "title": "Who may connect the agent",
+          "hint": "Only people of {{company}} can be chosen.",
+          "empty": "Nobody may connect this agent yet.",
+          "save": "Save",
+          "saving": "Saving…",
+          "saved": "People for {{name}} saved",
+          "revoked": "Disconnected connections: {{count}}"
+        },
+        "list": {
+          "title": "Agent connections",
+          "empty": "The agent is not connected to any app yet.",
+          "connectedBy": "connected by {{name}}",
+          "lastUsed": "Last used {{date}}",
+          "neverUsed": "Not used yet",
+          "revoke": "Disconnect",
+          "dialogTitle": "Disconnect {{client}}?",
+          "dialogDescription": "The app loses access as the agent within 30 seconds. The reason is written to the audit log.",
+          "reason": "Reason",
+          "reasonRequired": "Enter a reason.",
+          "confirm": "Disconnect",
+          "cancel": "Cancel",
+          "revoked": "{{client}} disconnected"
+        }
+      }
     }
   }
 }
