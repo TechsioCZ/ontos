@@ -11,7 +11,7 @@ export const SERVER_INSTRUCTIONS = [
   '1. Nejdřív zavolej ontos_whoami: firma, za koho jednáš, moduly a režim zápisu.',
   '2. Co umíš, najdeš přes ontos_capabilities {query: "zákazník"}; vstupní schéma přes ontos_capabilities {id}.',
   '3. Čtení: ontos_read {id, input}. Odpověď je zkrácená: další položky přes offset, vynechané části (omitted) přes path. Zápis: ontos_execute {id, input, reason}.',
-  '4. Režim „ke schválení“: zápis se neprovede hned, vznikne návrh, který schválí člověk v OntOS (Správa › Ke schválení). Uživateli vrať reviewUrl. Stav návrhů: ontos_list_proposals.',
+  '4. Režim „ke schválení“: zápis se neprovede hned, vznikne návrh, který schválí člověk v OntOS (Nastavení › Ke schválení). Uživateli vrať reviewUrl. Stav návrhů: ontos_list_proposals.',
   'Příklady: „najdi zákazníka“ → ontos_capabilities {query: "zákazník"} a ontos_read; „vytvoř úkol“ → ontos_execute {id: "work.tasks/command/CreateTask", input: {title}}.',
   'English: OntOS business system. Call ontos_whoami first, discover with ontos_capabilities, read with ontos_read, write with ontos_execute. In approval mode writes become proposals a person approves; share the reviewUrl.',
 ].join('\n');

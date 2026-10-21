@@ -9,6 +9,7 @@ import { Data, Effect, Schema } from 'effect';
 
 import { issueGatewayContextAssertion } from '../auth/gateway-issuer.ts';
 import { dispatchModuleApiRequest } from '../../src/module-api/transport.ts';
+import { commandRevisionFrom } from './command-revision.ts';
 
 /** A module call could not even be attempted (composition, assertion or dispatch failed before the module ran). */
 export class AgentModuleCallError extends Data.TaggedError('AgentModuleCallError')<{
@@ -135,9 +136,12 @@ const attemptCommand = (
     let body: unknown = command;
     if (slug === 'apply-command') {
       const read = yield* callModuleAs(principal, appId, '/reads/records', recordsQueryFor(appId));
-      const revision = isRecord(read.body) ? read.body['revision'] : undefined;
-      if (read.status !== 200 || typeof revision !== 'number') {
-        return failed(problemMessage(read.body, read.status), read.status === 200 ? 503 : read.status);
+      if (read.status !== 200) {
+        return failed(problemMessage(read.body, read.status), read.status);
+      }
+      const revision = commandRevisionFrom(read.body, command);
+      if (revision === undefined) {
+        return failed('Modul neuvedl aktuální revizi záznamů, změnu proto nelze bezpečně provést.', 503);
       }
       body = { command, expectedRevision: revision };
     }

@@ -71,7 +71,7 @@ export const MODULE_PAGE: Readonly<Record<string, string>> = {
   'property.portfolio': '/cs/nemovitosti',
   'work.tasks': '/cs/ukoly',
 };
-export const MSG_PROPOSED = 'Návrh čeká na schválení v OntOS (Správa › Ke schválení). Data se zatím nezměnila.';
+export const MSG_PROPOSED = 'Návrh čeká na schválení v OntOS (Nastavení › Ke schválení). Data se zatím nezměnila.';
 export const MSG_EXECUTED = 'Změna je provedena a zapsána do deníku.';
 
 const isPlainObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -634,7 +634,7 @@ export const buildConnectionTools = async (
       d.writePolicy === 'direct' ? 'Provést změnu' : 'Navrhnout změnu ke schválení',
       d.writePolicy === 'direct'
         ? 'Provede akci (zápis) v OntOS přes governed Action; server ověří oprávnění a zapíše deník. id z ontos_capabilities. Se stejným idempotencyKey se změna neprovede dvakrát. / Runs a governed Action.'
-        : 'Uloží změnu jako NÁVRH, který schválí člověk v OntOS (Správa › Ke schválení); data se hned nezmění. Vrací proposalId a reviewUrl. / Submits a proposal a person approves.',
+        : 'Uloží změnu jako NÁVRH, který schválí člověk v OntOS (Nastavení › Ke schválení); data se hned nezmění. Vrací proposalId a reviewUrl. / Submits a proposal a person approves.',
       {
         additionalProperties: false,
         properties: {
