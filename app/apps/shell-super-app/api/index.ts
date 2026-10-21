@@ -1961,9 +1961,6 @@ const agentPlatformConnectorCaller = (
   appIds: readonly string[],
 ) =>
   authenticateConnectorProposalCaller(headers, legalEntityId, appIds).pipe(
-    // The connector check reads the OAuth flow port per call; the handler runs inside the composed API runtime.
-    // @effect-diagnostics-next-line strictEffectProvide:off
-    Effect.provide(OAuthFlowLive),
     Effect.catch((error) =>
       failIdentityProblem(
         Predicate.isTagged(error, 'ConnectionForbidden')
@@ -2429,7 +2426,7 @@ export const makeShellAuthenticationApiRuntime = (
     resourcesGroupLive,
     gatewayContextGroupLive,
     oauthConnectGroupLive,
-    oauthConnectorGroupLive.pipe(Layer.provide(OAuthFlowLive)),
+    oauthConnectorGroupLive,
     // @ontos-codesmith-core-read-server-layers:start
 
     // @ontos-core-read legal-entity-detail
