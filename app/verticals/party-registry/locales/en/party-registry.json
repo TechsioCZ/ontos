@@ -170,7 +170,7 @@
         },
         "newCustomer": "New customer",
         "search": {
-          "placeholder": "Search name, IČO, e-mail or city…"
+          "placeholder": "Name, IČO, e-mail or phone…"
         },
         "state": {
           "clearFilters": "Clear filters",

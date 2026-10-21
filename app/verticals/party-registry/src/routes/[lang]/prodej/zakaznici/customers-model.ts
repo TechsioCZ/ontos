@@ -54,18 +54,32 @@ export const computeCustomerStats = (items: readonly CustomerListItem[], nowMill
   };
 };
 
+const PHONE_QUERY = /^[\d\s()+./-]+$/u;
+const NON_DIGITS = /\D/gu;
+
+/** Digits of a phone number without the Czech country prefix, so `777 642 318` finds `+420 777 642 318`. */
+const phoneDigits = (value: string): string => value.replaceAll(NON_DIGITS, '').replace(/^(?:00)?420(?=\d{9}$)/u, '');
+
 /**
- * Search covers name, IČO, e-mail and city only, matching the list's search contract. Case and diacritics are
- * folded on both sides, so `dvorak` finds `Dvořák` and `usti` finds `Ústí`.
+ * Search covers name, IČO, DIČ, e-mail, city and phone. Case and diacritics are folded on both sides, so `dvorak`
+ * finds `Dvořák` and `usti` finds `Ústí`. A query made of digits (spaces, `+`, `-` and brackets allowed) also matches
+ * phone numbers by their digits, whichever way they are grouped or prefixed.
  */
 export const matchesCustomerSearch = (item: CustomerListItem, query: string): boolean => {
-  const needle = foldSearchText(query.trim());
+  const trimmed = query.trim();
+  const needle = foldSearchText(trimmed);
   if (needle.length === 0) {
     return true;
   }
-  return [item.displayName, item.companyId, item.email, item.city].some(
-    (field) => field !== null && foldSearchText(field).includes(needle),
-  );
+  if (
+    [item.displayName, item.companyId, item.vatId, item.email, item.city, item.phone].some(
+      (field) => field !== null && foldSearchText(field).includes(needle),
+    )
+  ) {
+    return true;
+  }
+  const digits = PHONE_QUERY.test(trimmed) ? phoneDigits(trimmed) : '';
+  return digits.length >= 3 && item.phone !== null && phoneDigits(item.phone).includes(digits);
 };
 
 const CSV_FORMULA_PREFIX = /^[=+\-@\t\r]/u;

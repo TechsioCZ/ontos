@@ -15,7 +15,7 @@ const partyRef = Schema.decodeSync(PartyRefSchema)({
   tenantId,
 });
 
-const customer = (displayName: string, city: string | null) =>
+const customer = (displayName: string, city: string | null, phone: string | null = null) =>
   Schema.decodeSync(CustomerListItemSchema)({
     city,
     companyId: null,
@@ -32,7 +32,7 @@ const customer = (displayName: string, city: string | null) =>
     partyId,
     partyRef,
     partyRevision: 1,
-    phone: null,
+    phone,
     status: 'ACTIVE',
     vatId: null,
   });
@@ -50,4 +50,14 @@ it('treats an empty or blank query as a match for every customer', () => {
   const item = customer('Labská logistika a.s.', null);
   expect(matchesCustomerSearch(item, '')).toBe(true);
   expect(matchesCustomerSearch(item, '   ')).toBe(true);
+});
+
+it('finds a customer by phone digits whatever the grouping or country prefix', () => {
+  const item = customer('Zahradní servis Malá s.r.o.', null, '+420 777 642 318');
+  expect(matchesCustomerSearch(item, '777 642 318')).toBe(true);
+  expect(matchesCustomerSearch(item, '777642318')).toBe(true);
+  expect(matchesCustomerSearch(item, '+420777642318')).toBe(true);
+  expect(matchesCustomerSearch(item, '00420 777 642 318')).toBe(true);
+  expect(matchesCustomerSearch(item, '642 318')).toBe(true);
+  expect(matchesCustomerSearch(item, '602 445')).toBe(false);
 });

@@ -172,7 +172,7 @@
         },
         "newCustomer": "Nový zákazník",
         "search": {
-          "placeholder": "Hledat zákazníka…"
+          "placeholder": "Název, IČO, e-mail nebo telefon…"
         },
         "state": {
           "clearFilters": "Zrušit filtry",
