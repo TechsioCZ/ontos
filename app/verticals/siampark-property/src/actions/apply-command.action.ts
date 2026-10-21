@@ -23,6 +23,7 @@ const handleApplyCommand = Effect.fn('Property.Action.applyCommand')(function* h
   const { command } = payload;
   if (isStaffOnlyPropertyCommand(command)) {
     // Archiving hides records from every register: interactive staff sessions only, never API keys or jobs.
+    // The invocation itself is audited by the runtime (auditProfile standard); the record keeps who, when and why.
     const { authMethod } = context.scope;
     if (authMethod !== 'session' && authMethod !== 'support_impersonation') {
       return yield* new PropertyIneligible({
@@ -30,12 +31,6 @@ const handleApplyCommand = Effect.fn('Property.Action.applyCommand')(function* h
         reason: `Property command ${command._tag} is reserved for staff users`,
       });
     }
-    yield* context.recordAuditEvidence({
-      command: command._tag,
-      principalId: context.scope.principalId,
-      reason: 'reason' in command ? command.reason : null,
-      targetId: 'propertyRef' in command ? command.propertyRef.resourceId : command.unitRef.resourceId,
-    });
   }
   const milliseconds = yield* Clock.currentTimeMillis;
   yield* context.recordDataAccess({
