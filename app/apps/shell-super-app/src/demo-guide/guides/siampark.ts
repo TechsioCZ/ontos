@@ -144,7 +144,8 @@ export const siamparkGuide: DemoGuide = {
       id: 'externista',
       steps: [
         {
-          click: 'Otevřete Kavárnu Na Nábřeží s.r.o. a ukažte Obchodník: Martin Krejčí, externí obchodník, kterému Vedení kontakt svěřilo.',
+          click:
+            'Otevřete Kavárnu Na Nábřeží s.r.o. a ukažte Obchodník: Martin Krejčí, externí obchodník, kterému Vedení kontakt svěřilo.',
           id: 'siampark-vedeni-sveruje',
           persona: management,
           say: 'Vedení vidí všechny zájemce o pronájem a vybrané svěří externímu obchodníkovi. Svěření je záznam s autorem a důvodem.',
@@ -197,6 +198,47 @@ export const siamparkGuide: DemoGuide = {
       ],
       summary: 'Externí obchodník dostane svěřené kontakty, svěřené obchodní případy a svou práci, ne účetnictví.',
       title: 'Externista a oprávnění',
+    },
+    {
+      id: 'pripojeni-ai',
+      steps: [
+        {
+          click: 'Menu účtu › Můj profil › Připojené aplikace › Jak připojit › Kopírovat adresu.',
+          id: 'siampark-mcp-adresa',
+          persona: operations,
+          say: 'Do ChatGPT nebo Claude se vkládá jen adresa serveru, žádný klíč ani token. Přihlášení a souhlas proběhnou v OntOS.',
+          target: { kind: 'app', path: '/profil' },
+          title: 'Jedna adresa pro ChatGPT i Claude',
+        },
+        {
+          click:
+            'V Claude Code: claude mcp add --transport http ontos <adresa>, pak /mcp › Authenticate. Přihlaste se a na obrazovce Připojit zvolte firmu, Za mě a Navrhovat změny ke schválení.',
+          id: 'siampark-mcp-souhlas',
+          persona: operations,
+          say: 'Člověk sám zvolí firmu, za koho aplikace jedná, k jakým modulům má přístup a jestli změny jen navrhuje ke schválení.',
+          target: { kind: 'app', path: '/profil' },
+          title: 'Souhlas v češtině',
+        },
+        {
+          click: 'U připojení Upravit přístup: zúžit moduly nebo přepnout na Jen čtení. Potom Odpojit.',
+          id: 'siampark-mcp-upravit',
+          persona: operations,
+          say: 'Přístup jde kdykoli zúžit nebo odebrat bez nového přihlášení. Aplikace ztratí přístup do 30 sekund.',
+          target: { kind: 'app', path: '/profil' },
+          title: 'Upravit nebo odpojit',
+        },
+        {
+          click: 'Nastavení › Připojené aplikace: dlaždice, filtry a u připojení Odpojit s důvodem.',
+          id: 'siampark-mcp-prehled',
+          persona: management,
+          say: 'Správce vidí všechna připojení ve firmě a jedním kliknutím je odpojí. Odpojení i důvod se zapíšou do auditu.',
+          target: { kind: 'app', path: '/sprava/pripojene-aplikace' },
+          title: 'Přehled připojení pro správce',
+        },
+      ],
+      summary:
+        'ChatGPT nebo Claude se připojí jednou adresou, přihlášením do OntOS a souhlasem, bez kopírování tokenů.',
+      title: 'Připojení ChatGPT / Claude',
     },
   ],
   companyName: 'Siampark',
