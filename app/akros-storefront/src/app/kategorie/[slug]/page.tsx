@@ -117,61 +117,61 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
     })),
   ];
 
-  return (
-    <CategoryBranch activeSlug={category.slug}>
-      <StorefrontShell activeCategorySlug={category.slug}>
-        <StorefrontBreadcrumbs items={breadcrumbItems} />
+  const page = (
+    <StorefrontShell activeCategorySlug={category.slug}>
+      <StorefrontBreadcrumbs items={breadcrumbItems} />
+      <section
+        className="akros-section akros-product-listing-section"
+        aria-labelledby="category-title"
+      >
+        <div className="akros-category-heading">
+          <h1 id="category-title">{category.name}</h1>
+          {description && <p>{description}</p>}
+        </div>
+        {hasVisualChildCategories && <CategoryGrid categories={childCategories} />}
+      </section>
+
+      {ontos && (
+        <CategoryFilters
+          key={JSON.stringify(filters)}
+          filters={filters}
+          pathname={`/kategorie/${category.slug}`}
+          count={itemCount}
+        />
+      )}
+      {itemCount > 0 && products.length > 0 ? (
         <section
           className="akros-section akros-product-listing-section"
-          aria-labelledby="category-title"
+          aria-label={`Produkty: ${category.name}`}
         >
-          <div className="akros-category-heading">
-            <h1 id="category-title">{category.name}</h1>
-            {description && <p>{description}</p>}
-          </div>
-          {hasVisualChildCategories && <CategoryGrid categories={childCategories} />}
-        </section>
-
-        {ontos && (
-          <CategoryFilters
-            key={JSON.stringify(filters)}
-            filters={filters}
+          <ProductGrid products={products.map(toProductSummary)} />
+          <CatalogPagination
+            currentPage={currentPage}
+            itemCount={itemCount}
+            pageSize={productsPerPage}
             pathname={`/kategorie/${category.slug}`}
-            count={itemCount}
+            searchParams={ontos ? categoryFilterParams(filters) : undefined}
           />
-        )}
-        {itemCount > 0 && products.length > 0 ? (
-          <section
-            className="akros-section akros-product-listing-section"
-            aria-label={`Produkty: ${category.name}`}
-          >
-            <ProductGrid products={products.map(toProductSummary)} />
-            <CatalogPagination
-              currentPage={currentPage}
-              itemCount={itemCount}
-              pageSize={productsPerPage}
-              pathname={`/kategorie/${category.slug}`}
-              searchParams={ontos ? categoryFilterParams(filters) : undefined}
-            />
-          </section>
-        ) : (
-          <p className="akros-empty-state">
-            {filtersActive
-              ? "Nenalezeny žádné produkty. Upravte nebo vymažte filtry."
-              : cs.catalog.emptyCategory}
-          </p>
-        )}
+        </section>
+      ) : (
+        <p className="akros-empty-state">
+          {filtersActive
+            ? "Nenalezeny žádné produkty. Upravte nebo vymažte filtry."
+            : cs.catalog.emptyCategory}
+        </p>
+      )}
 
-        {recommendations.length > 0 && (
-          <section
-            className="akros-section akros-product-listing-section"
-            aria-labelledby="recommendations-title"
-          >
-            <h2 id="recommendations-title">{cs.catalog.recommendations}</h2>
-            <ProductGrid products={recommendations.slice(0, 4).map(toProductSummary)} />
-          </section>
-        )}
-      </StorefrontShell>
-    </CategoryBranch>
+      {recommendations.length > 0 && (
+        <section
+          className="akros-section akros-product-listing-section"
+          aria-labelledby="recommendations-title"
+        >
+          <h2 id="recommendations-title">{cs.catalog.recommendations}</h2>
+          <ProductGrid products={recommendations.slice(0, 4).map(toProductSummary)} />
+        </section>
+      )}
+    </StorefrontShell>
   );
+  // OntOS mode: the browser navigation gets only this category branch, not the whole tree.
+  return <CategoryBranch activeSlug={category.slug}>{page}</CategoryBranch>;
 }
