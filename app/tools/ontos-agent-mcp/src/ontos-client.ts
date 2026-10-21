@@ -25,7 +25,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import { Option, Result, Schema } from 'effect';
-import { getConfig } from './config.ts';
+import { getEndpoints } from './config.ts';
 import { getGatewayContext } from './gateway.ts';
 import type { GatewayContext } from './gateway.ts';
 
@@ -91,7 +91,7 @@ const postJson = async <S extends Schema.Codec<unknown>>(
   schema: S,
   headers: Readonly<Record<string, string>> = {},
 ): Promise<S['Type']> => {
-  const { shellUrl } = getConfig();
+  const { shellUrl } = getEndpoints();
   const response = await fetch(`${shellUrl}${context.apiBaseUrl}${path}`, {
     body: JSON.stringify(body),
     headers: {

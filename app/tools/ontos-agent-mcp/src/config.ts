@@ -110,6 +110,43 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): AgentConfig =>
   };
 };
 
+/** Every demo company a principal may belong to (core-runtime install/demo-company-profiles.ts; Kavárna is legacy). */
+export const DEMO_COMPANIES = [
+  { key: 'obchod', label: 'Obchodní firma', legalEntityId: '71000000-0000-4000-8000-000000000020' },
+  { key: 'siampark', label: 'Siampark', legalEntityId: '71000000-0000-4000-8000-000000000021' },
+  { key: 'hanak', label: 'Velkoobchod Hanák s.r.o.', legalEntityId: '71000000-0000-4000-8000-000000000022' },
+  { key: 'akros', label: 'AKROS (demo)', legalEntityId: '71000000-0000-4000-8000-000000000024' },
+] as const;
+export type DemoCompany = (typeof DEMO_COMPANIES)[number];
+
+/** Shell and composition endpoints. Never throws and needs no API key (the HTTP transport has none of its own). */
+export interface EndpointsConfig {
+  readonly compositionRevision: string | undefined;
+  readonly compositionUrl: string;
+  readonly shellUrl: string;
+}
+
+export const loadEndpoints = (env: NodeJS.ProcessEnv = process.env): EndpointsConfig => {
+  const fileValues = readDemoEnvFile();
+  const read = (key: string): string | undefined => (env[key] ?? fileValues[key])?.trim() || undefined;
+  return {
+    compositionRevision: read('ONTOS_COMPOSITION_REVISION'),
+    compositionUrl: read('ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL') ?? DEFAULT_COMPOSITION_URL,
+    shellUrl: (read('ONTOS_SHELL_URL') ?? DEFAULT_SHELL_URL).replace(/\/+$/u, ''),
+  };
+};
+
+let cachedEndpoints: EndpointsConfig | undefined;
+
+export const getEndpoints = (): EndpointsConfig => {
+  cachedEndpoints ??= loadEndpoints();
+  return cachedEndpoints;
+};
+
+/** Raw value of one variable: process environment first, then app/.env.demo.local. */
+export const readSetting = (key: string, env: NodeJS.ProcessEnv = process.env): string | undefined =>
+  (env[key] ?? readDemoEnvFile()[key])?.trim() || undefined;
+
 let cachedConfig: AgentConfig | undefined;
 
 /** Loads configuration once per process. Throws when ONTOS_AGENT_API_KEY is missing. */

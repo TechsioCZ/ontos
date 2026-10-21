@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { getConfig } from './config.ts';
+import { getEndpoints } from './config.ts';
+import { currentPrincipal } from './session.ts';
 
 /**
  * Shell API-key capability issuance.
@@ -54,7 +55,7 @@ const CompositionSchema = z.object({ composition: z.object({ revision: Compositi
 let liveRevision: string | undefined;
 
 const fetchActiveRevision = async (): Promise<string | undefined> => {
-  const { compositionUrl } = getConfig();
+  const { compositionUrl } = getEndpoints();
   try {
     const response = await fetch(compositionUrl);
     if (!response.ok) {
@@ -69,17 +70,19 @@ const fetchActiveRevision = async (): Promise<string | undefined> => {
 };
 
 const requestGatewayContext = async (audience: string, compositionRevision: string): Promise<Response> => {
-  const config = getConfig();
+  const { shellUrl } = getEndpoints();
+  // The active principal (session.ts): the HTTP session's bearer token or the stdio environment key.
+  const principal = currentPrincipal();
   const body = GatewayContextRequestSchema.parse({
     audience,
     compositionRevision,
-    legalEntityId: config.legalEntityId,
+    legalEntityId: principal.legalEntityId,
   });
-  return await fetch(`${config.shellUrl}${GATEWAY_CONTEXT_PATH}`, {
+  return await fetch(`${shellUrl}${GATEWAY_CONTEXT_PATH}`, {
     body: JSON.stringify(body),
     headers: {
       'content-type': 'application/json',
-      'x-api-key': config.apiKey,
+      'x-api-key': principal.apiKey,
       'x-correlation-id': randomUUID(),
     },
     method: 'POST',
@@ -92,7 +95,7 @@ const requestGatewayContext = async (audience: string, compositionRevision: stri
  * 409 (reload required: the stack was rebuilt), the live revision is fetched once and the request retried.
  */
 export const getGatewayContext = async (audience: string): Promise<GatewayContext> => {
-  const config = getConfig();
+  const config = getEndpoints();
   const revision = liveRevision ?? config.compositionRevision ?? (await fetchActiveRevision());
   if (revision === undefined) {
     throw new Error(
