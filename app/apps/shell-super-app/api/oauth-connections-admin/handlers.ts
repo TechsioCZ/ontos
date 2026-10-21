@@ -206,9 +206,11 @@ export const agentConnectionsOverview = <R>(caller: ConnectionsCaller, deps: Con
         const operatorIds = yield* deps.directory.operatorsOf(agent.principalId);
         return {
           connections: active.filter((connection) => connection.acting.principalId === agent.principalId),
+          description: null,
           displayName: agent.displayName,
           modules: agent.modules,
           operators: people.filter((person) => operatorIds.includes(person.principalId)),
+          owner: null,
           principalId: agent.principalId,
           seeded: agent.seeded,
           status: agent.status,

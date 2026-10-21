@@ -209,13 +209,20 @@ export const AgentOperatorsResponseSchema = Schema.Struct({
 });
 export type AgentOperatorsResponse = typeof AgentOperatorsResponseSchema.Type;
 
-/** Shell endpoint paths (all POST, JSON, session cookie). */
+/**
+ * Shell endpoint paths (all POST, JSON, session cookie, `cache-control: no-store`). Errors are problem JSON whose
+ * `detail` is Czech: 403 not the company administrator, 404 unknown agent, 409 changed meanwhile, 422 invalid input.
+ */
 export const AGENT_ACCESS_PATHS = {
   /** Company administrator; body `{}`; answers `AgentEntityOverview`. */
   list: '/shell-super-app-api/auth/identity/agent-entities/list',
-  /** Company administrator; header `idempotency-key`; body `ManageAgentEntityRequest`. */
+  /** Company administrator; header `idempotency-key`; body `ManageAgentEntityRequest`; answers `ManageAgentEntityResponse`. */
   manage: '/shell-super-app-api/auth/identity/agent-entities',
 } as const;
+
+export const AGENT_NAME_MAX = 200;
+export const AGENT_DESCRIPTION_MAX = 500;
+export const AGENT_REASON_MAX = 500;
 
 export const AgentAuditEntrySchema = Schema.Struct({
   actorName: Schema.NullOr(Schema.String),
@@ -248,10 +255,14 @@ export type AgentRolePreset = typeof AgentRolePresetSchema.Type;
 export const AgentEntitySchema = Schema.Struct({
   /** Active connections acting as this agent. */
   connections: Schema.Array(ConnectionSummarySchema),
+  /** What the agent is for (administrator's text); null when left empty. */
+  description: Schema.NullOr(Schema.String),
   displayName: Schema.String,
   modules: Schema.Array(AgentModuleGrantSchema),
   /** People allowed to connect the agent (SpiceDB `principal:{agent}#operator`). */
   operators: Schema.Array(PrincipalRefSchema),
+  /** Person of the company responsible for the agent; null when none was chosen (older seeded agents). */
+  owner: Schema.NullOr(PrincipalRefSchema),
   principalId: Schema.String,
   /** True while the profile still comes from the demo seed (no change made in the app yet). */
   seeded: Schema.Boolean,
@@ -260,26 +271,45 @@ export const AgentEntitySchema = Schema.Struct({
 });
 export type AgentEntity = typeof AgentEntitySchema.Type;
 
+/** Lidé a role › Agentní entity: everything the administrator page needs in one answer. */
 export const AgentEntityOverviewSchema = Schema.Struct({
+  /** Agents of the company (active and deactivated; deleted agents are gone), sorted by name (cs). */
   agents: Schema.Array(AgentEntitySchema),
+  /** Newest first: agent create/configure/status/delete rows and operator changes of this company. */
   audit: Schema.Array(AgentAuditEntrySchema),
   company: Schema.Struct({ legalEntityId: Schema.String, legalName: Schema.String }),
+  /** Active people of the company: the only allowed owners and operators. */
+  members: Schema.Array(PrincipalRefSchema),
+  /** Modules an agent of this company may get, sorted by label (cs). */
   modules: Schema.Array(AgentModuleOptionSchema),
+  /** The company's human roles as module presets, in role order. */
   presets: Schema.Array(AgentRolePresetSchema),
 });
 export type AgentEntityOverview = typeof AgentEntityOverviewSchema.Type;
 
+/**
+ * `create`      new agent; `modules` may only use `AgentEntityOverview.modules` (access <= maxAccess); owner and
+ *               operators must be active people of the company. Grants follow the module list and the write policy.
+ * `configure`   replaces name, description, owner, modules and write policy (operators: `CONNECTION_MANAGEMENT_PATHS.operators`).
+ * `change-status` deactivate (`reason` required) or reactivate. Deactivation revokes the agent's active connections.
+ * `delete`      archives the agent: its grants, operators and active connections are removed; it leaves the list.
+ */
 export const ManageAgentEntityRequestSchema = Schema.Union([
   Schema.Struct({
-    displayName: Text(200),
+    description: Schema.NullOr(Text(AGENT_DESCRIPTION_MAX)),
+    displayName: Text(AGENT_NAME_MAX),
     modules: Schema.Array(AgentModuleGrantSchema),
     operation: Schema.Literal('create'),
+    operatorPrincipalIds: Schema.Array(Schema.String),
+    ownerPrincipalId: Schema.String,
     writePolicy: AgentWritePolicySchema,
   }),
   Schema.Struct({
-    displayName: Text(200),
+    description: Schema.NullOr(Text(AGENT_DESCRIPTION_MAX)),
+    displayName: Text(AGENT_NAME_MAX),
     modules: Schema.Array(AgentModuleGrantSchema),
     operation: Schema.Literal('configure'),
+    ownerPrincipalId: Schema.String,
     principalId: Schema.String,
     writePolicy: AgentWritePolicySchema,
   }),
@@ -288,7 +318,12 @@ export const ManageAgentEntityRequestSchema = Schema.Union([
     newStatus: Schema.Literals(['active', 'disabled']),
     operation: Schema.Literal('change-status'),
     principalId: Schema.String,
-    reason: Schema.optionalKey(Text(500)),
+    reason: Schema.optionalKey(Text(AGENT_REASON_MAX)),
+  }),
+  Schema.Struct({
+    operation: Schema.Literal('delete'),
+    principalId: Schema.String,
+    reason: Text(AGENT_REASON_MAX),
   }),
 ]);
 export type ManageAgentEntityRequest = typeof ManageAgentEntityRequestSchema.Type;
@@ -296,9 +331,11 @@ export type ManageAgentEntityRequest = typeof ManageAgentEntityRequestSchema.Typ
 export const ManageAgentEntityResponseSchema = Schema.Struct({
   grantsGranted: Schema.Finite,
   grantsRevoked: Schema.Finite,
-  operation: Schema.Literals(['create', 'configure', 'change-status']),
+  operation: Schema.Literals(['create', 'configure', 'change-status', 'delete']),
   principalId: Schema.String,
-  status: Schema.Literals(['active', 'disabled']),
+  /** Active connections of the agent revoked by this change (deactivation, deletion). */
+  revokedConnections: Schema.Finite,
+  status: AgentStatusSchema,
 });
 export type ManageAgentEntityResponse = typeof ManageAgentEntityResponseSchema.Type;
 
