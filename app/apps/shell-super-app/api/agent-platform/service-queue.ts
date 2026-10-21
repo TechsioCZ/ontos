@@ -8,6 +8,7 @@ import {
   AGENT_APPROVALS_PATH,
   agentApprovalModuleByAppId,
   agentApprovalModules,
+  agentModuleLabel,
 } from '@app/shared-contracts/agent-proposals';
 import type {
   AgentActivityRequest,
@@ -21,11 +22,14 @@ import { Effect } from 'effect';
 
 import { loadAgentProfiles } from '../auth/agent-store.ts';
 
+import { approverCheck, crmClientIdOf, crmClientsOf } from './approval-logic.ts';
 import { AgentPlatformForbidden, AgentPlatformInvalid, callerModuleAccess } from './caller.ts';
 import { readTargetEntity } from './service-decide.ts';
 import type { AgentPlatformCaller } from './caller.ts';
 import { readLegacyBatches, seesWholeModule } from './legacy-queue.ts';
 import { rowsToQueueBatches } from './mappers.ts';
+import type { AgentProposalRow } from './mappers.ts';
+import { readModuleRecords } from './module-call.ts';
 import {
   AgentStoreUnavailable,
   findRunProposals,
@@ -53,6 +57,31 @@ const countPending = (batches: readonly AgentQueueBatch[], onlyDecidable: boolea
     0,
   );
 
+/** Order-independent JSON of a value (object keys sorted), so equal commands compare equal. */
+const canonicalJson = (value: unknown): string =>
+  Array.isArray(value)
+    ? `[${value.map(canonicalJson).join(',')}]`
+    : typeof value === 'object' && value !== null
+      ? `{${Object.entries(value)
+          .toSorted(([left], [right]) => left.localeCompare(right))
+          .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+          .join(',')}}`
+      : JSON.stringify(value);
+
+const proposalsSignature = (proposals: readonly (readonly [string, string, unknown])[]): string =>
+  canonicalJson(proposals);
+
+/** Batches whose proposals all still wait for a decision, each ordered by position. */
+const pendingBatchesOf = (rows: readonly AgentProposalRow[]): AgentProposalRow[][] => {
+  const batches = new Map<string, AgentProposalRow[]>();
+  for (const row of rows) {
+    batches.set(row.batchId, [...(batches.get(row.batchId) ?? []), row]);
+  }
+  return [...batches.values()]
+    .filter((batch) => batch.every((row) => row.status === 'pending' && row.batchRevertedAt === null))
+    .map((batch) => batch.toSorted((left, right) => left.position - right.position));
+};
+
 /** Stores an agent's batch as pending proposals. Repeating a runId returns the stored batch (`replayed`). */
 export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposals')(function* submitAgentProposals(
   agent: AgentPlatformCaller,
@@ -70,6 +99,26 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
         reviewPath: REVIEW_PATH,
       } satisfies AgentProposalSubmitResponse;
     }
+  }
+  // The same change sent again while the first one still waits (a retried tool call with a fresh key) returns the
+  // waiting batch instead of queueing a duplicate a person would have to reject.
+  const signature = proposalsSignature(
+    request.proposals.map((proposal) => [proposal.appId, proposal.actionSlug ?? 'apply-command', proposal.command]),
+  );
+  const waiting = yield* listCompanyProposals(tenantId, legalEntityId, {
+    agentPrincipalId: principalId,
+    limit: QUEUE_LIMIT,
+  });
+  const duplicate = pendingBatchesOf(waiting).find(
+    (batch) => proposalsSignature(batch.map((row) => [row.appId, row.actionSlug, row.command])) === signature,
+  );
+  if (duplicate !== undefined) {
+    return {
+      batchId: duplicate[0]?.batchId ?? '',
+      proposalIds: duplicate.map((row) => row.proposalId),
+      replayed: true,
+      reviewPath: REVIEW_PATH,
+    } satisfies AgentProposalSubmitResponse;
   }
   const modules = yield* callerModuleAccess(agent);
   const names = yield* principalNames(tenantId);
@@ -96,6 +145,12 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
     }
     // The platform describes commands it understands itself (read as the agent), never trusting the agent's diff.
     const target = yield* readTargetEntity(agent.principal, module.appId, proposal.command);
+    if (target.needed && target.available && target.value === undefined) {
+      // Approval runs as a person who could not apply a change to a record the proposer cannot even see.
+      return yield* new AgentPlatformInvalid({
+        reason: `Návrh ${index + 1}: záznam, který má změnit, neexistuje nebo k němu nemáte přístup. Načtěte ho znovu přes ontos_read.`,
+      });
+    }
     const platformDiff = agentPlatformDiff(module.appId, proposal.command, target.needed ? target.value : undefined);
     const commandDiff = agentCommandDiff(proposal.command);
     rows.push({
@@ -141,7 +196,7 @@ export const listOwnAgentBatches = Effect.fn('AgentPlatform.listOwnAgentBatches'
     limit: QUEUE_LIMIT,
   });
   const names = yield* principalNames(tenantId);
-  const batches = rowsToQueueBatches(rows, { canDecide: () => false, names });
+  const batches = rowsToQueueBatches(rows, { canDecide: () => ({ allowed: false }), names });
   return {
     batches,
     company: { legalEntityId, legalName: agent.legalName },
@@ -160,21 +215,73 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
     return yield* new AgentPlatformForbidden({ reason: NO_DECIDER });
   }
   const names = yield* principalNames(tenantId);
-  const rows = (yield* listCompanyProposals(tenantId, legalEntityId, { limit: QUEUE_LIMIT })).filter(
+  const moduleRows = (yield* listCompanyProposals(tenantId, legalEntityId, { limit: QUEUE_LIMIT })).filter(
     (row) => modules.access.has(row.moduleKey) || modules.write.has(row.moduleKey),
   );
-  // Pending items show "before" from the live record, read as this person.
-  const live = yield* Effect.forEach(
-    rows.filter((row) => row.status === 'pending'),
-    (row) =>
-      readTargetEntity(caller.principal, row.appId, row.command).pipe(
-        Effect.map((read) => (read.needed && read.value !== undefined ? [[row.proposalId, read.value] as const] : [])),
-      ),
-    { concurrency: 4 },
+  // Approval runs as the approver: each module is read once as this person to learn what they may change and,
+  // for modules with private records (CRM clients of other salespeople), which records they may even see.
+  const appIds = [
+    ...new Set(
+      moduleRows
+        .filter((row) => row.status === 'pending' || PRIVATE_SCOPE_APPS.has(row.appId))
+        .map((row) => row.appId),
+    ),
+  ];
+  const moduleReads = new Map(
+    yield* Effect.forEach(
+      appIds,
+      (appId) => readModuleRecords(caller.principal, appId).pipe(Effect.map((body) => [appId, body] as const)),
+      { concurrency: 3 },
+    ),
   );
-  const coreBatches = rowsToQueueBatches(rows, {
-    canDecide: (moduleKey) => modules.write.has(moduleKey),
-    liveBefore: new Map(live.flat()),
+  const rows = moduleRows.filter((row) => {
+    if (!PRIVATE_SCOPE_APPS.has(row.appId) || crmClientIdOf(row.command) === undefined) {
+      return true;
+    }
+    // History and pending proposals about a client the person cannot see stay hidden (also when CRM is down).
+    const body = moduleReads.get(row.appId);
+    return body !== undefined && crmClientsOf(body).some((client) => client['id'] === crmClientIdOf(row.command));
+  });
+  // Pending items show "before" from the live record, read as this person.
+  const pending = rows.filter((row) => row.status === 'pending');
+  const targets = new Map(
+    yield* Effect.forEach(
+      pending,
+      (row) =>
+        readTargetEntity(caller.principal, row.appId, row.command).pipe(
+          Effect.map((read) => [row.proposalId, read] as const),
+        ),
+      { concurrency: 4 },
+    ),
+  );
+  const checks = new Map(
+    pending.map((row) => {
+      const target = targets.get(row.proposalId) ?? { needed: false as const };
+      const moduleBody = target.needed && target.available ? target.body : moduleReads.get(row.appId);
+      return [row.proposalId, approverCheck(row.appId, row.command, moduleBody, target)] as const;
+    }),
+  );
+  const visible = rows.filter((row) => {
+    const check = checks.get(row.proposalId);
+    return check === undefined || check.ok || !check.hidden;
+  });
+  const liveBefore = new Map(
+    [...targets].flatMap(([proposalId, read]) =>
+      read.needed && read.value !== undefined ? [[proposalId, read.value] as const] : [],
+    ),
+  );
+  const coreBatches = rowsToQueueBatches(visible, {
+    canDecide: (row) => {
+      if (!modules.write.has(row.moduleKey)) {
+        return {
+          allowed: false,
+          reason: `Tuto změnu může schválit jen člověk s oprávněním k zápisu v modulu ${agentModuleLabel(row.moduleKey)}.`,
+        };
+      }
+      const check = checks.get(row.proposalId);
+      return check === undefined || check.ok ? { allowed: true } : { allowed: false, reason: check.reason };
+    },
+    liveBefore,
     names,
   });
   const legacyModules = agentApprovalModules.filter(

@@ -104,8 +104,13 @@ export type AgentSource = typeof AgentSourceSchema.Type;
 
 export const AgentQueueItemSchema = Schema.Struct({
   appId: Schema.String,
-  /** True when the current person may approve/reject this item (module write permission). */
+  /**
+   * True when the current person may approve/reject this item: module write permission and, where the module says
+   * so in its records read, the right to carry out this exact command on this record (approval runs as them).
+   */
   canDecide: Schema.Boolean,
+  /** Czech reason why this person cannot decide a pending item (absent when `canDecide`). */
+  cannotDecideReason: Schema.optionalKey(Schema.String),
   /** Exact module command an approval runs (core queue only). */
   command: Schema.optionalKey(AgentCommandSchema),
   decidedAt: Schema.optionalKey(Schema.String),

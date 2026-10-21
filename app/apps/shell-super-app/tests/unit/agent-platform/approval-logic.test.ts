@@ -2,6 +2,8 @@ import { toContextPermissionAccessObjectId, toModuleAccessObjectId } from '@app/
 import { expect, test } from 'effect-rstest';
 
 import {
+  approverCheck,
+  czechModuleFailure,
   moduleAccessSets,
   parseCoreKey,
   revertBeforeLookup,
@@ -88,4 +90,49 @@ test('revertResultMessage reports records a person changed after the approval', 
     outcome: 'failed',
   });
   expect(revertResultMessage({ changed: 1, failed: 0, reverted: 1, unavailable: 0 }).outcome).toBe('partial');
+});
+
+const clientOfJan = { id: 'c-jan', ownerSalespersonId: 'sp-jan', phone: '+420 541 100 200' };
+const crmBody = (viewer: Record<string, unknown>, clients: readonly Record<string, unknown>[]) => ({
+  state: { clients: { items: clients } },
+  viewer: { assign: false, readAll: false, readAssigned: true, writeAll: false, writeAssigned: true, ...viewer },
+});
+const updateJansClient = { _tag: 'UpdateClient', id: 'c-jan', patch: { phone: '+420 541 100 299' } };
+
+test('a salesperson cannot see or decide a proposal about a colleague client', () => {
+  expect(approverCheck('crm', updateJansClient, crmBody({ salespersonId: 'sp-petra' }, []))).toMatchObject({
+    hidden: true,
+    ok: false,
+  });
+  expect(approverCheck('crm', updateJansClient, crmBody({ salespersonId: 'sp-jan' }, [clientOfJan]))).toEqual({
+    ok: true,
+  });
+  expect(
+    approverCheck('crm', updateJansClient, crmBody({ readAll: true, salespersonId: 'sp-petra' }, [clientOfJan])),
+  ).toMatchObject({ hidden: false, ok: false });
+  expect(approverCheck('crm', updateJansClient, crmBody({ writeAll: true }, [clientOfJan]))).toEqual({ ok: true });
+});
+
+test('a catalog change needs catalog management, any change needs module write', () => {
+  const changePrice = { _tag: 'ChangePrice', id: 'p', priceMinor: 100 };
+  expect(approverCheck('merchandise', changePrice, { canManageCatalog: false, canWrite: true })).toMatchObject({
+    ok: false,
+  });
+  expect(approverCheck('merchandise', changePrice, { canManageCatalog: true, canWrite: true })).toEqual({ ok: true });
+  expect(approverCheck('tagging', { _tag: 'AttachTag' }, { canWrite: false })).toMatchObject({
+    hidden: false,
+    ok: false,
+  });
+  expect(approverCheck('tagging', { _tag: 'AttachTag' }, undefined)).toEqual({ ok: true });
+});
+
+test('English framework failures are shown in Czech', () => {
+  expect(czechModuleFailure('The requested resource was not found.')).toContain('nebyl nalezen');
+  expect(czechModuleFailure('The apply-command Action request is invalid.')).toContain('neplatný');
+});
+
+test('CRM client commands read the client before the change', () => {
+  const lookup = revertBeforeLookup('crm', updateJansClient);
+  expect(lookup?.query).toEqual({ clientId: 'c-jan' });
+  expect(lookup?.pick(crmBody({}, [clientOfJan]))).toEqual(clientOfJan);
 });

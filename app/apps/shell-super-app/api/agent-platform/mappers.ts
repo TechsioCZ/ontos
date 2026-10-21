@@ -20,6 +20,8 @@ import { agentCommandDiff, agentPlatformDiff } from '@app/shared-contracts/agent
 import { agentRevertUnavailableBeforeApproval } from '@app/shared-contracts/agent-revert';
 import { DateTime } from 'effect';
 
+import { czechModuleFailure, isGenericProblemText } from './approval-logic.ts';
+
 export interface AgentProposalRow {
   readonly proposalId: string;
   readonly tenantId: string;
@@ -81,8 +83,11 @@ export interface AccessActivityRow {
 export const nameOf = (names: ReadonlyMap<string, string>, principalId: string | null): string =>
   principalId === null ? 'Neznámý uživatel' : (names.get(principalId) ?? 'Neznámý uživatel');
 
+/** Whether the person may decide one pending proposal, with the Czech reason when not. */
+export type QueueItemDecision = { readonly allowed: true } | { readonly allowed: false; readonly reason?: string };
+
 export interface QueueItemOptions {
-  readonly canDecide: (moduleKey: string) => boolean;
+  readonly canDecide: (row: AgentProposalRow) => QueueItemDecision;
   /** Live wire JSON of the target entity of pending proposals (by proposal id), read as the person. */
   readonly liveBefore?: ReadonlyMap<string, Readonly<Record<string, unknown>>>;
   readonly names: ReadonlyMap<string, string>;
@@ -108,10 +113,20 @@ export const itemDiff = (
   if (platform === undefined) {
     // Modules without their own lines: the platform lists the stored command itself (never the agent's text).
     const fromCommand = agentCommandDiff(row.command);
-    return fromCommand.length > 0 ? { diff: fromCommand, diffSource: 'command' } : { diff: row.diff, diffSource: 'agent' };
+    return fromCommand.length > 0
+      ? { diff: fromCommand, diffSource: 'command' }
+      : { diff: row.diff, diffSource: 'agent' };
   }
   return { diff: live === undefined ? withStoredBefore(platform, row.diff) : platform, diffSource: 'platform' };
 };
+
+/** Failures stored before module problems were translated can be English framework texts; show them in Czech. */
+export const storedFailureText = (failure: string): string =>
+  failure === 'Modul odpověděl chybou HTTP 200.'
+    ? 'Modul neuvedl aktuální revizi záznamu, změna se proto neprovedla.'
+    : isGenericProblemText(failure)
+      ? czechModuleFailure(failure)
+      : failure;
 
 const toItem = (row: AgentProposalRow, options: QueueItemOptions): AgentQueueItem => {
   const revertUnavailableReason =
@@ -125,9 +140,18 @@ const toItem = (row: AgentProposalRow, options: QueueItemOptions): AgentQueueIte
   const { diff, diffSource } = itemDiff(row, options.liveBefore?.get(row.proposalId));
   // A pending row with decided_at is only claimed by an approval in progress; it has no decision yet.
   const decided = row.status !== 'pending';
+  const decision = options.canDecide(row);
+  const live = options.liveBefore?.get(row.proposalId);
+  const liveName = live?.['name'] ?? live?.['title'];
+  // Agents often repeat the action name as the target; the record's own name says more.
+  const targetLabel =
+    row.targetLabel === row.summary && typeof liveName === 'string' && liveName !== '' ? liveName : row.targetLabel;
   return {
     appId: row.appId,
-    canDecide: options.canDecide(row.moduleKey),
+    canDecide: decision.allowed,
+    ...(decision.allowed || decision.reason === undefined || row.status !== 'pending'
+      ? {}
+      : { cannotDecideReason: decision.reason }),
     command: row.command,
     diff,
     diffSource,
@@ -139,13 +163,13 @@ const toItem = (row: AgentProposalRow, options: QueueItemOptions): AgentQueueIte
     risk: row.risk,
     status: row.status,
     summary: row.summary,
-    targetLabel: row.targetLabel,
+    targetLabel,
     ...(!decided || row.decidedAt === null ? {} : { decidedAt: row.decidedAt.toISOString() }),
     ...(!decided || row.decidedByPrincipalId === null
       ? {}
       : { decidedByName: nameOf(options.names, row.decidedByPrincipalId) }),
     ...(row.decisionNote === null ? {} : { decisionNote: row.decisionNote }),
-    ...(row.failure === null ? {} : { failure: row.failure }),
+    ...(row.failure === null ? {} : { failure: storedFailureText(row.failure) }),
     ...(revertUnavailableReason === undefined ? {} : { revertUnavailableReason }),
   };
 };

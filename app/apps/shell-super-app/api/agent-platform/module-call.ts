@@ -9,6 +9,7 @@ import { Data, Effect, Schema } from 'effect';
 
 import { issueGatewayContextAssertion } from '../auth/gateway-issuer.ts';
 import { dispatchModuleApiRequest } from '../../src/module-api/transport.ts';
+import { czechModuleFailure, isGenericProblemText } from './approval-logic.ts';
 import { commandRevisionFrom } from './command-revision.ts';
 
 /** A module call could not even be attempted (composition, assertion or dispatch failed before the module ran). */
@@ -38,23 +39,27 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 export const recordsQueryFor = (appId: string): Readonly<Record<string, unknown>> =>
   appId === 'merchandise' ? { view: {} } : {};
 
+/** The person's records read of a module (undefined when the module did not answer 200). */
+export const readModuleRecords = (principal: TrustedPrincipalContext, appId: string) =>
+  callModuleAs(principal, appId, '/reads/records', recordsQueryFor(appId)).pipe(
+    Effect.result,
+    Effect.map((result): unknown =>
+      result._tag === 'Success' && result.success.status === 200 ? result.success.body : undefined,
+    ),
+  );
+
 /** Czech message from an RFC 9457 style problem body, with a generic fallback. */
 export const problemMessage = (body: unknown, status: number): string => {
-  // Generic framework problems are English; people deciding on the platform page get Czech text instead.
-  const generic = isRecord(body) && typeof body['detail'] === 'string' && /^[\u0020-\u007E]*$/u.test(body['detail']);
-  if (generic && status === 409) {
-    return 'Záznam se od návrhu změnil nebo už byl vyřízen. Obnovte seznam; zastaralý návrh zamítněte.';
-  }
-  if (generic && status === 403) {
-    return 'K této změně nemáte v modulu oprávnění.';
-  }
   if (isRecord(body)) {
-    const detail = body['detail'];
-    if (typeof detail === 'string' && detail.length > 0) return detail;
-    const title = body['title'];
-    if (typeof title === 'string' && title.length > 0) return title;
+    for (const key of ['detail', 'title'] as const) {
+      const text = body[key];
+      if (typeof text === 'string' && text.length > 0) {
+        // Generic framework problems are English; people deciding on the platform page get Czech text instead.
+        return isGenericProblemText(text) ? czechModuleFailure(text, status) : text;
+      }
+    }
   }
-  return `Modul odpověděl chybou HTTP ${status}.`;
+  return czechModuleFailure('', status);
 };
 
 /** JSON text of an arbitrary wire value (request bodies and headers). */
@@ -145,16 +150,10 @@ const attemptCommand = (
       }
       body = { command, expectedRevision: revision };
     }
-    const write = yield* callModuleAs(
-      principal,
-      appId,
-      `/${appId}/actions/${slug}`,
-      body,
-      {
-        idempotencyKey: key,
-        ...(options.referenceAudiences === undefined ? {} : { referenceAudiences: options.referenceAudiences }),
-      },
-    );
+    const write = yield* callModuleAs(principal, appId, `/${appId}/actions/${slug}`, body, {
+      idempotencyKey: key,
+      ...(options.referenceAudiences === undefined ? {} : { referenceAudiences: options.referenceAudiences }),
+    });
     if (write.status >= 200 && write.status < 300) {
       return { body: write.body, ok: true } satisfies ModuleCommandOutcome;
     }

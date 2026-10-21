@@ -142,3 +142,17 @@ it('pending proposals report undo support from the command alone', () => {
     'Tuto změnu nelze automaticky vrátit.',
   );
 });
+
+it('a CRM client edit is reverted to the values read before the approval', () => {
+  expect(
+    buildAgentRevertPlan('crm', {
+      before: { phone: '+420 541 100 200' },
+      command: { _tag: 'UpdateClient', id: 'c-1', patch: { phone: '+420 541 100 299' } },
+      tenantId: 't',
+    }),
+  ).toEqual({
+    commands: [{ _tag: 'UpdateClient', id: 'c-1', patch: { phone: '+420 541 100 200' } }],
+    kind: 'commands',
+  });
+  expect(agentRevertUnavailableBeforeApproval('crm', { _tag: 'UpdateClient' })).toBeUndefined();
+});

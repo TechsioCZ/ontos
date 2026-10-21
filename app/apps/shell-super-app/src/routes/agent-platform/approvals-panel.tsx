@@ -88,7 +88,7 @@ const ChangeCard = ({
     <div className="ai-review-heading">
       <div>
         <h3 className="font-semibold text-sm">{item.summary}</h3>
-        <p className="text-fg-secondary text-sm">{item.targetLabel}</p>
+        {item.targetLabel !== item.summary && <p className="text-fg-secondary text-sm">{item.targetLabel}</p>}
       </div>
       <div className="ai-review-actions">
         <Badge variant={itemBadgeVariant(item.status)}>{agentItemStatusLabel[item.status]}</Badge>
@@ -97,7 +97,7 @@ const ChangeCard = ({
       </div>
     </div>
     <p className="ai-review-reason">
-      <span className="font-medium">Proč AI změnu navrhuje: </span>
+      <span className="font-medium">Důvod návrhu: </span>
       {item.reason}
     </p>
     <div className="ai-review-diff" role="table" aria-label={`Porovnání: ${item.summary}`}>
@@ -126,7 +126,8 @@ const ChangeCard = ({
       </StatusText>
     ) : item.diffSource === 'command' ? (
       <p className="text-fg-secondary text-xs">
-        Hodnoty „Po schválení“ sestavila platforma z uloženého příkazu. Původní hodnoty tento modul platformě neposkytuje.
+        Hodnoty „Po schválení“ sestavila platforma z uloženého příkazu. Původní hodnoty tento modul platformě
+        neposkytuje.
       </p>
     ) : (
       item.diffSource === 'platform' && (
@@ -174,7 +175,8 @@ const ChangeCard = ({
     )}
     {item.status === 'pending' && !item.canDecide && (
       <p className="text-fg-secondary text-sm">
-        {`Tuto změnu může schválit jen člověk s oprávněním k zápisu v modulu ${item.moduleLabel}.`}
+        {item.cannotDecideReason ??
+          `Tuto změnu může schválit jen člověk s oprávněním k zápisu v modulu ${item.moduleLabel}.`}
       </p>
     )}
   </article>

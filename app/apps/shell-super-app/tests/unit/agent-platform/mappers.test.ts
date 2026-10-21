@@ -52,7 +52,7 @@ const baseRow: AgentProposalRow = {
   tenantId: TENANT,
 };
 
-const canDecideAll = () => true;
+const canDecideAll = () => ({ allowed: true }) as const;
 
 it('groups rows of one batch and orders items by position', () => {
   const first: AgentProposalRow = { ...baseRow, position: 1, proposalId: '66666666-6666-4666-8666-666666666661' };

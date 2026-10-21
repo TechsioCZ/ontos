@@ -63,3 +63,22 @@ it('lists the stored command fields for modules without their own diff', () => {
     { after: '21. 10. 2026', field: 'readingDate', label: 'readingDate' },
   ]);
 });
+
+it('a CRM client edit shows Czech labels with the live value before', () => {
+  expect(
+    agentPlatformDiff(
+      'crm',
+      { _tag: 'UpdateClient', id: 'c-1', patch: { phone: '+420 541 100 299', segment: 'bakery' } },
+      { phone: '+420 541 100 200', segment: 'retail' },
+    ),
+  ).toEqual([
+    { after: '+420 541 100 299', before: '+420 541 100 200', field: 'phone', label: 'Telefon' },
+    { after: 'Pekárna', before: 'Maloobchod', field: 'segment', label: 'Segment' },
+  ]);
+});
+
+it('command-built lines list patch fields one by one and skip the record id', () => {
+  expect(agentCommandDiff({ _tag: 'UpdateParty', id: 'p-1', patch: { email: 'a@b.cz' } })).toEqual([
+    { after: 'a@b.cz', field: 'email', label: 'E-mail' },
+  ]);
+});

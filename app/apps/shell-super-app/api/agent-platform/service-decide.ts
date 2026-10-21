@@ -14,13 +14,14 @@ import { agentChangeStillInPlace, agentPlatformDiff } from '@app/shared-contract
 import { buildAgentRevertPlan, resolveAgentRevertPlan } from '@app/shared-contracts/agent-revert';
 import { Effect } from 'effect';
 
-import { parseCoreKey, revertBeforeLookup, revertResultMessage } from './approval-logic.ts';
+import { approverCheck, parseCoreKey, revertBeforeLookup, revertResultMessage } from './approval-logic.ts';
+import type { TargetRead } from './approval-logic.ts';
 import { AgentPlatformForbidden, AgentPlatformInvalid, callerModuleAccess } from './caller.ts';
 import type { AgentPlatformCaller } from './caller.ts';
 import { parseLegacyKey } from './legacy-normalize.ts';
 import { decideLegacy, revertLegacy } from './legacy-queue.ts';
 import type { AgentProposalRow } from './mappers.ts';
-import { applyModuleCommand, callModuleAs } from './module-call.ts';
+import { applyModuleCommand, callModuleAs, readModuleRecords } from './module-call.ts';
 import {
   batchHasApprovalInProgress,
   claimBatchRevert,
@@ -49,10 +50,6 @@ const notAllowed = (moduleLabel: string) => `Změny v modulu ${moduleLabel} nem�
 const audiencesOf = (row: AgentProposalRow) =>
   row.referenceAudiences.length === 0 ? {} : { referenceAudiences: row.referenceAudiences };
 
-type EntityRead =
-  | { readonly needed: false }
-  | { readonly needed: true; readonly value: Readonly<Record<string, unknown>> | undefined };
-
 /** Current wire JSON of the entity the command changes, read as `principal` (`needed: false` for create commands). */
 export const readTargetEntity = Effect.fn('AgentPlatform.readTargetEntity')(function* readTargetEntity(
   principal: AgentPlatformCaller['principal'],
@@ -61,14 +58,27 @@ export const readTargetEntity = Effect.fn('AgentPlatform.readTargetEntity')(func
 ) {
   const lookup = revertBeforeLookup(appId, command);
   if (lookup === undefined) {
-    const notNeeded: EntityRead = { needed: false };
+    const notNeeded: TargetRead = { needed: false };
     return notNeeded;
   }
   const response = yield* callModuleAs(principal, appId, '/reads/records', lookup.query).pipe(Effect.result);
-  const value =
-    response._tag === 'Failure' || response.success.status !== 200 ? undefined : lookup.pick(response.success.body);
-  const read: EntityRead = { needed: true, value };
+  const available = response._tag === 'Success' && response.success.status === 200;
+  const body = available ? response.success.body : undefined;
+  const read: TargetRead = { available, body, needed: true, value: available ? lookup.pick(body) : undefined };
   return read;
+});
+
+/**
+ * Whether this person can carry out the stored command (approval runs as them): their module read and the target
+ * record, read as them. The target read already carries the module flags when the command changes one record.
+ */
+export const checkApprover = Effect.fn('AgentPlatform.checkApprover')(function* checkApprover(
+  principal: AgentPlatformCaller['principal'],
+  row: Pick<AgentProposalRow, 'appId' | 'command'>,
+) {
+  const target = yield* readTargetEntity(principal, row.appId, row.command);
+  const moduleBody = target.needed && target.available ? target.body : yield* readModuleRecords(principal, row.appId);
+  return approverCheck(row.appId, row.command, moduleBody, target);
 });
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -189,8 +199,9 @@ const approveCoreRow = Effect.fn('AgentPlatform.approveCoreRow')(function* appro
     }
     return result(itemKey, 'applied');
   }
-  if (outcome.status === 403) {
-    // The module refused this person: the proposal stays pending for someone with the right permission.
+  if (outcome.status === 403 || outcome.status === 404) {
+    // The module refused this person or does not show them the record: the proposal stays pending for someone with
+    // the right permission instead of being used up.
     yield* releaseApprovalClaim(row.proposalId, by);
     return result(itemKey, 'forbidden', outcome.message);
   }
@@ -223,6 +234,10 @@ const decideCore = Effect.fn('AgentPlatform.decideCore')(function* decideCore(
         }
         if (!modules.write.has(row.moduleKey)) {
           return result(itemKey, 'forbidden', notAllowed(agentModuleLabel(row.moduleKey)));
+        }
+        const check = yield* checkApprover(caller.principal, row);
+        if (!check.ok) {
+          return result(itemKey, 'forbidden', check.hidden ? 'Změna do této dávky nepatří.' : check.reason);
         }
         if (request.decision === 'reject') {
           const rejected = yield* markRejected(row.proposalId, { by: principalId, note: request.note ?? null });

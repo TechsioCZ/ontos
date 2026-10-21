@@ -57,6 +57,30 @@ const PRODUCT_LABELS: Readonly<Record<string, string>> = {
   vatRate: 'Sazba DPH',
 };
 
+const CLIENT_LABELS: Readonly<Record<string, string>> = {
+  address: 'Adresa',
+  email: 'E-mail',
+  kind: 'Druh klienta',
+  name: 'Název',
+  note: 'Poznámka',
+  phone: 'Telefon',
+  regNo: 'IČO',
+  segment: 'Segment',
+  vatNo: 'DIČ',
+  website: 'Web',
+};
+const CLIENT_KINDS: Readonly<Record<string, string>> = { organization: 'Firma', person: 'Osoba' };
+const CLIENT_SEGMENTS: Readonly<Record<string, string>> = {
+  bakery: 'Pekárna',
+  cafe: 'Kavárna',
+  catering: 'Catering',
+  hotel: 'Hotel',
+  institution: 'Instituce',
+  restaurant: 'Restaurace',
+  retail: 'Maloobchod',
+  wholesale: 'Velkoobchod',
+};
+
 const isoDate = /^(\d{4})-(\d{2})-(\d{2})$/u;
 
 /** Readable Czech text of one wire value; undefined for empty values. */
@@ -69,6 +93,12 @@ const show = (field: string, value: unknown): string | undefined => {
   }
   if (field === 'priority' && typeof value === 'string') {
     return TASK_PRIORITIES[value] ?? value;
+  }
+  if (field === 'segment' && typeof value === 'string') {
+    return CLIENT_SEGMENTS[value] ?? value;
+  }
+  if (field === 'kind' && typeof value === 'string' && CLIENT_KINDS[value] !== undefined) {
+    return CLIENT_KINDS[value];
   }
   if (typeof value === 'boolean') {
     return value ? 'Ano' : 'Ne';
@@ -152,6 +182,14 @@ const merchandiseDiff = (command: AgentCommand, before: Rec | undefined): AgentD
   }
 };
 
+const crmDiff = (command: AgentCommand, before: Rec | undefined): AgentDiffLine[] | undefined => {
+  if (command['_tag'] !== 'UpdateClient') {
+    return undefined;
+  }
+  const { patch } = command;
+  return isRecord(patch) ? fieldLines(patch, CLIENT_LABELS, before, new Set()) : undefined;
+};
+
 /**
  * Lines built from the command itself (after) and the live entity (before). Undefined when the platform does not
  * understand the command; the page then shows the agent's own description with a warning.
@@ -168,13 +206,19 @@ export const agentPlatformDiff = (
     case 'merchandise': {
       return merchandiseDiff(command, before);
     }
+    case 'crm': {
+      return crmDiff(command, before);
+    }
     default: {
       return undefined;
     }
   }
 };
 
-const COMMAND_SKIP: ReadonlySet<string> = new Set(['_tag', 'expectedRevision', 'idempotencyKey']);
+// `id` names the record the command changes; the card's title already says which record that is.
+const COMMAND_SKIP: ReadonlySet<string> = new Set(['_tag', 'expectedRevision', 'id', 'idempotencyKey']);
+/** Nested objects whose fields are the change itself (`UpdateX { id, patch: {...} }`), listed field by field. */
+const COMMAND_FLATTEN: ReadonlySet<string> = new Set(['changes', 'fields', 'patch']);
 const COMMAND_LABELS: Readonly<Record<string, string>> = {
   address: 'Adresa',
   amountMinor: 'Částka',
@@ -209,6 +253,10 @@ const COMMAND_LABELS: Readonly<Record<string, string>> = {
   partyId: 'Zákazník',
   phone: 'Telefon',
   priceMinor: 'Cena bez DPH',
+  regNo: 'IČO',
+  segment: 'Segment',
+  vatNo: 'DIČ',
+  website: 'Web',
   probability: 'Pravděpodobnost',
   propertyRef: 'Nemovitost',
   purpose: 'Účel',
@@ -237,6 +285,9 @@ const isEmptyValue = (value: unknown): boolean =>
  */
 export const agentCommandDiff = (command: AgentCommand): readonly AgentDiffLine[] =>
   Object.entries(command)
+    .flatMap(([key, value]): (readonly [string, unknown])[] =>
+      COMMAND_FLATTEN.has(key) && isRecord(value) ? Object.entries(value) : [[key, value]],
+    )
     .filter(([key, value]) => !COMMAND_SKIP.has(key) && !isEmptyValue(value))
     .slice(0, 60)
     .map(([key, value]) => {
@@ -296,6 +347,9 @@ export const agentChangeStillInPlace = (
     }
     const { _tag: _ignored, taskRef: _ref, ...fields } = command;
     return Object.entries(fields).every(([key, value]) => holds(value, current[key]));
+  }
+  if (appId === 'crm' && tag === 'UpdateClient') {
+    return current !== undefined && holds(command['patch'], current);
   }
   if (appId === 'property-leasing' && tag === 'SetRentTerms') {
     return current !== undefined && holds(command['rentTerms'], current['rentTerms']);

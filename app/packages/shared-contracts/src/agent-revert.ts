@@ -128,6 +128,20 @@ const merchandiseRevert = ({ before, command }: AgentRevertInput): AgentRevertPl
   }
 };
 
+/** CRM: an edited client gets its previous values back (only when every changed field had a value before). */
+const crmRevert = ({ before, command }: AgentRevertInput): AgentRevertPlan => {
+  if (command['_tag'] !== 'UpdateClient') return none(AGENT_REVERT_UNAVAILABLE);
+  const patch = command['patch'];
+  if (!isRecord(patch) || before === undefined) return none(MISSING_BEFORE);
+  const restoredPatch: Record<string, unknown> = {};
+  for (const key of Object.keys(patch)) {
+    const previous = before[key];
+    if (previous === undefined) return none(MISSING_BEFORE);
+    restoredPatch[key] = previous;
+  }
+  return commands([{ _tag: 'UpdateClient', id: command['id'], patch: restoredPatch }]);
+};
+
 const occupancyRevert = ({ before, command, tenantId }: AgentRevertInput): AgentRevertPlan => {
   const occupancyRef = command['occupancyRef'];
   switch (command['_tag']) {
@@ -181,6 +195,8 @@ export const buildAgentRevertPlan = (appId: string, input: AgentRevertInput): Ag
       return merchandiseRevert(input);
     case 'property-leasing':
       return occupancyRevert(input);
+    case 'crm':
+      return crmRevert(input);
     default:
       return none(AGENT_REVERT_UNAVAILABLE);
   }
@@ -226,6 +242,7 @@ export const resolveAgentRevertPlan = (
 };
 
 const REVERTIBLE_COMMANDS: Readonly<Record<string, ReadonlySet<string>>> = {
+  crm: new Set(['UpdateClient']),
   merchandise: new Set(['ChangePrice', 'UpdateProduct', 'CreateProduct']),
   'property-leasing': new Set(['SetRentTerms', 'UpdateDraft', 'CreateDraft']),
   'work-tasks': new Set(['CreateTask', 'UpdateTask', 'ChangeTaskState', 'AssignTask']),
