@@ -120,6 +120,46 @@ it.effect('PlaceStorefrontOrder rejects a stale price with the current one and s
   }),
 );
 
+it.effect('PlaceStorefrontOrder rejects a zero owner price even when the storefront expects zero', () =>
+  Effect.gen(function* zeroPrice() {
+    const created = yield* apply(
+      empty,
+      {
+        _tag: 'CreateProduct',
+        active: true,
+        category: 'Zrnková káva',
+        lowStockThreshold: 3,
+        name: 'Vzorek bez ceny',
+        priceMinor: 0,
+        sku: 'FREE',
+        unit: 'ks',
+        vatRate: 12,
+      },
+      'p0',
+    );
+    const stocked = yield* apply(
+      created.state,
+      { _tag: 'RecordStockMovement', delta: 10, productId: 'p0', reason: 'RECEIPT' },
+      'm0',
+    );
+    const result = yield* apply(
+      stocked.state,
+      guestOrder({ lines: [{ expectedUnitPriceMinor: 0, productId: 'p0', quantity: 1 }] }),
+      'inv-1',
+    );
+    expect(result.state).toBe(stocked.state);
+    expect(result.storefrontOrder?.outcome).toBe('REJECTED');
+    expect(result.storefrontOrder?.issues).toEqual([
+      expect.objectContaining({
+        code: 'PRICE_UNAVAILABLE',
+        message: 'Vzorek bez ceny: cena není dostupná, položku proto nelze objednat.',
+        productId: 'p0',
+      }),
+    ]);
+    expect(result.state.orders).toHaveLength(0);
+  }),
+);
+
 it.effect('PlaceStorefrontOrder rejects sold-out variants and missing variant choice', () =>
   Effect.gen(function* unavailable() {
     const state = yield* seeded;

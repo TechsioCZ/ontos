@@ -252,6 +252,7 @@ export const StorefrontIssueCodeSchema = Schema.Literals([
   'MINIMUM_QUANTITY',
   'PACKAGE_QUANTITY',
   'PRICE_CHANGED',
+  'PRICE_UNAVAILABLE',
   'SHIPPING_PRICE_CHANGED',
 ]);
 export type StorefrontIssueCode = typeof StorefrontIssueCodeSchema.Type;

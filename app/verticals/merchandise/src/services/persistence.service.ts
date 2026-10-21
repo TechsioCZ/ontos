@@ -910,6 +910,15 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     const quantity = (requested.get(key) ?? 0) + line.quantity;
     requested.set(key, quantity);
     const label = unit.variantName === undefined ? unit.name : `${unit.name} (${unit.variantName})`;
+    // A zero or missing owner price is never sellable, whatever price the storefront claims it saw.
+    if (!Number.isSafeInteger(unit.grossPriceMinor) || unit.grossPriceMinor <= 0) {
+      issues.push({
+        ...ids,
+        code: 'PRICE_UNAVAILABLE',
+        message: `${label}: cena není dostupná, položku proto nelze objednat.`,
+      });
+      continue;
+    }
     if (line.quantity < (unit.minimumQuantity ?? 1)) {
       issues.push({
         ...ids,

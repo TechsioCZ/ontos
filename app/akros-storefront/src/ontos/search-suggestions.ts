@@ -10,6 +10,8 @@ export interface RemoteSearchSuggestion {
   currency: "CZK";
   priceMinor: number;
   priceIsFrom: boolean;
+  /** Set when the price is missing, zero or in another currency; the suggestion then shows no amount. */
+  priceUnavailableReason?: string;
   matchingVariantCount: number;
   variant?: { sku: string; label: string };
 }
@@ -77,6 +79,9 @@ export function toRemoteSuggestion({
     currency: product.currency,
     priceMinor: variant?.priceMinor ?? product.priceMinor,
     priceIsFrom: !variant && product.detail.variants.length > 0,
+    ...((variant ?? product).priceUnavailableReason
+      ? { priceUnavailableReason: (variant ?? product).priceUnavailableReason }
+      : {}),
     matchingVariantCount: matchingVariants.length,
     ...(variant ? { variant: { sku: variant.sku, label: variant.label } } : {}),
   };

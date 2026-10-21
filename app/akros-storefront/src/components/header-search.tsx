@@ -14,7 +14,7 @@ import {
 } from "@techsio/ui-kit/templates/search-suggestions";
 
 import { cs } from "@/i18n/cs";
-import { formatPrice } from "@/lib/format";
+import { describeOfferPrice } from "@/lib/format";
 import { normalizeCatalogSearchTerm } from "@/lib/product-variant-search";
 import { useCatalog, useDataSource } from "@/ontos/catalog-provider";
 import type { RemoteCategorySuggestion, RemoteSearchResponse } from "@/ontos/search-suggestions";
@@ -27,6 +27,7 @@ type SuggestionData =
       variantSku?: string;
       priceMinor: number;
       priceIsFrom: boolean;
+      priceUnavailableReason?: string;
       currency: "CZK";
     };
 
@@ -184,6 +185,7 @@ export function HeaderSearch() {
                   variantSku: item.variant?.sku,
                   priceMinor: item.priceMinor,
                   priceIsFrom: item.priceIsFrom,
+                  priceUnavailableReason: item.priceUnavailableReason,
                   currency: item.currency,
                 },
               };
@@ -202,6 +204,7 @@ export function HeaderSearch() {
                   variantSku: variant?.sku,
                   priceMinor: variant?.priceMinor ?? product.priceMinor,
                   priceIsFrom: !variant && product.detail.variants.length > 0,
+                  priceUnavailableReason: (variant ?? product).priceUnavailableReason,
                   currency: product.currency,
                 },
               };
@@ -324,10 +327,7 @@ export function HeaderSearch() {
                     )}
                   </span>
                   {item.data.kind === "product" ? (
-                    <strong className="shrink-0 whitespace-nowrap text-sm">
-                      {item.data.priceIsFrom && `${cs.product.from} `}
-                      {formatPrice(item.data.priceMinor, item.data.currency)}
-                    </strong>
+                    <SuggestionPrice {...item.data} />
                   ) : (
                     <Icon className="shrink-0" icon="token-icon-chevron-right" size="sm" />
                   )}
@@ -339,5 +339,20 @@ export function HeaderSearch() {
         <SearchForm.Button aria-label={cs.actions.search} iconSize="lg" showSearchIcon />
       </SearchForm.Control>
     </SearchForm>
+  );
+}
+
+function SuggestionPrice(data: Extract<SuggestionData, { kind: "product" }>) {
+  const price = describeOfferPrice(data);
+  return price.available ? (
+    <strong className="shrink-0 whitespace-nowrap text-sm">{price.label}</strong>
+  ) : (
+    <span
+      className="shrink-0 whitespace-nowrap text-xs text-(--color-fg-secondary)"
+      data-akros-search-price-unavailable=""
+      title={price.reason}
+    >
+      {price.label}
+    </span>
   );
 }

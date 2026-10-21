@@ -71,4 +71,58 @@ describe("SiteHeader search in OntOS mode", () => {
     expect(url).toBe("/api/ontos/search");
     expect(JSON.parse(String(init.body))).toEqual({ q: "šroub" });
   });
+
+  it("shows „Cena není dostupná“ instead of 0,00 Kč for a zero or foreign-currency suggestion", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          total: 2,
+          items: [
+            {
+              productId: "p0",
+              slug: "sroub-bez-ceny",
+              name: "Šroub bez ceny",
+              imageSrc: "/akros/products/product-02.jpg",
+              currency: "CZK",
+              priceMinor: 0,
+              priceIsFrom: false,
+              matchingVariantCount: 0,
+            },
+            {
+              productId: "p1",
+              slug: "sroub-v-eurech",
+              name: "Šroub v eurech",
+              imageSrc: "/akros/products/product-02.jpg",
+              currency: "EUR",
+              priceMinor: 500,
+              priceIsFrom: false,
+              matchingVariantCount: 0,
+            },
+          ],
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    render(
+      <CartProvider storage={null}>
+        <SiteHeader />
+      </CartProvider>,
+    );
+    await user.type(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }), "šroub");
+    const products = await waitFor(() => {
+      const group = screen.getByRole("group", { name: "Produkty" });
+      expect(within(group).getAllByRole("option")).toHaveLength(2);
+      return group;
+    });
+    const zero = within(products).getByRole("option", { name: /Šroub bez ceny/ });
+    const euro = within(products).getByRole("option", { name: /Šroub v eurech/ });
+    for (const option of [zero, euro]) {
+      expect(option.textContent).toContain("Cena není dostupná");
+      expect(option.textContent).not.toMatch(/0,00|€|Kč/);
+    }
+    expect(euro.querySelector("[data-akros-search-price-unavailable]")?.getAttribute("title")).toBe(
+      "Cena je v nepodporované měně (EUR); e-shop prodává jen v Kč.",
+    );
+  });
 });

@@ -77,6 +77,7 @@ const ownerShippingMethod = (deliveryId: unknown) =>
 const ownerCodes = new Set<QuoteLineIssue["code"]>([
   "NOT_AVAILABLE",
   "AVAILABILITY_UNKNOWN",
+  "PRICE_UNAVAILABLE",
   "OUT_OF_STOCK",
   "INSUFFICIENT_STOCK",
   "MINIMUM_QUANTITY",
