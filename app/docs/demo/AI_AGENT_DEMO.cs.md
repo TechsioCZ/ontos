@@ -4,7 +4,7 @@ Cíl ukázky: AI asistent (Claude Desktop nebo Claude Code) pracuje s živými d
 mu dal backend**. Úroveň A smí pouze číst. Úroveň B navíc zakládá a upravuje úkoly a nic jiného. Úroveň C
 navrhuje změny příležitostí, objednávek a klientů; provede se jen to, co člověk schválí v aplikaci. Omezení
 nevzniká skrytím tlačítek v chatu. Každá úroveň má vlastní technickou identitu (servisní Principal), vlastní
-API klíč a vlastní oprávnění v jádru. Zakázaný zápis vrátí HTTP 403 i při přímém volání API a jádro ho
+připojení přes OAuth a vlastní oprávnění v jádru. Zakázaný zápis vrátí HTTP 403 i při přímém volání API a jádro ho
 zapíše do auditu jako zamítnutý pokus.
 
 | Úroveň | Identita (Principal)               | Smí                                                                  | Nesmí (backend vrací 403)                          |
@@ -13,9 +13,9 @@ zapíše do auditu jako zamítnutý pokus.
 | B      | `ai-agent-b-obchod` (služba)       | totéž + vytvořit / upravit úkol                                      | příležitosti, štítky, objednávky, faktury, zákazníci |
 | C      | `ai-agent-c-obchod` (služba)       | číst + **navrhnout** změnu příležitosti nebo objednávky (schválí člověk) | přímou změnu, schválení i vrácení              |
 
-Obě identity patří jen firmě **Obchodní firma**. Pokus použít stejný klíč pro Siampark jádro odmítne.
+Obě identity patří jen firmě **Obchodní firma**. Pokus použít stejného agenta pro Siampark jádro odmítne.
 Stejné tři úrovně existují i pro **Velkoobchod Hanák s.r.o.** (`ai-agent-a-hanak`, `ai-agent-b-hanak`,
-`ai-agent-c-hanak`, `ONTOS_AGENT_COMPANY=hanak`). Hanák nemá příležitosti, katalog ani faktury, proto jeho
+`ai-agent-c-hanak`). Hanák nemá příležitosti, katalog ani faktury, proto jeho
 A a B nabízejí jen čtení, která fungují: `list_crm` (klienti, kontakty, importované objednávky), zákazníci,
 zaměstnanci, úkoly a štítky. Každý nástroj, který agent vidí, vrací data; nic nekončí chybou 403.
 
@@ -26,14 +26,13 @@ Předpoklad: běží lokální demo (`http://localhost:3020/cs`).
 ```bash
 # Běžící demo se spouští z runtime stromu; jeho .env obsahuje aktuální certifikát SpiceDB.
 cd /Volumes/TraceDecayKingston/techsio-demo/ontos-runtime/app
-mise exec -- node scripts/demo/ai-profiles.mts   # identity + oprávnění + API klíče (idempotentní)
+mise exec -- node scripts/demo/ai-profiles.mts   # identity + oprávnění (idempotentní)
 mise exec -- node scripts/demo/prove-ai-levels.mts   # důkaz A/B proti běžícímu demu (= pnpm demo:prove:ai)
 ```
 
-`ai-profiles.mts` se spouští i automaticky v `scripts/demo/reset-permissions.mts`, takže po `up.sh` už klíče
-obvykle existují. Klíče jsou v `app/.env.demo.local` (necommituje se):
-`ONTOS_AGENT_A_OBCHOD_API_KEY`, `ONTOS_AGENT_B_OBCHOD_API_KEY`, `ONTOS_AGENT_C_OBCHOD_API_KEY`,
-`ONTOS_AGENT_A_HANAK_API_KEY`, `ONTOS_AGENT_B_HANAK_API_KEY`, `ONTOS_AGENT_C_HANAK_API_KEY`.
+`ai-profiles.mts` se spouští i automaticky v `scripts/demo/reset-permissions.mts`, takže po `up.sh` jsou agenti
+a jejich oprávnění obvykle připravené. Připojení se dělá přes OAuth (viz výše); tokeny se do dokumentace ani do
+aplikací nekopírují.
 
 Výstup důkazu (zkráceně, 20. 10. 2026 02:57):
 
@@ -48,52 +47,24 @@ PASS  Audit  Core audit: 5 zamítnutých pokusů, 1 provedený úkol
 VŠE PROŠLO / ALL PASS (19 kroků)
 ```
 
-## Připojení Claude Code
+## Připojení ChatGPT, Claude a dalších aplikací (OAuth, bez tokenů)
 
-```bash
-NODE=/Users/satan/.local/share/mise/installs/node/26.7.0/bin/node
-SERVER=/Volumes/TraceDecayKingston/techsio-demo/ontos-demo/app/tools/ontos-agent-mcp/src/server.ts
-claude mcp add ontos-ai-a -e ONTOS_AGENT_PROFILE=A -e ONTOS_AGENT_COMPANY=obchod -- "$NODE" --no-warnings "$SERVER"
-claude mcp add ontos-ai-b -e ONTOS_AGENT_PROFILE=B -e ONTOS_AGENT_COMPANY=obchod -- "$NODE" --no-warnings "$SERVER"
-claude mcp list            # oba servery: ✔ Connected
-```
+Do aplikace se vkládá jen adresa MCP serveru OntOS. Nikdo nekopíruje klíč ani token: uživatel se přihlásí svým účtem OntOS a na české obrazovce **Připojit** zvolí firmu, za koho aplikace jedná (**Za mě** nebo **Za agenta**), k jakým modulům má přístup a jak bude zapisovat (**Jen čtení**, **Navrhovat změny ke schválení**, **Provádět změny přímo**). Potom klikne **Povolit přístup**.
 
-Pro čistou ukázku mějte v jedné relaci připojený vždy jen jeden profil (`claude mcp remove ontos-ai-b` apod.).
+- Adresa MCP serveru (lokální demo): `http://localhost:3090/mcp`. Najdete ji také v **Můj profil › Připojené aplikace › Jak připojit**.
+- **Claude Code:** `claude mcp add --transport http ontos http://localhost:3090/mcp`, potom `/mcp` › Authenticate.
+- **VS Code, Cursor:** přidejte MCP server podle URL; přihlášení se otevře v prohlížeči.
+- **ChatGPT:** Nastavení › Aplikace a konektory › Přidat vlastní MCP server › URL › OAuth.
+- **Claude (web, desktop):** Nastavení › Konektory › Přidat vlastní konektor › URL.
+- ChatGPT a Claude na webu se k `localhost` nepřipojí; potřebují veřejnou adresu HTTPS. Na lokálním demu použijte Claude Code nebo VS Code.
 
-## Připojení Claude Desktop
-
-Soubor `~/Library/Application Support/Claude/claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "ontos-ai-a": {
-      "command": "/Users/satan/.local/share/mise/installs/node/26.7.0/bin/node",
-      "args": [
-        "--no-warnings",
-        "/Volumes/TraceDecayKingston/techsio-demo/ontos-demo/app/tools/ontos-agent-mcp/src/server.ts"
-      ],
-      "env": { "ONTOS_AGENT_PROFILE": "A", "ONTOS_AGENT_COMPANY": "obchod" }
-    },
-    "ontos-ai-b": {
-      "command": "/Users/satan/.local/share/mise/installs/node/26.7.0/bin/node",
-      "args": [
-        "--no-warnings",
-        "/Volumes/TraceDecayKingston/techsio-demo/ontos-demo/app/tools/ontos-agent-mcp/src/server.ts"
-      ],
-      "env": { "ONTOS_AGENT_PROFILE": "B", "ONTOS_AGENT_COMPANY": "obchod" }
-    }
-  }
-}
-```
-
-Po uložení Claude Desktop restartujte. V nastavení konektorů pak zapínejte vždy jen jeden z nich.
+Agenta A, B nebo C připojí jen člověk, kterému to správce povolil (**Nastavení › Lidé a role › Kdo smí agenta připojit**): na obrazovce Připojit zvolí **Za agenta …**. Připojení pak běží pod identitou agenta a v jeho oprávněních. Přehled a odpojení: **Můj profil › Připojené aplikace** (vlastní připojení) a **Nastavení › Připojené aplikace** (správce firmy). Odpojená aplikace ztratí přístup do 30 sekund.
 
 ## Co ukázat (scénář cca 6 minut)
 
 ### 1. Úroveň A — „asistent, který jen čte“
 
-Zapnutý jen `ontos-ai-a`.
+Připojený jen agent A (volba **Za agenta** při připojení).
 
 1. „Kdo jsi a co smíš?“ → nástroj `whoami`: profil A, firma Obchodní firma, seznam čtecích nástrojů.
 2. „Jaké máme otevřené příležitosti ve fázi Vyjednávání a kolik dohromady stojí? Seřaď je podle hodnoty.“
@@ -107,11 +78,11 @@ Pointa: data z ERP se dají volně rozebírat v chatu, ale tento asistent nic ne
 
 V terminálu: `mise exec -- pnpm demo:prove:ai`. Ukažte řádky
 `[A] Přímé API: založit úkol — HTTP 403 action_permission_denied` a `Core audit: zamítnuté pokusy`.
-Stejný klíč použitý mimo MCP backend odmítne a jádro to zapíše do auditu.
+Stejný agent volaný mimo MCP backend odmítne a jádro to zapíše do auditu.
 
 ### 3. Úroveň B — „asistent, který zakládá úkoly“
 
-Zapnutý jen `ontos-ai-b`.
+Připojený jen agent B (volba **Za agenta** při připojení).
 
 1. „Vytvoř úkol pro obchodníka, který má na starosti největší příležitost ve vyjednávání: ať do pátku zavolá
    zákazníkovi kvůli nabídce. Priorita vysoká, připoj zákazníka i příležitost.“
@@ -147,10 +118,9 @@ data. Druhé volání vrátí `deduplicated: true` a existující úkol. Důkaz:
 
 ## Řešení potíží
 
-- `whoami` vrací `assertionObtained: false` → spusťte znovu `node scripts/demo/ai-profiles.mts` (vydá nový klíč,
-  pokud starý přestal platit) a restartujte MCP server.
-- `ONTOS_AGENT_A_OBCHOD_API_KEY is required` → klíče ještě nebyly vydány: shell neběžel, když se spouštěl reset.
-  Spusťte `ai-profiles.mts` při běžícím demu.
+- Aplikace se nepřipojí → ověřte, že běží MCP server (http://localhost:3090/healthz) a shell (http://localhost:3020/cs).
+- Po odpojení v **Připojené aplikace** chce aplikace nové přihlášení: připojení bylo zrušeno, připojte ji znovu.
+- Na obrazovce Připojit chybí volba **Za agenta**: správce vás ještě nepřidal do **Kdo smí agenta připojit**.
 
 
 ## Úroveň C — návrhy CRM, lidské schválení a „Vrátit vše“
@@ -159,25 +129,19 @@ data. Druhé volání vrátí `deduplicated: true` a existující úkol. Důkaz:
 `vedouci@hanak.demo`, heslo `password1234`. **Stránka:**
 <http://localhost:3020/cs/sprava/ke-schvaleni> — Nastavení → **Ke schválení**.
 
-C je samostatný servisní principal se samostatným klíčem `ONTOS_AGENT_C_HANAK_API_KEY`. Na backendu smí
-v CRM spustit **pouze `AiProposeChanges`**. Přímá úprava, schválení i vrácení týmž klíčem skončí HTTP 403;
+C je samostatný servisní principal se samostatným připojením přes OAuth. Na backendu smí
+v CRM spustit **pouze `AiProposeChanges`**. Přímá úprava, schválení i vrácení týmž agentem skončí HTTP 403;
 zápis do jiných modulů také. Ani přidání kontaktu se neprovede automaticky. Agent má v MCP přesně tři
 nástroje: `whoami`, `list_crm`, `propose_crm_changes`.
 
 ### Připojení
 
-Použijte stejný MCP server jako u A/B, ale prostředí `ONTOS_AGENT_PROFILE=C` a
-`ONTOS_AGENT_COMPANY=hanak` (výchozí firma profilu C). Pro Obchodní firmu viz další oddíl.
-Nastavení existujícího MCP klienta:
-
-```json
-"env": { "ONTOS_AGENT_PROFILE": "C", "ONTOS_AGENT_COMPANY": "hanak" }
-```
+Připojte agenta C podle oddílu **Připojení ChatGPT, Claude a dalších aplikací** volbou **Za agenta**. Pro Obchodní firmu viz další oddíl.
 
 Profily a důkazy spouštějte **z `/Volumes/TraceDecayKingston/techsio-demo/ontos-runtime/app`**:
 
 ```bash
-mise exec -- pnpm demo:ai-profiles   # idempotentní; klíče nevypisuje
+mise exec -- pnpm demo:ai-profiles   # idempotentní; agenti A/B/C a jejich oprávnění
 mise exec -- pnpm demo:prove:ai:c    # skutečné MCP → pending → vedoucí schválí → zápis → vrácení
 mise exec -- pnpm demo:prove:ai      # původní A/B musí zůstat zelené
 ```
@@ -230,9 +194,9 @@ mise exec -- pnpm demo:prove:ai      # původní A/B musí zůstat zelené
 **Firma:** Obchodní firma (LE 0020). **Schvalovatel:** `obchod@demo.ontos` (vedoucí obchodu), heslo
 `password1234`. **Stránka:** <http://localhost:3020/cs/sprava/ke-schvaleni> — Nastavení → **Ke schválení**.
 
-C je samostatný servisní principal `ai-agent-c-obchod` s klíčem `ONTOS_AGENT_C_OBCHOD_API_KEY`. Smí spustit
+C je samostatný servisní principal `ai-agent-c-obchod` s vlastním připojením přes OAuth. Smí spustit
 Actions příležitostí a objednávek, ale **nemá právo zápisu** (`write_all`). Moduly proto přijmou jen
-`AiProposeChanges`; přímá změna fáze, storno objednávky, schválení i vrácení týmž klíčem skončí HTTP 403.
+`AiProposeChanges`; přímá změna fáze, storno objednávky, schválení i vrácení týmž agentem skončí HTTP 403.
 Nástroje v MCP: `whoami`, `list_opportunities`, `list_orders`, `list_customers`, `list_employees`,
 `list_products`, `propose_sales_changes`, `list_ai_proposals`.
 
@@ -243,13 +207,11 @@ příležitost nebo nepovolený přechod stavu objednávky agent zjistí hned, b
 
 ### Připojení
 
-```json
-"env": { "ONTOS_AGENT_PROFILE": "C", "ONTOS_AGENT_COMPANY": "obchod" }
-```
+Připojte agenta C podle oddílu **Připojení ChatGPT, Claude a dalších aplikací** volbou **Za agenta**.
 
 ```bash
 cd /Volumes/TraceDecayKingston/techsio-demo/ontos-runtime/app
-mise exec -- pnpm demo:ai-profiles          # idempotentní; vydá klíč C pro Obchodní firmu
+mise exec -- pnpm demo:ai-profiles          # idempotentní; agenti A/B/C a jejich oprávnění
 mise exec -- pnpm demo:prove:ai:c:obchod    # MCP → pending → vedoucí schválí → zápis + sklad → Vrátit vše
 ```
 
