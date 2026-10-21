@@ -121,6 +121,8 @@ export const RecordsResponseSchema = Schema.Struct({
   storefrontOrigin: Schema.optionalKey(Schema.String),
   canEditOrders: Schema.optionalKey(Schema.Boolean),
   canCleanupDemo: Schema.optionalKey(Schema.Boolean),
+  /** AKROS administrators may reset the company's demo data to its baseline (ResetDemoData). */
+  canResetDemo: Schema.optionalKey(Schema.Boolean),
   indicators: Schema.Struct({
     lowStockCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     openOrderValueMinor: MinorAmountSchema,

@@ -34,6 +34,7 @@ import { useCustomerDirectory } from './customers-directory.ts';
 import { OrderCancelDialog } from './order-cancel-dialog.tsx';
 import { OrderCreateDialog } from './order-create-dialog.tsx';
 import { OrderDetailDialog } from './order-detail-dialog.tsx';
+import { ResetDemoDialog } from './reset-demo-dialog.tsx';
 import { orderSearchText } from './order-eshop.ts';
 import {
   commonOrderTransitions,
@@ -91,6 +92,7 @@ const OrdersPageContent = () => {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<OrderStatus | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [resetOpen, setResetOpen] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [pendingCancel, setPendingCancel] = useState<readonly Order[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -164,10 +166,32 @@ const OrdersPageContent = () => {
       <section className="flex min-w-0 flex-col gap-250">
         <PageHeader
           actions={
-            (ready?.records.canEditOrders ?? canWrite) ? (
-              <Button icon="icon-[mdi--plus]" onClick={() => setCreateOpen(true)} size="sm" variant="primary">
-                {t(key('create.title'))}
-              </Button>
+            (ready?.records.canEditOrders ?? canWrite) || ready?.records.canResetDemo === true ? (
+              <div className="flex flex-wrap items-center gap-100">
+                {ready?.records.canResetDemo === true && (
+                  <Button
+                    className="shrink-0 whitespace-nowrap"
+                    icon="icon-[mdi--restore]"
+                    onClick={() => setResetOpen(true)}
+                    size="sm"
+                    theme="outlined"
+                    variant="secondary"
+                  >
+                    Obnovit ukázková data
+                  </Button>
+                )}
+                {(ready?.records.canEditOrders ?? canWrite) && (
+                  <Button
+                    className="shrink-0 whitespace-nowrap"
+                    icon="icon-[mdi--plus]"
+                    onClick={() => setCreateOpen(true)}
+                    size="sm"
+                    variant="primary"
+                  >
+                    {t(key('create.title'))}
+                  </Button>
+                )}
+              </div>
             ) : undefined
           }
           description={t(key('description'))}
@@ -387,7 +411,25 @@ const OrdersPageContent = () => {
           }}
           onStatus={(order, status) => requestStatus([order], status)}
           order={detailOrder}
+          orderMovesStock={
+            detailOrder !== undefined &&
+            (ready?.records.movements ?? []).some(
+              (movement) => movement.reason === 'ORDER' && movement.reference === detailOrder.number,
+            )
+          }
           products={ready?.records.products ?? []}
+          revision={ready?.records.revision ?? 0}
+        />
+
+        <ResetDemoDialog
+          onDismiss={() => setResetOpen(false)}
+          onReset={(message) => {
+            setResetOpen(false);
+            setDetailId(null);
+            toaster.create({ title: message, type: 'success' });
+            load();
+          }}
+          open={resetOpen}
           revision={ready?.records.revision ?? 0}
         />
 

@@ -11,6 +11,7 @@ import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { CatalogCategory } from '../../../../../shared/domain/merchandise-model.ts';
 import { runCommand } from './products-api.ts';
 import { useCommandFailure } from './product-forms.tsx';
+import { CATEGORY_RESULT_LIMIT, searchCategories } from './category-search.ts';
 
 export interface CatalogContentPanelProps {
   readonly canWrite: boolean;
@@ -83,15 +84,12 @@ export const CatalogContentPanel = ({
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
-  const matches = useMemo(() => {
-    const needle = categorySearch.trim().toLocaleLowerCase('cs');
-    if (needle === '') {
-      return [];
-    }
-    return categories
-      .filter((category) => category.name.toLocaleLowerCase('cs').includes(needle) || category.slug.includes(needle))
-      .slice(0, 30);
-  }, [categories, categorySearch]);
+  const trails = useMemo(
+    () => new Map(categories.map((category) => [category.id, categoryTrail(categories, category.id)] as const)),
+    [categories],
+  );
+  const found = useMemo(() => searchCategories(categories, trails, categorySearch), [categories, trails, categorySearch]);
+  const matches = found.slice(0, CATEGORY_RESULT_LIMIT);
 
   const parametersInvalid = parameters.some((parameter) => parameter.label.trim() === '' || parameter.value.trim() === '');
 
@@ -151,7 +149,7 @@ export const CatalogContentPanel = ({
                 label="Hledat kategorii"
                 name="categorySearch"
                 onChange={(event) => setCategorySearch(event.target.value)}
-                placeholder="např. šrouby"
+                placeholder="název nebo cesta, např. din 912 a 2"
                 size="sm"
                 value={categorySearch}
               />
@@ -170,11 +168,17 @@ export const CatalogContentPanel = ({
                       type="button"
                       variant="secondary"
                     >
-                      {categoryTrail(categories, category.id)}
+                      {trails.get(category.id) ?? category.name}
                     </Button>
                   </li>
                 ))}
               </ul>
+            ) : null}
+            {found.length > CATEGORY_RESULT_LIMIT ? (
+              <p className="text-fg-secondary text-sm">
+                Zobrazeno {CATEGORY_RESULT_LIMIT} z {found.length} kategorií. Upřesněte hledání, např. názvem nadřazené
+                kategorie.
+              </p>
             ) : null}
             {categorySearch.trim() !== '' && matches.length === 0 ? (
               <p className="text-fg-secondary text-sm">Žádná kategorie neodpovídá hledání.</p>

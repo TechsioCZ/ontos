@@ -689,12 +689,18 @@ export const ProductDetailView = ({
       <div className="flex w-full min-w-0 flex-col gap-250">
         <PageHeader
           actions={
-            <div className="flex items-center gap-150">
-              <Button onClick={() => requestClose(false)} theme="outlined" variant="secondary">
+            <div className="flex flex-wrap items-center gap-150">
+              <Button
+                className="shrink-0 whitespace-nowrap"
+                onClick={() => requestClose(false)}
+                theme="outlined"
+                variant="secondary"
+              >
                 {k('detail.back')}
               </Button>
               {canWrite && tab === 'detail' && (
                 <Button
+                  className="shrink-0 whitespace-nowrap"
                   form={DETAIL_FORM_ID}
                   isLoading={busy}
                   loadingText={k('messages.saving')}

@@ -46,6 +46,7 @@ import type { StorefrontIssue, StorefrontOrderResult } from '../../shared/action
 import { fullOrderTotals, lineGrossMinor, nextOrderNumber, orderTotals } from '../../shared/domain/order-totals.ts';
 import { merchandiseStates } from '../database/schema.ts';
 import { AKROS_LEGAL_ENTITY_ID, staffCommandAllowed } from '../../shared/actions/command-guard.ts';
+import { loadAkrosBaseline } from './akros-demo-reset.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
 import { assignCategory, updateCategoryCommand, withContentHistory } from './catalog-content.ts';
 import { cachedProductRecords, getCachedState, setCachedState, stateCacheKey } from './state-cache.ts';
@@ -1277,6 +1278,13 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
   };
 });
 
+/** An order edit that names the order version it was made against; see `EditOrder.expectedUpdatedAt`. */
+export const isOrderScopedEdit = (
+  command: MerchandiseCommand,
+): command is Extract<MerchandiseCommand, { readonly _tag: 'EditOrder' }> & {
+  readonly expectedUpdatedAt: DateTime.Utc;
+} => command._tag === 'EditOrder' && command.expectedUpdatedAt !== undefined;
+
 /** Applies one command to the state. Pure: persistence decides when the result is saved. */
 export const evolveMerchandiseState = (
   state: MerchandiseState,
@@ -1294,6 +1302,8 @@ export const evolveMerchandiseState = (
     Match.tag('PlaceStorefrontOrder', (value) => placeStorefrontOrder(state, value, input)),
     Match.tag('EditOrder', (value) => editOrder(state, value, input)),
     Match.tag('UpdateCategory', (value) => updateCategoryCommand(state, value, input)),
+    // Needs the baseline feed from disk, so persistence (applyOnce) performs it; the pure evolve never does.
+    Match.tag('ResetDemoData', () => Effect.fail(conflict('Demo reset runs only through persistence'))),
     Match.tag('ArchiveDemoProduct', (value) =>
       Effect.gen(function* () {
         const product = yield* findProduct(state.products, value.id);
@@ -1517,11 +1527,29 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
     ) {
       const snapshot = yield* load();
       // Storefront guests cannot know the aggregate revision; their command re-validates against current state.
-      if (command._tag !== 'PlaceStorefrontOrder' && snapshot.revision !== expectedRevision) {
+      // An order edit carrying the order's own updatedAt conflicts only when that order changed.
+      if (isOrderScopedEdit(command)) {
+        const current = snapshot.state.orders.find((order) => order.id === command.id);
+        if (
+          current !== undefined &&
+          DateTime.toEpochMillis(current.updatedAt) !== DateTime.toEpochMillis(command.expectedUpdatedAt)
+        ) {
+          return yield* new MerchandiseRevisionConflict({
+            code: 'merchandise_revision_conflict',
+            reason: 'The order changed; refresh before another edit',
+          });
+        }
+      } else if (command._tag !== 'PlaceStorefrontOrder' && snapshot.revision !== expectedRevision) {
         return yield* new MerchandiseRevisionConflict({
           code: 'merchandise_revision_conflict',
           reason: 'Merchandise changed; refresh before another operation',
         });
+      }
+      if (command._tag === 'ResetDemoData') {
+        // Scoped by whereScope (tenant + legal entity): no other company's row is read or written.
+        const baseline = yield* loadAkrosBaseline();
+        const revision = yield* save(snapshot.revision, baseline);
+        return { entityIds: [], revision };
       }
       const now = yield* DateTime.now;
       const actor = { principalId: scope.principalId, tenantId: scope.tenantId };
@@ -1555,7 +1583,9 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       return yield* applyOnce(command, expectedRevision, resourceId).pipe(
         Effect.retry({
           times: 2,
-          while: (error) => command._tag === 'PlaceStorefrontOrder' && error._tag === 'MerchandiseRevisionConflict',
+          while: (error) =>
+            (command._tag === 'PlaceStorefrontOrder' || isOrderScopedEdit(command)) &&
+            error._tag === 'MerchandiseRevisionConflict',
         }),
       );
     });
@@ -1666,6 +1696,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         storefrontOrigin: legalEntityId === AKROS_LEGAL_ENTITY_ID ? 'http://localhost:3070' : 'http://localhost:3060',
         canEditOrders: !storefront && canManageCatalog,
         canCleanupDemo: !storefront && canWrite && isAdministrator,
+        canResetDemo: !storefront && canWrite && isAdministrator && legalEntityId === AKROS_LEGAL_ENTITY_ID,
         // The storefront view never reveals staff totals: its indicators cover only what the view returns.
         indicators: {
           lowStockCount: (storefront ? filteredProducts : allProducts).filter((record) => record.lowStock).length,

@@ -140,6 +140,14 @@ export const MerchandiseCommandSchema = Schema.Union([
     id: ProductIdSchema,
     reason: Schema.Trim.check(Schema.isMinLength(5), Schema.isMaxLength(500)),
   }),
+  /**
+   * AKROS administrators only: replaces this company's catalog, stock and orders with the predictable demo baseline
+   * (the same state `demo:seed:akros --reset` writes). Scoped to the caller's tenant and legal entity.
+   */
+  Schema.TaggedStruct('ResetDemoData', {
+    confirmation: Schema.Literal('OBNOVIT'),
+    reason: Schema.Trim.check(Schema.isMinLength(5), Schema.isMaxLength(500)),
+  }),
   Schema.TaggedStruct('RemoveDemoOrder', {
     id: OrderIdSchema,
     /** Explicit legacy repair only; ordinary cleanup replay never credits previously compensated records. */
@@ -171,6 +179,11 @@ export const MerchandiseCommandSchema = Schema.Union([
   Schema.TaggedStruct('EditOrder', {
     contact: Schema.optionalKey(OrderContactSchema),
     deliveryAddress: Schema.optionalKey(OrderAddressSchema),
+    /**
+     * The order's `updatedAt` the editor saw. When present the edit conflicts only if this order changed meanwhile,
+     * not when any other part of the catalog (e.g. a storefront order) bumped the aggregate revision.
+     */
+    expectedUpdatedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
     id: OrderIdSchema,
     lines: Schema.optionalKey(Schema.Array(EditOrderLineSchema).check(Schema.isMinLength(1), Schema.isMaxLength(200))),
     note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(1000))),

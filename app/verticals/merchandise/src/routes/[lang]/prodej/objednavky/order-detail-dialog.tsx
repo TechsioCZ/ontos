@@ -39,6 +39,8 @@ interface OrderDetailDialogProps {
   readonly onEdited: (message: string) => void;
   readonly onStatus: (order: Order, status: OrderStatus) => void;
   readonly order: Order | undefined;
+  /** True when the order wrote ORDER stock movements, so editing quantities moves stock too. */
+  readonly orderMovesStock?: boolean;
   readonly products: readonly ProductRecord[];
   readonly revision: number;
 }
@@ -152,6 +154,7 @@ export const OrderDetailDialog = ({
   onEdited,
   onStatus,
   order,
+  orderMovesStock,
   products,
   revision,
 }: OrderDetailDialogProps) => {
@@ -247,6 +250,7 @@ export const OrderDetailDialog = ({
               setEditingId(null);
               onEdited(message);
             }}
+            movesStock={orderMovesStock === true}
             order={order}
             products={products}
             revision={revision}

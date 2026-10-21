@@ -72,6 +72,14 @@ export const editOrder = Effect.fn('OrdersRecords.editOrder')(function* editOrde
   return yield* submitCommand(command, revision);
 });
 
+/** AKROS administrators: resets this company's catalog, stock and orders to the demo baseline. */
+export const resetDemoData = Effect.fn('OrdersRecords.resetDemoData')(function* resetDemoData(
+  reason: string,
+  revision: number,
+) {
+  return yield* submitCommand({ _tag: 'ResetDemoData', confirmation: 'OBNOVIT', reason }, revision);
+});
+
 /** A revision conflict reaches the page as a 409 problem with its own code; other 409s are different conflicts. */
 export const isRevisionConflict = (error: CreateFailure): boolean =>
   Match.value(error).pipe(

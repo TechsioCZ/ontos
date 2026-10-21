@@ -148,6 +148,8 @@ const sameContact = (order: Order, draft: Draft) =>
   (order.contact?.phone ?? '') === draft.phone.trim();
 
 interface OrderEditFormProps {
+  /** The order wrote ORDER stock movements; quantity edits then move stock the same way. */
+  readonly movesStock: boolean;
   readonly onCancel: () => void;
   readonly onSaved: (message: string) => void;
   readonly order: Order;
@@ -157,9 +159,10 @@ interface OrderEditFormProps {
 
 /**
  * Admin edit of a DEMO order. Sends one EditOrder command with only the changed parts; the server recomputes the
- * totals and writes a before/after history entry per changed area. Pricing and real stock are never touched.
+ * totals and writes a before/after history entry per changed area. The price list never changes; when the order
+ * already took goods from stock, quantity changes write the matching ORDER movements.
  */
-export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: OrderEditFormProps) => {
+export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revision }: OrderEditFormProps) => {
   const [draft, setDraft] = useState<Draft>(() => draftOf(order));
   const [sequence, setSequence] = useState(0);
   const [pick, setPick] = useState<string | null>(null);
@@ -233,6 +236,7 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
     const reason = draft.reason.trim();
     const command: EditCommand = {
       _tag: 'EditOrder',
+      expectedUpdatedAt: order.updatedAt,
       id: order.id,
       ...(linesChanged ? { lines } : {}),
       ...(shippingChanged && draft.shippingMethod !== null && shippingPrice !== null
@@ -290,7 +294,7 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
             setBusy(false);
             setServerError(
               isRevisionConflict(error)
-                ? 'Objednávku mezitím upravil někdo jiný. Zavřete úpravy, načtěte data znovu a změnu zopakujte.'
+                ? 'Tuto objednávku mezitím změnil někdo jiný. Zavřete úpravy, načtěte data znovu a změnu zopakujte.'
                 : 'Změnu se nepodařilo uložit. Nic nebylo změněno, zkuste to prosím znovu.',
             );
           },
@@ -353,8 +357,11 @@ export const OrderEditForm = ({ onCancel, onSaved, order, products, revision }: 
       }}
     >
       <p className="text-fg-secondary text-sm">
-        Úprava DEMO objednávky. Součty přepočítá server, změna se zapíše do historie s autorem a časem. Ceník ani
-        skutečné zásoby se nemění.
+        Úprava DEMO objednávky. Součty přepočítá server, změna se zapíše do historie s autorem a časem. Ceník se
+        nemění.{' '}
+        {movesStock
+          ? 'Objednávka už zboží odepsala ze skladu: přidané kusy se ze skladu odepíšou, ubrané se vrátí (uvidíte je v Pohybech produktu).'
+          : 'Tato objednávka sklad neodepsala, změna množství zásoby nemění.'}
       </p>
       <SectionCard flush title="Položky">
         <div role="region" aria-label="Položky objednávky" tabIndex={0} style={{ overflowX: 'auto' }}>

@@ -1,7 +1,7 @@
 import type { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import type { ColumnDef, DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
-import { formatDate, formatNumber, StatusBadge, dataTableRowLabels } from '@app/admin-ui';
+import { formatDateTime, formatNumber, StatusBadge, dataTableRowLabels } from '@app/admin-ui';
 import type { Tag } from '@app/tagging/contracts/records';
 import { DateTime } from 'effect';
 import type { Order } from '../../../../../shared/apis/records.ts';
@@ -51,10 +51,10 @@ export const ordersColumns = (
   },
   {
     accessorFn: (order) => DateTime.formatIso(order.createdAt),
-    cell: (info) => formatDate(info.getValue<string>()),
+    cell: (info) => <span className="whitespace-nowrap tabular-nums">{formatDateTime(info.getValue<string>())}</span>,
     header: t(key('columns.createdAt')),
     id: 'createdAt',
-    meta: { type: 'date', width: 110 },
+    meta: { type: 'date', width: 150 },
   },
   {
     accessorFn: (order) => order.lines.length,
