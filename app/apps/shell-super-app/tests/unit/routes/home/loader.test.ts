@@ -377,7 +377,13 @@ it.effect.each([false, true])(
       expect(model).toMatchObject({
         navigation: {
           items: allowed
-            ? [expect.objectContaining({ href: '/sprava/lide' }), expect.objectContaining({ href: '/crm/klienti' })]
+            ? [
+                expect.objectContaining({ href: '/sprava/lide' }),
+                expect.objectContaining({ href: '/crm/klienti' }),
+                expect.objectContaining({ href: '/sprava/ke-schvaleni' }),
+                expect.objectContaining({ href: '/sprava/aktivita-agentu' }),
+                expect.objectContaining({ href: '/sprava/pripojene-aplikace' }),
+              ]
             : [expect.objectContaining({ href: '/crm/klienti' })],
         },
       });
