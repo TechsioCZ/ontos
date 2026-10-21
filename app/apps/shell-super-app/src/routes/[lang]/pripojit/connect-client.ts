@@ -26,6 +26,8 @@ type Answer =
   | { readonly json: unknown; readonly redirected: boolean; readonly status: 'ok'; readonly url: string };
 
 const failed = (reason: ConnectFailure): Failed => ({ reason, status: 'failed' });
+const isFailed = <A extends { readonly status: string }>(answer: A | Failed): answer is Failed =>
+  answer.status === 'failed';
 
 const failureOf = (status: number): ConnectFailure => {
   if (status === 401) {
@@ -47,12 +49,16 @@ const sendJson = (path: string, body: unknown): Promise<Answer> =>
     credentials: 'same-origin',
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     method: 'POST',
-  }).then((response): Promise<Answer> => {
-    if (!response.ok) {
-      return Promise.resolve(failed(failureOf(response.status)));
-    }
-    return response.json().then((json: unknown): Answer => ({ json, redirected: response.redirected, status: 'ok', url: response.url }));
-  }).catch((): Answer => failed('error'));
+  })
+    .then((response): Promise<Answer> => {
+      if (!response.ok) {
+        return Promise.resolve(failed(failureOf(response.status)));
+      }
+      return response
+        .json()
+        .then((json: unknown): Answer => ({ json, redirected: response.redirected, status: 'ok', url: response.url }));
+    })
+    .catch((): Answer => failed('error'));
 
 const postJson = (path: string, body: unknown): Effect.Effect<Answer> => Effect.promise(() => sendJson(path, body));
 
@@ -63,16 +69,11 @@ const callDecoded = <Value, Err>(
   decode: (input: unknown) => Effect.Effect<Value, Err>,
 ): Effect.Effect<ConnectOutcome<Value>> =>
   postJson(path, body).pipe(
-    Effect.flatMap(
-      (answer): Effect.Effect<ConnectOutcome<Value>> => {
-        if (answer.status === 'failed') {
-          return Effect.succeed(answer);
-        }
-        return decode(answer.json).pipe(
-          Effect.map((value): ConnectOutcome<Value> => ({ status: 'ok', value })),
-          Effect.orElseSucceed((): ConnectOutcome<Value> => failed('error')),
-        );
-      },
+    Effect.filterOrElse(isFailed, (answer) =>
+      decode(answer.json).pipe(
+        Effect.map((value): ConnectOutcome<Value> => ({ status: 'ok', value })),
+        Effect.orElseSucceed((): ConnectOutcome<Value> => failed('error')),
+      ),
     ),
   );
 
@@ -96,7 +97,14 @@ export const approveDraft = (grantId: string, oauthQuery: string) =>
 
 /** `grantId` null when the person cancels on screen 2 before any draft exists. */
 export const denyConnection = (grantId: string | null, oauthQuery: string) =>
-  callDecoded(OAUTH_CONNECTION_PATHS.connectDeny, { grantId, oauthQuery }, decodeDeny);
+  callDecoded(OAUTH_CONNECTION_PATHS.connectDeny, { grantId, oauthQuery }, decodeDeny).pipe(
+    // The page navigates to `redirectTo`, so it gets the same http(s)-or-path guard as Better Auth targets.
+    Effect.map((outcome) =>
+      outcome.status === 'ok' && navigationTarget({ url: outcome.value.redirectTo }, false, '') === undefined
+        ? failed('error')
+        : outcome,
+    ),
+  );
 
 const navigateTo = (path: string, body: unknown): Effect.Effect<ConnectOutcome<string>> =>
   postJson(path, body).pipe(
@@ -119,18 +127,8 @@ export const consentOAuth = (oauthQuery: string): Effect.Effect<ConnectOutcome<s
 
 /** Screen 2 "Pokračovat": create the draft, then continue the authorization. */
 export const createDraftAndContinue = (request: ConnectDraftRequest): Effect.Effect<ConnectOutcome<string>> =>
-  createDraft(request).pipe(
-    Effect.flatMap(
-      (draft): Effect.Effect<ConnectOutcome<string>> =>
-        draft.status === 'failed' ? Effect.succeed(draft) : continueOAuth(request.oauthQuery),
-    ),
-  );
+  createDraft(request).pipe(Effect.filterOrElse(isFailed, () => continueOAuth(request.oauthQuery)));
 
 /** Screen 3 "Povolit přístup": approve the draft, then issue the code. */
 export const approveDraftAndConsent = (grantId: string, oauthQuery: string): Effect.Effect<ConnectOutcome<string>> =>
-  approveDraft(grantId, oauthQuery).pipe(
-    Effect.flatMap(
-      (approved): Effect.Effect<ConnectOutcome<string>> =>
-        approved.status === 'failed' ? Effect.succeed(approved) : consentOAuth(oauthQuery),
-    ),
-  );
+  approveDraft(grantId, oauthQuery).pipe(Effect.filterOrElse(isFailed, () => consentOAuth(oauthQuery)));

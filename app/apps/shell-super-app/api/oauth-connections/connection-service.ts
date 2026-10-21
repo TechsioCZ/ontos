@@ -132,19 +132,17 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
 }) {
   const relationships = yield* Effect.scoped(
     Effect.flatMap(openDemoAccountGrants, (grants) => grants.relationshipsOf(input.actingPrincipalId)),
-  ).pipe(Effect.mapError(toUnavailable));
+  );
   const sets = moduleAccessSets(relationships, input.legalEntityId);
   const spice: LiveRights = { read: sets.access, write: sets.write };
   if (input.actingKind === 'human') {
     return { live: spice, offered: offeredModules(spice, 'direct'), policyCap: 'direct' as ConnectionWritePolicy };
   }
-  const profiles = yield* loadAgentProfiles(input.tenantId, [input.actingPrincipalId]).pipe(
-    Effect.mapError(toUnavailable),
-  );
+  const profiles = yield* loadAgentProfiles(input.tenantId, [input.actingPrincipalId]);
   const profile = profiles.get(input.actingPrincipalId) ?? DEFAULT_AGENT_PROFILE;
   const live = agentLiveRights(spice, profile.modules);
   return { live, offered: offeredModules(live, profile.writePolicy), policyCap: profile.writePolicy };
-});
+}, Effect.mapError(toUnavailable));
 
 export interface LiveConnection {
   readonly description: ConnectionDescription;

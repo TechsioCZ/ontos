@@ -9,7 +9,6 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { agentApprovalModuleByAppId } from '@app/shared-contracts/agent-proposals';
 import {
-  type ConnectionDescription,
   type ConnectorGatewayContextRequest,
   type ConnectorGatewayContextResponse,
   OAUTH_GRANT_CLAIM,
@@ -194,11 +193,12 @@ export const connectorGatewayContext = (
   Effect.gen(function* connectorGatewayContextEffect() {
     const live = yield* authenticateConnector(headers, yield* liveDeps);
     yield* auditExchange(live.grant, 'gateway-context');
-    return yield* issueGatewayContextAssertion({
+    const response: ConnectorGatewayContextResponse = yield* issueGatewayContextAssertion({
       audience: request.audience,
       compositionRevision: request.compositionRevision,
       principal: connectorPrincipalContext(live),
     });
+    return response;
   });
 
 /** Caller of the agent platform proposal endpoints when the connector headers are used. */
@@ -230,5 +230,6 @@ export const authenticateConnectorProposalCaller = (
         }
       }
     }
-    return { legalName: description.legalName, principal: connectorPrincipalContext(live) };
+    const caller: AgentPlatformCaller = { legalName: description.legalName, principal: connectorPrincipalContext(live) };
+    return caller;
   });

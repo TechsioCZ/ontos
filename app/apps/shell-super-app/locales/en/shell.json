@@ -281,7 +281,7 @@
         "validity": "Access lasts until you disconnect it in My profile › Connected applications. The company administrator can disconnect it too.",
         "redirectBefore": "After you allow access we will send you back to",
         "allow": "Allow access",
-        "deny": "Deny."
+        "deny": "Deny"
       }
     },
     "modules": {

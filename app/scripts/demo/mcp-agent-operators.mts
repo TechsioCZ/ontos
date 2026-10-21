@@ -39,7 +39,7 @@ const requestedAgents = (argv: readonly string[]) => {
       index += 1;
     }
   }
-  return pairs.length > 0 ? pairs : seededAgents;
+  return [...seededAgents, ...pairs];
 };
 
 const program = Effect.scoped(
