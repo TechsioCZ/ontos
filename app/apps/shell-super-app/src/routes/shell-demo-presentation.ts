@@ -39,6 +39,10 @@ const connectedAppsItem = agentPlatformItem('/sprava/pripojene-aplikace', 'Přip
 export const hasModuleAiApprovals = (navigation: readonly ShellNavigationItem[]): boolean =>
   navigation.some(({ href }) => href !== undefined && moduleAiApprovalHrefs.has(href));
 
+/** One approval inbox: in-module AI approval pages leave the sidebar (Ke schválení shows their batches and links them). */
+export const withoutModuleAiApprovals = (navigation: readonly ShellNavigationItem[]): readonly ShellNavigationItem[] =>
+  navigation.filter(({ href }) => href === undefined || !moduleAiApprovalHrefs.has(href));
+
 /**
  * Platform pages of the approval layer: shown to company administrators and to people who can open an in-module AI
  * approval page.

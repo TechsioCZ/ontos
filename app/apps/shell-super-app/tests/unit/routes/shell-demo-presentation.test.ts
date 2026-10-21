@@ -5,6 +5,7 @@ import {
   hasModuleAiApprovals,
   presentableDemoNavigation,
   withAgentPlatformNavigation,
+  withoutModuleAiApprovals,
 } from '../../../src/routes/shell-demo-presentation.ts';
 
 const navigation = ['/contacts', '/sprava/lide', '/crm/klienti'].map((href) => ({ href })) as ShellNavigationItem[];
@@ -90,6 +91,15 @@ it.each([
     { href: '/crm/klienti', moduleId: 'demo.crm' },
   ] as ShellNavigationItem[];
   expect(presentableDemoNavigation(pages, true, legalEntityId).map(({ href }) => href)).toEqual(hrefs);
+});
+
+it('keeps one approval inbox: in-module AI approval pages leave the sidebar', () => {
+  const pages = [
+    { href: '/prodej/schvalovani-ai', moduleId: 'demo.sales-pipeline' },
+    { href: '/crm/schvalovani-ai', moduleId: 'demo.crm' },
+    { href: '/crm/klienti', moduleId: 'demo.crm' },
+  ] as ShellNavigationItem[];
+  expect(withoutModuleAiApprovals(pages).map(({ href }) => href)).toEqual(['/crm/klienti']);
 });
 
 it('detects in-module AI approval pages', () => {
