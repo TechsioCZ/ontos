@@ -36,6 +36,8 @@ import type {
   PeopleOverview,
   Person,
 } from '../../../../api/people-admin-client.ts';
+import { isCrmSalesRole, syncCrmSalesperson } from '../../../../api/crm-salesperson-sync.ts';
+import type { SalespersonAccount, SalespersonSync } from '../../../../api/crm-salesperson-sync.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import csResource from '../../../../../locales/cs/workforce.json';
 import enResource from '../../../../../locales/en/workforce.json';
@@ -86,9 +88,37 @@ const Avatar = ({ name, muted }: { readonly muted: boolean; readonly name: strin
   </span>
 );
 
-const runCommand = (command: PeopleCommand): Promise<PeopleOutcome<ManageResult>> =>
+interface CommandResult {
+  /** CRM salesperson follow-up, present only when the account holds or held a salesperson role. */
+  readonly crm?: { readonly register: boolean; readonly sync: SalespersonSync };
+  readonly outcome: PeopleOutcome<ManageResult>;
+}
+
+/** Account state after the change, when it concerns a CRM salesperson role (now or before). */
+type CrmAccountOf = (result: ManageResult) => SalespersonAccount | undefined;
+
+const crmAccount = (account: SalespersonAccount) =>
+  isCrmSalesRole(account.roleKey) || isCrmSalesRole(account.previousRoleKey) ? account : undefined;
+
+const runCommand = (command: PeopleCommand, crmAccountOf?: CrmAccountOf): Promise<CommandResult> =>
   browserRuntime.runPromise(
-    newRequestToken.pipe(Effect.flatMap((token) => runPeopleCommand(command, `people-${token}`))),
+    newRequestToken.pipe(
+      Effect.flatMap((token) =>
+        runPeopleCommand(command, `people-${token}`).pipe(
+          Effect.flatMap((outcome) => {
+            const account = outcome.status === 'ok' ? crmAccountOf?.(outcome.value) : undefined;
+            return account === undefined
+              ? Effect.succeed<CommandResult>({ outcome })
+              : syncCrmSalesperson(account, `people-${token}`).pipe(
+                  Effect.map((sync): CommandResult => ({
+                    crm: { register: account.active && isCrmSalesRole(account.roleKey), sync },
+                    outcome,
+                  })),
+                );
+          }),
+        ),
+      ),
+    ),
   );
 
 const columnsOf = (t: Translate): ColumnDef<Person>[] => [
@@ -228,7 +258,7 @@ const CreateAccountPanel = ({
   roles,
 }: {
   readonly onClose: () => void;
-  readonly onCreated: (name: string, result: ManageResult) => void;
+  readonly onCreated: (name: string, result: ManageResult, crm: CommandResult['crm']) => void;
   readonly roles: PeopleOverview['roles'];
 }) => {
   const { t } = useModernI18n();
@@ -254,10 +284,20 @@ const CreateAccountPanel = ({
     }
     setBusy(true);
     setServerError(null);
-    void runCommand({ displayName: name.trim(), email: email.trim(), operation: 'create', roleKey }).then((outcome) => {
+    const displayName = name.trim();
+    const address = email.trim();
+    void runCommand({ displayName, email: address, operation: 'create', roleKey }, (result) =>
+      crmAccount({
+        active: result.status === 'active',
+        displayName,
+        email: address.toLowerCase(),
+        principalId: result.principalId,
+        roleKey,
+      }),
+    ).then(({ crm, outcome }) => {
       setBusy(false);
       if (outcome.status === 'ok') {
-        onCreated(name.trim(), outcome.value);
+        onCreated(displayName, outcome.value, crm);
       } else {
         setServerError(failureMessage(outcome.reason, t));
       }
@@ -346,7 +386,10 @@ const CreateAccountPanel = ({
           </StatusText>
         )}
         {roleKey !== null && (
-          <p className="text-fg-secondary text-sm">{roles.find((role) => role.key === roleKey)?.description}</p>
+          <p className="text-fg-secondary text-sm">
+            {roles.find((role) => role.key === roleKey)?.description}
+            {isCrmSalesRole(roleKey) && <> {t(`${key}.crm.roleHint`)}</>}
+          </p>
         )}
         <div className="rounded-md border border-border-primary bg-surface-secondary p-150 text-fg-secondary text-sm">
           {t(`${key}.form.password`)}
@@ -364,7 +407,7 @@ const PersonPanel = ({
   roles,
 }: {
   readonly audit: readonly AuditEntry[];
-  readonly onChanged: (message: string, result: ManageResult) => void;
+  readonly onChanged: (message: string, result: ManageResult, crm: CommandResult['crm']) => void;
   readonly onClose: () => void;
   readonly person: Person;
   readonly roles: PeopleOverview['roles'];
@@ -381,10 +424,20 @@ const PersonPanel = ({
   const execute = (kind: 'role' | 'status', command: PeopleCommand, message: string) => {
     setBusy(kind);
     setServerError(null);
-    void runCommand(command).then((outcome) => {
+    const nextRole = command.operation === 'change-role' ? command.roleKey : person.roleKey;
+    void runCommand(command, (result) =>
+      crmAccount({
+        active: result.status === 'active',
+        displayName: person.displayName,
+        email: person.email,
+        previousRoleKey: person.roleKey,
+        principalId: person.principalId,
+        roleKey: nextRole,
+      }),
+    ).then(({ crm, outcome }) => {
       setBusy(null);
       if (outcome.status === 'ok') {
-        onChanged(message, outcome.value);
+        onChanged(message, outcome.value, crm);
       } else {
         setServerError(failureMessage(outcome.reason, t));
       }
@@ -497,7 +550,10 @@ const PersonPanel = ({
                 value={roleKey === null ? [] : [roleKey]}
               />
               {roleKey !== null && (
-                <p className="text-fg-secondary text-sm">{roles.find((role) => role.key === roleKey)?.description}</p>
+                <p className="text-fg-secondary text-sm">
+                  {roles.find((role) => role.key === roleKey)?.description}
+                  {isCrmSalesRole(roleKey) && <> {t(`${key}.crm.roleHint`)}</>}
+                </p>
               )}
               <div>
                 <Button
@@ -631,6 +687,24 @@ const PeoplePageContent = () => {
         : person.displayName,
   }));
   const opened = people.find((person) => person.principalId === openId);
+  const crmToast = (crm: CommandResult['crm']) => {
+    if (crm === undefined || crm.sync.kind === 'unchanged') {
+      return;
+    }
+    if (crm.sync.kind === 'failed') {
+      toaster.create({
+        description: crm.sync.reason ?? t(`${key}.crm.failedHint`),
+        title: t(crm.register ? `${key}.crm.registerFailed` : `${key}.crm.retireFailed`),
+        type: 'warning',
+      });
+      return;
+    }
+    toaster.create({
+      description: t(`${key}.crm.${crm.sync.kind}Hint`),
+      title: t(`${key}.crm.${crm.sync.kind}`, { name: crm.sync.name }),
+      type: 'success',
+    });
+  };
   const grantsToast = (result: ManageResult) =>
     result.operation === 'change-status'
       ? undefined
@@ -774,13 +848,14 @@ const PeoplePageContent = () => {
       {creating && data !== undefined && (
         <CreateAccountPanel
           onClose={() => setCreating(false)}
-          onCreated={(name, result) => {
+          onCreated={(name, result, crm) => {
             setCreating(false);
             toaster.create({
               description: grantsToast(result),
               title: t(`${key}.toast.created`, { name }),
               type: 'success',
             });
+            crmToast(crm);
             reload();
           }}
           roles={data.roles}
@@ -790,8 +865,9 @@ const PeoplePageContent = () => {
         <PersonPanel
           audit={data.audit}
           key={`${opened.principalId}:${opened.status}:${opened.roleKey ?? ''}`}
-          onChanged={(message, result) => {
+          onChanged={(message, result, crm) => {
             toaster.create({ description: grantsToast(result), title: message, type: 'success' });
+            crmToast(crm);
             reload();
           }}
           onClose={() => setOpenId(null)}

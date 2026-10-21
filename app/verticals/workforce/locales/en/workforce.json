@@ -135,7 +135,7 @@
         },
         "aiActivity": {
           "title": "AI activity",
-          "description": "What AI agents and integrations did in this company: every allowed and denied write attempt from the Core audit. Level A may only read, level B may also create tasks.",
+          "description": "What AI agents and integrations did in this company: every allowed and denied write attempt from the Core audit. Level A may only read, level B may also create tasks, and level C proposes data changes (e.g. CRM clients) that a person must approve in the app and that can be reverted in bulk.",
           "refresh": "Refresh",
           "executed": "Executed: {{count}}",
           "denied": "Denied: {{count}}",
@@ -303,6 +303,18 @@
         "disabled": "Account deactivated",
         "enabled": "Account reactivated",
         "grants": "Permissions: {{granted}} granted, {{revoked}} revoked"
+      },
+      "crm": {
+        "roleHint": "The account also joins the CRM salespeople, so clients can be assigned to it.",
+        "registered": "{{name}} was added to the CRM salespeople",
+        "registeredHint": "They can receive clients and will see them in CRM › My clients.",
+        "reactivated": "Salesperson {{name}} is active in the CRM again",
+        "reactivatedHint": "They can receive clients again; earlier history was kept.",
+        "retired": "{{name}} was retired from the CRM salespeople",
+        "retiredHint": "They receive no new clients; their client history stays.",
+        "registerFailed": "The account could not be added to the CRM salespeople",
+        "retireFailed": "The salesperson could not be retired in the CRM",
+        "failedHint": "Finish it in CRM › Clients › Salespeople."
       },
       "errors": {
         "forbidden": "Only the company administrator may do this. The attempt was audited.",

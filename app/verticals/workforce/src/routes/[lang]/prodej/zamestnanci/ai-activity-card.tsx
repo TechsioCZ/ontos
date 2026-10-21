@@ -19,7 +19,7 @@ type Feed =
   | { readonly status: 'unavailable' }
   | { readonly entries: readonly AiActivityEntry[]; readonly status: 'ready' };
 
-type BadgeVariant = 'danger' | 'info' | 'outline' | 'success' | 'warning';
+type BadgeVariant = 'danger' | 'info' | 'outline' | 'secondary' | 'success' | 'warning';
 
 const outcomeVariant: Readonly<Record<string, BadgeVariant>> = {
   allowed: 'info',
@@ -32,10 +32,13 @@ const outcomeVariant: Readonly<Record<string, BadgeVariant>> = {
 const moduleOf = (entry: AiActivityEntry): string =>
   entry.targetModuleKey ?? entry.actionKey?.replace(/\.[a-z0-9-]+$/u, '') ?? '';
 
-const levelOf = (entry: AiActivityEntry): 'A' | 'B' | undefined => {
-  const match = /AI agent (?<level>[AB]) /u.exec(entry.actorDisplayName);
+type Level = 'A' | 'B' | 'C';
+const levelVariant: Readonly<Record<Level, BadgeVariant>> = { A: 'info', B: 'warning', C: 'secondary' };
+
+const levelOf = (entry: AiActivityEntry): Level | undefined => {
+  const match = /AI agent (?<level>[ABC])\b/u.exec(entry.actorDisplayName);
   const level = match?.groups?.['level'];
-  return level === 'A' || level === 'B' ? level : undefined;
+  return level === 'A' || level === 'B' || level === 'C' ? level : undefined;
 };
 
 const loadFeed = (onLoaded: (feed: Feed) => void) => {
@@ -53,7 +56,7 @@ const loadFeed = (onLoaded: (feed: Feed) => void) => {
 };
 
 /**
- * "AI aktivita": the latest Core audit events of non-human principals (AI agents A/B, integrations) in the selected
+ * "AI aktivita": the latest Core audit events of non-human principals (AI agents A/B/C, integrations) in the selected
  * company — who, what, result, when. Read from the real Core audit, refreshed every 10 s.
  */
 export const AiActivityCard = () => {
@@ -139,7 +142,7 @@ export const AiActivityCard = () => {
                     <td className="px-150 py-100">
                       <span className="flex items-center gap-100">
                         {level !== undefined && (
-                          <Badge size="sm" variant={level === 'A' ? 'info' : 'warning'}>
+                          <Badge size="sm" variant={levelVariant[level]}>
                             {t(`${key}.level`, { level })}
                           </Badge>
                         )}
