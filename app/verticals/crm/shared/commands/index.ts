@@ -41,6 +41,7 @@ export const nonHumanForbiddenCrmCommands: ReadonlySet<string> = new Set([
   'AiRevertBatch',
   // Team and identity links are people's decisions.
   'LinkClientParty',
+  'SyncClientParties',
   'RegisterSalesperson',
   'SetSalespersonActive',
   'UpdateCustomerInput',

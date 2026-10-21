@@ -17,7 +17,7 @@ import { ClientKindSchema, PartyLinkInputSchema } from '../domain/clients.ts';
 import { EntityIdSchema, LongTextSchema, ShortTextSchema } from '../domain/common.ts';
 import { canReadClient } from '../domain/access.ts';
 import type { CrmState } from '../domain/state.ts';
-import type { CommandContext, Reducer } from './context.ts';
+import type { CommandContext, Reducer, VerifiedParty } from './context.ts';
 import {
   conflict,
   definedOnly,
@@ -28,6 +28,7 @@ import {
   requireAnyWrite,
   requireAssign,
   requireWritableClient,
+  requireWriteAll,
 } from './context.ts';
 
 const OptionalText = Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(200)));
@@ -95,6 +96,14 @@ export const clientsCommandSchemas = [
     clientId: EntityIdSchema,
     partyRef: PartyLinkInputSchema,
   }),
+  /**
+   * Správce / vedoucí: gives every active client without a Party Registry identity (or the listed clients) its
+   * registry Party + CUSTOMER Counterparty through the server-side intake, and correlates every approved external
+   * customer id of a linked client with its Counterparty (C04 migration).
+   */
+  Schema.TaggedStruct('SyncClientParties', {
+    clientIds: Schema.optionalKey(Schema.Array(EntityIdSchema).check(Schema.isMaxLength(50))),
+  }),
 ] as const;
 export const ClientsCommandSchema = Schema.Union(clientsCommandSchemas);
 export type ClientsCommand = typeof ClientsCommandSchema.Type;
@@ -141,6 +150,65 @@ const verifiedPartyRef = (state: CrmState, context: CommandContext, input: Party
     };
     return ref;
   });
+
+/**
+ * C04: every approved external customer id (customer link) of a registry-linked client carries that client's
+ * Counterparty and Party, so imports pair to the canonical identity rather than to a CRM-local id.
+ */
+export const correlateCustomerLinks = (state: CrmState): CrmState => {
+  const refs = new Map(
+    state.clients.items.flatMap((client) =>
+      client.partyRef?.counterpartyId === undefined ? [] : [[client.id, client.partyRef] as const],
+    ),
+  );
+  let changed = false;
+  const customerLinks = state.imports.customerLinks.map((link) => {
+    const ref = refs.get(link.clientId);
+    if (ref?.counterpartyId === undefined || (link.counterpartyId === ref.counterpartyId && link.partyId === ref.partyId)) {
+      return link;
+    }
+    changed = true;
+    return { ...link, counterpartyId: ref.counterpartyId, partyId: ref.partyId };
+  });
+  return changed ? { ...state, imports: { ...state.imports, customerLinks } } : state;
+};
+
+/** Customer links still waiting for the C04 correlation (their client already has a Counterparty). */
+export const uncorrelatedCustomerLinks = (state: CrmState) =>
+  state.imports.customerLinks.filter((link) => {
+    const ref = state.clients.items.find((client) => client.id === link.clientId)?.partyRef;
+    return ref?.counterpartyId !== undefined && link.counterpartyId !== ref.counterpartyId;
+  }).length;
+
+/**
+ * Clients the server-side Party Registry intake must identify after a command: `SyncClientParties` names them
+ * (entityIds); any other command - Nový klient, restore, an approved AI proposal - is checked for clients that became
+ * active by it and have no registry identity yet.
+ */
+export const identityTargets = (
+  before: CrmState,
+  after: CrmState,
+  command: { readonly _tag: string },
+  entityIds: readonly string[],
+): readonly Client[] => {
+  if (command._tag === 'SyncClientParties') {
+    return after.clients.items.filter((client) => entityIds.includes(client.id) && client.partyRef === undefined);
+  }
+  const previous = new Map(before.clients.items.map((client) => [client.id, client.status] as const));
+  return after.clients.items.filter(
+    (client) => client.status === 'active' && client.partyRef === undefined && previous.get(client.id) !== 'active',
+  );
+};
+
+/** Counterparty and Party ids already held by a CRM client (one Party is one CRM client). */
+export const linkedIdentityIds = (state: CrmState): ReadonlySet<string> =>
+  new Set(
+    state.clients.items.flatMap((client) =>
+      client.partyRef === undefined
+        ? []
+        : [client.partyRef.partyId, ...(client.partyRef.counterpartyId === undefined ? [] : [client.partyRef.counterpartyId])],
+    ),
+  );
 
 const event = (
   context: CommandContext,
@@ -209,6 +277,47 @@ const withPrimary = (contacts: readonly ContactPerson[], clientId: string, prima
     const { primary: _primary, ...rest } = entry;
     return rest;
   });
+
+/** Stores a verified registry identity on a client, correlates its external customer ids and records it. */
+const withPartyRef = (
+  state: CrmState,
+  client: Client,
+  partyRef: PartyRef,
+  context: CommandContext,
+  eventSuffix: string,
+): CrmState => {
+  const items = replaceClient(state.clients.items, { ...client, partyRef, updatedAt: context.now });
+  const linked = correlateCustomerLinks({ ...state, clients: { ...state.clients, items } });
+  return withClients(linked, {}, [
+    event(context, eventSuffix, client.id, 'party_linked', { subject: partyRef.registryName ?? client.name }),
+  ]);
+};
+
+/**
+ * Links a client to the identity the server-side Party Registry intake verified (no browser claim involved).
+ * Refuses a Party another CRM client already holds.
+ */
+export const linkVerifiedParty = (
+  state: CrmState,
+  clientId: string,
+  verified: VerifiedParty,
+  context: CommandContext,
+  eventSuffix: string,
+): CrmState => {
+  const client = state.clients.items.find((entry) => entry.id === clientId);
+  const taken = linkedIdentityIds(state);
+  if (client === undefined || client.partyRef !== undefined || taken.has(verified.counterpartyId) || taken.has(verified.partyId)) {
+    return state;
+  }
+  const partyRef: PartyRef = {
+    ...definedOnly({ registryName: verified.displayName }),
+    counterpartyId: verified.counterpartyId,
+    linkedAt: context.now,
+    linkedBy: context.viewer.principalId,
+    partyId: verified.partyId,
+  };
+  return withPartyRef(state, client, partyRef, context, eventSuffix);
+};
 
 export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, context) =>
   Match.value(command).pipe(
@@ -439,25 +548,23 @@ export const applyClientsCommand: Reducer<ClientsCommand> = (state, command, con
           return yield* denied('Změnit vazbu na Party Registry smí jen správce nebo vedoucí obchodu');
         }
         const partyRef = yield* verifiedPartyRef(state, context, value.partyRef, client.id);
-        const next: Client = { ...client, partyRef, updatedAt: context.now };
-        // Approved external customer ids of this client now correlate to its Counterparty (C04).
-        const stamped: CrmState = {
-          ...state,
-          imports: {
-            ...state.imports,
-            customerLinks: state.imports.customerLinks.map((link) =>
-              link.clientId === client.id
-                ? { ...link, counterpartyId: value.partyRef.counterpartyId, partyId: value.partyRef.partyId }
-                : link,
-            ),
-          },
-        };
-        return {
-          entityIds: [client.id],
-          state: withClients(stamped, { items: replaceClient(state.clients.items, next) }, [
-            event(context, 'party', client.id, 'party_linked', { subject: partyRef.registryName ?? client.name }),
-          ]),
-        };
+        return { entityIds: [client.id], state: withPartyRef(state, client, partyRef, context, 'party') };
+      }),
+    ),
+    Match.tag('SyncClientParties', (value) =>
+      Effect.gen(function* syncClientParties() {
+        yield* requireWriteAll(context);
+        const wanted = value.clientIds === undefined ? undefined : new Set(value.clientIds);
+        if (wanted !== undefined && [...wanted].some((id) => !state.clients.items.some((entry) => entry.id === id))) {
+          return yield* notFound('Klient neexistuje');
+        }
+        const targets = state.clients.items
+          .filter((client) =>
+            client.partyRef === undefined && (wanted === undefined ? client.status === 'active' : wanted.has(client.id)),
+          )
+          .slice(0, 50);
+        // The server-side intake links the targets after this reducer; the C04 correlation happens here.
+        return { entityIds: targets.map((client) => client.id), state: correlateCustomerLinks(state) };
       }),
     ),
     Match.tag('AssignClient', (value) =>

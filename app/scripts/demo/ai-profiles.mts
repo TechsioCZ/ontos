@@ -306,7 +306,7 @@ const upsertAiPrincipalRows = (selected: readonly AiPrincipal[]) =>
   });
 
 /** Writes the AI relationships through the core development bootstrap port (no accounts, TOUCH-only). */
-const writeAiRelationships = Effect.fn('AiProfiles.relationships')(function* writeAiRelationships(
+export const writeAiRelationships = Effect.fn('AiProfiles.relationships')(function* writeAiRelationships(
   root: string,
   environment: DemoResetChildEnvironment,
   relationships: readonly AiRelationship[],

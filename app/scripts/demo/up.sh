@@ -257,6 +257,8 @@ step demo-seed-work-people "${WITH_ENV[@]}" node scripts/demo/seed-work-people.m
 step company-membership-hygiene "${WITH_ENV[@]}" node scripts/demo/company-membership-hygiene.mts
 # reset-permissions deliberately logs AI errors without failing; this explicit step makes a cold start honest.
 step ai-profiles pnpm_ demo:ai-profiles
+# CRM.md §3: key of the CRM's Party Registry intake principal (read by the crm server per intake, no restart).
+step crm-party-intake pnpm_ demo:crm-party-intake
 # Rental data uses public reads/Actions, so it must run AFTER composition, company setup and grants.
 if [ "${DEMO_RESET:-1}" != 0 ]; then
   step demo-seed-rental env \

@@ -6,7 +6,7 @@ import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runt
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
 import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/api/client';
 import { and, eq } from 'drizzle-orm';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 
 import {
   CrmPermissionDenied,
@@ -19,6 +19,7 @@ import {
 import type { CrmCommand } from '../../shared/actions/apply-command.ts';
 import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import type { VerifiedParty } from '../../shared/commands/context.ts';
+import { identityTargets, linkedIdentityIds, linkVerifiedParty } from '../../shared/commands/clients.ts';
 import { dispatchCrmCommand, partyLinksOf } from '../../shared/commands/index.ts';
 import type { PartyLinkInput } from '../../shared/domain/clients.ts';
 import type { CrmPermissionKey, CrmViewer } from '../../shared/domain/access.ts';
@@ -27,6 +28,7 @@ import type { CrmState } from '../../shared/domain/state.ts';
 import { CrmStateSchema, initialCrmState, projectCrmState, withDefaultSlices } from '../../shared/domain/state.ts';
 import { salespersonOfPrincipal } from '../../shared/domain/team.ts';
 import { crmStates } from '../database/schema.ts';
+import { makePartyIntake } from './party-intake.ts';
 
 const moduleId = 'demo.crm';
 
@@ -278,13 +280,28 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
       const links = partyLinksOf(command);
       const verifiedParties = links.length === 0 ? undefined : yield* verifyParties(links);
       const now = DateTime.formatIso(yield* DateTime.now);
-      const change = yield* dispatchCrmCommand(snapshot.state, command, {
+      const context = {
         invocationId,
         now,
         viewer,
         ...(verifiedParties === undefined ? {} : { verifiedParties }),
-      });
-      const revision = yield* save(expectedRevision, change.state);
+      };
+      const change = yield* dispatchCrmCommand(snapshot.state, command, context);
+      // CRM.md §3: no active client without a Party Registry identity. Clients this command made active (Nový
+      // klient by a salesperson, restore, approved AI proposal) or SyncClientParties targets go through the
+      // governed server-side intake, after the caller's own CRM write rights were checked by the reducer.
+      const targets = identityTargets(snapshot.state, change.state, command, change.entityIds);
+      let state = change.state;
+      if (targets.length > 0) {
+        const intake = yield* makePartyIntake({ ...scope, legalEntityId });
+        for (const [index, client] of targets.entries()) {
+          const verified = yield* intake.identify(client, linkedIdentityIds(state), `crm-intake:${invocationId}:${index}`);
+          if (Option.isSome(verified)) {
+            state = linkVerifiedParty(state, client.id, verified.value, context, `party-intake-${index}`);
+          }
+        }
+      }
+      const revision = yield* save(expectedRevision, state);
       return { entityIds: [...change.entityIds], revision };
     });
     const records = Effect.fn('Crm.records')(function* records(request: RecordsRequest) {

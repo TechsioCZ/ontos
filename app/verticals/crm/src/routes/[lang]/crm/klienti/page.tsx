@@ -9,10 +9,12 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Input } from '@techsio/ui-kit/atoms/input';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
+import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { canSeeEverything } from '../../../../../shared/domain/access.ts';
+import { uncorrelatedCustomerLinks } from '../../../../../shared/commands/clients.ts';
 import type { Client } from '../../../../../shared/domain/clients.ts';
 import { CrmPage } from '../../../../crm/crm-page.tsx';
 import { salespersonName, useCrmRecords } from '../../../../crm/records.ts';
@@ -238,6 +240,8 @@ const ClientsList = ({
   const filtered =
     search.trim() !== '' || owner !== ALL || segment !== ALL || status !== 'active' || registry !== 'all';
   const linkedCount = active.filter((row) => partyLinked(row.client)).length;
+  const pendingCorrelations = uncorrelatedCustomerLinks(records.state);
+  const toaster = useToast();
   const mine = records.viewer.salespersonId;
   const summaries = (
     <>
@@ -281,8 +285,41 @@ const ClientsList = ({
           />
         )}
       </StatRow>
-      {/* Order statistics only where the company imports orders (wholesale CRM); a firm without imports sees no empty block. */}
-      {(records.state.imports.orders.length > 0 || records.state.imports.batches.length > 0) && (
+      {records.viewer.writeAll && (active.length > linkedCount || pendingCorrelations > 0) && (
+        <div className="flex flex-wrap items-center justify-between gap-150 rounded-lg border border-border-warning bg-surface-secondary px-200 py-150">
+          <p className="text-sm">
+            {active.length > linkedCount
+              ? `${formatNumber(active.length - linkedCount)} aktivních klientů zatím nemá identitu v Party Registry.`
+              : `${formatNumber(pendingCorrelations)} schválených externích ID zákazníků čeká na převod na Party Registry.`}{' '}
+            Systém je založí nebo dohledá podle IČO a názvu a propojí.
+          </p>
+          <Button
+            disabled={busy}
+            icon="icon-[mdi--link-variant]"
+            onClick={() =>
+              void submit({ _tag: 'SyncClientParties' }).then((outcome) =>
+                toaster.create(
+                  outcome.ok
+                    ? { title: 'Klienti propojeni s Party Registry', type: 'success' }
+                    : {
+                        description: outcome.message ?? 'Zkuste to prosím znovu.',
+                        title: 'Propojení se nezdařilo',
+                        type: 'error',
+                      },
+                ),
+              )
+            }
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
+            Propojit s Party Registry
+          </Button>
+        </div>
+      )}
+      {/* Order statistics only where the company has imported wholesale orders (Hanák); a firm without orders, such as
+          Siampark, never sees the wholesale "Prodeje v kostce" block. */}
+      {records.state.imports.orders.length > 0 && (
         <CrmSalesKpiStrip records={records} />
       )}
     </>

@@ -55,6 +55,7 @@ import { discoverCurrentActions } from '../provision-current-action-authorizatio
 import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from '../siampark/reset-configuration.mts';
 import type { DemoResetChildEnvironment } from '../siampark/reset-configuration.mts';
 import { setupAiProfiles } from './ai-profiles.mts';
+import { setupCrmPartyIntake } from './crm-party-intake.mts';
 import { demoLegalEntityId, demoTenantId, eshopDemoLegalEntityId } from './fixture-ids.mts';
 import {
   akrosStorefrontPrincipal,
@@ -569,6 +570,10 @@ const main = (skipBot: boolean) =>
     // AI principals A/B (ai-ab lane); a failure there must not hide the company and persona setup above.
     yield* setupAiProfiles(root, environment, { skipKeys: skipBot }).pipe(
       Effect.catch((failure) => Console.error(`ai-profiles failed (${String(failure)}); companies are configured`)),
+    );
+    // CRM.md §3: the CRM server's governed Party Registry intake principal (salespeople's new clients get an identity).
+    yield* setupCrmPartyIntake(root, environment, { skipKeys: skipBot }).pipe(
+      Effect.catch((failure) => Console.error(`crm-party-intake failed (${String(failure)}); companies are configured`)),
     );
   });
 
