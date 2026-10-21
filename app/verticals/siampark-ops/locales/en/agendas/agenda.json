@@ -73,7 +73,8 @@
     "noDataDescription": "The source holds no data needed for this figure.",
     "loadingDescription": "Loading data from the source.",
     "readyDescription": "",
-    "agendaUnavailable": "The calendar agenda is unavailable – own events and notifications are not shown."
+    "agendaUnavailable": "The calendar agenda is unavailable – own events and notifications are not shown.",
+    "readOnly": "Read-only agenda: you see only the events Siampark assigned to you. Siampark staff create and change events."
   },
   "category": {
     "contractEnd": "Contract end",

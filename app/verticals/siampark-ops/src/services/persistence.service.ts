@@ -16,7 +16,7 @@ import type { ApplyCommandResult, OpsCommand } from '../../shared/actions/apply-
 import { MAX_FILE_BYTES, agendaDefinitions, agendaIds, agendaOfCommand } from '../../shared/agendas.ts';
 import type { FileUploadCommand } from '../../shared/agendas.ts';
 import type { RecordsRequest, RecordsResponse, StoredFile } from '../../shared/apis/records.ts';
-import { agendaStateForPrincipal } from '../../shared/domain/agenda.ts';
+import { PERSONAL_AGENDA_COMMANDS, agendaStateForAssignee, agendaStateForPrincipal } from '../../shared/domain/agenda.ts';
 import type { AgendaState } from '../../shared/domain/agenda.ts';
 import { canApplyMeterCommand, meterAccess, operationalMetersState } from '../../shared/domain/meters-access.ts';
 import type { MetersState } from '../../shared/domain/meters.ts';
@@ -85,6 +85,13 @@ export const canReadAgenda = (grants: Grants, sensitivity: AgendaSensitivity) =>
   (sensitivity === 'operational' && (grants.readOperational || grants.writeOperational));
 export const canWriteAgenda = (grants: Grants, sensitivity: AgendaSensitivity) =>
   grants.writeAll || (sensitivity === 'operational' && grants.writeOperational);
+/**
+ * Operational-only principals (external partners) read just the calendar events assigned to them and never
+ * create or change events: the calendar of the company stays with its own staff.
+ */
+export const isAssignedOnly = (grants: Grants) => !grants.readAll && !grants.writeAll;
+const canWriteAgendaEvents = (grants: Grants) =>
+  !isAssignedOnly(grants) && canWriteAgenda(grants, agendaDefinitions.agenda.sensitivity);
 
 /** Decoded byte length of a padded base64 string. */
 const base64ByteLength = (value: string) => {
@@ -329,9 +336,14 @@ export const persistenceService = Effect.fn('SiamparkOps.persistenceService')(
         command._tag === 'MeterUpdate' ||
         command._tag === 'MeterReadingRecord' ||
         command._tag === 'MeterReadingVoid';
+      const agendaCommand = definition.id === 'agenda';
       const mayApply = meterCommand
         ? canApplyMeterCommand(granted, command)
-        : canWriteAgenda(granted, definition.sensitivity);
+        : agendaCommand && PERSONAL_AGENDA_COMMANDS.has(command._tag)
+          ? canReadAgenda(granted, definition.sensitivity)
+          : agendaCommand
+            ? canWriteAgendaEvents(granted)
+            : canWriteAgenda(granted, definition.sensitivity);
       if (!mayApply) {
         return yield* permissionDenied(`Changes in agenda ${definition.id} require write permission`);
       }
@@ -398,12 +410,19 @@ export const persistenceService = Effect.fn('SiamparkOps.persistenceService')(
       const granted = yield* grants();
       const requested = request.agendas ?? agendaIds;
       const meters = meterAccess(granted);
+      const assignedOnly = isAssignedOnly(granted);
       const accessList = agendaIds.map((agenda) => {
         const { sensitivity } = agendaDefinitions[agenda];
-        return agenda === 'meters'
-          ? { agenda, canRead: meters.canRead, canWrite: meters.canWrite }
-          : { agenda, canRead: canReadAgenda(granted, sensitivity), canWrite: canWriteAgenda(granted, sensitivity) };
+        if (agenda === 'meters') {
+          return { agenda, canRead: meters.canRead, canWrite: meters.canWrite };
+        }
+        if (agenda === 'agenda') {
+          return { agenda, canRead: canReadAgenda(granted, sensitivity), canWrite: canWriteAgendaEvents(granted) };
+        }
+        return { agenda, canRead: canReadAgenda(granted, sensitivity), canWrite: canWriteAgenda(granted, sensitivity) };
       });
+      const actorRef = actor as RecordsResponse['actorPrincipalRef'];
+      let ownEventIds: ReadonlySet<string> | undefined;
       const agendas: Record<string, unknown> = {};
       for (const entry of accessList) {
         if (!entry.canRead || !requested.includes(entry.agenda)) {
@@ -412,13 +431,22 @@ export const persistenceService = Effect.fn('SiamparkOps.persistenceService')(
         const snapshot = yield* load(entry.agenda);
         agendas[entry.agenda] = {
           canWrite: entry.canWrite,
+          ...(entry.agenda === 'agenda' && assignedOnly ? { assignedOnly: true as const } : {}),
           ...(entry.agenda === 'meters'
             ? { canReadFinancial: meters.canReadFinancial, canManage: meters.canManage }
             : {}),
           revision: snapshot.revision,
           state:
             entry.agenda === 'agenda'
-              ? agendaStateForPrincipal(snapshot.state as AgendaState, actor as RecordsResponse['actorPrincipalRef'])
+              ? (() => {
+                  const personal = agendaStateForPrincipal(snapshot.state as AgendaState, actorRef);
+                  if (!assignedOnly) {
+                    return personal;
+                  }
+                  const own = agendaStateForAssignee(personal, actorRef);
+                  ownEventIds = new Set(own.events.map((event) => event.id));
+                  return own;
+                })()
               : entry.agenda === 'meters' && !meters.canReadFinancial
                 ? operationalMetersState(snapshot.state as MetersState)
                 : snapshot.state,
@@ -428,11 +456,23 @@ export const persistenceService = Effect.fn('SiamparkOps.persistenceService')(
       const documentsReadable = accessList.find((entry) => entry.agenda === 'documents')?.canRead === true;
       const file = request.fileId !== undefined && documentsReadable ? yield* readFile(request.fileId) : undefined;
       const readable = new Set(accessList.filter((entry) => entry.canRead).map((entry) => entry.agenda as string));
+      // An operational-only principal sees the history of their own events only, never of other people's.
+      if (assignedOnly && request.historyFor !== undefined) {
+        if (ownEventIds === undefined) {
+          const snapshot = yield* load('agenda');
+          ownEventIds = new Set(
+            agendaStateForAssignee(snapshot.state as AgendaState, actorRef).events.map((event) => event.id),
+          );
+        }
+        if (!ownEventIds.has(request.historyFor)) {
+          readable.delete('agenda');
+        }
+      }
       const history = request.historyFor === undefined ? undefined : yield* historyOf(request.historyFor, readable);
       // The read definition validates the result against RecordsResponseSchema (agenda states are typed values).
       const response: RecordsResponse = {
         access: accessList,
-        actorPrincipalRef: actor as RecordsResponse['actorPrincipalRef'],
+        actorPrincipalRef: actorRef,
         agendas: agendas as RecordsResponse['agendas'],
         ...(file === undefined ? {} : { file }),
         ...(history === undefined ? {} : { history }),

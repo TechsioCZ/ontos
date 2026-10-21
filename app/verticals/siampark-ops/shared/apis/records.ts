@@ -59,7 +59,13 @@ export const RecordsResponseSchema = Schema.Struct({
   access: Schema.Array(AgendaAccessSchema),
   actorPrincipalRef: PrincipalRefSchema,
   agendas: Schema.Struct({
-    agenda: Schema.optionalKey(envelope(AgendaStateSchema)),
+    agenda: Schema.optionalKey(
+      Schema.Struct({
+        ...envelope(AgendaStateSchema).fields,
+        /** Present (true) when only the events assigned to the principal are returned (external partners). */
+        assignedOnly: Schema.optionalKey(Schema.Literal(true)),
+      }),
+    ),
     assets: Schema.optionalKey(envelope(AssetsStateSchema)),
     documents: Schema.optionalKey(envelope(DocumentsStateSchema)),
     meters: Schema.optionalKey(

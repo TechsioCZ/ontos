@@ -114,6 +114,25 @@ export const agendaStateForPrincipal = (state: AgendaState, actor: PrincipalRef)
   };
 };
 
+/**
+ * Operational-only principals (external partners: `read_operational` without `read_all`/`write_all`) see only
+ * the calendar events assigned to them. Filtered on the server, so other people's events never leave it.
+ */
+export const agendaStateForAssignee = (state: AgendaState, actor: PrincipalRef): AgendaState => ({
+  ...state,
+  events: state.events.filter(
+    (event) => event.assignee?.principalId === actor.principalId && event.assignee.tenantId === actor.tenantId,
+  ),
+});
+
+/** Inbox, preference and export-log commands touch only the actor's own entries; readers may run them. */
+export const PERSONAL_AGENDA_COMMANDS: ReadonlySet<string> = new Set([
+  'AgendaExportRecord',
+  'AgendaNotificationsMarkAllRead',
+  'AgendaNotificationsMarkRead',
+  'AgendaPreferencesSet',
+]);
+
 /** Always e-mailed when e-mail is on (S13: e-mail notifications; preferences only for optional events). */
 export const MANDATORY_EMAIL_CATEGORIES: readonly NotificationCategory[] = ['ASSIGNED', 'OVERDUE'];
 /** The person decides whether these are e-mailed too. */

@@ -73,7 +73,8 @@
     "noDataDescription": "Zdroj neobsahuje údaje potřebné k výpočtu.",
     "loadingDescription": "Načítám data ze zdroje.",
     "readyDescription": "",
-    "agendaUnavailable": "Agenda kalendáře není dostupná – vlastní události a upozornění se nezobrazí."
+    "agendaUnavailable": "Agenda kalendáře není dostupná – vlastní události a upozornění se nezobrazí.",
+    "readOnly": "Agendu máte jen pro čtení: vidíte pouze události, které vám přidělil Siampark. Události zakládají a mění zaměstnanci Siampark."
   },
   "category": {
     "contractEnd": "Konec smlouvy",

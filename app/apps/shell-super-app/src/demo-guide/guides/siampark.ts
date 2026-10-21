@@ -178,6 +178,15 @@ export const siamparkGuide: DemoGuide = {
           title: 'Externista vidí svou práci',
         },
         {
+          click:
+            'Provoz › Agenda: jen událost Prohlídka R101 se zájemcem, kterou mu Siampark přidělil, a poznámka Agendu máte jen pro čtení. Bez tlačítka Nová událost; v Měřidlech jen odečty bez cen a bez úprav.',
+          id: 'siampark-externista-provoz',
+          persona: external,
+          say: 'Z provozu dostane jen to, co mu Siampark přidělil. Události kolegů ani ceny energií neuvidí a nic nezmění – hlídá to server.',
+          target: { kind: 'app', path: '/siampark/provoz/agenda' },
+          title: 'Provoz jen pro čtení',
+        },
+        {
           click: 'Otevřete odkaz přímo: zobrazí se české odmítnutí přístupu bez faktur a částek.',
           id: 'siampark-externista-zakaz',
           persona: external,

@@ -176,6 +176,11 @@ const AgendaView = () => {
         title={t(`${k}.title`)}
       />
       <SourceHealth sources={sources} />
+      {sources.ops.data?.agendas.agenda?.assignedOnly === true && (
+        <p className="siamparkops:m-0 siamparkops:text-sm" style={{ color: 'var(--color-fg-secondary, #6b7280)' }}>
+          {t(`${k}.state.readOnly`)}
+        </p>
+      )}
       {!agendaReadable && sources.ops.status !== 'loading' && (
         <p className="siamparkops:m-0 siamparkops:text-sm" style={{ color: 'var(--color-fg-secondary, #6b7280)' }}>
           {t(`${k}.state.agendaUnavailable`)}

@@ -192,4 +192,6 @@ it('gives the Siampark accounts their 0021 roles and limits the external agent t
   expect(hasModule(external.principalId, rentalDemoLegalEntityId, 'siampark.billing-finance')).toBe(false);
   expect(opsPermission(external.principalId, 'demo.siampark_ops.read_operational')).toBe(true);
   expect(opsPermission(external.principalId, 'demo.siampark_ops.read_all')).toBe(false);
+  expect(opsPermission(external.principalId, 'demo.siampark_ops.write_operational')).toBe(false);
+  expect(opsPermission(external.principalId, 'demo.siampark_ops.write_all')).toBe(false);
 });

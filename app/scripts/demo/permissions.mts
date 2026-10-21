@@ -405,7 +405,10 @@ export const siamparkRentalPersonas = [
     role: {
       contextPermissions: {
         'demo.crm': ['demo.crm.read_assigned'],
-        'demo.siampark-ops': ['demo.siampark_ops.read_operational', 'demo.siampark_ops.write_operational'],
+        // S00: provoz read-only. Without read_all/write_all siampark-ops returns only the calendar events assigned
+        // to him and operational meter data; no agenda or meter write (the apply-command Action stays granted only
+        // for his own inbox, preferences and export log). Live: scripts/demo/ops-operational-permissions.mts.
+        'demo.siampark-ops': ['demo.siampark_ops.read_operational'],
       },
       identityAdmin: false,
       label: 'Externí partner',
