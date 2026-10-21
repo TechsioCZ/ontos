@@ -12,6 +12,9 @@ export type LegacyBatchesResult =
   | { readonly state: 'unavailable' }
   | { readonly batches: AgentQueueBatch[]; readonly state: 'ok' };
 
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
 const ABSENT: LegacyBatchesResult = { state: 'absent' };
 const UNAVAILABLE: LegacyBatchesResult = { state: 'unavailable' };
 
@@ -88,3 +91,20 @@ export const revertLegacy = (principal: TrustedPrincipalContext, appId: string, 
     },
     { idempotencyKey: randomUUID() },
   );
+
+/**
+ * Modules with per-person record privacy (CRM: own clients only) say in `viewer` whether this person sees the whole
+ * company. Someone who sees only their own records must not see company-wide agent activity of that module either.
+ */
+export const seesWholeModule = Effect.fn('AgentPlatform.seesWholeModule')(function* seesWholeModule(
+  principal: TrustedPrincipalContext,
+  appId: string,
+) {
+  const result = yield* callModuleAs(principal, appId, '/reads/records', recordsQueryFor(appId)).pipe(Effect.result);
+  if (result._tag === 'Failure' || result.success.status !== 200) {
+    return false;
+  }
+  const body = result.success.body;
+  const viewer = isRecord(body) ? body['viewer'] : undefined;
+  return isRecord(viewer) ? viewer['readAll'] === true || viewer['writeAll'] === true : true;
+});

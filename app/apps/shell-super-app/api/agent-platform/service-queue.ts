@@ -24,7 +24,7 @@ import { loadAgentProfiles } from '../auth/agent-store.ts';
 import { AgentPlatformForbidden, AgentPlatformInvalid, callerModuleAccess } from './caller.ts';
 import { readTargetEntity } from './service-decide.ts';
 import type { AgentPlatformCaller } from './caller.ts';
-import { readLegacyBatches } from './legacy-queue.ts';
+import { readLegacyBatches, seesWholeModule } from './legacy-queue.ts';
 import { rowsToQueueBatches } from './mappers.ts';
 import {
   AgentStoreUnavailable,
@@ -39,6 +39,8 @@ import type { NewAgentProposal } from './proposal-store.ts';
 
 const HUMAN_ONLY_COMMANDS: ReadonlySet<string> = new Set(['AiDecideChanges', 'AiRevertBatch']);
 const QUEUE_LIMIT = 300;
+/** Modules whose records are private per person (see legacy-queue.ts seesWholeModule). */
+const PRIVATE_SCOPE_APPS: ReadonlySet<string> = new Set(['crm']);
 const REVIEW_PATH = `/cs${AGENT_APPROVALS_PATH}`;
 const NO_DECIDER = 'Návrhy agentů schvalují jen lidé s oprávněním k zápisu v některém modulu firmy.';
 
@@ -208,9 +210,19 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
   const proposalOnlyAgents = new Set(
     agentIds.filter((principalId) => profiles.get(principalId)?.writePolicy === 'approval'),
   );
-  // People see agent activity only in modules where they approve agent changes.
+  // People see agent activity only in modules where they approve agent changes, and only company-wide when the
+  // module shows them the whole company (CRM salespeople see their own clients only).
+  const scoped = yield* Effect.forEach(
+    agentApprovalModules.filter(
+      (module) => PRIVATE_SCOPE_APPS.has(module.appId) && modules.write.has(module.moduleKey),
+    ),
+    (module) =>
+      seesWholeModule(caller.principal, module.appId).pipe(Effect.map((whole) => (whole ? [] : [module.moduleKey]))),
+    { concurrency: 2 },
+  );
+  const hidden = new Set(scoped.flat());
   return yield* listAgentActivity(tenantId, legalEntityId, request, {
     proposalOnlyAgents,
-    visibleModules: modules.write,
+    visibleModules: new Set([...modules.write].filter((moduleKey) => !hidden.has(moduleKey))),
   });
 });

@@ -111,7 +111,11 @@ const noteAgentProvenance = Effect.fn('AgentPlatform.noteAgentProvenance')(funct
       taskRef,
       text: `Změnu navrhl ${row.agentLabel}. Schválil(a) ${approver} na stránce Ke schválení (${row.summary}).`,
     },
-    { idempotencyKey: `agent-proposal-${row.proposalId}-provenance`, ...audiencesOf(row) },
+    {
+      idempotencyKey: `agent-proposal-${row.proposalId}-provenance`,
+      // Work Tasks names the comment author from Workforce.
+      referenceAudiences: [...new Set([...row.referenceAudiences, 'workforce'])],
+    },
   ).pipe(Effect.ignore);
 });
 
