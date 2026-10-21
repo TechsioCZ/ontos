@@ -398,6 +398,15 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
     });
     const composition = yield* Schema.decodeEffect(ShellCompositionSchema)({
       compositionRevision: catalog.composition.revision,
+      // A deployment counts as denied only when access to every module it serves is definitely denied.
+      deniedAppIds: [...new Set(catalog.contracts.map((contract) => contract.deployment.appId))]
+        .filter((appId) =>
+          catalog.contracts.every(
+            (contract) =>
+              contract.deployment.appId !== appId || permissionByModule.get(contract.manifest.module.id) === 'denied',
+          ),
+        )
+        .toSorted(),
       navigation: navigation.toSorted(
         (left, right) =>
           left.order - right.order ||

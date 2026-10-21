@@ -155,6 +155,7 @@ const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): Hom
     state: 'available',
   },
   navigation: {
+    deniedAppIds: [],
     items: [
       {
         appId: inventoryAppId,

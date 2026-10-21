@@ -132,6 +132,7 @@ const authenticatedShell = (): HomePageModel => ({
     state: 'available',
   },
   navigation: {
+    deniedAppIds: [],
     items: [
       {
         appId: inventoryAppId,

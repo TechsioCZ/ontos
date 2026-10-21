@@ -122,6 +122,7 @@ export {
   getDocumentCompositionRevision,
   pinDocumentCompositionRevision,
 } from './document-composition-revision.ts';
+export { isDocumentAppDenied, pinDocumentDeniedApps } from './document-denied-apps.ts';
 
 export const UltramodernPublicSitemapChangeFrequencySchema = Schema.Literals([
   'always',

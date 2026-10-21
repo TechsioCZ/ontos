@@ -474,6 +474,11 @@ export const ShellCompositionSchema = Schema.Union([
   }),
   Schema.Struct({
     compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
+    /**
+     * Deployments whose module access is definitely denied to the principal in the current company. Browser hint
+     * only (the gateway skips optional reads of them); every module still authorizes each request itself.
+     */
+    deniedAppIds: Schema.Array(AppIdSchema),
     navigation: Schema.Array(ShellNavigationItemSchema),
     state: Schema.Literal('available'),
     unavailableDeployments: Schema.Array(ShellUnavailableDeploymentSchema),

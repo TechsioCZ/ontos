@@ -894,6 +894,7 @@ it.live(
     expect(activeModulesResponse.status).toBe(200);
     expect(yield* Effect.tryPromise(() => activeModulesResponse.json())).toEqual({
       compositionRevision: testRevision,
+      deniedAppIds: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -1586,6 +1587,7 @@ it.live(
     );
     expect(yield* Effect.tryPromise(() => firstModules.json())).toEqual({
       compositionRevision: testRevision,
+      deniedAppIds: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -1726,6 +1728,7 @@ it.live(
     );
     expect(yield* Effect.tryPromise(() => secondModules.json())).toEqual({
       compositionRevision: testRevision,
+      deniedAppIds: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],

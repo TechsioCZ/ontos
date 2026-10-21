@@ -91,6 +91,7 @@ beforeEach(() => {
   shellCompositionMock.mockReturnValue(
     Effect.succeed({
       compositionRevision,
+      deniedAppIds: [],
       navigation,
       state: 'available' as const,
       unavailableDeployments: [],
@@ -118,6 +119,7 @@ it.effect('resolves trusted context before returning one serializable compositio
         state: 'available',
       },
       navigation: {
+        deniedAppIds: [],
         items: navigation,
         state: 'available',
         unavailableDeployments: [],
@@ -330,9 +332,11 @@ it.effect('rechecks Home contribution permissions on every visit even when navig
     shellCompositionMock.mockReturnValue(
       Effect.succeed({
         compositionRevision,
-        navigation: ['demo.sales-insights', 'demo.sales-pipeline', 'work.tasks', 'finance.billing'].map(
-          (moduleId) => ({ ...navigation[0], moduleId }),
-        ),
+        deniedAppIds: [],
+        navigation: ['demo.sales-insights', 'demo.sales-pipeline', 'work.tasks', 'finance.billing'].map((moduleId) => ({
+          ...navigation[0],
+          moduleId,
+        })),
         state: 'available',
         unavailableDeployments: [],
       }),
@@ -367,6 +371,7 @@ it.effect.each([false, true])(
       shellCompositionMock.mockReturnValue(
         Effect.succeed({
           compositionRevision,
+          deniedAppIds: [],
           navigation: ['/contacts', '/sprava/lide', '/crm/klienti'].map((href) => ({ ...navigation[0], href })),
           state: 'available',
           unavailableDeployments: [],
@@ -376,6 +381,7 @@ it.effect.each([false, true])(
       const model = yield* loadModel({ request: request() });
       expect(model).toMatchObject({
         navigation: {
+          deniedAppIds: [],
           items: allowed
             ? [
                 expect.objectContaining({ href: '/sprava/lide' }),

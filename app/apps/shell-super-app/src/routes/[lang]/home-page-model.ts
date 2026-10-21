@@ -63,6 +63,8 @@ export interface AuthenticatedHomePageModel {
     | { readonly items: readonly []; readonly state: 'unavailable' };
   readonly navigation:
     | {
+        /** Deployments the person definitely cannot open here; pinned on the document for the browser gateway. */
+        readonly deniedAppIds: readonly string[];
         readonly items: readonly ShellNavigationItem[];
         readonly state: 'available';
         readonly unavailableDeployments: readonly ShellUnavailableDeployment[];
@@ -227,6 +229,7 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
     }
     let compositionRevision: string | undefined;
     let navigation: AuthenticatedHomePageModel['navigation'] = {
+      deniedAppIds: [],
       items: [],
       state: 'available',
       unavailableDeployments: [],
@@ -255,6 +258,7 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
         session.identity.legalEntityId,
       );
       navigation = {
+        deniedAppIds: composition.deniedAppIds,
         items: withConnectedAppsNavigation(
           withAgentPlatformNavigation(presentable, canManagePeople || hasModuleAiApprovals(presentable)),
           canManagePeople,
