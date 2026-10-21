@@ -420,7 +420,7 @@
       "allPriorities": "All priorities"
     },
     "form": {
-      "actualHelp": "Fill in after completion; difference = actual − planned.",
+      "actualHelp": "Fill in after completion.",
       "actualRequired": "A completed investment needs its actual amount.",
       "noAsset": "No related asset"
     },

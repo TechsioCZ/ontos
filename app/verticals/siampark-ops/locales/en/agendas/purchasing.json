@@ -421,7 +421,7 @@
       "descriptionPlaceholder": "e.g. Lounge rental – corporate event",
       "addLine": "Add line",
       "removeLine": "Remove",
-      "saveDraft": "Save as draft",
+      "saveDraft": "Save draft",
       "saveSent": "Save as sent",
       "saveChanges": "Save changes",
       "required": "Choose a customer, a date and fill in name, quantity and price for every line.",

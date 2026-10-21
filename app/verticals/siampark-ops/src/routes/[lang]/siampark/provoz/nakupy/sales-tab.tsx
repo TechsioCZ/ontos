@@ -337,7 +337,7 @@ export const SalesQuoteFormPanel = ({
       onOpenChange={(open) => !open && onClose()}
       open
       resizeLabel={t('siampark-ops.common.close')}
-      size="lg"
+      size="xl"
       title={quote === undefined ? k('sales.newQuote') : k('sales.editQuote', { number: quote.number })}
     >
       <div className="flex flex-col gap-200 py-200">
@@ -379,7 +379,7 @@ export const SalesQuoteFormPanel = ({
         <fieldset className="flex flex-col gap-150 rounded-lg border border-border-primary p-200">
           <legend className="px-50 font-semibold text-sm">{k('sales.fields.lines')}</legend>
           {lines.map((line, index) => (
-            <div className="grid grid-cols-1 gap-100 border-border-secondary border-b pb-150 sm:grid-cols-[1fr_5rem_8rem_6rem_auto]" key={index}>
+            <div className="flex flex-col gap-100 border-border-secondary border-b pb-150" key={index}>
               <FormInput
                 id={`sales-line-${index}-description`}
                 label={k('sales.fields.description')}
@@ -387,6 +387,7 @@ export const SalesQuoteFormPanel = ({
                 placeholder={k('sales.form.descriptionPlaceholder')}
                 value={line.description}
               />
+              <div className="grid grid-cols-2 items-end gap-100 sm:grid-cols-[6rem_minmax(9rem,1fr)_7rem_auto]">
               <FormInput
                 id={`sales-line-${index}-quantity`}
                 inputMode="numeric"
@@ -420,6 +421,7 @@ export const SalesQuoteFormPanel = ({
                 >
                   {k('sales.form.removeLine')}
                 </Button>
+              </div>
               </div>
             </div>
           ))}
@@ -460,13 +462,13 @@ const LinesTable = ({ lines, delivered }: { readonly lines: SalesQuote['lines'] 
         <Table.Body>
           {lines.map((line) => (
             <Table.Row key={line.id}>
-              <Table.Cell className="font-medium">{line.description}</Table.Cell>
+              <Table.Cell className="min-w-[12rem] font-medium">{line.description}</Table.Cell>
               <Table.Cell className="text-right tabular-nums">{line.quantity}</Table.Cell>
               {delivered === true && (
                 <Table.Cell className="text-right tabular-nums">{'deliveredQuantity' in line ? line.deliveredQuantity : 0}</Table.Cell>
               )}
               <Table.Cell className="whitespace-nowrap text-right tabular-nums">{formatAmount(line.unitPriceMinor)}</Table.Cell>
-              <Table.Cell className="text-right tabular-nums">{`${line.vatRate} %`}</Table.Cell>
+              <Table.Cell className="whitespace-nowrap text-right tabular-nums">{`${line.vatRate} %`}</Table.Cell>
               <Table.Cell className="whitespace-nowrap text-right tabular-nums">{formatAmount(line.quantity * line.unitPriceMinor)}</Table.Cell>
             </Table.Row>
           ))}

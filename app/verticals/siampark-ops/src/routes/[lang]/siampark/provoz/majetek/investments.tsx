@@ -33,11 +33,9 @@ const priorityVariant = (priority: InvestmentPriority) =>
 const statusVariant = (status: InvestmentStatus) =>
   status === 'done'
     ? ('success' as const)
-    : status === 'cancelled'
-      ? ('outline' as const)
-      : status === 'in_progress'
-        ? ('info' as const)
-        : ('secondary' as const);
+    : status === 'in_progress' || status === 'approved'
+      ? ('info' as const)
+      : ('outline' as const);
 
 const amountInput = (minor: number | undefined) =>
   minor === undefined ? '' : (minor / 100).toLocaleString('cs-CZ', { maximumFractionDigits: 2, useGrouping: true });
@@ -298,7 +296,7 @@ export const InvestmentPlan = ({
             value={statusFilter}
           />
         </div>
-        <div className="w-[12rem]">
+        <div className="w-[14rem]">
           <SelectField
             label={k('investments.fields.priority')}
             name="investment-priority-filter"

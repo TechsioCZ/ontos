@@ -422,7 +422,7 @@
       "allPriorities": "Všechny priority"
     },
     "form": {
-      "actualHelp": "Vyplňte po realizaci; rozdíl = skutečnost − plán.",
+      "actualHelp": "Doplňte po realizaci.",
       "actualRequired": "Dokončená investice musí mít skutečnou částku.",
       "noAsset": "Bez vazby na majetek"
     },
