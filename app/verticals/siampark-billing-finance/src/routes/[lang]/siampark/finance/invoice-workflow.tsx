@@ -61,7 +61,7 @@ export const InvoiceLifecycleCard = ({ invoice, vm }: { readonly invoice: Invoic
         {presentation.label}
       </Badge>
       {lifecycle !== 'VOIDED' && (
-        <ol className="flex flex-col gap-75 text-sm">
+        <ol className="flex flex-col gap-50 text-sm">
           {STEPS.map(([step, label]) => (
             <li className="flex items-start gap-100" key={step}>
               <span
@@ -211,7 +211,7 @@ export const PriorSettlementCard = ({ invoice, vm }: { readonly invoice: Invoice
           <>
             <ul className="flex flex-col divide-y divide-border-primary">
               {settlement.entries.map((entry) => (
-                <li className="flex flex-wrap items-center justify-between gap-100 py-75" key={entry.invoiceResourceId}>
+                <li className="flex flex-wrap items-center justify-between gap-100 py-50" key={entry.invoiceResourceId}>
                   <a
                     className="inline-flex items-center gap-50 font-medium underline"
                     href={`?resourceId=${encodeURIComponent(entry.invoiceResourceId)}`}
@@ -389,7 +389,7 @@ export const PaymentTermsCard = ({ invoice, vm }: { readonly invoice: Invoice; r
           <p className="text-fg-secondary">U dokladu není evidováno skonto ani sjednaný úrok z prodlení.</p>
         ) : (
           <dl className="flex flex-col gap-100">
-            <div className="flex flex-col gap-25">
+            <div className="flex flex-col gap-50">
               <dt className="text-fg-secondary text-xs">Skonto</dt>
               <dd className="break-words">
                 {terms.skontoText ?? '—'}
@@ -400,7 +400,7 @@ export const PaymentTermsCard = ({ invoice, vm }: { readonly invoice: Invoice; r
                 )}
               </dd>
             </div>
-            <div className="flex flex-col gap-25">
+            <div className="flex flex-col gap-50">
               <dt className="text-fg-secondary text-xs">Sjednaný úrok z prodlení</dt>
               <dd className="break-words">
                 {terms.lateInterestText ?? '—'}

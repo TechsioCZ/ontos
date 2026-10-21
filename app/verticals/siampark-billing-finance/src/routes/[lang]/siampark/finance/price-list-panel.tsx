@@ -92,7 +92,7 @@ export const PriceListPanel = ({ vm }: { readonly vm: FinanceViewModel }) => {
     );
 
   return (
-    <div className="flex flex-col gap-250">
+    <div className="flex flex-col gap-500">
       <SectionCard
         actions={
           vm.canWrite ? (
