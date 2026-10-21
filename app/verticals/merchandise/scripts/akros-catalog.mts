@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { demoId } from '../../../scripts/demo/fixture-ids.mts';
 import type { MerchandiseStateSchema } from '../shared/apis/records.ts';
+import { decodeCategoryText } from './akros-merge.ts';
 import { akrosSampleContacts } from './order-presentation.ts';
 
 type Encoded = typeof MerchandiseStateSchema.Encoded;
@@ -92,7 +93,8 @@ const pathFor = (id: string): string[] => {
   }
   return path;
 };
-const productUnitOf = (unit: string): Encoded['products'][number]['unit'] => (unit === 'm' || unit === 'tab' || unit === 'set' ? unit : 'ks');
+const productUnitOf = (unit: string): Encoded['products'][number]['unit'] =>
+  unit === 'm' || unit === 'tab' || unit === 'set' ? unit : 'ks';
 // Import every source group; never silently curate the live owner catalog.
 export const akrosSourceProducts = catalog.products;
 const at = '2026-10-19T08:00:00.000Z';
@@ -227,16 +229,18 @@ export const buildAkrosEncoded = (): Encoded => {
     products,
     movements,
     orders,
-    categories: categories.map((category) => ({
-      ...category,
-      heading: category.heading ?? category.name,
-      description: category.description ?? '',
-      longDescription: category.longDescription ?? '',
-      position: category.position ?? 0,
-      imageSrc: category.imageSrc ?? '',
-      imageAlt: category.imageAlt ?? category.name,
-      hasChildren: category.hasChildren ?? false,
-    })),
+    categories: categories
+      .map((source) => decodeCategoryText(source))
+      .map((category) => ({
+        ...category,
+        heading: category.heading ?? category.name,
+        description: category.description ?? '',
+        longDescription: category.longDescription ?? '',
+        position: category.position ?? 0,
+        imageSrc: category.imageSrc ?? '',
+        imageAlt: category.imageAlt ?? category.name,
+        hasChildren: category.hasChildren ?? false,
+      })),
     homepageFeaturedProductIds: catalog.homepageFeaturedProductIds,
   };
 };

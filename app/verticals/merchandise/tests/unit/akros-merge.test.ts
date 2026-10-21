@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { backfillProduct, mergeSeed } from '../../scripts/akros-merge.ts';
+import { backfillProduct, decodeHtmlEntities, mergeSeed } from '../../scripts/akros-merge.ts';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 
@@ -121,4 +121,22 @@ it('keeps existing orders and movements and skips seed records already present',
   const merged = mergeSeed(current, seed);
   expect(merged.orders.map((entry) => entry.id)).toEqual(['o1']);
   expect(merged.movements.map((entry) => entry.id)).toEqual(['m1', 'm2']);
+});
+
+it('decodes the HTML entities found in the AKROS source copy and leaves unknown ones', () => {
+  expect(
+    decodeHtmlEntities(
+      'dílů &ndash; nerez &bdquo;A2&ldquo; 90&deg; M6 &times; 20&hellip; &quot;x&quot; &gt; &#8211; &foo;',
+    ),
+  ).toBe('dílů – nerez „A2“ 90° M6 × 20… "x" > – &foo;');
+});
+
+it('cleans entities in existing category text once and is then idempotent', () => {
+  const dirty = { ...category('c1'), description: 'Kartáče &ndash; nerez', longDescription: '<p>90&deg;</p>' };
+  const once = mergeSeed(state({ categories: [dirty] }), state({ categories: [category('c1')] }));
+  expect(once.categories?.[0]?.description).toBe('Kartáče – nerez');
+  expect(once.categories?.[0]?.longDescription).toBe('<p>90°</p>');
+  expect(once.categories?.[0]?.name).toBe('Kategorie c1');
+  const twice = mergeSeed(once, state({ categories: [category('c1')] }));
+  expect(twice.categories?.[0]).toBe(once.categories?.[0]);
 });
