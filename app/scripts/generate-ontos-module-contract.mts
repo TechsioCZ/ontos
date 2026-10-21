@@ -37,6 +37,7 @@ import {
   toCamelCase,
   toPascalCase,
 } from './scaffolding/shared.mts';
+import { deriveOntosMcpContribution } from './ontos-mcp-contribution.mts';
 
 export const OntosModuleContractTargetSchema = Schema.Literals(['cloudflare-dist', 'dist']);
 export type OntosModuleContractTarget = typeof OntosModuleContractTargetSchema.Type;
@@ -431,6 +432,17 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
           workspaceRoot,
         }),
     });
+    const mcp = yield* Effect.try({
+      catch: (cause) => failure(cause instanceof Error ? cause.message : 'MCP contribution is invalid', cause),
+      try: () =>
+        deriveOntosMcpContribution({
+          actions: owner.manifest.publicSurface.actions,
+          api: owner.manifest.publicSurface.api,
+          appId,
+          authored: owner.manifest.publicSurface.mcp,
+          moduleId: owner.manifest.module.id,
+        }),
+    });
     const contract = {
       deployment: {
         appId,
@@ -445,6 +457,7 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
           businessPermissions: owner.manifest.publicSurface.businessPermissions ?? [],
           components: sorted(components, (left, right) => left.key.localeCompare(right.key)),
           events: sorted(events, (left, right) => left.key.localeCompare(right.key)),
+          ...(mcp === undefined ? {} : { mcp }),
           reports: owner.manifest.publicSurface.reports,
           resourceTypes: owner.manifest.publicSurface.resourceTypes,
           search: owner.manifest.publicSurface.search,

@@ -16,6 +16,7 @@ import { workTasksWriteAllPermission } from './shared/permissions/work-tasks-wri
 import { taskCollectionResourceDescriptor } from './shared/resources/task-collection.ts';
 import { taskResourceDescriptor } from './shared/resources/task.ts';
 // </generated-module-manifest-imports>
+import { workTasksMcpContribution } from './shared/mcp/contribution.ts';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -65,6 +66,7 @@ export const workTasksManifest = defineOntosModuleManifest({
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: workTasksMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>

@@ -737,6 +737,23 @@ export {
   defineOntosModuleManifest,
 } from './modules/manifest.ts';
 export {
+  OntosMcpContributionSchema,
+  OntosMcpHidden,
+  OntosMcpRevisionSchema,
+  OntosMcpTextSchema,
+  OntosMcpToolSchema,
+  defineOntosMcpContribution,
+} from './modules/mcp-contribution.ts';
+export type {
+  OntosMcpContribution,
+  OntosMcpContributionInput,
+  OntosMcpRevision,
+  OntosMcpText,
+  OntosMcpTool,
+  OntosMcpToolTextInput,
+  OntosMcpWriteInput,
+} from './modules/mcp-contribution.ts';
+export {
   OntosShellContributionsSchema,
   ShellMediaAttachmentContributionSchema,
   ShellNavigationContributionSchema,

@@ -7,6 +7,8 @@ import { isActionRegistration } from '../actions/definition.ts';
 import { TENANT_PERMISSION_KEYS } from '../permissions/context-permissions.ts';
 import { BusinessPermissionDescriptorSchema, defineBusinessPermission } from '../permissions/business-permission.ts';
 import type { BusinessPermissionDescriptor } from '../permissions/business-permission.ts';
+import { OntosMcpContributionSchema } from './mcp-contribution.ts';
+import type { OntosMcpContributionInput } from './mcp-contribution.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
 import { OntosShellContributionsSchema, validateShellContributions } from './shell-contribution.ts';
 import type { OntosShellContributions } from './shell-contribution.ts';
@@ -151,6 +153,8 @@ export const OntosSerializedPublicSurfaceSchema = Schema.Struct({
   businessPermissions: Schema.optionalKey(Schema.Array(BusinessPermissionDescriptorSchema)),
   components: Schema.Array(OntosComponentContractSchema),
   events: Schema.Array(OntosPublicEventContractSchema),
+  /** MCP tools the module offers to agents (absent: none). */
+  mcp: Schema.optionalKey(OntosMcpContributionSchema),
   reports: Schema.Array(OntosReportDescriptorSchema),
   resourceTypes: Schema.Array(OntosResourceTypeSchema),
   search: Schema.Array(OntosSearchDescriptorSchema),
@@ -215,6 +219,8 @@ export interface OntosAuthoredPublicSurface {
   readonly businessPermissions?: readonly BusinessPermissionDescriptor[];
   readonly components: Readonly<Record<string, OntosManifestComponentValue>>;
   readonly events: readonly OntosAuthoredPublicEvent[];
+  /** MCP tool contribution; the contract generator derives schemas and handler paths from the module's own values. */
+  readonly mcp?: OntosMcpContributionInput;
   readonly reports: readonly OntosReportDescriptor[];
   readonly resourceTypes: readonly OntosResourceType[];
   readonly search: readonly OntosSearchDescriptor[];
@@ -294,6 +300,7 @@ export const validateOntosModuleManifestFields = <Input extends object, PublicSu
       'businessPermissions',
       'components',
       'events',
+      'mcp',
       'reports',
       'resourceTypes',
       'search',
