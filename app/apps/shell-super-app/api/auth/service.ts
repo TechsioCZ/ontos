@@ -12,14 +12,18 @@ import {
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
 import { apiKey } from '@better-auth/api-key';
+import { cimd } from '@better-auth/cimd';
+import { fetchClientMetadataResource } from '@better-auth/cimd/node';
+import { mcp } from '@better-auth/mcp';
 import { APIError, betterAuth } from 'better-auth';
 import { isAPIError } from 'better-auth/api';
 import { getCookies } from 'better-auth/cookies';
 import { admin } from 'better-auth/plugins/admin';
-import { Context, Effect, Function as Fn, Layer, Predicate, Redacted, Schema, flow } from 'effect';
+import { jwt } from 'better-auth/plugins/jwt';
+import { Context, Effect, Function as Fn, Layer, Option, Predicate, Redacted, Schema, flow } from 'effect';
 import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'effect/unstable/http/Cookies';
 
-import { AuthConfig } from './config.ts';
+import { AuthConfig, DEFAULT_MCP_RESOURCE_URL } from './config.ts';
 import { observeAuthenticationPhase, withAuthenticationTimeout } from './observability.ts';
 import type { AuthenticationPhase } from './observability.ts';
 import type { AuthConfigValue } from './config.ts';
@@ -32,6 +36,20 @@ import {
   OntosIdentityForbiddenError,
   TenantAccessForbiddenError,
 } from './errors.ts';
+import { OAuthConnectionHooks, stubOAuthConnectionHooks } from './oauth-server/connection-hooks.ts';
+import type { OAuthConnectionHooksContract } from './oauth-server/connection-hooks.ts';
+import {
+  OAUTH_ACCESS_TOKEN_TTL_SECONDS,
+  OAUTH_BASE_PATH,
+  OAUTH_CONNECT_PAGE,
+  OAUTH_CONSENT_PAGE,
+  OAUTH_LOGIN_PAGE,
+  OAUTH_REFRESH_TOKEN_TTL_SECONDS,
+  OAUTH_SCOPES,
+  oauthIssuerFor,
+  validateAuthorizeRedirectUri,
+} from './oauth-server/policy.ts';
+import type { OAuthServerEndpoint } from './oauth-server/policy.ts';
 import type {
   AuthenticationRuntimeError,
   AuthenticationUnavailableFailure,
@@ -217,6 +235,8 @@ export interface AuthenticationServiceContract {
   readonly currentSession: (
     requestHeaders: Headers,
   ) => Effect.Effect<CurrentSessionResult, AuthenticationRuntimeError, ContextAccess>;
+  /** Better Auth OAuth 2.1 authorization server for MCP clients; mounted by api/auth/oauth-server/transport.ts. Optional so test doubles stay valid. */
+  readonly oauth?: OAuthServerEndpoint;
   readonly resolveShellContext: (
     requestHeaders: Headers,
   ) => Effect.Effect<ShellContextResult, AuthenticationRuntimeError, ContextAccess | LegalEntityContext>;
@@ -424,6 +444,7 @@ const fallbackClearingCookies = (configuration: AuthConfigValue): readonly strin
 
 interface AuthenticationAssemblyOptions {
   readonly allowFixtureSignUp?: boolean;
+  readonly oauthHooks: OAuthConnectionHooksContract;
   readonly runResolverEffect: typeof Effect.runPromise;
 }
 
@@ -447,6 +468,9 @@ const assembleAuthenticationService = (
       Effect.mapError(mapResolverApiError),
     );
   const beforeSessionCreate = flow(prepareCreatedSession, options.runResolverEffect);
+  const oauthHooks = options.oauthHooks;
+  const oauthIssuer = oauthIssuerFor(configuration.baseUrl);
+  const mcpResourceUrl = configuration.mcpResourceUrl ?? DEFAULT_MCP_RESOURCE_URL;
   const auth = betterAuth({
     advanced: {
       defaultCookieAttributes: {
@@ -456,6 +480,7 @@ const assembleAuthenticationService = (
       },
       useSecureCookies: configuration.secureCookies,
     },
+    basePath: OAUTH_BASE_PATH,
     baseURL: configuration.baseUrl,
     database: databaseAdapter,
     databaseHooks: {
@@ -483,6 +508,39 @@ const assembleAuthenticationService = (
         adminUserIds: [...configuration.supportUserIds],
         allowImpersonatingAdmins: false,
       }),
+      // OAuth 2.1 authorization server for MCP clients (ONTOS-MCP-AUTH-DESIGN.md §2). Issuer = baseURL + basePath.
+      jwt({
+        // Never sign a JWT on every getSession; only OAuth access/ID tokens are JWTs.
+        disableSettingJwtHeader: true,
+        jwks: { keyPairConfig: { alg: 'EdDSA', crv: 'Ed25519' } },
+        jwt: { issuer: oauthIssuer },
+      }),
+      mcp({
+        accessTokenExpiresIn: OAUTH_ACCESS_TOKEN_TTL_SECONDS,
+        allowPublicClientPrelogin: true,
+        consentPage: OAUTH_CONSENT_PAGE,
+        customAccessTokenClaims: (input) => oauthHooks.customAccessTokenClaims(input),
+        grantTypes: ['authorization_code', 'refresh_token'],
+        loginPage: OAUTH_LOGIN_PAGE,
+        postLogin: {
+          consentReferenceId: (context) => oauthHooks.consentReferenceId(context),
+          page: OAUTH_CONNECT_PAGE,
+          shouldRedirect: (context) => oauthHooks.shouldRedirect(context),
+        },
+        rateLimit: {
+          authorize: { max: 60, window: 60 },
+          token: { max: 120, window: 60 },
+        },
+        refreshTokenExpiresIn: OAUTH_REFRESH_TOKEN_TTL_SECONDS,
+        resource: mcpResourceUrl,
+        // No allowedScopes on purpose: Better Auth intersects them with the request and would drop offline_access/openid (spike S3).
+        resourceSeedMode: 'overwrite',
+        resources: [{ accessTokenTtl: OAUTH_ACCESS_TOKEN_TTL_SECONDS, identifier: mcpResourceUrl, name: 'OntOS MCP' }],
+        scopes: [...OAUTH_SCOPES],
+        validateRedirectUri: validateAuthorizeRedirectUri,
+      }),
+      // CIMD only (NO-COMPAT): no dynamic client registration; documents are fetched with the SSRF-safe Node transport.
+      cimd({ fetchClientMetadataResource, metadataProfile: 'mcp-2026-07-28' }),
     ],
     secret: configuration.secret,
     session: {
@@ -922,6 +980,10 @@ const assembleAuthenticationService = (
               },
         ),
       ),
+    oauth: {
+      handler: (request: Request) => auth.handler(request),
+      issuer: oauthIssuer,
+    },
     resolveShellContext,
     resolveTenantContext: (requestHeaders) =>
       readResolvedSession(requestHeaders).pipe(
@@ -1072,8 +1134,10 @@ export const makeAuthenticationService = Effect.fn('AuthenticationService.make')
     const database = yield* AuthDatabase;
     const resolver = yield* PrincipalResolver;
     const effectContext = yield* Effect.context();
+    const oauthHooks = Option.getOrElse(yield* Effect.serviceOption(OAuthConnectionHooks), () => stubOAuthConnectionHooks);
     return assembleAuthenticationService(configuration, database.adapter, resolver, {
       ...options,
+      oauthHooks,
       runResolverEffect: Effect.runPromiseWith(effectContext),
     });
   },
