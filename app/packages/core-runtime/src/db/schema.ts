@@ -43,6 +43,7 @@ export const CORE_TABLE_INVENTORY = [
   'search_projection_generations',
   'search_projection_rebuilds',
   'worker_checkpoints',
+  'agent_proposals',
 ] as const;
 
 export const ACTION_INVOCATION_STATUSES = [
@@ -1008,10 +1009,64 @@ export const workerCheckpoints = coreSchema.table(
   ],
 );
 
+/** Platform approval queue: write proposals of AI agents for any module (approvals-platform lane). No RLS: the
+ * shell filters by tenant and legal entity; bootstrap-runtime-role grants the runtime role on all core tables. */
+export const agentProposals = coreSchema.table(
+  'agent_proposals',
+  {
+    proposalId: uuid('proposal_id').defaultRandom().primaryKey(),
+    tenantId: uuid('tenant_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    batchId: uuid('batch_id').notNull(),
+    batchInstruction: text('batch_instruction').notNull(),
+    runId: text('run_id'),
+    position: integer('position').notNull(),
+    agentPrincipalId: uuid('agent_principal_id').notNull(),
+    agentLabel: text('agent_label').notNull(),
+    appId: text('app_id').notNull(),
+    moduleKey: text('module_key').notNull(),
+    actionSlug: text('action_slug').notNull().default('apply-command'),
+    commandJson: jsonb('command_json').$type<Readonly<Record<string, unknown>>>().notNull(),
+    referenceAudiencesJson: jsonb('reference_audiences_json').$type<readonly string[]>().notNull().default(sql`'[]'::jsonb`),
+    summary: text('summary').notNull(),
+    targetLabel: text('target_label').notNull(),
+    reason: text('reason').notNull(),
+    risk: text('risk').notNull(),
+    diffJson: jsonb('diff_json').$type<readonly unknown[]>().notNull().default(sql`'[]'::jsonb`),
+    revertJson: jsonb('revert_json').$type<unknown>(),
+    status: text('status').notNull().default('pending'),
+    createdAt: createdAt(),
+    decidedByPrincipalId: uuid('decided_by_principal_id'),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    decisionNote: text('decision_note'),
+    appliedAt: timestamp('applied_at', { withTimezone: true }),
+    applyResultJson: jsonb('apply_result_json').$type<unknown>(),
+    failure: text('failure'),
+    revertedByPrincipalId: uuid('reverted_by_principal_id'),
+    revertedAt: timestamp('reverted_at', { withTimezone: true }),
+    batchRevertedAt: timestamp('batch_reverted_at', { withTimezone: true }),
+    batchRevertedByPrincipalId: uuid('batch_reverted_by_principal_id'),
+    batchRevertNote: text('batch_revert_note'),
+  },
+  (table) => [
+    index('core_agent_proposals_company_created_idx').on(table.tenantId, table.legalEntityId, table.createdAt),
+    index('core_agent_proposals_batch_idx').on(table.batchId),
+    uniqueIndex('core_agent_proposals_run_uk')
+      .on(table.tenantId, table.agentPrincipalId, table.runId, table.position)
+      .where(sql`${table.runId} is not null`),
+    check(
+      'core_agent_proposals_status_ck',
+      sql`${table.status} in ('pending', 'applied', 'rejected', 'failed', 'reverted', 'revert_failed')`,
+    ),
+    check('core_agent_proposals_risk_ck', sql`${table.risk} in ('low', 'medium', 'high')`),
+  ],
+);
+
 export const coreDatabaseSchema = {
   applicationCompositionAuthority,
   applicationCompositionDurableWork,
   actionInvocations,
+  agentProposals,
   auditEvents,
   dataAccessEvents,
   domainEvents,
@@ -1056,6 +1111,7 @@ export const CORE_TABLES = [
   searchProjectionGenerations,
   searchProjectionRebuilds,
   workerCheckpoints,
+  agentProposals,
 ] as const;
 
 export type TenantRow = typeof tenants.$inferSelect;
