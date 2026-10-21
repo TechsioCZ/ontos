@@ -33,7 +33,6 @@ import {
   markRejected,
   markRevertFailed,
   markReverted,
-  principalNames,
   releaseApprovalClaim,
 } from './proposal-store.ts';
 
@@ -99,17 +98,13 @@ const noteAgentProvenance = Effect.fn('AgentPlatform.noteAgentProvenance')(funct
   if (typeof taskRef !== 'object' || taskRef === null) {
     return;
   }
-  const names = yield* principalNames(caller.principal.tenantId).pipe(
-    Effect.orElseSucceed(() => new Map<string, string>()),
-  );
-  const approver = names.get(caller.principal.principalId) ?? 'schvalovatel';
   yield* applyModuleCommand(
     caller.principal,
     row.appId,
     {
       _tag: 'AddTaskComment',
       taskRef,
-      text: `Změnu navrhl ${row.agentLabel}. Schválil(a) ${approver} na stránce Ke schválení (${row.summary}).`,
+      text: `Změnu „${row.summary}“ navrhl ${row.agentLabel}; schváleno na stránce Ke schválení.`,
     },
     {
       idempotencyKey: `agent-proposal-${row.proposalId}-provenance`,

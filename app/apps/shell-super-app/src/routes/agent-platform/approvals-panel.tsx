@@ -22,6 +22,9 @@ const moduleApprovalPageFor = (batch: AgentQueueBatch) =>
 
 type Decision = 'approve' | 'reject';
 
+/** Batches shown per step in „Všechny dávky“. */
+const HISTORY_PAGE = 12;
+
 /** Neutral outline for settled items; the theme's secondary badge is the brand green and reads as success. */
 const itemBadgeVariant = (status: AgentQueueItem['status']) =>
   status === 'pending'
@@ -315,6 +318,7 @@ const BatchCard = ({
 export const ApprovalsPanel = () => {
   const [queue, setQueue] = useState<QueueState>({ status: 'loading' });
   const [filter, setFilter] = useState<'all' | 'pending'>('pending');
+  const [shownCount, setShownCount] = useState(HISTORY_PAGE);
   const [moduleFilter, setModuleFilter] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -407,6 +411,9 @@ export const ApprovalsPanel = () => {
       (filter === 'all' || touched.has(batch.key) || batch.items.some((item) => item.status === 'pending')) &&
       (moduleFilter === '' || batch.moduleLabels.includes(moduleFilter)),
   );
+  // „Všechny dávky“ shows the newest batches first and older history on request.
+  const shownBatches = filter === 'all' ? visibleBatches.slice(0, shownCount) : visibleBatches;
+  const hiddenCount = visibleBatches.length - shownBatches.length;
 
   return (
     <div className="ai-review">
@@ -476,9 +483,21 @@ export const ApprovalsPanel = () => {
           <p className="text-fg-secondary text-sm">Zatím tu nejsou žádné dávky návrhů.</p>
         )
       ) : (
-        visibleBatches.map((batch) => (
+        shownBatches.map((batch) => (
           <BatchCard batch={batch} busy={busy} key={batch.key} onDecide={onDecide} onRevert={onRevert} />
         ))
+      )}
+      {hiddenCount > 0 && (
+        <div>
+          <Button
+            onClick={() => setShownCount((count) => count + HISTORY_PAGE)}
+            size="sm"
+            theme="outlined"
+            variant="secondary"
+          >
+            {`Zobrazit starší dávky (${hiddenCount})`}
+          </Button>
+        </div>
       )}
       <div>
         <LinkButton as={LocalizedLink} size="sm" theme="outlined" to="/sprava/aktivita-agentu" variant="primary">
