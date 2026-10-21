@@ -1,4 +1,6 @@
+import { mcp } from '@better-auth/mcp';
 import { getAuthTables } from 'better-auth/db';
+import { jwt } from 'better-auth/plugins/jwt';
 import { getColumns } from 'drizzle-orm';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import { expect, test } from 'effect-rstest';
@@ -9,6 +11,14 @@ import {
   AUTH_TABLE_INVENTORY,
   account,
   apikey,
+  jwks,
+  oauthAccessToken,
+  oauthClient,
+  oauthClientAssertion,
+  oauthClientResource,
+  oauthConsent,
+  oauthRefreshToken,
+  oauthResource,
   session,
   supportImpersonationRecovery,
   user,
@@ -23,6 +33,14 @@ test('owns the exact Better Auth model inside the auth schema', () => {
     'verification',
     'apikey',
     'support_impersonation_recovery',
+    'jwks',
+    'oauth_client',
+    'oauth_resource',
+    'oauth_client_resource',
+    'oauth_refresh_token',
+    'oauth_access_token',
+    'oauth_consent',
+    'oauth_client_assertion',
   ]);
   expect(expectedAuthTableCatalog).toEqual([
     'auth.user',
@@ -31,7 +49,39 @@ test('owns the exact Better Auth model inside the auth schema', () => {
     'auth.verification',
     'auth.apikey',
     'auth.support_impersonation_recovery',
+    'auth.jwks',
+    'auth.oauth_client',
+    'auth.oauth_resource',
+    'auth.oauth_client_resource',
+    'auth.oauth_refresh_token',
+    'auth.oauth_access_token',
+    'auth.oauth_consent',
+    'auth.oauth_client_assertion',
   ]);
+});
+
+test('declares every Better Auth OAuth provider and JWKS field', () => {
+  const tables = getAuthTables({
+    plugins: [
+      jwt(),
+      mcp({ consentPage: '/cs/pripojit/souhlas', loginPage: '/cs/login', resource: 'http://localhost:3090/mcp' }),
+    ],
+  });
+  const cases = [
+    ['jwks', jwks],
+    ['oauthClient', oauthClient],
+    ['oauthResource', oauthResource],
+    ['oauthClientResource', oauthClientResource],
+    ['oauthRefreshToken', oauthRefreshToken],
+    ['oauthAccessToken', oauthAccessToken],
+    ['oauthConsent', oauthConsent],
+    ['oauthClientAssertion', oauthClientAssertion],
+  ] as const;
+  for (const [model, table] of cases) {
+    expect(Object.keys(getColumns(table)).toSorted()).toEqual(
+      ['id', ...Object.keys(tables[model]?.fields ?? {})].toSorted(),
+    );
+  }
 });
 
 test('keys accounts on the Better Auth provider identity and keeps only a nullable legacy issuer', () => {
@@ -118,7 +168,19 @@ test('reports missing and unexpected authentication tables', () => {
   expect(
     compareAuthCatalog(['auth.user', 'auth.session', 'auth.account', 'auth.unexpected', 'auth.unexpected']),
   ).toEqual({
-    missing: ['auth.apikey', 'auth.support_impersonation_recovery', 'auth.verification'],
+    missing: [
+      'auth.apikey',
+      'auth.jwks',
+      'auth.oauth_access_token',
+      'auth.oauth_client',
+      'auth.oauth_client_assertion',
+      'auth.oauth_client_resource',
+      'auth.oauth_consent',
+      'auth.oauth_refresh_token',
+      'auth.oauth_resource',
+      'auth.support_impersonation_recovery',
+      'auth.verification',
+    ],
     unexpected: ['auth.unexpected'],
   });
 });
