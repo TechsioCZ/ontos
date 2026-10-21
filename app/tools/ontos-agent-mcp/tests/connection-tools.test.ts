@@ -5,7 +5,7 @@ import { describe, it } from '@rstest/core';
 import type { Catalog, CatalogAction, CatalogModule, CatalogRead } from '../src/capabilities/types.ts';
 import type { ConnectionDescription, ConnectionWritePolicy, RsConfig } from '../src/oauth/types.ts';
 import { buildConnectionTools } from '../src/mcp/tools.ts';
-import type { ToolSpec } from '../src/mcp/types.ts';
+import type { ToolResult, ToolSpec } from '../src/mcp/types.ts';
 import type { OAuthConnectionSession } from '../src/session.ts';
 
 const workRead: CatalogRead = {
@@ -77,11 +77,27 @@ const moduleOf = (
   supportsAiProposals: true,
   typedTools: true,
 });
+const meterCreate: CatalogAction = {
+  actionSlug: 'apply-command',
+  appId: 'facility-operations',
+  commandTag: 'MeterCreate',
+  id: 'facility.operations/command/MeterCreate',
+  inputSchema: { type: 'object' },
+  kind: 'action',
+  moduleId: 'facility.operations',
+  proposable: false,
+  toolName: 'facility_operations__meter_create',
+};
+const opsRead: CatalogRead = { ...workRead, appId: 'facility-operations', id: 'facility.operations/read/records', moduleId: 'facility.operations', toolName: 'facility_operations__read_records' };
+const invoiceRead: CatalogRead = { ...workRead, appId: 'finance-billing', id: 'finance.billing/read/records', moduleId: 'finance.billing', toolName: 'finance_billing__read_records' };
+const resetDemo: CatalogAction = { ...createTask, commandTag: 'ResetDemoData', id: 'work.tasks/command/ResetDemoData', toolName: 'work_tasks__reset_demo_data' };
 const CATALOG: Catalog = {
   compositionRevision: 'a'.repeat(64),
   modules: [
-    moduleOf('work.tasks', 'work-tasks', [workRead], [createTask, cancelTask, aiPropose]),
+    moduleOf('work.tasks', 'work-tasks', [workRead], [createTask, cancelTask, aiPropose, resetDemo]),
     moduleOf('demo.crm', 'crm', [crmRead], [updateClient]),
+    moduleOf('facility.operations', 'facility-operations', [opsRead], [meterCreate]),
+    moduleOf('finance.billing', 'finance-billing', [invoiceRead], []),
   ],
   warnings: [],
 };
@@ -120,7 +136,11 @@ const describe_ = (writePolicy: ConnectionWritePolicy, write = true): Connection
   grantId: 'grant-1',
   legalEntityId: '71000000-0000-4000-8000-000000000021',
   legalName: 'Siampark',
-  modules: [{ label: 'Úkoly', moduleId: 'work.tasks', read: true, write }],
+  modules: [
+    { label: 'Úkoly', moduleId: 'work.tasks', read: true, write },
+    { label: 'Provoz', moduleId: 'facility.operations', read: true, write },
+    { label: 'Finance', moduleId: 'finance.billing', read: true, write: false },
+  ],
   profileId: 'profile-1',
   status: 'active',
   tenantId: 'tenant-1',
@@ -174,8 +194,8 @@ const tool = (tools: readonly ToolSpec[], name: string): ToolSpec => {
   return found;
 };
 
-const textOf = (result: { readonly content: readonly { readonly text: string }[] }): string =>
-  result.content.map((part) => part.text).join('\n');
+const textOf = (result: ToolResult): string =>
+  result.content.map((part) => (part.type === 'text' ? part.text : '')).join('\n');
 
 describe('buildConnectionTools', () => {
   it('offers write tools only where the policy allows them', async () => {
@@ -210,7 +230,12 @@ describe('buildConnectionTools', () => {
     assert.notEqual(result.isError, true);
     assert.equal(result.structuredContent?.['status'], 'proposed');
     assert.equal(result.structuredContent?.['proposalId'], 'proposal-1');
-    assert.equal(result.structuredContent?.['reviewUrl'], 'http://localhost:3020/cs/sprava/ke-schvaleni');
+    assert.equal(result.structuredContent?.['reviewUrl'], 'http://localhost:3020/cs/sprava/ke-schvaleni?davka=batch-1');
+    assert.ok(
+      result.content.some(
+        (part) => part.type === 'resource_link' && part.uri === 'http://localhost:3020/cs/sprava/ke-schvaleni?davka=batch-1',
+      ),
+    );
     assert.equal(requests.length, 1);
     const [request] = requests;
     assert.ok(request !== undefined);
@@ -242,5 +267,82 @@ describe('buildConnectionTools', () => {
     const result = await tool(tools, 'ontos_execute').handler({ id: 'work.tasks/command/AiProposeChanges' });
     assert.equal(result.isError, true);
     assert.equal(textOf(result), 'Tuto akci nelze volat přes MCP.');
+  });
+  it('rejects an Action input that does not match its schema before anything reaches a reviewer', async () => {
+    const { fetchFn, requests } = fakeFetch();
+    const tools = await build('approval', fetchFn);
+    const result = await tool(tools, 'ontos_execute').handler({
+      id: 'work.tasks/command/CreateTask',
+      input: { titl: 'x' },
+    });
+    assert.equal(result.isError, true);
+    assert.ok(textOf(result).includes('chybí povinné pole „input.title“'), textOf(result));
+    assert.ok(textOf(result).includes('ontos_capabilities'));
+    assert.equal(requests.length, 0);
+    const typed = await tool(tools, 'work_tasks__create_task').handler({});
+    assert.equal(typed.isError, true);
+    assert.equal(requests.length, 0);
+  });
+
+  it('answers wrong tool arguments in Czech instead of the SDK English error', async () => {
+    const { fetchFn } = fakeFetch();
+    const tools = await build('direct', fetchFn);
+    const result = await tool(tools, 'ontos_read').handler({ id: 'work.tasks/read/records', limit: 'pět' });
+    assert.equal(result.isError, true);
+    assert.ok(textOf(result).startsWith('Neplatné argumenty nástroje ontos_read: „limit“ musí být celé číslo'), textOf(result));
+  });
+
+  it('approval mode does not offer writes to modules the review queue refuses', async () => {
+    const { fetchFn, requests } = fakeFetch();
+    const tools = await build('approval', fetchFn);
+    const result = await tool(tools, 'ontos_execute').handler({
+      id: 'facility.operations/command/MeterCreate',
+      input: {},
+    });
+    assert.equal(result.isError, true);
+    assert.ok(textOf(result).includes('nepřijímá návrhy ke schválení'));
+    assert.equal(requests.length, 0);
+    assert.ok(!tools.some((spec) => spec.name === 'facility_operations__meter_create'));
+    const whoami = await tool(tools, 'ontos_whoami').handler({});
+    const modules = whoami.structuredContent?.['modules'] as readonly { moduleId: string; write: boolean }[];
+    assert.equal(modules.find((module) => module.moduleId === 'facility.operations')?.write, false);
+    assert.equal(modules.find((module) => module.moduleId === 'work.tasks')?.write, true);
+    const direct = await build('direct', fetchFn);
+    assert.ok(direct.some((spec) => spec.name === 'facility_operations__meter_create'));
+  });
+
+  it('never offers demo maintenance and marks deletions destructive', async () => {
+    const { fetchFn } = fakeFetch();
+    const tools = await build('direct', fetchFn);
+    assert.ok(!tools.some((spec) => spec.name === 'work_tasks__reset_demo_data'));
+    const reset = await tool(tools, 'ontos_execute').handler({ id: 'work.tasks/command/ResetDemoData', input: {} });
+    assert.equal(reset.isError, true);
+    assert.equal(tool(tools, 'work_tasks__cancel_task').annotations.destructiveHint, true);
+    assert.equal(tool(tools, 'work_tasks__create_task').annotations.destructiveHint, false);
+  });
+
+  it('ontos_capabilities search ignores case and diacritics and matches Czech word forms', async () => {
+    const { fetchFn } = fakeFetch();
+    const tools = await build('direct', fetchFn);
+    const search = async (query: string): Promise<readonly string[]> => {
+      const result = await tool(tools, 'ontos_capabilities').handler({ query });
+      return (result.structuredContent?.['modules'] as readonly { moduleId: string }[]).map((module) => module.moduleId);
+    };
+    assert.deepEqual(await search('faktura'), ['finance.billing']);
+    assert.deepEqual(await search('Ukol'), ['work.tasks']);
+    assert.deepEqual(await search('údržba'), ['facility.operations']);
+    assert.deepEqual(await search('zavada'), ['facility.operations']);
+    assert.deepEqual(await search('xyzzy'), []);
+  });
+
+  it('typed write tools accept an idempotencyKey and reason without sending them as Action fields', async () => {
+    const { fetchFn, requests } = fakeFetch();
+    const tools = await build('approval', fetchFn);
+    const typed = tool(tools, 'work_tasks__create_task');
+    const properties = typed.inputSchema['properties'] as Record<string, unknown>;
+    assert.ok('idempotencyKey' in properties && 'reason' in properties);
+    const result = await typed.handler({ idempotencyKey: 'k-1', reason: 'Kvůli testu', title: 'Úkol' });
+    assert.notEqual(result.isError, true, textOf(result));
+    assert.deepEqual(requests[0]?.body.proposals[0]?.command, { _tag: 'CreateTask', title: 'Úkol' });
   });
 });

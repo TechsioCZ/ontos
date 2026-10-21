@@ -14,7 +14,7 @@ process.env.ONTOS_AGENT_API_KEY = 'test-agent-key';
 process.env.ONTOS_SHELL_URL = SHELL;
 process.env.ONTOS_COMPOSITION_REVISION = REVISION;
 
-const { findEntry, runExecute, runRead, shapeReadResult } = await import('../src/operations.ts');
+const { findEntry, runExecute, runRead, selectPath, shapeReadResult } = await import('../src/operations.ts');
 
 /** A JSON object body, decoded from the request or response text. */
 const BodySchema = z.record(z.string(), z.unknown());
@@ -232,8 +232,9 @@ describe('generic read operations', () => {
       assert.equal(result.id, 'work.tasks/read/records');
       assert.equal(result.legalEntityId, SESSION.legalEntityId);
       const data = result.data as { readonly items: readonly number[] };
-      assert.equal(data.items.length, 50);
-      assert.deepEqual(result.truncated, [{ offset: 0, path: 'items', returned: 50, total: 120 }]);
+      assert.equal(data.items.length, 25);
+      assert.deepEqual(result.truncated, [{ offset: 0, path: 'items', returned: 25, total: 120 }]);
+      assert.deepEqual(result.omitted, []);
       assert.equal(findEntry(BASE_CATALOG, 'work_tasks__read_records')?.id, 'work.tasks/read/records');
     }),
   );
@@ -372,7 +373,7 @@ describe('generic execute operations', () => {
 });
 
 describe('shapeReadResult', () => {
-  it.effect('slices arrays up to depth three and keeps the input unchanged', () =>
+  it.effect('slices lists at any depth and keeps the input unchanged', () =>
     Effect.sync(() => {
       const input = { state: { clients: { items: [1, 2, 3] } } };
       const result = shapeReadResult(input, { limit: 2, offset: 0 });
@@ -380,6 +381,50 @@ describe('shapeReadResult', () => {
       assert.deepEqual(result.truncated, [{ offset: 0, path: 'state.clients.items', returned: 2, total: 3 }]);
       assert.deepEqual(result.data, { state: { clients: { items: [1, 2] } } });
       assert.deepEqual(input, { state: { clients: { items: [1, 2, 3] } } });
+    }),
+  );
+
+  it.effect('cuts deep lists (depth 4+) and lists inside list items', () =>
+    Effect.sync(() => {
+      const meters = Array.from({ length: 30 }, (_, index) => ({ id: index, readings: Array.from({ length: 9 }, (__, r) => r) }));
+      const input = { agendas: { meters: { state: { meters } } } };
+      const result = shapeReadResult(input, { limit: 2, offset: 1 });
+      const data = result.data as { agendas: { meters: { state: { meters: { id: number; readings: number[] }[] } } } };
+
+      assert.deepEqual(data.agendas.meters.state.meters.map((meter) => meter.id), [1, 2]);
+      assert.equal(data.agendas.meters.state.meters[0]?.readings.length, 2);
+      assert.deepEqual(result.truncated.map((item) => item.path), [
+        'agendas.meters.state.meters',
+        'agendas.meters.state.meters[].readings',
+      ]);
+    }),
+  );
+
+  it.effect('keeps the JSON under the budget by omitting the largest lists, with paths to fetch them', () =>
+    Effect.sync(() => {
+      const big = (count: number) => Array.from({ length: count }, (_, index) => ({ index, text: 'x'.repeat(300) }));
+      const input = { a: { state: { assets: big(20) } }, b: { state: { small: big(1) } }, c: { list: big(10) } };
+      const result = shapeReadResult(input, { budget: 4_000, limit: 20, offset: 0 });
+
+      assert.ok(JSON.stringify(result.data).length <= 4_000);
+      assert.deepEqual(result.omitted[0], { count: 20, kind: 'list', path: 'a.state.assets' });
+      const data = result.data as { a: { state: { assets: unknown } } };
+      assert.deepEqual(data.a.state.assets, { _omitted: 'list', count: 20, path: 'a.state.assets' });
+    }),
+  );
+
+  it.effect('selectPath drills into a part of the result and names what exists when the path is wrong', () =>
+    Effect.sync(() => {
+      const input = { agendas: { meters: { state: { meters: [{ id: 'm1' }, { id: 'm2' }] } } } };
+      assert.deepEqual(selectPath(input, 'agendas.meters.state.meters[1]'), { id: 'm2' });
+      assert.deepEqual(selectPath(input, 'agendas.meters.state.meters.0'), { id: 'm1' });
+      assert.throws(() => selectPath(input, 'agendas.nope'), /Dostupné: meters/u);
+      const shaped = shapeReadResult(selectPath(input, 'agendas.meters.state.meters'), {
+        basePath: 'agendas.meters.state.meters',
+        limit: 1,
+        offset: 1,
+      });
+      assert.deepEqual(shaped.truncated, [{ offset: 1, path: 'agendas.meters.state.meters', returned: 1, total: 2 }]);
     }),
   );
 });

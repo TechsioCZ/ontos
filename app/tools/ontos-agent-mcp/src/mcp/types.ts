@@ -20,9 +20,21 @@ export interface ToolTextContent {
   readonly text: string;
 }
 
+/** Link into the OntOS UI (review queue, module page); clients show it as a clickable resource. */
+export interface ToolResourceLinkContent {
+  readonly type: 'resource_link';
+  readonly uri: string;
+  readonly name: string;
+  readonly title?: string;
+  readonly description?: string;
+  readonly mimeType?: string;
+}
+
+export type ToolContent = ToolTextContent | ToolResourceLinkContent;
+
 /** A tool call result. Permission problems are `isError: true` results with Czech text, never HTTP errors. */
 export interface ToolResult {
-  readonly content: readonly ToolTextContent[];
+  readonly content: readonly ToolContent[];
   readonly structuredContent?: Readonly<Record<string, unknown>>;
   readonly isError?: boolean;
   /** e.g. `{ 'mcp/www_authenticate': ['Bearer …'] }` when the grant stopped working mid-call. */
@@ -38,6 +50,8 @@ export interface ToolSpec {
   readonly description: string;
   /** JSON Schema of the arguments; always `type: 'object'`. */
   readonly inputSchema: JsonSchema;
+  /** JSON Schema of `structuredContent` on success (MCP outputSchema). */
+  readonly outputSchema?: JsonSchema;
   readonly annotations: ToolAnnotationsSpec;
   /** Never throws: failures come back as `isError: true`. */
   readonly handler: (args: Readonly<Record<string, unknown>>) => Promise<ToolResult>;

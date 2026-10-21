@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { OntosRequestError } from '../ontos-client.ts';
 import { CONNECTOR_KEY_HEADER, CONNECTOR_PATHS } from '../oauth/types.ts';
 import type { PrincipalSession } from '../session.ts';
 
@@ -77,14 +78,24 @@ const post = async (target: ProposalsTarget, path: string, body: unknown, failur
   }
   const text = await response.text();
   if (!response.ok) {
-    let detail = '';
+    let problem: { code?: unknown; detail?: unknown; title?: unknown } = {};
     try {
-      const problem = JSON.parse(text) as { detail?: unknown; title?: unknown };
-      detail = typeof problem.detail === 'string' ? problem.detail : typeof problem.title === 'string' ? problem.title : '';
+      problem = JSON.parse(text) as typeof problem;
     } catch {
-      detail = '';
+      problem = {};
     }
-    throw new Error(`${failureCs} (HTTP ${response.status}${detail === '' ? '' : `: ${detail}`}).`);
+    const field = (value: unknown): string | undefined =>
+      typeof value === 'string' && value.trim() !== '' ? value : undefined;
+    const code = field(problem.code);
+    const detail = field(problem.detail);
+    const title = field(problem.title);
+    throw new OntosRequestError({
+      ...(code === undefined ? {} : { code }),
+      ...(detail === undefined ? {} : { detail }),
+      message: `${failureCs} (HTTP ${response.status})`,
+      status: response.status,
+      ...(title === undefined ? {} : { title }),
+    });
   }
   return JSON.parse(text) as unknown;
 };

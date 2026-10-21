@@ -19,12 +19,64 @@ export const grantedModule = (description: ConnectionDescription, moduleId: stri
   description.modules.find((module) => module.moduleId === moduleId);
 export const canRead = (description: ConnectionDescription, moduleId: string): boolean =>
   grantedModule(description, moduleId)?.read === true;
-export const canWrite = (description: ConnectionDescription, moduleId: string): boolean =>
+/**
+ * Modules whose changes the platform approval queue accepts (mirror of agentApprovalModules in
+ * packages/shared-contracts/src/agent-proposals.ts; the shell refuses proposals for any other app with 403).
+ */
+export const APPROVAL_QUEUE_MODULES: ReadonlySet<string> = new Set([
+  'demo.crm',
+  'demo.sales-pipeline',
+  'demo.merchandise',
+  'work.tasks',
+  'property.leasing',
+  'demo.tagging',
+]);
+export const acceptsProposals = (moduleId: string): boolean => APPROVAL_QUEUE_MODULES.has(moduleId);
+/** The grant allows writing to the module (before the approval-queue check). */
+export const grantAllowsWrite = (description: ConnectionDescription, moduleId: string): boolean =>
   description.writePolicy !== 'read_only' && grantedModule(description, moduleId)?.write === true;
+/** Changes this connection can actually make: directly, or as proposals the approval queue accepts. */
+export const canWrite = (description: ConnectionDescription, moduleId: string): boolean =>
+  grantAllowsWrite(description, moduleId) && (description.writePolicy !== 'approval' || acceptsProposals(moduleId));
+/** ontos_propose: a batch for human approval, also from direct connections. */
+export const canPropose = (description: ConnectionDescription, moduleId: string): boolean =>
+  grantAllowsWrite(description, moduleId) && acceptsProposals(moduleId);
 /** AiProposeChanges / AiDecideChanges / AiRevertBatch are approval plumbing, never offered as tools. */
 export const isAiMetaCommand = (entry: CatalogEntry): boolean =>
   entry.kind === 'action' && entry.commandTag !== undefined && /^Ai[A-Z]/u.test(entry.commandTag);
-const DESTRUCTIVE = /(delete|remove|cancel|storno|archive|revoke|deactivate|reject)/iu;
+
+/** Demo maintenance (reset, remove demo orders) is never offered to connected apps. */
+const DEMO_MAINTENANCE = /(reset[-_]?demo|demo[-_]?data|demo[-_]?order|demo[-_]?product|seed)/iu;
+/**
+ * Commands a module reserves for people working in the app (merchandise command-guard nonHumanForbiddenCommands):
+ * a connection may only propose them for approval, never run them directly.
+ */
+export const HUMAN_ONLY_COMMANDS: Readonly<Record<string, ReadonlySet<string>>> = {
+  'demo.merchandise': new Set(['BulkUpdateProducts', 'ChangePrice', 'EditOrder', 'UpdateCategory']),
+};
+const humanOnly = (entry: CatalogEntry): boolean =>
+  entry.kind === 'action' && entry.commandTag !== undefined && HUMAN_ONLY_COMMANDS[entry.moduleId]?.has(entry.commandTag) === true;
+
+export type ActionAvailability = 'offered' | 'ai_meta' | 'demo_maintenance' | 'human_only';
+/** Whether an action is offered to this connection at all (independent of the module grant). */
+export const actionAvailability = (entry: CatalogEntry, policy: ConnectionDescription['writePolicy']): ActionAvailability => {
+  if (isAiMetaCommand(entry)) {
+    return 'ai_meta';
+  }
+  if (entry.kind === 'action' && DEMO_MAINTENANCE.test(entry.commandTag ?? entry.actionSlug)) {
+    return 'demo_maintenance';
+  }
+  if (policy === 'direct' && humanOnly(entry)) {
+    return 'human_only';
+  }
+  return 'offered';
+};
+export const isOffered = (entry: CatalogEntry, policy: ConnectionDescription['writePolicy']): boolean =>
+  actionAvailability(entry, policy) === 'offered';
+
+/** Deletes, cancels, voids, erases or otherwise removes data or access; clients should ask before calling. */
+const DESTRUCTIVE =
+  /(delete|remove|cancel|storno|void|archive|revoke|deactivate|reject|terminate|dispose|retract|erase|erasure|anonymi|privacy|purge|wipe|reset|suspend)/iu;
 
 export const annotationsFor = (entry: CatalogEntry): ToolAnnotationsSpec =>
   entry.kind === 'read'
@@ -55,7 +107,7 @@ export const planTools = (catalog: Catalog, description: ConnectionDescription):
     }
     module.reads.forEach(add);
     if (canWrite(description, module.moduleId)) {
-      const actions = module.actions.filter((action) => !isAiMetaCommand(action));
+      const actions = module.actions.filter((action) => isOffered(action, description.writePolicy));
       // Approval: typed tools only for commands the module accepts as proposals; ontos_execute can propose any.
       (description.writePolicy === 'approval' ? actions.filter((action) => action.proposable) : actions).forEach(add);
     }
