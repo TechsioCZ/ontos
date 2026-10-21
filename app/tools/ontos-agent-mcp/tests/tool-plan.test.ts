@@ -7,38 +7,38 @@ import type { ConnectionDescription, ConnectionWritePolicy } from '../src/oauth/
 import { annotationsFor, planTools } from '../src/mcp/tool-plan.ts';
 
 const workRead: CatalogRead = {
-  appId: 'siampark-work',
-  id: 'siampark.work/read/records',
+  appId: 'work-tasks',
+  id: 'work.tasks/read/records',
   inputSchema: { type: 'object' },
   kind: 'read',
-  moduleId: 'siampark.work',
+  moduleId: 'work.tasks',
   slug: 'records',
-  toolName: 'siampark_work__read_records',
+  toolName: 'work_tasks__read_records',
 };
 const createTask: CatalogAction = {
   actionSlug: 'apply-command',
-  appId: 'siampark-work',
+  appId: 'work-tasks',
   commandTag: 'CreateTask',
-  id: 'siampark.work/command/CreateTask',
+  id: 'work.tasks/command/CreateTask',
   inputSchema: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'] },
   kind: 'action',
-  moduleId: 'siampark.work',
+  moduleId: 'work.tasks',
   proposable: true,
-  toolName: 'siampark_work__create_task',
+  toolName: 'work_tasks__create_task',
 };
 const cancelTask: CatalogAction = {
   ...createTask,
   commandTag: 'CancelTask',
-  id: 'siampark.work/command/CancelTask',
+  id: 'work.tasks/command/CancelTask',
   proposable: false,
-  toolName: 'siampark_work__cancel_task',
+  toolName: 'work_tasks__cancel_task',
 };
 const aiPropose: CatalogAction = {
   ...createTask,
   commandTag: 'AiProposeChanges',
-  id: 'siampark.work/command/AiProposeChanges',
+  id: 'work.tasks/command/AiProposeChanges',
   proposable: false,
-  toolName: 'siampark_work__ai_propose_changes',
+  toolName: 'work_tasks__ai_propose_changes',
 };
 const crmRead: CatalogRead = {
   appId: 'crm',
@@ -78,7 +78,7 @@ const moduleOf = (
 const CATALOG: Catalog = {
   compositionRevision: 'a'.repeat(64),
   modules: [
-    moduleOf('siampark.work', 'siampark-work', [workRead], [createTask, cancelTask, aiPropose]),
+    moduleOf('work.tasks', 'work-tasks', [workRead], [createTask, cancelTask, aiPropose]),
     moduleOf('demo.crm', 'crm', [crmRead], [updateClient]),
   ],
   warnings: [],
@@ -91,7 +91,7 @@ const describe_ = (writePolicy: ConnectionWritePolicy, write = true): Connection
   grantId: 'grant-1',
   legalEntityId: '71000000-0000-4000-8000-000000000021',
   legalName: 'Siampark',
-  modules: [{ label: 'Úkoly', moduleId: 'siampark.work', read: true, write }],
+  modules: [{ label: 'Úkoly', moduleId: 'work.tasks', read: true, write }],
   profileId: 'profile-1',
   status: 'active',
   tenantId: 'tenant-1',
@@ -105,7 +105,7 @@ describe('planTools', () => {
     assert.deepEqual([...plan.generic], GENERIC_READ);
     assert.deepEqual(
       plan.typed.map((entry) => entry.toolName),
-      ['siampark_work__read_records'],
+      ['work_tasks__read_records'],
     );
   });
 
@@ -114,7 +114,7 @@ describe('planTools', () => {
     assert.deepEqual([...plan.generic], [...GENERIC_READ, 'ontos_execute', 'ontos_propose']);
     assert.deepEqual(
       plan.typed.map((entry) => entry.toolName),
-      ['siampark_work__read_records', 'siampark_work__create_task'],
+      ['work_tasks__read_records', 'work_tasks__create_task'],
     );
   });
 
@@ -122,7 +122,7 @@ describe('planTools', () => {
     const plan = planTools(CATALOG, describe_('direct'));
     assert.deepEqual(
       plan.typed.map((entry) => entry.toolName),
-      ['siampark_work__read_records', 'siampark_work__create_task', 'siampark_work__cancel_task'],
+      ['work_tasks__read_records', 'work_tasks__create_task', 'work_tasks__cancel_task'],
     );
     assert.ok(!plan.typed.some((entry) => entry.toolName.includes('ai_propose')));
   });
@@ -131,7 +131,7 @@ describe('planTools', () => {
     const plan = planTools(CATALOG, describe_('direct', false));
     assert.deepEqual(
       plan.typed.map((entry) => entry.toolName),
-      ['siampark_work__read_records'],
+      ['work_tasks__read_records'],
     );
   });
 
@@ -145,11 +145,11 @@ describe('planTools', () => {
   it('drops all typed tools when the candidates exceed the cap', () => {
     const reads: CatalogRead[] = Array.from({ length: 41 }, (_, index) => ({
       ...workRead,
-      id: `siampark.work/read/r${index}`,
+      id: `work.tasks/read/r${index}`,
       slug: `r${index}`,
-      toolName: `siampark_work__read_r${index}`,
+      toolName: `work_tasks__read_r${index}`,
     }));
-    const big: Catalog = { ...CATALOG, modules: [moduleOf('siampark.work', 'siampark-work', reads, [])] };
+    const big: Catalog = { ...CATALOG, modules: [moduleOf('work.tasks', 'work-tasks', reads, [])] };
     const plan = planTools(big, describe_('read_only'));
     assert.deepEqual([...plan.typed], []);
     assert.equal(plan.typedOverCap, true);

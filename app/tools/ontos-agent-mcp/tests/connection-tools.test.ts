@@ -9,38 +9,38 @@ import type { ToolSpec } from '../src/mcp/types.ts';
 import type { OAuthConnectionSession } from '../src/session.ts';
 
 const workRead: CatalogRead = {
-  appId: 'siampark-work',
-  id: 'siampark.work/read/records',
+  appId: 'work-tasks',
+  id: 'work.tasks/read/records',
   inputSchema: { type: 'object' },
   kind: 'read',
-  moduleId: 'siampark.work',
+  moduleId: 'work.tasks',
   slug: 'records',
-  toolName: 'siampark_work__read_records',
+  toolName: 'work_tasks__read_records',
 };
 const createTask: CatalogAction = {
   actionSlug: 'apply-command',
-  appId: 'siampark-work',
+  appId: 'work-tasks',
   commandTag: 'CreateTask',
-  id: 'siampark.work/command/CreateTask',
+  id: 'work.tasks/command/CreateTask',
   inputSchema: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'] },
   kind: 'action',
-  moduleId: 'siampark.work',
+  moduleId: 'work.tasks',
   proposable: true,
-  toolName: 'siampark_work__create_task',
+  toolName: 'work_tasks__create_task',
 };
 const cancelTask: CatalogAction = {
   ...createTask,
   commandTag: 'CancelTask',
-  id: 'siampark.work/command/CancelTask',
+  id: 'work.tasks/command/CancelTask',
   proposable: false,
-  toolName: 'siampark_work__cancel_task',
+  toolName: 'work_tasks__cancel_task',
 };
 const aiPropose: CatalogAction = {
   ...createTask,
   commandTag: 'AiProposeChanges',
-  id: 'siampark.work/command/AiProposeChanges',
+  id: 'work.tasks/command/AiProposeChanges',
   proposable: false,
-  toolName: 'siampark_work__ai_propose_changes',
+  toolName: 'work_tasks__ai_propose_changes',
 };
 const crmRead: CatalogRead = {
   appId: 'crm',
@@ -80,7 +80,7 @@ const moduleOf = (
 const CATALOG: Catalog = {
   compositionRevision: 'a'.repeat(64),
   modules: [
-    moduleOf('siampark.work', 'siampark-work', [workRead], [createTask, cancelTask, aiPropose]),
+    moduleOf('work.tasks', 'work-tasks', [workRead], [createTask, cancelTask, aiPropose]),
     moduleOf('demo.crm', 'crm', [crmRead], [updateClient]),
   ],
   warnings: [],
@@ -120,7 +120,7 @@ const describe_ = (writePolicy: ConnectionWritePolicy, write = true): Connection
   grantId: 'grant-1',
   legalEntityId: '71000000-0000-4000-8000-000000000021',
   legalName: 'Siampark',
-  modules: [{ label: 'Úkoly', moduleId: 'siampark.work', read: true, write }],
+  modules: [{ label: 'Úkoly', moduleId: 'work.tasks', read: true, write }],
   profileId: 'profile-1',
   status: 'active',
   tenantId: 'tenant-1',
@@ -203,7 +203,7 @@ describe('buildConnectionTools', () => {
     const { fetchFn, requests } = fakeFetch();
     const tools = await build('approval', fetchFn);
     const result = await tool(tools, 'ontos_execute').handler({
-      id: 'siampark.work/command/CreateTask',
+      id: 'work.tasks/command/CreateTask',
       input: { title: 'Test' },
       reason: 'Důvod testu',
     });
@@ -239,7 +239,7 @@ describe('buildConnectionTools', () => {
   it('AI meta commands are never callable through MCP', async () => {
     const { fetchFn } = fakeFetch();
     const tools = await build('direct', fetchFn);
-    const result = await tool(tools, 'ontos_execute').handler({ id: 'siampark.work/command/AiProposeChanges' });
+    const result = await tool(tools, 'ontos_execute').handler({ id: 'work.tasks/command/AiProposeChanges' });
     assert.equal(result.isError, true);
     assert.equal(textOf(result), 'Tuto akci nelze volat přes MCP.');
   });
