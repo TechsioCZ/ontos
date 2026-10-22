@@ -143,6 +143,11 @@ zerops:
         httpGet:
           port: 2000
           path: '/ready'
+      # Workers VPC needs the QUIC transport. quic-go's UDP GSO batching and ECN marking lose ~20% of
+      # tunnel packets on the Zerops network, which capped Hyperdrive/SpiceDB replies at ~100 kB/s.
+      envVariables:
+        QUIC_GO_DISABLE_GSO: 'true'
+        QUIC_GO_DISABLE_ECN: 'true'
       start: sh -c 'test -n "$TUNNEL_TOKEN" || { echo "TUNNEL_TOKEN is required" >&2; exit 1; }; exec app/.zerops/runtime/cloudflared/cloudflared tunnel --no-autoupdate --metrics 0.0.0.0:2000 run'
 
   # <generated-vertical-provider-deployments>

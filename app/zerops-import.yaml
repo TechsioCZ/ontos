@@ -77,11 +77,11 @@ services:
       minDisk: 1
       maxDisk: 2
   # The Cloudflare Tunnel connector for Workers VPC; `stage:cloudflare provision` imports it with its TUNNEL_TOKEN secret.
-  # One connector is enough for stage: a restart pauses Workers VPC traffic for seconds, not longer.
+  # Two connector replicas keep Workers VPC traffic flowing while one container restarts or reconnects.
   - hostname: cloudflared
     type: alpine@3.23
-    minContainers: 1
-    maxContainers: 1
+    minContainers: 2
+    maxContainers: 2
     verticalAutoscaling:
       cpuMode: SHARED
       minCpu: 1
