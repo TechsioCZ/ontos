@@ -3,7 +3,9 @@ import type { MarketSubjectRestrictionsCurrentResponse } from '@app/customer-mar
 import { executeMarketSubjectRestrictionsCurrentWithAuthorization } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current/client';
 import { GatewayContextResponseSchema } from '@app/shared-contracts';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
+import type { ReadPrepareContext } from '@app/core-runtime';
 import { Config, Effect, Schema } from 'effect';
+import type { Option } from 'effect';
 
 import type { PurchasingSubjectRefSchema } from '../../shared/market-contracts.ts';
 
@@ -139,3 +141,26 @@ export const makeServerMarketSubjectRestrictionsReader = ({
     return yield* toSnapshot(response);
   }),
 });
+
+/** Production reader for a Read's `prepare` step: the verified composition and Legal Entity of that Read. */
+export const serverMarketSubjectRestrictionsReaderFor = (
+  context: ReadPrepareContext,
+): MarketSubjectRestrictionsReader =>
+  makeServerMarketSubjectRestrictionsReader({
+    compositionRevision: context.compositionRevision,
+    legalEntityId: context.scope.legalEntityId,
+  });
+
+/**
+ * The purchasing subject's current restrictions from Customer Context, read in `prepare` so the remote round trip
+ * never holds the Read's database connection. None for an absent or guest subject, and none when the owner cannot
+ * answer (the caller fails closed for a named subject).
+ */
+export const currentSubjectRestrictions = (
+  reader: MarketSubjectRestrictionsReader,
+  subject: PurchasingSubject | undefined,
+  requestCorrelation: string,
+): Effect.Effect<Option.Option<MarketSubjectRestrictionSnapshot>> =>
+  subject === undefined || subject.kind === 'GUEST'
+    ? Effect.succeedNone
+    : reader.current(subject, requestCorrelation).pipe(Effect.option);

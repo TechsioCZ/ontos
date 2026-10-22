@@ -15,7 +15,13 @@ import type {
   ResourceAccessTarget,
 } from '../permissions/context-access.ts';
 import type { LegalEntityPermissionKey, TenantPermissionKey } from '../permissions/context-permissions.ts';
-import type { ReadFinishContext, ReadHandlerResult, ReadLoadContext, ReadPrepareContext } from './context.ts';
+import type {
+  ReadFinishContext,
+  ReadHandlerResult,
+  ReadLoadContext,
+  ReadOwnerTransaction,
+  ReadPrepareContext,
+} from './context.ts';
 
 const registrationMarker: unique symbol = Symbol('@app/core-runtime/reads/registration');
 const resourcePermissionDeclarationMarker: unique symbol = Symbol('@app/core-runtime/reads/resource-permission');
@@ -333,7 +339,10 @@ export type ReadLoad<Input, Services, Prepared, Loaded, Error = never, Requireme
   context: ReadLoadContext<Services, Prepared>,
 ) => Effect.Effect<Loaded, Error, Requirements>;
 
-/** Owner work after commit: decoding, row filtering through SpiceDB, and shaping the result. */
+/**
+ * Owner work after commit: decoding, row filtering through SpiceDB, remote owner calls, and shaping the result.
+ * An evaluation that must read owner state between remote calls opens a short `context.transaction` per read.
+ */
 export type ReadFinish<Input, Prepared, Loaded, Result, Error = never, Requirements = never> = (
   input: Input,
   context: ReadFinishContext<Prepared, Loaded>,
@@ -374,13 +383,18 @@ export interface ReadFinishPipeline<
   readonly prepare?: ReadPrepare<Input, Prepared, PrepareError, PrepareRequirements>;
 }
 
+/** What Core hands the owner pipeline: the prepare context plus the after-commit owner transaction. */
+export interface ReadOwnerStepsContext extends ReadPrepareContext {
+  readonly transaction: ReadOwnerTransaction;
+}
+
 /**
  * The owner pipeline as Core runs it, with the owner's intermediate types closed over: `prepare` runs before
  * the transaction and yields the transaction step; that yields the after-commit step.
  */
 export type ReadOwnerStages<Input, Result, Services, Error, Requirements> = (
   input: Input,
-  context: ReadPrepareContext,
+  context: ReadOwnerStepsContext,
 ) => Effect.Effect<
   (
     services: Services,
@@ -624,9 +638,16 @@ const afterCommitStep =
     readonly finish: ReadFinish<Input, Prepared, Loaded, Result, Error, Requirements>;
     readonly input: Input;
     readonly prepared: Prepared;
+    readonly transaction: ReadOwnerTransaction;
   }) =>
   (loaded: Loaded) =>
-    Effect.suspend(() => step.finish(step.input, { ...step.context, loaded, prepared: step.prepared }));
+    Effect.suspend(() =>
+      step.finish(step.input, { ...step.context, loaded, prepared: step.prepared, transaction: step.transaction }),
+    );
+
+/** Owner `prepare` and `load` see only the prepare context; the owner transaction belongs to `finish`. */
+const prepareContextOf = ({ transaction: _transaction, ...context }: ReadOwnerStepsContext): ReadPrepareContext =>
+  context;
 
 const loadPipelineStages =
   <Input, Result, Services, Prepared, Error, Requirements, PrepareError, PrepareRequirements>(
@@ -641,12 +662,14 @@ const loadPipelineStages =
       PrepareRequirements
     >,
   ): ReadOwnerStages<Input, Result, Services, Error | PrepareError, Requirements | PrepareRequirements> =>
-  (input, context) =>
-    prepareStage(pipeline.prepare, input, context).pipe(
+  (input, stepsContext) => {
+    const context = prepareContextOf(stepsContext);
+    return prepareStage(pipeline.prepare, input, context).pipe(
       Effect.map((prepared) =>
         transactionStep({ context, input, load: pipeline.load, next: Effect.succeed, prepared }),
       ),
     );
+  };
 
 const finishPipelineStages =
   <
@@ -682,18 +705,26 @@ const finishPipelineStages =
     StepChannels<Error, PrepareError, FinishError>,
     StepChannels<Requirements, PrepareRequirements, FinishRequirements>
   > =>
-  (input, context) =>
-    prepareStage(pipeline.prepare, input, context).pipe(
+  (input, stepsContext) => {
+    const context = prepareContextOf(stepsContext);
+    return prepareStage(pipeline.prepare, input, context).pipe(
       Effect.map((prepared) =>
         transactionStep({
           context,
           input,
           load: pipeline.load,
-          next: afterCommitStep({ context, finish: pipeline.finish, input, prepared }),
+          next: afterCommitStep({
+            context,
+            finish: pipeline.finish,
+            input,
+            prepared,
+            transaction: stepsContext.transaction,
+          }),
           prepared,
         }),
       ),
     );
+  };
 
 type AnyReadPipeline<
   Input,
@@ -983,6 +1014,9 @@ export const getReadStages = <
 ): ReadOwnerStages<InputSchema['Type'], ResultSchema['Type'], Services, Error, Requirements> =>
   ReadPrivateStorage.getValue(registration).stages;
 
+const noOwnerTransaction: ReadOwnerTransaction = () =>
+  Effect.die('These owner steps run without Core; pass `transaction` to give finish its owner transaction');
+
 /** Runs a Read's owner steps in order (prepare, load, finish) without Core's runtime: unit tests of owner code. */
 export const runReadOwnerSteps = <
   InputSchema extends Schema.ConstraintDecoder<unknown>,
@@ -995,9 +1029,14 @@ export const runReadOwnerSteps = <
 >(
   registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
   input: InputSchema['Type'],
-  context: ReadPrepareContext & { readonly services: Services },
+  context: ReadPrepareContext & { readonly services: Services; readonly transaction?: ReadOwnerTransaction },
 ) =>
-  getReadStages(registration)(input, { readKey: context.readKey, scope: context.scope }).pipe(
+  getReadStages(registration)(input, {
+    compositionRevision: context.compositionRevision,
+    readKey: context.readKey,
+    scope: context.scope,
+    transaction: context.transaction ?? noOwnerTransaction,
+  }).pipe(
     Effect.flatMap((load) => load(context.services)),
     Effect.flatten,
   );

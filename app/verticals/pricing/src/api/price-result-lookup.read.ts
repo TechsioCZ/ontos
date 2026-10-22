@@ -15,10 +15,6 @@ const MODULE_KEY = 'commerce.pricing' as const;
 export const PriceActionCommitResolutionSchema = Schema.Literals(['ABSENT', 'COMMITTED', 'OPEN', 'UNAVAILABLE']);
 export type PriceActionCommitResolution = typeof PriceActionCommitResolutionSchema.Type;
 
-export interface PriceActionResultRecoveryServices extends PriceActionResultLookupPersistence {
-  readonly resolveCommit: (actionInvocationId: string) => Effect.Effect<PriceActionCommitResolution>;
-}
-
 const lookupUnavailable = (cause: unknown): ReadHandlerUnavailable =>
   Object.defineProperty(
     new ReadHandlerUnavailable({
@@ -37,19 +33,28 @@ const priceResultLookupEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 
-export const readPriceResult = Effect.fn('PriceResultLookupRead.read')(function* readPriceResult(
+/**
+ * Before the transaction: Core's Action commit state, read through its own short query rather than inside this
+ * Read's transaction. Without a trusted Legal Entity the result is unavailable.
+ */
+export const resolvePriceResultCommit = (
   input: PriceResultLookupRequest,
   trustedScope: { readonly legalEntityId: null | string | undefined },
-  services: PriceActionResultRecoveryServices,
+  resolveCommit: (actionInvocationId: string) => Effect.Effect<PriceActionCommitResolution>,
+): Effect.Effect<PriceActionCommitResolution> =>
+  trustedScope.legalEntityId === null || trustedScope.legalEntityId === undefined
+    ? Effect.succeed('UNAVAILABLE')
+    : resolveCommit(input.actionInvocationId);
+
+/**
+ * In the transaction: the owner's recorded result, which must agree with the commit state read before it. A
+ * commit landing between the two reads disagrees and stays retryably unavailable.
+ */
+export const readPriceResult = Effect.fn('PriceResultLookupRead.read')(function* readPriceResult(
+  input: PriceResultLookupRequest,
+  resolution: PriceActionCommitResolution,
+  persistence: PriceActionResultLookupPersistence,
 ) {
-  if (trustedScope.legalEntityId === null || trustedScope.legalEntityId === undefined) {
-    return {
-      actionInvocationId: input.actionInvocationId,
-      outcome: 'PRICE_ACTION_RESULT_UNAVAILABLE' as const,
-      retryable: true as const,
-    } satisfies PriceResultLookupResponse;
-  }
-  const resolution = yield* services.resolveCommit(input.actionInvocationId);
   if (resolution === 'UNAVAILABLE') {
     return {
       actionInvocationId: input.actionInvocationId,
@@ -57,7 +62,7 @@ export const readPriceResult = Effect.fn('PriceResultLookupRead.read')(function*
       retryable: true as const,
     } satisfies PriceResultLookupResponse;
   }
-  const ownerResult = yield* services.lookupResult(input).pipe(Effect.mapError(lookupUnavailable));
+  const ownerResult = yield* persistence.lookupResult(input).pipe(Effect.mapError(lookupUnavailable));
   if (
     (resolution === 'COMMITTED' && ownerResult.outcome === 'PRICE_ACTION_RESULT_ABSENT') ||
     (resolution !== 'COMMITTED' && ownerResult.outcome === 'PRICE_ACTION_RESULT_FOUND')
@@ -75,8 +80,8 @@ const resolveCommitForScope = Effect.fn('PriceResultLookupRead.resolveCommitForS
   scope: OperationalScope,
 ) {
   const runtime = yield* ActionRuntime;
-  return Effect.fn('PriceResultLookupRead.resolveCommit')(function* resolveCommit(input: PriceResultLookupRequest) {
-    return yield* runtime.resolveActionCommit({ invocationId: input.actionInvocationId, principal: scope }).pipe(
+  return Effect.fn('PriceResultLookupRead.resolveCommit')(function* resolveCommit(actionInvocationId: string) {
+    return yield* runtime.resolveActionCommit({ invocationId: actionInvocationId, principal: scope }).pipe(
       Effect.as('OPEN' as const),
       Effect.catchTags({
         ActionAlreadyCommitted: () => Effect.succeed('COMMITTED' as const),
@@ -108,28 +113,22 @@ export const priceResultLookupRead = defineRead(
     schemaVersion: '1',
   },
   {
-    load: (input, context: ReadLoadContext<PriceActionResultRecoveryServices>) =>
-      readPriceResult(input, { legalEntityId: context.scope.legalEntityId }, context.services).pipe(
+    // oxlint-disable perfectionist/sort-objects -- Steps stay in execution order: each step's types infer from the previous one.
+    prepare: (input, context) =>
+      resolveCommitForScope(context.scope).pipe(
+        Effect.flatMap((resolveCommit) =>
+          resolvePriceResultCommit(input, { legalEntityId: context.scope.legalEntityId }, resolveCommit),
+        ),
+      ),
+    load: (input, context: ReadLoadContext<PriceActionResultLookupPersistence, PriceActionCommitResolution>) =>
+      readPriceResult(input, context.prepared, context.services).pipe(
         Effect.map((result) => ({
           evidence: { resultCount: result.outcome === 'PRICE_ACTION_RESULT_FOUND' ? 1 : 0 },
           result,
         })),
       ),
+    // oxlint-enable perfectionist/sort-objects
   },
-  Effect.fn('PriceResultLookupRead.priceResultLookupRead')(
-    function* makePriceActionResultRecoveryServices(transaction, scope) {
-      const { persistence, resolveCommit } = yield* Effect.all(
-        {
-          persistence: pricePersistenceForScope(transaction, scope),
-          resolveCommit: resolveCommitForScope(scope),
-        },
-        { concurrency: 2 },
-      );
-      return {
-        ...persistence,
-        resolveCommit: (actionInvocationId: string) => resolveCommit({ actionInvocationId }),
-      };
-    },
-  ),
+  pricePersistenceForScope,
   () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

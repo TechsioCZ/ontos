@@ -29,7 +29,7 @@ import {
   setSupportedCurrenciesAction,
 } from '../../src/actions/set-supported-currencies.action.ts';
 import { executePriceScheduleWithAuthorization } from '../../src/api/price-schedule-client.ts';
-import { readPriceResult } from '../../src/api/price-result-lookup.read.ts';
+import { readPriceResult, resolvePriceResultCommit } from '../../src/api/price-result-lookup.read.ts';
 import type { SetCurrencySupportCommand } from '../../src/persistence/currency-support-persistence.ts';
 import type {
   DefinePricePersistenceOutcome,
@@ -41,6 +41,18 @@ import {
   makeExternalPriceInputBoundary,
 } from '../../src/services/external-price-input-boundary.service.ts';
 import { preparePriceSourceEvidence } from '../../src/services/price-source-provenance.service.ts';
+
+/** prepare (Core commit state) then load (the owner result), as the governed Read runs them. */
+const lookupPriceResult = (
+  input: Parameters<typeof readPriceResult>[0],
+  trustedScope: Parameters<typeof resolvePriceResultCommit>[1],
+  services: Parameters<typeof readPriceResult>[2] & {
+    readonly resolveCommit: Parameters<typeof resolvePriceResultCommit>[2];
+  },
+) =>
+  resolvePriceResultCommit(input, trustedScope, services.resolveCommit).pipe(
+    Effect.flatMap((resolution) => readPriceResult(input, resolution, services)),
+  );
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -722,7 +734,7 @@ describe('Pricing management Actions acceptance', () => {
         retryCommand: false,
         status: 503,
       });
-      const defineLookup = yield* readPriceResult(
+      const defineLookup = yield* lookupPriceResult(
         yield* Schema.decodeEffect(PriceResultLookupRequestSchema)({
           actionInvocationId: defineFailure.invocationId,
         }),
@@ -819,7 +831,7 @@ describe('Pricing management Actions acceptance', () => {
         retryCommand: false,
         status: 503,
       });
-      const reviseLookup = yield* readPriceResult(
+      const reviseLookup = yield* lookupPriceResult(
         yield* Schema.decodeEffect(PriceResultLookupRequestSchema)({
           actionInvocationId: reviseFailure.invocationId,
         }),
@@ -859,7 +871,7 @@ describe('Pricing management Actions acceptance', () => {
 
       for (const actionKind of ['DEFINE_PRICE', 'REVISE_PRICE'] as const) {
         for (const resolution of ['ABSENT', 'OPEN'] as const) {
-          const retryDecision = yield* readPriceResult(
+          const retryDecision = yield* lookupPriceResult(
             yield* Schema.decodeEffect(PriceResultLookupRequestSchema)({
               actionInvocationId: trusted.actionInvocationId,
             }),

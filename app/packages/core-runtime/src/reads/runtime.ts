@@ -39,12 +39,13 @@ import {
   failClosedOwnerAuthorizationOverlay,
 } from '../permissions/owner-authorization-overlay.ts';
 import type { OwnerAuthorizationTarget } from '../permissions/owner-authorization-overlay.ts';
-import { insideDatabaseTransaction } from '../permissions/spicedb-transaction-guard.ts';
+import { insideDatabaseTransaction } from '../db/transaction-io-guard.ts';
 import type {
   AssortmentPermissionAccessTarget,
   AssortmentPermissionCommercialScope,
   AssortmentPermissionSubject,
 } from '../permissions/context-access.ts';
+import type { ReadOwnerTransaction } from './context.ts';
 import { validateReadEvidenceMetadata } from './context.ts';
 import type {
   AtomicResolvedReadPermissionTarget,
@@ -1256,7 +1257,8 @@ const readRuntimeFromDependencies = <
                 Effect.mapError(compositionNoLongerAdmits),
               );
             }
-            return yield* body(transaction);
+            // Between BEGIN and COMMIT nothing reaches SpiceDB, a module, the network, or a second pooled connection.
+            return yield* body(transaction).pipe(insideDatabaseTransaction(input.registration.descriptor.readKey));
           }),
         )
         .pipe(
@@ -1469,7 +1471,15 @@ const readRuntimeFromDependencies = <
     const sanitizeOwnerFailure = Effect.mapError((failure: unknown) =>
       sanitizeReadHandlerFailure(getReadDomainErrorSchema(input.registration), failure),
     );
-    const ownerContext = Object.freeze({ readKey: input.registration.descriptor.readKey, scope });
+    /** A short admitted, scoped, guarded owner transaction for `finish` (owner-state reads between remote calls). */
+    const ownerTransaction: ReadOwnerTransaction = (use) =>
+      admittedTransaction((transaction) => installOperationalScope(transaction, scope).pipe(Effect.flatMap(use)));
+    const ownerContext = Object.freeze({
+      compositionRevision,
+      readKey: input.registration.descriptor.readKey,
+      scope,
+      transaction: ownerTransaction,
+    });
 
     const executeAuthorizedRead = Effect.fn('ReadRuntime.executeAuthorizedRead')(function* executeAuthorizedRead() {
       // Owner `prepare` and the owner authorization overlay's remote inputs: SpiceDB grants and other
@@ -1490,7 +1500,7 @@ const readRuntimeFromDependencies = <
         { concurrency: 2 },
       );
       // Owner work: the transaction holds only the scope installation, owner authorization state, and `load`.
-      // SpiceDB refuses to run inside it (`insideDatabaseTransaction`).
+      // Remote I/O and a second pooled connection refuse to run inside it (`insideDatabaseTransaction`).
       const finishOwner = yield* admittedTransaction(
         Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBody(transaction: CoreTransaction) {
           const scoped = yield* installOperationalScope(transaction, scope);
@@ -1512,9 +1522,10 @@ const readRuntimeFromDependencies = <
           const services = yield* getReadServiceFactory(input.registration)(scoped, scope, compositionRevision);
           const finish = yield* loadWith(services).pipe(sanitizeOwnerFailure);
           stage('handler_executed');
+          // @effect-diagnostics-next-line returnEffectInGen:off -- The after-commit step leaves the transaction unevaluated.
           return finish;
         }),
-      ).pipe(insideDatabaseTransaction(input.registration.descriptor.readKey));
+      );
       // The connection is back in the pool: owner `finish`, result validation, result authorization, and evidence.
       const handlerResult = yield* finishOwner.pipe(sanitizeOwnerFailure);
       const result = yield* Schema.decodeUnknownEffect(Schema.toType(input.registration.descriptor.resultSchema), {

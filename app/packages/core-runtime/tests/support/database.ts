@@ -9,6 +9,7 @@ import type { SqlError } from 'effect/unstable/sql/SqlError';
 
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
+import { guardPoolAcquisition } from '../../src/db/transaction-io-guard.ts';
 import { scriptedPgClientLayer } from '../../src/testing/scripted-pg-client.ts';
 import { testSqlConnection } from './sql-connection.ts';
 
@@ -20,11 +21,16 @@ export const privacyMeasureDeferredCases = [
 ] as const;
 
 /** Scripted SQL connection fixture; Drizzle and Effect own query and transaction execution. */
+/** Behind the same pool guard as the production Core database. */
 export const makeTestDatabase = (
   execute: (sql: string, params: readonly unknown[]) => Effect.Effect<readonly object[], SqlError>,
 ) =>
   Effect.scoped(
-    makeWithDefaults({ relations: coreRelations }).pipe(
+    Effect.flatMap(Effect.service(PgClient.PgClient), (client) =>
+      makeWithDefaults({ relations: coreRelations }).pipe(
+        Effect.provideService(PgClient.PgClient, guardPoolAcquisition(client)),
+      ),
+    ).pipe(
       Effect.provide(
         scriptedPgClientLayer(Effect.succeed(testSqlConnection(execute))).pipe(Layer.provideMerge(Reactivity.layer)),
       ),

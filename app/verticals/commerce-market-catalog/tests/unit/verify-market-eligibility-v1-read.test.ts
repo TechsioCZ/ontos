@@ -11,7 +11,10 @@ import type { MarketEligibilityFact, MarketEligibilitySnapshot } from '../../src
 import type { MarketResolutionPersistence } from '../../src/persistence/market-resolution-persistence.ts';
 import { MarketResolutionPersistenceUnavailable } from '../../src/persistence/market-resolution-persistence.ts';
 import type { MarketSubjectRestrictionSnapshot } from '../../src/integrations/market-subject-restrictions.ts';
-import { handleVerifyMarketEligibilityV1 } from '../../src/api/verify-market-eligibility-v1.read.ts';
+import {
+  handleVerifyMarketEligibilityV1,
+  prepareVerifyMarketEligibilityV1,
+} from '../../src/api/verify-market-eligibility-v1.read.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const subjectId = '99999999-9999-4999-8999-999999999999';
@@ -142,13 +145,12 @@ const run = (
   const reader = {
     current: () => Effect.succeed(restrictions ?? ownerRestrictions('subject:1')),
   };
-  return handleVerifyMarketEligibilityV1(
-    { observedProof, originalRequest: input },
-    {
-      readKey: 'commerce.market-catalog.api.verify-market-eligibility-v1',
-      scope,
-      services: { ...persistence, ...reader },
-    },
+  const verifyInput = { observedProof, originalRequest: input };
+  const steps = { readKey: 'commerce.market-catalog.api.verify-market-eligibility-v1', scope };
+  return prepareVerifyMarketEligibilityV1(verifyInput, steps, reader).pipe(
+    Effect.flatMap((prepared) =>
+      handleVerifyMarketEligibilityV1(verifyInput, { ...steps, prepared, services: persistence }),
+    ),
   );
 };
 

@@ -6,8 +6,20 @@ import {
   PriceResultLookupRequestSchema,
   PriceResultLookupResponseSchema,
 } from '../../shared/apis/price-result-lookup.ts';
-import { readPriceResult } from '../../src/api/price-result-lookup.read.ts';
+import { readPriceResult, resolvePriceResultCommit } from '../../src/api/price-result-lookup.read.ts';
 import { PricePersistenceUnavailable } from '../../src/services/price-persistence.service.ts';
+
+/** prepare (Core commit state) then load (the owner result), as the governed Read runs them. */
+const lookupPriceResult = (
+  input: Parameters<typeof readPriceResult>[0],
+  trustedScope: Parameters<typeof resolvePriceResultCommit>[1],
+  services: Parameters<typeof readPriceResult>[2] & {
+    readonly resolveCommit: Parameters<typeof resolvePriceResultCommit>[2];
+  },
+) =>
+  resolvePriceResultCommit(input, trustedScope, services.resolveCommit).pipe(
+    Effect.flatMap((resolution) => readPriceResult(input, resolution, services)),
+  );
 
 const actionInvocationId = '33333333-3333-4333-8333-333333333333';
 const input = Schema.decodeSync(PriceResultLookupRequestSchema)({ actionInvocationId });
@@ -22,12 +34,12 @@ describe('Price governed result lookup issue #797', () => {
         result: { outcome: 'CONFLICT' as const, reason: 'EXPECTED_CURRENT_MISMATCH' as const },
       };
       const absent = { actionInvocationId, outcome: 'PRICE_ACTION_RESULT_ABSENT' as const };
-      const foundResult = yield* readPriceResult(
+      const foundResult = yield* lookupPriceResult(
         input,
         { legalEntityId },
         { lookupResult: () => Effect.succeed(found), resolveCommit: () => Effect.succeed('COMMITTED' as const) },
       );
-      const absentResult = yield* readPriceResult(
+      const absentResult = yield* lookupPriceResult(
         input,
         { legalEntityId },
         { lookupResult: () => Effect.succeed(absent), resolveCommit: () => Effect.succeed('OPEN' as const) },
@@ -49,13 +61,13 @@ describe('Price governed result lookup issue #797', () => {
         },
         resolveCommit: () => Effect.succeed('COMMITTED' as const),
       };
-      const missingScope = yield* readPriceResult(input, { legalEntityId: null }, services);
+      const missingScope = yield* lookupPriceResult(input, { legalEntityId: null }, services);
       expect(missingScope).toEqual({
         actionInvocationId,
         outcome: 'PRICE_ACTION_RESULT_UNAVAILABLE',
         retryable: true,
       });
-      const failure = yield* readPriceResult(input, { legalEntityId }, services).pipe(Effect.flip);
+      const failure = yield* lookupPriceResult(input, { legalEntityId }, services).pipe(Effect.flip);
       expect(failure).toBeInstanceOf(ReadHandlerUnavailable);
       expect(failure.cause).toBeInstanceOf(PricePersistenceUnavailable);
       expect(reads).toBe(1);
@@ -78,7 +90,7 @@ describe('Price governed result lookup issue #797', () => {
 
       for (const found of [foundDefine, foundRevise]) {
         expect(
-          yield* readPriceResult(
+          yield* lookupPriceResult(
             input,
             { legalEntityId },
             {
@@ -89,7 +101,7 @@ describe('Price governed result lookup issue #797', () => {
         ).toEqual(found);
 
         expect(
-          yield* readPriceResult(
+          yield* lookupPriceResult(
             input,
             { legalEntityId },
             {
@@ -102,7 +114,7 @@ describe('Price governed result lookup issue #797', () => {
 
       for (const resolution of ['OPEN', 'ABSENT'] as const) {
         expect(
-          yield* readPriceResult(
+          yield* lookupPriceResult(
             input,
             { legalEntityId },
             {
@@ -115,7 +127,7 @@ describe('Price governed result lookup issue #797', () => {
 
       let reads = 0;
       expect(
-        yield* readPriceResult(
+        yield* lookupPriceResult(
           input,
           { legalEntityId },
           {

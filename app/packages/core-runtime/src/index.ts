@@ -490,8 +490,11 @@ export type {
   ReadFinishContext,
   ReadHandlerResult,
   ReadLoadContext,
+  ReadOwnerTransaction,
   ReadPrepareContext,
 } from './reads/context.ts';
+export { IoInsideDatabaseTransaction } from './db/transaction-io-guard.ts';
+export type { TransactionIo } from './db/transaction-io-guard.ts';
 export { READ_RUNTIME_STAGES, ReadRuntime, ReadRuntimeLive } from './reads/runtime.ts';
 export type { ReadRuntimeOptions, ReadRuntimeService, ReadRuntimeStage } from './reads/runtime.ts';
 export {

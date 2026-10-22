@@ -10,6 +10,7 @@ import { DatabaseConnectionError } from './connection-error.ts';
 import type { DatabasePoolDeadlines } from './pool-configuration.ts';
 import { configureDatabasePool } from './pool-configuration.ts';
 import { coreRelations } from './schema.ts';
+import { guardPoolAcquisition } from './transaction-io-guard.ts';
 import type { CoreDatabaseExecutor } from './types.ts';
 
 export { DatabaseConnectionError } from './connection-error.ts';
@@ -40,8 +41,9 @@ export const makeCoreDatabase = Effect.fn('Client.makeCoreDatabase')(function* m
     ),
   );
   return {
+    // A marked transaction body that would check out a second pooled connection dies instead.
     executor: yield* makeWithDefaults({ relations: coreRelations }).pipe(
-      Effect.provideService(PgClient.PgClient, client),
+      Effect.provideService(PgClient.PgClient, guardPoolAcquisition(client)),
     ),
   };
 });

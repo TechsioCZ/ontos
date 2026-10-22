@@ -1,4 +1,7 @@
-import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
+import { PgClient } from '@effect/sql-pg';
+import { Cause, Context, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Schema } from 'effect';
+import { FetchHttpClient, HttpClient } from 'effect/unstable/http';
+import { Reactivity } from 'effect/unstable/reactivity';
 import { constVoid } from 'effect/Function';
 /* oxlint-disable sonarjs/use-type-alias, typescript/no-unsafe-type-assertion -- Existing compatibility boundary; expires: 2026-12-31. */
 import { expect, it } from 'effect-rstest';
@@ -39,11 +42,18 @@ import {
   ReadPermissionDenied,
   ReadPolicyDenied,
 } from '../../src/reads/errors.ts';
+import type { ReadFinishContext, ReadHandlerResult } from '../../src/reads/context.ts';
 import { makeReadRuntime, READ_RUNTIME_STAGES } from '../../src/reads/runtime.ts';
 import { guardSpiceDbRpc } from '../../src/permissions/spicedb-transaction-guard.ts';
+import { guardPoolAcquisition, IoInsideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
+import type { TransactionIo } from '../../src/db/transaction-io-guard.ts';
+import { moduleReleaseFetch } from '../../src/http/unit-service-fetch.export.ts';
+import { scriptedPgClientLayer } from '../../src/testing/scripted-pg-client.ts';
 import type { SpiceDbRpc } from '../../src/permissions/spicedb-rpc.ts';
 import { makeTestDatabase } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
+import { makeOutboxWorkerComposition } from '../support/outbox-worker-composition.ts';
+import { testSqlConnection } from '../support/sql-connection.ts';
 
 const scope: OperationalScope = Object.freeze({
   ...Schema.decodeSync(TrustedPrincipalContextSchema)({
@@ -1330,14 +1340,18 @@ const guardedSpiceDb = (events: string[]): SpiceDbRpc =>
     writeSchema: unusedSpiceDbRpc,
   });
 const spiceDbCheck = (rpc: SpiceDbRpc) => rpc.checkPermission(v1.CheckPermissionRequest.create({}));
-const diedInsideTransaction = (exit: Exit.Exit<unknown, unknown>, readKey: string): boolean =>
+const diedInsideTransaction = (
+  exit: Exit.Exit<unknown, unknown>,
+  readKey: string,
+  io: TransactionIo = 'spicedb',
+): boolean =>
   Exit.isFailure(exit) &&
   exit.cause.reasons.some(
     (reason) =>
       Cause.isDieReason(reason) &&
-      Predicate.isTagged(reason.defect, 'SpiceDbInsideTransaction') &&
-      Predicate.hasProperty(reason.defect, 'operationKey') &&
-      reason.defect.operationKey === readKey,
+      Schema.is(Schema.instanceOf(IoInsideDatabaseTransaction))(reason.defect) &&
+      reason.defect.operationKey === readKey &&
+      reason.defect.io === io,
   );
 
 it.effect('lets owner prepare, finish, and the owner overlay preparation reach SpiceDB outside the transaction', () =>
@@ -1438,6 +1452,145 @@ it.effect('refuses SpiceDB between BEGIN and COMMIT: owner load, service factory
     // The guard fails before the transport: no round trip ran, and every transaction rolled back.
     expect(events.filter((event) => event === 'spicedb-rpc')).toEqual([]);
     expect(events.filter((event) => event === 'ROLLBACK')).toHaveLength(3);
+  }),
+);
+
+const isRequest = Schema.is(Schema.instanceOf(Request));
+/** Every fetch that reaches the platform is recorded; inside a marked transaction none may. */
+const recordingFetch =
+  (events: string[]) =>
+  (input: Request | URL | string): Promise<Response> => {
+    events.push(`fetch:${isRequest(input) ? input.url : String(input)}`);
+    return Promise.resolve(new Response('{}', { status: 200 }));
+  };
+const [ownerModule] = makeOutboxWorkerComposition([{ appId: 'owner-release', moduleId: 'commerce.owner' }]).modules;
+// @effect-diagnostics-next-line strictEffectProvide:off -- Test owner call over the platform fetch client.
+const ownerFetch = HttpClient.get('https://owner.example/current').pipe(Effect.provide(FetchHttpClient.layer));
+/** A second guarded Core client: its statements would check out a connection of their own. */
+const secondPool = (events: string[]) =>
+  Layer.build(
+    scriptedPgClientLayer(
+      Effect.succeed(
+        testSqlConnection((text) =>
+          Effect.sync(() => {
+            events.push(`second-pool:${text}`);
+            return [];
+          }),
+        ),
+      ),
+    ).pipe(Layer.provide(Reactivity.layer)),
+  ).pipe(Effect.map((context) => guardPoolAcquisition(Context.get(context, PgClient.PgClient))));
+
+it.effect('refuses outbound fetch, module transport, and a second pooled connection between BEGIN and COMMIT', () =>
+  Effect.gen(function* remoteIoInsideTransaction() {
+    const events: string[] = [];
+    const { readKey } = registration().descriptor;
+    const pool = yield* secondPool(events);
+    const releaseModule = yield* Effect.fromNullishOr(ownerModule).pipe(Effect.orDie);
+    const runWith = (load: () => Effect.Effect<unknown>) =>
+      Effect.gen(function* runReadWithRemoteIo() {
+        const harness = yield* makeHarness({ permissionDecision: 'allowed', sqlEvents: events });
+        return yield* Effect.exit(
+          harness.runtime.runRead({
+            input: {},
+            principal: scope,
+            registration: defineRead(
+              registration().descriptor,
+              { load: () => load().pipe(Effect.as({ evidence: { resultCount: 0 }, result: [] })) },
+              () => Effect.succeed({}),
+              () => ({ kind: 'module', moduleId: 'core.shell' }),
+            ),
+            transport: { correlationId: scope.correlationId },
+          }),
+        );
+      }).pipe(Effect.provideService(FetchHttpClient.Fetch, recordingFetch(events)));
+    // Owner code that maps the failed fetch away still dies: the mark re-raises the refusal.
+    const fetchMappedAway = yield* runWith(() => ownerFetch.pipe(Effect.ignore));
+    const fetchInLoad = yield* runWith(() => ownerFetch.pipe(Effect.orDie));
+    const moduleTransport = yield* runWith(() =>
+      moduleReleaseFetch(new Request('https://owner.example/api/records'), releaseModule).pipe(Effect.orDie),
+    );
+    const secondConnection = yield* runWith(() => pool.unsafe('select 1').withoutTransform.pipe(Effect.orDie));
+    expect(diedInsideTransaction(fetchMappedAway, readKey, 'outbound-fetch')).toBe(true);
+    expect(diedInsideTransaction(fetchInLoad, readKey, 'outbound-fetch')).toBe(true);
+    expect(diedInsideTransaction(moduleTransport, readKey, 'module-transport')).toBe(true);
+    expect(diedInsideTransaction(secondConnection, readKey, 'pool-acquisition')).toBe(true);
+    // Nothing left the process and the second pool was never asked for a connection.
+    expect(events.filter((event) => event.startsWith('fetch:') || event.startsWith('second-pool:'))).toEqual([]);
+    expect(events.filter((event) => event === 'ROLLBACK')).toHaveLength(4);
+    // Outside a transaction the same calls go through.
+    yield* ownerFetch.pipe(Effect.provideService(FetchHttpClient.Fetch, recordingFetch(events)), Effect.orDie);
+    yield* pool.unsafe('select 1').withoutTransform.pipe(Effect.orDie);
+    expect(events.filter((event) => event.startsWith('fetch:') || event.startsWith('second-pool:'))).toEqual([
+      'fetch:https://owner.example/current',
+      'second-pool:select 1',
+    ]);
+  }),
+);
+
+it.effect('gives finish short owner transactions: owner state between remote calls, never remote I/O inside', () =>
+  Effect.gen(function* finishOwnerTransactions() {
+    const events: string[] = [];
+    const { readKey } = registration().descriptor;
+    const harness = yield* makeHarness({ permissionDecision: 'allowed', sqlEvents: events });
+    const run = (
+      finish: (
+        input: Readonly<Record<string, never>>,
+        context: ReadFinishContext<unknown, unknown>,
+      ) => Effect.Effect<ReadHandlerResult<readonly string[]>>,
+    ) =>
+      Effect.exit(
+        harness.runtime.runRead({
+          input: {},
+          principal: scope,
+          registration: defineRead(
+            registration().descriptor,
+            {
+              // oxlint-disable perfectionist/sort-objects -- Steps stay in execution order: each step's types infer from the previous one.
+              prepare: () => ownerFetch.pipe(Effect.orDie),
+              load: () => Effect.sync(() => events.push('owner-load')),
+              finish,
+              // oxlint-enable perfectionist/sort-objects
+            },
+            () => Effect.succeed({}),
+            () => ({ kind: 'module', moduleId: 'core.shell' }),
+          ),
+          transport: { correlationId: scope.correlationId },
+        }),
+      ).pipe(Effect.provideService(FetchHttpClient.Fetch, recordingFetch(events)));
+    const interleaved = yield* run((_input, context) =>
+      context
+        .transaction((transaction) =>
+          Effect.sync(() => events.push(`owner-state:${transaction.scope.tenantId === scope.tenantId}`)),
+        )
+        .pipe(
+          Effect.andThen(ownerFetch),
+          Effect.andThen(context.transaction(() => Effect.sync(() => events.push('owner-state-again')))),
+          Effect.orDie,
+          Effect.as({ evidence: { resultCount: 0 }, result: [] }),
+        ),
+    );
+    expect(Exit.isSuccess(interleaved)).toBe(true);
+    expect(events).toEqual([
+      'fetch:https://owner.example/current',
+      'BEGIN',
+      'owner-load',
+      'COMMIT',
+      'BEGIN',
+      'owner-state:true',
+      'COMMIT',
+      'fetch:https://owner.example/current',
+      'BEGIN',
+      'owner-state-again',
+      'COMMIT',
+    ]);
+    events.length = 0;
+    const fetchInOwnerTransaction = yield* run((_input, context) =>
+      context.transaction(() => ownerFetch).pipe(Effect.orDie, Effect.as({ evidence: { resultCount: 0 }, result: [] })),
+    );
+    expect(diedInsideTransaction(fetchInOwnerTransaction, readKey, 'outbound-fetch')).toBe(true);
+    expect(events.filter((event) => event.startsWith('fetch:'))).toEqual(['fetch:https://owner.example/current']);
+    expect(events.at(-1)).toBe('ROLLBACK');
   }),
 );
 

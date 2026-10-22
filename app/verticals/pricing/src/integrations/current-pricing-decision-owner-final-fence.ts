@@ -25,7 +25,14 @@ import {
   PricingDiscountIdentityBasisSchema,
 } from '@app/pricing-contracts/domain/discount';
 import { PricingContractualDiscountSetPredicateSchema } from '@app/pricing-contracts/domain/contractual-discount-set';
-import type { OperationContextUnavailable, OperationalScope, ReadServiceFactory } from '@app/core-runtime';
+import type {
+  OperationContextUnavailable,
+  OperationalScope,
+  ReadHandlerExecutionError,
+  ReadHandlerUnavailable,
+  ReadOwnerTransaction,
+  ReadServiceFactory,
+} from '@app/core-runtime';
 
 import {
   PricingCatalogMaterialEvidenceFenceGateway,
@@ -1260,6 +1267,47 @@ export const pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope = (
       }),
     ),
   );
+
+/**
+ * The same Pricing owner fence for a Read's `finish`: each verification runs in its own short owner transaction,
+ * after the Read's transaction has committed and between the evaluation's remote owner calls.
+ */
+export const pricingCurrentDecisionPricingOwnerFinalFenceGatewayPerRead = (
+  ownerTransaction: ReadOwnerTransaction,
+  scope: OperationalScope,
+  compositionRevision: string,
+): PricingOwnerMaterialEvidenceFenceGateway => {
+  const unavailableShortTransaction = (cause: unknown) =>
+    Effect.fail(pricingOwnerUnavailable('The short Pricing owner transaction could not be completed', cause));
+  const fenceIn = (transaction: Parameters<Parameters<ReadOwnerTransaction>[0]>[0]) =>
+    pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope(transaction, scope, compositionRevision);
+  const shortTransactionUnavailable = <Value>(
+    effect: Effect.Effect<
+      Value,
+      | OperationContextUnavailable
+      | PricingOwnerMaterialEvidenceFenceGatewayUnavailable
+      | ReadHandlerExecutionError
+      | ReadHandlerUnavailable
+    >,
+  ) =>
+    effect.pipe(
+      Effect.catchTags({
+        OperationContextUnavailable: unavailableShortTransaction,
+        ReadHandlerExecutionError: unavailableShortTransaction,
+        ReadHandlerUnavailable: unavailableShortTransaction,
+      }),
+    );
+  return {
+    confirmObservedGenerationsThrough: (request) =>
+      ownerTransaction((transaction) =>
+        fenceIn(transaction).pipe(Effect.flatMap((fence) => fence.confirmObservedGenerationsThrough(request))),
+      ).pipe(shortTransactionUnavailable),
+    verifyOpaqueProofsAgainstCurrentState: (request) =>
+      ownerTransaction((transaction) =>
+        fenceIn(transaction).pipe(Effect.flatMap((fence) => fence.verifyOpaqueProofsAgainstCurrentState(request))),
+      ).pipe(shortTransactionUnavailable),
+  };
+};
 
 type MarketEvidenceClientEffect = ReturnType<typeof executePricingCurrentMarketEvidenceWithAuthorization>;
 type MarketEvidenceClientFailure =

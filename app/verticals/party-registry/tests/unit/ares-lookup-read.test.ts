@@ -89,15 +89,13 @@ it.layer(NodeFileSystem.layer)('ares-lookup-read', (suite) => {
       const result = yield* runReadOwnerSteps(aresLookupRead, request, {
         readKey: aresLookupRead.descriptor.readKey,
         scope,
-        services: {
-          lookup: (input) => {
+        services: {},
+      }).pipe(
+        Effect.provideService(AresSubjectService, {
+          subject: (input) => {
             calls.push(input);
             return Effect.succeed(evidence);
           },
-        },
-      }).pipe(
-        Effect.provideService(AresSubjectService, {
-          subject: () => Effect.die('The handler test supplies services directly'),
         }),
       );
 
@@ -162,12 +160,10 @@ it.layer(NodeFileSystem.layer)('ares-lookup-read', (suite) => {
             runReadOwnerSteps(aresLookupRead, request, {
               readKey: aresLookupRead.descriptor.readKey,
               scope,
-              services: { lookup: () => Effect.fail(failure) },
+              services: {},
             }),
           ).pipe(
-            Effect.provideService(AresSubjectService, {
-              subject: () => Effect.die('The handler test supplies services directly'),
-            }),
+            Effect.provideService(AresSubjectService, { subject: () => Effect.fail(failure) }),
             Effect.map((error) => ({ error, expectedTag })),
           ),
         ),

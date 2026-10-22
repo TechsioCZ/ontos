@@ -85,6 +85,7 @@ export interface InstalledModuleCatalogServiceContract {
 export class InstalledModuleCatalogService extends Context.Service<
   InstalledModuleCatalogService,
   InstalledModuleCatalogServiceContract
+  // @effect-diagnostics-next-line deterministicKeys:off -- The file-derived key would name a vertical id inside Core.
 >()('@app/core-runtime/modules/InstalledModuleCatalogService') {}
 
 const invalid = (reason: string): OntosModuleCatalogValidationError =>

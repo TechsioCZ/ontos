@@ -25,9 +25,7 @@ export const aresLookupEntrypoint = defineTenantModuleEntrypoint({
   role: 'api',
 });
 
-interface Services {
-  readonly lookup: AresSubjectServiceContract['subject'];
-}
+type AresSubjectResult = Effect.Success<ReturnType<AresSubjectServiceContract['subject']>>;
 
 type AresLookupHandlerError = ReadHandlerExecutionError | ReadHandlerNotFound | ReadHandlerUnavailable;
 
@@ -129,18 +127,21 @@ export const aresLookupRead = defineRead(
     schemaVersion: '1',
   },
   {
-    load: (input, context: ReadLoadContext<Services>) =>
-      context.services
-        .lookup({
-          correlationId: context.scope.correlationId,
-          ico: input.ico,
-        } satisfies AresSubjectLookup)
-        .pipe(
-          Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
-          // oxlint-disable-next-line promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining.
-          Effect.catch(mapAresFailure),
+    // ARES is an external registry: the lookup runs before the transaction opens, never while it holds a connection.
+    prepare: (input, context) =>
+      AresSubjectService.pipe(
+        Effect.flatMap((service) =>
+          service.subject({
+            correlationId: context.scope.correlationId,
+            ico: input.ico,
+          } satisfies AresSubjectLookup),
         ),
+        // oxlint-disable-next-line promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining.
+        Effect.catch(mapAresFailure),
+      ),
+    load: (_input, context: ReadLoadContext<Readonly<Record<string, never>>, AresSubjectResult>) =>
+      Effect.succeed({ evidence: { resultCount: 1 }, result: context.prepared }),
   },
-  () => AresSubjectService.pipe(Effect.map((service) => ({ lookup: service.subject }))),
+  () => Effect.succeed({}),
   () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );

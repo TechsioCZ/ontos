@@ -20,7 +20,7 @@ import { counterpartyOrderHistoryRead } from '../../src/api/counterparty-order-h
 import { counterpartyOrderHistoryDetailRead } from '../../src/api/counterparty-order-history-detail.read.ts';
 import { retailOrderHistoryRead } from '../../src/api/retail-order-history.read.ts';
 import { retailOrderHistoryDetailRead } from '../../src/api/retail-order-history-detail.read.ts';
-import { customerHistoryPortsForOperation } from '../../src/history-production-services.ts';
+import { counterpartyAssociationReader } from '../../src/history-production-services.ts';
 import type {
   ProfilePersistenceScope,
   ProfileScopedRoutineInvoker,
@@ -138,12 +138,10 @@ it.effect('keeps exact Counterparty history association independent from the new
     };
 
     for (const state of states) {
-      const historyPorts = yield* customerHistoryPortsForOperation(
-        unavailableCustomerHistoryPorts(),
+      const association = yield* counterpartyAssociationReader(
         profileTransaction(state),
         scope,
-      );
-      const association = yield* historyPorts.counterpartyProfiles.current({
+      )({
         counterpartyRef,
         profileRef: counterpartyProfileRef,
       });
@@ -162,12 +160,10 @@ it.effect('keeps exact Counterparty history association independent from the new
       { counterpartyResourceId: counterpartyRef.resourceId, profileId: 'counterparty-profile-2' },
       { counterpartyResourceId: 'counterparty-2', profileId: counterpartyProfileRef.resourceId },
     ]) {
-      const historyPorts = yield* customerHistoryPortsForOperation(
-        unavailableCustomerHistoryPorts(),
+      const association = yield* counterpartyAssociationReader(
         profileTransaction('SUSPENDED', mismatch),
         scope,
-      );
-      const association = yield* historyPorts.counterpartyProfiles.current({
+      )({
         counterpartyRef,
         profileRef: counterpartyProfileRef,
       });

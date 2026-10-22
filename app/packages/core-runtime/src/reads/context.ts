@@ -1,8 +1,11 @@
 import { Effect, Predicate, Schema } from 'effect';
 
+import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
+import type { OperationContextUnavailable } from '../operations/errors.ts';
 import type { ReadEvidenceCaptureMode } from './definition.ts';
 import { ReadEvidenceValidationError } from './errors.ts';
+import type { ReadHandlerExecutionError, ReadHandlerUnavailable } from './errors.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -19,11 +22,27 @@ export interface ReadEvidenceMetadata {
   readonly resultFingerprintSchema?: string;
 }
 
-/** What every owner step of a Read knows: the Read and its Core-verified scope. */
+/** What every owner step of a Read knows: the Read, its Core-verified scope, and the verified composition. */
 export interface ReadPrepareContext {
+  /** The composition revision the gateway verified, which remote owner calls must carry. */
+  readonly compositionRevision?: string | undefined;
   readonly readKey: string;
   readonly scope: OperationalScope;
 }
+
+/**
+ * A short owner transaction after commit: admitted by the same composition revision, with the same operational
+ * scope installed, and guarded like the Read's own transaction. It is for evaluations that interleave remote owner
+ * calls with owner-state reads: each owner-state read gets its own short transaction, and no remote call ever runs
+ * while one is open.
+ */
+export type ReadOwnerTransaction = <Value, Failure, Requirements>(
+  use: (transaction: ScopedTransactionExecutor) => Effect.Effect<Value, Failure, Requirements>,
+) => Effect.Effect<
+  Value,
+  Failure | OperationContextUnavailable | ReadHandlerExecutionError | ReadHandlerUnavailable,
+  Requirements
+>;
 
 /**
  * The owner transaction step: scoped database services and whatever `prepare` established. A pipeline without
@@ -37,6 +56,7 @@ export type ReadLoadContext<Services, Prepared = undefined> = ReadPrepareContext
 export interface ReadFinishContext<Prepared, Loaded> extends ReadPrepareContext {
   readonly loaded: Loaded;
   readonly prepared: Prepared;
+  readonly transaction: ReadOwnerTransaction;
 }
 
 export interface ReadHandlerResult<Result> {

@@ -20,6 +20,7 @@ import { transactionalOwnerAuthorization } from '../permissions/owner-authorizat
 import { ReadRuntime, makeReadRuntime } from '../reads/runtime.ts';
 import type { ReadRuntimeStage } from '../reads/runtime.ts';
 import { scriptedPgClientLayer } from './scripted-pg-client.ts';
+import { guardPoolAcquisition } from '../db/transaction-io-guard.ts';
 
 export interface ReadTestOwnerQuery {
   readonly params: readonly unknown[];
@@ -130,7 +131,7 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
     scriptedPgClientLayer(acquireConnection).pipe(Layer.provide(Reactivity.layer)),
   );
   const executor = yield* makeWithDefaults({ relations: coreRelations }).pipe(
-    Effect.provideService(PgClient.PgClient, Context.get(clientContext, PgClient.PgClient)),
+    Effect.provideService(PgClient.PgClient, guardPoolAcquisition(Context.get(clientContext, PgClient.PgClient))),
   );
   const decision = options.permissionDecision ?? 'denied';
   const contextAccess: ContextAccessService = {

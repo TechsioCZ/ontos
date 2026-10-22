@@ -357,7 +357,7 @@ it.live('converges concurrent neutral reservations and protects the complete bin
         ),
       );
     const deniedRead = yield* runDeniedRead({
-      authBindingId: Schema.decodeSync(AuthBindingIdSchema)(preparedA.authBindingId),
+      authBindingId: yield* Schema.decodeEffect(AuthBindingIdSchema)(preparedA.authBindingId),
       lookup: 'binding',
     });
     expect(deniedRead.result.outcome).toBe('NOT_FOUND');

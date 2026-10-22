@@ -12,7 +12,7 @@ export interface CoreSearchIngestionRegistration {
 export class CoreSearchIngestionRegistry extends Context.Service<
   CoreSearchIngestionRegistry,
   readonly CoreSearchIngestionRegistration[]
->()('@app/core-runtime/search/ingestion/CoreSearchIngestionRegistry') {}
+>()('@app/core-runtime/search/ingestion-registry/CoreSearchIngestionRegistry') {}
 
 export const defineCoreSearchIngestionRegistrations = (
   registrations: readonly CoreSearchIngestionRegistration[],

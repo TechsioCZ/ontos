@@ -13,7 +13,8 @@ import { describe, expect, it } from 'effect-rstest';
 
 import {
   currentPricingDecisionRead,
-  resolveCurrentPricingDecision,
+  evaluateCurrentPricingDecision,
+  verifyCurrentPricingDecisionSubject,
 } from '../../src/api/current-pricing-decision.read.ts';
 import type {
   CurrentPricingDecisionWholeAttempt,
@@ -29,6 +30,17 @@ import { calculatePricingUnitPrice } from '../../src/services/unit-price-calcula
 import { makeIssue779Scenario } from './support/issue-779-line-value.fixture.ts';
 import { makeIssue787Snapshot } from './support/issue-787-material-change.fixture.ts';
 import { unitPriceCalculationAttempt } from './support/unit-price-calculation.fixture.ts';
+
+/** The decision the governed Read makes: subject verification in `prepare`, then the evaluation in `finish`. */
+const resolveCurrentPricingDecision = (
+  input: Parameters<typeof verifyCurrentPricingDecisionSubject>[0],
+  trusted: Parameters<typeof verifyCurrentPricingDecisionSubject>[1],
+  verifySubjectAuthority: Parameters<typeof verifyCurrentPricingDecisionSubject>[2],
+  evaluate: Parameters<typeof evaluateCurrentPricingDecision>[3],
+) =>
+  verifyCurrentPricingDecisionSubject(input, trusted, verifySubjectAuthority).pipe(
+    Effect.flatMap((verified) => evaluateCurrentPricingDecision(input, trusted, verified, evaluate)),
+  );
 
 const decodeDecisionRequest = Schema.decodeUnknownSync(CurrentPricingDecisionRequestSchema, {
   onExcessProperty: 'error',
