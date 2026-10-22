@@ -17,9 +17,8 @@ import { isRealVariant, ProductMetadataSchema } from '../../../../../shared/doma
 import { useBlocker } from '@modern-js/plugin-tanstack/runtime';
 import { useEffect, useRef, useState } from 'react';
 import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
-import type { ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
+import type { CategoryTrail, ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type {
-  CategoryNode,
   ProductMetadata,
   ProductUnit,
   ProductVariant,
@@ -50,7 +49,9 @@ export interface ProductDetailViewProps {
   readonly storefrontOrigin?: string;
   readonly canWrite: boolean;
   readonly canMoveStock?: boolean;
-  readonly categories?: readonly CategoryNode[];
+  /** The product's tree category with its path label; null when it has none. */
+  readonly category?: CategoryTrail | null;
+  readonly hasCategoryTree?: boolean;
   readonly movements: readonly StockMovement[];
   readonly onBack: () => void;
   readonly onCommitted: (message: string) => void;
@@ -625,7 +626,8 @@ export const ProductDetailView = ({
   storefrontOrigin,
   canWrite,
   canMoveStock = canWrite,
-  categories = [],
+  category = null,
+  hasCategoryTree = false,
   movements,
   onBack,
   onCommitted,
@@ -789,7 +791,8 @@ export const ProductDetailView = ({
           <Tabs.Content className="py-200" value="content">
             <CatalogContentPanel
               canWrite={canWrite}
-              categories={categories}
+              category={category}
+              hasCategoryTree={hasCategoryTree}
               key={`content-${DateTime.formatIso(product.updatedAt)}`}
               onCommitted={onCommitted}
               onReload={onReload}

@@ -2,52 +2,44 @@ import { DateTime, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { staffCommandAllowed, AKROS_LEGAL_ENTITY_ID } from '../../shared/actions/command-guard.ts';
 import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
-import { CategoryNodeSchema } from '../../shared/domain/merchandise-model.ts';
-import type { CategoryNode } from '../../shared/domain/merchandise-model.ts';
-import { searchCategories } from '../../src/routes/[lang]/provoz/produkty/category-search.ts';
+import { rankCategories } from '../../shared/domain/category-search.ts';
+import type { CategoryCandidate } from '../../shared/domain/category-search.ts';
 import { moveImage } from '../../src/routes/[lang]/provoz/produkty/product-images.ts';
 import { isOrderScopedEdit } from '../../src/services/persistence.service.ts';
 
-const category = (id: string, parentId: string | null, name: string, slug: string): CategoryNode =>
-  Schema.decodeUnknownSync(CategoryNodeSchema)({ hasChildren: false, id, name, parentId, position: 0, slug });
+const category = (id: string, name: string, slug: string, trail: string): CategoryCandidate => ({
+  id,
+  name,
+  slug,
+  trail,
+});
 
 const categories = [
-  category('root', null, 'Šrouby', 'srouby'),
-  category('din912', 'root', 'DIN 912', 'din-912'),
-  category('din933', 'root', 'DIN 933', 'din-933'),
-  category('a2-912', 'din912', 'A 2', 'din-912-a2'),
-  category('a2-933', 'din933', 'A 2', 'din-933-a2'),
-  category('cert', null, 'DIN 912 s certifikátem', 'din-912-s-certifikatem'),
-  category('cert-a2', 'cert', 'A 2 certifikát', 'din-912-cert-a2'),
-  category('din6912', 'root', 'DIN 6912', 'din-6912'),
-  category('a2-6912', 'din6912', 'A 2', 'din-6912-a2'),
+  category('root', 'Šrouby', 'srouby', 'Šrouby'),
+  category('din912', 'DIN 912', 'din-912', 'Šrouby › DIN 912'),
+  category('din933', 'DIN 933', 'din-933', 'Šrouby › DIN 933'),
+  category('a2-912', 'A 2', 'din-912-a2', 'Šrouby › DIN 912 › A 2'),
+  category('a2-933', 'A 2', 'din-933-a2', 'Šrouby › DIN 933 › A 2'),
+  category('cert', 'DIN 912 s certifikátem', 'din-912-s-certifikatem', 'DIN 912 s certifikátem'),
+  category('cert-a2', 'A 2 certifikát', 'din-912-cert-a2', 'DIN 912 s certifikátem › A 2 certifikát'),
+  category('din6912', 'DIN 6912', 'din-6912', 'Šrouby › DIN 6912'),
+  category('a2-6912', 'A 2', 'din-6912-a2', 'Šrouby › DIN 6912 › A 2'),
 ];
-const trails = new Map([
-  ['root', 'Šrouby'],
-  ['din912', 'Šrouby › DIN 912'],
-  ['din933', 'Šrouby › DIN 933'],
-  ['a2-912', 'Šrouby › DIN 912 › A 2'],
-  ['a2-933', 'Šrouby › DIN 933 › A 2'],
-  ['cert', 'DIN 912 s certifikátem'],
-  ['cert-a2', 'DIN 912 s certifikátem › A 2 certifikát'],
-  ['din6912', 'Šrouby › DIN 6912'],
-  ['a2-6912', 'Šrouby › DIN 6912 › A 2'],
-]);
 
 it('finds an ambiguous leaf category by its parent path, diacritics-insensitive', () => {
-  expect(searchCategories(categories, trails, 'din 912 a 2').map((entry) => entry.id)).toEqual([
+  expect(rankCategories(categories, 'din 912 a 2').map((entry) => entry.id)).toEqual([
     'a2-912',
     'cert-a2',
     'a2-6912',
     'cert',
   ]);
-  expect(searchCategories(categories, trails, 'srouby › din 933 › a 2').map((entry) => entry.id)).toEqual(['a2-933']);
+  expect(rankCategories(categories, 'srouby › din 933 › a 2').map((entry) => entry.id)).toEqual(['a2-933']);
   expect(
-    searchCategories(categories, trails, 'a 2')
+    rankCategories(categories, 'a 2')
       .map((entry) => entry.id)
       .slice(0, 3),
   ).toEqual(['a2-6912', 'a2-912', 'a2-933']);
-  expect(searchCategories(categories, trails, '   ')).toEqual([]);
+  expect(rankCategories(categories, '   ')).toEqual([]);
 });
 
 it('reorders gallery images and makes any image the main one', () => {

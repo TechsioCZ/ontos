@@ -4,43 +4,25 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { formatDateTime, SectionCard, surfaceTileClassName } from '@app/admin-ui';
+import { formatDateTime, SectionCard } from '@app/admin-ui';
 import { DateTime } from 'effect';
-import { useMemo, useState } from 'react';
-import type { ProductRecord } from '../../../../../shared/apis/records.ts';
-import type { CategoryNode } from '../../../../../shared/domain/merchandise-model.ts';
+import { useState } from 'react';
+import type { CategoryTrail, ProductRecord } from '../../../../../shared/apis/records.ts';
+import { CategorySearchCombobox } from './category-search-combobox.tsx';
 import { runCommand } from './products-api.ts';
 import { useCommandFailure } from './product-forms.tsx';
-import { CATEGORY_RESULT_LIMIT, searchCategories } from './category-search.ts';
 
 export interface CatalogContentPanelProps {
   readonly canWrite: boolean;
-  readonly categories: readonly CategoryNode[];
+  /** The product's tree category with its path label; null when it has none. */
+  readonly category: CategoryTrail | null;
+  /** The company has a storefront category tree. */
+  readonly hasCategoryTree: boolean;
   readonly onCommitted: (message: string) => void;
   readonly onReload: () => void;
   readonly product: ProductRecord;
   readonly revision: number;
 }
-
-/** Walks parentId up to the root and joins the names root-first. */
-const trailOf = (byId: ReadonlyMap<string, CategoryNode>, id: string): string => {
-  let current = byId.get(id);
-  if (current === undefined) {
-    return '—';
-  }
-  const names: string[] = [];
-  for (let step = 0; current !== undefined && step < 12; step += 1) {
-    names.unshift(current.name);
-    current = current.parentId === null ? undefined : byId.get(current.parentId);
-  }
-  return names.join(' › ');
-};
-
-/** Path label of every category, keyed by id. */
-export const categoryTrails = (categories: readonly CategoryNode[]): ReadonlyMap<string, string> => {
-  const byId = new Map(categories.map((category) => [category.id, category] as const));
-  return new Map(categories.map((category) => [category.id, trailOf(byId, category.id)] as const));
-};
 
 interface ParameterDraft {
   readonly key: number;
@@ -58,15 +40,16 @@ type Flags = {
 
 export const CatalogContentPanel = ({
   canWrite,
-  categories,
+  category,
+  hasCategoryTree,
   onCommitted,
   onReload,
   product,
   revision,
 }: CatalogContentPanelProps) => {
   const failure = useCommandFailure();
-  const [categoryId, setCategoryId] = useState<string | undefined>(product.categoryId);
-  const [categorySearch, setCategorySearch] = useState('');
+  const [picked, setPicked] = useState<CategoryTrail | null>(category);
+  const categoryId = picked?.id ?? product.categoryId;
   const [parameters, setParameters] = useState<readonly ParameterDraft[]>(() =>
     (product.parameters ?? []).map((parameter, index) => ({
       key: index,
@@ -85,13 +68,6 @@ export const CatalogContentPanel = ({
   const [imageAlt, setImageAlt] = useState(product.imageAlt ?? '');
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
-
-  const trails = useMemo(() => categoryTrails(categories), [categories]);
-  const found = useMemo(
-    () => searchCategories(categories, trails, categorySearch),
-    [categories, trails, categorySearch],
-  );
-  const matches = found.slice(0, CATEGORY_RESULT_LIMIT);
 
   const parametersInvalid = parameters.some(
     (parameter) => parameter.label.trim() === '' || parameter.value.trim() === '',
@@ -140,57 +116,32 @@ export const CatalogContentPanel = ({
   return (
     <div className="flex flex-col gap-250">
       <SectionCard title="Kategorie v e-shopu">
-        {categories.length === 0 ? (
+        {hasCategoryTree ? (
+          <>
+            <p className="text-sm">
+              Aktuální kategorie: <strong>{picked?.trail ?? '—'}</strong>
+            </p>
+            {canWrite ? (
+              <CategorySearchCombobox
+                errorMessage="Kategorie se nepodařilo načíst."
+                id="content-category-search"
+                label="Hledat kategorii"
+                loadingMessage="Načítám kategorie…"
+                moreMessage={(shown, total) =>
+                  `Zobrazeno ${shown} z ${total} kategorií. Upřesněte hledání, např. názvem nadřazené kategorie.`
+                }
+                noResultsMessage="Žádná kategorie neodpovídá hledání."
+                onSelect={setPicked}
+                placeholder="název nebo cesta, např. din 912 a 2"
+                retryLabel="Zkusit znovu"
+                selected={picked}
+              />
+            ) : null}
+          </>
+        ) : (
           <p className="text-fg-secondary text-sm">
             Tato firma nemá strom kategorií e-shopu. Název kategorie upravíte na kartě Detail.
           </p>
-        ) : (
-          <>
-            <p className="text-sm">
-              Aktuální kategorie:{' '}
-              <strong>{(categoryId === undefined ? undefined : trails.get(categoryId)) ?? '—'}</strong>
-            </p>
-            {canWrite ? (
-              <FormInput
-                id="content-category-search"
-                label="Hledat kategorii"
-                name="categorySearch"
-                onChange={(event) => setCategorySearch(event.target.value)}
-                placeholder="název nebo cesta, např. din 912 a 2"
-                size="sm"
-                value={categorySearch}
-              />
-            ) : null}
-            {matches.length > 0 ? (
-              <ul className={`${surfaceTileClassName} flex max-h-64 flex-col gap-50 overflow-y-auto p-100`}>
-                {matches.map((category) => (
-                  <li key={category.id}>
-                    <Button
-                      onClick={() => {
-                        setCategoryId(category.id);
-                        setCategorySearch('');
-                      }}
-                      size="sm"
-                      theme="borderless"
-                      type="button"
-                      variant="secondary"
-                    >
-                      {trails.get(category.id) ?? category.name}
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
-            {found.length > CATEGORY_RESULT_LIMIT ? (
-              <p className="text-fg-secondary text-sm">
-                Zobrazeno {CATEGORY_RESULT_LIMIT} z {found.length} kategorií. Upřesněte hledání, např. názvem nadřazené
-                kategorie.
-              </p>
-            ) : null}
-            {categorySearch.trim() !== '' && matches.length === 0 ? (
-              <p className="text-fg-secondary text-sm">Žádná kategorie neodpovídá hledání.</p>
-            ) : null}
-          </>
         )}
       </SectionCard>
 

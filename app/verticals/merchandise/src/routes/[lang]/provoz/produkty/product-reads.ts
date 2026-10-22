@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import { executeRecords } from '../../../../api/records-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
+import { CATEGORY_RESULT_LIMIT } from '../../../../../shared/domain/category-search.ts';
 import type { ProductId } from '../../../../../shared/domain/merchandise-model.ts';
 
 export const SEARCH_DEBOUNCE: Duration.Input = '250 millis';
@@ -48,6 +49,15 @@ export const searchProducts = (search: string, activeOnly: boolean) =>
       ),
     ),
     Effect.map((response) => response.products),
+  );
+
+/** Tree categories whose path matches `text` (blank = top-level ones), best first, with the match count. */
+export const searchCategoryTrails = (text: string) =>
+  correlation('categories').pipe(
+    Effect.flatMap((id) =>
+      executeRecords({ view: { categorySearch: { limit: CATEGORY_RESULT_LIMIT, text }, limit: 0, ordersLimit: 0 } }, id),
+    ),
+    Effect.map((response) => ({ matches: response.categoryMatches ?? [], total: response.categoryMatchTotal ?? 0 })),
   );
 
 /**

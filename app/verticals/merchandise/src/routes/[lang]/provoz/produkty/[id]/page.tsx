@@ -92,7 +92,10 @@ const ProductDetailPageContent = ({ routeParams }: ProductDetailPageProps) => {
           {...(state.response.storefrontOrigin === undefined
             ? {}
             : { storefrontOrigin: state.response.storefrontOrigin })}
-          categories={state.response.categories ?? []}
+          category={
+            state.response.categoryTrails?.find((trail) => trail.id === state.product.categoryId) ?? null
+          }
+          hasCategoryTree={state.response.hasCategoryTree === true}
           key={state.product.id}
           movements={state.response.movements.filter((movement) => movement.productId === state.product.id)}
           onBack={back}

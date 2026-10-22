@@ -257,6 +257,11 @@
         "filters": {
           "allCategories": "All categories",
           "category": "Category",
+          "categorySearch": "Search categories…",
+          "categoryNoResults": "No category matches the search.",
+          "categoryError": "Categories could not be loaded.",
+          "categoryRetry": "Try again",
+          "categoryMore": "Showing {{shown}} of {{total}} categories. Narrow the search, e.g. by a parent category name.",
           "lowStockOnly": "Below minimum only",
           "search": "Search by name or SKU…"
         },

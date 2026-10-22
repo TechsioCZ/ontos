@@ -142,19 +142,19 @@ export const loadCategoryTree = (onOutcome: (outcome: LoadOutcome) => void): voi
   loadView({ includeCategories: true, limit: 0, ordersLimit: 0 }, onOutcome);
 
 /**
- * The category filter's choices without products or orders: the storefront category tree (navigation fields only)
- * and the distinct product category labels with counts, for companies without a tree.
+ * The category filter's choices without products or orders: whether the company has a storefront tree (the filter
+ * then searches it on the server) and, without a tree, the distinct product category labels with counts.
  */
 export const loadCategoryChoices = (onOutcome: (outcome: LoadOutcome) => void): void =>
-  loadView({ includeCategories: true, includeProductCategories: true, limit: 0, ordersLimit: 0 }, onOutcome);
+  loadView({ includeProductCategories: true, limit: 0, ordersLimit: 0 }, onOutcome);
 
 /** One category with its content fields and history, plus the tree around it. */
 export const loadCategoryDetail = (categoryId: string, onOutcome: (outcome: LoadOutcome) => void): void =>
   loadView({ categoryId, includeCategories: true, limit: 0, ordersLimit: 0 }, onOutcome);
 
-/** Detail read: one product with its variants, its own movements and the storefront category tree. */
+/** Detail read: one product with its variants, its own movements and the path label of its tree category. */
 export const loadProductDetail = (productId: string, onOutcome: (outcome: LoadOutcome) => void): void =>
-  loadView({ includeCategories: true, ordersLimit: 0, productId }, onOutcome);
+  loadView({ categoryTrails: true, ordersLimit: 0, productId }, onOutcome);
 
 /** One command against the single merchandise apply-command action. Each call gets its own idempotency key. */
 export const runCommand = (

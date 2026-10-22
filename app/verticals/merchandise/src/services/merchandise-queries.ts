@@ -2,9 +2,11 @@
 // largest unit a read ever materializes is one page of products (with variants only for detail reads).
 import { and, asc, desc, eq, inArray, like, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { Effect, Schema } from 'effect';
-import type { RecordsView, StorefrontCatalogQuery, StorefrontOrderStatus } from '../../shared/apis/records.ts';
+import type { CategoryTrail, RecordsView, StorefrontCatalogQuery, StorefrontOrderStatus } from '../../shared/apis/records.ts';
+import { CATEGORY_RESULT_LIMIT, categoryQueryWords, rankCategories } from '../../shared/domain/category-search.ts';
 import { CatalogChangeSchema } from '../../shared/domain/merchandise-model.ts';
 import type { CategoryNode, Order, OrderStatus, ProductRecord, StockMovement } from '../../shared/domain/merchandise-model.ts';
 import { categories, orders, priceTiers, productVariants, products, stockMovements } from '../database/schema.ts';
@@ -415,6 +417,119 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
 });
 
 // ------------------------------------------------------------------------------------------------ categories
+
+// ------------------------------------------------------------------------------------------------ category search
+
+/** Ancestors joined per category; the trail stops there (as the editor's own trail walk does). */
+const TRAIL_DEPTH = 12;
+/** Candidates PostgreSQL pre-ranks for one search; the server ranks them and returns the best `limit`. */
+const CATEGORY_CANDIDATE_LIMIT = 200;
+const ancestors = Array.from({ length: TRAIL_DEPTH }, (_, index) => alias(categories, `category_ancestor_${index + 1}`));
+/** Root-first path label built in PostgreSQL, so a search never ships the whole tree to the Worker. */
+const trailExpression = sql<string>`concat_ws(' › ', ${sql.join(
+  [...ancestors].reverse().map((ancestor) => ancestor.name),
+  sql`, `,
+)}, ${categories.name})`;
+// Lower case without diacritics, as `foldCategoryText` folds the query (PostgreSQL here has no unaccent).
+const FOLD_FROM = 'áäčďéěëíĺľňóôöŕřšťúůüýžàâçèêîïùûÿåãõñ';
+const FOLD_TO = 'aacdeeeillnooorrstuuuyzaaceeiiuuyaaon';
+const folded = (value: SQL | AnyPgColumn) => sql<string>`translate(lower(${value}), ${FOLD_FROM}, ${FOLD_TO})`;
+
+const depthExpression = sql<number>`${sql.join(
+  ancestors.map((ancestor) => sql`(${ancestor.id} is not null)::int`),
+  sql` + `,
+)} + 1`;
+
+/** Categories of the company matching `condition`, each with its path label, depth and the match count. */
+const withAncestors = (db: MerchandiseDb, scope: StoreScope, condition?: SQL) => {
+  let statement = db
+    .select({
+      depth: depthExpression,
+      id: categories.id,
+      name: categories.name,
+      slug: categories.slug,
+      total: sql<number>`(count(*) over ())::int`,
+      trail: trailExpression,
+    })
+    .from(categories)
+    .$dynamic();
+  let child: { readonly id: AnyPgColumn; readonly legalEntityId: AnyPgColumn; readonly parentId: AnyPgColumn; readonly tenantId: AnyPgColumn } =
+    categories;
+  for (const ancestor of ancestors) {
+    statement = statement.leftJoin(
+      ancestor,
+      and(
+        eq(ancestor.tenantId, child.tenantId),
+        eq(ancestor.legalEntityId, child.legalEntityId),
+        eq(ancestor.id, child.parentId),
+      ),
+    );
+    child = ancestor;
+  }
+  return statement.where(and(whereScope(categories, scope), condition));
+};
+
+/**
+ * Tree categories whose path or slug carries every word of `text` (case- and diacritics-insensitive), best first,
+ * at most `limit`; blank text lists the top-level categories. PostgreSQL filters and pre-ranks (own name carries the
+ * last word, then shallower paths), the Worker ranks those candidates like the editor's picker did.
+ */
+export const searchCategoryTrails = Effect.fn('MerchandiseQueries.searchCategoryTrails')(function* searchCategoryTrails(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  input: { readonly limit?: number | undefined; readonly text: string },
+) {
+  const limit = input.limit ?? CATEGORY_RESULT_LIMIT;
+  const words = categoryQueryWords(input.text);
+  if (words.length === 0) {
+    const roots = yield* query(
+      withAncestors(db, scope, sql`${categories.parentId} is null`)
+        .orderBy(asc(categories.position), asc(categories.ordinal))
+        .limit(limit),
+      'Categories could not be searched',
+    );
+    return { matches: roots.map(({ id, trail }): CategoryTrail => ({ id, trail })), total: roots[0]?.total ?? 0 };
+  }
+  const haystack = folded(sql`${trailExpression} || ' ' || ${categories.slug}`);
+  const lastWord = words.at(-1) ?? '';
+  const rows = yield* query(
+    withAncestors(db, scope, and(...words.map((word) => like(haystack, `%${likeEscape(word)}%`))))
+      .orderBy(
+        desc(sql`position(${lastWord} in ${folded(categories.name)}) > 0`),
+        asc(depthExpression),
+        asc(trailExpression),
+      )
+      .limit(CATEGORY_CANDIDATE_LIMIT),
+    'Categories could not be searched',
+  );
+  const ranked = rankCategories(rows, input.text).slice(0, limit);
+  return { matches: ranked.map(({ id, trail }): CategoryTrail => ({ id, trail })), total: rows[0]?.total ?? 0 };
+});
+
+/** Path labels of these tree categories (unknown ids are left out). */
+export const categoryTrailsOf = Effect.fn('MerchandiseQueries.categoryTrailsOf')(function* categoryTrailsOf(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  ids: readonly string[],
+) {
+  const unique = [...new Set(ids)];
+  if (unique.length === 0) {
+    return [] as readonly CategoryTrail[];
+  }
+  const rows = yield* query(
+    withAncestors(db, scope, inArray(categories.id, unique)),
+    'Category paths could not be read',
+  );
+  return rows.map(({ id, trail }): CategoryTrail => ({ id, trail }));
+});
+
+/** Whether the company has a storefront category tree. */
+export const hasCategoryTree = (db: MerchandiseDb, scope: StoreScope) =>
+  query(
+    db.select({ id: categories.id }).from(categories).where(whereScope(categories, scope)).limit(1),
+    'Categories could not be read',
+  ).pipe(Effect.map((rows) => rows.length > 0));
+
 
 /**
  * The category tree in one query (navigation fields only). `detail` names categories that also carry their

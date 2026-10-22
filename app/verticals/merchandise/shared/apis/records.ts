@@ -80,6 +80,10 @@ const CustomerPartyIdListSchema = Schema.Array(
 ).check(Schema.isMaxLength(500));
 
 /** One distinct product category label (`products.category`) with the number of products filed under it. */
+/** One tree category with its root-first path label (`Šrouby › DIN 912 › A 2`). */
+export const CategoryTrailSchema = Schema.Struct({ id: Schema.String, trail: Schema.String });
+export type CategoryTrail = typeof CategoryTrailSchema.Type;
+
 export const ProductCategoryCountSchema = Schema.Struct({
   name: Schema.String,
   productCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
@@ -96,9 +100,13 @@ export type ProductCategoryCount = typeof ProductCategoryCountSchema.Type;
  * - orders (staff): newest first, paged by `ordersOffset`/`ordersLimit` (default 100, max 250; 0 = none);
  *   `totalOrders` counts all matches.
  *   `taggedProductIds` / `taggedOrderIds` narrow the list to the subjects carrying the selected tag.
- * - categories (`includeCategories`): the navigation tree; with `categoryId` that category also carries its
- *   content and history. `includeProductCategories`: the distinct product category labels with counts (for
- *   companies without a storefront tree; filter with `category`).
+ * - categories (`includeCategories`): the whole navigation tree (thousands of nodes for an imported catalog: only the
+ *   tree editor reads it); with `categoryId` that category also carries its content and history.
+ *   `categorySearch`: tree categories whose path matches the words, best first (`categoryMatches`, at most
+ *   `limit`, `categoryMatchTotal` counts all matches); blank text = the top-level categories. `categoryTrails`:
+ *   the path label of the listed products' categories and of `categoryId` (detail and selected filter value).
+ *   `includeProductCategories`: `hasCategoryTree`, and when the company has no tree the distinct product
+ *   category labels with counts (filter with `category`).
  * Indicators always cover the whole company and ignore filters.
  */
 export const RecordsViewSchema = Schema.Struct({
@@ -108,6 +116,15 @@ export const RecordsViewSchema = Schema.Struct({
   storefrontOrderStatus: Schema.optionalKey(StorefrontOrderStatusLookupSchema),
   /** Staff reads: also return the company's storefront category tree as `categories`. */
   includeCategories: Schema.optionalKey(Schema.Boolean),
+  /** Staff reads: tree categories matching the words of `text` (see above). */
+  categorySearch: Schema.optionalKey(
+    Schema.Struct({
+      limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+      text: Schema.String.check(Schema.isMaxLength(200)),
+    }),
+  ),
+  /** Staff reads: path labels of the listed products' categories and of `categoryId` as `categoryTrails`. */
+  categoryTrails: Schema.optionalKey(Schema.Boolean),
   slug: Schema.optionalKey(Schema.String),
   categoryId: Schema.optionalKey(Schema.String),
   search: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
@@ -192,6 +209,11 @@ export const RecordsResponseSchema = Schema.Struct({
   aiChanges: Schema.optionalKey(MerchandiseAiSliceSchema),
   categories: Schema.optionalKey(Schema.Array(CategoryNodeSchema)),
   productCategories: Schema.optionalKey(Schema.Array(ProductCategoryCountSchema)),
+  /** With `includeProductCategories`: whether the company has a storefront category tree. */
+  hasCategoryTree: Schema.optionalKey(Schema.Boolean),
+  categoryMatches: Schema.optionalKey(Schema.Array(CategoryTrailSchema)),
+  categoryMatchTotal: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  categoryTrails: Schema.optionalKey(Schema.Array(CategoryTrailSchema)),
   homepageFeaturedProductIds: Schema.optionalKey(Schema.Array(Schema.String)),
   total: Schema.optionalKey(Schema.Int),
   totalOrders: Schema.optionalKey(Schema.Int),

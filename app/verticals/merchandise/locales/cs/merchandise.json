@@ -257,6 +257,11 @@
         "filters": {
           "allCategories": "Všechny kategorie",
           "category": "Kategorie",
+          "categorySearch": "Hledat kategorii…",
+          "categoryNoResults": "Hledání neodpovídá žádná kategorie.",
+          "categoryError": "Kategorie se nepodařilo načíst.",
+          "categoryRetry": "Zkusit znovu",
+          "categoryMore": "Zobrazeno {{shown}} z {{total}} kategorií. Upřesněte hledání, např. názvem nadřazené kategorie.",
           "lowStockOnly": "Jen pod minimem",
           "search": "Hledat podle názvu nebo SKU…"
         },

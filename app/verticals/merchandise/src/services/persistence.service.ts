@@ -49,12 +49,15 @@ import { applyMerchandiseAiCommand, isMerchandiseAiCommand } from './ai-changes.
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
 import { assignCategory, updateCategoryCommand, withContentHistory } from './catalog-content.ts';
 import {
+  categoryTrailsOf,
   categoryTree,
+  hasCategoryTree,
   indicators,
   orderPage,
   productCategoryCounts,
   ordersByClientRequest,
   productMovements,
+  searchCategoryTrails,
   staffProducts,
   storefrontOrderStatus,
   storefrontProducts,
@@ -1723,10 +1726,28 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
               Effect.mapError(unavailable),
             )
           : undefined;
+      const hasTree =
+        staff && (view.includeProductCategories === true || view.categoryTrails === true)
+          ? tree === undefined
+            ? yield* hasCategoryTree(transaction, store).pipe(Effect.mapError(unavailable))
+            : tree.length > 0
+          : undefined;
       // Product category labels stand in for the storefront tree; a company with a tree filters by the tree.
       const productCategories =
-        staff && view.includeProductCategories === true && (tree === undefined || tree.length === 0)
+        staff && view.includeProductCategories === true && hasTree === false
           ? yield* productCategoryCounts(transaction, store).pipe(Effect.mapError(unavailable))
+          : undefined;
+      // Pickers search the tree in PostgreSQL and lists label only their own categories: no whole tree on the wire.
+      const categorySearch =
+        staff && view.categorySearch !== undefined
+          ? yield* searchCategoryTrails(transaction, store, view.categorySearch).pipe(Effect.mapError(unavailable))
+          : undefined;
+      const categoryTrails =
+        staff && view.categoryTrails === true
+          ? yield* categoryTrailsOf(transaction, store, [
+              ...page.products.flatMap((product) => (product.categoryId === undefined ? [] : [product.categoryId])),
+              ...(view.categoryId === undefined ? [] : [view.categoryId]),
+            ]).pipe(Effect.mapError(unavailable))
           : undefined;
       // The storefront view never reveals staff totals: its indicators cover only what the view returns.
       const totals = staff
@@ -1758,6 +1779,11 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         revision: head.revision,
         ...(tree === undefined ? {} : { categories: [...tree] }),
         ...(productCategories === undefined ? {} : { productCategories: [...productCategories] }),
+        ...(hasTree === undefined ? {} : { hasCategoryTree: hasTree }),
+        ...(categorySearch === undefined
+          ? {}
+          : { categoryMatches: [...categorySearch.matches], categoryMatchTotal: categorySearch.total }),
+        ...(categoryTrails === undefined ? {} : { categoryTrails: [...categoryTrails] }),
       };
       return storefrontOrigin === undefined ? response : { ...response, storefrontOrigin };
     });
