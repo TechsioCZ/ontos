@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Build-time Modern config: Node's connect dev middleware, Rspack resolution and file URLs run outside any Effect runtime, and the effect barrel cannot load under jiti; expires: 2027-03-31.
 import { readFileSync } from 'node:fs';
 import { builtinModules, createRequire } from 'node:module';
 import path from 'node:path';
@@ -13,6 +14,7 @@ import {
   OptionFromUndefinedOr,
   Trim,
   check,
+  decodeResult,
   decodeTo,
   decodeUnknownResult,
   isBetween,
@@ -220,8 +222,9 @@ const DEVELOPMENT_CONTRACT_ARTIFACTS: ReadonlySet<string> = new Set([
 ]);
 
 /** Serves the unit's prepared development module contract and its MCP tool catalog ahead of locale redirects. */
-export const createDevelopmentContractMiddleware = (moduleUrl: string) => {
-  return ({ unshift }: DevelopmentMiddlewareSetup) => {
+export const createDevelopmentContractMiddleware =
+  (moduleUrl: string) =>
+  ({ unshift }: DevelopmentMiddlewareSetup) => {
     unshift((request, response, next) => {
       const requestPath = request.url?.split('?', 1)[0];
       if (requestPath === undefined || !DEVELOPMENT_CONTRACT_ARTIFACTS.has(requestPath)) {
@@ -235,7 +238,6 @@ export const createDevelopmentContractMiddleware = (moduleUrl: string) => {
       response.end(contract);
     });
   };
-};
 
 export const createCloudflareWorkerSecurity = () => ({
   contentSecurityPolicy: {
@@ -272,9 +274,9 @@ export const createCloudflareWorkerSecurity = () => ({
 
 const requiredCloudflareBuildValue = (envValue: ModernBuildContext['envValue'], name: string): string =>
   getResultOrThrow(
-    decodeUnknownResult(
-      Trim.pipe(check(isMinLength(1, { message: `${name} is required for a Cloudflare Worker build` }))),
-    )(envValue(name) ?? ''),
+    decodeResult(Trim.pipe(check(isMinLength(1, { message: `${name} is required for a Cloudflare Worker build` }))))(
+      envValue(name) ?? '',
+    ),
   );
 
 /**
