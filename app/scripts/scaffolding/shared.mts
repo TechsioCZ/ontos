@@ -55,6 +55,8 @@ export const GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START = '// <generated-governed-h
 export const GOVERNED_HTTP_HANDLER_IMPORT_SLOT_END = '// </generated-governed-http-handler-imports>';
 export const GOVERNED_HTTP_HANDLER_LAYER_SLOT_START = '// <generated-governed-http-handler-layers>';
 export const GOVERNED_HTTP_HANDLER_LAYER_SLOT_END = '// </generated-governed-http-handler-layers>';
+export const isGovernedHttpHandlerLayerSlotEntry = (candidate: string): boolean =>
+  /^[A-Za-z][A-Za-z0-9]*(?:Read|Action)ApiLive,$/u.test(candidate);
 export const GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START = '// <generated-governed-http-handler-support-imports>';
 export const GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END = '// </generated-governed-http-handler-support-imports>';
 export const GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START = '// <generated-governed-http-handler-support-layers>';

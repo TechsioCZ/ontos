@@ -8,6 +8,7 @@ import path from 'node:path';
 import {
   decodeActionRegistration,
   inspectAction,
+  patchRuntimeRoot,
   renderActionHttpClient,
   renderActionHttpContract,
   renderActionHttpProblems,
@@ -271,3 +272,47 @@ it.live(
     Effect.provide(NodeServices.layer),
   ),
 );
+
+it('publishes bare Action groups and exposes the injected runtime through request services exactly once', () => {
+  const source = `
+import { pricingPolicyReadRuntimeLive } from './pricing-policy-production-layers.ts';
+const productionReadRuntimeLive = pricingPolicyReadRuntimeLive.pipe(Layer.provide(DatabaseConfigLive));
+type PricingPolicyApiRuntimeArguments = readonly [
+  readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
+];
+export const makePricingPolicyApiRuntime = (...args: PricingPolicyApiRuntimeArguments) => {
+  const [governedReadRuntimeLive, gatewayAssertionRedemption] = args;
+  const handlersLive = Layer.mergeAll(
+    // <generated-governed-http-handler-layers>
+    currentRatesReadApiLive,
+    // </generated-governed-http-handler-layers>
+  );
+  const requestServicesLive = Layer.mergeAll(governedReadRuntimeLive, gatewayAssertionRedemption).pipe(Layer.orDie);
+  return assembleEffectBffRuntime({ api, handlers: handlersLive, services: requestServicesLive });
+};
+const apiRuntime = makePricingPolicyApiRuntime(
+  productionReadRuntimeLive,
+);
+export default apiRuntime;
+`;
+  const generated = patchRuntimeRoot(source, vertical, 'changeRateActionApiLive');
+  expect(generated).toMatch(
+    /currentRatesReadApiLive,\s*changeRateActionApiLive,|changeRateActionApiLive,\s*currentRatesReadApiLive,/u,
+  );
+  expect(generated).not.toContain('changeRateActionApiLive.pipe(');
+  expect(generated).toContain(
+    'Layer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive, gatewayAssertionRedemption)',
+  );
+  expect(generated).toContain('services: requestServicesLive');
+  expect(patchRuntimeRoot(generated, vertical, 'changeRateActionApiLive')).toBe(generated);
+  expect(() =>
+    patchRuntimeRoot(
+      source.replace(
+        'currentRatesReadApiLive,',
+        'currentRatesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),',
+      ),
+      vertical,
+      'changeRateActionApiLive',
+    ),
+  ).toThrow(/unsupported content/u);
+});

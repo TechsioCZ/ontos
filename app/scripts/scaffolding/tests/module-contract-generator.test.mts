@@ -108,11 +108,9 @@ const writePinnedEffectApi = (root: string, slug: string): Effect.Effect<void, u
     yield* write(
       root,
       `verticals/${slug}/api/index.ts`,
-      `const fixtureLayer = HttpApiBuilder.group(fixtureApi, 'fixture', handlers => handlers);
-const layer = HttpApiBuilder.layer(fixtureApi).pipe(
-  Layer.provide(fixtureLayer),
-) satisfies EffectRuntimeLayer;
-export default defineEffectBff({ api: fixtureApi, layer });
+      `import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
+const fixtureLayer = HttpApiBuilder.group(fixtureApi, 'fixture', handlers => handlers);
+export default assembleEffectBffRuntime({ api: fixtureApi, handlers: fixtureLayer, services: Layer.empty });
 `,
     );
   });
@@ -685,15 +683,18 @@ it.live(
         yield* write(
           root,
           PROPERTY_RUNTIME_PATH,
-          `const layer = HttpApiBuilder.layer(fixtureApi).pipe(
-  identity,
-) satisfies EffectRuntimeLayer;
-export default defineEffectBff({ api: fixtureApi, layer });
+          `import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
+export default assembleEffectBffRuntime({ api: fixtureApi, handlers: fixtureHandlers, services: ownerServicesLive });
 `,
         );
         yield* scaffold(root);
         const generated = yield* Effect.promise(() => readFile(path.join(root, PROPERTY_RUNTIME_PATH), 'utf-8'));
-        expect(generated).toMatch(/GovernedReadLayer\.provide\(governedReadApiHandlersLive\)/u);
+        expect(generated).toContain(
+          'handlers: GovernedReadLayer.mergeAll(fixtureHandlers, governedReadApiHandlersLive)',
+        );
+        expect(generated).toContain(
+          'services: GovernedReadLayer.mergeAll(ownerServicesLive, governedRequestServicesLive)',
+        );
         expect(generated).toMatch(/GovernedReadLayer\.orDie/u);
         expect(generated).not.toMatch(/\bLayer\./u);
       }),
@@ -734,11 +735,38 @@ export default apiRuntime;
         expect(shared).toContain("export const fixtureFoundationApi = HttpApi.make('FixtureFoundation')");
         expect(shared).toContain('export const governedHttpApi = fixtureApi;');
         expect(runtime).toContain('GovernedReadLayer.mergeAll(originalHandlers, governedReadApiHandlersLive)');
-        expect(runtime).toContain('GovernedReadLayer.provide(governedApplicationCompositionSourceLive)');
-        expect(runtime).toContain('GovernedReadLayer.provide(GovernedDatabaseConfigLive)');
+        expect(runtime).toContain('GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive)');
+        expect(runtime).toContain('GovernedReadLayer.provideMerge(GovernedDatabaseConfigLive)');
         expect(runtime).toContain('GovernedReadLayer.orDie');
         expect(runtime).not.toContain('const layer = HttpApiBuilder.layer(');
         expect(hasValidGovernedHttpCompositionRoot(shared, runtime)).toBe(true);
+        expect(runtime).toContain(
+          'const governedRequestServicesLive = GovernedReadLayer.mergeAll(governedReadRuntimeLive).pipe(',
+        );
+        expect(runtime).not.toContain('export const governedRequestServicesLive');
+        const supportStart = '// <generated-governed-http-handler-support-layers>';
+        const supportEnd = '// </generated-governed-http-handler-support-layers>';
+        const supportEntry = 'GovernedReadLayer.provideMerge(ownerServicesLive),';
+        const supported = runtime.replace(supportStart, `${supportStart}\n  ${supportEntry}`);
+        expect(hasValidGovernedHttpCompositionRoot(shared, supported)).toBe(true);
+        const supportSlot = supported.slice(
+          supported.indexOf(supportStart),
+          supported.indexOf(supportEnd) + supportEnd.length,
+        );
+        const detached = supported.replace(supportSlot, '');
+        for (const invalid of [
+          supported.replace(supportEntry, 'GovernedReadLayer.provide(ownerServicesLive),'),
+          supported.replace('const governedRequestServicesLive =', 'export const governedRequestServicesLive ='),
+          supported.replace('services: governedRequestServicesLive.pipe(', 'services: unrelatedServicesLive.pipe('),
+          detached.replace('GovernedReadLayer.empty,', `GovernedReadLayer.empty,\n${supportSlot}`),
+          `${detached}\nconst disconnectedServices = GovernedReadLayer.mergeAll(governedReadRuntimeLive).pipe(\n${supportSlot}\n);`,
+          runtime.replace(
+            '// <generated-governed-http-handler-layers>',
+            '// <generated-governed-http-handler-layers>\n stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),',
+          ),
+        ]) {
+          expect(hasValidGovernedHttpCompositionRoot(shared, invalid)).toBe(false);
+        }
         expect(
           hasValidGovernedHttpCompositionRoot(shared, runtime.replace(', governedReadApiHandlersLive)', ')')),
         ).toBe(false);

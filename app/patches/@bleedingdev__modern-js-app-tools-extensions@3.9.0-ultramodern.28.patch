@@ -3850,3 +3850,343 @@ diff --git a/src/templates/cloudflare-entry.006-fetch-handler.mjs b/src/template
      const corsPreflightResponse = await createCorsPreflightResponse(
        request,
        env,
+diff --git a/dist/cjs/templates/cloudflare-entry.005-worker-dispatch.mjs b/dist/cjs/templates/cloudflare-entry.005-worker-dispatch.mjs
+index 655f1b2..3a60636 100644
+--- a/dist/cjs/templates/cloudflare-entry.005-worker-dispatch.mjs
++++ b/dist/cjs/templates/cloudflare-entry.005-worker-dispatch.mjs
+@@ -237,11 +237,12 @@ function createEffectBffDispatcherErrorResponse(bff, error) {
+   );
+ }
+ 
+-// workerd binds every I/O object (sockets, timers, pending promises) to the request that
+-// created it, so an Effect runtime built while serving one request cannot serve the next: a
+-// pooled PostgreSQL connection or a cached in-flight effect from an earlier request never
+-// completes. Each BFF request therefore builds its own dispatcher and disposes it once the
+-// response body has been delivered; platform pools such as Hyperdrive keep connections warm.
++// One Effect BFF dispatcher serves every request of this isolate: the api's router, handlers,
++// codecs and OpenAPI document are built once. workerd binds every I/O object (sockets, timers,
++// pending promises) to the request that created it, so the module's services (database pool,
++// clients) are built by the dispatcher for each request and released after its response body.
++let isolateEffectBffDispatcher;
++
+ async function createEffectBffDispatcher(bff, runtime) {
+   if (
+     typeof bff.dispatcherExport !== 'string' ||
+@@ -325,21 +326,19 @@ async function createEffectBffDispatcher(bff, runtime) {
+   return effectDispatcher;
+ }
+ 
+-function disposeEffectBffDispatcherAfterResponse(response, dispatcher, ctx) {
+-  if (response.body === null) {
+-    ctx.waitUntil(dispatcher.dispose());
+-    return response;
++// Each request awaits only a dispatcher it created itself (never another request's pending
++// promise); concurrent first requests may both build one, and the later is disposed.
++async function isolateEffectBffDispatcherFor(bff, runtime, ctx) {
++  if (isolateEffectBffDispatcher !== undefined) {
++    return isolateEffectBffDispatcher;
+   }
+-  const { readable, writable } = new TransformStream();
+-  // The body pipe settles when the client has the whole body or the stream failed; a failure
+-  // already reached the client through `readable`, so it only has to release the runtime here.
+-  ctx.waitUntil(
+-    response.body
+-      .pipeTo(writable)
+-      .catch(() => undefined)
+-      .then(() => dispatcher.dispose()),
+-  );
+-  return new Response(readable, response);
++  const created = await createEffectBffDispatcher(bff, runtime);
++  if (isolateEffectBffDispatcher === undefined) {
++    isolateEffectBffDispatcher = created;
++  } else {
++    ctx.waitUntil(created.dispose());
++  }
++  return isolateEffectBffDispatcher;
+ }
+ 
+ async function dispatchBffRequest(request, env, ctx) {
+@@ -387,23 +386,15 @@ async function dispatchBffRequest(request, env, ctx) {
+     let effectDispatcher;
+ 
+     try {
+-      effectDispatcher = await createEffectBffDispatcher(bff, runtime);
++      effectDispatcher = await isolateEffectBffDispatcherFor(bff, runtime, ctx);
+     } catch (error) {
+       return createEffectBffDispatcherErrorResponse(bff, error);
+     }
+ 
+-    let response;
+-    try {
+-      response = await effectDispatcher.dispatch(canonicalRequest, { env });
+-    } catch (error) {
+-      ctx.waitUntil(effectDispatcher.dispose());
+-      throw error;
+-    }
+-    return disposeEffectBffDispatcherAfterResponse(
+-      response,
+-      effectDispatcher,
+-      ctx,
+-    );
++    return effectDispatcher.dispatch(canonicalRequest, {
++      env,
++      waitUntil: (promise) => ctx.waitUntil(promise),
++    });
+   }
+ 
+   const directHandler =
+diff --git a/dist/esm/templates/cloudflare-entry.005-worker-dispatch.mjs b/dist/esm/templates/cloudflare-entry.005-worker-dispatch.mjs
+index 655f1b2..3a60636 100644
+--- a/dist/esm/templates/cloudflare-entry.005-worker-dispatch.mjs
++++ b/dist/esm/templates/cloudflare-entry.005-worker-dispatch.mjs
+@@ -237,11 +237,12 @@ function createEffectBffDispatcherErrorResponse(bff, error) {
+   );
+ }
+ 
+-// workerd binds every I/O object (sockets, timers, pending promises) to the request that
+-// created it, so an Effect runtime built while serving one request cannot serve the next: a
+-// pooled PostgreSQL connection or a cached in-flight effect from an earlier request never
+-// completes. Each BFF request therefore builds its own dispatcher and disposes it once the
+-// response body has been delivered; platform pools such as Hyperdrive keep connections warm.
++// One Effect BFF dispatcher serves every request of this isolate: the api's router, handlers,
++// codecs and OpenAPI document are built once. workerd binds every I/O object (sockets, timers,
++// pending promises) to the request that created it, so the module's services (database pool,
++// clients) are built by the dispatcher for each request and released after its response body.
++let isolateEffectBffDispatcher;
++
+ async function createEffectBffDispatcher(bff, runtime) {
+   if (
+     typeof bff.dispatcherExport !== 'string' ||
+@@ -325,21 +326,19 @@ async function createEffectBffDispatcher(bff, runtime) {
+   return effectDispatcher;
+ }
+ 
+-function disposeEffectBffDispatcherAfterResponse(response, dispatcher, ctx) {
+-  if (response.body === null) {
+-    ctx.waitUntil(dispatcher.dispose());
+-    return response;
++// Each request awaits only a dispatcher it created itself (never another request's pending
++// promise); concurrent first requests may both build one, and the later is disposed.
++async function isolateEffectBffDispatcherFor(bff, runtime, ctx) {
++  if (isolateEffectBffDispatcher !== undefined) {
++    return isolateEffectBffDispatcher;
+   }
+-  const { readable, writable } = new TransformStream();
+-  // The body pipe settles when the client has the whole body or the stream failed; a failure
+-  // already reached the client through `readable`, so it only has to release the runtime here.
+-  ctx.waitUntil(
+-    response.body
+-      .pipeTo(writable)
+-      .catch(() => undefined)
+-      .then(() => dispatcher.dispose()),
+-  );
+-  return new Response(readable, response);
++  const created = await createEffectBffDispatcher(bff, runtime);
++  if (isolateEffectBffDispatcher === undefined) {
++    isolateEffectBffDispatcher = created;
++  } else {
++    ctx.waitUntil(created.dispose());
++  }
++  return isolateEffectBffDispatcher;
+ }
+ 
+ async function dispatchBffRequest(request, env, ctx) {
+@@ -387,23 +386,15 @@ async function dispatchBffRequest(request, env, ctx) {
+     let effectDispatcher;
+ 
+     try {
+-      effectDispatcher = await createEffectBffDispatcher(bff, runtime);
++      effectDispatcher = await isolateEffectBffDispatcherFor(bff, runtime, ctx);
+     } catch (error) {
+       return createEffectBffDispatcherErrorResponse(bff, error);
+     }
+ 
+-    let response;
+-    try {
+-      response = await effectDispatcher.dispatch(canonicalRequest, { env });
+-    } catch (error) {
+-      ctx.waitUntil(effectDispatcher.dispose());
+-      throw error;
+-    }
+-    return disposeEffectBffDispatcherAfterResponse(
+-      response,
+-      effectDispatcher,
+-      ctx,
+-    );
++    return effectDispatcher.dispatch(canonicalRequest, {
++      env,
++      waitUntil: (promise) => ctx.waitUntil(promise),
++    });
+   }
+ 
+   const directHandler =
+diff --git a/dist/esm-node/templates/cloudflare-entry.005-worker-dispatch.mjs b/dist/esm-node/templates/cloudflare-entry.005-worker-dispatch.mjs
+index 655f1b2..3a60636 100644
+--- a/dist/esm-node/templates/cloudflare-entry.005-worker-dispatch.mjs
++++ b/dist/esm-node/templates/cloudflare-entry.005-worker-dispatch.mjs
+@@ -237,11 +237,12 @@ function createEffectBffDispatcherErrorResponse(bff, error) {
+   );
+ }
+ 
+-// workerd binds every I/O object (sockets, timers, pending promises) to the request that
+-// created it, so an Effect runtime built while serving one request cannot serve the next: a
+-// pooled PostgreSQL connection or a cached in-flight effect from an earlier request never
+-// completes. Each BFF request therefore builds its own dispatcher and disposes it once the
+-// response body has been delivered; platform pools such as Hyperdrive keep connections warm.
++// One Effect BFF dispatcher serves every request of this isolate: the api's router, handlers,
++// codecs and OpenAPI document are built once. workerd binds every I/O object (sockets, timers,
++// pending promises) to the request that created it, so the module's services (database pool,
++// clients) are built by the dispatcher for each request and released after its response body.
++let isolateEffectBffDispatcher;
++
+ async function createEffectBffDispatcher(bff, runtime) {
+   if (
+     typeof bff.dispatcherExport !== 'string' ||
+@@ -325,21 +326,19 @@ async function createEffectBffDispatcher(bff, runtime) {
+   return effectDispatcher;
+ }
+ 
+-function disposeEffectBffDispatcherAfterResponse(response, dispatcher, ctx) {
+-  if (response.body === null) {
+-    ctx.waitUntil(dispatcher.dispose());
+-    return response;
++// Each request awaits only a dispatcher it created itself (never another request's pending
++// promise); concurrent first requests may both build one, and the later is disposed.
++async function isolateEffectBffDispatcherFor(bff, runtime, ctx) {
++  if (isolateEffectBffDispatcher !== undefined) {
++    return isolateEffectBffDispatcher;
+   }
+-  const { readable, writable } = new TransformStream();
+-  // The body pipe settles when the client has the whole body or the stream failed; a failure
+-  // already reached the client through `readable`, so it only has to release the runtime here.
+-  ctx.waitUntil(
+-    response.body
+-      .pipeTo(writable)
+-      .catch(() => undefined)
+-      .then(() => dispatcher.dispose()),
+-  );
+-  return new Response(readable, response);
++  const created = await createEffectBffDispatcher(bff, runtime);
++  if (isolateEffectBffDispatcher === undefined) {
++    isolateEffectBffDispatcher = created;
++  } else {
++    ctx.waitUntil(created.dispose());
++  }
++  return isolateEffectBffDispatcher;
+ }
+ 
+ async function dispatchBffRequest(request, env, ctx) {
+@@ -387,23 +386,15 @@ async function dispatchBffRequest(request, env, ctx) {
+     let effectDispatcher;
+ 
+     try {
+-      effectDispatcher = await createEffectBffDispatcher(bff, runtime);
++      effectDispatcher = await isolateEffectBffDispatcherFor(bff, runtime, ctx);
+     } catch (error) {
+       return createEffectBffDispatcherErrorResponse(bff, error);
+     }
+ 
+-    let response;
+-    try {
+-      response = await effectDispatcher.dispatch(canonicalRequest, { env });
+-    } catch (error) {
+-      ctx.waitUntil(effectDispatcher.dispose());
+-      throw error;
+-    }
+-    return disposeEffectBffDispatcherAfterResponse(
+-      response,
+-      effectDispatcher,
+-      ctx,
+-    );
++    return effectDispatcher.dispatch(canonicalRequest, {
++      env,
++      waitUntil: (promise) => ctx.waitUntil(promise),
++    });
+   }
+ 
+   const directHandler =
+diff --git a/src/templates/cloudflare-entry.005-worker-dispatch.mjs b/src/templates/cloudflare-entry.005-worker-dispatch.mjs
+index 655f1b2..3a60636 100644
+--- a/src/templates/cloudflare-entry.005-worker-dispatch.mjs
++++ b/src/templates/cloudflare-entry.005-worker-dispatch.mjs
+@@ -237,11 +237,12 @@ function createEffectBffDispatcherErrorResponse(bff, error) {
+   );
+ }
+ 
+-// workerd binds every I/O object (sockets, timers, pending promises) to the request that
+-// created it, so an Effect runtime built while serving one request cannot serve the next: a
+-// pooled PostgreSQL connection or a cached in-flight effect from an earlier request never
+-// completes. Each BFF request therefore builds its own dispatcher and disposes it once the
+-// response body has been delivered; platform pools such as Hyperdrive keep connections warm.
++// One Effect BFF dispatcher serves every request of this isolate: the api's router, handlers,
++// codecs and OpenAPI document are built once. workerd binds every I/O object (sockets, timers,
++// pending promises) to the request that created it, so the module's services (database pool,
++// clients) are built by the dispatcher for each request and released after its response body.
++let isolateEffectBffDispatcher;
++
+ async function createEffectBffDispatcher(bff, runtime) {
+   if (
+     typeof bff.dispatcherExport !== 'string' ||
+@@ -325,21 +326,19 @@ async function createEffectBffDispatcher(bff, runtime) {
+   return effectDispatcher;
+ }
+ 
+-function disposeEffectBffDispatcherAfterResponse(response, dispatcher, ctx) {
+-  if (response.body === null) {
+-    ctx.waitUntil(dispatcher.dispose());
+-    return response;
++// Each request awaits only a dispatcher it created itself (never another request's pending
++// promise); concurrent first requests may both build one, and the later is disposed.
++async function isolateEffectBffDispatcherFor(bff, runtime, ctx) {
++  if (isolateEffectBffDispatcher !== undefined) {
++    return isolateEffectBffDispatcher;
+   }
+-  const { readable, writable } = new TransformStream();
+-  // The body pipe settles when the client has the whole body or the stream failed; a failure
+-  // already reached the client through `readable`, so it only has to release the runtime here.
+-  ctx.waitUntil(
+-    response.body
+-      .pipeTo(writable)
+-      .catch(() => undefined)
+-      .then(() => dispatcher.dispose()),
+-  );
+-  return new Response(readable, response);
++  const created = await createEffectBffDispatcher(bff, runtime);
++  if (isolateEffectBffDispatcher === undefined) {
++    isolateEffectBffDispatcher = created;
++  } else {
++    ctx.waitUntil(created.dispose());
++  }
++  return isolateEffectBffDispatcher;
+ }
+ 
+ async function dispatchBffRequest(request, env, ctx) {
+@@ -387,23 +386,15 @@ async function dispatchBffRequest(request, env, ctx) {
+     let effectDispatcher;
+ 
+     try {
+-      effectDispatcher = await createEffectBffDispatcher(bff, runtime);
++      effectDispatcher = await isolateEffectBffDispatcherFor(bff, runtime, ctx);
+     } catch (error) {
+       return createEffectBffDispatcherErrorResponse(bff, error);
+     }
+ 
+-    let response;
+-    try {
+-      response = await effectDispatcher.dispatch(canonicalRequest, { env });
+-    } catch (error) {
+-      ctx.waitUntil(effectDispatcher.dispose());
+-      throw error;
+-    }
+-    return disposeEffectBffDispatcherAfterResponse(
+-      response,
+-      effectDispatcher,
+-      ctx,
+-    );
++    return effectDispatcher.dispatch(canonicalRequest, {
++      env,
++      waitUntil: (promise) => ctx.waitUntil(promise),
++    });
+   }
+ 
+   const directHandler =

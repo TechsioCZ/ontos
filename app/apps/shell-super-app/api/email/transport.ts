@@ -1,5 +1,5 @@
 // @effect-diagnostics *:off
-import { DatabaseConfig, DatabaseConfigLive, ContextAccess, LegalEntityContext } from '@app/core-runtime';
+import { DatabaseConfig, DatabaseConfigLive } from '@app/core-runtime';
 import { dispatchEmailBatch } from '@app/email-delivery/dispatcher';
 import { emailDeliverySources } from '@app/email-delivery/contract';
 import type { EmailDeliverySource } from '@app/email-delivery/contract';
@@ -56,72 +56,62 @@ export const parseDeliveryQuery = (url: URL) => {
 export const isDispatchAuthorized = (headers: Headers, secret: string | undefined): boolean =>
   secret !== undefined && secret.trim() !== '' && headers.get('authorization') === `Bearer ${secret}`;
 
-export const EmailTransportLive = Layer.unwrap(
+const receipts = (request: Request) =>
   Effect.gen(function* () {
-    const auth = yield* AuthenticationService;
-    const contextAccess = yield* ContextAccess;
-    const legalEntityContext = yield* LegalEntityContext;
-    const receipts = (request: Request) =>
-      Effect.gen(function* () {
-        const query = parseDeliveryQuery(new URL(request.url));
-        if (query === null) return json({ error: 'invalid_query' }, 400);
-        let scope: DeliveryReadScope;
-        let cookies: readonly string[] = [];
-        if (query.recipient !== null) {
-          scope = { kind: 'buyer', recipient: query.recipient };
-        } else {
-          const session = yield* auth
-            .resolveShellContext(request.headers)
-            .pipe(
-              Effect.provideService(ContextAccess, contextAccess),
-              Effect.provideService(LegalEntityContext, legalEntityContext),
-            );
-          cookies = session.setCookieHeaders;
-          if (session.state !== 'authenticated') return json({ error: 'authentication_required' }, 401, cookies);
-          scope = {
-            kind: 'company',
-            legalEntityId: session.identity.legalEntityId,
-            principalId: session.identity.principalId,
-            tenantId: session.identity.tenantId,
-          };
-        }
-        if (
-          query.source === 'facility-agenda' &&
-          (scope.kind !== 'company' ||
-            query.subjectNumbers.length > 0 ||
-            query.subjectIds.some((id) => !id.startsWith(`${scope.principalId}:`)))
-        ) {
-          return json({ error: 'forbidden' }, 403, cookies);
-        }
-        const deliveries = yield* listDeliveries({ ...query, scope }).pipe(Effect.provide(EmailDatabaseLive));
-        return json({ deliveries }, 200, cookies);
-      });
-    const dispatch = (request: Request) => {
-      if (!isDispatchAuthorized(request.headers, emailEnvironment['ONTOS_EMAIL_DISPATCH_SECRET']))
-        return Effect.succeed(json({ error: 'unauthorized' }, 401));
-      return dispatchEmailBatch.pipe(
-        Effect.provide(EmailDatabaseLive),
-        Effect.map((result) => json(result, result.configured ? 200 : 503)),
-      );
-    };
-    const route = (
-      method: 'GET' | 'POST',
-      path: `/${string}`,
-      handler: (request: Request) => Effect.Effect<Response, unknown>,
-    ) =>
-      HttpRouter.add(method, path, (request) =>
-        HttpServerRequest.toWeb(request).pipe(
-          Effect.flatMap(handler),
-          Effect.catchCause(() => Effect.succeed(json({ error: 'email_unavailable' }, 503))),
-          Effect.map((response) =>
-            HttpServerResponse.raw(response, { status: response.status, statusText: response.statusText }),
-          ),
-        ),
-      );
-    return Layer.mergeAll(
-      route('GET', '/email/provider', () => Effect.succeed(json(emailTransport.provider))),
-      route('GET', '/email/deliveries', receipts),
-      route('POST', '/email/dispatch', dispatch),
-    );
-  }),
+    const query = parseDeliveryQuery(new URL(request.url));
+    if (query === null) return json({ error: 'invalid_query' }, 400);
+    let scope: DeliveryReadScope;
+    let cookies: readonly string[] = [];
+    if (query.recipient !== null) {
+      scope = { kind: 'buyer', recipient: query.recipient };
+    } else {
+      const auth = yield* AuthenticationService;
+      const session = yield* auth.resolveShellContext(request.headers);
+      cookies = session.setCookieHeaders;
+      if (session.state !== 'authenticated') return json({ error: 'authentication_required' }, 401, cookies);
+      scope = {
+        kind: 'company',
+        legalEntityId: session.identity.legalEntityId,
+        principalId: session.identity.principalId,
+        tenantId: session.identity.tenantId,
+      };
+    }
+    if (
+      query.source === 'facility-agenda' &&
+      (scope.kind !== 'company' ||
+        query.subjectNumbers.length > 0 ||
+        query.subjectIds.some((id) => !id.startsWith(`${scope.principalId}:`)))
+    ) {
+      return json({ error: 'forbidden' }, 403, cookies);
+    }
+    const deliveries = yield* listDeliveries({ ...query, scope }).pipe(Effect.provide(EmailDatabaseLive));
+    return json({ deliveries }, 200, cookies);
+  });
+const dispatch = (request: Request) => {
+  if (!isDispatchAuthorized(request.headers, emailEnvironment['ONTOS_EMAIL_DISPATCH_SECRET']))
+    return Effect.succeed(json({ error: 'unauthorized' }, 401));
+  return dispatchEmailBatch.pipe(
+    Effect.provide(EmailDatabaseLive),
+    Effect.map((result) => json(result, result.configured ? 200 : 503)),
+  );
+};
+const route = <R>(
+  method: 'GET' | 'POST',
+  path: `/${string}`,
+  handler: (request: Request) => Effect.Effect<Response, unknown, R>,
+) =>
+  HttpRouter.add(method, path, (request) =>
+    HttpServerRequest.toWeb(request).pipe(
+      Effect.flatMap(handler),
+      Effect.catchCause(() => Effect.succeed(json({ error: 'email_unavailable' }, 503))),
+      Effect.map((response) =>
+        HttpServerResponse.raw(response, { status: response.status, statusText: response.statusText }),
+      ),
+    ),
+  );
+
+export const EmailTransportLive = Layer.mergeAll(
+  route('GET', '/email/provider', () => Effect.succeed(json(emailTransport.provider))),
+  route('GET', '/email/deliveries', receipts),
+  route('POST', '/email/dispatch', dispatch),
 );

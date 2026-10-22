@@ -292,7 +292,8 @@ const createFixture = Effect.fn('NativeModuleTransportTest.createFixture')(funct
       assembleEffectBffRuntime({
         api: HttpApi.make('NativeModuleTransportProofApi'),
         handlers: Layer.empty,
-        transport: ModuleApiTransportLive.pipe(Layer.provide(layer)),
+        services: layer,
+        transport: ModuleApiTransportLive,
       }).createHandler({ dataPlatform: { batch: { enabled: false }, enabled: false }, openapi: false }),
     ),
     (ownedRouter) => Effect.promise(() => ownedRouter.dispose()),

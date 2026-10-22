@@ -17,7 +17,7 @@ import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
-import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
+import { Logger, References, Schema, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 import { storefrontRegistryApi, storefrontRegistryOperationContexts } from '../shared/api.ts';
@@ -103,15 +103,16 @@ export const makeStorefrontRegistryApiRuntime = (
   const apiHandlersLive = Layer.mergeAll(
     storefrontRegistryReadinessLayer,
     // <generated-governed-http-handler-layers>
-    currentStorefrontApplicationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    verifyCurrentStorefrontApplicationV1ReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    currentStorefrontApplicationReadApiLive,
+    verifyCurrentStorefrontApplicationV1ReadApiLive,
     // </generated-governed-http-handler-layers>
-  ).pipe(Layer.provide(Layer.mergeAll(GovernedActionPrincipalVerifierLive, gatewayAssertionRedemption)));
-  const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(
+  );
+  const resolvedApiHandlersLive = apiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));
+  const requestServicesLive = governedReadRuntimeLive.pipe(
+    Layer.provideMerge(Layer.mergeAll(GovernedActionPrincipalVerifierLive, gatewayAssertionRedemption)),
+    Layer.provideMerge(
       Layer.mergeAll(
         runtimeObservabilityLive,
-        RequestSchemaProblemLive,
         ActiveApplicationCompositionSourceLive.pipe(
           Layer.provide(
             FetchHttpClient.layer.pipe(
@@ -133,6 +134,7 @@ export const makeStorefrontRegistryApiRuntime = (
   return assembleEffectBffRuntime({
     api: storefrontRegistryApi,
     handlers: resolvedApiHandlersLive,
+    services: requestServicesLive,
     transport: transportLive,
   });
 };

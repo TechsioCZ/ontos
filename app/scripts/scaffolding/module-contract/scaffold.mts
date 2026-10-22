@@ -162,7 +162,7 @@ const initializeGovernedHttpHandlerRoot = (source: string, vertical: VerticalMet
     'GovernedReadLayer',
     'governedReadRuntimeLive',
     'governedReadApiHandlersLive',
-    'governedResolvedApiHandlersLive',
+    'governedRequestServicesLive',
     GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START,
     GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
     GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START,
@@ -188,23 +188,18 @@ const initializeGovernedHttpHandlerRoot = (source: string, vertical: VerticalMet
     assemblerOpening === undefined
       ? []
       : [assemblerOpening + 1, ...assemblerProperties.map((position) => position + 1)];
-  const handlerProperty = propertyStarts
-    .map((start, index) => ({ end: assemblerProperties[index] ?? assemblerClosing ?? start, start }))
-    .find(({ end, start }) => /^\s*handlers:\s*[A-Za-z][A-Za-z0-9]*\s*$/u.test(structure.slice(start, end)));
-  const assemblerMode = assemblerCalls.length > 0;
-  if (assemblerMode && (assembler === undefined || handlerProperty === undefined)) {
+  const properties = propertyStarts.map((start, index) => ({
+    end: assemblerProperties[index] ?? assemblerClosing ?? start,
+    start,
+  }));
+  const handlerProperty = properties.find(({ end, start }) =>
+    /^\s*handlers:\s*[A-Za-z][A-Za-z0-9]*\s*$/u.test(structure.slice(start, end)),
+  );
+  const servicesProperty = properties.find(({ end, start }) => /^\s*services:\s*\S/u.test(structure.slice(start, end)));
+  if (assembler === undefined || handlerProperty === undefined) {
     return raiseScaffoldFailure(
       `vertical ${vertical.slug} API root must contain one pinned assembler with explicit handlers`,
     );
-  }
-  const runtimeLayerNeedle = ') satisfies EffectRuntimeLayer;';
-  const runtimeLayerEnd = source.lastIndexOf(runtimeLayerNeedle);
-  if (!assemblerMode && runtimeLayerEnd === -1) {
-    return raiseScaffoldFailure(`vertical ${vertical.slug} API root must expose the pinned Effect runtime layer`);
-  }
-  const runtimeLayerStart = source.lastIndexOf('const layer = HttpApiBuilder.layer(', runtimeLayerEnd);
-  if (!assemblerMode && runtimeLayerStart === -1) {
-    return raiseScaffoldFailure(`vertical ${vertical.slug} API root must contain the pinned HttpApiBuilder layer`);
   }
   const generatedRoot = `import {
   ContextAccessLive as GovernedContextAccessLive,
@@ -260,32 +255,47 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   GovernedReadLayer.empty,
   ${GOVERNED_HTTP_HANDLER_LAYER_SLOT_START}
   ${GOVERNED_HTTP_HANDLER_LAYER_SLOT_END}
-).pipe(
+);
+
+const governedRequestServicesLive = GovernedReadLayer.mergeAll(governedReadRuntimeLive).pipe(
   ${GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START}
   ${GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END}
-  GovernedReadLayer.provide(GovernedReadLayer.empty),
+  GovernedReadLayer.provideMerge(governedReadRuntimeDependenciesLive),
 );
 `;
-  if (assemblerMode && handlerProperty !== undefined) {
-    const handlers = source
-      .slice(handlerProperty.start, handlerProperty.end)
-      .trim()
-      .replace(/^handlers:\s*/u, '');
-    return `${generatedRoot}\n${source.slice(0, handlerProperty.start)}
-    handlers: GovernedReadLayer.mergeAll(${handlers}, governedReadApiHandlersLive).pipe(
-      GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
-      GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+  const handlers = source
+    .slice(handlerProperty.start, handlerProperty.end)
+    .trim()
+    .replace(/^handlers:\s*/u, '');
+  const services =
+    servicesProperty === undefined
+      ? undefined
+      : source
+          .slice(servicesProperty.start, servicesProperty.end)
+          .trim()
+          .replace(/^services:\s*/u, '');
+  const requestServices =
+    services === undefined
+      ? 'governedRequestServicesLive'
+      : `GovernedReadLayer.mergeAll(${services}, governedRequestServicesLive)`;
+  const servicesEntry = `services: ${requestServices}.pipe(
+      GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive),
+      GovernedReadLayer.provideMerge(GovernedDatabaseConfigLive),
       GovernedReadLayer.orDie,
-    )${source.slice(handlerProperty.end)}`;
+    )`;
+  const appendedServices = servicesProperty === undefined ? `,\n    ${servicesEntry}` : '';
+  const replacements = [
+    {
+      ...handlerProperty,
+      value: `\n    handlers: GovernedReadLayer.mergeAll(${handlers}, governedReadApiHandlersLive)${appendedServices}`,
+    },
+    ...(servicesProperty === undefined ? [] : [{ ...servicesProperty, value: `\n    ${servicesEntry}` }]),
+  ];
+  let initialized = source;
+  for (const { end, start, value } of replacements.toSorted((left, right) => right.start - left.start)) {
+    initialized = `${initialized.slice(0, start)}${value}${initialized.slice(end)}`;
   }
-  return `${generatedRoot}\n${source.slice(0, runtimeLayerStart)}${source.slice(
-    runtimeLayerStart,
-    runtimeLayerEnd,
-  )}  GovernedReadLayer.provide(governedReadApiHandlersLive),
-  GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
-  GovernedReadLayer.provide(GovernedDatabaseConfigLive),
-  GovernedReadLayer.orDie,
-${source.slice(runtimeLayerEnd)}`;
+  return `${generatedRoot}\n${initialized}`;
 };
 
 class ModuleContractScaffoldError extends Schema.TaggedError<ModuleContractScaffoldError>()(
@@ -637,10 +647,7 @@ const planModuleContractScaffold = (
       .pipe(Effect.mapError((cause) => scaffoldError(`failed to read vertical ${vertical.slug} API root`, cause)));
     const apiRootMutation = yield* trySync(() => {
       const generatedRoot = initializeGovernedHttpHandlerRoot(apiRootContent, vertical);
-      if (
-        maskNonCode(apiRootContent).includes('assembleEffectBffRuntime(') &&
-        !hasValidGovernedHttpCompositionRoot(generatedSharedApi, generatedRoot)
-      ) {
+      if (!hasValidGovernedHttpCompositionRoot(generatedSharedApi, generatedRoot)) {
         return raiseScaffoldFailure(`vertical ${vertical.slug} API root has invalid pinned assembler composition`);
       }
       return updateMutation(apiRootPath, apiRootContent, generatedRoot);
