@@ -59,7 +59,21 @@ export const OntosMcpToolSchema = Schema.Struct({
 });
 export type OntosMcpTool = typeof OntosMcpToolSchema.Type;
 
+/**
+ * The module's agent review read (`@app/shared-contracts/agent-review`): the approval platform asks it, as the
+ * reading person, whether a proposal is visible to them, whether they can carry it out, its before -> after lines,
+ * its undo plan and its follow-up after approval. Modules without it get the platform's generic handling.
+ */
+export const OntosMcpApprovalReviewSchema = Schema.Struct({
+  /** Path of the read on the vertical BFF, e.g. `/reads/agent-review`. */
+  path: nonEmpty,
+  /** Records are private per person: when the review read is unavailable, the module's proposals stay hidden. */
+  privateRecords: Schema.Boolean,
+});
+export type OntosMcpApprovalReview = typeof OntosMcpApprovalReviewSchema.Type;
+
 export const OntosMcpContributionSchema = Schema.Struct({
+  approvalReview: Schema.optionalKey(OntosMcpApprovalReviewSchema),
   /** Proposals for this module may go to the platform approval queue („Ke schválení“). */
   approvals: Schema.Boolean,
   /** Shared JSON Schema definitions of the tools (`#/$defs/<key>`). */
@@ -102,6 +116,8 @@ export type OntosMcpHidden = typeof OntosMcpHidden;
  */
 export interface OntosMcpContributionInput {
   readonly actions?: Readonly<Record<string, OntosMcpWriteInput | OntosMcpHidden>>;
+  /** Read slug of the module's agent review read (see {@link OntosMcpApprovalReviewSchema}). */
+  readonly approvalReview?: { readonly privateRecords?: boolean; readonly read: string };
   readonly approvals: boolean;
   readonly commands?: Readonly<Record<string, OntosMcpWriteInput | OntosMcpHidden>>;
   readonly description: OntosMcpText;
@@ -151,6 +167,12 @@ export const defineOntosMcpContribution = <const Input extends OntosMcpContribut
         fail(`MCP ${group}.${key} description needs Czech and English text`);
       }
     }
+  }
+  if (input.approvalReview !== undefined && !(input.approvalReview.read in input.reads)) {
+    fail(`MCP approval review read ${input.approvalReview.read} is not one of the module's reads`);
+  }
+  if (input.approvalReview !== undefined && !input.approvals) {
+    fail('MCP approval review needs approvals');
   }
   if (input.revision !== undefined && !(input.revision.read in input.reads)) {
     fail(`MCP revision read ${input.revision.read} is not one of the module's reads`);
