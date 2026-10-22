@@ -99,14 +99,22 @@ const cleanDescription = (value: string | null) => {
   return trimmed === '' ? null : trimmed;
 };
 
-const companyCatalog = (tenantId: string, legalEntityId: string, grants: DemoAccountGrants) =>
+const roleTemplates = (tenantId: string, legalEntityId: string) =>
+  companyRoleTemplates(tenantId, legalEntityId).pipe(Effect.mapError(fromDemoAccountError));
+
+const companyCatalog = (
+  legalEntityId: string,
+  roles: Effect.Success<ReturnType<typeof roleTemplates>>,
+  grants: DemoAccountGrants,
+) =>
   Effect.gen(function* companyCatalog() {
-    const roles = yield* companyRoleTemplates(tenantId, legalEntityId).pipe(Effect.mapError(fromDemoAccountError));
+    // Each SpiceDB read is its own Workers VPC round trip (0.1-0.5 s on stage): read every template at once. Workers
+    // queue fetches beyond six open connections, so this never fails, it only stops shortening the wait.
     const templates = yield* Effect.forEach(
       roles,
       (role) =>
         grants.relationshipsOf(role.templatePrincipalId).pipe(Effect.map((relationships) => ({ relationships, role }))),
-      { concurrency: 1 },
+      { concurrency: 'unbounded' },
     ).pipe(Effect.mapError(unavailable));
     const union = templates.flatMap(({ relationships }) => relationships);
     const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(unavailable));
@@ -126,37 +134,55 @@ export const listAgentEntities = <R>(caller: DemoAccountCaller, deps: Connection
   Effect.gen(function* listAgentEntities() {
     const { legalEntityId, tenantId } = caller.principal;
     const grants = yield* openDemoAccountGrants.pipe(Effect.mapError(unavailable));
-    yield* requireAdministrator(caller, grants).pipe(
+    const { members } = yield* requireAdministrator(caller, grants).pipe(
       Effect.mapError((error) =>
         error._tag === 'DemoAccountForbidden'
           ? new ConnectionsForbidden({ reason: 'Agenty spravuje jen správce firmy.' })
           : fromDemoAccountError(error),
       ),
     );
-    const catalog = yield* companyCatalog(tenantId, legalEntityId, grants);
-    // Agents someone answers for first (the ones the company set up), then technical ones without an owner.
-    const agents = (yield* deps.directory.agents(tenantId, legalEntityId))
-      .filter((agent) => agent.status !== 'archived')
-      .toSorted((left, right) => Number(left.ownerPrincipalId === null) - Number(right.ownerPrincipalId === null));
-    const people = yield* deps.directory.people(tenantId, legalEntityId);
-    const active = yield* deps.grants.list({ legalEntityId, statuses: ['active'], tenantId });
-    const entries = yield* Effect.forEach(agents, (agent) =>
-      deps.directory.operatorsOf(agent.principalId).pipe(
-        Effect.map((operatorIds): AgentEntity => ({
-          connections: active.filter((connection) => connection.acting.principalId === agent.principalId),
-          description: agent.description,
-          displayName: agent.displayName,
-          modules: agent.modules,
-          operators: people.filter((person) => operatorIds.includes(person.principalId)),
-          owner: people.find((person) => person.principalId === agent.ownerPrincipalId) ?? null,
-          principalId: agent.principalId,
-          seeded: agent.seeded,
-          status: agent.status,
-          writePolicy: agent.writePolicy,
-        })),
-      ),
+    // Every SpiceDB read is a Workers VPC round trip, so the role templates and the agents' operators are read
+    // concurrently. Database reads stay on one sequential lane: a pooled connection holds one of the six
+    // outbound-connection slots of the request until it ends.
+    const company = Effect.gen(function* companyAgents() {
+      // Agents someone answers for first (the ones the company set up), then technical ones without an owner.
+      const agents = (yield* deps.directory.agents(tenantId, members))
+        .filter((agent) => agent.status !== 'archived')
+        .toSorted((left, right) => Number(left.ownerPrincipalId === null) - Number(right.ownerPrincipalId === null));
+      const [operators, [people, active, audit]] = yield* Effect.all(
+        [
+          Effect.forEach(agents, (agent) => deps.directory.operatorsOf(agent.principalId), {
+            concurrency: 'unbounded',
+          }),
+          Effect.all([
+            deps.directory.people(tenantId, members),
+            deps.grants.list({ legalEntityId, statuses: ['active'], tenantId }),
+            auditTrail(tenantId, legalEntityId, [], 'agents').pipe(Effect.mapError(fromDemoAccountError)),
+          ]),
+        ],
+        { concurrency: 2 },
+      );
+      return { active, agents, audit, operators, people };
+    });
+    const roles = yield* roleTemplates(tenantId, legalEntityId);
+    const [catalog, { active, agents, audit, operators, people }] = yield* Effect.all(
+      [companyCatalog(legalEntityId, roles, grants), company],
+      { concurrency: 2 },
     );
-    const audit = yield* auditTrail(tenantId, legalEntityId, [], 'agents').pipe(Effect.mapError(fromDemoAccountError));
+    const entries = agents.map(
+      (agent, index): AgentEntity => ({
+        connections: active.filter((connection) => connection.acting.principalId === agent.principalId),
+        description: agent.description,
+        displayName: agent.displayName,
+        modules: agent.modules,
+        operators: people.filter((person) => operators[index]?.includes(person.principalId) === true),
+        owner: people.find((person) => person.principalId === agent.ownerPrincipalId) ?? null,
+        principalId: agent.principalId,
+        seeded: agent.seeded,
+        status: agent.status,
+        writePolicy: agent.writePolicy,
+      }),
+    );
     const overview: AgentEntityOverview = {
       agents: entries,
       audit,
@@ -196,10 +222,9 @@ const changeAgent = <R>(
       runtime
         .runAction({ payload, principal: caller.principal, registration: manageDemoAccountAction, transport })
         .pipe(Effect.mapError(fromActionError));
-    const agents = (yield* deps.directory.agents(tenantId, legalEntityId)).filter(
-      (agent) => agent.status !== 'archived',
-    );
-    const memberIds = (yield* deps.directory.people(tenantId, legalEntityId)).map((person) => person.principalId);
+    const members = yield* deps.directory.members(tenantId, legalEntityId);
+    const agents = (yield* deps.directory.agents(tenantId, members)).filter((agent) => agent.status !== 'archived');
+    const memberIds = (yield* deps.directory.people(tenantId, members)).map((person) => person.principalId);
     const revokeActive = (agentPrincipalId: string, reasonText: string) =>
       deps.grants.list({ actingPrincipalId: agentPrincipalId, legalEntityId, statuses: ['active'], tenantId }).pipe(
         Effect.flatMap((connections) =>
@@ -224,7 +249,7 @@ const changeAgent = <R>(
     if (request.operation === 'create') {
       // Same idempotency key = same principal id: a retry replays the Core Action instead of failing the name check.
       const principalId = derivedUuid(`${tenantId}:${legalEntityId}:${transport.idempotencyKey}:agent`);
-      const catalog = yield* companyCatalog(tenantId, legalEntityId, grants);
+      const catalog = yield* companyCatalog(legalEntityId, yield* roleTemplates(tenantId, legalEntityId), grants);
       const problem = agentDraftProblem({
         labelOf: catalog.labelOf,
         displayName: request.displayName,
@@ -296,7 +321,7 @@ const changeAgent = <R>(
     }
 
     if (request.operation === 'configure') {
-      const catalog = yield* companyCatalog(tenantId, legalEntityId, grants);
+      const catalog = yield* companyCatalog(legalEntityId, yield* roleTemplates(tenantId, legalEntityId), grants);
       const problem = agentDraftProblem({
         labelOf: catalog.labelOf,
         displayName: request.displayName,

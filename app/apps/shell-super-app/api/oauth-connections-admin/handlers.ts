@@ -139,12 +139,13 @@ export const replaceAgentOperators = <R>(
     if (!caller.isCompanyAdmin) {
       return yield* new ConnectionsForbidden({ reason: 'Kdo smí agenta připojit, nastavuje jen správce firmy.' });
     }
-    const agents = yield* deps.directory.agents(caller.tenantId, caller.legalEntityId);
+    const members = yield* deps.directory.members(caller.tenantId, caller.legalEntityId);
+    const agents = yield* deps.directory.agents(caller.tenantId, members);
     const agentPrincipalId = request.agentPrincipalId;
     if (!agents.some((agent) => agent.principalId === agentPrincipalId)) {
       return yield* new ConnectionsNotFound({ reason: 'Agent v této firmě neexistuje.' });
     }
-    const people = yield* deps.directory.people(caller.tenantId, caller.legalEntityId);
+    const people = yield* deps.directory.people(caller.tenantId, members);
     const wanted = uniqueIds(request.operatorPrincipalIds);
     const personIds = people.map((person) => person.principalId);
     if (wanted.some((id) => !personIds.includes(id))) {

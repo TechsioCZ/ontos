@@ -92,15 +92,20 @@ export interface CompanyAgent {
 
 /** People, agents and SpiceDB operator relations of one company. */
 export interface CompanyDirectoryPort<R> {
-  /** Active human members of the company, sorted by display name (cs). */
+  /** Principal ids with `member` on the company (one SpiceDB read; pass them to `people` and `agents`). */
+  readonly members: (
+    tenantId: string,
+    legalEntityId: string,
+  ) => Effect.Effect<readonly string[], ConnectionsUnavailable, R>;
+  /** Active humans among the company's `members`, sorted by display name (cs). */
   readonly people: (
     tenantId: string,
-    legalEntityId: string,
+    members: readonly string[],
   ) => Effect.Effect<readonly PrincipalRef[], ConnectionsUnavailable, R>;
-  /** Agent entities that are members of the company (any status), sorted by display name (cs). */
+  /** Agent entities among the company's `members` (any status), sorted by display name (cs). */
   readonly agents: (
     tenantId: string,
-    legalEntityId: string,
+    members: readonly string[],
   ) => Effect.Effect<readonly CompanyAgent[], ConnectionsUnavailable, R>;
   /** Principal ids with `principal:{agent}#operator`. */
   readonly operatorsOf: (agentPrincipalId: string) => Effect.Effect<readonly string[], ConnectionsUnavailable, R>;

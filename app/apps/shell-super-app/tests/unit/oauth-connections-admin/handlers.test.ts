@@ -151,13 +151,18 @@ const makeDeps = (state: Fixture) => {
     updates: [] as Parameters<GrantAdminPort<never>['update']>[0][],
   };
   const directory: CompanyDirectoryPort<never> = {
-    agents: (_tenant, legalEntityId) =>
-      Effect.succeed(state.agents.filter((agent) => agent.legalEntityId === legalEntityId)),
+    agents: (_tenant, members) => Effect.succeed(state.agents.filter((agent) => members.includes(agent.principalId))),
+    members: (_tenant, legalEntityId) =>
+      Effect.succeed(
+        [...state.agents, ...state.people]
+          .filter((member) => member.legalEntityId === legalEntityId)
+          .map((member) => member.principalId),
+      ),
     operatorsOf: (agentPrincipalId) => Effect.succeed(state.operators[agentPrincipalId] ?? []),
-    people: (_tenant, legalEntityId) =>
+    people: (_tenant, members) =>
       Effect.succeed(
         state.people
-          .filter((person) => person.legalEntityId === legalEntityId)
+          .filter((person) => members.includes(person.principalId))
           .map(({ displayName, principalId }) => ({ displayName, principalId })),
       ),
     replaceOperators: (input) => {

@@ -327,14 +327,28 @@ export const companyRoleTemplates = Effect.fn('DemoAccounts.companyRoleTemplates
   if (roles === undefined) {
     return [] as readonly { readonly key: string; readonly label: string; readonly templatePrincipalId: string }[];
   }
-  return yield* Effect.forEach(
-    roles.roles,
-    (role) =>
-      principalByEmail(tenantId, role.templateEmail).pipe(
-        Effect.map((templatePrincipalId) => ({ key: role.key, label: role.label, templatePrincipalId })),
+  const { executor } = yield* AuthDatabase;
+  const rows = yield* executor
+    .select({ email: user.email, principalId: coreBindings.principalId })
+    .from(user)
+    .innerJoin(
+      coreBindings,
+      and(
+        eq(coreBindings.providerSubjectId, user.id),
+        eq(coreBindings.provider, 'better_auth'),
+        eq(coreBindings.subjectType, 'user'),
+        eq(coreBindings.tenantId, tenantId),
       ),
-    { concurrency: 3 },
-  );
+    )
+    .where(inArray(user.email, [...new Set(roles.roles.map((role) => role.templateEmail))]))
+    .pipe(Effect.mapError(unavailable));
+  const byEmail = new Map(rows.map((row) => [row.email, row.principalId]));
+  return yield* Effect.forEach(roles.roles, (role) => {
+    const templatePrincipalId = byEmail.get(role.templateEmail);
+    return templatePrincipalId === undefined
+      ? Effect.fail(new DemoAccountUnavailable({ cause: `Role template ${role.templateEmail} is not provisioned` }))
+      : Effect.succeed({ key: role.key, label: role.label, templatePrincipalId });
+  });
 });
 
 /** The caller must hold an administrator role in the selected company (Core additionally checks `manage_identity`). */
@@ -346,11 +360,19 @@ export const requireAdministrator = Effect.fn('DemoAccounts.requireAdministrator
   if (roles === undefined) {
     return yield* new DemoAccountForbidden({ reason: 'This company has no people administration' });
   }
-  const members = yield* grants
-    .companyMembers(caller.principal.tenantId, caller.principal.legalEntityId)
-    .pipe(Effect.mapError(unavailable));
-  const assigned = yield* assignedRoles(caller.principal.tenantId, caller.principal.legalEntityId);
-  const [self] = yield* loadPeople(caller.principal.tenantId, [caller.principal.principalId]);
+  // The SpiceDB read (one Workers VPC round trip) overlaps the two database reads, which share one connection.
+  const [members, [assigned, [self]]] = yield* Effect.all(
+    [
+      grants
+        .companyMembers(caller.principal.tenantId, caller.principal.legalEntityId)
+        .pipe(Effect.mapError(unavailable)),
+      Effect.all([
+        assignedRoles(caller.principal.tenantId, caller.principal.legalEntityId),
+        loadPeople(caller.principal.tenantId, [caller.principal.principalId]),
+      ]),
+    ],
+    { concurrency: 2 },
+  );
   const selfRole =
     self === undefined ? undefined : roles.roles.find((entry) => entry.key === roleKeyOf(self, assigned, roles));
   if (!members.includes(caller.principal.principalId) || selfRole?.administrator !== true) {
@@ -496,33 +518,41 @@ export const listDemoAccounts = Effect.fn('DemoAccounts.list')(function* listDem
   const grants = yield* openDemoAccountGrants.pipe(Effect.mapError(unavailable));
   const { assigned, members, roles } = yield* requireAdministrator(caller, grants);
   const { legalEntityId, principalId, tenantId } = caller.principal;
-  const people = yield* loadPeople(tenantId, members);
   const companies = yield* legalNames(tenantId);
-  const accounts = yield* Effect.forEach(
-    people,
-    (person) =>
-      grants.companiesOf(person.principalId).pipe(
-        Effect.mapError(unavailable),
-        Effect.map((memberships) => {
-          const key = roleKeyOf(person, assigned, roles);
-          const current = roles.roles.find((entry) => entry.key === key);
-          return {
-            displayName: person.displayName,
-            editable: person.principalId !== principalId,
-            email: person.email,
-            otherCompanies: memberships
-              .filter((company) => company !== legalEntityId)
-              .map((company) => companies.get(company) ?? company),
-            principalId: person.principalId,
-            roleKey: current?.key ?? null,
-            roleLabel: current?.label ?? null,
-            self: person.principalId === principalId,
-            status: person.status,
-          };
-        }),
+  // Other companies of each person: one member read per company of the tenant, not one grant scan per person (each
+  // SpiceDB read is a Workers VPC round trip). The reads overlap the people query.
+  const [people, otherMembers] = yield* Effect.all(
+    [
+      loadPeople(tenantId, members),
+      Effect.forEach(
+        [...companies.keys()].filter((company) => company !== legalEntityId),
+        (company) =>
+          grants.companyMembers(tenantId, company).pipe(
+            Effect.mapError(unavailable),
+            Effect.map((ids) => ({ company, members: new Set(ids) })),
+          ),
+        { concurrency: 'unbounded' },
       ),
-    { concurrency: 4 },
+    ],
+    { concurrency: 2 },
   );
+  const accounts = people.map((person) => {
+    const key = roleKeyOf(person, assigned, roles);
+    const current = roles.roles.find((entry) => entry.key === key);
+    return {
+      displayName: person.displayName,
+      editable: person.principalId !== principalId,
+      email: person.email,
+      otherCompanies: otherMembers.flatMap(({ company, members: ids }) =>
+        ids.has(person.principalId) ? [companies.get(company) ?? company] : [],
+      ),
+      principalId: person.principalId,
+      roleKey: current?.key ?? null,
+      roleLabel: current?.label ?? null,
+      self: person.principalId === principalId,
+      status: person.status,
+    };
+  });
   const audit = yield* auditTrail(tenantId, legalEntityId, members, 'people');
   const response: DemoAccountListResponse = {
     accounts: accounts.toSorted(

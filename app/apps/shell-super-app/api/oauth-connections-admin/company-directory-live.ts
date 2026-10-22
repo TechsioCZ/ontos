@@ -46,8 +46,7 @@ const members = (tenantId: string, legalEntityId: string) =>
     Effect.mapError(unavailable),
   );
 
-const people = Effect.fn('CompanyDirectory.people')(function* people(tenantId: string, legalEntityId: string) {
-  const memberIds = yield* members(tenantId, legalEntityId);
+const people = Effect.fn('CompanyDirectory.people')(function* people(tenantId: string, memberIds: readonly string[]) {
   if (memberIds.length === 0) {
     return [] as readonly PrincipalRef[];
   }
@@ -67,8 +66,7 @@ const people = Effect.fn('CompanyDirectory.people')(function* people(tenantId: s
   return [...rows].sort((left, right) => left.displayName.localeCompare(right.displayName, 'cs'));
 });
 
-const agents = Effect.fn('CompanyDirectory.agents')(function* agents(tenantId: string, legalEntityId: string) {
-  const memberIds = yield* members(tenantId, legalEntityId);
+const agents = Effect.fn('CompanyDirectory.agents')(function* agents(tenantId: string, memberIds: readonly string[]) {
   if (memberIds.length === 0) {
     return [] as readonly CompanyAgent[];
   }
@@ -170,6 +168,7 @@ const replaceOperators = Effect.fn('CompanyDirectory.replaceOperators')(function
 
 export const companyDirectoryLive: CompanyDirectoryPort<AuthDatabase> = {
   agents,
+  members,
   operatorsOf,
   people,
   replaceOperators,
