@@ -9,8 +9,10 @@ import "./globals.css";
 import { CartProvider } from "@/features/cart/cart-provider";
 import { CartNotifications } from "@/features/cart/cart-notifications";
 
+// Inter subset to Latin, Latin-1, Latin Extended-A and typographic punctuation/symbols (Czech copy and
+// product names): 146 kB instead of the full 352 kB file on the critical path. Other glyphs use the fallback.
 const inter = localFont({
-  src: "../fonts/InterVariable.woff2",
+  src: "../fonts/InterVariable-latin.woff2",
   weight: "400 900",
   style: "normal",
   display: "swap",
