@@ -1,11 +1,12 @@
 // In-app reset of the AKROS demo company to the same predictable baseline `demo:seed:akros --reset` writes. The
 // baseline ships inside the server bundle (akros-baseline.generated.ts), so the reset needs no filesystem and runs
-// the same on Node and Cloudflare Workers; parts are decoded and inserted one at a time to keep memory bounded.
+// the same on Node and Cloudflare Workers; parts are decoded and inserted one at a time to keep memory bounded. The
+// parts are loaded only when a reset runs, so they cost nothing on a cold isolate's first request.
 import { Effect, Encoding, Result, Schema } from 'effect';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { MerchandisePersistenceUnavailable } from '../../shared/errors/merchandise-persistence-unavailable.ts';
-import { AKROS_BASELINE_PARTS } from './akros-baseline.generated.ts';
+import { loadAkrosBaselineParts } from './akros-baseline.generated.ts';
 import { deleteScope, insertSnapshotPart, writeSnapshotHead } from './merchandise-store.ts';
 import type { MerchandiseDb, StoreScope } from './merchandise-store.ts';
 
@@ -44,7 +45,7 @@ export const resetToAkrosBaseline = Effect.fn('Merchandise.resetToAkrosBaseline'
   db: MerchandiseDb,
   scope: StoreScope,
 ) {
-  const [first, ...rest] = AKROS_BASELINE_PARTS;
+  const [first, ...rest] = loadAkrosBaselineParts();
   if (first === undefined) {
     return yield* baselineUnavailable('AKROS baseline is empty');
   }

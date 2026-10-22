@@ -5,14 +5,14 @@ import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { akrosBaselineParts } from '../../scripts/akros-baseline-parts.ts';
 import { buildAkrosEncoded } from '../../scripts/akros-catalog.mts';
-import { AKROS_BASELINE_PARTS } from '../../src/services/akros-baseline.generated.ts';
+import { loadAkrosBaselineParts } from '../../src/services/akros-baseline.generated.ts';
 import { decodeAkrosBaselinePart } from '../../src/services/akros-demo-reset.ts';
 
 const built = buildAkrosEncoded();
 
 it('bundled baseline parts equal the seed baseline built from the storefront feed', () => {
   const expected = akrosBaselineParts(built).map((part) => JSON.stringify(part));
-  const bundled = AKROS_BASELINE_PARTS.map((part) => gunzipSync(Buffer.from(part, 'base64')).toString('utf-8'));
+  const bundled = loadAkrosBaselineParts().map((part) => gunzipSync(Buffer.from(part, 'base64')).toString('utf-8'));
   expect(bundled.length).toBe(expected.length);
   expect(bundled.every((part, index) => part === expected[index])).toBe(true);
 });
@@ -35,7 +35,7 @@ it('parts cover the whole baseline: every product once, every movement with its 
 it.effect('every bundled part decodes through the runtime path (Web streams, no filesystem)', () =>
   Effect.gen(function* decodeAllParts() {
     let products = 0;
-    for (const part of AKROS_BASELINE_PARTS) {
+    for (const part of loadAkrosBaselineParts()) {
       products += (yield* decodeAkrosBaselinePart(part)).products.length;
     }
     expect(products).toBe(built.products.length);
