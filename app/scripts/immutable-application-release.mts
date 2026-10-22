@@ -12,6 +12,7 @@ import { MICROVERTICAL_RELEASE_ENVELOPE_PATH } from '@modern-js/app-tools-extens
 import { resolveUltramodernSourceRevision } from '@modern-js/app-tools-extensions/release-identity';
 import {
   Array as EffectArray,
+  Clock,
   Config,
   Data,
   Duration,
@@ -117,6 +118,18 @@ export const ImmutableShellArtifactReceiptSchema = Schema.Struct({
 export type ImmutableShellArtifactReceipt = typeof ImmutableShellArtifactReceiptSchema.Type;
 
 const fail = (message: string, cause?: unknown) => new ImmutableApplicationReleaseError({ cause, message });
+
+/** Logs how long each upload phase took since the previous mark, so a slow release names its slow step. */
+const releasePhaseTimer = (release: string) =>
+  Effect.gen(function* startReleasePhaseTimer() {
+    let last = yield* Clock.currentTimeMillis;
+    return (phase: string) =>
+      Effect.gen(function* markReleasePhase() {
+        const now = yield* Clock.currentTimeMillis;
+        yield* Effect.logInfo(`release ${release} phase ${phase}: ${String(now - last)} ms`);
+        last = now;
+      });
+  });
 
 export const resolveCleanImmutableApplicationSourceRevision = Effect.fn('ImmutableApplicationRelease.cleanSource')(
   function* cleanSourceRevision(directory: string) {
@@ -658,7 +671,6 @@ const WranglerSchema = Schema.StructWithRest(
 const DeliveryUnitSchema = Schema.Struct({
   deliveryUnit: Schema.Struct({ buildMarker, sourceRevision, unitId: deliveryUnitIdSchema }),
 });
-const ApiEnvelope = Schema.Struct({ result: Schema.Json, success: Schema.Boolean });
 const PinnedNativeTools = Schema.Struct({
   devDependencies: Schema.Struct({
     wrangler: Schema.String.check(Schema.isPattern(/^\d+\.\d+\.\d+(?:[-+][a-z\d.-]+)?$/u)),
@@ -1061,6 +1073,7 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
     const plan = yield* Schema.decodeUnknownEffect(ImmutableApplicationReleasePlanSchema, {
       onExcessProperty: 'error',
     })(input.plan).pipe(Effect.mapError((cause) => fail('release plan failed validation', cause)));
+    const markPhase = yield* releasePhaseTimer(plan.backendScriptName);
     yield* validateReleasePlan(plan);
     yield* requirePlannedSourceRevision(
       input.appDirectory,
@@ -1095,6 +1108,7 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
       contract,
       deliveryUnit: delivery.deliveryUnit,
     });
+    yield* markPhase('verify compiled output');
     const accountSubdomain = yield* verifyImmutableAssetsAccountOrigin(accountId, apiToken, plan);
     const apiUrl = (suffix: string) => `https://api.cloudflare.com/client/v4/accounts/${accountId}${suffix}`;
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -1103,8 +1117,12 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
         Effect.mapError(() => fail('Cloudflare release request failed')),
       );
     const backendScript = `/workers/scripts/${plan.backendScriptName}`;
-    for (const suffix of [backendScript, `/workers/scripts/${plan.assetsScriptName}`]) {
-      const current = yield* execute(HttpClientRequest.get(apiUrl(suffix)));
+    const absence = yield* Effect.forEach(
+      [backendScript, `/workers/scripts/${plan.assetsScriptName}`],
+      (suffix) => execute(HttpClientRequest.get(apiUrl(suffix))),
+      { concurrency: 'unbounded' },
+    );
+    for (const current of absence) {
       if (current.status !== 404) {
         return yield* fail(
           current.status === 200
@@ -1113,6 +1131,7 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
         );
       }
     }
+    yield* markPhase('provider account and absence');
     const deployedAssetsDirectory = yield* materializeImmutablePublicAssets(compiledAssets);
     // Native assets-only Workers apply these bytes directly; the compiled assets stay unchanged.
     yield* fileSystem.writeFileString(
@@ -1165,7 +1184,9 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
     const packageDirectory = yield* fileSystem.makeTempDirectoryScoped({
       prefix: 'ontos-immutable-package-',
     });
+    yield* markPhase('materialize assets and configs');
     yield* deploy(backendConfig, ['--dry-run', '--outdir', packageDirectory]);
+    yield* markPhase('native package dry run');
     const packagedModules = (yield* readReleaseFiles(packageDirectory)).filter(
       (file) => file.path !== 'README.md' && !file.path.endsWith('.map'),
     );
@@ -1208,21 +1229,18 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
       deployedAssetsDirectory,
       packageDirectory,
     ]);
-    yield* deploy(backendConfig, ['--no-bundle']);
-    for (const [name, text] of Object.entries(secrets)) {
-      const request = yield* HttpClientRequest.bodyJson(HttpClientRequest.put(apiUrl(`${backendScript}/secrets`)), {
-        name,
-        text,
-        type: 'secret_text',
-      });
-      const response = yield* execute(request);
-      const envelope = yield* Schema.decodeUnknownEffect(ApiEnvelope)(
-        yield* response.json.pipe(Effect.mapError(() => fail('secret installation response is invalid'))),
-      ).pipe(Effect.mapError(() => fail('secret installation response is invalid')));
-      if ((response.status !== 200 && response.status !== 201) || !envelope.success) {
-        return yield* fail('complete backend release secret installation failed');
-      }
+    // The secrets travel with the one backend upload, so the release has a single version that already
+    // holds them. The file lives outside the checkout and is removed when the upload scope closes.
+    const secretsArguments: string[] = [];
+    if (Object.keys(secrets).length > 0) {
+      const secretsFile = yield* fileSystem.makeTempFileScoped({ prefix: 'ontos-release-secrets-', suffix: '.json' });
+      yield* fileSystem.chmod(secretsFile, 0o600);
+      yield* fileSystem.writeFileString(secretsFile, JSON.stringify(secrets));
+      secretsArguments.push('--secrets-file', secretsFile);
     }
+    yield* markPhase('verify upload package');
+    yield* deploy(backendConfig, ['--no-bundle', ...secretsArguments]);
+    yield* markPhase('backend upload with secrets');
     yield* deployImmutableAssets({
       accountId,
       appDirectory: input.appDirectory,
@@ -1230,18 +1248,25 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
       plan,
       token: apiToken,
     });
-    const installed = yield* execute(HttpClientRequest.get(apiUrl(backendScript)));
+    yield* markPhase('assets upload');
+    // The read-backs are independent, so they run side by side; any failure still fails the release.
+    const [installed, subdomain, installedContent] = yield* Effect.all(
+      [
+        execute(HttpClientRequest.get(apiUrl(backendScript))),
+        execute(HttpClientRequest.get(apiUrl(`${backendScript}/subdomain`))),
+        execute(HttpClientRequest.get(apiUrl(`${backendScript}/content/v2`))),
+      ],
+      { concurrency: 'unbounded' },
+    );
     if (installed.status !== 200) {
       return yield* fail('complete immutable Worker release was not retained');
     }
-    const subdomain = yield* execute(HttpClientRequest.get(apiUrl(`${backendScript}/subdomain`)));
     const subdomainState = yield* Schema.decodeUnknownEffect(
       Schema.Struct({ result: Schema.Struct({ enabled: Schema.Boolean }), success: Schema.Boolean }),
     )(yield* subdomain.json).pipe(Effect.mapError(() => fail('native Worker subdomain readback is invalid')));
     if (subdomain.status !== 200 || !subdomainState.success || !subdomainState.result.enabled) {
       return yield* fail('the immutable backend has no enabled native workers.dev route');
     }
-    const installedContent = yield* execute(HttpClientRequest.get(apiUrl(`${backendScript}/content/v2`)));
     if (installedContent.status !== 200) {
       return yield* fail('the provider did not retain the complete immutable Worker module content');
     }
@@ -1257,19 +1282,25 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
     ).pipe(
       Effect.mapError((cause) => fail('the deployed Worker differs from the captured native upload package', cause)),
     );
-    yield* Effect.forEach(
-      assets.filter((file) => !['_headers', '_redirects', '.assetsignore'].includes(file.path)),
-      (file) => verifyRetainedPublicAsset(plan, file),
-      { concurrency: 4 },
+    const [, versionId, assetsVersionId] = yield* Effect.all(
+      [
+        Effect.forEach(
+          assets.filter((file) => !['_headers', '_redirects', '.assetsignore'].includes(file.path)),
+          (file) => verifyRetainedPublicAsset(plan, file),
+          { concurrency: 16 },
+        ),
+        readRetainedImmutableWorkerVersion(accountId, apiToken, plan.backendScriptName),
+        readRetainedImmutableWorkerVersion(accountId, apiToken, plan.assetsScriptName),
+      ],
+      { concurrency: 'unbounded' },
     );
-    const versionId = yield* readRetainedImmutableWorkerVersion(accountId, apiToken, plan.backendScriptName);
+    yield* markPhase('provider read-back');
     const backend = yield* Schema.decodeUnknownEffect(ApplicationCompositionCloudflareWorkerBackendSchema)({
       baseUrl: `https://${plan.backendScriptName}.${accountSubdomain}.workers.dev/`,
       transport: 'cloudflare-worker',
       versionId,
       workerName: plan.backendScriptName,
     }).pipe(Effect.mapError((cause) => fail('the observed immutable Worker placement is invalid', cause)));
-    const assetsVersionId = yield* readRetainedImmutableWorkerVersion(accountId, apiToken, plan.assetsScriptName);
     return {
       artifacts: { ...artifacts, workerSha256 },
       assetsVersionId,

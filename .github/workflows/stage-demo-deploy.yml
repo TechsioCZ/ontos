@@ -172,6 +172,29 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  # The release scripts decide what reaches stage, so their tests gate every release.
+  release-script-tests:
+    name: Test the release scripts
+    needs: [plan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Run the immutable release tests
+        working-directory: app
+        run: >-
+          mise exec -- pnpm exec rstest --project scripts
+          scripts/tests/immutable-application-release.test.mts
+          scripts/tests/immutable-shell-release.test.mts
+
   build-storefront:
     name: Build akros-storefront
     needs: [plan]
@@ -215,7 +238,7 @@ jobs:
   # composition refresh. The job records the stage-edge deployment, so the refresh re-publishes this revision.
   release:
     name: Deploy, publish and activate stage
-    needs: [plan, build, build-storefront]
+    needs: [plan, build, build-storefront, release-script-tests]
     if: github.event_name == 'push' || inputs.deploy
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -289,12 +312,12 @@ jobs:
           database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
 
       # Deploys only upload immutable release Workers; nothing serves them until publication. Each upload
-      # locks only its own release identity, so four run side by side (Cloudflare API rate limits).
+      # locks only its own release identity, so eight run side by side (Cloudflare API rate limits).
       - name: Upload every immutable release Worker
         working-directory: app
         env:
           ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
-          UPLOAD_PARALLELISM: '4'
+          UPLOAD_PARALLELISM: '8'
         run: |
           mkdir -p "$RECEIPTS" "$RUNNER_TEMP/upload-logs"
           upload() {
@@ -323,6 +346,19 @@ jobs:
           # shellcheck disable=SC2016
           jq -r '.[] | [.id, .path] | @tsv' <<<"$UNITS_JSON" \
             | xargs -P "$UPLOAD_PARALLELISM" -L 1 bash -c 'upload "$0" "$1"'
+
+      - name: Upload the per-unit upload logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upload-logs
+          path: ${{ runner.temp }}/upload-logs
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Summarize the upload phases
+        if: always()
+        run: grep -h ' phase ' "$RUNNER_TEMP"/upload-logs/*.log | sed -E 's/^.*(release [^ ]+ phase)/\1/' | sort || true
 
       - name: Assemble the composition candidate
         working-directory: app
