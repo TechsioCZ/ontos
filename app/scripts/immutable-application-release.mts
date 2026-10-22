@@ -22,6 +22,7 @@ import {
   Option,
   Order,
   Redacted,
+  Runtime,
   Schema,
   Stream,
 } from 'effect';
@@ -1346,6 +1347,7 @@ const deployCommand = Command.make(
         receiptFile,
         yield* Schema.encodeEffect(Schema.fromJsonString(ImmutableApplicationReleaseReceiptSchema))(receipt),
       );
+      yield* Effect.logInfo(`release ${plan.backendScriptName} receipt written`);
     }),
 ).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
 
@@ -1458,6 +1460,18 @@ const executableLayer = Layer.effectDiscard(Command.run(command, { version: '1.0
     ).pipe(Layer.provideMerge(NodeServices.layer)),
   ),
 );
+/**
+ * The CLI exits as soon as its command and every scope (lock session, database pool) have closed. A
+ * successful run would otherwise wait for the event loop to drain: on CI that took 58 s after the last
+ * read-back of every upload, longer than the upload itself.
+ */
+const exitWhenCommandCompletes: Runtime.Teardown = (exit, onExit) => {
+  Runtime.defaultTeardown(exit, (code) => {
+    onExit(code);
+    process.exit(code);
+  });
+};
+
 if (import.meta.main) {
-  NodeRuntime.runMain(Layer.build(executableLayer).pipe(Effect.scoped));
+  NodeRuntime.runMain(Layer.build(executableLayer).pipe(Effect.scoped), { teardown: exitWhenCommandCompletes });
 }
