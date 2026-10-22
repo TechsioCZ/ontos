@@ -88,38 +88,6 @@ export const seededAgentProfiles: Readonly<
   },
 };
 
-/** Czech module labels for the agent editor; unknown modules show their id. */
-export const agentModuleLabels: Readonly<Record<string, string>> = {
-  'party.registry': 'Adresář firem a osob',
-  'commerce.customer-context': 'Zákaznické skupiny',
-  'demo.merchandise': 'Produkty, sklad a objednávky',
-  'demo.sales-pipeline': 'Obchodní případy',
-  'demo.sales-insights': 'Přehledy a statistiky',
-  'demo.tagging': 'Štítky',
-  'demo.workforce': 'Zaměstnanci a správa lidí',
-  'demo.crm': 'CRM – klienti a návštěvy',
-  'work.tasks': 'Úkoly a projekty',
-  'finance.billing': 'Faktury a finance',
-  'property.portfolio': 'Majetek a prostory',
-  'property.leasing': 'Obsazenost a pronájmy',
-  'legal.agreements': 'Smlouvy',
-  'facility.operations': 'Provoz',
-  'crm.activities': 'Nájemci a vztahy',
-  'commerce.catalog': 'Katalog',
-  'commerce.inventory': 'Zásoby',
-  'commerce.pricing': 'Ceny',
-  'commerce.assortment': 'Sortiment',
-  'commerce.availability': 'Dostupnost',
-  'commerce.market-catalog': 'Tržní katalog',
-  'commerce.storefront-registry': 'E-shopy',
-  'commerce.tax': 'Daně',
-  'payment.term-catalog': 'Platební podmínky',
-  'pricing.price-group-catalog': 'Cenové skupiny',
-  'privacy.core': 'Ochrana osobních údajů',
-};
-
-export const moduleLabel = (moduleId: string): string => agentModuleLabels[moduleId] ?? moduleId;
-
 const ModulesJson = Schema.fromJsonString(Schema.Array(AgentModuleGrantSchema));
 
 const seedOf = (principalId: string): AgentProfile | undefined => {

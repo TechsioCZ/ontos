@@ -27,7 +27,10 @@ import { AgentModuleGrantSchema } from '@app/shared-contracts/agent-access';
 import { sql } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
 
+import { composedModulesOf } from '../agent-platform/composed-modules.ts';
 import { withdrawPendingOfAgent } from '../agent-platform/proposal-store.ts';
+import { mcpCatalogOf } from '../mcp/catalog.ts';
+import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 
 import {
   ConnectionsForbidden,
@@ -105,8 +108,11 @@ const companyCatalog = (tenantId: string, legalEntityId: string, grants: DemoAcc
       { concurrency: 3 },
     ).pipe(Effect.mapError(unavailable));
     const union = templates.flatMap(({ relationships }) => relationships);
+    const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(unavailable));
+    const labelOf = composedModulesOf(mcpCatalogOf(installed.composition)).labelOf;
     return {
-      options: agentModuleOptions(agentModuleAccessOf(union, legalEntityId)),
+      labelOf,
+      options: agentModuleOptions(agentModuleAccessOf(union, legalEntityId), labelOf),
       presets: templates.map(({ relationships, role }) =>
         agentRolePreset(role, agentModuleAccessOf(relationships, legalEntityId)),
       ),
@@ -218,6 +224,7 @@ const changeAgent = <R>(
       const principalId = derivedUuid(`${tenantId}:${legalEntityId}:${transport.idempotencyKey}:agent`);
       const catalog = yield* companyCatalog(tenantId, legalEntityId, grants);
       const problem = agentDraftProblem({
+        labelOf: catalog.labelOf,
         displayName: request.displayName,
         existingNames: agents.filter((agent) => agent.principalId !== principalId).map((agent) => agent.displayName),
         memberIds,
@@ -288,6 +295,7 @@ const changeAgent = <R>(
     if (request.operation === 'configure') {
       const catalog = yield* companyCatalog(tenantId, legalEntityId, grants);
       const problem = agentDraftProblem({
+        labelOf: catalog.labelOf,
         displayName: request.displayName,
         existingNames: agents
           .filter((other) => other.principalId !== agent.principalId)

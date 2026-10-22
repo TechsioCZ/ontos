@@ -2,12 +2,13 @@
 // administrator sees as Czech reasons. No database or Effect imports.
 import type { AgentModuleGrant, AgentModuleOption, AgentRolePreset } from '@app/shared-contracts/agent-access';
 
-import { moduleLabel } from './agent-store-model.ts';
-
 /** Module choices for agents of a company: highest access any role has, sorted by Czech label. */
-export const agentModuleOptions = (access: readonly AgentModuleGrant[]): readonly AgentModuleOption[] =>
+export const agentModuleOptions = (
+  access: readonly AgentModuleGrant[],
+  labelOf: (moduleId: string) => string,
+): readonly AgentModuleOption[] =>
   access
-    .map(({ access: maxAccess, moduleId }) => ({ label: moduleLabel(moduleId), maxAccess, moduleId }))
+    .map(({ access: maxAccess, moduleId }) => ({ label: labelOf(moduleId), maxAccess, moduleId }))
     .toSorted((left, right) => left.label.localeCompare(right.label, 'cs'));
 
 export const agentRolePreset = (
@@ -18,6 +19,8 @@ export const agentRolePreset = (
 export interface AgentDraftInput {
   readonly displayName: string;
   readonly existingNames: readonly string[];
+  /** Czech label of a module key (from the composed modules). */
+  readonly labelOf: (moduleId: string) => string;
   readonly memberIds: readonly string[];
   readonly modules: readonly AgentModuleGrant[];
   readonly operatorPrincipalIds: readonly string[];
@@ -46,7 +49,7 @@ export const agentDraftProblem = (input: AgentDraftInput): string | null => {
   for (const module of input.modules) {
     const option = input.options.find((candidate) => candidate.moduleId === module.moduleId);
     if (option === undefined) {
-      return `Modul ${moduleLabel(module.moduleId)} tato firma nemá.`;
+      return `Modul ${input.labelOf(module.moduleId)} tato firma nemá.`;
     }
     if (module.access === 'write' && option.maxAccess !== 'write') {
       return `${option.label}: zápis tu nemá žádná role, agent ho dostat nemůže.`;

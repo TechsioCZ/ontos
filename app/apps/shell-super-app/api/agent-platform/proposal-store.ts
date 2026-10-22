@@ -17,6 +17,7 @@ import { AuthDatabase } from '../auth/db/client.ts';
 import {
   type AgentProposalRow,
   type AuditActivityRow,
+  type ModuleTexts,
   accessRowToEntry,
   auditRowToEntry,
   buildActivityResponse,
@@ -568,6 +569,8 @@ export interface AgentActivityScope {
   readonly visibleModules: ReadonlySet<string>;
   /** Agents that may only propose: their successful legacy-module writes are proposals, not direct changes. */
   readonly proposalOnlyAgents: ReadonlySet<string>;
+  /** Labels and engines of the composed modules. */
+  readonly modules: ModuleTexts;
 }
 
 export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(function* listAgentActivity(
@@ -664,9 +667,11 @@ export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(funct
   const names = yield* principalNames(tenantId);
 
   const entries = [
-    ...audit.map((row) => auditRowToEntry(row, { proposalOnly: scope.proposalOnlyAgents.has(row.principalId) })),
-    ...accessRows.map(accessRowToEntry),
-    ...proposals.flatMap((row) => proposalRowToEntries(row, names)),
+    ...audit.map((row) =>
+      auditRowToEntry(row, { modules: scope.modules, proposalOnly: scope.proposalOnlyAgents.has(row.principalId) }),
+    ),
+    ...accessRows.map((row) => accessRowToEntry(row, scope.modules)),
+    ...proposals.flatMap((row) => proposalRowToEntries(row, names, scope.modules)),
   ].filter((entry) => entry.moduleKey !== null && scope.visibleModules.has(entry.moduleKey));
   return buildActivityResponse(entries, request);
 });

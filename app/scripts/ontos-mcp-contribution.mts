@@ -384,6 +384,7 @@ export const deriveOntosMcpContribution = (input: DeriveOntosMcpContributionInpu
     description: authored.description,
     keywords: authored.keywords,
     label: authored.label,
+    ...(authored.ownProposalEngine === true ? { ownProposalEngine: true } : {}),
     ...(authored.page === undefined ? {} : { page: authored.page }),
     ...(revision === undefined
       ? {}

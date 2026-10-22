@@ -7,7 +7,7 @@
 //   POST /shell-super-app-api/agent-platform/activity         human (session)    -> AgentActivityResponse
 // Core-queue proposals live in `core.agent_proposals`; approval runs the stored module command (governed Action
 // `<appId>/actions/<actionSlug>`) AS THE APPROVING PERSON, so the module's own permissions and Core audit apply.
-// Legacy per-module engines (CRM, sales-pipeline, merchandise `aiChanges` slices) appear in the same queue.
+// Modules that keep their own AI change engine (`aiChanges`, declared in their MCP contribution) appear in the same queue.
 import { Schema } from 'effect';
 
 const ShortText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
@@ -48,14 +48,14 @@ export type AgentRevertPlan = typeof AgentRevertPlanSchema.Type;
 export const AGENT_CREATED_ID_PLACEHOLDER = '$createdId';
 
 export const AgentProposalInputSchema = Schema.Struct({
-  /** Stable module app id (directory under app/verticals), e.g. `work-tasks`, `merchandise`. */
+  /** Stable deployment app id of the module (from the composition). */
   appId: ShortText,
   /** Module action slug: `apply-command` (default, body `{ command, expectedRevision }`) or a named Action such as `update-party` whose body is `command` itself (no `_tag`). */
   actionSlug: Schema.optionalKey(ShortText),
   command: AgentCommandSchema,
   diff: Schema.Array(AgentDiffLineSchema).check(Schema.isMaxLength(60)),
   reason: LongText,
-  /** Extra audiences whose assertions the module needs (work-tasks CreateTask with assignee: `workforce`). */
+  /** Extra audiences whose assertions the module needs (the MCP tool contribution declares them). */
   referenceAudiences: Schema.optionalKey(Schema.Array(ShortText).check(Schema.isMaxLength(5))),
   revert: Schema.optionalKey(AgentRevertPlanSchema),
   risk: AgentRiskSchema,
@@ -237,64 +237,6 @@ export const AgentActivityResponseSchema = Schema.Struct({
   modules: Schema.Array(Schema.Struct({ label: Schema.String, moduleKey: Schema.String })),
 });
 export type AgentActivityResponse = typeof AgentActivityResponseSchema.Type;
-
-// ------------------------------------------------------------------------------------------------ module registry
-
-export interface AgentApprovalModule {
-  readonly appId: string;
-  readonly label: string;
-  /** True when the module keeps its own `aiChanges` engine (AiDecideChanges / AiRevertBatch). */
-  readonly legacyEngine: boolean;
-  readonly moduleKey: string;
-}
-
-/** Modules that accept agent proposals (every served module with Actions except sales-insights, whose metrics no screen shows). Unknown app ids are refused on submit. */
-export const agentApprovalModules: readonly AgentApprovalModule[] = [
-  { appId: 'crm', label: 'CRM', legacyEngine: true, moduleKey: 'demo.crm' },
-  { appId: 'sales-pipeline', label: 'Obchodní případy', legacyEngine: true, moduleKey: 'demo.sales-pipeline' },
-  { appId: 'merchandise', label: 'Produkty, ceny a objednávky', legacyEngine: true, moduleKey: 'demo.merchandise' },
-  { appId: 'work-tasks', label: 'Úkoly', legacyEngine: false, moduleKey: 'work.tasks' },
-  { appId: 'property-leasing', label: 'Nájmy a pobyty', legacyEngine: false, moduleKey: 'property.leasing' },
-  { appId: 'tagging', label: 'Štítky', legacyEngine: false, moduleKey: 'demo.tagging' },
-  { appId: 'crm-activities', label: 'Aktivity', legacyEngine: false, moduleKey: 'crm.activities' },
-  { appId: 'facility-operations', label: 'Provoz areálu', legacyEngine: false, moduleKey: 'facility.operations' },
-  { appId: 'legal-agreements', label: 'Smlouvy', legacyEngine: false, moduleKey: 'legal.agreements' },
-  { appId: 'party-registry', label: 'Zákazníci a partneři', legacyEngine: false, moduleKey: 'party.registry' },
-  {
-    appId: 'commerce-customer-context',
-    label: 'Zákaznický kontext e-shopu',
-    legacyEngine: false,
-    moduleKey: 'commerce.customer-context',
-  },
-  { appId: 'property-portfolio', label: 'Nemovitosti', legacyEngine: false, moduleKey: 'property.portfolio' },
-  { appId: 'finance-billing', label: 'Faktury a platby', legacyEngine: false, moduleKey: 'finance.billing' },
-  { appId: 'workforce', label: 'Zaměstnanci', legacyEngine: false, moduleKey: 'demo.workforce' },
-];
-
-/** Czech labels of every module key that can appear in agent activity. Fallback: the module key itself. */
-export const agentModuleLabels: Readonly<Record<string, string>> = {
-  'demo.crm': 'CRM',
-  'demo.merchandise': 'Produkty, ceny a objednávky',
-  'commerce.customer-context': 'Zákaznický kontext e-shopu',
-  'crm.activities': 'Aktivity',
-  'demo.sales-insights': 'Přehledy',
-  'demo.sales-pipeline': 'Obchodní případy',
-  'facility.operations': 'Provoz areálu',
-  'demo.tagging': 'Štítky',
-  'demo.workforce': 'Zaměstnanci',
-  'party.registry': 'Zákazníci a partneři',
-  'legal.agreements': 'Smlouvy',
-  'finance.billing': 'Faktury a platby',
-  'property.leasing': 'Nájmy a pobyty',
-  'property.portfolio': 'Nemovitosti',
-  'work.tasks': 'Úkoly',
-};
-
-export const agentModuleLabel = (moduleKey: string | null | undefined): string =>
-  moduleKey === null || moduleKey === undefined ? 'Platforma' : (agentModuleLabels[moduleKey] ?? moduleKey);
-
-export const agentApprovalModuleByAppId = (appId: string): AgentApprovalModule | undefined =>
-  agentApprovalModules.find((entry) => entry.appId === appId);
 
 // ------------------------------------------------------------------------------------------------ Czech UI labels
 

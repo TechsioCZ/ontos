@@ -21,7 +21,9 @@ import { DateTime, Effect, Option, Schema } from 'effect';
 
 import { moduleAccessSets } from '../agent-platform/approval-logic.ts';
 import { loadAgentProfiles } from '../auth/agent-store.ts';
-import { DEFAULT_AGENT_PROFILE, moduleLabel } from '../auth/agent-store-model.ts';
+import { DEFAULT_AGENT_PROFILE } from '../auth/agent-store-model.ts';
+import { composedModulesOf } from '../agent-platform/composed-modules.ts';
+import { mcpCatalogOf } from '../mcp/catalog.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import {
   ConnectionForbidden,
@@ -134,18 +136,25 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
   );
   const sets = moduleAccessSets(relationships, input.legalEntityId);
   // SpiceDB can still hold rights on modules that are no longer installed; a connection only offers live modules.
-  const installed = new Set<string>((yield* (yield* ShellInstalledModuleCatalog).load).moduleIds);
+  const catalog = yield* (yield* ShellInstalledModuleCatalog).load;
+  const installed = new Set<string>(catalog.moduleIds);
+  const labelOf = composedModulesOf(mcpCatalogOf(catalog.composition)).labelOf;
   const spice: LiveRights = {
     read: new Set([...sets.access].filter((moduleId) => installed.has(moduleId))),
     write: new Set([...sets.write].filter((moduleId) => installed.has(moduleId))),
   };
   if (input.actingKind === 'human') {
-    return { live: spice, offered: offeredModules(spice, 'direct'), policyCap: 'direct' as ConnectionWritePolicy };
+    return {
+      labelOf,
+      live: spice,
+      offered: offeredModules(spice, 'direct', labelOf),
+      policyCap: 'direct' as ConnectionWritePolicy,
+    };
   }
   const profiles = yield* loadAgentProfiles(input.tenantId, [input.actingPrincipalId]);
   const profile = profiles.get(input.actingPrincipalId) ?? DEFAULT_AGENT_PROFILE;
   const live = agentLiveRights(spice, profile.modules);
-  return { live, offered: offeredModules(live, profile.writePolicy), policyCap: profile.writePolicy };
+  return { labelOf, live, offered: offeredModules(live, profile.writePolicy, labelOf), policyCap: profile.writePolicy };
 }, Effect.mapError(toUnavailable));
 
 export interface LiveConnection {
@@ -219,6 +228,7 @@ export const loadLiveConnection = Effect.fn('OAuthConnectionService.loadLiveConn
     tenantId: grant.tenantId,
   });
   const effective = effectiveAuthority({
+    labelOf: authority.labelOf,
     live: authority.live,
     policyCap: authority.policyCap,
     requested: grant.modules,
@@ -389,15 +399,17 @@ const summariesOf = Effect.fn('OAuthConnectionService.summariesOf')(function* (
     ...new Set(rows.flatMap((row) => [row.userPrincipalId, row.actingPrincipalId])),
   ]);
   const legalNames = yield* loadLegalNames(tenantId, [...new Set(rows.map((row) => row.legalEntityId))]);
+  const catalog = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(toUnavailable));
+  const labelOf = composedModulesOf(mcpCatalogOf(catalog.composition)).labelOf;
   return yield* Effect.forEach(
     rows,
     (row) =>
       row.status === 'active'
         ? loadLiveConnection(row.grantId).pipe(
             Effect.option,
-            Effect.map((live) => summaryOf(row, names, legalNames, Option.getOrUndefined(live))),
+            Effect.map((live) => summaryOf(row, names, legalNames, Option.getOrUndefined(live), labelOf)),
           )
-        : Effect.succeed(summaryOf(row, names, legalNames, undefined)),
+        : Effect.succeed(summaryOf(row, names, legalNames, undefined, labelOf)),
     { concurrency: 4 },
   );
 });
@@ -407,13 +419,14 @@ const summaryOf = (
   names: PrincipalNames,
   legalNames: ReadonlyMap<string, string>,
   live: LiveConnection | undefined,
+  labelOf: (moduleId: string) => string,
 ): ConnectionSummary => {
   const agent = row.actingKind === 'agent';
   const fallbackModules: readonly ConnectionModule[] =
     row.modules === 'all'
       ? []
       : row.modules.map((grant) => ({
-          label: moduleLabel(grant.moduleId),
+          label: labelOf(grant.moduleId),
           moduleId: grant.moduleId,
           read: true,
           write: grant.access === 'write',

@@ -9,6 +9,7 @@ import {
 } from '../../../api/oauth-connections/effective-authority.ts';
 
 const live = { read: new Set(['work.tasks', 'demo.crm']), write: new Set(['work.tasks']) };
+const labelOf = (moduleId: string): string => moduleId;
 
 test('minWritePolicy picks the more restrictive policy', () => {
   expect(minWritePolicy('approval', 'direct')).toBe('approval');
@@ -16,7 +17,7 @@ test('minWritePolicy picks the more restrictive policy', () => {
 });
 
 test("requested 'all' offers every live module with write only where live write holds", () => {
-  const authority = effectiveAuthority({ live, policyCap: 'direct', requested: 'all', requestedPolicy: 'direct' });
+  const authority = effectiveAuthority({ labelOf, live, policyCap: 'direct', requested: 'all', requestedPolicy: 'direct' });
   expect(authority.modules.length).toBe(2);
   expect(authority.modules.find((m) => m.moduleId === 'work.tasks')?.write).toBe(true);
   expect(authority.modules.find((m) => m.moduleId === 'demo.crm')?.write).toBe(false);
@@ -24,6 +25,7 @@ test("requested 'all' offers every live module with write only where live write 
 
 test('explicit module list keeps only modules the principal holds live', () => {
   const authority = effectiveAuthority({
+    labelOf,
     live: { read: new Set(['work.tasks']), write: new Set() },
     policyCap: 'direct',
     requested: [
@@ -36,12 +38,12 @@ test('explicit module list keeps only modules the principal holds live', () => {
 });
 
 test('writePolicy is the minimum of requested policy and cap', () => {
-  const authority = effectiveAuthority({ live, policyCap: 'approval', requested: 'all', requestedPolicy: 'direct' });
+  const authority = effectiveAuthority({ labelOf, live, policyCap: 'approval', requested: 'all', requestedPolicy: 'direct' });
   expect(authority.writePolicy).toBe('approval');
 });
 
 test('read_only policy turns every write off', () => {
-  const authority = effectiveAuthority({ live, policyCap: 'read_only', requested: 'all', requestedPolicy: 'direct' });
+  const authority = effectiveAuthority({ labelOf, live, policyCap: 'read_only', requested: 'all', requestedPolicy: 'direct' });
   expect(authority.modules.every((m) => m.write === false)).toBe(true);
 });
 
@@ -55,12 +57,12 @@ test('agentLiveRights intersects SpiceDB access with the agent profile', () => {
 });
 
 test('isModulesRequestWithin rejects write beyond offered write and accepts all', () => {
-  const offered = offeredModules(live, 'read_only');
+  const offered = offeredModules(live, 'read_only', labelOf);
   expect(isModulesRequestWithin([{ access: 'write', moduleId: 'work.tasks' }], offered)).toBe(false);
   expect(isModulesRequestWithin([{ access: 'read', moduleId: 'work.tasks' }], offered)).toBe(true);
   expect(isModulesRequestWithin('all', offered)).toBe(true);
 });
 
 test('isModulesRequestWithin rejects an empty module list', () => {
-  expect(isModulesRequestWithin([], offeredModules(live, 'direct'))).toBe(false);
+  expect(isModulesRequestWithin([], offeredModules(live, 'direct', labelOf))).toBe(false);
 });

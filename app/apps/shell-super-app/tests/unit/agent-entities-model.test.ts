@@ -2,14 +2,22 @@ import { expect, test } from 'effect-rstest';
 
 import { agentDraftProblem, agentModuleOptions } from '../../api/auth/agent-entities-model.ts';
 
-const options = agentModuleOptions([
-  { access: 'write', moduleId: 'work.tasks' },
-  { access: 'read', moduleId: 'facility.operations' },
-]);
+/** Labels the composed modules declare in their contributions. */
+const LABELS: Readonly<Record<string, string>> = { 'facility.operations': 'Provoz', 'work.tasks': 'Úkoly a projekty' };
+const labelOf = (moduleId: string): string => LABELS[moduleId] ?? moduleId;
+
+const options = agentModuleOptions(
+  [
+    { access: 'write', moduleId: 'work.tasks' },
+    { access: 'read', moduleId: 'facility.operations' },
+  ],
+  labelOf,
+);
 
 const valid = {
   displayName: 'Asistent provozu',
   existingNames: [],
+  labelOf,
   memberIds: ['p1', 'p2'],
   modules: [{ access: 'write', moduleId: 'work.tasks' }],
   operatorPrincipalIds: ['p1'],

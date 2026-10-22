@@ -1,16 +1,15 @@
 import { expect, test } from 'effect-rstest';
 
-import { agentApprovalModuleByAppId } from '@app/shared-contracts/agent-proposals';
-
 import {
   legacyBatchKey,
   normalizeLegacySlice,
   parseLegacyKey,
   sliceFromRecords,
 } from '../../../api/agent-platform/legacy-normalize.ts';
+import type { LegacyEngineModule } from '../../../api/agent-platform/legacy-normalize.ts';
 
-const crm = agentApprovalModuleByAppId('crm');
-if (crm === undefined) throw new Error('CRM module is not registered for agent approvals');
+/** A composed module that keeps its own AI change engine. */
+const crm: LegacyEngineModule = { appId: 'crm', label: 'CRM', moduleKey: 'demo.crm' };
 
 const names = new Map([['principal-jana', 'Jana Nováková']]);
 

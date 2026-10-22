@@ -1,5 +1,4 @@
 import type {
-  AgentApprovalModule,
   AgentDiffLine,
   AgentItemStatus,
   AgentQueueBatch,
@@ -8,6 +7,13 @@ import type {
 } from '@app/shared-contracts/agent-proposals';
 
 type Rec = Readonly<Record<string, unknown>>;
+
+/** A composed module that keeps its own AI change engine (`aiChanges` in its records read). */
+export interface LegacyEngineModule {
+  readonly appId: string;
+  readonly label: string;
+  readonly moduleKey: string;
+}
 
 const isRecord = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -94,7 +100,7 @@ const diffOfChange = (change: Rec): AgentDiffLine[] => {
 };
 
 const itemOf = (
-  module: AgentApprovalModule,
+  module: LegacyEngineModule,
   change: Rec,
   options: { readonly canDecide: boolean; readonly names: ReadonlyMap<string, string> },
 ): AgentQueueItem | undefined => {
@@ -134,7 +140,7 @@ const itemOf = (
 
 /** Turns one module's legacy `aiChanges` slice into queue batches. Malformed entries are skipped. */
 export const normalizeLegacySlice = (
-  module: AgentApprovalModule,
+  module: LegacyEngineModule,
   slice: unknown,
   options: { readonly canDecide: boolean; readonly names: ReadonlyMap<string, string> },
 ): AgentQueueBatch[] => {

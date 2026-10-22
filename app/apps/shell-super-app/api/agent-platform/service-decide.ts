@@ -3,7 +3,6 @@
  * permissions, their audit); the revert plan is built here from the entity read just before the change. Legacy
  * module engines (CRM, sales, merchandise orders) decide and revert through their own AiDecideChanges/AiRevertBatch.
  */
-import { agentApprovalModuleByAppId, agentModuleLabel } from '@app/shared-contracts/agent-proposals';
 import type {
   AgentDecideRequest,
   AgentDecideResponse,
@@ -21,6 +20,7 @@ import type { AgentPlatformCaller } from './caller.ts';
 import { parseLegacyKey } from './legacy-normalize.ts';
 import { decideLegacy, revertLegacy } from './legacy-queue.ts';
 import type { AgentProposalRow } from './mappers.ts';
+import { loadComposedModules } from './composed-modules.ts';
 import { applyModuleCommand, callModuleAs, readModuleRecords } from './module-call.ts';
 import {
   batchHasApprovalInProgress,
@@ -240,7 +240,7 @@ const decideCore = Effect.fn('AgentPlatform.decideCore')(function* decideCore(
           return result(itemKey, 'skipped', 'Změna už byla vyřízena.');
         }
         if (!modules.write.has(row.moduleKey)) {
-          return result(itemKey, 'forbidden', notAllowed(agentModuleLabel(row.moduleKey)));
+          return result(itemKey, 'forbidden', notAllowed((yield* loadComposedModules).labelOf(row.moduleKey)));
         }
         const check = yield* checkApprover(caller.principal, row);
         if (!check.ok) {
@@ -265,10 +265,11 @@ const decideLegacyBatch = Effect.fn('AgentPlatform.decideLegacyBatch')(function*
   batch: { readonly appId: string; readonly id: string },
   request: AgentDecideRequest,
 ) {
-  const module = agentApprovalModuleByAppId(batch.appId);
-  if (module === undefined || !module.legacyEngine) {
+  const composed = (yield* loadComposedModules).byAppId(batch.appId);
+  if (composed === undefined || !composed.ownProposalEngine) {
     return yield* new AgentPlatformInvalid({ reason: BATCH_NOT_FOUND });
   }
+  const module = { appId: composed.appId, label: composed.label.cs, moduleKey: composed.moduleId };
   const changeIdOf = (key: string) => {
     const parsed = parseLegacyKey(key);
     return parsed !== undefined && parsed.appId === batch.appId ? parsed.id : undefined;
@@ -363,10 +364,11 @@ const revertLegacyBatch = Effect.fn('AgentPlatform.revertLegacyBatch')(function*
   batch: { readonly appId: string; readonly id: string },
   request: AgentRevertRequest,
 ) {
-  const module = agentApprovalModuleByAppId(batch.appId);
-  if (module === undefined || !module.legacyEngine) {
+  const composed = (yield* loadComposedModules).byAppId(batch.appId);
+  if (composed === undefined || !composed.ownProposalEngine) {
     return yield* new AgentPlatformInvalid({ reason: BATCH_NOT_FOUND });
   }
+  const module = { appId: composed.appId, label: composed.label.cs, moduleKey: composed.moduleId };
   const modules = yield* callerModuleAccess(caller);
   if (!modules.write.has(module.moduleKey)) {
     return yield* new AgentPlatformForbidden({ reason: `Dávku v modulu ${module.label} nemůžete vrátit.` });

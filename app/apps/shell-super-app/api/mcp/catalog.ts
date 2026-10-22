@@ -24,6 +24,8 @@ export interface McpCatalogModule {
   readonly keywords: string;
   readonly label: OntosMcpText;
   readonly moduleId: string;
+  /** The module keeps its own AI change engine the approval queue reads (legacy `aiChanges`). */
+  readonly ownProposalEngine: boolean;
   readonly page: string | undefined;
   readonly revision: OntosMcpContribution['revision'];
   readonly tools: readonly McpCatalogTool[];
@@ -119,6 +121,7 @@ export const buildMcpCatalog = (composition: {
           keywords: contribution.keywords,
           label: contribution.label,
           moduleId: module.moduleId,
+          ownProposalEngine: contribution.ownProposalEngine === true,
           page: contribution.page,
           revision: contribution.revision,
           tools: contribution.tools.map((tool) => ({
