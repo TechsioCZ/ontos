@@ -16,12 +16,13 @@ import { cimd } from '@better-auth/cimd';
 import { fetchClientMetadataResource as fetchClientMetadataOnNode } from './cimd-transport.node.ts';
 import { fetchClientMetadataResource as fetchClientMetadataOnWorkerd } from './cimd-transport.workerd.ts';
 import { mcp } from '@better-auth/mcp';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { APIError, betterAuth } from 'better-auth';
 import { isAPIError } from 'better-auth/api';
 import { getCookies } from 'better-auth/cookies';
 import { admin } from 'better-auth/plugins/admin';
 import { jwt } from 'better-auth/plugins/jwt';
-import { Context, Effect, Function as Fn, Layer, Option, Predicate, Redacted, Schema, flow } from 'effect';
+import { Context, Data, Effect, Function as Fn, Layer, Option, Predicate, Redacted, Schema } from 'effect';
 import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'effect/unstable/http/Cookies';
 
 import { mcpResourceUrlOf } from '../../shared/mcp-resource.ts';
@@ -452,30 +453,64 @@ interface AuthenticationAssemblyOptions {
   readonly runResolverEffect: typeof Effect.runPromise;
 }
 
-const assembleAuthenticationService = (
-  ...[configuration, databaseAdapter, resolver, options]: readonly [
-    configuration: AuthConfigValue,
-    databaseAdapter: BetterAuthDatabaseAdapter,
-    resolver: (typeof PrincipalResolver)['Service'],
-    options: AuthenticationAssemblyOptions,
-  ]
-): AuthenticationServiceContract => {
-  const prepareCreatedSession = <Session extends { readonly userId: string }>(session: Session) =>
-    resolver.resolveDefaultBetterAuthUser(session.userId).pipe(
-      Effect.map((principal) => ({
-        data: {
-          ...session,
-          activeLegalEntityId: null,
-          activeTenantId: principal.tenantId,
-        },
-      })),
-      Effect.mapError(mapResolverApiError),
-    );
-  const beforeSessionCreate = flow(prepareCreatedSession, options.runResolverEffect);
-  const oauthHooks = options.oauthHooks;
+type ShellSessionCreateHook = <Session extends { readonly userId: string }>(
+  session: Session,
+) => Promise<{ readonly data: Session & { readonly activeLegalEntityId: null; readonly activeTenantId: string } }>;
+
+/**
+ * What one request lends the isolate's Better Auth instance. A Worker builds the BFF runtime per request (workerd binds
+ * every socket to the request that opened it), so the database and the resolver-backed hooks always come from the
+ * request being served, while Better Auth itself, with its plugin setup and its OAuth resource seed, lives per isolate.
+ */
+interface BetterAuthRequestBindings {
+  readonly beforeSessionCreate: ShellSessionCreateHook;
+  readonly databaseAdapter: BetterAuthDatabaseAdapter;
+  readonly oauthHooks: OAuthConnectionHooksContract;
+}
+
+const betterAuthRequest = new AsyncLocalStorage<BetterAuthRequestBindings>();
+
+/** A Better Auth call that no Shell request scoped: a wiring defect, never an expected outcome. */
+class BetterAuthOutsideRequestError extends Data.TaggedError('BetterAuthOutsideRequestError') {}
+
+const requestBindings = (): BetterAuthRequestBindings => {
+  const bindings = betterAuthRequest.getStore();
+  if (bindings === undefined) {
+    throw new BetterAuthOutsideRequestError();
+  }
+  return bindings;
+};
+
+type BetterAuthAdapterInstance = ReturnType<BetterAuthDatabaseAdapter>;
+const requestAdapters = new WeakMap<BetterAuthRequestBindings, BetterAuthAdapterInstance>();
+
+/** Better Auth keeps the adapter it was built with; every call on it goes to the serving request's database. */
+const requestScopedDatabase: BetterAuthDatabaseAdapter = (betterAuthOptions) => {
+  const current = (): BetterAuthAdapterInstance => {
+    const bindings = requestBindings();
+    const existing = requestAdapters.get(bindings);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const created = bindings.databaseAdapter(betterAuthOptions);
+    requestAdapters.set(bindings, created);
+    return created;
+  };
+  return new Proxy(current(), {
+    get: (_target, key) => {
+      const value: unknown = Reflect.get(current(), key);
+      return typeof value === 'function'
+        ? (...args: readonly unknown[]) => Reflect.apply(value, current(), args)
+        : value;
+    },
+    has: (_target, key) => Reflect.has(current(), key),
+  });
+};
+
+const makeShellBetterAuth = (configuration: AuthConfigValue, allowFixtureSignUp: boolean) => {
   const oauthIssuer = oauthIssuerFor(configuration.baseUrl);
   const mcpResourceUrl = mcpResourceUrlOf(configuration.baseUrl);
-  const auth = betterAuth({
+  return betterAuth({
     advanced: {
       defaultCookieAttributes: {
         httpOnly: true,
@@ -486,17 +521,17 @@ const assembleAuthenticationService = (
     },
     basePath: OAUTH_BASE_PATH,
     baseURL: configuration.baseUrl,
-    database: databaseAdapter,
+    database: requestScopedDatabase,
     databaseHooks: {
       session: {
         create: {
-          before: beforeSessionCreate,
+          before: (session) => requestBindings().beforeSessionCreate(session),
         },
       },
     },
     emailAndPassword: {
-      autoSignIn: options.allowFixtureSignUp !== true,
-      disableSignUp: options.allowFixtureSignUp !== true,
+      autoSignIn: !allowFixtureSignUp,
+      disableSignUp: !allowFixtureSignUp,
       enabled: true,
     },
     logger: {
@@ -523,13 +558,13 @@ const assembleAuthenticationService = (
         accessTokenExpiresIn: OAUTH_ACCESS_TOKEN_TTL_SECONDS,
         allowPublicClientPrelogin: true,
         consentPage: OAUTH_CONSENT_PAGE,
-        customAccessTokenClaims: (input) => oauthHooks.customAccessTokenClaims(input),
+        customAccessTokenClaims: (input) => requestBindings().oauthHooks.customAccessTokenClaims(input),
         grantTypes: ['authorization_code', 'refresh_token'],
         loginPage: OAUTH_LOGIN_PAGE,
         postLogin: {
-          consentReferenceId: (context) => oauthHooks.consentReferenceId(context),
+          consentReferenceId: (context) => requestBindings().oauthHooks.consentReferenceId(context),
           page: OAUTH_CONNECT_PAGE,
-          shouldRedirect: (context) => oauthHooks.shouldRedirect(context),
+          shouldRedirect: (context) => requestBindings().oauthHooks.shouldRedirect(context),
         },
         rateLimit: {
           authorize: { max: 60, window: 60 },
@@ -598,6 +633,93 @@ const assembleAuthenticationService = (
     },
     trustedOrigins: [...configuration.trustedOrigins],
   });
+};
+type ShellBetterAuth = ReturnType<typeof makeShellBetterAuth>;
+
+const readyBetterAuth = new Map<string, ShellBetterAuth>();
+
+const publishWhenReady = async (key: string, created: ShellBetterAuth): Promise<void> => {
+  try {
+    await created.$context;
+  } catch {
+    // A failed setup stays with the request that built it; the next request builds again.
+    return;
+  }
+  if (!readyBetterAuth.has(key)) {
+    readyBetterAuth.set(key, created);
+  }
+};
+
+/**
+ * One Better Auth instance per isolate and configuration. A request that finds none ready builds its own; it becomes
+ * the shared one only after its setup (including the OAuth resource seed) finished inside that request, so no request
+ * ever waits on I/O that belongs to another one.
+ */
+const isolateBetterAuth = (
+  configuration: AuthConfigValue,
+  allowFixtureSignUp: boolean,
+  bindings: BetterAuthRequestBindings,
+): ShellBetterAuth => {
+  const key = JSON.stringify([
+    configuration.baseUrl,
+    configuration.connectionString,
+    configuration.secret,
+    configuration.secureCookies,
+    configuration.supportUserIds,
+    configuration.trustedOrigins,
+    allowFixtureSignUp,
+  ]);
+  const ready = readyBetterAuth.get(key);
+  if (ready !== undefined) {
+    return ready;
+  }
+  const created = betterAuthRequest.run(bindings, () => makeShellBetterAuth(configuration, allowFixtureSignUp));
+  void publishWhenReady(key, created);
+  return created;
+};
+
+/** The isolate's Better Auth with every endpoint call running on this request's database and hooks. */
+const requestBoundBetterAuth = (shared: ShellBetterAuth, bindings: BetterAuthRequestBindings) => ({
+  api: new Proxy(shared.api, {
+    get: (target, key) => {
+      const endpoint: unknown = Reflect.get(target, key);
+      return typeof endpoint === 'function'
+        ? (...args: readonly unknown[]) => betterAuthRequest.run(bindings, () => Reflect.apply(endpoint, target, args))
+        : endpoint;
+    },
+  }),
+  handler: (request: Request) => betterAuthRequest.run(bindings, () => shared.handler(request)),
+});
+
+const assembleAuthenticationService = (
+  ...[configuration, databaseAdapter, resolver, options]: readonly [
+    configuration: AuthConfigValue,
+    databaseAdapter: BetterAuthDatabaseAdapter,
+    resolver: (typeof PrincipalResolver)['Service'],
+    options: AuthenticationAssemblyOptions,
+  ]
+): AuthenticationServiceContract => {
+  const prepareCreatedSession = <Session extends { readonly userId: string }>(session: Session) =>
+    resolver.resolveDefaultBetterAuthUser(session.userId).pipe(
+      Effect.map((principal) => ({
+        data: {
+          ...session,
+          activeLegalEntityId: null,
+          activeTenantId: principal.tenantId,
+        },
+      })),
+      Effect.mapError(mapResolverApiError),
+    );
+  const bindings: BetterAuthRequestBindings = {
+    beforeSessionCreate: (session) => options.runResolverEffect(prepareCreatedSession(session)),
+    databaseAdapter,
+    oauthHooks: options.oauthHooks,
+  };
+  const oauthIssuer = oauthIssuerFor(configuration.baseUrl);
+  const auth = requestBoundBetterAuth(
+    isolateBetterAuth(configuration, options.allowFixtureSignUp === true, bindings),
+    bindings,
+  );
 
   const resolveIdentity = (
     user: {

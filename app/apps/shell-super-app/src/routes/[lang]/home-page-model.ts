@@ -31,7 +31,10 @@ import type { HomeContribution } from './home-contribution-model.ts';
 import type { AvailableTenantsClientError, ShellAuthenticationClientOptions } from '../../api/auth-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { browserBaseUrl, browserReadKey, browserStaleWhileRevalidateCache, keyPart } from '../browser-swr-cache.ts';
-import { shellAuthenticationClientOptionsFromRequest } from '../shell-authentication-client-options.ts';
+import {
+  isServerRenderWithoutSession,
+  shellAuthenticationClientOptionsFromRequest,
+} from '../shell-authentication-client-options.ts';
 import { redirectToSignIn } from '../sign-in-return.ts';
 import type { SignInReason } from '../sign-in-return.ts';
 
@@ -245,6 +248,9 @@ const companyWelcomeFor = (identity: SafeAuthenticatedIdentity, options: ShellAu
 export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
   function* loadHomePageModelEffect(request: Request) {
     const options = yield* shellAuthenticationClientOptionsFromRequest(request);
+    if (isServerRenderWithoutSession(options)) {
+      return anonymousModel;
+    }
     const session = yield* sessionFor(options);
     if (session.state === 'anonymous') {
       return anonymousModel;
