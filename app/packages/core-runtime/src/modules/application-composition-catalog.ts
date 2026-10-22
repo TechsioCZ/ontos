@@ -1,4 +1,4 @@
-import { Effect, Redacted, Schema } from 'effect';
+import { Effect, Predicate, Redacted, Ref, Schema } from 'effect';
 
 import {
   ApplicationCompositionSchema,
@@ -174,16 +174,39 @@ const buildCatalog = Effect.fn('ApplicationComposition.buildCatalog')(function* 
   return catalog;
 });
 
+// Catalogs contain immutable data only. Mutable or shallow-frozen injected inputs must be
+// verified again; a frozen accessor is not immutable evidence either.
+const isFrozenArtifact = <Value>(value: Value): boolean =>
+  !Predicate.isObjectKeyword(value) ||
+  value === null ||
+  (Object.isFrozen(value) &&
+    Object.values(Object.getOwnPropertyDescriptors(value)).every(
+      (descriptor) => 'value' in descriptor && isFrozenArtifact(descriptor.value),
+    ));
+const validatedCatalogs = Ref.makeUnsafe(new WeakMap<ApplicationComposition, InstalledModuleCatalog>());
+
 /**
  * Construct one all-or-nothing catalog from approved documents. No remote fetch, topology fallback,
  * availability filtering, or retained last-known-good catalog can alter installed membership.
  */
-export const buildApplicationCompositionCatalog = (
+export const buildApplicationCompositionCatalog = Effect.fn(
+  'ApplicationCompositionCatalog.buildApplicationCompositionCatalog',
+)(function* loadValidatedCatalog(
   composition: ApplicationComposition,
-): Effect.Effect<InstalledModuleCatalog, ApplicationCompositionValidationError> =>
-  buildCatalog(composition).pipe(
+): Effect.fn.Return<InstalledModuleCatalog, ApplicationCompositionValidationError> {
+  const cached = (yield* Ref.get(validatedCatalogs)).get(composition);
+  if (cached !== undefined) {
+    return cached;
+  }
+  return yield* buildCatalog(composition).pipe(
+    Effect.tap((catalog) =>
+      isFrozenArtifact(composition)
+        ? Ref.update(validatedCatalogs, (catalogs) => catalogs.set(composition, catalog))
+        : Effect.void,
+    ),
     Effect.timeoutOrElse({
       duration: ONTOS_APPLICATION_COMPOSITION_VALIDATION_TIMEOUT_MS,
       orElse: () => Effect.fail(invalid('Application Composition validation exceeded its time budget')),
     }),
   );
+});

@@ -1,11 +1,18 @@
 import { createHash } from 'node:crypto';
 
-import { DateTime, Effect, Fiber, Schema } from 'effect';
+import { Context, DateTime, Effect, Fiber, Layer, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it, rstest } from 'effect-rstest';
 
 import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
-import { validateActiveApplicationCompositionSnapshot } from '../../src/modules/active-application-composition.ts';
+import {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+  ActiveApplicationCompositionSnapshotSchema,
+  validateActiveApplicationCompositionSnapshot,
+} from '../../src/modules/active-application-composition.ts';
+import { ActiveApplicationCompositionSource } from '../../src/modules/active-application-composition-source-service.ts';
+import { ActiveApplicationCompositionSourceReadError } from '../../src/modules/active-application-composition-source-errors.ts';
 import type { ActiveApplicationCompositionSnapshot } from '../../src/modules/active-application-composition.ts';
 import {
   ApplicationCompositionSchema,
@@ -113,6 +120,87 @@ it.effect('owns immutable lease dates while preserving native DateTime operation
     expect(Reflect.set(expiresParts, 'second', 59)).toBe(false);
     expect(DateTime.toEpochMillis(output.observedAt)).toBe(Date.parse(observedAt));
     expect(DateTime.toEpochMillis(output.validUntil)).toBe(Date.parse(validUntil));
+  }),
+);
+
+it.effect('reuses only validator-owned snapshots and checks the lease again without hashing', () =>
+  Effect.gen(function* reuseValidatedSnapshot() {
+    yield* TestClock.setTime(Date.parse(observedAt));
+    const digest = rstest.spyOn(globalThis.crypto.subtle, 'digest');
+    yield* Effect.addFinalizer(() => Effect.sync(() => digest.mockRestore()));
+    const input = snapshot();
+    const approved = yield* validateActiveApplicationCompositionSnapshot(input);
+    const digestCalls = digest.mock.calls.length;
+    expect(yield* validateActiveApplicationCompositionSnapshot(approved)).toBe(approved);
+    expect(digest).toHaveBeenCalledTimes(digestCalls);
+    // An injected object with the same revision is not trusted by identity.
+    expect(Reflect.set(input.composition.shell.deployment, 'buildMarker', 'changed-build')).toBe(true);
+    expect(yield* Effect.flip(validateActiveApplicationCompositionSnapshot(input))).toBeInstanceOf(
+      ActiveApplicationCompositionUnavailableError,
+    );
+    yield* TestClock.setTime(Date.parse(validUntil));
+    expect(yield* Effect.flip(validateActiveApplicationCompositionSnapshot(approved))).toBeInstanceOf(
+      ActiveApplicationCompositionUnavailableError,
+    );
+  }),
+);
+
+it.effect('reuses exact configured bytes across request Layers but never skips the source or its lease', () =>
+  Effect.gen(function* reuseConfiguredSnapshot() {
+    yield* TestClock.setTime(Date.parse(observedAt));
+    const input = snapshot();
+    const encode = Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema));
+    const encoded = yield* encode(input);
+    let current = encoded;
+    let available = true;
+    let reads = 0;
+    const layer = ActiveApplicationCompositionConfigLive.pipe(
+      Layer.provide(
+        Layer.succeed(ActiveApplicationCompositionSource, {
+          load: Effect.suspend(() => {
+            reads += 1;
+            return available
+              ? Effect.succeed(current)
+              : Effect.fail(
+                  new ActiveApplicationCompositionSourceReadError({
+                    reason: 'source unavailable',
+                  }),
+                );
+          }),
+        }),
+      ),
+    );
+    const load = Effect.scoped(
+      Layer.build(layer).pipe(
+        Effect.flatMap((context) => Context.get(context, ActiveApplicationCompositionService).load),
+      ),
+    );
+    const first = yield* load;
+    expect(yield* load).toBe(first);
+    expect(reads).toBe(2);
+    current = yield* encode({
+      ...input,
+      composition: {
+        ...input.composition,
+        shell: {
+          ...input.composition.shell,
+          deployment: { ...input.composition.shell.deployment, buildMarker: 'tampered' },
+        },
+      },
+    });
+    expect(yield* Effect.flip(load)).toBeInstanceOf(ActiveApplicationCompositionUnavailableError);
+    current = encoded;
+    available = false;
+    expect(yield* Effect.flip(load)).toBeInstanceOf(ActiveApplicationCompositionUnavailableError);
+    available = true;
+    yield* TestClock.setTime(Date.parse(validUntil));
+    expect(yield* Effect.flip(load)).toBeInstanceOf(ActiveApplicationCompositionUnavailableError);
+    current = yield* encode({ ...input, validUntil: DateTime.makeUnsafe(Date.parse(validUntil) + 1000) });
+    const renewed = yield* load;
+    expect(renewed).not.toBe(first);
+    expect(renewed.composition.revision).toBe(first.composition.revision);
+    expect(yield* load).toBe(renewed);
+    expect(reads).toBe(7);
   }),
 );
 

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { Effect, Schema, Struct } from 'effect';
-import { expect, it } from 'effect-rstest';
+import { expect, it, rstest } from 'effect-rstest';
 
 import { moduleReleaseWorkerName } from '../../src/http/module-release-identity.ts';
 import { buildApplicationCompositionCatalog } from '../../src/modules/application-composition-catalog.ts';
@@ -10,6 +10,7 @@ import {
   ApplicationCompositionSchema,
   ApplicationCompositionValidationError,
   canonicalizeApplicationComposition,
+  freezeApplicationCompositionArtifact,
   ONTOS_APPLICATION_COMPOSITION_MAX_CONTRACT_BYTES,
   ONTOS_APPLICATION_COMPOSITION_MAX_MODULES,
   ONTOS_SHELL_CONTRIBUTION_ABI,
@@ -154,6 +155,28 @@ it.effect('accepts an intentionally empty approved inventory', () =>
     expect(catalog.deploymentAppIds).toEqual([]);
     expect(catalog.moduleIds).toEqual([]);
     expect(catalog.outboxSubscriptions).toEqual([]);
+  }),
+);
+
+it.effect('reuses a catalog only for the same deeply frozen approved artifact', () =>
+  Effect.gen(function* reuseImmutableCatalog() {
+    const input = freezeApplicationCompositionArtifact(composition([moduleFromContract(contract())]));
+    const digestSpy = rstest.spyOn(globalThis.crypto.subtle, 'digest');
+    yield* Effect.addFinalizer(() => Effect.sync(() => digestSpy.mockRestore()));
+    const first = yield* buildApplicationCompositionCatalog(input);
+    const digestCalls = digestSpy.mock.calls.length;
+    expect(yield* buildApplicationCompositionCatalog(input)).toBe(first);
+    expect(digestSpy).toHaveBeenCalledTimes(digestCalls);
+  }),
+);
+
+it.effect('revalidates shallow-frozen and mutable inputs even when their claimed revision is unchanged', () =>
+  Effect.gen(function* rejectMutableCatalogCache() {
+    for (const input of [composition(), Object.freeze(composition())]) {
+      yield* buildApplicationCompositionCatalog(input);
+      expect(Reflect.set(input.shell.deployment, 'buildMarker', 'changed-after-admission')).toBe(true);
+      yield* assertInvalid(input, /revision does not match/u);
+    }
   }),
 );
 

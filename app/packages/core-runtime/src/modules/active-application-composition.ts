@@ -1,4 +1,4 @@
-import { Clock, Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
+import { Clock, Context, DateTime, Effect, Layer, Option, Ref, Schema } from 'effect';
 
 import {
   ApplicationCompositionSchema,
@@ -50,12 +50,26 @@ const unavailableActiveApplicationComposition = (cause: unknown): ActiveApplicat
     reason: 'The active Application Composition snapshot is unavailable or invalid',
   });
 
+// Only immutable values minted by this validator are reusable. Never retain request-owned I/O,
+// promises, or failures: a Worker builds a new scoped runtime for each request.
+const validatedSnapshots = Ref.makeUnsafe(new WeakSet<ActiveApplicationCompositionSnapshot>());
+const decodeSnapshot = Schema.decodeEffect(Schema.toType(ActiveApplicationCompositionSnapshotSchema), {
+  onExcessProperty: 'error',
+});
+
 /** Every injected/runtime source is checked at the operation edge; expiry never selects an old revision. */
 export const validateActiveApplicationCompositionSnapshot = Effect.fn('ActiveApplicationComposition.validateSnapshot')(
   function* validateSnapshot(snapshot: ActiveApplicationCompositionSnapshot) {
-    const decoded = yield* Schema.decodeEffect(Schema.toType(ActiveApplicationCompositionSnapshotSchema), {
-      onExcessProperty: 'error',
-    })(snapshot).pipe(Effect.mapError(unavailableActiveApplicationComposition));
+    if ((yield* Ref.get(validatedSnapshots)).has(snapshot)) {
+      const now = yield* Clock.currentTimeMillis;
+      if (DateTime.toEpochMillis(snapshot.observedAt) > now || DateTime.toEpochMillis(snapshot.validUntil) <= now) {
+        return yield* unavailableActiveApplicationComposition(
+          'Application Composition authority is expired or not yet valid',
+        );
+      }
+      return snapshot;
+    }
+    const decoded = yield* decodeSnapshot(snapshot).pipe(Effect.mapError(unavailableActiveApplicationComposition));
     const observedAt = DateTime.make(DateTime.toEpochMillis(decoded.observedAt));
     const validUntil = DateTime.make(DateTime.toEpochMillis(decoded.validUntil));
     if (Option.isNone(observedAt) || Option.isNone(validUntil)) {
@@ -81,31 +95,45 @@ export const validateActiveApplicationCompositionSnapshot = Effect.fn('ActiveApp
         'Application Composition authority expired during validation',
       );
     }
-    return Object.freeze({
+    const validated = Object.freeze({
       ...decoded,
       composition: freezeApplicationCompositionArtifact(decoded.composition),
       observedAt: observed,
       validUntil: expires,
     });
+    yield* Ref.update(validatedSnapshots, (snapshots) => snapshots.add(validated));
+    return validated;
   },
 );
 
-const configuredActiveApplicationCompositionSnapshot = (encoded: string) => {
+// Bounded to one successful wire value across request-scoped Layers. Exact bytes, not a claimed
+// revision, identify the cache entry; each source read and each lease check still runs.
+const configuredSnapshot = Ref.makeUnsafe<{
+  readonly encoded: string;
+  readonly snapshot: ActiveApplicationCompositionSnapshot;
+} | null>(null);
+
+const configuredActiveApplicationCompositionSnapshot = Effect.fn(
+  'ActiveApplicationComposition.configuredActiveApplicationCompositionSnapshot',
+)(function* loadConfiguredSnapshot(encoded: string) {
+  const cached = yield* Ref.get(configuredSnapshot);
+  if (cached?.encoded === encoded) {
+    return yield* validateActiveApplicationCompositionSnapshot(cached.snapshot);
+  }
   if (
     encoded.length > ONTOS_APPLICATION_COMPOSITION_MAX_BYTES ||
     new TextEncoder().encode(encoded).byteLength > ONTOS_APPLICATION_COMPOSITION_MAX_BYTES
   ) {
-    return Effect.fail(
-      unavailableActiveApplicationComposition('Application Composition snapshot exceeds its byte budget'),
-    );
+    return yield* unavailableActiveApplicationComposition('Application Composition snapshot exceeds its byte budget');
   }
-  return Schema.decodeEffect(activeApplicationCompositionSnapshotJsonSchema, {
+  return yield* Schema.decodeEffect(activeApplicationCompositionSnapshotJsonSchema, {
     onExcessProperty: 'error',
   })(encoded).pipe(
     Effect.mapError(unavailableActiveApplicationComposition),
     Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+    Effect.tap((snapshot) => Ref.set(configuredSnapshot, { encoded, snapshot })),
   );
-};
+});
 
 /**
  * Server runtime adapter. Deployment automation publishes the immutable active snapshot as one atomic
