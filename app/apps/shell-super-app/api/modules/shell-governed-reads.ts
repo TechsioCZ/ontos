@@ -15,6 +15,7 @@ import type {
   TenantModuleStateServiceContract,
   makeTenantModuleStateService,
 } from '@app/core-runtime';
+import { makeLegalEntityNavigationExclusions } from '@app/core-runtime/modules/legal-entity-navigation-exclusions';
 import { Context, Effect, Layer, Schema } from 'effect';
 
 import {
@@ -140,6 +141,7 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
     const scopedDependencies = {
       ...dependencies,
       moduleStates: scopedModuleStateFactory(transaction),
+      navigationExclusions: makeLegalEntityNavigationExclusions({ executor: transaction }),
     };
     return Effect.succeed(
       Object.freeze({

@@ -46,6 +46,7 @@ export const CORE_TABLE_INVENTORY = [
   'search_projection_rebuilds',
   'worker_checkpoints',
   'agent_proposals',
+  'legal_entity_navigation_exclusions',
 ] as const;
 
 export const ACTION_INVOCATION_STATUSES = [
@@ -60,7 +61,13 @@ export const ACTION_INVOCATION_STATUSES = [
 
 export type ActionInvocationStatus = (typeof ACTION_INVOCATION_STATUSES)[number];
 
-export const ACTION_AUTH_METHODS = ['session', 'api_key', 'system', 'support_impersonation', 'oauth_connection'] as const;
+export const ACTION_AUTH_METHODS = [
+  'session',
+  'api_key',
+  'system',
+  'support_impersonation',
+  'oauth_connection',
+] as const;
 
 export type ActionAuthMethod = (typeof ACTION_AUTH_METHODS)[number];
 
@@ -1029,12 +1036,18 @@ export const agentProposals = coreSchema.table(
     moduleKey: text('module_key').notNull(),
     actionSlug: text('action_slug').notNull().default('apply-command'),
     commandJson: jsonb('command_json').$type<Readonly<Record<string, unknown>>>().notNull(),
-    referenceAudiencesJson: jsonb('reference_audiences_json').$type<readonly string[]>().notNull().default(sql`'[]'::jsonb`),
+    referenceAudiencesJson: jsonb('reference_audiences_json')
+      .$type<readonly string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     summary: text('summary').notNull(),
     targetLabel: text('target_label').notNull(),
     reason: text('reason').notNull(),
     risk: text('risk').notNull(),
-    diffJson: jsonb('diff_json').$type<readonly unknown[]>().notNull().default(sql`'[]'::jsonb`),
+    diffJson: jsonb('diff_json')
+      .$type<readonly unknown[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
     revertJson: jsonb('revert_json').$type<unknown>(),
     status: text('status').notNull().default('pending'),
     createdAt: createdAt(),
@@ -1101,13 +1114,45 @@ export const oauthConnectionGrants = coreSchema.table(
     index('core_oauth_grants_acting_status_idx').on(table.actingPrincipalId, table.status),
     index('core_oauth_grants_client_idx').on(table.clientId),
     index('core_oauth_grants_session_idx').on(table.sessionId),
-    check('core_oauth_grants_status_ck', sql`${table.status} in ('draft', 'active', 'denied', 'revoked', 'superseded')`),
+    check(
+      'core_oauth_grants_status_ck',
+      sql`${table.status} in ('draft', 'active', 'denied', 'revoked', 'superseded')`,
+    ),
     check('core_oauth_grants_acting_kind_ck', sql`${table.actingKind} in ('human', 'agent')`),
     check('core_oauth_grants_client_kind_ck', sql`${table.clientKind} in ('cimd', 'loopback')`),
     check('core_oauth_grants_write_policy_ck', sql`${table.writePolicy} in ('read_only', 'approval', 'direct')`),
     check(
       'core_oauth_grants_revoke_reason_ck',
       sql`${table.revokeReason} is null or ${table.revokeReason} in ('user', 'admin', 'superseded', 'operator_removed', 'agent_disabled', 'user_disabled', 'password_changed')`,
+    ),
+  ],
+);
+
+/**
+ * Shell navigation destinations a company does not offer, keyed by the contribution's page entrypoint. Tenant data
+ * filled by installation or seed tooling; the Shell composition drops listed destinations for that legal entity.
+ */
+export const legalEntityNavigationExclusions = coreSchema.table(
+  'legal_entity_navigation_exclusions',
+  {
+    tenantId: uuid('tenant_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    entrypointKey: text('entrypoint_key').notNull(),
+    createdAt: createdAt(),
+  },
+  (table) => [
+    primaryKey({
+      name: 'core_legal_entity_navigation_exclusions_pk',
+      columns: [table.tenantId, table.legalEntityId, table.entrypointKey],
+    }),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId],
+      foreignColumns: [legalEntities.tenantId, legalEntities.legalEntityId],
+      name: 'core_legal_entity_navigation_exclusions_legal_entity_fk',
+    }).onDelete('cascade'),
+    check(
+      'core_legal_entity_navigation_exclusions_entrypoint_ck',
+      sql`${table.entrypointKey} ~ '^[a-z][a-z0-9]*([.-][a-z0-9]+)*$' and length(${table.entrypointKey}) <= 200`,
     ),
   ],
 );
@@ -1122,6 +1167,7 @@ export const coreDatabaseSchema = {
   domainEvents,
   evidenceReferences,
   legalEntities,
+  legalEntityNavigationExclusions,
   mediaAssets,
   mediaLinks,
   oauthConnectionGrants,
@@ -1163,6 +1209,7 @@ export const CORE_TABLES = [
   searchProjectionRebuilds,
   workerCheckpoints,
   agentProposals,
+  legalEntityNavigationExclusions,
 ] as const;
 
 export type TenantRow = typeof tenants.$inferSelect;

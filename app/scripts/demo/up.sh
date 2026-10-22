@@ -257,6 +257,8 @@ step accounts-admin-grants "${WITH_ENV[@]}" node scripts/demo/accounts-admin-gra
 step demo-seed-work-people "${WITH_ENV[@]}" node scripts/demo/seed-work-people.mts
 # Old baseline grants Siampark staff to commercial 0020; only retain their intended Siampark company.
 step company-membership-hygiene "${WITH_ENV[@]}" node scripts/demo/company-membership-hygiene.mts
+# Per-company navigation (core.legal_entity_navigation_exclusions): pages a demo company does not offer.
+step navigation-exclusions "${WITH_ENV[@]}" node scripts/demo/navigation-exclusions.mts
 # reset-permissions deliberately logs AI errors without failing; this explicit step makes a cold start honest.
 step ai-profiles pnpm_ demo:ai-profiles
 # Agentní entity: one presentable agent per company through the shell's admin endpoint (idempotent by name).

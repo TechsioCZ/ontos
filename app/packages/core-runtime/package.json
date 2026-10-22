@@ -20,6 +20,7 @@
     "./install/stage-context-bootstrap": "./src/install/stage-context-bootstrap.ts",
     "./module-entrypoint": "./src/modules/module-entrypoint.ts",
     "./modules/mcp-contribution": "./src/modules/mcp-contribution.ts",
+    "./modules/legal-entity-navigation-exclusions": "./src/modules/legal-entity-navigation-exclusions.ts",
     "./modules/active-application-composition": "./src/modules/active-application-composition.ts",
     "./modules/active-application-composition-source": {
       "workerd": "./src/modules/active-application-composition-source.workerd.ts",
