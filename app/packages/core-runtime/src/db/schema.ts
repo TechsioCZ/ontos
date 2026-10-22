@@ -47,6 +47,7 @@ export const CORE_TABLE_INVENTORY = [
   'worker_checkpoints',
   'agent_proposals',
   'legal_entity_navigation_exclusions',
+  'oauth_connection_grants',
 ] as const;
 
 export const ACTION_INVOCATION_STATUSES = [

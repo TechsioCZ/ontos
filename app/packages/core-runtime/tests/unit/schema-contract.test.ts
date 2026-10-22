@@ -39,10 +39,15 @@ it('exports exactly the Core table inventory in PostgreSQL schema core', () => {
       return `${config.schema}.${config.name}`;
     })
     .toSorted();
-  const expectedQualifiedNames = CORE_TABLE_INVENTORY.map((tableName) => `${CORE_SCHEMA_NAME}.${tableName}`).toSorted();
+  // Core's migrations also own the platform mail ledger, which lives in its own schema.
+  const expectedQualifiedNames = [
+    ...CORE_TABLE_INVENTORY.map((tableName) => `${CORE_SCHEMA_NAME}.${tableName}`),
+    'demo_email.deliveries',
+    'demo_email.settings',
+  ].toSorted();
 
   expect(qualifiedNames).toEqual(expectedQualifiedNames);
-  expect(new Set(qualifiedNames).size).toBe(CORE_TABLE_INVENTORY.length);
+  expect(new Set(qualifiedNames).size).toBe(expectedQualifiedNames.length);
   expect(qualifiedNames.some((name) => name.startsWith('public.'))).toBe(false);
   expect(qualifiedNames.some((name) => /^(?:auth|ticketing|properties|property|accounting)\./u.test(name))).toBe(false);
 });
