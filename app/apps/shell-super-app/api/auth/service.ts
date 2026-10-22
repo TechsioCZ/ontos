@@ -23,7 +23,8 @@ import { jwt } from 'better-auth/plugins/jwt';
 import { Context, Effect, Function as Fn, Layer, Option, Predicate, Redacted, Schema, flow } from 'effect';
 import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'effect/unstable/http/Cookies';
 
-import { AuthConfig, DEFAULT_MCP_RESOURCE_URL } from './config.ts';
+import { mcpResourceUrlOf } from '../../shared/mcp-resource.ts';
+import { AuthConfig } from './config.ts';
 import { observeAuthenticationPhase, withAuthenticationTimeout } from './observability.ts';
 import type { AuthenticationPhase } from './observability.ts';
 import type { AuthConfigValue } from './config.ts';
@@ -472,7 +473,7 @@ const assembleAuthenticationService = (
   const beforeSessionCreate = flow(prepareCreatedSession, options.runResolverEffect);
   const oauthHooks = options.oauthHooks;
   const oauthIssuer = oauthIssuerFor(configuration.baseUrl);
-  const mcpResourceUrl = configuration.mcpResourceUrl ?? DEFAULT_MCP_RESOURCE_URL;
+  const mcpResourceUrl = mcpResourceUrlOf(configuration.baseUrl);
   const auth = betterAuth({
     advanced: {
       defaultCookieAttributes: {

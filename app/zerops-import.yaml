@@ -19,10 +19,6 @@ services:
   - hostname: shellsuperapp
     type: nodejs@24
     enableSubdomainAccess: true
-  # MCP OAuth resource server (mcp.<domain>); production derivation runs it with at least two containers.
-  - hostname: ontosmcp
-    type: nodejs@24
-    enableSubdomainAccess: true
   - hostname: partyregistry
     type: nodejs@24
     enableSubdomainAccess: true

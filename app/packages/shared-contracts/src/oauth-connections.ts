@@ -1,13 +1,12 @@
-// MCP OAuth connections (lane mcp-connection-grants, ONTOS-MCP-AUTH-DESIGN.md §3, §4, §5.4). Shared wire contract of
-// the shell connect flow (/cs/pripojit, /cs/pripojit/souhlas), the private connector endpoints the MCP resource
-// server calls, and the "Připojené aplikace" management endpoints (lane mcp-connections-ui).
+// MCP OAuth connections (ONTOS-MCP-AUTH-DESIGN.md §3, §4, §5.4). Shared wire contract of the shell connect flow
+// (/cs/pripojit, /cs/pripojit/souhlas) and the "Připojené aplikace" management endpoints. The MCP endpoint itself is
+// the Shell's `/mcp` route; it verifies tokens and describes connections in-process.
 //
 //   Connection grant  one row per approved connection: one company + one acting principal (me or an agent I may
 //                     operate) + requested modules + write policy. Its id is the Better Auth consent referenceId and
 //                     the access-token claim `https://ontos.cz/grant`.
-//   Connector call    the MCP server sends `x-ontos-connector-key: <ONTOS_MCP_CONNECTOR_SECRET>` AND
-//                     `authorization: Bearer <user access JWT>` (aud = MCP resource). Both are required.
-//                     401 = token/grant invalid, revoked or principal inactive (the host re-runs OAuth).
+//   MCP request       `authorization: Bearer <user access JWT>` (aud = `<shell>/mcp`). 401 = token/grant invalid,
+//                     revoked or principal inactive (the host re-runs OAuth).
 //   Effective access  live OntOS rights of the acting principal ∩ grant modules; write policy =
 //                     min(grant policy, agent profile policy), order read_only < approval < direct.
 // CIMD only (no DCR), current MCP spec only (NO-COMPAT rule, v2/lanes/COMMON.md).
@@ -16,11 +15,6 @@ import { Schema } from 'effect';
 import { AgentModuleGrantSchema, AgentWritePolicySchema } from './agent-access.ts';
 
 export const OAUTH_CONNECTION_PATHS = {
-  // private, connector-authenticated (x-ontos-connector-key + Bearer user JWT); answers 401/403/503 problems
-  /** Body `{}` -> `ConnectionDescription`. */
-  connectorDescribe: '/shell-super-app-api/auth/connector/describe',
-  /** Body `ConnectorGatewayContextRequest` -> `ConnectorGatewayContextResponse` (existing EdDSA gateway assertion). */
-  connectorGateway: '/shell-super-app-api/auth/connector/gateway-context',
   // browser, session-authenticated (connect flow, screens 2 and 3)
   /** Body `ConnectOptionsRequest` -> `ConnectOptions`. */
   connectOptions: '/shell-super-app-api/auth/oauth-connections/options',
@@ -44,8 +38,6 @@ export const OAUTH_CONNECTION_PATHS = {
 export const OAUTH_GRANT_CLAIM = 'https://ontos.cz/grant' as const;
 /** The only OAuth capability scope; it never widens anything. */
 export const OAUTH_MCP_SCOPE = 'ontos' as const;
-/** Header with the shared connector secret (MCP server -> shell, private network only). */
-export const OAUTH_CONNECTOR_KEY_HEADER = 'x-ontos-connector-key' as const;
 /** `TrustedPrincipalContext.authContextRef` prefix of an OAuth connection. */
 export const OAUTH_GRANT_CONTEXT_PREFIX = 'oauth-grant:' as const;
 /** Drafts older than this are deleted and can no longer be approved. */
@@ -111,7 +103,7 @@ export const ConnectionPrincipalSchema = Schema.Struct({
 });
 export type ConnectionPrincipal = typeof ConnectionPrincipalSchema.Type;
 
-/** What an active connection may do right now (answer of `connectorDescribe`). */
+/** What an active connection may do right now (described live on every MCP request). */
 export const ConnectionDescriptionSchema = Schema.Struct({
   acting: Schema.Struct({
     displayName: Schema.String,
@@ -119,7 +111,6 @@ export const ConnectionDescriptionSchema = Schema.Struct({
     principalId: Schema.String,
   }),
   client: ConnectionClientSchema,
-  /** Pass it unchanged in `ConnectorGatewayContextRequest.compositionRevision`. */
   compositionRevision: Schema.String,
   /** The human who connected an agent; null when the person acts for themselves. */
   delegatedBy: Schema.NullOr(ConnectionPrincipalSchema),
@@ -167,28 +158,6 @@ export const ConnectionListResponseSchema = Schema.Struct({
   connections: Schema.Array(ConnectionSummarySchema),
 });
 export type ConnectionListResponse = typeof ConnectionListResponseSchema.Type;
-
-// ── connector (MCP server -> shell) ────────────────────────────────────────────────────────────────────────────
-
-export const ConnectorDescribeRequestSchema = Schema.Struct({});
-export type ConnectorDescribeRequest = typeof ConnectorDescribeRequestSchema.Type;
-
-export const ConnectorGatewayContextRequestSchema = Schema.Struct({
-  /** Stable topology app id of the vertical, e.g. `work-tasks`. */
-  audience: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  /** `ConnectionDescription.compositionRevision`. */
-  compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
-});
-export type ConnectorGatewayContextRequest = typeof ConnectorGatewayContextRequestSchema.Type;
-
-/** Same wire shape as `GatewayContextResponse` (gateway-context.ts): send `token` as `Authorization: Bearer`. */
-export const ConnectorGatewayContextResponseSchema = Schema.Struct({
-  apiBaseUrl: Schema.String,
-  compositionRevision: Schema.String,
-  expiresAt: Schema.Finite,
-  token: Schema.String,
-});
-export type ConnectorGatewayContextResponse = typeof ConnectorGatewayContextResponseSchema.Type;
 
 // ── connect flow (browser, session cookie) ─────────────────────────────────────────────────────────────────────
 

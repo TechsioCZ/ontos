@@ -1,14 +1,13 @@
 import { Config, ConfigProvider, Effect } from 'effect';
 
+import { mcpResourceUrlOf } from '../../shared/mcp-resource.ts';
 import { loadConfigurationProvider } from '../auth/configuration-provider.ts';
 import { ConnectionUnavailable } from './errors.ts';
 
 export interface OAuthServerConfig {
-  /** Empty when ONTOS_MCP_CONNECTOR_SECRET is not set: connector endpoints then answer 503. */
-  readonly connectorSecret: string;
   /** Exact issuer string, e.g. http://localhost:3020/shell-super-app-api/oauth (no trailing slash). */
   readonly issuer: string;
-  /** MCP resource = JWT aud, e.g. http://localhost:3090/mcp. */
+  /** MCP resource = JWT aud = `<shell origin>/mcp`, e.g. http://localhost:3020/mcp. */
   readonly resource: string;
 }
 
@@ -19,11 +18,10 @@ const parseOAuthServerConfig = Effect.gen(function* parseOAuthServerConfig() {
   const issuer = yield* Config.String('ONTOS_OAUTH_ISSUER').pipe(
     Effect.orElseSucceed(() => `${betterAuthUrl.replace(/\/+$/u, '')}/shell-super-app-api/oauth`),
   );
-  const resource = yield* Config.String('ONTOS_MCP_RESOURCE_URL').pipe(
-    Effect.orElseSucceed(() => 'http://localhost:3090/mcp'),
-  );
-  const connectorSecret = yield* Config.String('ONTOS_MCP_CONNECTOR_SECRET').pipe(Effect.orElseSucceed(() => ''));
-  return { connectorSecret, issuer: issuer.replace(/\/+$/u, ''), resource } satisfies OAuthServerConfig;
+  return {
+    issuer: issuer.replace(/\/+$/u, ''),
+    resource: mcpResourceUrlOf(betterAuthUrl),
+  } satisfies OAuthServerConfig;
 });
 
 export const loadOAuthServerConfig = loadConfigurationProvider(

@@ -248,20 +248,6 @@
       "ignoreDependencies": [
         "cloudflare"
       ]
-    },
-    "tools/ontos-agent-mcp": {
-      "entry": [
-        "src/server.ts",
-        "tests/*.test.ts",
-        "scripts/demo-session.mts"
-      ],
-      "project": [
-        "src/**/*.ts",
-        "tests/**/*.ts",
-        "scripts/**/*.mts"
-      ],
-      "node": false,
-      "lefthook": false
     }
   }
 }

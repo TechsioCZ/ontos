@@ -11,7 +11,7 @@ const verified = (state: string | null): VerifiedOAuthQuery => ({
   clientId: 'https://claude.ai/oauth/mcp-client.json',
   company: null,
   redirectUri: 'http://localhost:5555/callback',
-  resource: 'http://localhost:3090/mcp',
+  resource: 'http://localhost:3020/mcp',
   scope: 'ontos',
   state,
 });

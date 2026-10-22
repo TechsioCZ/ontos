@@ -1,3 +1,4 @@
+import { mcpResourceUrlOf } from '../../shared/mcp-resource.ts';
 import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -50,39 +51,7 @@ it.effect('keeps gateway signing configuration independent from Better Auth conf
   }),
 );
 
-it.effect('defaults the MCP resource to the local resource server', () =>
-  Effect.gen(function* defaultsMcpResource() {
-    const configuration = yield* parseAuthConfig(validEnvironment);
-    expect(configuration.mcpResourceUrl).toBe('http://localhost:3090/mcp');
-  }),
-);
-
-it.effect('accepts an https or loopback MCP resource', () =>
-  Effect.gen(function* acceptsMcpResource() {
-    const [httpsConfiguration, loopbackConfiguration] = yield* Effect.all([
-      parseAuthConfig({ ...validEnvironment, ONTOS_MCP_RESOURCE_URL: 'https://mcp.example.test/mcp' }),
-      parseAuthConfig({ ...validEnvironment, ONTOS_MCP_RESOURCE_URL: 'http://127.0.0.1:3090/mcp' }),
-    ]);
-    expect(httpsConfiguration.mcpResourceUrl).toBe('https://mcp.example.test/mcp');
-    expect(loopbackConfiguration.mcpResourceUrl).toBe('http://127.0.0.1:3090/mcp');
-  }),
-);
-
-it.effect('rejects a malformed MCP resource', () =>
-  Effect.gen(function* rejectsMcpResource() {
-    const errors = yield* Effect.all(
-      [
-        'http://mcp.example.test/mcp',
-        'http://localhost:3090/mcp/',
-        'https://mcp.example.test/mcp?x=1',
-        'not a url',
-      ].map((ONTOS_MCP_RESOURCE_URL) =>
-        Effect.flip(parseAuthConfig({ ...validEnvironment, ONTOS_MCP_RESOURCE_URL })),
-      ),
-      { concurrency: 'unbounded' },
-    );
-    for (const error of errors) {
-      expect(Predicate.isTagged(error, 'AuthConfigError')).toBe(true);
-    }
-  }),
-);
+it('derives the MCP resource from the Shell origin', () => {
+  expect(mcpResourceUrlOf('http://localhost:3020')).toBe('http://localhost:3020/mcp');
+  expect(mcpResourceUrlOf('https://ontos-stage.example/cs')).toBe('https://ontos-stage.example/mcp');
+});

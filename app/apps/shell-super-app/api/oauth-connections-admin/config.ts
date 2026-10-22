@@ -1,15 +1,11 @@
 import { Config, Effect } from 'effect';
 
-import { DEFAULT_MCP_RESOURCE_URL } from '../auth/config.ts';
+import { mcpResourceUrlOf } from '../../shared/mcp-resource.ts';
 import { loadConfigurationProvider } from '../auth/configuration-provider.ts';
 
-/**
- * MCP resource URL people paste into ChatGPT/Claude; equals the access-token audience. Read from the same sources
- * as `AuthConfig.mcpResourceUrl` (process environment, then the app env file), falling back to the same default.
- */
+/** MCP URL people paste into ChatGPT/Claude: the Shell's own `/mcp`, which is also the access-token audience. */
 export const mcpResourceUrl: Effect.Effect<string> = loadConfigurationProvider({}, () => 'unavailable' as const).pipe(
-  Effect.flatMap((provider) => Config.String('ONTOS_MCP_RESOURCE_URL').parse(provider)),
-  Effect.map((value) => value.trim()),
-  Effect.map((value) => (value === '' ? DEFAULT_MCP_RESOURCE_URL : value)),
-  Effect.orElseSucceed(() => DEFAULT_MCP_RESOURCE_URL),
+  Effect.flatMap((provider) => Config.String('BETTER_AUTH_URL').parse(provider)),
+  Effect.map(mcpResourceUrlOf),
+  Effect.orElseSucceed(() => mcpResourceUrlOf('http://localhost:3020')),
 );

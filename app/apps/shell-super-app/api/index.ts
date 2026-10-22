@@ -117,8 +117,7 @@ import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-
 import { AuthConfigLive } from './auth/config.ts';
 import { OAuthFlowLive } from './auth/oauth-server/oauth-flow-live.ts';
 import { oauthConnectGroupLive } from './oauth-connections/connect-http.ts';
-import { oauthConnectorGroupLive } from './oauth-connections/connector-http.ts';
-import { authenticateConnectorProposalCaller } from './oauth-connections/connector-service.ts';
+import { McpTransportLive } from './mcp/transport.ts';
 import { OAuthServerTransportLive } from './auth/oauth-server/transport.ts';
 import {
   CommerceExternalIdentityContextAccessLive,
@@ -1960,23 +1959,6 @@ const agentPlatformKeyCaller = Effect.fn('shell.agentPlatform.keyCaller')(functi
   return caller;
 });
 
-const agentPlatformConnectorCaller = (
-  headers: { readonly authorization?: string | undefined; readonly 'x-ontos-connector-key'?: string | undefined },
-  legalEntityId: string,
-  appIds: readonly string[],
-) =>
-  authenticateConnectorProposalCaller(headers, legalEntityId, appIds).pipe(
-    Effect.catch((error) =>
-      failIdentityProblem(
-        Predicate.isTagged(error, 'ConnectionForbidden')
-          ? shellTargetForbiddenProblem()
-          : Predicate.isTagged(error, 'ConnectionUnavailable')
-            ? shellCapabilityUnavailableProblem()
-            : shellAuthenticationRequiredProblem(),
-      ),
-    ),
-  );
-
 const agentPlatformDefect = (request: RequestWithHeaders) =>
   recoverUnexpectedDefect(request, 'Unexpected agent platform defect', () =>
     failIdentityProblem(shellInternalProblem()),
@@ -1986,18 +1968,8 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
   handlers
     .handle('submitAgentProposals', ({ headers, payload, request }) =>
       Effect.gen(function* submitAgentProposalsHandler() {
-        if (headers['x-ontos-connector-key'] !== undefined) {
-          const connector = yield* agentPlatformConnectorCaller(
-            headers,
-            payload.legalEntityId,
-            payload.proposals.map((proposal) => proposal.appId),
-          );
-          const response = yield* submitAgentProposals(connector, payload).pipe(Effect.catch(agentPlatformFailure));
-          yield* noStore;
-          return response;
-        }
         const agent = yield* agentPlatformKeyCaller(headers['x-api-key'], payload.legalEntityId);
-        // An API-key agent is always shown under its own principal name; only the MCP connector names the acting party.
+        // An API-key agent is always shown under its own principal name; only MCP connections name the acting party.
         const { agentLabel: _agentLabel, ...submission } = payload;
         const response = yield* assertKeyAgentMayPropose(agent).pipe(
           Effect.andThen(submitAgentProposals(agent, submission)),
@@ -2009,10 +1981,7 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
     )
     .handle('listOwnAgentProposals', ({ headers, payload, request }) =>
       Effect.gen(function* listOwnAgentProposalsHandler() {
-        const agent =
-          headers['x-ontos-connector-key'] === undefined
-            ? yield* agentPlatformKeyCaller(headers['x-api-key'], payload.legalEntityId)
-            : yield* agentPlatformConnectorCaller(headers, payload.legalEntityId, []);
+        const agent = yield* agentPlatformKeyCaller(headers['x-api-key'], payload.legalEntityId);
         const response = yield* listOwnAgentBatches(agent).pipe(Effect.catch(agentPlatformFailure));
         yield* noStore;
         return response;
@@ -2490,7 +2459,6 @@ export const makeShellAuthenticationApiRuntime = (
     resourcesGroupLive,
     gatewayContextGroupLive,
     oauthConnectGroupLive,
-    oauthConnectorGroupLive,
     // @ontos-codesmith-core-read-server-layers:start
 
     // @ontos-core-read legal-entity-detail
@@ -2517,6 +2485,13 @@ export const makeShellAuthenticationApiRuntime = (
       ),
       // The same authentication layer as the handlers, so one Better Auth instance serves both.
       OAuthServerTransportLive.pipe(Layer.provide(authenticationLayer), Layer.orDie),
+      // The MCP endpoint runs tools in-process as the connection's principal, with the agent platform's services.
+      McpTransportLive.pipe(
+        Layer.provide(activeApplicationCompositionLive),
+        Layer.provide(handlerDependenciesLive),
+        Layer.provide(compositionSourceLive),
+        Layer.orDie,
+      ),
     ),
   });
 };
@@ -2535,8 +2510,20 @@ const apiRuntime = makeShellAuthenticationApiRuntime(
 
 export default apiRuntime;
 
-// The Cloudflare entry calls this optional BFF hook before its normal prefix dispatch.
+// The Cloudflare entry calls these optional BFF hooks before its normal prefix dispatch.
 export { oauthMetadataTarget } from '../shared/oauth-metadata-routes.ts';
+export { rootRouteTarget } from '../shared/mcp-resource.ts';
+
+let rootRouteHandler: ReturnType<typeof apiRuntime.createHandler> | undefined;
+
+/**
+ * Node: the root `/mcp` and `/.well-known/oauth-protected-resource[/mcp]` middleware serves the canonical BFF route
+ * in-process (the request path is already rewritten to the BFF route without its prefix).
+ */
+export const handleRootRoute = (request: Request): Promise<Response> => {
+  rootRouteHandler ??= apiRuntime.createHandler();
+  return rootRouteHandler.handler(request);
+};
 
 /** The Node root aliases use the same scoped Better Auth service as the canonical BFF route. */
 export const handleOAuthMetadata = (request: Request): Promise<Response> =>
