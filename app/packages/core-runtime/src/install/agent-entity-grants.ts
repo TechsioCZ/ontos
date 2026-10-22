@@ -26,7 +26,10 @@ const belongsToCompany = (relationship: DemoAccountRelationship, legalEntityId: 
   demoAccountObjectIdParts(relationship.resourceId).includes(legalEntityId);
 const isCoreModule = (moduleId: string) => moduleId.startsWith('core.');
 
-const companyModules = (relationships: readonly DemoAccountRelationship[], legalEntityId: string): readonly string[] => [
+const companyModules = (
+  relationships: readonly DemoAccountRelationship[],
+  legalEntityId: string,
+): readonly string[] => [
   ...new Set(
     relationships.flatMap((relationship) => {
       if (relationship.resourceType !== 'module_access' || !belongsToCompany(relationship, legalEntityId)) {
@@ -92,9 +95,13 @@ export const agentModuleAccessOf = (
     .toSorted((left, right) => left.moduleId.localeCompare(right.moduleId));
 };
 
-/** The complete grant set of one agent entity in `legalEntityId`. */
+/**
+ * The complete grant set of one agent entity in `legalEntityId`. `legalEntityWriteRelations` holds, per module, the
+ * company-wide relations its writers need (declared by the module's contract); others stay read-only.
+ */
 export const agentGrantRelationships = (input: {
   readonly legalEntityId: string;
+  readonly legalEntityWriteRelations: ReadonlyMap<string, readonly string[]>;
   readonly modules: readonly AgentGrantModule[];
   readonly template: readonly DemoAccountRelationship[];
   readonly writePolicy: AgentGrantWritePolicy;
@@ -106,6 +113,9 @@ export const agentGrantRelationships = (input: {
       .map(({ access, moduleId }) => [moduleId, input.writePolicy === 'direct' ? access : 'read'] as const),
   );
   const writes = (moduleId: string) => effective.get(moduleId) === 'write';
+  const writtenLegalEntityRelations = new Set(
+    [...input.legalEntityWriteRelations].flatMap(([moduleId, relations]) => (writes(moduleId) ? relations : [])),
+  );
   const keep = (relationship: DemoAccountRelationship): boolean => {
     if (companyScopedTypes.has(relationship.resourceType) && !belongsToCompany(relationship, input.legalEntityId)) {
       return false;
@@ -117,7 +127,7 @@ export const agentGrantRelationships = (input: {
       return (
         relationship.relation === 'member' ||
         relationship.relation.endsWith('_reader') ||
-        (relationship.relation.endsWith('_manager') && writes('party.registry'))
+        writtenLegalEntityRelations.has(relationship.relation)
       );
     }
     if (relationship.resourceType === 'module_access') {
@@ -127,7 +137,9 @@ export const agentGrantRelationships = (input: {
     if (relationship.resourceType === 'context_permission' || relationship.resourceType === 'action') {
       const granted = relationshipModuleAccess(relationship, known);
       return (
-        granted !== undefined && effective.has(granted.moduleId) && (granted.access === 'read' || writes(granted.moduleId))
+        granted !== undefined &&
+        effective.has(granted.moduleId) &&
+        (granted.access === 'read' || writes(granted.moduleId))
       );
     }
     return false;

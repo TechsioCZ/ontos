@@ -41,7 +41,9 @@ const snakeCase = (value: string): string =>
 /** `<app_id>__<suffix>`; longer than 64 characters: first 55 + `_` + 8 hex of sha256(full name). */
 export const mcpToolName = (appId: string, suffix: string): string => {
   const full = `${snakeCase(appId)}__${snakeCase(suffix)}`;
-  return full.length <= 64 ? full : `${full.slice(0, 55)}_${createHash('sha256').update(full).digest('hex').slice(0, 8)}`;
+  return full.length <= 64
+    ? full
+    : `${full.slice(0, 55)}_${createHash('sha256').update(full).digest('hex').slice(0, 8)}`;
 };
 
 /** Default when the vertical does not say: verbs that remove, cancel or void data or access. */
@@ -59,7 +61,9 @@ const documentOf = (schema: Schema.Top, label: string): SchemaDocument => {
     const { $schema: _dialect, ...root } = document.schema as MutableJsonObject;
     return { definitions: { ...(document.definitions as JsonObject) }, schema: root };
   } catch (error) {
-    return fail(`${label}: the JSON Schema cannot be derived (${error instanceof Error ? error.message : String(error)})`);
+    return fail(
+      `${label}: the JSON Schema cannot be derived (${error instanceof Error ? error.message : String(error)})`,
+    );
   }
 };
 
@@ -190,7 +194,12 @@ const actionEndpointsOf = (actions: readonly unknown[], moduleId: string, appId:
         'command' in properties && 'expectedRevision' in properties
           ? taggedVariants(properties['command'], document.definitions)
           : [];
-      return { document, path: `/${appId}/actions/${slug}`, slug, variants: variants.length > 0 ? variants : undefined };
+      return {
+        document,
+        path: `/${appId}/actions/${slug}`,
+        slug,
+        variants: variants.length > 0 ? variants : undefined,
+      };
     })
     .sort((left, right) => left.slug.localeCompare(right.slug));
 
@@ -263,7 +272,9 @@ const checkCoverage = (
   if (missing.length > 0) {
     fail(`${moduleId}: MCP ${group} not contributed or hidden: ${missing.join(', ')}`);
   }
-  const unknown = Object.keys(declared).filter((key) => !available.has(key)).sort();
+  const unknown = Object.keys(declared)
+    .filter((key) => !available.has(key))
+    .sort();
   if (unknown.length > 0) {
     fail(`${moduleId}: MCP ${group} do not exist in the module: ${unknown.join(', ')}`);
   }
@@ -291,7 +302,9 @@ export interface DeriveOntosMcpContributionInput {
 }
 
 /** Undefined when the vertical contributes no MCP tools. */
-export const deriveOntosMcpContribution = (input: DeriveOntosMcpContributionInput): OntosMcpContribution | undefined => {
+export const deriveOntosMcpContribution = (
+  input: DeriveOntosMcpContributionInput,
+): OntosMcpContribution | undefined => {
   const { appId, authored, moduleId } = input;
   if (authored === undefined) {
     return undefined;
@@ -392,6 +405,9 @@ export const deriveOntosMcpContribution = (input: DeriveOntosMcpContributionInpu
     description: authored.description,
     keywords: authored.keywords,
     label: authored.label,
+    ...(authored.legalEntityWriteRelations === undefined
+      ? {}
+      : { legalEntityWriteRelations: [...authored.legalEntityWriteRelations] }),
     ...(authored.ownProposalEngine === true ? { ownProposalEngine: true } : {}),
     ...(authored.page === undefined ? {} : { page: authored.page }),
     ...(revision === undefined
@@ -399,7 +415,10 @@ export const deriveOntosMcpContribution = (input: DeriveOntosMcpContributionInpu
       : {
           revision: {
             field: revision.field ?? 'revision',
-            fieldsByCommandPrefix: (revision.fieldsByCommandPrefix ?? []).map(({ field, prefix }) => ({ field, prefix })),
+            fieldsByCommandPrefix: (revision.fieldsByCommandPrefix ?? []).map(({ field, prefix }) => ({
+              field,
+              prefix,
+            })),
             path: `/reads/${revision.read}`,
             query: { ...(revision.query ?? {}) },
           },

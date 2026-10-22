@@ -82,6 +82,13 @@ export const OntosMcpContributionSchema = Schema.Struct({
   /** Search words (Czech and English) for capability search. */
   keywords: Schema.String.check(Schema.isMaxLength(2000)),
   label: OntosMcpTextSchema,
+  /**
+   * Company-wide (Legal Entity) authorization relations an agent with write access to this module receives from the
+   * company's role templates, because the module's Actions check them (e.g. a manager relation).
+   */
+  legalEntityWriteRelations: Schema.optionalKey(
+    Schema.Array(Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9_]*$/u))),
+  ),
   /** The module keeps its own AI change engine (`aiChanges`, AiDecideChanges, AiRevertBatch) the queue also shows. */
   ownProposalEngine: Schema.optionalKey(Schema.Boolean),
   /** Shell page of the module below `/<lang>`, e.g. `/ukoly`. */
@@ -123,6 +130,8 @@ export interface OntosMcpContributionInput {
   readonly description: OntosMcpText;
   readonly keywords: string;
   readonly label: OntosMcpText;
+  /** See {@link OntosMcpContributionSchema} `legalEntityWriteRelations`. */
+  readonly legalEntityWriteRelations?: readonly string[];
   readonly ownProposalEngine?: boolean;
   readonly page?: string;
   readonly reads: Readonly<Record<string, OntosMcpToolTextInput | OntosMcpHidden>>;

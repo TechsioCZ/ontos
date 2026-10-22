@@ -98,6 +98,8 @@ export const partyRegistryMcpContribution = defineOntosMcpContribution({
   keywords:
     'zákazník zákazníci partner firma osoba subjekt kontakt telefon e-mail ičo dič ares vztah duplicita gdpr osobní údaje customer party company person',
   label: { cs: 'Registr subjektů', en: 'Party registry' },
+  // Counterparty Actions check `manage_counterparty` on the company, which this relation grants.
+  legalEntityWriteRelations: ['counterparty_manager'],
   page: '/contacts',
   reads: {
     'ares-lookup': { title: { cs: 'Vyhledání firmy v ARES', en: 'Company lookup in ARES' } },

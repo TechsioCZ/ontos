@@ -41,6 +41,7 @@ import {
 } from '../oauth-connections-admin/ports.ts';
 import type { ConnectionsAdminDeps } from '../oauth-connections-admin/ports.ts';
 import { agentDraftProblem, agentModuleOptions, agentRolePreset } from './agent-entities-model.ts';
+import { legalEntityWriteRelationsOf } from './agent-write-relations.ts';
 import {
   auditForbiddenAttempt,
   auditTrail,
@@ -112,6 +113,7 @@ const companyCatalog = (tenantId: string, legalEntityId: string, grants: DemoAcc
     const labelOf = composedModulesOf(mcpCatalogOf(installed.composition)).labelOf;
     return {
       labelOf,
+      legalEntityWriteRelations: legalEntityWriteRelationsOf(installed.composition),
       options: agentModuleOptions(agentModuleAccessOf(union, legalEntityId), labelOf),
       presets: templates.map(({ relationships, role }) =>
         agentRolePreset(role, agentModuleAccessOf(relationships, legalEntityId)),
@@ -260,6 +262,7 @@ const changeAgent = <R>(
         .replaceAgentGrants({
           desired: agentGrantRelationships({
             legalEntityId,
+            legalEntityWriteRelations: catalog.legalEntityWriteRelations,
             modules: request.modules,
             template: catalog.union,
             writePolicy: request.writePolicy,
@@ -324,6 +327,7 @@ const changeAgent = <R>(
         .replaceAgentGrants({
           desired: agentGrantRelationships({
             legalEntityId,
+            legalEntityWriteRelations: catalog.legalEntityWriteRelations,
             modules: request.modules,
             template: catalog.union,
             writePolicy: request.writePolicy,

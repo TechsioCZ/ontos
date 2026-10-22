@@ -1,4 +1,11 @@
-import { agentGrantRelationships, agentModuleAccessOf, isReadPermission, toContextPermissionAccessObjectId, toLegalEntityAccessObjectId, toModuleAccessObjectId } from '../../src/index.ts';
+import {
+  agentGrantRelationships,
+  agentModuleAccessOf,
+  isReadPermission,
+  toContextPermissionAccessObjectId,
+  toLegalEntityAccessObjectId,
+  toModuleAccessObjectId,
+} from '../../src/index.ts';
 import { toSpiceDbActionObjectId } from '../../src/permissions/service.ts';
 import { expect, it } from 'effect-rstest';
 
@@ -36,6 +43,7 @@ const template = [
   moduleAccess(company, 'core.identity'),
   moduleAccess(company, 'demo.crm'),
   moduleAccess(company, 'work.tasks'),
+  moduleAccess(company, 'example.counterparties'),
   moduleAccess(other, 'demo.crm'),
   permission('demo.crm', 'demo_crm.read_all'),
   permission('demo.crm', 'demo_crm.write_all'),
@@ -44,8 +52,14 @@ const template = [
   permission('work.tasks', 'work_tasks.write_all'),
   executor('demo.crm.apply-command'),
   executor('work.tasks.apply-command'),
+  executor('example.counterparties.create-counterparty'),
   executor('core.identity.manage-demo-account'),
 ];
+
+// The counterparty module declares that its writers need the company-wide manager relation.
+const legalEntityWriteRelations: ReadonlyMap<string, readonly string[]> = new Map([
+  ['example.counterparties', ['counterparty_manager']],
+]);
 
 const has = (
   result: readonly { readonly relation: string; readonly resourceId: string; readonly resourceType: string }[],
@@ -68,6 +82,7 @@ it('classifies read and write permissions', () => {
 it('derives the highest access per non-Core company module', () => {
   expect(agentModuleAccessOf(template, company)).toEqual([
     { access: 'write', moduleId: 'demo.crm' },
+    { access: 'write', moduleId: 'example.counterparties' },
     { access: 'write', moduleId: 'work.tasks' },
   ]);
 });
@@ -75,6 +90,7 @@ it('derives the highest access per non-Core company module', () => {
 it('keeps write grants for direct write policy and drops other modules and Core identity', () => {
   const result = agentGrantRelationships({
     legalEntityId: company,
+    legalEntityWriteRelations,
     modules: [
       { access: 'write', moduleId: 'demo.crm' },
       { access: 'read', moduleId: 'work.tasks' },
@@ -89,14 +105,26 @@ it('keeps write grants for direct write policy and drops other modules and Core 
   expect(has(result, moduleAccess(company, 'core.shell'))).toBe(true);
   expect(has(result, { relation: 'member', resourceId: tenant, resourceType: 'tenant' })).toBe(true);
   expect(has(result, { relation: 'party_identity_reader', resourceId: tenant, resourceType: 'tenant' })).toBe(true);
-  expect(has(result, { relation: 'member', resourceId: toLegalEntityAccessObjectId(tenant, company) ?? '', resourceType: 'legal_entity' })).toBe(true);
+  expect(
+    has(result, {
+      relation: 'member',
+      resourceId: toLegalEntityAccessObjectId(tenant, company) ?? '',
+      resourceType: 'legal_entity',
+    }),
+  ).toBe(true);
 
   expect(has(result, permission('work.tasks', 'work_tasks.write_all'))).toBe(false);
   expect(has(result, executor('work.tasks.apply-command'))).toBe(false);
   expect(has(result, { relation: 'identity_admin', resourceId: tenant, resourceType: 'tenant' })).toBe(false);
   expect(has(result, moduleAccess(company, 'core.identity'))).toBe(false);
   expect(has(result, executor('core.identity.manage-demo-account'))).toBe(false);
-  expect(has(result, { relation: 'counterparty_manager', resourceId: toLegalEntityAccessObjectId(tenant, company) ?? '', resourceType: 'legal_entity' })).toBe(false);
+  expect(
+    has(result, {
+      relation: 'counterparty_manager',
+      resourceId: toLegalEntityAccessObjectId(tenant, company) ?? '',
+      resourceType: 'legal_entity',
+    }),
+  ).toBe(false);
   expect(has(result, moduleAccess(other, 'demo.crm'))).toBe(false);
 });
 
@@ -104,6 +132,7 @@ it('caps write grants to read unless the write policy is direct', () => {
   for (const writePolicy of ['approval', 'read_only'] as const) {
     const result = agentGrantRelationships({
       legalEntityId: company,
+      legalEntityWriteRelations,
       modules: [{ access: 'write', moduleId: 'demo.crm' }],
       template,
       writePolicy,
@@ -116,8 +145,38 @@ it('caps write grants to read unless the write policy is direct', () => {
 });
 
 it('grants no module-specific access when no module is chosen', () => {
-  const result = agentGrantRelationships({ legalEntityId: company, modules: [], template, writePolicy: 'direct' });
+  const result = agentGrantRelationships({
+    legalEntityId: company,
+    legalEntityWriteRelations,
+    modules: [],
+    template,
+    writePolicy: 'direct',
+  });
   expect(has(result, moduleAccess(company, 'demo.crm'))).toBe(false);
   expect(has(result, { relation: 'member', resourceId: tenant, resourceType: 'tenant' })).toBe(true);
   expect(has(result, moduleAccess(company, 'core.shell'))).toBe(true);
+});
+
+it('grants a declared company-wide relation only to writers of the declaring module', () => {
+  const managerRelation = {
+    relation: 'counterparty_manager',
+    resourceId: toLegalEntityAccessObjectId(tenant, company) ?? '',
+    resourceType: 'legal_entity',
+  };
+  const writer = agentGrantRelationships({
+    legalEntityId: company,
+    legalEntityWriteRelations,
+    modules: [{ access: 'write', moduleId: 'example.counterparties' }],
+    template,
+    writePolicy: 'direct',
+  });
+  expect(has(writer, managerRelation)).toBe(true);
+  const reader = agentGrantRelationships({
+    legalEntityId: company,
+    legalEntityWriteRelations,
+    modules: [{ access: 'read', moduleId: 'example.counterparties' }],
+    template,
+    writePolicy: 'direct',
+  });
+  expect(has(reader, managerRelation)).toBe(false);
 });
