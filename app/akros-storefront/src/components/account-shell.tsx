@@ -1,6 +1,6 @@
 "use client";
 
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import type { ReactNode } from "react";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { SiteFooter } from "@/components/site-footer";
@@ -64,7 +64,7 @@ export function AccountShell({
             >
               {navigation.map((item) => (
                 <LinkButton
-                  as={NextLink}
+                  as={StoreLink}
                   key={item.key}
                   href={item.href ?? "#"}
                   disabled={!item.href}

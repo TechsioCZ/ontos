@@ -1,6 +1,6 @@
 "use client";
 
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { useEffect, useId, useRef, useState } from "react";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
@@ -100,7 +100,7 @@ export function MiniCart() {
     >
       <Popover.Anchor className="inline-flex shrink-0">
         <LinkButton
-          as={NextLink}
+          as={StoreLink}
           aria-controls={open ? `${id}-content` : undefined}
           aria-expanded={open}
           aria-haspopup="dialog"
@@ -159,7 +159,7 @@ export function MiniCart() {
         >
           <Popover.Title className="sr-only">{cs.cart.miniCart.title}</Popover.Title>
           <Link
-            as={NextLink}
+            as={StoreLink}
             className="block text-inherit no-underline"
             href="/kosik"
             onClick={closePreview}

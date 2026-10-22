@@ -1,5 +1,5 @@
 "use client";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { useCartQuote } from "@/ontos/cart-revalidation";
@@ -16,7 +16,7 @@ export function CartContent() {
         <h1 className="text-lg font-medium">Nákupní košík</h1>
         <p>Košík je zatím prázdný.</p>
         <LinkButton
-          as={NextLink}
+          as={StoreLink}
           href="/kategorie/nerezovy-spojovaci-material"
           size="sm"
           variant="primary"
@@ -51,7 +51,7 @@ export function CartNavigation() {
       className="order-3 mt-(--dimension-24) flex flex-wrap justify-between gap-(--dimension-24) pt-(--dimension-16) leading-(--akros-checkout-heading-leading) xl:col-start-1"
     >
       <LinkButton
-        as={NextLink}
+        as={StoreLink}
         href="/"
         variant="secondary"
         size="sm"
@@ -79,7 +79,7 @@ export function CartNavigation() {
         </div>
       ) : (
         <LinkButton
-          as={NextLink}
+          as={StoreLink}
           href="/kosik/doprava-platba"
           variant="primary"
           size="sm"

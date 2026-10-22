@@ -2,7 +2,7 @@
 
 import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { VerticalNavigation } from "@techsio/ui-kit/molecules/vertical-navigation";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 
 import { cs } from "@/i18n/cs";
 import type { CatalogCategory } from "@/mock-storefront/types";
@@ -68,7 +68,7 @@ function CategoryNavigationItem({
         <VerticalNavigation.Item>
           <VerticalNavigation.Row data-akros-depth={visualDepth}>
             <VerticalNavigation.Link
-              as={NextLink}
+              as={StoreLink}
               className="justify-between"
               current={isCurrent}
               href={href}
@@ -88,7 +88,7 @@ function CategoryNavigationItem({
     return (
       <VerticalNavigation.Item>
         <VerticalNavigation.Link
-          as={NextLink}
+          as={StoreLink}
           current={isCurrent}
           data-akros-depth={visualDepth}
           href={href}
@@ -106,7 +106,7 @@ function CategoryNavigationItem({
       id={`${navigationId}-${category.id}`}
     >
       <VerticalNavigation.Row data-akros-depth={visualDepth}>
-        <VerticalNavigation.Link as={NextLink} current={isCurrent} href={href}>
+        <VerticalNavigation.Link as={StoreLink} current={isCurrent} href={href}>
           {category.name}
         </VerticalNavigation.Link>
         <VerticalNavigation.BranchTrigger aria-label={category.name}>
@@ -197,12 +197,12 @@ export function CatalogHelpNavigation() {
       <VerticalNavigation.Group>
         <VerticalNavigation.GroupLabel>{cs.catalog.recommendations}</VerticalNavigation.GroupLabel>
         <VerticalNavigation.Separator />
-        <NextLink
+        <StoreLink
           className="flex min-h-(--dimension-44) items-center self-start text-xs font-normal underline"
           href="/faq"
         >
           {cs.catalog.firstSteps}
-        </NextLink>
+        </StoreLink>
       </VerticalNavigation.Group>
     </VerticalNavigation>
   );

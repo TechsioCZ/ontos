@@ -1,6 +1,6 @@
 "use client";
 
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -109,7 +109,7 @@ function MobileNavigation({ pathname }: { pathname: string }) {
                     className="akros-mobile-menu__links"
                   >
                     <LinkButton
-                      as={NextLink}
+                      as={StoreLink}
                       block
                       className="justify-start"
                       href="/prihlaseni"
@@ -120,7 +120,7 @@ function MobileNavigation({ pathname }: { pathname: string }) {
                       {cs.header.login}
                     </LinkButton>
                     <LinkButton
-                      as={NextLink}
+                      as={StoreLink}
                       block
                       className="justify-start"
                       href="/muj-ucet"
@@ -131,7 +131,7 @@ function MobileNavigation({ pathname }: { pathname: string }) {
                       {cs.header.account}
                     </LinkButton>
                     <LinkButton
-                      as={NextLink}
+                      as={StoreLink}
                       block
                       className="justify-start"
                       href="/oblibene"
@@ -149,7 +149,7 @@ function MobileNavigation({ pathname }: { pathname: string }) {
                     {utilityLinks.map((item) => (
                       <LinkButton
                         key={item.href}
-                        as={NextLink}
+                        as={StoreLink}
                         aria-current={pathname === item.href ? "page" : undefined}
                         block
                         className="justify-start"
@@ -183,7 +183,7 @@ export function SiteHeader() {
             {utilityLinks.map((item) => (
               <LinkButton
                 key={item.href}
-                as={NextLink}
+                as={StoreLink}
                 aria-current={pathname === item.href ? "page" : undefined}
                 className="leading-(--text-sm--line-height) underline"
                 href={item.href}
@@ -196,7 +196,7 @@ export function SiteHeader() {
             ))}
           </nav>
           <LinkButton
-            as={NextLink}
+            as={StoreLink}
             data-akros-header-login
             href="/prihlaseni"
             icon="icon-[mdi--lock]"
@@ -212,7 +212,7 @@ export function SiteHeader() {
       <div className="akros-header__main">
         <div className="akros-header__top-row">
           <MobileNavigation key={pathname} pathname={pathname} />
-          <NextLink className="akros-brand" href="/" aria-label="AKROS – domovská stránka">
+          <StoreLink className="akros-brand" href="/" aria-label="AKROS – domovská stránka">
             <Image
               alt=""
               className="akros-brand__logo"
@@ -221,7 +221,7 @@ export function SiteHeader() {
               src="/akros/logo-akros.png"
               width={380}
             />
-          </NextLink>
+          </StoreLink>
 
           <div className="akros-header__cart-actions flex shrink-0 items-center gap-3">
             <nav
@@ -229,7 +229,7 @@ export function SiteHeader() {
               className="akros-header__personal-navigation flex items-center"
             >
               <LinkButton
-                as={NextLink}
+                as={StoreLink}
                 aria-label={cs.header.account}
                 className="w-10"
                 href="/muj-ucet"
@@ -239,7 +239,7 @@ export function SiteHeader() {
                 theme="borderless"
               />
               <LinkButton
-                as={NextLink}
+                as={StoreLink}
                 aria-label={cs.header.favorites}
                 className="w-12"
                 href="/oblibene"

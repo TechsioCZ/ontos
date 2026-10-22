@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 
 import { MockRegistrationForm } from "@/components/mock-auth-form";
 import { StorefrontWideShell } from "@/components/storefront-shell";
@@ -32,7 +32,7 @@ export default function RegistrationPage() {
           </header>
           <MockRegistrationForm />
           <p>
-            Již jste registrováni? <NextLink href="/prihlaseni">Přihlaste se zde</NextLink>
+            Již jste registrováni? <StoreLink href="/prihlaseni">Přihlaste se zde</StoreLink>
           </p>
         </div>
         <aside className="akros-benefit-card">

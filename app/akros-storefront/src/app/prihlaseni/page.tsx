@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 
 import { MockLoginForm } from "@/components/mock-auth-form";
 import { StorefrontWideShell } from "@/components/storefront-shell";
@@ -20,7 +20,7 @@ export default function LoginPage() {
             <span>nebo</span>
           </div>
           <p>
-            Ještě u nás nemáte účet? <NextLink href="/registrace">Vytvořte si ho zde</NextLink>
+            Ještě u nás nemáte účet? <StoreLink href="/registrace">Vytvořte si ho zde</StoreLink>
           </p>
         </div>
       </section>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
@@ -19,12 +19,12 @@ const columns: ColumnDef<Order>[] = [
     accessorKey: "number",
     header: "Objednávka",
     cell: ({ row }) => (
-      <NextLink
+      <StoreLink
         className="underline underline-offset-4 hover:no-underline"
         href={orderHref(row.original)}
       >
         {row.original.number}
-      </NextLink>
+      </StoreLink>
     ),
   },
   {
@@ -59,12 +59,12 @@ const columns: ColumnDef<Order>[] = [
     header: "Detail",
     enableSorting: false,
     cell: ({ row }) => (
-      <NextLink
+      <StoreLink
         className="underline underline-offset-4 hover:no-underline"
         href={orderHref(row.original)}
       >
         Otevřít<span className="sr-only"> objednávku {row.original.number}</span>
-      </NextLink>
+      </StoreLink>
     ),
   },
 ];
@@ -91,7 +91,7 @@ export function AccountOrders() {
         description="Vyhledejte objednávku nebo si otevřete její detail."
       >
         <LinkButton
-          as={NextLink}
+          as={StoreLink}
           href="/sledovani-zasilky"
           data-account-action
           size="sm"
@@ -174,12 +174,12 @@ export function AccountOrders() {
                 className="min-w-0 rounded-(--dimension-8) bg-(--akros-account-surface) p-(--dimension-24) max-sm:p-(--dimension-16)"
               >
                 <h2 className="font-bold">
-                  <NextLink
+                  <StoreLink
                     className="underline underline-offset-4 hover:no-underline"
                     href={orderHref(order)}
                   >
                     {order.number}
-                  </NextLink>
+                  </StoreLink>
                 </h2>
                 <p className="mt-(--dimension-8) text-(--akros-account-muted)">{order.date}</p>
                 <dl className="my-(--dimension-24) grid gap-(--dimension-8)">
@@ -197,7 +197,7 @@ export function AccountOrders() {
                   </div>
                 </dl>
                 <LinkButton
-                  as={NextLink}
+                  as={StoreLink}
                   href={orderHref(order)}
                   size="sm"
                   theme="outlined"

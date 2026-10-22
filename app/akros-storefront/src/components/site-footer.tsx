@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { Footer } from "@techsio/ui-kit/organisms/footer";
 
@@ -88,7 +88,11 @@ export function SiteFooter() {
       <div className="akros-footer__inner" id="footer">
         <Footer.Container className="akros-footer__top">
           <Footer.Section className="akros-footer__section akros-footer__brand-column">
-            <NextLink className="akros-footer__brand" href="/" aria-label={cs.footer.homeLinkLabel}>
+            <StoreLink
+              className="akros-footer__brand"
+              href="/"
+              aria-label={cs.footer.homeLinkLabel}
+            >
               <Image
                 alt="AKROS"
                 className="akros-footer__logo"
@@ -97,7 +101,7 @@ export function SiteFooter() {
                 sizes="161px"
                 src="/akros/footer/logo.png"
               />
-            </NextLink>
+            </StoreLink>
             <div className="akros-footer__contact">
               <Footer.Title>{cs.footer.contact}</Footer.Title>
               <div className="akros-footer__contact-links">
@@ -124,7 +128,7 @@ export function SiteFooter() {
                 {customerLinks.map((item) => (
                   <li key={`${item.href}-${item.label}`}>
                     <Footer.Link
-                      as={NextLink}
+                      as={StoreLink}
                       className="akros-footer__customer-link underline"
                       href={item.href}
                     >
@@ -209,10 +213,10 @@ export function SiteFooter() {
             </Footer.Link>
           </Footer.Text>
           <div className="akros-footer__bottom-links">
-            <Footer.Link as={NextLink} href="/gdpr#cookies">
+            <Footer.Link as={StoreLink} href="/gdpr#cookies">
               {cs.footer.cookies}
             </Footer.Link>
-            <Footer.Link as={NextLink} href="/gdpr">
+            <Footer.Link as={StoreLink} href="/gdpr">
               {cs.footer.personalDataProtection}
             </Footer.Link>
           </div>

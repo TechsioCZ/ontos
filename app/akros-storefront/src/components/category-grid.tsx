@@ -1,5 +1,5 @@
 import Image from "next/image";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 
 import { categoryImage } from "@/lib/category-presentation";
 import type { CatalogCategory } from "@/mock-storefront/types";
@@ -12,7 +12,7 @@ export function CategoryGrid({ categories }: { categories: CatalogCategory[] }) 
       {categories.map((category) => {
         const image = categoryImage(category);
         return (
-          <NextLink
+          <StoreLink
             className="akros-category-card"
             href={`/kategorie/${category.slug}`}
             key={category.id}
@@ -28,7 +28,7 @@ export function CategoryGrid({ categories }: { categories: CatalogCategory[] }) 
               />
             )}
             <strong>{category.name}</strong>
-          </NextLink>
+          </StoreLink>
         );
       })}
     </div>

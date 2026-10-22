@@ -1,6 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import type { CatalogCategory, CatalogProduct } from "@/mock-storefront/types";
+import { catalogCache } from "./catalog-cache";
 import { createCatalog } from "./catalog-model";
 import { readRecords } from "./gateway";
 import {
@@ -41,33 +42,27 @@ export interface CatalogPage {
   pageSize: number;
 }
 
-/** Admin edits in OntOS are visible after at most this delay plus a page refresh. */
+/** Admin edits in OntOS are visible on a page view at most this long after they were read. */
 export const CATALOG_CACHE_MS = 10_000;
 /** The navigation tree changes rarely; one owner read per minute (and per detailed category). */
 export const CATEGORY_CACHE_MS = 60_000;
+/** How long a page waits for a refresh before it renders the previous catalog values. */
+export const CATALOG_REFRESH_WAIT_MS = 800;
 // Kai's model shows 16 cards and skips placeholder groups (e.g. one named "AKCE"): read a few spares.
 const homeQuery: CatalogQuery = { featured: true, pageSize: 20 };
 
-/** Bounded process-local cache; never retains an unbounded number of user search terms or slugs. */
-const boundedCache = <T>(limit: number, ttl: number) => {
-  const entries = new Map<string, { at: number; value: T }>();
-  return {
-    get: (key: string) => {
-      const entry = entries.get(key);
-      return entry && Date.now() - entry.at < ttl ? entry.value : undefined;
-    },
-    set: (key: string, value: T) => {
-      entries.delete(key);
-      if (entries.size >= limit) {
-        const oldest = entries.keys().next().value;
-        if (oldest !== undefined) entries.delete(oldest);
-      }
-      entries.set(key, { at: Date.now(), value });
-    },
-  };
-};
-const productPages = boundedCache<ProductPage>(100, CATALOG_CACHE_MS);
-const categoryTrees = boundedCache<CatalogCategory[]>(20, CATEGORY_CACHE_MS);
+const productPages = catalogCache<ProductPage>("products", {
+  freshMs: CATALOG_CACHE_MS,
+  keepMs: 15 * 60_000,
+  refreshWaitMs: CATALOG_REFRESH_WAIT_MS,
+  limit: 100,
+});
+const categoryTrees = catalogCache<CatalogCategory[]>("categories", {
+  freshMs: CATEGORY_CACHE_MS,
+  keepMs: 60 * 60_000,
+  refreshWaitMs: CATALOG_REFRESH_WAIT_MS,
+  limit: 20,
+});
 
 const readCatalog = async (storefrontCatalog: Record<string, unknown>) =>
   (await readRecords("merchandise", "records", {
@@ -82,19 +77,21 @@ const compact = (query: CatalogQuery): CatalogQuery =>
     ),
   ) as CatalogQuery;
 
-/** One bounded product read without the category tree. `fresh` bypasses (and refreshes) the cache. */
+const loadProducts = (key: string) => async () =>
+  projectProducts(await readCatalog(JSON.parse(key) as Record<string, unknown>));
+// One owner read per render for equal queries, keyed by the serialized owner query.
+const cachedProducts = cache((key: string): Promise<ProductPage> =>
+  productPages.get(key, loadProducts(key)),
+);
+
+/** One bounded product read without the category tree. `fresh` reads OntOS now (carts, quotes, orders). */
 export async function readProducts(
   query: CatalogQuery,
   fields: CatalogFields,
   fresh = false,
 ): Promise<ProductPage> {
-  const storefrontCatalog = { ...compact(query), fields, includeCategories: false };
-  const key = JSON.stringify(storefrontCatalog);
-  const cached = fresh ? undefined : productPages.get(key);
-  if (cached) return cached;
-  const page = projectProducts(await readCatalog(storefrontCatalog));
-  productPages.set(key, page);
-  return page;
+  const key = JSON.stringify({ ...compact(query), fields, includeCategories: false });
+  return fresh ? await loadProducts(key)() : await cachedProducts(key);
 }
 
 /** Fresh full records of the cart's products, each carrying only the cart's variants (cart quote). */
@@ -110,21 +107,19 @@ export async function readCartProducts(
  * The navigation tree (navigation fields only, root categories with content). With `categorySlug` the
  * tree also carries the content of that category and its direct children (category page heading/grid).
  */
-export async function getCategoryTree(categorySlug?: string): Promise<CatalogCategory[]> {
-  const key = categorySlug ?? "";
-  const cached = categoryTrees.get(key);
-  if (cached) return cached;
-  const categories = projectCategories(
-    await readCatalog({
-      pageSize: 1,
-      fields: "card",
-      includeCategories: true,
-      ...(categorySlug ? { categorySlug } : {}),
-    }),
-  );
-  categoryTrees.set(key, categories);
-  return categories;
-}
+export const getCategoryTree = cache(
+  async (categorySlug?: string): Promise<CatalogCategory[]> =>
+    await categoryTrees.get(categorySlug ?? "", async () =>
+      projectCategories(
+        await readCatalog({
+          pageSize: 1,
+          fields: "card",
+          includeCategories: true,
+          ...(categorySlug ? { categorySlug } : {}),
+        }),
+      ),
+    ),
+);
 
 const slimCategory = ({
   id,

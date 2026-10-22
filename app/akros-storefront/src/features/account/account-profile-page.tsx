@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import Image from "next/image";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
@@ -250,9 +250,9 @@ export function AccountProfilePage() {
                     label={
                       <>
                         Souhlasím se zpracováním{" "}
-                        <NextLink href="/gdpr" className="underline">
+                        <StoreLink href="/gdpr" className="underline">
                           osobních údajů
-                        </NextLink>
+                        </StoreLink>
                       </>
                     }
                     checked={profile.privacyConsent}

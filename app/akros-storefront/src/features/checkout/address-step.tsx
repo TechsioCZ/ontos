@@ -1,5 +1,5 @@
 "use client";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@techsio/ui-kit/atoms/button";
@@ -185,7 +185,7 @@ export function AddressStep() {
       </section>
       <div className="mt-6 flex flex-wrap justify-between gap-4">
         <LinkButton
-          as={NextLink}
+          as={StoreLink}
           href="/kosik/doprava-platba"
           data-akros-checkout-action
           className="leading-(--akros-checkout-heading-leading)"

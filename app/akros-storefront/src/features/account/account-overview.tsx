@@ -1,6 +1,6 @@
 "use client";
 
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { AccountHeading, AccountPanel } from "./account-content";
 import { mockCustomer, mockOrders } from "@/mock-storefront/fixtures/account";
@@ -69,7 +69,7 @@ export function AccountOverview() {
           </dl>
           <div className="mt-(--dimension-32) flex flex-wrap gap-(--dimension-16)">
             <LinkButton
-              as={NextLink}
+              as={StoreLink}
               href="/sledovani-zasilky"
               data-account-action
               size="sm"
@@ -78,7 +78,7 @@ export function AccountOverview() {
               Sledovat zásilku
             </LinkButton>
             <LinkButton
-              as={NextLink}
+              as={StoreLink}
               href="/detail-objednavky"
               data-account-action
               size="sm"
@@ -109,7 +109,7 @@ export function AccountOverview() {
             </div>
           </dl>
           <LinkButton
-            as={NextLink}
+            as={StoreLink}
             href="/muj-ucet"
             data-account-action
             className="mt-(--dimension-32)"
@@ -126,7 +126,7 @@ export function AccountOverview() {
           <AccountPanel key={item.href} title={item.title}>
             <p className="text-(--akros-account-muted)">{item.text}</p>
             <LinkButton
-              as={NextLink}
+              as={StoreLink}
               href={item.href}
               size="sm"
               theme="unstyled"

@@ -1,6 +1,6 @@
 "use client";
 
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { useEffect, useId } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
@@ -48,7 +48,7 @@ export function CartNotifications() {
               <p>Skladový limit umožnil přidat jen část požadovaného množství.</p>
             )}
             <LinkButton
-              as={NextLink}
+              as={StoreLink}
               href="/kosik"
               size="sm"
               variant="primary"

@@ -1,6 +1,6 @@
 "use client";
 
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { type CSSProperties, useId, useMemo, useState } from "react";
 import { ActionIcon } from "@techsio/ui-kit/atoms/action-icon";
 import { Link } from "@techsio/ui-kit/atoms/link";
@@ -141,7 +141,7 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
         cell: ({ row: { original: line } }) => (
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-(--akros-cart-detail-gap) gap-y-1 whitespace-normal">
             <Link
-              as={NextLink}
+              as={StoreLink}
               href={`/produkt/${line.slug}`}
               className="min-w-0 wrap-anywhere text-inherit no-underline"
             >

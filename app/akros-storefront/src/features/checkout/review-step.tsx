@@ -1,7 +1,7 @@
 "use client";
 import { demoCheckoutNotice, demoPayment } from "@/ontos/demo-checkout";
 import { useRef, useState } from "react";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { useRouter } from "next/navigation";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
@@ -60,7 +60,7 @@ export function ReviewStep() {
             <dt className="grid gap-2">
               <span>Způsob dopravy – {getDelivery(draft)?.title}</span>
               <span>{getDeliveryLocation(draft)}</span>
-              <Link as={NextLink} href="/kosik/doprava-platba" className="w-fit">
+              <Link as={StoreLink} href="/kosik/doprava-platba" className="w-fit">
                 Změnit dopravu
               </Link>
             </dt>
@@ -118,7 +118,7 @@ export function ReviewStep() {
       </section>
       <div className="mt-6 flex flex-wrap items-start justify-between gap-4">
         <LinkButton
-          as={NextLink}
+          as={StoreLink}
           href="/kosik/dodaci-udaje"
           data-akros-checkout-action
           className="leading-(--akros-checkout-heading-leading)"

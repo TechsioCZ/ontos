@@ -1,5 +1,5 @@
 "use client";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { demoCheckoutNotice, demoPayment } from "@/ontos/demo-checkout";
 import { useSyncExternalStore } from "react";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
@@ -65,7 +65,7 @@ export function OrderConfirmation() {
       <section className="grid justify-items-center gap-6 py-12 text-center">
         <h1 className="text-lg font-medium">Není zde dokončená objednávka</h1>
         <p>Potvrzení ukázkové objednávky je dostupné pouze v relaci, ve které jste ji vytvořili.</p>
-        <LinkButton as={NextLink} href="/kosik" size="sm" variant="primary">
+        <LinkButton as={StoreLink} href="/kosik" size="sm" variant="primary">
           Přejít do košíku
         </LinkButton>
       </section>
@@ -162,7 +162,7 @@ export function OrderConfirmation() {
         </section>
       </div>
       <LinkButton
-        as={NextLink}
+        as={StoreLink}
         href="/"
         variant="primary"
         size="sm"

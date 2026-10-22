@@ -1,6 +1,6 @@
 "use client";
 
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 
 import type { ReactNode } from "react";
@@ -17,7 +17,7 @@ export function PrimaryLinkButton({
   uppercase?: boolean;
 }) {
   return (
-    <LinkButton as={NextLink} href={href} size={size} uppercase={uppercase} variant="primary">
+    <LinkButton as={StoreLink} href={href} size={size} uppercase={uppercase} variant="primary">
       {children}
     </LinkButton>
   );

@@ -1,6 +1,6 @@
 "use client";
 
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Table } from "@techsio/ui-kit/organisms/table";
 import { AccountHeading, AccountPanel } from "./account-content";
@@ -15,7 +15,7 @@ export function AccountOrderDetail({ order }: { order: (typeof mockOrders)[numbe
         description={`Vytvořeno ${order.date} · ${order.status}`}
       >
         <LinkButton
-          as={NextLink}
+          as={StoreLink}
           href="/historie-objednavek"
           data-account-action
           size="sm"
@@ -26,7 +26,7 @@ export function AccountOrderDetail({ order }: { order: (typeof mockOrders)[numbe
         </LinkButton>
         {hasLines && (
           <LinkButton
-            as={NextLink}
+            as={StoreLink}
             href="/sledovani-zasilky"
             data-account-action
             size="sm"

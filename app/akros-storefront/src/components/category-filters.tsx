@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
@@ -132,7 +132,7 @@ export function CategoryFilters({
           cena „od“.
         </p>
         <div className="flex flex-wrap items-center gap-4">
-          <Link as={NextLink} href={pathname}>
+          <Link as={StoreLink} href={pathname}>
             Vymazat filtry
           </Link>
           <Button type="submit" variant="primary" size="sm" uppercase>

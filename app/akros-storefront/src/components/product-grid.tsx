@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
@@ -71,7 +71,7 @@ export function ProductGrid({
               layout="column"
             >
               <div className="relative">
-                <NextLink
+                <StoreLink
                   aria-label={product.name}
                   className="akros-catalog-product-card__image-link"
                   href={detailHref}
@@ -115,10 +115,10 @@ export function ProductGrid({
                       ) : null}
                     </div>
                   )}
-                </NextLink>
+                </StoreLink>
                 <LinkButton
                   aria-label="Zobrazit oblíbené produkty"
-                  as={NextLink}
+                  as={StoreLink}
                   className="akros-product-card__favorite absolute top-0 right-0 size-11 rounded-full p-0"
                   href="/oblibene"
                   icon="icon-[mdi--heart-outline]"
@@ -130,9 +130,9 @@ export function ProductGrid({
               </div>
 
               <ProductCard.Name className="akros-catalog-product-card__name m-0 text-center uppercase">
-                <NextLink className="akros-product-card__name-link" href={detailHref}>
+                <StoreLink className="akros-product-card__name-link" href={detailHref}>
                   {product.name}
-                </NextLink>
+                </StoreLink>
               </ProductCard.Name>
 
               <div className="akros-product-card__stock-row flex flex-wrap items-center justify-between gap-2 py-1">
@@ -208,7 +208,7 @@ export function ProductGrid({
                   />
                 ) : (
                   <LinkButton
-                    as={NextLink}
+                    as={StoreLink}
                     block
                     href={detailHref}
                     size="sm"

@@ -1,6 +1,6 @@
 "use client";
 
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { Breadcrumb } from "@techsio/ui-kit/molecules/breadcrumb";
 import { Fragment } from "react";
 
@@ -28,7 +28,7 @@ export function StorefrontBreadcrumbs({
                 {isCurrent || !item.href ? (
                   <Breadcrumb.CurrentLink>{item.label}</Breadcrumb.CurrentLink>
                 ) : (
-                  <Breadcrumb.Link as={NextLink} href={item.href}>
+                  <Breadcrumb.Link as={StoreLink} href={item.href}>
                     {item.label}
                   </Breadcrumb.Link>
                 )}

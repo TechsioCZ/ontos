@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 
@@ -81,7 +81,7 @@ export function ProductDetailActions({ productId, productName }: ProductDetailAc
         {isWatched ? "Produkt hlídáme" : "Hlídat produkt"}
       </Button>
       <LinkButton
-        as={NextLink}
+        as={StoreLink}
         href="/kontakty#primy-kontakt"
         className="akros-product-actions__question hover:underline focus-visible:underline"
         icon="token-icon-akros-product-question"

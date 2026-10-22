@@ -1,6 +1,6 @@
 "use client";
 
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { createPaginationGetPageUrl, Pagination } from "@techsio/ui-kit/molecules/pagination";
 
 import { cs } from "@/i18n/cs";
@@ -31,7 +31,7 @@ export function CatalogPagination({
       className="akros-pagination akros-catalog-pagination"
       count={itemCount}
       getPageUrl={getPageUrl}
-      linkAs={NextLink}
+      linkAs={StoreLink}
       page={currentPage}
       pageSize={pageSize}
       size="sm"

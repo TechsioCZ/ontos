@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { useRef, useState } from "react";
 import { Carousel } from "@techsio/ui-kit/molecules/carousel";
 
@@ -29,7 +29,7 @@ export function HomeCarousel() {
     return {
       id: slide.id,
       content: slide.href ? (
-        <NextLink
+        <StoreLink
           className="block w-full"
           href={slide.href}
           onClick={(event) => {
@@ -39,7 +39,7 @@ export function HomeCarousel() {
           tabIndex={index === activePage ? 0 : -1}
         >
           {image}
-        </NextLink>
+        </StoreLink>
       ) : (
         image
       ),

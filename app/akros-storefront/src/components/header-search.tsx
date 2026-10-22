@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useState, type KeyboardEvent } from "react";
 import { Link } from "@techsio/ui-kit/atoms/link";
@@ -217,7 +217,7 @@ export function HeaderSearch() {
             size="md"
             allResultsLink={
               searchError || searchLoading ? undefined : (
-                <Link as={NextLink} href={resultsHref} onClick={() => setOpen(false)}>
+                <Link as={StoreLink} href={resultsHref} onClick={() => setOpen(false)}>
                   {cs.search.allResults(remoteTotal)}
                 </Link>
               )

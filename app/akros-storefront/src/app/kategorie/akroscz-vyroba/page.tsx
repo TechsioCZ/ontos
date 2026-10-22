@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
@@ -35,15 +35,16 @@ export default function ManufacturingPage() {
           <h2 id="manufacturing-contact-title">Řešení pro váš projekt</h2>
           <p>
             Pro informace o možnostech zpracování materiálu a zakázkové výrobě přejděte na{" "}
-            <NextLink href="/kontakty">kontakty AKROS</NextLink>.
+            <StoreLink href="/kontakty">kontakty AKROS</StoreLink>.
           </p>
           <p>
             Hledáte hotový materiál? Prohlédněte si{" "}
-            <NextLink href="/kategorie/nerezovy-spojovaci-material">
+            <StoreLink href="/kategorie/nerezovy-spojovaci-material">
               nerezový spojovací materiál
-            </NextLink>{" "}
+            </StoreLink>{" "}
             nebo{" "}
-            <NextLink href="/kategorie/nerezovy-hutni-material">nerezový hutní materiál</NextLink>.
+            <StoreLink href="/kategorie/nerezovy-hutni-material">nerezový hutní materiál</StoreLink>
+            .
           </p>
         </section>
       </article>

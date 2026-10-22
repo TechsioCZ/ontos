@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Image from "next/image";
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
 
 import { ProductGrid } from "@/components/product-grid";
@@ -75,7 +75,7 @@ export default async function NewsPage() {
         >
           <div className="akros-section__heading">
             <h2 id="new-products-title">Nové nerezové produkty v nabídce</h2>
-            <NextLink href="/vyhledavani?q=novinka">Zobrazit všechny novinky</NextLink>
+            <StoreLink href="/vyhledavani?q=novinka">Zobrazit všechny novinky</StoreLink>
           </div>
           <ProductGrid action="detail" products={newProducts.map(toProductSummary)} />
         </section>
@@ -86,7 +86,7 @@ export default async function NewsPage() {
         >
           <div className="akros-section__heading">
             <h2 id="sale-products-title">Akční nabídky a výprodej</h2>
-            <NextLink href="/vyhledavani?q=akce">Zobrazit celou akční nabídku</NextLink>
+            <StoreLink href="/vyhledavani?q=akce">Zobrazit celou akční nabídku</StoreLink>
           </div>
           <ProductGrid products={promotionProducts} />
         </section>

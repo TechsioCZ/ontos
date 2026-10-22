@@ -1,6 +1,6 @@
 "use client";
 
-import NextLink from "next/link";
+import StoreLink from "@/components/store-link";
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
@@ -49,7 +49,7 @@ export default function NotFoundPage() {
           <strong>Nebo přejděte rovnou do hlavních kategorií:</strong>
           <div>
             <LinkButton
-              as={NextLink}
+              as={StoreLink}
               href="/kategorie/srouby"
               size="sm"
               theme="outlined"
@@ -58,7 +58,7 @@ export default function NotFoundPage() {
               Nerezové šrouby
             </LinkButton>
             <LinkButton
-              as={NextLink}
+              as={StoreLink}
               href="/kategorie/matice"
               size="sm"
               theme="outlined"
@@ -67,7 +67,7 @@ export default function NotFoundPage() {
               Nerezové matice
             </LinkButton>
             <LinkButton
-              as={NextLink}
+              as={StoreLink}
               href="/zavitove-tyce"
               size="sm"
               theme="outlined"
@@ -77,7 +77,7 @@ export default function NotFoundPage() {
             </LinkButton>
           </div>
         </div>
-        <LinkButton as={NextLink} href="/" size="md" theme="solid" variant="primary">
+        <LinkButton as={StoreLink} href="/" size="md" theme="solid" variant="primary">
           Zpět na hlavní stránku
         </LinkButton>
       </section>
