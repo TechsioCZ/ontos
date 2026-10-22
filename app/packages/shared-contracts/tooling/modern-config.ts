@@ -637,11 +637,28 @@ export const createWorkerSsrPlugins = <DefinitionPlugin, ReplacementPlugin>(
   new rspack.NormalModuleReplacementPlugin(/^\.\.?[/\\]/u, (resource) => {
     markWorkerApiSource(resource, sourceDirectory);
   }),
-  // Browser-only libraries load from effects that never run during SSR. PDF.js imports its own
-  // modules by computed URL, which a Worker bundle must not contain, so SSR gets an empty module.
-  new rspack.NormalModuleReplacementPlugin(/^pdfjs-dist(?:\/.*)?$/u, (resource) => {
-    resource.request = BROWSER_ONLY_SSR_MODULE;
-  }),
+  createBrowserOnlySsrReplacement(rspack),
 ];
 
 const BROWSER_ONLY_SSR_MODULE = fileURLToPath(new URL('browser-only-ssr-module.mjs', import.meta.url));
+
+/**
+ * Browser-only libraries load from effects that never run during SSR. PDF.js imports its own modules
+ * by computed URL, which a Worker bundle must not contain, so the Worker SSR build gets an empty module.
+ */
+export const createBrowserOnlySsrReplacement = <ReplacementPlugin>(rspack: {
+  NormalModuleReplacementPlugin: new (
+    pattern: RegExp,
+    replace: (resource: ReplacementResource) => void,
+  ) => ReplacementPlugin;
+}) =>
+  new rspack.NormalModuleReplacementPlugin(/^pdfjs-dist(?:\/.*)?$/u, (resource) => {
+    resource.request = BROWSER_ONLY_SSR_MODULE;
+  });
+
+/** `tools.rspack` for apps with their own Modern config whose UI pulls in browser-only libraries. */
+export const browserOnlyWorkerSsrRspack = (config: RspackConfiguration, { environment, rspack }: RspackContext) => {
+  if (environment.name === 'workerSSR') {
+    config.plugins.push(createBrowserOnlySsrReplacement(rspack));
+  }
+};
