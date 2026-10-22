@@ -4,14 +4,46 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SiteHeader } from "@/components/site-header";
 import { CartProvider } from "@/features/cart/cart-provider";
-import { getCategories, getProducts, searchCatalog } from "@/mock-storefront/catalog";
-import { normalizeCatalogSearchTerm } from "@/lib/product-variant-search";
+import type {
+  RemoteCategorySuggestion,
+  RemoteSearchResponse,
+  RemoteSearchSuggestion,
+} from "@/ontos/search-suggestions";
 
 const { push, route } = vi.hoisted(() => ({
   push: vi.fn<(href: string) => void>(),
   route: { pathname: "/" },
 }));
 const originalScrollIntoView = Element.prototype.scrollIntoView;
+const product: RemoteSearchSuggestion = {
+  productId: "p1",
+  slug: "retez-din-766",
+  name: "Řetěz DIN 766",
+  imageSrc: "/akros/products/product-02.jpg",
+  currency: "CZK",
+  priceMinor: 12100,
+  priceIsFrom: true,
+  hasVariants: false,
+};
+const retezy: RemoteCategorySuggestion = {
+  id: "c-retezy",
+  slug: "retezy",
+  name: "Řetězy",
+  trail: "Nerezový spojovací materiál",
+};
+const vruty: RemoteCategorySuggestion = {
+  id: "c-vruty",
+  slug: "vruty",
+  name: "Vruty",
+  trail: "Nerezový spojovací materiál",
+};
+function respondWith(body: RemoteSearchResponse) {
+  const fetchMock = vi.fn<(url: string, init: RequestInit) => Promise<Response>>(async () =>
+    Response.json(body),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
 
 vi.mock("next/navigation", () => ({
   usePathname: () => route.pathname,
@@ -37,9 +69,15 @@ describe("SiteHeader search", () => {
       },
     );
     Element.prototype.scrollIntoView = vi.fn<Element["scrollIntoView"]>();
+    respondWith({ total: 0, items: [], categories: [] });
   });
 
-  it("shows catalog suggestions after two characters and closes them with Escape", async () => {
+  it("shows BFF suggestions after two characters and closes them with Escape", async () => {
+    const fetchMock = respondWith({
+      total: 9,
+      items: [product],
+      categories: [retezy],
+    });
     const user = userEvent.setup();
     render(
       <CartProvider storage={null}>
@@ -51,28 +89,29 @@ describe("SiteHeader search", () => {
     await user.type(input, "r");
     expect(screen.queryByRole("listbox")).toBeNull();
     await user.type(input, "etez");
-    expect(
-      within(screen.getByRole("group", { name: "Kategorie" }))
-        .getByRole("option", { name: "Řetězy" })
-        .getAttribute("href"),
-    ).toBe("/kategorie/retezy");
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("group", { name: "Kategorie" }))
+          .getByRole("option", { name: /Řetězy/ })
+          .getAttribute("href"),
+      ).toBe("/kategorie/retezy"),
+    );
     expect(
       within(screen.getByRole("group", { name: "Produkty" })).getAllByRole("option"),
-    ).toHaveLength(Math.min(6, searchCatalog("retez").length));
+    ).toHaveLength(1);
     const allResults = screen.getByRole("link", { name: /Zobrazit všechny produkty/ });
     expect(allResults.getAttribute("href")).toBe("/vyhledavani?q=retez");
+    expect(
+      fetchMock.mock.calls.every(([, init]) => JSON.parse(String(init.body)).q.length >= 2),
+    ).toBe(true);
 
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("listbox")).toBeNull();
     expect(input.getAttribute("value")).toBe("retez");
-    await user.clear(input);
-    await user.paste("vruty");
-    expect(
-      within(screen.getByRole("group", { name: "Produkty" })).getAllByRole("option"),
-    ).toHaveLength(6);
   });
 
   it("opens a highlighted product with Enter without also submitting the search", async () => {
+    respondWith({ total: 1, items: [product], categories: [] });
     const user = userEvent.setup();
     render(
       <CartProvider storage={null}>
@@ -80,14 +119,15 @@ describe("SiteHeader search", () => {
       </CartProvider>,
     );
     await user.type(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }), "DIN 766");
-    const firstHref = screen.getAllByRole("option")[0].getAttribute("href");
+    await screen.findByRole("option", { name: /Řetěz DIN 766/ });
 
     await user.keyboard("{ArrowDown}{Enter}");
     expect(push).toHaveBeenCalledOnce();
-    expect(push).toHaveBeenCalledWith(firstHref);
+    expect(push).toHaveBeenCalledWith("/produkt/retez-din-766");
   });
 
-  it("shows products and categories, prioritizes an exact category match and navigates with Enter", async () => {
+  it("lists BFF categories before products and navigates to a category with Enter", async () => {
+    respondWith({ total: 1, items: [product], categories: [vruty, retezy] });
     const user = userEvent.setup();
     render(
       <CartProvider storage={null}>
@@ -95,41 +135,15 @@ describe("SiteHeader search", () => {
       </CartProvider>,
     );
     await user.type(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }), "vruty");
-    const categories = within(screen.getByRole("group", { name: "Kategorie" })).getAllByRole(
-      "option",
+    const categories = await waitFor(() =>
+      within(screen.getByRole("group", { name: "Kategorie" })).getAllByRole("option"),
     );
-    expect(categories).toHaveLength(4);
+    expect(categories).toHaveLength(2);
     expect(categories[0].getAttribute("href")).toBe("/kategorie/vruty");
-    expect(
-      within(screen.getByRole("group", { name: "Produkty" })).getAllByRole("option"),
-    ).toHaveLength(6);
+    expect(categories[0].textContent).toContain("Nerezový spojovací materiál");
     await user.keyboard("{ArrowDown}{Enter}");
     expect(push).toHaveBeenCalledOnce();
     expect(push).toHaveBeenCalledWith("/kategorie/vruty");
-  });
-
-  it("matches categories without diacritics and supports category-only results", async () => {
-    const user = userEvent.setup();
-    const category = getCategories().find(
-      (entry) => entry.name.length >= 2 && searchCatalog(entry.name).length === 0,
-    )!;
-    render(
-      <CartProvider storage={null}>
-        <SiteHeader />
-      </CartProvider>,
-    );
-    await user.type(
-      screen.getByRole("combobox", { name: "Vyhledat v katalogu" }),
-      normalizeCatalogSearchTerm(category.name),
-    );
-    expect(screen.queryByRole("group", { name: "Produkty" })).toBeNull();
-    expect(screen.queryByRole("status")).toBeNull();
-    const option = within(screen.getByRole("group", { name: "Kategorie" }))
-      .getAllByRole("option")
-      .find((entry) => entry.getAttribute("href") === `/kategorie/${category.slug}`)!;
-    await user.click(option);
-    expect(push).toHaveBeenCalledOnce();
-    expect(push).toHaveBeenCalledWith(`/kategorie/${category.slug}`);
   });
 
   it("submits an unmatched query with Enter and displays the empty state", async () => {
@@ -139,30 +153,30 @@ describe("SiteHeader search", () => {
         <SiteHeader />
       </CartProvider>,
     );
-    await user.type(
-      screen.getByRole("combobox", { name: "Vyhledat v katalogu" }),
-      "nenalezenyproduktxyz",
+    await user.click(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }));
+    await user.paste("nenalezenyproduktxyz");
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain("nenašli žádné produkty"),
     );
-    expect(screen.getByRole("status").textContent).toContain("nenašli žádné produkty");
 
     await user.keyboard("{Enter}");
     expect(push).toHaveBeenCalledOnce();
     expect(push).toHaveBeenCalledWith("/vyhledavani?q=nenalezenyproduktxyz");
   });
 
-  it("preserves the matching variant in the product link when searching by SKU", async () => {
+  it("opens a variant group with its variant table filtered by the query", async () => {
+    respondWith({ total: 1, items: [{ ...product, hasVariants: true }], categories: [] });
     const user = userEvent.setup();
-    const product = getProducts().find((entry) => entry.detail.variants.length > 0)!;
-    const variant = product.detail.variants[0];
     render(
       <CartProvider storage={null}>
         <SiteHeader />
       </CartProvider>,
     );
-    await user.type(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }), variant.sku);
-    const option = screen.getByRole("option", { name: `${product.name} – ${variant.label}` });
+    await user.click(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }));
+    await user.paste("766-A4-8");
+    const option = await screen.findByRole("option", { name: /Řetěz DIN 766/ });
     expect(option.getAttribute("href")).toBe(
-      `/produkt/${product.slug}?${new URLSearchParams({ variant: variant.sku })}#product-variants`,
+      `/produkt/retez-din-766?${new URLSearchParams({ variant: "766-A4-8" })}`,
     );
     await user.click(option);
     expect(push).toHaveBeenCalledOnce();

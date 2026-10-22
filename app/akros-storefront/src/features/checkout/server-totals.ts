@@ -1,14 +1,12 @@
 "use client";
 import { useCartQuote } from "@/ontos/cart-revalidation";
-import type { getCheckoutTotals } from "@/mock-storefront/checkout";
-
-type Totals = Omit<ReturnType<typeof getCheckoutTotals>, "shipping"> & { shipping: number | null };
+import type { CheckoutTotals } from "@/mock-storefront/checkout";
 
 /**
- * OntOS mode: net, VAT and the grand total are the owner's dry-run totals from the cart quote; the browser only
- * adds up displayed gross prices and never computes tax. Prototype mode keeps its local totals.
+ * Net, VAT and the grand total are the owner's dry-run totals from the cart quote; the browser only adds up
+ * displayed gross prices and never computes tax.
  */
-export function useServerTotals(local: Totals): { totals: Totals; note: string } {
+export function useServerTotals(local: CheckoutTotals): { totals: CheckoutTotals; note: string } {
   const quote = useCartQuote();
   if (!quote?.enabled) return { totals: local, note: "" };
   const server = quote.status === "ready" && quote.quote?.canCheckout ? quote.quote.totals : null;

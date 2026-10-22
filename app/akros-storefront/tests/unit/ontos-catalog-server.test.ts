@@ -2,154 +2,218 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readRecords } from "@/ontos/gateway";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/ontos/config", () => ({ isOntos: () => true }));
 vi.mock("@/ontos/gateway", () => ({ readRecords: vi.fn() }));
 
-// tests/setup-match-media.ts replaces this module for component suites; load the real one here.
-const server =
-  await vi.importActual<typeof import("@/ontos/catalog-server")>("@/ontos/catalog-server");
-const body = {
-  revision: 5,
-  total: 1,
-  page: 1,
-  pageSize: 16,
-  categories: [
-    {
-      id: "c1",
-      parentId: null,
-      slug: "srouby",
-      name: "Šrouby",
-      position: 1,
-      heading: "Nerezové šrouby",
-      description: "Krátký popis",
-      longDescription: "Velmi dlouhý popis kategorie",
-      imageSrc: "/akros/products/product-02.jpg",
-      imageAlt: "Šrouby",
-    },
-  ],
-  products: [],
-};
+type Server = typeof import("@/ontos/catalog-server");
+type Query = { view: { storefrontCatalog: Record<string, unknown> } };
+const catalogOf = (call: unknown[]) => (call[2] as Query).view.storefrontCatalog;
 
-beforeEach(() => {
+const category = (id: string, parentId: string | null, slug: string, content = false) => ({
+  id,
+  parentId,
+  slug,
+  name: slug,
+  position: 1,
+  hasChildren: false,
+  ...(content
+    ? {
+        heading: `Nadpis ${slug}`,
+        description: `Popis ${slug}`,
+        longDescription: "Velmi dlouhý popis kategorie",
+        imageSrc: "/akros/products/product-02.jpg",
+        imageAlt: slug,
+      }
+    : {}),
+});
+const product = (id: string) => ({
+  id,
+  slug: id,
+  name: id,
+  active: true,
+  availability: "IN_STOCK",
+  grossPriceMinor: 121,
+  currentPriceMinor: 100,
+  stockOnHand: 5,
+  minimumQuantity: 1,
+  variantSummary: { count: 0, minGrossPriceMinor: null, stockOnHand: 0, units: [] },
+});
+const tree = [
+  category("root", null, "nerezovy-spojovaci-material", true),
+  category("srouby", "root", "srouby"),
+  category("din", "srouby", "din-933"),
+  category("din-a2", "din", "din-933-a2"),
+  category("other", null, "jina-sekce", true),
+];
+
+let server: Server;
+beforeEach(async () => {
+  // Fresh module per test: the product and navigation caches are process-local.
+  vi.resetModules();
+  server = await vi.importActual<Server>("@/ontos/catalog-server");
   vi.mocked(readRecords).mockReset();
-  vi.mocked(readRecords).mockResolvedValue(body);
+  vi.mocked(readRecords).mockImplementation(async (_vertical, _read, query) => {
+    const catalog = (query as Query).view.storefrontCatalog;
+    return {
+      revision: 5,
+      total: 1,
+      page: 1,
+      pageSize: Number(catalog.pageSize ?? 24),
+      homepageFeaturedProductIds: [],
+      products: [product("p1")],
+      ...(catalog.includeCategories
+        ? {
+            categories: tree.map((node) =>
+              node.slug === catalog.categorySlug
+                ? category(node.id, node.parentId, node.slug, true)
+                : node,
+            ),
+          }
+        : {}),
+    };
+  });
 });
 
 describe("OntOS catalog server reads", () => {
-  it("sends the published storefrontCatalog shape without unset keys", async () => {
-    await server.getSnapshot(true, {
-      categorySlug: "srouby",
-      page: 2,
-      pageSize: 24,
-      q: "",
-      minMinor: undefined,
-    });
+  it("reads products as bounded cards without the category tree and without unset keys", async () => {
+    await server.readProducts(
+      { categorySlug: "srouby", page: 2, pageSize: 24, q: "", minMinor: undefined },
+      "card",
+    );
     expect(readRecords).toHaveBeenCalledWith("merchandise", "records", {
       view: {
         storefront: true,
-        storefrontCatalog: { categorySlug: "srouby", page: 2, pageSize: 24 },
+        storefrontCatalog: {
+          categorySlug: "srouby",
+          page: 2,
+          pageSize: 24,
+          fields: "card",
+          includeCategories: false,
+        },
       },
     });
   });
-  it("caches equal queries briefly and bypasses the cache for fresh reads", async () => {
-    await server.getSnapshot(false, { slug: "cache-test", pageSize: 1 });
-    await server.getSnapshot(false, { slug: "cache-test", pageSize: 1 });
+  it("caches equal product queries briefly and bypasses the cache for fresh reads", async () => {
+    await server.readProducts({ slug: "cache-test", pageSize: 1 }, "full");
+    await server.readProducts({ slug: "cache-test", pageSize: 1 }, "full");
     expect(readRecords).toHaveBeenCalledTimes(1);
-    await server.getSnapshot(true, { slug: "cache-test", pageSize: 1 });
+    await server.readProducts({ slug: "cache-test", pageSize: 1 }, "full", true);
     expect(readRecords).toHaveBeenCalledTimes(2);
     expect(server.CATALOG_CACHE_MS).toBeLessThanOrEqual(15_000);
   });
-  it("ships only the slim navigation to the layout: no products, no deep categories", async () => {
-    const category = (id: string, parentId: string | null, slug: string) => ({
-      id,
-      parentId,
-      slug,
-      name: slug,
-      position: 1,
+  it("reads the navigation tree once per cache window, separately from products", async () => {
+    await server.getCatalogPage({ q: "a", pageSize: 24 });
+    await server.getCatalogPage({ q: "b", pageSize: 24 });
+    const calls = vi.mocked(readRecords).mock.calls.map(catalogOf);
+    expect(calls.filter((call) => call.includeCategories === true)).toEqual([
+      { pageSize: 1, fields: "card", includeCategories: true },
+    ]);
+    expect(calls.filter((call) => call.includeCategories === false)).toHaveLength(2);
+    expect(server.CATEGORY_CACHE_MS).toBe(60_000);
+  });
+  it("adds the content of the requested category from its own detail read", async () => {
+    const model = await server.getCatalog("srouby");
+    expect(vi.mocked(readRecords).mock.calls.map(catalogOf)).toContainEqual({
+      pageSize: 1,
+      fields: "card",
+      includeCategories: true,
+      categorySlug: "srouby",
+    });
+    expect(model.getCategoryBySlug("srouby")).toMatchObject({
+      heading: "Nadpis srouby",
+      description: "Popis srouby",
       longDescription: "Velmi dlouhý popis kategorie",
-      imageSrc: "/akros/products/product-02.jpg",
-      imageAlt: slug,
     });
-    vi.mocked(readRecords).mockResolvedValue({
-      ...body,
-      categories: [
-        category("root", null, "nerezovy-spojovaci-material"),
-        category("srouby", "root", "srouby"),
-        category("din", "srouby", "din-933"),
-        category("din-a2", "din", "din-933-a2"),
-        category("other", null, "jina-sekce"),
-      ],
-      products: [
-        {
-          id: "p1",
-          slug: "p1",
-          name: "p1",
-          grossPriceMinor: 121,
-          currentPriceMinor: 100,
-          stockOnHand: 5,
-          minimumQuantity: 1,
-        },
-      ],
+    // Navigation-only nodes have no content fields.
+    expect(model.getCategoryBySlug("din-933")).toMatchObject({
+      description: undefined,
+      imageSrc: undefined,
     });
+    expect(model.getProducts().map((p) => p.id)).toEqual(["p1"]);
+  });
+  it("reads product detail in full and listings as cards", async () => {
+    await server.getCatalogPage({ slug: "p1", pageSize: 1 }, { fields: "full" });
+    await server.getCatalogPage({ categorySlug: "srouby", pageSize: 24 });
+    const products = vi
+      .mocked(readRecords)
+      .mock.calls.map(catalogOf)
+      .filter((call) => call.includeCategories === false);
+    expect(products.map((call) => call.fields)).toEqual(["full", "card"]);
+  });
+  it("reads the cart's products fresh, in full, with only the cart's variants", async () => {
+    await server.readCartProducts([
+      { productId: "p1", variantId: "v1" },
+      { productId: "p1", variantId: "v2" },
+      { productId: "p2" },
+    ]);
+    await server.readCartProducts([{ productId: "p1", variantId: "v1" }]);
+    expect(vi.mocked(readRecords).mock.calls.map(catalogOf)).toEqual([
+      {
+        productIds: ["p1", "p2"],
+        variantIds: ["v1", "v2"],
+        pageSize: 2,
+        fields: "full",
+        includeCategories: false,
+      },
+      {
+        productIds: ["p1"],
+        variantIds: ["v1"],
+        pageSize: 1,
+        fields: "full",
+        includeCategories: false,
+      },
+    ]);
+  });
+  it("ships only the slim navigation to the layout: no products, no deep categories", async () => {
     const snapshot = await server.getShellSnapshot();
-    expect(vi.mocked(readRecords).mock.calls[0][2]).toEqual({
-      view: { storefront: true, storefrontCatalog: { featured: true, pageSize: 20 } },
-    });
+    expect(vi.mocked(readRecords).mock.calls.map(catalogOf)).toEqual([
+      { pageSize: 1, fields: "card", includeCategories: true },
+    ]);
     expect(snapshot.catalog.products).toEqual([]);
     expect(snapshot.categories.categories.map((c) => c.id)).toEqual(["root", "srouby"]);
-    expect(snapshot.categories.categories[1]).toEqual({
-      id: "srouby",
-      parentId: "root",
+    expect(snapshot.categories.categories[0]).toEqual({
+      id: "root",
+      parentId: null,
       hasChildren: true,
-      slug: "srouby",
-      name: "srouby",
+      slug: "nerezovy-spojovaci-material",
+      name: "nerezovy-spojovaci-material",
       position: 1,
       imageSrc: "/akros/products/product-02.jpg",
-      imageAlt: "srouby",
+      imageAlt: "nerezovy-spojovaci-material",
     });
     // A category page adds only its own trail and the children of each trail level.
     const branch = await server.getCategoryBranch("din-933");
     expect(branch.map((c) => c.id)).toEqual(["din", "din-a2"]);
     expect(branch[0]).not.toHaveProperty("longDescription");
   });
-  it("returns page totals for paginated pages", async () => {
-    const page = await server.getCatalogPage({ q: "page-test", page: 1, pageSize: 24 });
-    expect(page).toMatchObject({ total: 1, page: 1, pageSize: 16, products: [] });
-    expect(page.model.getCategoryBySlug("srouby")?.longDescription).toBe(
-      "Velmi dlouhý popis kategorie",
-    );
-  });
   it("maps storefront sections to owner labels and merges promotion reads", async () => {
     vi.mocked(readRecords).mockImplementation(async (_v, _r, query) => {
-      const label = (query as { view: { storefrontCatalog: { label?: string } } }).view
-        .storefrontCatalog.label;
-      const product = (id: string) => ({
-        id,
-        slug: id,
-        name: id,
-        grossPriceMinor: 121,
-        currentPriceMinor: 100,
-        stockOnHand: 5,
-        minimumQuantity: 1,
-      });
+      const catalog = (query as Query).view.storefrontCatalog;
       return {
-        ...body,
+        revision: 5,
+        homepageFeaturedProductIds: [],
+        categories: catalog.includeCategories ? tree : undefined,
         products:
-          label === "action"
+          catalog.label === "action"
             ? [product("p-action"), product("p-both")]
             : [product("p-both"), product("p-sale")],
       };
     });
     const page = await server.getCatalogPage({ flag: "promotion", pageSize: 48 });
-    const sent = vi.mocked(readRecords).mock.calls.map((call) => call[2]);
+    const sent = vi
+      .mocked(readRecords)
+      .mock.calls.map(catalogOf)
+      .filter((call) => call.includeCategories === false);
     expect(sent).toEqual([
-      { view: { storefront: true, storefrontCatalog: { pageSize: 48, label: "action" } } },
-      { view: { storefront: true, storefrontCatalog: { pageSize: 48, label: "sale" } } },
+      { pageSize: 48, label: "action", fields: "card", includeCategories: false },
+      { pageSize: 48, label: "sale", fields: "card", includeCategories: false },
     ]);
-    expect(page.products.map((product) => product.id)).toEqual(["p-action", "p-both", "p-sale"]);
+    expect(page.products.map((p) => p.id)).toEqual(["p-action", "p-both", "p-sale"]);
     await server.getCatalogPage({ flag: "new", pageSize: 48 });
-    expect(vi.mocked(readRecords).mock.calls.at(-1)?.[2]).toEqual({
-      view: { storefront: true, storefrontCatalog: { pageSize: 48, label: "new" } },
+    expect(catalogOf(vi.mocked(readRecords).mock.calls.at(-1)!)).toEqual({
+      pageSize: 48,
+      label: "new",
+      fields: "card",
+      includeCategories: false,
     });
   });
 });

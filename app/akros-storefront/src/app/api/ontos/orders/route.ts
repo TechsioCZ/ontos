@@ -2,7 +2,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { guard, jsonBody, problem, RequestError } from "@/ontos/http";
 import { assertCart } from "@/ontos/quote";
-import { getSnapshot } from "@/ontos/catalog-server";
+import { readProducts } from "@/ontos/catalog-server";
 import { callAction, OntosError } from "@/ontos/gateway";
 import {
   isCheckoutDraft,
@@ -23,14 +23,6 @@ export async function POST(request: Request) {
       Object.keys(validateMethods(draft)).length
     )
       throw new RequestError(400, "Neplatné dodací údaje.");
-    if (!["osobni", "zasilkovna"].includes(draft.deliveryId) || draft.extendedReturn)
-      return Response.json(
-        {
-          message:
-            "Vyberte osobní odběr nebo Zásilkovnu a vypněte prodloužené vrácení. Tyto služby jsou v DEMO režimu podporované.",
-        },
-        { status: 422 },
-      );
     const address = getDeliveryAddress(draft);
     const command = {
       _tag: "PlaceStorefrontOrder",
@@ -61,7 +53,7 @@ export async function POST(request: Request) {
     };
     for (let attempt = 0; attempt < 3; attempt++) {
       // Only the aggregate revision is needed: smallest possible fresh owner read.
-      const snapshot = await getSnapshot(true, { pageSize: 1 });
+      const snapshot = await readProducts({ pageSize: 1 }, "card", true);
       const payload = { command, expectedRevision: snapshot.revision };
       const digest = createHash("sha256")
         .update(JSON.stringify(payload))

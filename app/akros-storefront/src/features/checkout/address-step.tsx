@@ -1,6 +1,5 @@
 "use client";
 import NextLink from "next/link";
-import { useDataSource } from "@/ontos/catalog-provider";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@techsio/ui-kit/atoms/button";
@@ -13,7 +12,6 @@ import { validateAddresses } from "@/mock-storefront/checkout";
 import { useCartQuote } from "@/ontos/cart-revalidation";
 
 export function AddressStep() {
-  const ontos = useDataSource() === "ontos";
   const { draft, updateDraft } = useCheckout();
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
@@ -66,12 +64,10 @@ export function AddressStep() {
           >
             Dodací údaje
           </h1>
-          {ontos && (
-            <p className="mb-4 rounded-sm border border-(--color-border-primary) p-4 text-sm">
-              DEMO – používejte výhradně fiktivní jméno, e-mail a adresu. Skutečné osobní údaje sem
-              nepatří.
-            </p>
-          )}
+          <p className="mb-4 rounded-sm border border-(--color-border-primary) p-4 text-sm">
+            DEMO – používejte výhradně fiktivní jméno, e-mail a adresu. Skutečné osobní údaje sem
+            nepatří.
+          </p>
           {editing ? (
             <div className="grid gap-4 sm:grid-cols-2">
               <FormInput

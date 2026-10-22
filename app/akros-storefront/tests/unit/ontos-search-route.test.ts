@@ -1,18 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createCatalog } from "@/ontos/catalog-model";
-import { project } from "@/ontos/catalog-projection";
+import { projectProducts } from "@/ontos/catalog-projection";
 import { getCatalogPage, type CatalogPage } from "@/ontos/catalog-server";
 import { POST } from "@/app/api/ontos/search/route";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/ontos/config", () => ({ isOntos: () => true }));
 vi.mock("@/ontos/catalog-server", () => ({ getCatalogPage: vi.fn() }));
 
-const snapshot = project({
+// A listing card: no variant records, only the owner's variant summary.
+const listing = projectProducts({
   total: 37,
   page: 1,
   pageSize: 6,
-  categories: [],
   products: [
     {
       id: "p1",
@@ -21,36 +20,28 @@ const snapshot = project({
       name: "Šroub DIN 933 A2",
       active: true,
       published: true,
+      availability: "IN_STOCK",
       imageSrc: "/akros/products/product-02.jpg",
-      variantRecords: [
-        {
-          id: "v1",
-          sku: "933A2M8",
-          name: "M8 × 20",
-          active: true,
-          priceMinor: 100,
-          grossPriceMinor: 121,
-          stockOnHand: 40,
-          minimumQuantity: 1,
-        },
-        {
-          id: "v2",
-          sku: "933A2M10",
-          name: "M10 × 30",
-          active: true,
-          priceMinor: 200,
-          grossPriceMinor: 242,
-          stockOnHand: 0,
-          minimumQuantity: 1,
-        },
-      ],
+      grossPriceMinor: 121,
+      variantSummary: { count: 2, minGrossPriceMinor: 121, stockOnHand: 40, units: ["ks"] },
     },
   ],
 });
 const page: CatalogPage = {
-  snapshot,
-  model: createCatalog(snapshot.catalog, snapshot.categories),
-  products: snapshot.catalog.products,
+  model: createCatalog(listing, {
+    categories: [
+      { id: "c1", parentId: null, hasChildren: true, slug: "srouby", name: "Šrouby", position: 1 },
+      {
+        id: "c2",
+        parentId: "c1",
+        hasChildren: false,
+        slug: "din-933",
+        name: "Šrouby DIN 933",
+        position: 1,
+      },
+    ],
+  }),
+  products: listing.products,
   total: 37,
   page: 1,
   pageSize: 6,
@@ -76,7 +67,10 @@ describe("header search BFF", () => {
     expect(getCatalogPage).toHaveBeenCalledWith({ q: "šroub", page: 1, pageSize: 6 });
     expect(await response.json()).toEqual({
       total: 37,
-      categories: [],
+      categories: [
+        { id: "c1", slug: "srouby", name: "Šrouby", trail: "" },
+        { id: "c2", slug: "din-933", name: "Šrouby DIN 933", trail: "Šrouby" },
+      ],
       items: [
         {
           productId: "p1",
@@ -86,18 +80,9 @@ describe("header search BFF", () => {
           currency: "CZK",
           priceMinor: 121,
           priceIsFrom: true,
-          matchingVariantCount: 0,
+          hasVariants: true,
         },
       ],
-    });
-  });
-  it("labels an exact variant SKU match", async () => {
-    const body = await (await ask("933A2M10")).json();
-    expect(body.items[0]).toMatchObject({
-      priceMinor: 242,
-      priceIsFrom: false,
-      matchingVariantCount: 1,
-      variant: { sku: "933A2M10", label: "M10 × 30" },
     });
   });
   it("does not read OntOS for fewer than two characters", async () => {

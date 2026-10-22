@@ -31,85 +31,43 @@ const cart: CartState = {
 };
 
 describe("four-step checkout", () => {
-  it("updates demo shipping at the threshold without counting the return service as goods", () => {
-    const draft = { ...createCheckoutDraft(), deliveryId: "dpd", extendedReturn: true };
-    const goods = (priceMinor: number): CartState => ({
-      version: 3,
-      lines: [
-        {
-          ...cart.lines[0],
-          quantity: 1,
-          priceMinor,
-          priceExcludingVatMinor: Math.round(priceMinor / 1.21),
-        },
-      ],
-    });
-    expect(getCheckoutTotals(goods(199999), draft).shipping).toBe(7900);
-    expect(getCheckoutTotals(goods(200000), draft).shipping).toBe(0);
-    expect(getCheckoutTotals(goods(200001), draft).shipping).toBe(0);
-    expect(getCheckoutTotals(goods(200000), { ...draft, deliveryId: "" }).shipping).toBeNull();
-    expect(getCheckoutTotals(goods(199999), { ...draft, deliveryId: "osobni" }).shipping).toBe(0);
-    const free = getCheckoutTotals(goods(200000), draft);
-    expect(free.net).toBe(Math.round(200000 / 1.21) + 13140);
-    expect(free.total).toBe(215900);
-    expect(free.vat).toBe(free.total - (free.net ?? 0));
-  });
-
-  it("adds extended returns once and preserves the service across draft storage", () => {
-    const draft = createCheckoutDraft();
-    const base = getCheckoutTotals(cart, draft);
-    const selected = getCheckoutTotals(cart, { ...draft, extendedReturn: true });
-    expect(selected.extendedReturn).toBe(15900);
-    expect(selected.total - base.total).toBe(15900);
-    expect((selected.net ?? 0) - (base.net ?? 0)).toBe(13140);
-    expect(
-      parseCheckoutDraft(JSON.stringify({ version: 1, draft: { ...draft, extendedReturn: true } }))
-        .extendedReturn,
-    ).toBe(true);
-    const { extendedReturn: _legacy, ...legacy } = draft;
-    expect(parseCheckoutDraft(JSON.stringify({ version: 1, draft: legacy }))).toEqual(draft);
-    expect(
-      parseCheckoutDraft(
-        JSON.stringify({ version: 1, draft: { ...draft, extendedReturn: "yes" } }),
-      ),
-    ).toEqual(draft);
-  });
-
-  it("starts with no shipping or payment and an editable valid demo contact", () => {
+  it("starts with no shipping and an editable valid demo contact", () => {
     const draft = createCheckoutDraft();
     expect(draft.deliveryId).toBe("");
-    expect(draft.paymentId).toBe("");
-    expect(draft.newsletter).toBe(false);
     expect(validateAddresses(draft)).toEqual({});
     expect(getCheckoutTotals(cart, draft)).toMatchObject({
       subtotal: 61,
       total: 61,
-      net: 50,
-      vat: 11,
+      net: null,
+      vat: null,
       shipping: null,
     });
   });
 
-  it("requires a matching pickup point and compatible payment", () => {
-    const draft = { ...createCheckoutDraft(), deliveryId: "zasilkovna", paymentId: "gopay" };
+  it("requires a supported delivery and a matching pickup point", () => {
+    expect(validateMethods({ ...createCheckoutDraft(), deliveryId: "dpd" })).toHaveProperty(
+      "deliveryId",
+    );
+    const draft = { ...createCheckoutDraft(), deliveryId: "zasilkovna" };
     expect(validateMethods(draft)).toHaveProperty("pickupPointId");
     expect(validateMethods({ ...draft, pickupPointId: "balikovna-praha" })).toHaveProperty(
       "pickupPointId",
     );
     expect(validateMethods({ ...draft, pickupPointId: "zasilkovna-praha" })).toEqual({});
-    expect(validateMethods({ ...draft, paymentId: "store-card" })).toHaveProperty("paymentId");
+    expect(validateMethods({ ...draft, deliveryId: "osobni" })).toEqual({});
   });
 
-  it("invalidates payment and pickup when changing delivery", () => {
+  it("invalidates the pickup point when changing delivery", () => {
     const draft = {
       ...createCheckoutDraft(),
-      deliveryId: "osobni",
-      paymentId: "store-card",
+      deliveryId: "zasilkovna",
       pickupPointId: "zasilkovna-praha",
     };
-    expect(selectDelivery(draft, "dpd")).toMatchObject({
-      deliveryId: "dpd",
-      paymentId: "",
+    expect(selectDelivery(draft, "zasilkovna")).toMatchObject({
+      pickupPointId: "zasilkovna-praha",
+    });
+    expect(selectDelivery(draft, "osobni")).toMatchObject({
+      deliveryId: "osobni",
       pickupPointId: "",
     });
   });
@@ -117,7 +75,7 @@ describe("four-step checkout", () => {
   it("guards direct URLs and skipped steps but permits going back", () => {
     const draft = createCheckoutDraft();
     expect(getReachableStep(3, cart, draft)).toBe(1);
-    const methods = { ...draft, deliveryId: "dpd", paymentId: "gopay" };
+    const methods = { ...draft, deliveryId: "osobni" };
     expect(getReachableStep(3, cart, methods)).toBe(3);
     expect(getReachableStep(3, cart, { ...methods, email: "invalid" })).toBe(2);
     expect(getReachableStep(0, cart, methods)).toBe(0);
@@ -130,31 +88,24 @@ describe("four-step checkout", () => {
     expect(validateAddresses({ ...draft, differentDeliveryAddress: false })).toEqual({});
   });
 
-  it("does not invent VAT when an old cart snapshot lacks a net price", () => {
-    const oldCart = {
-      ...cart,
-      lines: cart.lines.map(({ priceExcludingVatMinor: _net, ...line }) => line),
-    };
-    expect(getCheckoutTotals(oldCart, createCheckoutDraft())).toMatchObject({
+  it("adds the selected demo shipping to the gross total and leaves tax to the OntOS quote", () => {
+    const draft = { ...createCheckoutDraft(), deliveryId: "zasilkovna" };
+    expect(getCheckoutTotals(cart, draft)).toEqual({
+      subtotal: 61,
+      shipping: 7900,
+      payment: 0,
+      total: 7961,
       net: null,
       vat: null,
+    });
+    expect(getCheckoutTotals(cart, { ...draft, deliveryId: "osobni" })).toMatchObject({
+      shipping: 0,
       total: 61,
     });
   });
 
-  it("adds the selected demo shipping price and tax only once", () => {
-    const draft = { ...createCheckoutDraft(), deliveryId: "dpd", paymentId: "gopay" };
-    expect(getCheckoutTotals(cart, draft)).toMatchObject({
-      shipping: 7900,
-      payment: 0,
-      total: 7961,
-      net: 6579,
-      vat: 1382,
-    });
-  });
-
   it("round trips incomplete drafts and safely rejects corrupted storage", () => {
-    const draft = { ...createCheckoutDraft(), email: "unfinished", newsletter: true };
+    const draft = { ...createCheckoutDraft(), email: "unfinished" };
     expect(parseCheckoutDraft(JSON.stringify({ version: 1, draft }))).toEqual(draft);
     expect(parseCheckoutDraft("broken")).toEqual(createCheckoutDraft());
     expect(parseCheckoutDraft(JSON.stringify({ version: 99, draft }))).toEqual(

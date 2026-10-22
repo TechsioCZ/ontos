@@ -1,5 +1,5 @@
 import "server-only";
-import { getConfig, isOntos } from "@/ontos/config";
+import { getConfig } from "@/ontos/config";
 
 const events = ["ORDER_CREATED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"];
 const statuses = ["SENDING", "SENT", "RETRY", "FAILED", "UNKNOWN", "SKIPPED"];
@@ -17,8 +17,6 @@ function toReceipt(value: unknown): Receipt | null {
   };
 }
 export async function GET(request: Request) {
-  if (!isOntos())
-    return Response.json({ message: "Připojení k OntOS není zapnuté." }, { status: 404 });
   const query = new URL(request.url).searchParams;
   const orderNumber = query.get("orderNumber") ?? "";
   // Only the buyer sees receipts: the dispatcher matches the order number AND the e-mail it was placed with.
@@ -36,10 +34,13 @@ export async function GET(request: Request) {
       subjectNumber: orderNumber,
       recipient: email,
     });
-    const upstream = await fetch(`${getConfig().shellUrl}/shell-super-app-api/email/deliveries?${params.toString()}`, {
-      cache: "no-store",
-      signal: AbortSignal.timeout(3000),
-    });
+    const upstream = await fetch(
+      `${getConfig().shellUrl}/shell-super-app-api/email/deliveries?${params.toString()}`,
+      {
+        cache: "no-store",
+        signal: AbortSignal.timeout(3000),
+      },
+    );
     if (!upstream.ok) throw new Error(`dispatcher HTTP ${upstream.status}`);
     const body = (await upstream.json()) as { deliveries?: unknown };
     const deliveries = Array.isArray(body.deliveries)

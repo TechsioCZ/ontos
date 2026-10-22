@@ -2,7 +2,9 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { FeaturedProductGrid } from "@/components/featured-product-grid";
-import { getHomepageFeaturedProducts, toProductSummary } from "@/mock-storefront/catalog";
+import { fixtureCatalog } from "../support/catalog-fixture";
+
+const { getHomepageFeaturedProducts, toProductSummary } = fixtureCatalog;
 
 describe("FeaturedProductGrid", () => {
   it("renders homepage recommendations through the standard rich product cards", () => {

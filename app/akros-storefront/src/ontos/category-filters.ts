@@ -1,7 +1,3 @@
-import type { CatalogProduct } from "@/mock-storefront/types";
-import { normalizeCatalogSearchTerm } from "@/lib/product-variant-search";
-import { getProductStockStatus } from "@/lib/product-stock";
-
 export type CategoryQuery = Record<string, string | string[] | undefined>;
 export type CategoryFilters = ReturnType<typeof parseCategoryFilters>;
 const first = (value: string | string[] | undefined) =>
@@ -40,41 +36,4 @@ export function categoryFilterParams(filters: CategoryFilters) {
       sort: filters.sort === "name" ? "" : filters.sort,
     }).filter(([, value]) => value),
   );
-}
-
-export function filterCategoryProducts(products: CatalogProduct[], filters: CategoryFilters) {
-  const term = normalizeCatalogSearchTerm(filters.q);
-  const name = new Intl.Collator("cs-CZ", { numeric: true, sensitivity: "base" });
-  return products
-    .filter((product) => {
-      if (
-        term &&
-        !normalizeCatalogSearchTerm(
-          [
-            product.name,
-            product.sku,
-            ...product.detail.variants.map((variant) => variant.sku),
-          ].join(" "),
-        ).includes(term)
-      )
-        return false;
-      // Filter/sort the same owner-supplied unit/from price displayed on the card.
-      if (filters.minMinor !== undefined && product.priceMinor < filters.minMinor) return false;
-      if (filters.maxMinor !== undefined && product.priceMinor > filters.maxMinor) return false;
-      const available = (product.detail.variants.length ? product.detail.variants : [product]).some(
-        (item) => getProductStockStatus(item) === "in-stock",
-      );
-      if (filters.availability === "in-stock" && !available) return false;
-      if (filters.availability === "out-of-stock" && available) return false;
-      return true;
-    })
-    .sort((a, b) => {
-      const difference =
-        filters.sort === "price-asc"
-          ? a.priceMinor - b.priceMinor
-          : filters.sort === "price-desc"
-            ? b.priceMinor - a.priceMinor
-            : 0;
-      return difference || name.compare(a.name, b.name) || a.id.localeCompare(b.id);
-    });
 }

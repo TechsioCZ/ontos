@@ -1,16 +1,16 @@
 # AKROS storefront prototype
 
 Standalone Next.js storefront prototype based on the AKROS Figma handoff. It consumes
-`@techsio/ui-kit` and keeps all demo catalog/cart behavior inside this directory.
+`@techsio/ui-kit`. Catalog, prices, stock and orders always come from OntOS through the
+server-side BFF; see [ONTOS-INTEGRATION.md](./ONTOS-INTEGRATION.md).
 
 ## Run locally
 
 ```bash
 npm install
-npm run dev
+node scripts/with-demo-env.mjs build
+node scripts/with-demo-env.mjs start   # 127.0.0.1:3070, needs the local OntOS demo
 ```
-
-Open <http://localhost:3000>.
 
 The six-part UI-kit refactor, its progress and component adoption inventories are tracked in
 [UI-KIT-REFACTOR.md](./UI-KIT-REFACTOR.md).
@@ -125,27 +125,21 @@ Button and input weights use the UI kit's component font-weight tokens; checkbox
 borders use `--border-width-checkbox`. Select indicators keep their existing slot
 utilities. Header, footer and checkout keep their existing layout.
 
-Checkout demo shipping becomes free at a goods subtotal of CZK 2,000, matching the existing
-shipping-information page. The optional 60-day return service costs CZK 159, with the same
-demo VAT assumptions as the delivery fixtures. Both rules are local prototype configuration
-in `src/mock-storefront/fixtures/checkout.ts`; they are not live AKROS business policies.
-
-- Catalog, editorial, account, order, delivery, and payment demo data lives under
-  `src/mock-storefront/fixtures/`.
+- Editorial, account, order and delivery demo data lives under `src/mock-storefront/fixtures/`.
+  The catalog is never read from there; `src/mock-storefront/generated/` is only the OntOS seed input.
 - Named carts are browser-local under `akros-demo-carts-v1`; `akros-demo-cart-v3` mirrors
   the active cart and is migrated into the default cart when no collection exists.
   Each cart keeps separate contents. Cart deletion requires confirmation; the last cart remains.
 - Checkout has four URL-backed steps: `/kosik`, `/kosik/doprava-platba`,
   `/kosik/dodaci-udaje`, `/kosik/shrnuti`. `/pokladna` redirects into this flow.
-- The editable demo B2B profile, delivery and payment selections persist in
+- The editable demo B2B profile and delivery selection persist in
   `sessionStorage` under `akros-demo-checkout-v1` for the default cart and a key with the
   cart ID suffix for each additional cart. Delivery methods, prices and pickup
   points are explicit Czech-only demo fixtures, not live carrier availability.
 - Completing checkout saves `akros-demo-order-v1` in the same session before clearing
   the cart. `/potvrzeni-objednavky` displays that snapshot, never a fictitious paid order.
-- Existing cart snapshots remain readable. New items carry catalog net prices; for old
-  snapshots without them the UI explicitly marks the tax breakdown unavailable.
-- No API, database, authentication, checkout submission, or OntOS application module is used.
+- The cart is verified and the order placed in OntOS (`/api/ontos/cart`, `/api/ontos/orders`);
+  net prices and VAT come only from the OntOS quote.
 - `npm run check` runs formatting, linting, type checking, tests, and the production build.
 
 Original checkout implementation history: [CHECKOUT-PLAN.md](CHECKOUT-PLAN.md).

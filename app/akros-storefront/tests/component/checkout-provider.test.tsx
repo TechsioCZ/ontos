@@ -1,10 +1,11 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CheckoutProvider, useCheckout } from "@/features/checkout/checkout-provider";
 import { CartProvider, useCart } from "@/features/cart/cart-provider";
 import { createCheckoutDraft } from "@/mock-storefront/checkout";
 import { OrderConfirmation } from "@/features/checkout/order-confirmation";
+import { checkoutSaveError } from "@/ontos/checkout-response";
 
 function Probe() {
   const { draft, updateDraft, completeOrder, ready, storageError } = useCheckout();
@@ -22,7 +23,10 @@ function Probe() {
   );
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 beforeEach(() => {
   window.localStorage.clear();
   window.sessionStorage.clear();
@@ -79,9 +83,31 @@ describe("checkout persistence", () => {
     );
   });
 
-  it("saves an order before clearing the cart and does not submit twice", async () => {
+  it("saves the OntOS order before clearing the cart and does not submit twice", async () => {
     const user = userEvent.setup();
-    const draft = { ...createCheckoutDraft(), deliveryId: "dpd", paymentId: "gopay" };
+    const orderRequests: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, options: RequestInit) => {
+        if (url === "/api/ontos/cart")
+          return Response.json({ canCheckout: true, priceChanged: false, issues: [] });
+        if (url === "/api/ontos/orders") {
+          orderRequests.push(String(options.body));
+          return Response.json({
+            outcome: "PLACED",
+            orderNumber: "OBJ-2026-0100",
+            totalMinor: 7961,
+            totalVatMinor: 1382,
+          });
+        }
+        return Response.json({}, { status: 404 });
+      }),
+    );
+    const draft = {
+      ...createCheckoutDraft(),
+      deliveryId: "zasilkovna",
+      pickupPointId: "zasilkovna-praha",
+    };
     window.sessionStorage.setItem("akros-demo-checkout-v1", JSON.stringify({ version: 1, draft }));
     const view = render(
       <CartProvider>
@@ -92,11 +118,13 @@ describe("checkout persistence", () => {
     );
     await waitFor(() => expect(screen.getByLabelText("Košík").textContent).toBe("1"));
     await user.dblClick(screen.getByText("Objednat"));
-    expect(screen.getByLabelText("Košík").textContent).toBe("0");
+    await waitFor(() => expect(screen.getByLabelText("Košík").textContent).toBe("0"));
+    expect(orderRequests).toHaveLength(1);
     const order = JSON.parse(window.sessionStorage.getItem("akros-demo-order-v1") ?? "null");
     expect(order.cart.lines[0]).toMatchObject({ quantity: 0.5, priceExcludingVatMinor: 100 });
     expect(order.draft.email).toBe(draft.email);
-    expect(order.totals.total).toBe(7961);
+    expect(order.id).toBe("OBJ-2026-0100");
+    expect(order.totals).toMatchObject({ total: 7961, vat: 1382, net: 6579 });
     expect(order.paymentStatus).toBe("not-processed");
     view.unmount();
     const confirmation = render(<OrderConfirmation />);
@@ -108,13 +136,13 @@ describe("checkout persistence", () => {
     expect(await screen.findByText(order.id)).not.toBeNull();
   });
 
-  it("keeps cart contents when writing the order fails", async () => {
+  it("keeps cart contents when browser storage fails before submission", async () => {
     const user = userEvent.setup();
     const storage = {
       getItem: () =>
         JSON.stringify({
           version: 1,
-          draft: { ...createCheckoutDraft(), deliveryId: "dpd", paymentId: "gopay" },
+          draft: { ...createCheckoutDraft(), deliveryId: "osobni" },
         }),
       setItem: () => {
         throw new Error("Quota exceeded");
@@ -130,7 +158,7 @@ describe("checkout persistence", () => {
     await waitFor(() => expect(screen.getByLabelText("Košík").textContent).toBe("1"));
     await user.click(screen.getByText("Objednat"));
     expect(screen.getByLabelText("Košík").textContent).toBe("1");
-    expect(screen.getByLabelText("Chyba").textContent).toContain("uložit");
+    expect(screen.getByLabelText("Chyba").textContent).toBe(checkoutSaveError);
   });
 
   it.each([null, "broken", JSON.stringify({ version: 1, paymentStatus: "paid" })])(
@@ -139,7 +167,7 @@ describe("checkout persistence", () => {
       if (saved) window.sessionStorage.setItem("akros-demo-order-v1", saved);
       render(<OrderConfirmation />);
       expect(await screen.findByText("Není zde dokončená objednávka")).not.toBeNull();
-      expect(screen.queryByText("Ukázková objednávka je uložená")).toBeNull();
+      expect(screen.queryByText(/DEMO objednávka č\./)).toBeNull();
     },
   );
 });

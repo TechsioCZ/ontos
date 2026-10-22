@@ -8,7 +8,9 @@ import {
   CatalogSidebar,
 } from "@/components/catalog-sidebar";
 import { cs } from "@/i18n/cs";
-import { getSidebarCategories } from "@/mock-storefront/catalog";
+import { fixtureCatalog } from "../support/catalog-fixture";
+
+const { getSidebarCategories } = fixtureCatalog;
 
 afterEach(cleanup);
 

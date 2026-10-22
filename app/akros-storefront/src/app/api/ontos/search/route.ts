@@ -19,13 +19,8 @@ export async function POST(request: Request) {
         headers: noStore,
       });
     const listing = await getCatalogPage({ q: term, page: 1, pageSize: 6 });
-    const matches = new Map(
-      listing.model.searchCatalog(term).map((result) => [result.product.id, result] as const),
-    );
-    const items = placeholdersLast(listing.products).map((product) =>
-      toRemoteSuggestion(matches.get(product.id) ?? { product, matchingVariants: [] }),
-    );
-    // Every owner read carries the category tree; match it here so the browser never needs it.
+    const items = placeholdersLast(listing.products).map(toRemoteSuggestion);
+    // The cached navigation tree is matched here so the browser never needs it.
     const categories = matchCategories(
       listing.model.getCategories(),
       listing.model.getCategoryTrail,

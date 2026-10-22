@@ -9,7 +9,6 @@
   --color-steps-fg: var(--akros-checkout-ink);
   --color-steps-content-fg: var(--akros-checkout-ink);
   --akros-checkout-muted: #535353;
-  --akros-checkout-service-title-color: #000000;
   --akros-checkout-divider: #a8a8a8;
   --akros-checkout-body-size: var(--dimension-20);
   --akros-checkout-small-size: var(--dimension-16);
@@ -17,12 +16,6 @@
   --text-sm--line-height: var(--akros-checkout-body-leading);
   --text-xs--line-height: var(--akros-checkout-body-leading);
   --akros-checkout-payment-heading-size: 30px;
-  --akros-checkout-shipping-icon-size: 54px;
-  --akros-checkout-return-icon-size: var(--dimension-48);
-  --akros-checkout-progress-width: 429px;
-  --akros-checkout-progress-height: var(--dimension-6);
-  --akros-checkout-progress-radius: var(--dimension-4);
-  --akros-checkout-progress-track: #ededed;
   --font-weight-label: var(--font-weight-medium);
   --color-fill-surface: #f8f9fa;
   --color-button-bg-primary-base: #fdc533;
@@ -93,16 +86,6 @@
   --text-radio-group-item-sm: var(--akros-checkout-body-size);
   --spacing-radio-group-item-content-sm: var(--dimension-8);
   --text-numeric-input-sm: var(--text-sm);
-}
-
-[data-akros-cart-services] {
-  --size-checkbox: var(--dimension-24);
-  --radius-checkbox: 4.235px;
-  --border-width-checkbox: 2px;
-  --spacing-form-checkbox-gap: var(--dimension-32);
-  --color-label-fg: var(--akros-checkout-ink);
-  --color-checkbox-bg-base: var(--color-base);
-  --color-checkbox-border-base: var(--akros-checkout-ink);
 }
 
 [data-akros-checkout] .akros-product-card {

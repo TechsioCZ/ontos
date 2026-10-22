@@ -2,14 +2,12 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ProductGrid } from "@/components/product-grid";
-import {
-  getActionProducts,
-  getProductBySlug,
-  getProducts,
-  getRecommendedProducts,
-  getSaleProducts,
-  toProductSummary,
-} from "@/mock-storefront/catalog";
+import { fixtureCatalog } from "../support/catalog-fixture";
+
+const { getProductBySlug, getProducts, toProductSummary } = fixtureCatalog;
+const getRecommendedProducts = () => getProducts().filter((product) => product.isRecommended);
+const getSaleProducts = () => getProducts().filter((product) => product.isSale);
+const getActionProducts = () => getProducts().filter((product) => product.isAction);
 
 describe("ProductGrid", () => {
   afterEach(cleanup);

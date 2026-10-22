@@ -5,7 +5,6 @@ import { CheckoutProvider, useCheckout } from "@/features/checkout/checkout-prov
 import { CartProvider, useCart } from "@/features/cart/cart-provider";
 import { createCheckoutDraft } from "@/mock-storefront/checkout";
 import { checkoutSaveError } from "@/ontos/checkout-response";
-vi.mock("@/ontos/catalog-provider", () => ({ useDataSource: () => "ontos" }));
 
 function Probe() {
   const { ready, storageError, draft, completeOrder } = useCheckout();
@@ -15,7 +14,7 @@ function Probe() {
       <output aria-label="Ready">{String(ready)}</output>
       <output aria-label="Cart">{cart.lines.length}</output>
       <output aria-label="Error">{storageError}</output>
-      <output aria-label="Payment">{draft.paymentId}</output>
+      <output aria-label="Delivery">{draft.deliveryId}</output>
       <button onClick={() => completeOrder()}>Submit</button>
     </>
   );
@@ -53,7 +52,7 @@ beforeEach(() => {
     "akros-demo-checkout-v1",
     JSON.stringify({
       version: 1,
-      draft: { ...createCheckoutDraft(), deliveryId: "osobni", paymentId: "gopay" },
+      draft: { ...createCheckoutDraft(), deliveryId: "osobni" },
     }),
   );
 });
@@ -93,7 +92,7 @@ describe("OntOS submission recovery", () => {
         </CartProvider>,
       );
       await waitFor(() => expect(screen.getByLabelText("Ready").textContent).toBe("true"));
-      expect(screen.getByLabelText("Payment").textContent).toBe("demo-no-payment");
+      expect(screen.getByLabelText("Delivery").textContent).toBe("osobni");
       await user.click(screen.getByText("Submit"));
       await waitFor(() =>
         expect(screen.getByLabelText("Error").textContent).toBe(checkoutSaveError),
@@ -106,8 +105,8 @@ describe("OntOS submission recovery", () => {
       expect(requests[0]).toBe(requests[1]);
       expect(JSON.parse(sessionStorage.getItem("akros-demo-order-v1")!)).toMatchObject({
         id: "OBJ-2026-0099",
-        source: "ontos",
-        paymentTitle: "Nic neplatíte (DEMO)",
+        clientRequestId: expect.stringMatching(/^akros-/),
+        totals: { total: 121, vat: 21, net: 100 },
       });
     },
   );

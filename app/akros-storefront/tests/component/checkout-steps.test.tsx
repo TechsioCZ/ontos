@@ -28,7 +28,7 @@ function renderStep(child: ReactNode) {
 }
 
 describe("checkout step interactions", () => {
-  it("requires shipping and payment before continuing", async () => {
+  it("requires a supported delivery and its pickup point before continuing", async () => {
     const user = userEvent.setup();
     renderStep(<DeliveryPaymentStep />);
     await user.click(screen.getByRole("button", { name: "Dodací údaje" }));
@@ -37,8 +37,16 @@ describe("checkout step interactions", () => {
     await waitFor(() =>
       expect(document.activeElement).toBe(screen.getByRole("radio", { name: "Zásilkovna" })),
     );
-    await user.click(screen.getByRole("radio", { name: /DPD Parcel/ }));
-    await user.click(screen.getByRole("radio", { name: "GoPay" }));
+    expect(screen.getAllByRole("radio").map((radio) => radio.getAttribute("value"))).toEqual([
+      "zasilkovna",
+      "osobni",
+    ]);
+    expect(screen.getByText("Nic neplatíte (DEMO)")).not.toBeNull();
+    await user.click(screen.getByRole("radio", { name: "Zásilkovna" }));
+    await user.click(screen.getByRole("button", { name: "Dodací údaje" }));
+    expect(screen.getByText("Vyberte výdejní místo.")).not.toBeNull();
+    expect(router.push).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("radio", { name: /Osobní odběr/ }));
     await user.click(screen.getByRole("button", { name: "Dodací údaje" }));
     expect(router.push).toHaveBeenCalledWith("/kosik/dodaci-udaje");
   });

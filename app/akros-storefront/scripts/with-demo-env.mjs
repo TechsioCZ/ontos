@@ -5,8 +5,6 @@ import {spawn} from "node:child_process";
 const file=fileURLToPath(new URL("../../.env.demo.local",import.meta.url));
 if(existsSync(file)) process.loadEnvFile(file);
 const command=process.argv[2]??"start";
-process.env.STOREFRONT_DATA_SOURCE??="ontos";
-if(!["mock","ontos"].includes(process.env.STOREFRONT_DATA_SOURCE))throw new Error("STOREFRONT_DATA_SOURCE must be mock or ontos");
 const app=fileURLToPath(new URL("../",import.meta.url));
 const child=spawn(process.execPath,[`${app}node_modules/next/dist/bin/next`,command,...(command==="start"?["-p","3070","-H","127.0.0.1"]:[])],{cwd:app,env:process.env,stdio:"inherit"});
 for(const signal of ["SIGTERM","SIGINT"])process.on(signal,()=>child.kill(signal));

@@ -10,12 +10,8 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/",
   useRouter: () => ({ push: vi.fn() }),
 }));
-vi.mock("@/ontos/catalog-provider", async () => {
-  const model = await import("@/mock-storefront/catalog");
-  return { useCatalog: () => model, useDataSource: () => "ontos" };
-});
 
-describe("SiteHeader search in OntOS mode", () => {
+describe("SiteHeader search through the OntOS BFF", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
@@ -46,7 +42,7 @@ describe("SiteHeader search in OntOS mode", () => {
             currency: "CZK",
             priceMinor: 12100,
             priceIsFrom: true,
-            matchingVariantCount: 0,
+            hasVariants: false,
           },
         ],
       }),
@@ -87,7 +83,7 @@ describe("SiteHeader search in OntOS mode", () => {
               currency: "CZK",
               priceMinor: 0,
               priceIsFrom: false,
-              matchingVariantCount: 0,
+              hasVariants: false,
             },
             {
               productId: "p1",
@@ -97,7 +93,7 @@ describe("SiteHeader search in OntOS mode", () => {
               currency: "EUR",
               priceMinor: 500,
               priceIsFrom: false,
-              matchingVariantCount: 0,
+              hasVariants: false,
             },
           ],
         }),

@@ -59,6 +59,14 @@ export interface CatalogProductDetail {
   variants: CatalogProductVariant[];
 }
 
+/** The owner's aggregate of a product's active, sellable variants (listing cards carry no variant records). */
+export interface CatalogVariantSummary {
+  count: number;
+  minGrossPriceMinor: number | null;
+  stockOnHand: number;
+  units: string[];
+}
+
 export interface CatalogProduct {
   vatRate?: number;
   id: string;
@@ -91,18 +99,14 @@ export interface CatalogProduct {
   isRecommended: boolean;
   isSale: boolean;
   isNew: boolean;
+  variantSummary: CatalogVariantSummary;
+  /** Variant records, parameters and paragraphs are filled only by product detail (`fields: "full"`) reads. */
   detail: CatalogProductDetail;
 }
 
 export interface CatalogPromotionItem {
   product: CatalogProduct;
-  variant?: CatalogProductVariant;
   kind: "action" | "sale";
-}
-
-export interface CatalogSearchResult {
-  product: CatalogProduct;
-  matchingVariants: CatalogProductVariant[];
 }
 
 export type CatalogProductSummaryStock =
@@ -129,6 +133,7 @@ export type CatalogProductSummary = Omit<
   | "secondaryImageSrc"
   | "stockCount"
   | "unit"
+  | "variantSummary"
 > & {
   priceExcludingVatMinor?: number;
   hasVariants: boolean;
@@ -136,19 +141,11 @@ export type CatalogProductSummary = Omit<
   stock: CatalogProductSummaryStock;
 };
 
-export interface CatalogMetadata {
-  sourceCategoryCount: number;
-  sourceItemCount: number;
-  productGroupCount: number;
-}
-
 export interface CatalogData {
-  metadata: CatalogMetadata;
   homepageFeaturedProductIds: string[];
   products: CatalogProduct[];
 }
 
 export interface CategoryData {
-  metadata: CatalogMetadata;
   categories: CatalogCategory[];
 }

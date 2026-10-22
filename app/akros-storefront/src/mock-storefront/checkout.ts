@@ -3,11 +3,8 @@ import { type CartState, getCartSubtotal } from "./cart";
 import { mockCustomer } from "./fixtures/account";
 import {
   checkoutDeliveryMethods,
-  checkoutPaymentMethods,
   checkoutPickupPoints,
   demoStoreAddress,
-  demoFreeShippingThresholdMinor,
-  demoExtendedReturn,
 } from "./fixtures/checkout";
 
 export const checkoutSteps = [
@@ -29,7 +26,6 @@ export interface CheckoutAddress {
 
 export interface CheckoutDraft {
   deliveryId: string;
-  paymentId: string;
   pickupPointId: string;
   email: string;
   company: string;
@@ -38,14 +34,11 @@ export interface CheckoutDraft {
   billing: CheckoutAddress;
   delivery: CheckoutAddress;
   differentDeliveryAddress: boolean;
-  newsletter: boolean;
-  extendedReturn?: boolean;
 }
 
 export type CheckoutErrors = Record<string, string>;
 export const createCheckoutDraft = (): CheckoutDraft => ({
   deliveryId: "",
-  paymentId: "",
   pickupPointId: "",
   email: mockCustomer.email,
   company: mockCustomer.company,
@@ -71,16 +64,10 @@ export const createCheckoutDraft = (): CheckoutDraft => ({
     phone: "",
   },
   differentDeliveryAddress: false,
-  newsletter: false,
-  extendedReturn: false,
 });
 
 export const getDelivery = (draft: CheckoutDraft) =>
   checkoutDeliveryMethods.find((method) => method.id === draft.deliveryId);
-export const getPayment = (draft: CheckoutDraft) =>
-  draft.paymentId === demoPayment.id
-    ? demoPayment
-    : checkoutPaymentMethods.find((method) => method.id === draft.paymentId);
 export const getDeliveryAddress = (draft: CheckoutDraft) =>
   draft.differentDeliveryAddress ? draft.delivery : draft.billing;
 
@@ -100,17 +87,13 @@ export function selectDelivery(draft: CheckoutDraft, deliveryId: string): Checko
     ...draft,
     deliveryId,
     pickupPointId: draft.deliveryId === deliveryId ? draft.pickupPointId : "",
-    paymentId: getPayment(draft)?.pickupOnly && deliveryId !== "osobni" ? "" : draft.paymentId,
   };
 }
 
 export function validateMethods(draft: CheckoutDraft): CheckoutErrors {
   const errors: CheckoutErrors = {};
   const delivery = getDelivery(draft);
-  const payment = getPayment(draft);
   if (!delivery) errors.deliveryId = "Vyberte způsob dopravy.";
-  if (!payment || (payment.pickupOnly && delivery?.id !== "osobni"))
-    errors.paymentId = "Vyberte dostupný způsob platby.";
   if (
     delivery?.pickup &&
     !checkoutPickupPoints.some(
@@ -150,35 +133,27 @@ export function getReachableStep(target: number, cart: CartState, draft: Checkou
   return Math.max(0, Math.min(target, 3));
 }
 
-export function getCheckoutTotals(cart: CartState, draft: CheckoutDraft, ontos = false) {
-  const delivery = getDelivery(draft);
-  const payment = getPayment(draft);
+export interface CheckoutTotals {
+  subtotal: number;
+  shipping: number | null;
+  payment: number;
+  total: number;
+  /** Net and VAT come only from the OntOS server quote; the browser never computes tax. */
+  net: number | null;
+  vat: number | null;
+}
+
+export function getCheckoutTotals(cart: CartState, draft: CheckoutDraft): CheckoutTotals {
   const subtotal = getCartSubtotal(cart);
-  const freeShipping = !ontos && subtotal >= demoFreeShippingThresholdMinor;
-  const shipping = delivery ? (freeShipping ? 0 : delivery.priceMinor) : null;
-  const extendedReturn = !ontos && draft.extendedReturn ? demoExtendedReturn.priceMinor : 0;
-  const paymentPrice =
-    payment && (!payment.pickupOnly || delivery?.id === "osobni") ? payment.priceMinor : 0;
-  const total = subtotal + (shipping ?? 0) + paymentPrice + extendedReturn;
-  // OntOS mode: net and VAT come only from the server quote (owner dry run); the browser never computes tax.
-  const hasNet = !ontos && cart.lines.every((line) => line.priceExcludingVatMinor !== undefined);
-  const net = hasNet
-    ? cart.lines.reduce(
-        (sum, line) => sum + Math.round((line.priceExcludingVatMinor ?? 0) * line.quantity),
-        0,
-      ) +
-      (shipping ? (delivery?.priceExcludingVatMinor ?? 0) : 0) +
-      (paymentPrice > 0 ? (payment?.priceExcludingVatMinor ?? 0) : 0) +
-      (extendedReturn ? demoExtendedReturn.priceExcludingVatMinor : 0)
-    : null;
+  const shipping = getDelivery(draft)?.priceMinor ?? null;
+  const payment = demoPayment.priceMinor;
   return {
     subtotal,
     shipping,
-    payment: paymentPrice,
-    extendedReturn,
-    total,
-    net,
-    vat: net === null ? null : total - net,
+    payment,
+    total: subtotal + (shipping ?? 0) + payment,
+    net: null,
+    vat: null,
   };
 }
 
@@ -195,7 +170,6 @@ const addressKeys = [
 ] as const;
 const draftKeys = [
   "deliveryId",
-  "paymentId",
   "pickupPointId",
   "email",
   "company",
@@ -209,8 +183,6 @@ export function isCheckoutDraft(value: unknown): value is CheckoutDraft {
   return (
     draftKeys.every((key) => typeof value[key] === "string") &&
     typeof value.differentDeliveryAddress === "boolean" &&
-    typeof value.newsletter === "boolean" &&
-    (value.extendedReturn === undefined || typeof value.extendedReturn === "boolean") &&
     addresses.every(
       (address) =>
         isRecord(address) && addressKeys.every((key) => typeof address[key] === "string"),
@@ -222,7 +194,7 @@ export function parseCheckoutDraft(value: string | null): CheckoutDraft {
   try {
     const parsed: unknown = JSON.parse(value ?? "null");
     if (isRecord(parsed) && parsed.version === 1 && isCheckoutDraft(parsed.draft))
-      return { ...parsed.draft, extendedReturn: parsed.draft.extendedReturn ?? false };
+      return parsed.draft;
   } catch {
     /* An incomplete/corrupt local draft is safe to replace with defaults. */
   }

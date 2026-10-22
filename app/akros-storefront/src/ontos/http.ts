@@ -1,5 +1,4 @@
 import "server-only";
-import { isOntos } from "./config";
 
 /** A request the BFF refuses on its own (not an OntOS outage): sent back with its own status. */
 export class RequestError extends Error {
@@ -11,7 +10,6 @@ export class RequestError extends Error {
   }
 }
 export function guard(request: Request) {
-  if (!isOntos()) throw new RequestError(404, "Připojení k OntOS není zapnuté.");
   const origin = request.headers.get("origin");
   if (origin && origin !== new URL(request.url).origin)
     throw new RequestError(403, "Požadavek musí pocházet z tohoto obchodu.");

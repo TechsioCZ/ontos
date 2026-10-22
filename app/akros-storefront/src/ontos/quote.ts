@@ -4,7 +4,7 @@ import { RequestError } from "./http";
 import { purchaseConstraints } from "./purchase-constraints";
 import type { CartState, CartLine } from "@/mock-storefront/cart";
 import { createCatalog } from "./catalog-model";
-import { getSnapshot } from "./catalog-server";
+import { readCartProducts } from "./catalog-server";
 import { callAction } from "./gateway";
 export function assertCart(value: unknown): asserts value is CartState {
   const cart = value as CartState;
@@ -138,11 +138,8 @@ async function ownerDryRun(cart: CartState, revision: number, deliveryId: unknow
 }
 
 export async function quoteCart(cart: CartState, deliveryId?: unknown): Promise<CartQuote> {
-  const snapshot = await getSnapshot(true, {
-    productIds: [...new Set(cart.lines.map((line) => line.productId))],
-    pageSize: 50,
-  });
-  const model = createCatalog(snapshot.catalog, snapshot.categories);
+  const snapshot = await readCartProducts(cart.lines);
+  const model = createCatalog(snapshot, { categories: [] });
   const lineIssues: QuoteLineIssue[] = [];
   let priceChanged = false;
   const lines: CartLine[] = cart.lines.map((line) => {
@@ -153,7 +150,8 @@ export async function quoteCart(cart: CartState, deliveryId?: unknown): Promise<
     const p = model.getProductById(line.productId);
     const v = p?.detail.variants.find((v) => v.id === line.variantId);
     const fallbackLabel = `${line.name || "Položka"}${line.variantLabel ? ` (${line.variantLabel})` : ""}`;
-    if (!p || (p.detail.variants.length > 0 && !v)) {
+    // The read carries only the cart's variants, so a group is recognised by its variant summary.
+    if (!p || (line.variantId ? !v : p.variantSummary.count > 0)) {
       lineIssues.push({
         ...ids,
         code: "NOT_AVAILABLE",

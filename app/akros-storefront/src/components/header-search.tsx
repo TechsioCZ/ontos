@@ -15,8 +15,6 @@ import {
 
 import { cs } from "@/i18n/cs";
 import { describeOfferPrice } from "@/lib/format";
-import { normalizeCatalogSearchTerm } from "@/lib/product-variant-search";
-import { useCatalog, useDataSource } from "@/ontos/catalog-provider";
 import type { RemoteCategorySuggestion, RemoteSearchResponse } from "@/ontos/search-suggestions";
 
 type SuggestionData =
@@ -24,7 +22,6 @@ type SuggestionData =
   | {
       kind: "product";
       imageSrc: string;
-      variantSku?: string;
       priceMinor: number;
       priceIsFrom: boolean;
       priceUnavailableReason?: string;
@@ -32,20 +29,13 @@ type SuggestionData =
     };
 
 export function HeaderSearch() {
-  const { getCategories, getCategoryTrail, searchCatalog } = useCatalog();
-  const searchableCategories = getCategories().map((category) => ({
-    category,
-    normalizedName: normalizeCatalogSearchTerm(category.name),
-  }));
-
   const router = useRouter();
   const id = useId();
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const trimmedQuery = query.trim();
   const ready = trimmedQuery.length >= 2;
-  // OntOS mode: the browser only holds featured products, so product suggestions come from the BFF.
-  const ontos = useDataSource() === "ontos";
+  // The browser only holds featured products and navigation, so all suggestions come from the BFF.
   const [remote, setRemote] = useState<
     RemoteSearchResponse & {
       query: string;
@@ -61,7 +51,7 @@ export function HeaderSearch() {
   });
   const [searchAttempt, setSearchAttempt] = useState(0);
   useEffect(() => {
-    if (!ontos || !ready) return;
+    if (!ready) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       fetch("/api/ontos/search", {
@@ -110,108 +100,51 @@ export function HeaderSearch() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [ontos, ready, trimmedQuery, searchAttempt]);
-  const remoteCurrent = ontos && remote.query === trimmedQuery;
+  }, [ready, trimmedQuery, searchAttempt]);
+  const remoteCurrent = remote.query === trimmedQuery;
   const searchError = remoteCurrent ? remote.error : undefined;
-  const searchLoading = ontos && ready && !remoteCurrent;
-  const remoteItems = useMemo(
-    () => (ontos && remote.query === trimmedQuery ? remote.items : []),
-    [ontos, remote, trimmedQuery],
-  );
-  const remoteTotal = ontos && remote.query === trimmedQuery ? remote.total : 0;
-  // OntOS mode: the browser holds only the navigation, so category matches come from the BFF too.
+  const searchLoading = ready && !remoteCurrent;
+  const remoteItems = useMemo(() => (remoteCurrent ? remote.items : []), [remoteCurrent, remote]);
+  const remoteTotal = remoteCurrent ? remote.total : 0;
   const remoteCategories = useMemo(
-    () => (ontos && remote.query === trimmedQuery ? remote.categories : []),
-    [ontos, remote, trimmedQuery],
+    () => (remoteCurrent ? remote.categories : []),
+    [remoteCurrent, remote],
   );
-  const results = useMemo(
-    () => (ready && !ontos ? searchCatalog(trimmedQuery) : []),
-    [ready, ontos, trimmedQuery],
-  );
-  const categories = useMemo(() => {
-    if (!ready || ontos) return [];
-    const normalizedQuery = normalizeCatalogSearchTerm(trimmedQuery);
-    const rank = (normalizedName: string) => {
-      return normalizedName === normalizedQuery
-        ? 0
-        : normalizedName.startsWith(normalizedQuery)
-          ? 1
-          : 2;
-    };
-    return searchableCategories
-      .filter(({ normalizedName }) => normalizedName.includes(normalizedQuery))
-      .sort((left, right) => rank(left.normalizedName) - rank(right.normalizedName))
-      .slice(0, 4)
-      .map(({ category }) => category);
-  }, [ready, ontos, trimmedQuery]);
   const groups = useMemo<SearchSuggestionGroup<SuggestionData>[]>(
     () => [
       {
         id: "categories",
         label: cs.search.categories,
-        items: ontos
-          ? remoteCategories.map((category) => ({
-              value: `category:${category.id}`,
-              label: category.name,
-              href: `/kategorie/${category.slug}`,
-              data: { kind: "category" as const, trail: category.trail },
-            }))
-          : categories.map((category) => ({
-              value: `category:${category.id}`,
-              label: category.name,
-              href: `/kategorie/${category.slug}`,
-              data: {
-                kind: "category",
-                trail: getCategoryTrail(category)
-                  .slice(0, -1)
-                  .map((parent) => parent.name)
-                  .join(" › "),
-              },
-            })),
+        items: remoteCategories.map((category) => ({
+          value: `category:${category.id}`,
+          label: category.name,
+          href: `/kategorie/${category.slug}`,
+          data: { kind: "category" as const, trail: category.trail },
+        })),
       },
       {
         id: "products",
         label: cs.search.suggestions,
-        items: ontos
-          ? remoteItems.map((item) => {
-              const params = new URLSearchParams({ variant: item.variant?.sku ?? trimmedQuery });
-              return {
-                value: `product:${item.productId}`,
-                label: item.variant ? `${item.name} – ${item.variant.label}` : item.name,
-                href: `/produkt/${item.slug}${item.matchingVariantCount ? `?${params}#product-variants` : ""}`,
-                data: {
-                  kind: "product",
-                  imageSrc: item.imageSrc,
-                  variantSku: item.variant?.sku,
-                  priceMinor: item.priceMinor,
-                  priceIsFrom: item.priceIsFrom,
-                  priceUnavailableReason: item.priceUnavailableReason,
-                  currency: item.currency,
-                },
-              };
-            })
-          : results.slice(0, 6).map(({ product, matchingVariants }) => {
-              const variant = matchingVariants.length === 1 ? matchingVariants[0] : undefined;
-              const params = new URLSearchParams({ variant: variant?.sku ?? trimmedQuery });
-
-              return {
-                value: `product:${product.id}`,
-                label: variant ? `${product.name} – ${variant.label}` : product.name,
-                href: `/produkt/${product.slug}${matchingVariants.length ? `?${params}#product-variants` : ""}`,
-                data: {
-                  kind: "product",
-                  imageSrc: variant?.imageSrc ?? product.imageSrc,
-                  variantSku: variant?.sku,
-                  priceMinor: variant?.priceMinor ?? product.priceMinor,
-                  priceIsFrom: !variant && product.detail.variants.length > 0,
-                  priceUnavailableReason: (variant ?? product).priceUnavailableReason,
-                  currency: product.currency,
-                },
-              };
-            }),
+        items: remoteItems.map((item) => {
+          // A variant group opens with its variant table filtered by the query (when a variant matches).
+          const params = new URLSearchParams({ variant: trimmedQuery });
+          return {
+            value: `product:${item.productId}`,
+            label: item.name,
+            href: `/produkt/${item.slug}${item.hasVariants ? `?${params}` : ""}`,
+            data: {
+              kind: "product",
+              imageSrc: item.imageSrc,
+              priceMinor: item.priceMinor,
+              priceIsFrom: item.priceIsFrom,
+              priceUnavailableReason: item.priceUnavailableReason,
+              currency: item.currency,
+            },
+          };
+        }),
       },
     ],
-    [categories, ontos, remoteCategories, remoteItems, results, trimmedQuery],
+    [remoteCategories, remoteItems, trimmedQuery],
   );
   const resultsHref = `/vyhledavani?q=${encodeURIComponent(trimmedQuery)}`;
 
@@ -285,7 +218,7 @@ export function HeaderSearch() {
             allResultsLink={
               searchError || searchLoading ? undefined : (
                 <Link as={NextLink} href={resultsHref} onClick={() => setOpen(false)}>
-                  {cs.search.allResults(ontos ? remoteTotal : results.length)}
+                  {cs.search.allResults(remoteTotal)}
                 </Link>
               )
             }
@@ -318,11 +251,6 @@ export function HeaderSearch() {
                     {item.data.kind === "category" && item.data.trail && (
                       <span className="truncate text-xs text-(--color-fg-secondary)">
                         {item.data.trail}
-                      </span>
-                    )}
-                    {item.data.kind === "product" && item.data.variantSku && (
-                      <span className="truncate text-xs">
-                        {cs.product.sku}: {item.data.variantSku}
                       </span>
                     )}
                   </span>

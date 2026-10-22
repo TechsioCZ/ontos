@@ -764,13 +764,6 @@ body {
   text-underline-offset: 3px;
 }
 
-.akros-product-card__search-match {
-  margin: 0;
-  color: var(--color-fg-secondary);
-  font-size: 12px;
-  line-height: 1.4;
-}
-
 .akros-product-card__discount {
   display: block;
   margin-bottom: var(--dimension-4);

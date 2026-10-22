@@ -1,4 +1,4 @@
-import type { CatalogCategory, CatalogSearchResult } from "@/mock-storefront/types";
+import type { CatalogCategory, CatalogProduct } from "@/mock-storefront/types";
 import { normalizeCatalogSearchTerm } from "@/lib/product-variant-search";
 
 /** One header-search product suggestion returned by POST /api/ontos/search (no server-side data). */
@@ -12,8 +12,8 @@ export interface RemoteSearchSuggestion {
   priceIsFrom: boolean;
   /** Set when the price is missing, zero or in another currency; the suggestion then shows no amount. */
   priceUnavailableReason?: string;
-  matchingVariantCount: number;
-  variant?: { sku: string; label: string };
+  /** A variant group: the detail page pre-filters its variant table with the query. */
+  hasVariants: boolean;
 }
 /** One header-search category suggestion; the browser no longer holds the whole category tree. */
 export interface RemoteCategorySuggestion {
@@ -66,23 +66,20 @@ export function matchCategories(
     }));
 }
 
-export function toRemoteSuggestion({
-  product,
-  matchingVariants,
-}: CatalogSearchResult): RemoteSearchSuggestion {
-  const variant = matchingVariants.length === 1 ? matchingVariants[0] : undefined;
+/** One listing card as a header suggestion (cards carry no variant records). */
+export function toRemoteSuggestion(product: CatalogProduct): RemoteSearchSuggestion {
+  const hasVariants = product.variantSummary.count > 0;
   return {
     productId: product.id,
     slug: product.slug,
     name: product.name,
-    imageSrc: variant?.imageSrc ?? product.imageSrc,
+    imageSrc: product.imageSrc,
     currency: product.currency,
-    priceMinor: variant?.priceMinor ?? product.priceMinor,
-    priceIsFrom: !variant && product.detail.variants.length > 0,
-    ...((variant ?? product).priceUnavailableReason
-      ? { priceUnavailableReason: (variant ?? product).priceUnavailableReason }
+    priceMinor: product.priceMinor,
+    priceIsFrom: hasVariants,
+    ...(product.priceUnavailableReason
+      ? { priceUnavailableReason: product.priceUnavailableReason }
       : {}),
-    matchingVariantCount: matchingVariants.length,
-    ...(variant ? { variant: { sku: variant.sku, label: variant.label } } : {}),
+    hasVariants,
   };
 }

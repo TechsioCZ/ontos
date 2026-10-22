@@ -47,8 +47,7 @@ export const cartFixture = {
 export const checkoutFixture = {
   version: 1,
   draft: {
-    deliveryId: "dpd",
-    paymentId: "gopay",
+    deliveryId: "osobni",
     pickupPointId: "",
     email: "layout@example.com",
     company: "",
@@ -73,6 +72,5 @@ export const checkoutFixture = {
       phone: "",
     },
     differentDeliveryAddress: false,
-    newsletter: false,
   },
 };

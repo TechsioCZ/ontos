@@ -5,13 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CategoryPage from "@/app/kategorie/[slug]/page";
 import SearchPage from "@/app/vyhledavani/page";
 import { CartProvider } from "@/features/cart/cart-provider";
-import * as mockCatalog from "@/mock-storefront/catalog";
 import { getCatalogPage, type CatalogPage } from "@/ontos/catalog-server";
+import { asCard, fixtureCatalog, fixtureCategoryProducts } from "../support/catalog-fixture";
 
-vi.mock("@/ontos/config", () => ({ isOntos: () => true }));
 vi.mock("@/ontos/catalog-server", async () => {
-  const model = await import("@/mock-storefront/catalog");
-  return { getCatalog: async () => model, getCatalogPage: vi.fn() };
+  const { fixtureCatalog } = await import("../support/catalog-fixture");
+  return { getCatalog: async () => fixtureCatalog, getCatalogPage: vi.fn() };
 });
 // The active-branch navigation is an async server wrapper; shell rendering is covered elsewhere.
 vi.mock("@/ontos/category-branch", () => ({
@@ -30,9 +29,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 const ownerPage = (total: number): CatalogPage => ({
-  snapshot: {} as CatalogPage["snapshot"],
-  model: mockCatalog as unknown as CatalogPage["model"],
-  products: mockCatalog.getProductsByCategory("srouby").slice(0, 3),
+  model: fixtureCatalog,
+  products: fixtureCategoryProducts("srouby").slice(0, 3).map(asCard),
   total,
   page: 2,
   pageSize: 24,

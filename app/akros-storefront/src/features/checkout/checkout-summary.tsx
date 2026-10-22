@@ -1,5 +1,4 @@
 "use client";
-import { useDataSource } from "@/ontos/catalog-provider";
 import { useCart } from "@/features/cart/cart-provider";
 import { useCheckout } from "./checkout-provider";
 import { getCheckoutTotals } from "@/mock-storefront/checkout";
@@ -7,11 +6,9 @@ import { formatCheckoutPrice } from "./checkout-format";
 import { useServerTotals } from "./server-totals";
 
 export function CheckoutSummary() {
-  const ontos = useDataSource() === "ontos";
   const { cart } = useCart();
   const { draft } = useCheckout();
-  const local = getCheckoutTotals(cart, draft, ontos);
-  const server = useServerTotals(local);
+  const server = useServerTotals(getCheckoutTotals(cart, draft));
   const totals = server.totals;
   return (
     <aside
@@ -38,12 +35,6 @@ export function CheckoutSummary() {
                 : formatCheckoutPrice(totals.shipping + totals.payment)}
             </dd>
           </div>
-          {totals.extendedReturn > 0 && (
-            <div className="flex justify-between gap-3">
-              <dt>Prodloužená doba vrácení</dt>
-              <dd className="text-right">{formatCheckoutPrice(totals.extendedReturn)}</dd>
-            </div>
-          )}
         </div>
         <div className="grid gap-1 border-b border-(--color-border-primary) pb-4">
           <div className="flex justify-between gap-3">
@@ -70,11 +61,9 @@ export function CheckoutSummary() {
         </div>
       </dl>
       {totals.net === null && (
-        <p className="mt-3 text-xs text-(--color-fg-secondary)">
-          {ontos ? server.note : "U dříve uložených položek není dostupná cena bez DPH."}
-        </p>
+        <p className="mt-3 text-xs text-(--color-fg-secondary)">{server.note}</p>
       )}
-      {ontos && totals.net !== null && (
+      {totals.net !== null && (
         <p className="mt-3 text-xs text-(--color-fg-secondary)">
           DPH a částky bez daně spočítal OntOS při ověření košíku.
         </p>

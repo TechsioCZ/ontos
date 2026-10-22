@@ -92,53 +92,6 @@ try {
       await typography("[data-akros-cart-items] td a", 20, 500, 30);
       await typography("[data-akros-cart-items] td strong", 20, 800, 30);
       await typography("[data-akros-cart-items] input[role=spinbutton]", 25, 700, 30);
-      await typography("[data-akros-free-shipping-text]", 20, 500, 30);
-      await typography("[data-akros-return-title]", 20, 500, 30);
-      await typography("#checkout-extended-return-description", 16, 500, 24);
-      await typography("[data-akros-return-price]", 20, 500, 30);
-      const client = await page.context().newCDPSession(page);
-      await client.send("DOM.enable");
-      await client.send("CSS.enable");
-      const { root } = await client.send("DOM.getDocument");
-      const { nodeId } = await client.send("DOM.querySelector", {
-        nodeId: root.nodeId,
-        selector: "[data-akros-free-shipping-text]",
-      });
-      const { fonts } = await client.send("CSS.getPlatformFontsForNode", { nodeId });
-      assert.ok(fonts.some((f) => f.isCustomFont && f.familyName === "Inter Variable"));
-      await client.detach();
-      const geometry = await page.locator("[data-akros-cart-services]").evaluate((e) => {
-        const icons = [
-          ...e.querySelectorAll('[data-slot="icon"], [class*="token-icon-akros-checkout"]'),
-        ].map((i) => ({
-          width: i.getBoundingClientRect().width,
-          height: i.getBoundingClientRect().height,
-          mask: getComputedStyle(i).maskImage,
-        }));
-        const progress = e.querySelector("progress");
-        const control = e.querySelector('[data-part="control"]');
-        return {
-          icons,
-          progressWidth: progress.getBoundingClientRect().width,
-          progressHeight: progress.getBoundingClientRect().height,
-          checkboxSize: control.getBoundingClientRect().width,
-          checkboxBorder: getComputedStyle(control).borderTopWidth,
-        };
-      });
-      assert.equal(geometry.progressWidth, 429);
-      assert.ok(Math.abs(geometry.progressHeight - 6) < 0.2);
-      assert.equal(geometry.checkboxSize, 24);
-      assert.equal(geometry.checkboxBorder, "2px");
-      for (const size of [54, 48])
-        assert.ok(
-          geometry.icons.some(
-            (i) =>
-              Math.abs(i.width - size) < 0.2 &&
-              Math.abs(i.height - size) < 0.2 &&
-              i.mask !== "none",
-          ),
-          `Original ${size}px icon missing`,
-        );
     }
     if (route === "/kosik/doprava-platba") {
       await typography('[data-akros-checkout] form button[type="submit"]', 20, 700);
@@ -189,50 +142,6 @@ try {
       }
     }
   }
-  await page.goto(new URL("/kosik", baseUrl).href, { waitUntil: "domcontentloaded" });
-  const services = page.locator("[data-akros-cart-services]");
-  await page.locator("[data-akros-return-title]").waitFor();
-  assert.match(await page.locator("[data-akros-free-shipping-text]").innerText(), /1 101 Kč/);
-  const getTotal = () =>
-    page.evaluate(
-      () => JSON.parse(sessionStorage.getItem("akros-demo-checkout-v1")).draft.extendedReturn,
-    );
-  await services.getByText("Prodloužená doba vrácení", { exact: true }).click();
-  await page.waitForFunction(
-    () =>
-      JSON.parse(sessionStorage.getItem("akros-demo-checkout-v1")).draft.extendedReturn === true,
-  );
-  assert.equal(await getTotal(), true);
-  assert.match(
-    await page.locator('[aria-labelledby="checkout-summary-title"]').innerText(),
-    /1 137 Kč/,
-  );
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await services.getByRole("checkbox").waitFor({ state: "attached" });
-  assert.equal(await services.getByRole("checkbox").isChecked(), true);
-  const quantity = page.locator("[data-akros-cart-items]").getByRole("spinbutton").first();
-  await quantity.fill("3");
-  await quantity.press("Enter");
-  await page.getByText("Dopravu máte zdarma", { exact: true }).waitFor();
-  assert.equal(
-    await page.getByRole("progressbar", { name: "Doprava zdarma" }).evaluate((e) => e.value),
-    200000,
-  );
-  await page.goto(new URL("/kosik/shrnuti", baseUrl).href, { waitUntil: "domcontentloaded" });
-  await page.locator("#review-title").waitFor();
-  assert.match(
-    await page.locator("[data-akros-checkout-review] dl").innerText(),
-    /Prodloužená doba vrácení/,
-  );
-  await page.getByRole("button", { name: "Objednat s povinností platby", exact: true }).click();
-  await page.waitForURL("**/potvrzeni-objednavky");
-  const order = await page.evaluate(() =>
-    JSON.parse(sessionStorage.getItem("akros-demo-order-v1")),
-  );
-  assert.equal(order.draft.extendedReturn, true);
-  assert.equal(order.totals.extendedReturn, 15900);
-  assert.equal(order.totals.shipping, 0);
-  assert.equal(order.totals.total, 285600);
   if (artifactDir)
     await writeFile(
       join(artifactDir, "typography-values.json"),
@@ -240,7 +149,7 @@ try {
       "utf8",
     );
   console.log(
-    `Checkout typography passed ${audit.length} style checks and ${widths.length * 4} layout checks; services, reload, shipping threshold and order snapshot passed.`,
+    `Checkout typography passed ${audit.length} style checks and ${widths.length * 4} layout checks passed.`,
   );
 } finally {
   await browser.close();

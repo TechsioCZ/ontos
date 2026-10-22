@@ -1,6 +1,4 @@
 "use client";
-import { useDataSource } from "@/ontos/catalog-provider";
-import { demoPayment } from "@/ontos/demo-checkout";
 import {
   CheckoutStockError,
   checkoutSaveError,
@@ -15,7 +13,6 @@ import {
   createCheckoutDraft,
   getCheckoutTotals,
   getDelivery,
-  getPayment,
   getReachableStep,
   parseCheckoutDraft,
 } from "@/mock-storefront/checkout";
@@ -72,7 +69,6 @@ function CheckoutCartProvider({
   children: ReactNode;
   storage?: CheckoutStorage;
 }) {
-  const ontos = useDataSource() === "ontos";
   const { cart, dispatch, ready: cartReady, activeCartId } = useCart();
   const draftStorageKey =
     activeCartId === "default" ? legacyDraftStorageKey : `${legacyDraftStorageKey}:${activeCartId}`;
@@ -95,20 +91,17 @@ function CheckoutCartProvider({
       storageRef.current = storage ?? window.sessionStorage;
       checkoutDispatch({
         type: "hydrate",
-        draft: {
-          ...parseCheckoutDraft(storageRef.current.getItem(draftStorageKey)),
-          ...(ontos ? { paymentId: demoPayment.id } : {}),
-        },
+        draft: parseCheckoutDraft(storageRef.current.getItem(draftStorageKey)),
         error: "",
       });
     } catch {
       checkoutDispatch({
         type: "hydrate",
-        draft: { ...createCheckoutDraft(), ...(ontos ? { paymentId: demoPayment.id } : {}) },
+        draft: createCheckoutDraft(),
         error: "Rozpracované údaje nelze uložit v prohlížeči. Povolte úložiště pro tento web.",
       });
     }
-  }, [storage, draftStorageKey, ontos]);
+  }, [storage, draftStorageKey]);
 
   useEffect(() => {
     if (!hydrated || !storageRef.current) return;
@@ -128,89 +121,75 @@ function CheckoutCartProvider({
     checkoutDispatch({ type: "submit-error", error: "" });
     if (!hydrated || !cartReady || getReachableStep(3, cart, draft) !== 3) return null;
     const delivery = getDelivery(draft);
-    const payment = getPayment(draft);
-    if (!delivery || !payment) return null;
+    if (!delivery) return null;
 
-    let orderNumber: string | undefined;
-    let orderId: string | undefined;
-    let clientRequestId: string | undefined;
-    let serverTotals: { totalMinor?: number; totalVatMinor?: number } | undefined;
-    if (ontos) {
-      try {
-        if (!storageRef.current) throw new Error("Povolte úložiště pro tento web.");
-        // Store the exact request BEFORE sending. Retries, double-submit and refresh reuse it verbatim.
-        const key = `akros-ontos-pending:${activeCartId}`;
-        const signature = JSON.stringify({ cart, draft });
-        const previous = JSON.parse(storageRef.current.getItem(key) ?? "null");
-        const pending =
-          previous?.signature === signature
-            ? previous
-            : { signature, clientRequestId: `akros-${crypto.randomUUID()}` };
-        storageRef.current.setItem(key, JSON.stringify(pending));
-        if (!pending.sent) {
-          const checkResponse = await fetch("/api/ontos/cart", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ cart, deliveryId: draft.deliveryId }),
-          });
-          const check = await readCheckoutQuote(checkResponse);
-          if (!check.canCheckout)
-            throw new Error(
-              check.priceChanged
-                ? "Cena se změnila – přijmout novou cenu v ověření košíku a zkusit znovu."
-                : `Košík nyní nelze ověřit. ${check.issues.join(" ")} Vraťte se do košíku a zkontrolujte dostupnost a množství.`.replace(
-                    /\s+/g,
-                    " ",
-                  ),
-            );
-        }
-        pending.sent = true;
-        storageRef.current.setItem(key, JSON.stringify(pending));
-        const response = await fetch("/api/ontos/orders", {
+    let order: LocalOrder;
+    try {
+      if (!storageRef.current) throw new Error("Povolte úložiště pro tento web.");
+      // Store the exact request BEFORE sending. Retries, double-submit and refresh reuse it verbatim.
+      const key = `akros-ontos-pending:${activeCartId}`;
+      const signature = JSON.stringify({ cart, draft });
+      const previous = JSON.parse(storageRef.current.getItem(key) ?? "null");
+      const pending =
+        previous?.signature === signature
+          ? previous
+          : { signature, clientRequestId: `akros-${crypto.randomUUID()}` };
+      storageRef.current.setItem(key, JSON.stringify(pending));
+      if (!pending.sent) {
+        const checkResponse = await fetch("/api/ontos/cart", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ cart, draft, clientRequestId: pending.clientRequestId }),
+          body: JSON.stringify({ cart, deliveryId: draft.deliveryId }),
         });
-        const result = await readOrderResponse(response);
-        orderNumber = result.orderNumber;
-        orderId = result.orderId;
-        clientRequestId = pending.clientRequestId;
-        serverTotals = result;
-      } catch (error) {
-        checkoutDispatch({
-          type: "submit-error",
-          error:
-            error instanceof CheckoutStockError ||
-            (error instanceof Error &&
-              (error.message.startsWith("Cena se změnila") ||
-                error.message.startsWith("Košík nyní nelze ověřit")))
-              ? error.message
-              : checkoutSaveError,
-        });
-        return null;
+        const check = await readCheckoutQuote(checkResponse);
+        if (!check.canCheckout)
+          throw new Error(
+            check.priceChanged
+              ? "Cena se změnila – přijmout novou cenu v ověření košíku a zkusit znovu."
+              : `Košík nyní nelze ověřit. ${check.issues.join(" ")} Vraťte se do košíku a zkontrolujte dostupnost a množství.`.replace(
+                  /\s+/g,
+                  " ",
+                ),
+          );
       }
+      pending.sent = true;
+      storageRef.current.setItem(key, JSON.stringify(pending));
+      const response = await fetch("/api/ontos/orders", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cart, draft, clientRequestId: pending.clientRequestId }),
+      });
+      const result = await readOrderResponse(response);
+      order = {
+        version: 1,
+        id: result.orderNumber,
+        ...(result.orderId ? { orderId: result.orderId } : {}),
+        clientRequestId: pending.clientRequestId,
+        createdAt: new Date().toISOString(),
+        cart: structuredClone(cart),
+        draft: structuredClone(draft),
+        deliveryTitle: delivery.title,
+        paymentStatus: "not-processed",
+        totals: {
+          ...getCheckoutTotals(cart, draft),
+          total: result.totalMinor,
+          vat: result.totalVatMinor,
+          net: result.totalMinor - result.totalVatMinor,
+        },
+      };
+    } catch (error) {
+      checkoutDispatch({
+        type: "submit-error",
+        error:
+          error instanceof CheckoutStockError ||
+          (error instanceof Error &&
+            (error.message.startsWith("Cena se změnila") ||
+              error.message.startsWith("Košík nyní nelze ověřit")))
+            ? error.message
+            : checkoutSaveError,
+      });
+      return null;
     }
-    const totals = getCheckoutTotals(cart, draft, ontos);
-    if (serverTotals?.totalMinor !== undefined) {
-      totals.total = serverTotals.totalMinor;
-      if (serverTotals.totalVatMinor !== undefined) {
-        totals.vat = serverTotals.totalVatMinor;
-        totals.net = totals.total - totals.vat;
-      }
-    }
-    const order: LocalOrder = {
-      version: 1,
-      id: orderNumber ?? `DEMO-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
-      createdAt: new Date().toISOString(),
-      cart: structuredClone(cart),
-      draft: structuredClone(draft),
-      deliveryTitle: delivery.title,
-      paymentTitle: payment.title,
-      paymentStatus: "not-processed",
-      totals,
-      ...(orderNumber ? { source: "ontos" as const } : {}),
-      ...(orderNumber && orderId && clientRequestId ? { orderId, clientRequestId } : {}),
-    };
     try {
       if (!storageRef.current) throw new Error("Session storage unavailable");
       storageRef.current.setItem(orderStorageKey, JSON.stringify(order));
@@ -235,14 +214,7 @@ function CheckoutCartProvider({
         ready: hydrated && cartReady,
         submitted,
         storageError: submitError || storageError,
-        updateDraft: (update) =>
-          checkoutDispatch({
-            type: "update",
-            update: (current) => ({
-              ...update(current),
-              ...(ontos ? { paymentId: demoPayment.id } : {}),
-            }),
-          }),
+        updateDraft: (update) => checkoutDispatch({ type: "update", update }),
         completeOrder,
       }}
     >

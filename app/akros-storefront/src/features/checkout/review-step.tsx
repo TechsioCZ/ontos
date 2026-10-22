@@ -1,5 +1,4 @@
 "use client";
-import { useDataSource } from "@/ontos/catalog-provider";
 import { demoCheckoutNotice, demoPayment } from "@/ontos/demo-checkout";
 import { useRef, useState } from "react";
 import NextLink from "next/link";
@@ -7,7 +6,6 @@ import { useRouter } from "next/navigation";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Link } from "@techsio/ui-kit/atoms/link";
-import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
 import { useCart } from "@/features/cart/cart-provider";
 import { useCheckout } from "./checkout-provider";
 import { CartItemsTable } from "./cart-items-table";
@@ -17,20 +15,18 @@ import {
   getDelivery,
   getDeliveryAddress,
   getDeliveryLocation,
-  getPayment,
 } from "@/mock-storefront/checkout";
 import { formatPrice } from "@/lib/format";
 import { useCartQuote } from "@/ontos/cart-revalidation";
 import { useServerTotals } from "./server-totals";
 
 export function ReviewStep() {
-  const ontos = useDataSource() === "ontos";
   const { cart } = useCart();
-  const { draft, updateDraft, completeOrder, submitted, storageError } = useCheckout();
+  const { draft, completeOrder, submitted, storageError } = useCheckout();
   const router = useRouter();
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
-  const server = useServerTotals(getCheckoutTotals(cart, draft, ontos));
+  const server = useServerTotals(getCheckoutTotals(cart, draft));
   const totals = server.totals;
   const quote = useCartQuote();
   const blocked = quote ? !quote.canContinue : false;
@@ -73,25 +69,15 @@ export function ReviewStep() {
             </dd>
           </div>
           <div className="flex justify-between gap-4 py-4">
-            <dt>Způsob platby – {ontos ? demoPayment.title : getPayment(draft)?.title}</dt>
+            <dt>Způsob platby – {demoPayment.title}</dt>
             <dd>{totals.payment === 0 ? "Zdarma" : formatPrice(totals.payment)}</dd>
           </div>
           <div className="flex justify-between gap-4 py-4">
             <dt>Cena bez DPH</dt>
             <dd>
-              {totals.net !== null
-                ? formatPrice(totals.net)
-                : ontos
-                  ? "Spočítá OntOS po ověření košíku"
-                  : "Není dostupná pro starší položky"}
+              {totals.net !== null ? formatPrice(totals.net) : "Spočítá OntOS po ověření košíku"}
             </dd>
           </div>
-          {totals.extendedReturn > 0 && (
-            <div className="flex justify-between gap-4 py-4">
-              <dt>Prodloužená doba vrácení</dt>
-              <dd>{formatPrice(totals.extendedReturn)}</dd>
-            </div>
-          )}
           <div className="flex flex-wrap items-center justify-between gap-4 py-4">
             <dt>Celková cena s DPH</dt>
             <dd
@@ -129,14 +115,6 @@ export function ReviewStep() {
             <p className="text-sm">{draft.email}</p>
           </section>
         </div>
-        {!ontos && (
-          <FormCheckbox
-            label="Mám zájem o zasílání e-mailových akcí, novinek a tipů"
-            size="sm"
-            checked={draft.newsletter}
-            onCheckedChange={(newsletter) => updateDraft((current) => ({ ...current, newsletter }))}
-          />
-        )}
       </section>
       <div className="mt-6 flex flex-wrap items-start justify-between gap-4">
         <LinkButton
@@ -159,14 +137,12 @@ export function ReviewStep() {
               {storageError}
             </p>
           )}
-          {ontos && (
-            <p
-              role="note"
-              className="rounded-sm border border-(--color-border-primary) bg-(--color-base) p-4 text-sm font-bold"
-            >
-              {demoCheckoutNotice}
-            </p>
-          )}
+          <p
+            role="note"
+            className="rounded-sm border border-(--color-border-primary) bg-(--color-base) p-4 text-sm font-bold"
+          >
+            {demoCheckoutNotice}
+          </p>
           <Button
             type="submit"
             data-akros-checkout-action
@@ -177,34 +153,16 @@ export function ReviewStep() {
             disabled={sending || submitted || !cart.lines.length || blocked}
             aria-describedby={blocked ? "review-blocked" : undefined}
           >
-            {sending
-              ? "Odesílám do OntOS…"
-              : ontos
-                ? "Potvrdit DEMO objednávku"
-                : "Objednat s povinností platby"}
+            {sending ? "Odesílám do OntOS…" : "Potvrdit DEMO objednávku"}
           </Button>
           {blocked && (
             <p id="review-blocked" className="text-center text-xs text-(--color-fg-secondary)">
               {quote?.blockedReason}
             </p>
           )}
-          {!ontos && (
-            <p className="text-center text-xs leading-(--akros-checkout-body-leading)">
-              Kliknutím na tlačítko Objednat s povinností platby souhlasíte s{" "}
-              <Link as={NextLink} href="/obchodni-podminky">
-                obchodními podmínkami
-              </Link>{" "}
-              a{" "}
-              <Link as={NextLink} href="/gdpr">
-                zpracováním osobních údajů
-              </Link>
-              .
-            </p>
-          )}
           <p className="text-center text-xs text-(--color-fg-secondary)">
-            {ontos
-              ? "DEMO – objednávka se uloží v OntOS, nebude doručena a nic neplatíte. Potvrzení a změny stavu vám přijdou e-mailem."
-              : "Lokální ukázka: objednávka, platba ani e-mail se nikam neodesílají."}
+            DEMO – objednávka se uloží v OntOS, nebude doručena a nic neplatíte. Potvrzení a změny
+            stavu vám přijdou e-mailem.
           </p>
         </div>
       </div>

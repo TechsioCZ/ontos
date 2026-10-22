@@ -13,12 +13,10 @@ export function CatalogProvider({
 }) {
   return (
     <Context.Provider value={snapshot}>
-      {snapshot.mode === "ontos" && (
-        <p role="note" className="bg-base-dark p-2 text-center text-sm text-base-light">
-          DEMO – objednávky se jen ukládají pro ukázku; nic neplatíte a nic vám nedoručíme. Katalog,
-          ceny a sklad: OntOS. Účet a přihlášení: simulace.
-        </p>
-      )}
+      <p role="note" className="bg-base-dark p-2 text-center text-sm text-base-light">
+        DEMO – objednávky se jen ukládají pro ukázku; nic neplatíte a nic vám nedoručíme. Katalog,
+        ceny a sklad: OntOS. Účet a přihlášení: simulace.
+      </p>
       {children}
     </Context.Provider>
   );
@@ -52,7 +50,4 @@ export function useCatalog() {
   const s = useContext(Context);
   if (!s) throw new Error("CatalogProvider missing");
   return useMemo(() => createCatalog(s.catalog, s.categories), [s]);
-}
-export function useDataSource() {
-  return useContext(Context)?.mode ?? "mock";
 }

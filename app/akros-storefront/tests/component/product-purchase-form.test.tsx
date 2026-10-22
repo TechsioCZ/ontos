@@ -57,6 +57,7 @@ const product: CatalogProduct = {
   imageSrc: "/bolt.png",
   imageAlt: "Bolt",
   featuredPosition: null,
+  variantSummary: { count: 2, minGrossPriceMinor: 84, stockOnHand: 32_500, units: ["ks"] },
   isAction: false,
   isRecommended: false,
   isSale: false,

@@ -1,33 +1,27 @@
 # AKROS × OntOS (standalone)
 
 Kai's Next.js app stays independent: npm + package-lock, no pnpm workspace registration,
-no federation, no OntOS vertical and no redesign. The pure catalog model lives in
-`src/ontos/catalog-model.ts`; `src/mock-storefront/catalog.ts` still exports the same prototype API.
-The few server pages bind the model to a request-local snapshot; client search/navigation use
-`CatalogProvider`. All integration code is additive under `src/ontos` and Next route handlers.
+no federation, no OntOS vertical and no redesign. The storefront always reads OntOS; there is no
+local prototype data source. The pure catalog model lives in `src/ontos/catalog-model.ts`; server
+pages bind it to bounded owner reads, client navigation uses `CatalogProvider`. All integration code
+lives under `src/ontos` and Next route handlers.
 
-## Modes and local startup
+## Local startup
 
 ```sh
 npm ci
-npm run dev                        # default mock, exactly the local prototype
-STOREFRONT_DATA_SOURCE=mock npm run build
-STOREFRONT_DATA_SOURCE=mock npm start -- -p 3070
-
 # Local OntOS demo; reads ../.env.demo.local on the SERVER only:
 node scripts/with-demo-env.mjs build
 node scripts/with-demo-env.mjs start # 127.0.0.1:3070
 ```
 
-The wrapper defaults to `ontos`; standard npm commands default to `mock`. Explicit
-`STOREFRONT_DATA_SOURCE=mock|ontos` overrides the wrapper. Never use `NEXT_PUBLIC_` for a credential.
+Never use `NEXT_PUBLIC_` for a credential.
 
 Server environment:
 
 | Variable                                   | Meaning                                                            |
 | ------------------------------------------ | ------------------------------------------------------------------ |
-| `STOREFRONT_DATA_SOURCE`                   | `mock` (default without wrapper), or `ontos`                       |
-| `ONTOS_AKROS_STOREFRONT_API_KEY`           | Required in ontos mode; dedicated least-privilege service key      |
+| `ONTOS_AKROS_STOREFRONT_API_KEY`           | Required; dedicated least-privilege service key                    |
 | `ONTOS_SHELL_URL`                          | Shell gateway origin, default `http://localhost:3020`              |
 | `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL` | Default `http://127.0.0.1:3041/active`                             |
 | `ONTOS_COMPOSITION_REVISION`               | Optional fallback if publisher unavailable                         |
@@ -39,14 +33,14 @@ A commented template is in `.env.example`.
 
 ```sh
 npm ci
-export STOREFRONT_DATA_SOURCE=ontos ONTOS_AKROS_STOREFRONT_API_KEY=… \
+export ONTOS_AKROS_STOREFRONT_API_KEY=… \
   ONTOS_SHELL_URL=https://… ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL=https://…/active
 npm run build
 npm run check:browser-bundle       # fails if the key appears anywhere in .next/static
 npm start -- -p 3070 -H 0.0.0.0
 ```
 
-All variables are read by the Node server at runtime (`isOntos()` / `getConfig()`); none is inlined
+All variables are read by the Node server at runtime (`getConfig()`); none is inlined
 into the browser bundle. `STOREFRONT_IMAGE_HOSTS` is also read by `next.config.ts`, so set it for
 both build and start. Any Node 22+ host that can run `next start` works; no OntOS code is bundled.
 
@@ -75,32 +69,39 @@ Only these server modules read the key. No direct vertical/backend URL or bearer
 serialized to the browser. Gateway implementation follows `apps/eshop-storefront/server/ontos.ts`:
 fresh single-use assertion per read/action, fixed merchandise audience and AKROS legal entity,
 composition refresh, 4–6 second timeouts, at most three attempts for reads with backoff.
-Catalog reads are cached per query for 10 seconds (`CATALOG_CACHE_MS`, at most 100 queries);
-checkout, quote and order-revision reads are always fresh.
+Product reads are cached per query for 10 seconds (`CATALOG_CACHE_MS`, at most 100 queries), the
+navigation tree for 60 seconds (`CATEGORY_CACHE_MS`, at most 20 detailed categories); checkout,
+quote and order-revision reads are always fresh.
 
-Catalog source (ontos mode): EVERYTHING the customer sees comes from OntOS. No page, provider or
-route reads Kai's generated JSON in ontos mode (it is only imported dynamically in mock mode).
-`src/ontos/catalog-server.ts` sends merchandise `records` with
-`{view:{storefront:true,storefrontCatalog:{…}}}` (shape published by lane akros-sync-backend):
+Catalog source: EVERYTHING the customer sees comes from OntOS. No page, provider or route reads
+Kai's generated JSON (it is only the OntOS seed input). `src/ontos/catalog-server.ts` sends
+merchandise `records` with `{view:{storefront:true,storefrontCatalog:{…}}}`. Product reads always
+send `includeCategories:false`; listings read `fields:"card"`, only product detail reads `"full"`.
+The navigation tree is a separate cached read merged into the model (`createCatalog`):
 
-| Page / caller                                                            | `storefrontCatalog`                                                         |
-| ------------------------------------------------------------------------ | --------------------------------------------------------------------------- |
-| Root layout (sidebar, header navigation, homepage, cart recommendations) | `{featured:true,pageSize:16}`                                               |
-| `/kategorie/[slug]`                                                      | `{categorySlug,page,pageSize:24,sort,q?,minMinor?,maxMinor?,availability?}` |
-| `/vyhledavani`                                                           | `{q,page,pageSize:24}`                                                      |
-| Header suggestions `POST /api/ontos/search`                              | `{q,page:1,pageSize:6}`                                                     |
-| `/produkt/[slug]`                                                        | `{slug,pageSize:1}`                                                         |
-| `/novinky-a-akce`                                                        | `{flag:"new"\|"promotion",pageSize:48}`                                     |
-| Cart quote / checkout                                                    | `{productIds,pageSize:50}` fresh; order revision `{pageSize:1}` fresh       |
+| Page / caller                                           | `storefrontCatalog`                                                                       | Size (AKROS) |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------ |
+| Navigation tree (layout sidebar, trails, header search) | `{pageSize:1,fields:"card",includeCategories:true}` (60 s)                                | ≈ 230 kB     |
+| Category content (`/kategorie/[slug]` heading, grid)    | `{pageSize:1,fields:"card",includeCategories:true,categorySlug}` (60 s)                   | ≈ 230 kB     |
+| Homepage, cart/product recommendations, favourites      | `{featured:true,pageSize:20,fields:"card"}`                                               | ≈ 26 kB      |
+| `/kategorie/[slug]`                                     | `{categorySlug,page,pageSize:24,sort,q?,minMinor?,maxMinor?,availability?,fields:"card"}` | ≈ 30 kB      |
+| `/vyhledavani`                                          | `{q,page,pageSize:24,fields:"card"}`                                                      | ≈ 30 kB      |
+| Header suggestions `POST /api/ontos/search`             | `{q,page:1,pageSize:6,fields:"card"}` + cached tree                                       | ≈ 8 kB       |
+| `/novinky-a-akce`                                       | `{label:"new"\|"action"\|"sale",pageSize:48,fields:"card"}`                               | ≈ 60 kB      |
+| `/produkt/[slug]`                                       | `{slug,pageSize:1,fields:"full"}`                                                         | ≤ 210 kB     |
+| Cart quote / checkout                                   | `{productIds,variantIds,pageSize:n,fields:"full"}` fresh (only the cart's variants)       | small        |
+| Order revision                                          | `{pageSize:1,fields:"card"}` fresh                                                        | ≈ 2 kB       |
 
-Every response carries the published category tree, `total`, `page`, `pageSize`, `revision` and
-`homepageFeaturedProductIds`. `catalog-projection.ts` maps only owner fields: names, slugs, SKUs,
+Every product response carries `total`, `page`, `pageSize`, `revision` and
+`homepageFeaturedProductIds`; every product carries the owner's `variantSummary`
+(`count`, `minGrossPriceMinor`, `stockOnHand`, `units`), which listing cards use for „od“ prices,
+„Vybrat variantu“ and stock. `catalog-projection.ts` maps only owner fields: names, slugs, SKUs,
 `description` (authoritative; split on blank lines into detail paragraphs), gallery/images,
 parameters, labels (`flags`), prices/tiers, stock and minimums. Unknown/new owner products are
 offered; unpublished or inactive ones never are. A missing, zero or non-CZK owner price is shown as
 **cena není dostupná** with its reason and an inactive buy button; owner availability `UNKNOWN`,
 untracked stock (`stockTracked:false`) or a missing availability is shown as **dostupnost nyní nelze
-ověřit** and is never sold (the raw `stockOnHand` alone never means „skladem“). Never a mock fallback. Images that `next/image` cannot serve (non-https or a host outside
+ověřit** and is never sold (the raw `stockOnHand` alone never means „skladem“). Images that `next/image` cannot serve (non-https or a host outside
 `www.akros.cz/data/**` + `STOREFRONT_IMAGE_HOSTS`) become the honest "image unavailable" placeholder.
 Navigation payload: the browser never receives the whole category tree or product data from the
 layout. The root layout ships only Kai's curated sidebar sections (2 roots + their listed children,
@@ -108,7 +109,9 @@ id/parentId/slug/name/position/image only) and no products. Category and product
 active branch (trail + children of each trail level) through `CategoryBranch`
 (`src/ontos/category-branch.tsx`). Header suggestions get category matches from
 `POST /api/ontos/search` (`categories: [{id,slug,name,trail}]`). This keeps `/` at roughly 0.2 MB of
-HTML instead of about 1.9 MB. Kai's placeholder group named "AKCE" stays in search results and totals
+HTML instead of about 1.9 MB. Search results and header suggestions are cards: a variant group links
+to its detail page with `?variant=<query>`, which pre-filters the variant table when a variant matches.
+Kai's placeholder group named "AKCE" stays in search results and totals
 but is listed after real goods (search page and header suggestions).
 Kai's homepage banner carousel and content pages are static marketing content, not catalog data.
 The sidebar keeps Kai's curated section order by category slug; renamed categories update live,
@@ -129,13 +132,12 @@ require the visible **Přijmout nové ceny** action; they are never silently acc
 Before consent, the quote lists old → new gross unit prices, each changed line total and the
 cart merchandise subtotal. The cart itself keeps its original amounts until the customer accepts.
 
-In OntOS mode mandatory package quantities are selling constraints, not an optional discount.
+Mandatory package quantities are selling constraints, not an optional discount.
 `purchase-constraints.ts` rounds the owner minimum up to a complete package and publishes an
 additive `quantityStep` for purchase controls, cart edits and browser storage. Both purchase
 buttons therefore add only legal package multiples (including metre-based products). The UI
 explains this before adding; grouped product summaries defer to each variant rather than
-advertising another variant’s minimum. Mock mode has no `quantityStep` and retains Kai’s
-original unit/package behavior. The server still rechecks all constraints independently.
+advertising another variant’s minimum. The server still rechecks all constraints independently.
 
 `POST /api/ontos/orders` only constructs `PlaceStorefrontOrder`, through merchandise
 `apply-command`. It validates the input and delivery details, uses the fresh aggregate revision
@@ -143,7 +145,7 @@ and an idempotency key derived from the persisted `clientRequestId` + exact payl
 rechecks prices/stock/quantities and persists/deduplicates the order by clientRequestId. It never
 accepts a browser-requested arbitrary Action. Origin/content-type/body-size checks protect the BFF.
 BFF status codes: cross-origin 403, non-JSON content type 415, oversized body 413, malformed JSON or
-invalid cart/delivery data 400, ontos mode off 404; only a real OntOS failure is 503, with a
+invalid cart/delivery data 400; only a real OntOS failure is 503, with a
 route-specific Czech message (cart, order status, search). The summary button locks on the first
 click (ref, not state), so a fast double/triple click sends one order request.
 
@@ -165,31 +167,24 @@ customer data or order-search endpoint is exposed to the public browser.
 real in OntOS and order e-mails are really sent (local Mailpit inbox `http://localhost:8025`, order
 confirmation and every status change, receipts on the confirmation page). Carriers, payment,
 account/login and parcel tracking are simulated. The top banner labels this on every live page.
-Live checkout offers owner-supported personal pickup (0 Kč) or Zásilkovna (79 Kč).
-Prototype-only free-shipping threshold/paid extended returns are not applied in ontos mode.
-Connected checkout has only the inactive **Nic neplatíte (DEMO)** method. Old saved payment
-choices are migrated to `demo-no-payment`; GoPay/Apple Pay/card choices remain in mock mode only.
-New connected orders use the Czech staff note **Platba se neprovádí (DEMO).** rather than
-serializing the internal payment ID (including when submitting an old saved payment choice).
-Existing order notes are historical snapshots and are not rewritten by this presentation fix.
-The connected CTA is **Potvrdit DEMO objednávku** with the exact notice before and after confirmation:
+Checkout offers owner-supported personal pickup (0 Kč) or Zásilkovna (79 Kč) and only the inactive
+**Nic neplatíte (DEMO)** payment. Orders use the Czech staff note **Platba se neprovádí (DEMO).**
+The CTA is **Potvrdit DEMO objednávku** with the exact notice before and after confirmation:
 **E-shop je prezentační demo. Žádné zboží vám nebude doručeno a nic neplatíte.**
-The production-style payment-obligation terms and newsletter signup are hidden in connected mode.
 HTTP errors (including non-JSON), invalid success payloads and network failures show Czech retry
 guidance without clearing the cart or inventing a local success. The same persisted submission ID
 is reused on retry, including after an ambiguous response; only validated owner order numbers and
 totals produce confirmation.
 
-Connected category lists combine name/SKU text, unit/from price range (CZK with VAT), availability
+Category lists combine name/SKU text, unit/from price range (CZK with VAT), availability
 and sorting (Czech name A–Z by default, price ascending/descending). Filters apply server-side to
 the current permitted catalog, not to the current page only. GET query keys `q`, `min`, `max`,
 `availability=in-stock|out-of-stock`, `sort=name|price-asc|price-desc` survive reload/back and
 pagination. Filter submit resets pagination; **Vymazat filtry** clears the complete selection.
-A grouped product uses its displayed lowest/from price; availability requires at least one variant
-with its legal minimum in stock. No query parameter changes backend authorization or company.
-Kai's mock category layout/order and prototype checkout wording/payment choices are unchanged.
+A grouped product uses its displayed lowest/from price and the owner's availability of its variants.
+No query parameter changes backend authorization or company.
 
-Both modes are nonproduction: all pages inherit robots `noindex, nofollow`, every response has
+The storefront is nonproduction: all pages inherit robots `noindex, nofollow`, every response has
 `X-Robots-Tag: noindex, nofollow, noarchive`, and `/robots.txt` disallows all crawlers. This is
 indexing guidance, not authentication or access control.
 
@@ -223,8 +218,7 @@ description (`description`, paragraphs separated by a blank line; `descriptionPa
 (`images`, exposed as `gallery`), main image `imageSrc`/`imageAlt`, category tree (`categories`: id, parentId, name,
 slug, heading, description, longDescription, position, imageSrc, imageAlt, hasChildren), parameters, labels
 (`isAction` akce, `isNew` novinka, `isRecommended` doporučujeme, `isSale` výprodej, on products and variants), units,
-minimum and package quantities, price tiers, gross prices and stock. Kai's generated JSON is only the seed input and
-the `mock` mode.
+minimum and package quantities, price tiers, gross prices and stock. Kai's generated JSON is only the seed input.
 
 ### Catalog read
 
@@ -243,24 +237,26 @@ the `mock` mode.
       "minMinor": 10000,
       "maxMinor": 50000,
       "fields": "card",
-      "includeCategories": true
+      "includeCategories": false
     }
   }
 }
 ```
 
 - Filters: `slug`, `categorySlug`, `q`, `featured`, `label` (`action|recommended|sale|new`), `productIds` (up to 200),
+  `variantIds` (up to 200; with `full`, each product's `variantRecords` hold only these variants),
   `minMinor`/`maxMinor`, `availability` (`in-stock|out-of-stock`), `sort` (`name|price-asc|price-desc`).
   `pageSize` is 1 to 250, default 24. `fields` is `card` or `full` (default `full`); `card` omits `variantRecords`,
-  `description`, `descriptionParagraphs` and `parameters`.
+  `description`, `descriptionParagraphs` and `parameters`. `full` pages hold at most 2 products (50 with `variantIds`).
 - Response: `{ products, total, page, pageSize, categories?, homepageFeaturedProductIds, revision }`.
 - `featured` returns `homepageFeaturedProductIds` order first, then `isRecommended` products.
 - `in-stock` means IN_STOCK or LOW_STOCK. `out-of-stock` is everything else (OUT_OF_STOCK, UNKNOWN).
 - Price filters compare the gross `grossPriceMinor`.
-- `q` ignores case and diacritics (`sroub` finds `šroub`, like the mock search). Every word must occur in the name,
+- `q` ignores case and diacritics (`sroub` finds `šroub`). Every word must occur in the name,
   SKU, short description, parameters, or a variant's name, SKU, attributes or parameters, in any order.
-- `categories` carries `heading` and `longDescription` only for the category named by `categorySlug`; every other
-  category has them as `""`. The storefront shows them nowhere else, and this keeps each read about 250 kB smaller.
+- `categories` (unless `includeCategories:false`) is the navigation tree: id, parentId, name, slug, position,
+  hasChildren, published. `description`, `imageSrc` and `imageAlt` are present only for root categories, the
+  `categorySlug` category and its direct children; `heading` and `longDescription` only for the `categorySlug` category.
 - Without `storefrontCatalog`, the legacy `{ "storefront": true }` read returns the whole published catalog
   (about 13 MB for AKROS). Do not use it.
 
@@ -347,6 +343,6 @@ cd app && mise exec -- pnpm demo:seed:akros --restore-catalog # reset seed produ
 
 ### Environment
 
-Unchanged: `STOREFRONT_DATA_SOURCE`, `ONTOS_AKROS_STOREFRONT_API_KEY`, `ONTOS_SHELL_URL`,
+Unchanged: `ONTOS_AKROS_STOREFRONT_API_KEY`, `ONTOS_SHELL_URL`,
 `ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL`, optional `ONTOS_COMPOSITION_REVISION`. The legal entity is pinned to
 `71000000-0000-4000-8000-000000000024`.

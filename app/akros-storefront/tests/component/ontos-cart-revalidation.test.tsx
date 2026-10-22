@@ -6,7 +6,6 @@ import { CartQuoteProvider, CartRevalidation } from "@/ontos/cart-revalidation";
 import { CartNavigation } from "@/features/cart/cart-content";
 import { CartItemsTable } from "@/features/checkout/cart-items-table";
 import type { CartState } from "@/mock-storefront/cart";
-vi.mock("@/ontos/catalog-provider", () => ({ useDataSource: () => "ontos" }));
 const cart: CartState = {
   version: 3,
   lines: [

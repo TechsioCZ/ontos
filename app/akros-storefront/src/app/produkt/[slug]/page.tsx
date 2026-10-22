@@ -16,7 +16,6 @@ import {
   normalizeCatalogSearchTerm,
 } from "@/lib/product-variant-search";
 import { getCatalog, getCatalogPage } from "@/ontos/catalog-server";
-import { isOntos } from "@/ontos/config";
 
 interface ProductPageProps {
   params: Promise<{ slug: string }>;
@@ -26,28 +25,23 @@ interface ProductPageProps {
 const isQuantityPricingCopy = (paragraph: string) =>
   /množstevních slev|snížená cena|snížení ceny/i.test(paragraph);
 
+/** The one `full` read: this product with its variants, parameters and description. */
+const getProductDetail = async (slug: string) =>
+  (await getCatalogPage({ slug, pageSize: 1 }, { fields: "full" })).model;
+
 export async function generateMetadata({ params }: ProductPageProps): Promise<Metadata> {
   const { slug } = await params;
-  const { getProductBySlug } = isOntos()
-    ? (await getCatalogPage({ slug, pageSize: 1 })).model
-    : await getCatalog();
-  const product = getProductBySlug(slug);
+  const product = (await getProductDetail(slug)).getProductBySlug(slug);
 
   return { title: product?.name ?? "Produkt" };
 }
 
 export default async function ProductPage({ params, searchParams }: ProductPageProps) {
-  const ontos = isOntos();
   const { slug } = await params;
-  // Default snapshot = OntOS homepage selection (ontos) or Kai's full prototype catalog (mock).
+  // Recommendations come from the homepage selection (cards).
   const featuredCatalog = await getCatalog();
-  const {
-    getCategoryById,
-    getCategoryTrail,
-    getProductBySlug,
-    getRecommendedProducts,
-    toProductSummary,
-  } = ontos ? (await getCatalogPage({ slug, pageSize: 1 })).model : featuredCatalog;
+  const { getCategoryById, getCategoryTrail, getProductBySlug, toProductSummary } =
+    await getProductDetail(slug);
   const { variant: requestedVariantSearch } = await searchParams;
   const product = getProductBySlug(slug);
   if (!product) notFound();
@@ -92,9 +86,8 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
     materialMarkers.filter((marker) =>
       candidateName.toLocaleUpperCase("cs-CZ").includes(marker.toLocaleUpperCase("cs-CZ")),
     ).length;
-  const recommendations = (
-    ontos ? featuredCatalog.getHomepageFeaturedProducts() : getRecommendedProducts()
-  )
+  const recommendations = featuredCatalog
+    .getHomepageFeaturedProducts()
     .filter(
       (candidate) =>
         candidate.id !== product.id &&
@@ -374,6 +367,6 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
       </article>
     </StorefrontShell>
   );
-  // OntOS mode: the browser navigation gets only this category branch, not the whole tree.
+  // The browser navigation gets only this category branch, not the whole tree.
   return <CategoryBranch activeSlug={category?.slug}>{page}</CategoryBranch>;
 }

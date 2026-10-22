@@ -1,21 +1,20 @@
 import type { CartState } from "./cart";
-import { type CheckoutDraft, getCheckoutTotals, isCheckoutDraft } from "./checkout";
+import { type CheckoutDraft, type CheckoutTotals, isCheckoutDraft } from "./checkout";
 
 export const orderStorageKey = "akros-demo-order-v1";
 export interface LocalOrder {
   version: 1;
-  source?: "ontos";
   /** OntOS order id + the persisted submission id: lets the confirmation read the live status. */
   orderId?: string;
-  clientRequestId?: string;
+  clientRequestId: string;
+  /** OntOS order number. */
   id: string;
   createdAt: string;
   cart: CartState;
   draft: CheckoutDraft;
   deliveryTitle: string;
-  paymentTitle: string;
   paymentStatus: "not-processed";
-  totals: ReturnType<typeof getCheckoutTotals>;
+  totals: CheckoutTotals;
 }
 
 export function parseLocalOrder(value: string | null): LocalOrder | null {
@@ -26,12 +25,11 @@ export function parseLocalOrder(value: string | null): LocalOrder | null {
       order.version !== 1 ||
       typeof order.id !== "string" ||
       (order.orderId !== undefined && typeof order.orderId !== "string") ||
-      (order.clientRequestId !== undefined && typeof order.clientRequestId !== "string") ||
+      typeof order.clientRequestId !== "string" ||
       typeof order.createdAt !== "string" ||
       !Number.isFinite(Date.parse(order.createdAt)) ||
       order.paymentStatus !== "not-processed" ||
       typeof order.deliveryTitle !== "string" ||
-      typeof order.paymentTitle !== "string" ||
       !isCheckoutDraft(order.draft) ||
       order.cart?.version !== 3 ||
       !Array.isArray(order.cart.lines) ||
@@ -49,8 +47,6 @@ export function parseLocalOrder(value: string | null): LocalOrder | null {
           line.priceMinor >= 0,
       ) ||
       !order.totals ||
-      (order.totals.extendedReturn !== undefined &&
-        (!Number.isSafeInteger(order.totals.extendedReturn) || order.totals.extendedReturn < 0)) ||
       ![order.totals.subtotal, order.totals.total, order.totals.payment].every(
         (price) => Number.isSafeInteger(price) && price >= 0,
       ) ||
@@ -59,11 +55,7 @@ export function parseLocalOrder(value: string | null): LocalOrder | null {
       )
     )
       return null;
-    return {
-      ...order,
-      draft: { ...order.draft, extendedReturn: order.draft.extendedReturn ?? false },
-      totals: { ...order.totals, extendedReturn: order.totals.extendedReturn ?? 0 },
-    } as LocalOrder;
+    return order as LocalOrder;
   } catch {
     return null;
   }

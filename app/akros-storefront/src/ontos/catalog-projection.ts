@@ -1,5 +1,6 @@
 import { purchaseConstraints } from "./purchase-constraints";
 import type {
+  CatalogVariantSummary,
   CatalogData,
   CategoryData,
   CatalogCategory,
@@ -99,18 +100,38 @@ const dedupeTiers = (tiers: CatalogPriceTier[]): CatalogPriceTier[] =>
     (a, b) => a.minimumQuantity - b.minimumQuantity,
   );
 
+/** One owner product read (`includeCategories: false`): one page of products plus the catalog revision. */
+export interface ProductPage {
+  revision: number;
+  total: number;
+  page: number;
+  pageSize: number;
+  products: CatalogProduct[];
+  homepageFeaturedProductIds: string[];
+}
+
+/** Products and navigation merged for Kai's model (`createCatalog`). */
 export interface CatalogSnapshot {
   catalog: CatalogData;
   categories: CategoryData;
-  mode: "mock" | "ontos";
-  revision: number;
-  total?: number;
-  page?: number;
-  pageSize?: number;
 }
 
-/** Project ONLY owner data. No prototype catalog/template lookup, including unknown/new identities. */
-export function project(body: Raw): CatalogSnapshot {
+const variantSummaryOf = (value: unknown): CatalogVariantSummary => {
+  const raw = value && typeof value === "object" ? (value as Raw) : {};
+  const minGross = number(raw.minGrossPriceMinor);
+  return {
+    count: Math.max(0, number(raw.count) ?? 0),
+    minGrossPriceMinor: minGross ?? null,
+    stockOnHand: Math.max(0, number(raw.stockOnHand) ?? 0),
+    units: strings(raw.units),
+  };
+};
+
+/**
+ * Project ONLY owner product data. No prototype catalog/template lookup, including unknown/new identities.
+ * Listing cards carry no variant records; every product carries the owner's `variantSummary`.
+ */
+export function projectProducts(body: Raw): ProductPage {
   const products: CatalogProduct[] = [];
   for (const p of rows(body.products)) {
     if (p.active === false || p.published === false || !text(p.id) || !text(p.slug)) continue;
@@ -170,31 +191,33 @@ export function project(body: Raw): CatalogSnapshot {
     const net = number(p.currentPriceMinor);
     // Products created in OntOS (not imported) carry no minimumQuantity; the owner then sells from 1 unit.
     const minimum = number(p.minimumQuantity) ?? 1;
-    const productPriceIssue = variants.length
-      ? variants.every((v) => v.priceUnavailableReason)
-        ? variants[0]!.priceUnavailableReason
-        : undefined
+    const variantSummary = variantSummaryOf(p.variantSummary);
+    // A variant group is sold per variant: its card price is the owner's lowest sellable variant price.
+    const isGroup = variantSummary.count > 0;
+    const groupGross = variantSummary.minGrossPriceMinor ?? undefined;
+    // A group has no net price of its own (each variant carries one), so only its gross price is checked.
+    const productPriceIssue = isGroup
+      ? priceUnavailableReason(groupGross, groupGross, p.currency)
       : priceUnavailableReason(gross, net, p.currency);
-    const productAvailabilityUnknown = variants.length
-      ? variants.every((v) => v.availabilityUnknown)
-      : isAvailabilityUnknown(p.availability, p.stockTracked);
+    const productAvailabilityUnknown = isAvailabilityUnknown(p.availability, p.stockTracked);
     const priced = variants.filter((v) => !v.priceUnavailableReason);
     const first = priced.reduce<CatalogProductVariant | undefined>(
       (a, b) => (!a || b.priceMinor < a.priceMinor ? b : a),
       undefined,
     );
-    const productTiers = productPriceIssue
-      ? []
-      : dedupeTiers([
-          { minimumQuantity: minimum, priceMinor: gross!, priceExcludingVatMinor: net! },
-          ...rows(p.priceTiers)
-            .map((t) => ({
-              minimumQuantity: number(t.minimumQuantity)!,
-              priceMinor: number(t.priceMinor)!,
-              priceExcludingVatMinor: number(t.priceExcludingVatMinor)!,
-            }))
-            .filter((t) => Object.values(t).every(Number.isFinite) && t.priceMinor > 0),
-        ]);
+    const productTiers =
+      isGroup || productPriceIssue
+        ? []
+        : dedupeTiers([
+            { minimumQuantity: minimum, priceMinor: gross!, priceExcludingVatMinor: net! },
+            ...rows(p.priceTiers)
+              .map((t) => ({
+                minimumQuantity: number(t.minimumQuantity)!,
+                priceMinor: number(t.priceMinor)!,
+                priceExcludingVatMinor: number(t.priceExcludingVatMinor)!,
+              }))
+              .filter((t) => Object.values(t).every(Number.isFinite) && t.priceMinor > 0),
+          ]);
     const gallery = strings(p.gallery).flatMap((src) => safeImage(src) ?? []);
     // Staff edit the ordered gallery in OntOS ("Hlavní" = first image); imageSrc is only the import-time copy.
     const primaryImage = gallery[0] ?? safeImage(p.imageSrc) ?? imagePlaceholder;
@@ -210,7 +233,7 @@ export function project(body: Raw): CatalogSnapshot {
       currency: "CZK",
       unit: text(p.sourceUnit, text(p.unit, "ks")),
       vatRate: number(p.vatRate),
-      priceMinor: first?.priceMinor ?? (productPriceIssue ? 0 : gross!),
+      priceMinor: productPriceIssue ? 0 : isGroup ? groupGross! : gross!,
       ...(productAvailabilityUnknown ? { availabilityUnknown: true } : {}),
       ...(productPriceIssue ? { priceUnavailableReason: productPriceIssue } : {}),
       ...purchaseConstraints(
@@ -218,11 +241,12 @@ export function project(body: Raw): CatalogSnapshot {
         first?.packageQuantity ?? number(p.packageQuantity),
       ),
       packageQuantity: first?.packageQuantity ?? number(p.packageQuantity),
-      stockCount: variants.length
-        ? variants.reduce((sum, v) => sum + v.stockCount, 0)
-        : productAvailabilityUnknown
-          ? 0
+      stockCount: productAvailabilityUnknown
+        ? 0
+        : isGroup
+          ? variantSummary.stockOnHand
           : stockOf(p.stockOnHand, p.availability),
+      variantSummary,
       imageSrc: primaryImage,
       imageAlt: text(p.imageAlt, text(p.name)),
       secondaryImageSrc: gallery.find((src) => src !== primaryImage),
@@ -237,8 +261,33 @@ export function project(body: Raw): CatalogSnapshot {
       },
     });
   }
+  const homepageFeaturedProductIds = Array.isArray(body.homepageFeaturedProductIds)
+    ? strings(body.homepageFeaturedProductIds)
+    : products
+        .filter((product) => product.featuredPosition !== null || product.isRecommended)
+        .sort(
+          (a, b) =>
+            (a.featuredPosition ?? Number.MAX_SAFE_INTEGER) -
+            (b.featuredPosition ?? Number.MAX_SAFE_INTEGER),
+        )
+        .map((product) => product.id);
+  return {
+    revision: number(body.revision) ?? 0,
+    total: number(body.total) ?? products.length,
+    page: number(body.page) ?? 1,
+    pageSize: number(body.pageSize) ?? products.length,
+    products,
+    homepageFeaturedProductIds,
+  };
+}
+
+/**
+ * Project the owner's navigation tree. Content fields (heading, descriptions, image) are present only for
+ * root categories and for the category a read asks about in detail plus its direct children.
+ */
+export function projectCategories(body: Raw): CatalogCategory[] {
   const categories: CatalogCategory[] = rows(body.categories)
-    .filter((c) => text(c.id) && text(c.slug) && c.active !== false && c.published !== false)
+    .filter((c) => text(c.id) && text(c.slug) && c.published !== false)
     .map((c) => ({
       id: text(c.id),
       parentId: text(c.parentId) || null,
@@ -254,29 +303,5 @@ export function project(body: Raw): CatalogSnapshot {
     }));
   const parentIds = new Set(categories.map((category) => category.parentId));
   for (const category of categories) category.hasChildren = parentIds.has(category.id);
-  const total = number(body.total) ?? products.length;
-  const metadata = {
-    sourceCategoryCount: categories.length,
-    sourceItemCount: total,
-    productGroupCount: total,
-  };
-  const homepageFeaturedProductIds = Array.isArray(body.homepageFeaturedProductIds)
-    ? strings(body.homepageFeaturedProductIds)
-    : products
-        .filter((product) => product.featuredPosition !== null || product.isRecommended)
-        .sort(
-          (a, b) =>
-            (a.featuredPosition ?? Number.MAX_SAFE_INTEGER) -
-            (b.featuredPosition ?? Number.MAX_SAFE_INTEGER),
-        )
-        .map((product) => product.id);
-  return {
-    mode: "ontos",
-    revision: number(body.revision) ?? 0,
-    total,
-    page: number(body.page) ?? 1,
-    pageSize: number(body.pageSize) ?? products.length,
-    catalog: { metadata, products, homepageFeaturedProductIds },
-    categories: { metadata, categories },
-  };
+  return categories;
 }

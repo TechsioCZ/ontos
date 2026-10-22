@@ -5,8 +5,6 @@ import {
   readCheckoutQuote,
   readOrderResponse,
 } from "@/ontos/checkout-response";
-import { demoPayment } from "@/ontos/demo-checkout";
-import { createCheckoutDraft, getPayment, validateMethods } from "@/mock-storefront/checkout";
 
 const valid = {
   outcome: "PLACED",
@@ -86,11 +84,5 @@ describe("connected checkout response boundary", () => {
     { canCheckout: true, priceChanged: false, issues: ["blocked"] },
   ])("rejects invalid quotes %j", async (body) => {
     await expect(readCheckoutQuote(Response.json(body))).rejects.toThrow(checkoutSaveError);
-  });
-  it("recognizes the inactive demo method without changing prototype choices", () => {
-    const draft = { ...createCheckoutDraft(), deliveryId: "osobni", paymentId: demoPayment.id };
-    expect(getPayment(draft)?.title).toBe("Nic neplatíte (DEMO)");
-    expect(validateMethods(draft)).toEqual({});
-    expect(getPayment({ ...draft, paymentId: "gopay" })?.title).toBe("GoPay");
   });
 });

@@ -7,7 +7,7 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "cloudflare:configure": "node scripts/cloudflare-config.mjs",
-    "cloudflare:build": "npm run cloudflare:configure && STOREFRONT_DATA_SOURCE=ontos AKROS_CLOUDFLARE_BUILD=1 opennextjs-cloudflare build --config .wrangler.generated.json",
+    "cloudflare:build": "npm run cloudflare:configure && AKROS_CLOUDFLARE_BUILD=1 opennextjs-cloudflare build --config .wrangler.generated.json",
     "cloudflare:deploy": "npm run cloudflare:configure && opennextjs-cloudflare deploy --config .wrangler.generated.json",
     "catalog:generate": "node scripts/generate-akros-catalog.mjs",
     "start": "next start",

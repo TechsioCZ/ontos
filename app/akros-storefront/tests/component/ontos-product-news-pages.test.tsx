@@ -5,13 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ProductPage, { generateMetadata } from "@/app/produkt/[slug]/page";
 import NewsPage from "@/app/novinky-a-akce/page";
 import { CartProvider } from "@/features/cart/cart-provider";
-import * as mockCatalog from "@/mock-storefront/catalog";
+import { createCatalog } from "@/ontos/catalog-model";
 import { getCatalogPage, type CatalogPage } from "@/ontos/catalog-server";
+import { asCard, fixtureCatalog, fixtureProducts } from "../support/catalog-fixture";
 
-vi.mock("@/ontos/config", () => ({ isOntos: () => true }));
 vi.mock("@/ontos/catalog-server", async () => {
-  const model = await import("@/mock-storefront/catalog");
-  return { getCatalog: async () => model, getCatalogPage: vi.fn() };
+  const { fixtureCatalog } = await import("../support/catalog-fixture");
+  return { getCatalog: async () => fixtureCatalog, getCatalogPage: vi.fn() };
 });
 // The active-branch navigation is an async server wrapper; shell rendering is covered elsewhere.
 vi.mock("@/ontos/category-branch", () => ({
@@ -30,17 +30,22 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
 }));
 
-const product = mockCatalog
-  .getProducts()
-  .find((candidate) => candidate.detail.variants.length > 1)!;
+const product = fixtureProducts.find((candidate) => candidate.detail.variants.length > 1)!;
 const ownerPage: CatalogPage = {
-  snapshot: {} as CatalogPage["snapshot"],
-  model: mockCatalog as unknown as CatalogPage["model"],
+  model: fixtureCatalog,
   products: [product],
   total: 1,
   page: 1,
   pageSize: 1,
 };
+
+const createCardPage = (products: CatalogPage["products"]): CatalogPage => ({
+  model: createCatalog({ products, homepageFeaturedProductIds: [] }, { categories: [] }),
+  products,
+  total: products.length,
+  page: 1,
+  pageSize: products.length,
+});
 
 beforeEach(() => {
   vi.mocked(getCatalogPage).mockReset();
@@ -58,7 +63,10 @@ describe("OntOS product and news pages", () => {
         })}
       </CartProvider>,
     );
-    expect(getCatalogPage).toHaveBeenCalledWith({ slug: product.slug, pageSize: 1 });
+    expect(getCatalogPage).toHaveBeenCalledWith(
+      { slug: product.slug, pageSize: 1 },
+      { fields: "full" },
+    );
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(product.name);
     expect(
       await generateMetadata({
@@ -69,11 +77,18 @@ describe("OntOS product and news pages", () => {
       title: product.name,
     });
   });
-  it("reads the new and promotion sections as flagged OntOS pages", async () => {
-    render(<CartProvider storage={null}>{await NewsPage()}</CartProvider>);
+  it("reads the new and promotion sections as flagged OntOS card pages", async () => {
+    const sale = fixtureProducts
+      .filter((candidate) => candidate.isSale && candidate.stockCount >= candidate.minimumQuantity)
+      .map(asCard);
+    const cards = createCardPage(sale);
+    vi.mocked(getCatalogPage).mockResolvedValue(cards);
+    const { container } = render(<CartProvider storage={null}>{await NewsPage()}</CartProvider>);
     expect(getCatalogPage).toHaveBeenCalledWith({ flag: "new", pageSize: 48 });
     expect(getCatalogPage).toHaveBeenCalledWith({ flag: "promotion", pageSize: 48 });
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Novinky a akce");
+    expect(container.querySelectorAll(".akros-catalog-product-card").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Doprodej").length).toBeGreaterThan(0);
   });
   it("keeps the page up when a flagged read fails", async () => {
     vi.mocked(getCatalogPage).mockRejectedValue(new Error("HTTP 400"));

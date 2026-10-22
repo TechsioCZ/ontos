@@ -3,7 +3,6 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { useCart } from "@/features/cart/cart-provider";
 import { useCheckoutDeliveryId } from "@/features/checkout/checkout-provider";
-import { useDataSource } from "./catalog-provider";
 import {
   getCartSubtotal,
   getLineTotal,
@@ -36,7 +35,7 @@ export interface Quote {
 }
 
 export interface CartQuoteState {
-  /** false in the prototype (mock) mode or for an empty cart: nothing to verify, nothing blocked. */
+  /** false until the cart is loaded and for an empty cart: nothing to verify, nothing blocked. */
   enabled: boolean;
   status: "checking" | "ready" | "error";
   quote: Quote | null;
@@ -55,12 +54,11 @@ const quoteFailure = "Ověření košíku v OntOS se nepodařilo. Košík zůst�
 
 /** One shared OntOS cart verification for every checkout step: the cart, steps and summary read it. */
 export function CartQuoteProvider({ children }: { children: ReactNode }) {
-  const mode = useDataSource();
   const { cart, ready, dispatch } = useCart();
   const [quote, setQuote] = useState<Quote | null>(null);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
-  const enabled = mode === "ontos" && ready && cart.lines.length > 0;
+  const enabled = ready && cart.lines.length > 0;
   const deliveryId = useCheckoutDeliveryId();
   useEffect(() => {
     if (!enabled) return;
@@ -129,10 +127,9 @@ export function useCartQuote(): CartQuoteState | null {
 }
 
 export function CartRevalidation() {
-  const mode = useDataSource();
   const { cart, dispatch } = useCart();
   const state = useCartQuote();
-  if (mode !== "ontos" || !cart.lines.length || !state) return null;
+  if (!cart.lines.length || !state) return null;
   const { quote, error, status, retry } = state;
   return (
     <section

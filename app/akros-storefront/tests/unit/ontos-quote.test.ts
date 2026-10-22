@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { project } from "@/ontos/catalog-projection";
-import { getSnapshot } from "@/ontos/catalog-server";
+import { projectProducts as project } from "@/ontos/catalog-projection";
+import { readCartProducts } from "@/ontos/catalog-server";
 import { callAction } from "@/ontos/gateway";
 import { quoteCart } from "@/ontos/quote";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/ontos/catalog-server", () => ({ getSnapshot: vi.fn() }));
+vi.mock("@/ontos/catalog-server", () => ({ readCartProducts: vi.fn() }));
 vi.mock("@/ontos/gateway", () => ({ callAction: vi.fn() }));
 
 const product = (variant: Record<string, unknown>) => ({
@@ -14,6 +14,8 @@ const product = (variant: Record<string, unknown>) => ({
   name: "Vruty",
   active: true,
   vatRate: 21,
+  availability: variant.availability ?? "IN_STOCK",
+  variantSummary: { count: 1, minGrossPriceMinor: 121, stockOnHand: 1000, units: ["ks"] },
   variantRecords: [
     {
       id: "v",
@@ -64,7 +66,7 @@ beforeEach(() => {
 
 describe("server cart quote", () => {
   it("blocks an item whose owner availability is UNKNOWN, naming the variant, without asking OntOS to order", async () => {
-    vi.mocked(getSnapshot).mockResolvedValue(
+    vi.mocked(readCartProducts).mockResolvedValue(
       project({ revision: 3, products: [product({ availability: "UNKNOWN" })] }),
     );
     const quote = await quoteCart(cart(10, 121));
@@ -77,7 +79,7 @@ describe("server cart quote", () => {
   });
 
   it("blocks an unpriced item", async () => {
-    vi.mocked(getSnapshot).mockResolvedValue(
+    vi.mocked(readCartProducts).mockResolvedValue(
       project({ revision: 3, products: [product({ grossPriceMinor: 0, priceMinor: 0 })] }),
     );
     const quote = await quoteCart(cart(10, 0));
@@ -87,7 +89,9 @@ describe("server cart quote", () => {
   });
 
   it("applies the owner quantity tier and returns OntOS dry-run totals (no browser VAT)", async () => {
-    vi.mocked(getSnapshot).mockResolvedValue(project({ revision: 3, products: [product({})] }));
+    vi.mocked(readCartProducts).mockResolvedValue(
+      project({ revision: 3, products: [product({})] }),
+    );
     const quote = await quoteCart(cart(500, 109), "osobni");
     expect(quote.priceChanged).toBe(false);
     expect(quote.cart.lines[0]).toMatchObject({ priceMinor: 109, priceExcludingVatMinor: 90 });
@@ -106,7 +110,9 @@ describe("server cart quote", () => {
   });
 
   it("keeps the cart blocked when OntOS itself rejects a line", async () => {
-    vi.mocked(getSnapshot).mockResolvedValue(project({ revision: 3, products: [product({})] }));
+    vi.mocked(readCartProducts).mockResolvedValue(
+      project({ revision: 3, products: [product({})] }),
+    );
     vi.mocked(callAction).mockResolvedValue({
       storefrontOrder: {
         outcome: "REJECTED",

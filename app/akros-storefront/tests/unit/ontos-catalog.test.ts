@@ -1,8 +1,20 @@
 import { describe, it, expect } from "vitest";
-import { imagePlaceholder, project } from "@/ontos/catalog-projection";
+import { imagePlaceholder, projectCategories, projectProducts } from "@/ontos/catalog-projection";
 import raw from "@/mock-storefront/generated/catalog.generated.json";
 import { createCatalog } from "@/ontos/catalog-model";
 import { createCheckoutDraft, getCheckoutTotals } from "@/mock-storefront/checkout";
+/** One owner response projected the way catalog-server merges products and navigation. */
+const project = (body: Record<string, unknown>) => {
+  const page = projectProducts(body);
+  return {
+    ...page,
+    catalog: {
+      products: page.products,
+      homepageFeaturedProductIds: page.homepageFeaturedProductIds,
+    },
+    categories: { categories: projectCategories(body) },
+  };
+};
 const template = raw.products.find((p) => p.detail.variants.length > 1)!;
 const variant = template.detail.variants[0];
 const live = () => ({
@@ -11,6 +23,13 @@ const live = () => ({
   slug: template.slug,
   active: true,
   published: true,
+  availability: "IN_STOCK",
+  variantSummary: {
+    count: 1,
+    minGrossPriceMinor: 121 as number | null,
+    stockOnHand: 40,
+    units: ["ks"],
+  },
   variantRecords: [
     {
       id: variant.id,
@@ -171,6 +190,11 @@ describe("OntOS source-of-truth boundary", () => {
     for (const field of ["grossPriceMinor", "priceMinor"]) {
       const p = live();
       delete (p.variantRecords[0] as Record<string, unknown>)[field];
+      // The owner summary counts only priced variants and has no lowest price without a gross one.
+      p.variantSummary =
+        field === "priceMinor"
+          ? { count: 0, minGrossPriceMinor: null, stockOnHand: 0, units: [] }
+          : { ...p.variantSummary, minGrossPriceMinor: null };
       const [product] = project({ products: [p] }).catalog.products;
       expect(product.priceUnavailableReason).toBe("OntOS pro tuto položku nevrátil cenu.");
       expect(product.detail.variants[0]).toMatchObject({ priceMinor: 0, priceTiers: [] });
@@ -180,6 +204,7 @@ describe("OntOS source-of-truth boundary", () => {
     const zero = live();
     zero.variantRecords[0].grossPriceMinor = 0;
     zero.variantRecords[0].priceMinor = 0;
+    zero.variantSummary.minGrossPriceMinor = 0;
     expect(project({ products: [zero] }).catalog.products[0].priceUnavailableReason).toMatch(
       /nulová/,
     );
@@ -192,6 +217,7 @@ describe("OntOS source-of-truth boundary", () => {
     for (const patch of [{ availability: "UNKNOWN" }, { availability: undefined }]) {
       const p = live();
       Object.assign(p.variantRecords[0], patch);
+      Object.assign(p, patch);
       const [product] = project({ products: [p] }).catalog.products;
       expect(product.detail.variants[0]).toMatchObject({
         availabilityUnknown: true,
@@ -254,6 +280,43 @@ describe("OntOS source-of-truth boundary", () => {
     const [product] = project({ products: [created] }).catalog.products;
     expect(product).toMatchObject({ priceMinor: 1210, minimumQuantity: 1, stockCount: 0 });
   });
+  it("prices and stocks a listing card of a variant group from the owner's variant summary", () => {
+    const { variantRecords: _records, ...card } = live();
+    void _records;
+    const [product] = project({
+      products: [
+        {
+          ...card,
+          grossPriceMinor: 121,
+          variantSummary: { count: 3, minGrossPriceMinor: 99, stockOnHand: 75, units: ["ks"] },
+        },
+      ],
+    }).catalog.products;
+    expect(product).toMatchObject({ priceMinor: 99, stockCount: 75 });
+    expect(product.detail.variants).toEqual([]);
+    expect(
+      createCatalog(
+        { products: [product], homepageFeaturedProductIds: [] },
+        { categories: [] },
+      ).toProductSummary(product),
+    ).toMatchObject({
+      hasVariants: true,
+      priceIsFrom: true,
+      stock: { kind: "quantity", status: "in-stock", stockCount: 75, unit: "ks" },
+    });
+    const unpriced = project({
+      products: [
+        {
+          ...card,
+          variantSummary: { count: 2, minGrossPriceMinor: null, stockOnHand: 5, units: [] },
+        },
+      ],
+    }).catalog.products[0];
+    expect(unpriced).toMatchObject({
+      priceMinor: 0,
+      priceUnavailableReason: "OntOS pro tuto položku nevrátil cenu.",
+    });
+  });
   it("keeps tier net/gross values and filters inactive variants", () => {
     const p = live();
     expect(
@@ -262,8 +325,8 @@ describe("OntOS source-of-truth boundary", () => {
     p.variantRecords[0].active = false;
     expect(project({ products: [p] }).catalog.products).toEqual([]);
   });
-  it("leaves OntOS net/VAT to the server and keeps prototype net from the tiers", () => {
-    const draft = { ...createCheckoutDraft(), deliveryId: "osobni", paymentId: "store-card" };
+  it("leaves net/VAT to the OntOS quote", () => {
+    const draft = { ...createCheckoutDraft(), deliveryId: "osobni" };
     const cart = {
       version: 3 as const,
       lines: [
@@ -284,50 +347,12 @@ describe("OntOS source-of-truth boundary", () => {
         },
       ],
     };
-    // OntOS mode never computes tax in the browser: net/VAT come from the server quote.
-    expect(getCheckoutTotals(cart, draft, true)).toMatchObject({
-      net: null,
-      vat: null,
-      total: 19400,
-    });
-    expect(getCheckoutTotals(cart, draft, false)).toMatchObject({ net: 16000, total: 19400 });
+    // The browser never computes tax: net/VAT come from the server quote.
+    expect(getCheckoutTotals(cart, draft)).toMatchObject({ net: null, vat: null, total: 19400 });
   });
   it("never mutates Kai's prototype snapshot", () => {
     const before = JSON.stringify(template);
     project({ products: [live()] });
     expect(JSON.stringify(template)).toBe(before);
-  });
-  it("does not apply prototype-only free shipping or extended return to a live order", () => {
-    const draft = {
-      ...createCheckoutDraft(),
-      deliveryId: "zasilkovna",
-      paymentId: "gopay",
-      extendedReturn: true,
-    };
-    const cart = {
-      version: 3 as const,
-      lines: [
-        {
-          productId: "p",
-          slug: "p",
-          name: "Materiál",
-          sku: "P",
-          imageSrc: "",
-          imageAlt: "",
-          unit: "ks",
-          minimumQuantity: 1,
-          stockCount: 5,
-          priceMinor: 250000,
-          priceExcludingVatMinor: 206612,
-          quantity: 1,
-        },
-      ],
-    };
-    expect(getCheckoutTotals(cart, draft).shipping).toBe(0);
-    expect(getCheckoutTotals(cart, draft, true)).toMatchObject({
-      shipping: 7900,
-      extendedReturn: 0,
-      total: 257900,
-    });
   });
 });

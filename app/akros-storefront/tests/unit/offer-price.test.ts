@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { describeOfferPrice, PRICE_UNAVAILABLE_LABEL } from "@/lib/format";
 import { toRemoteSuggestion } from "@/ontos/search-suggestions";
-import type { CatalogSearchResult } from "@/mock-storefront/types";
+import type { CatalogProduct } from "@/mock-storefront/types";
 
 const label = (input: Parameters<typeof describeOfferPrice>[0]) => describeOfferPrice(input).label;
 
@@ -65,28 +65,14 @@ describe("toRemoteSuggestion", () => {
     currency: "CZK",
     priceMinor: 0,
     priceUnavailableReason: "Cena v OntOS je nulová, položku proto nelze objednat.",
-    detail: { variants: [] },
-  } as unknown as CatalogSearchResult["product"];
+    variantSummary: { count: 0, minGrossPriceMinor: null, stockOnHand: 0, units: [] },
+  } as unknown as CatalogProduct;
 
   it("carries the price-unavailable reason to the header search", () => {
-    expect(toRemoteSuggestion({ product, matchingVariants: [] })).toMatchObject({
+    expect(toRemoteSuggestion(product)).toMatchObject({
       priceMinor: 0,
       priceUnavailableReason: "Cena v OntOS je nulová, položku proto nelze objednat.",
+      hasVariants: false,
     });
-  });
-
-  it("uses the matched variant's own reason", () => {
-    const variant = {
-      sku: "S-1",
-      label: "M6",
-      priceMinor: 0,
-      priceUnavailableReason: "Cena je v nepodporované měně (EUR); e-shop prodává jen v Kč.",
-    } as unknown as CatalogSearchResult["matchingVariants"][number];
-    expect(
-      toRemoteSuggestion({
-        product: { ...product, priceMinor: 100, priceUnavailableReason: undefined },
-        matchingVariants: [variant],
-      }).priceUnavailableReason,
-    ).toBe("Cena je v nepodporované měně (EUR); e-shop prodává jen v Kč.");
   });
 });

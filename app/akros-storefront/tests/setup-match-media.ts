@@ -18,19 +18,19 @@ beforeEach(() => {
   });
 });
 
-// Component suites exercise Kai's prototype, outside Next's RSC runtime and root layout.
-// Live source-of-truth behavior is covered separately by ontos-catalog and headless BFF checks.
+// Component suites render Kai's UI outside Next's RSC runtime and root layout, on the generated
+// seed catalog. Owner reads are covered by ontos-catalog/ontos-catalog-server and the page suites.
 vi.mock("@/ontos/catalog-provider", async () => {
-  const model = await import("@/mock-storefront/catalog");
-  return { useCatalog: () => model, useDataSource: () => "mock" };
+  const { fixtureCatalog } = await import("./support/catalog-fixture");
+  return { useCatalog: () => fixtureCatalog };
 });
 vi.mock("@/ontos/catalog-server", async () => {
-  const model = await import("@/mock-storefront/catalog");
+  const { fixtureCatalog } = await import("./support/catalog-fixture");
   return {
-    getCatalog: async () => model,
-    // OntOS-only paths; component suites run in mock mode and must never reach them.
+    getCatalog: async () => fixtureCatalog,
+    // Page suites mock the owner page read themselves; other suites must never reach it.
     getCatalogPage: async () => {
-      throw new Error("getCatalogPage is only used in OntOS mode");
+      throw new Error("getCatalogPage must be mocked by the suite");
     },
     getShellSnapshot: async () => {
       throw new Error("getShellSnapshot is only used by the root layout");

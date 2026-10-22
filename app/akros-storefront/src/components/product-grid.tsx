@@ -14,10 +14,6 @@ import type { CatalogProductSummary } from "@/mock-storefront/types";
 
 export interface ProductGridItem extends CatalogProductSummary {
   detailHref?: string;
-  searchMatchLabel?: string;
-  variantId?: string;
-  variantLabel?: string;
-  productName?: string;
 }
 
 export function ProductGrid({
@@ -69,7 +65,7 @@ export function ProductGrid({
           : undefined;
 
         return (
-          <article className="min-w-0" key={product.variantId ?? product.id}>
+          <article className="min-w-0" key={product.id}>
             <ProductCard
               className="akros-product-card akros-catalog-product-card shadow-(--shadow-sm)"
               layout="column"
@@ -156,9 +152,6 @@ export function ProductGrid({
               <p className="akros-product-card__description m-0 line-clamp-2 min-h-[2.8em] text-sm leading-normal text-(--color-fg-secondary)">
                 {supportingText}
               </p>
-              {product.searchMatchLabel && (
-                <p className="akros-product-card__search-match">{product.searchMatchLabel}</p>
-              )}
 
               <ProductCard.Price
                 className={`mt-auto mb-0 text-center ${columns === "checkout" ? "leading-(--akros-checkout-heading-leading)" : ""}`}
@@ -199,9 +192,8 @@ export function ProductGrid({
                   <AddToCartButton
                     item={{
                       productId: product.id,
-                      variantId: product.variantId,
                       slug: product.slug,
-                      name: product.productName ?? product.name,
+                      name: product.name,
                       sku: product.sku,
                       imageSrc: product.imageSrc,
                       imageAlt: product.imageAlt,
@@ -211,7 +203,6 @@ export function ProductGrid({
                       stockCount: product.stock.stockCount,
                       priceMinor: product.priceMinor,
                       priceExcludingVatMinor: product.priceExcludingVatMinor,
-                      variantLabel: product.variantLabel,
                     }}
                     quantity={product.stock.minimumQuantity}
                   />

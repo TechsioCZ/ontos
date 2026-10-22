@@ -14,7 +14,6 @@ if (!/^[a-f\d]{32}$/u.test(namespaceId)) throw new Error("Invalid composition KV
 const config = JSON.parse(readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8"));
 config.vars = {
   ONTOS_SHELL_URL: shellUrl.origin,
-  STOREFRONT_DATA_SOURCE: "ontos",
   STOREFRONT_IMAGE_HOSTS: process.env.STOREFRONT_IMAGE_HOSTS ?? "",
 };
 config.kv_namespaces = [{ binding: "ONTOS_ACTIVE_APPLICATION_COMPOSITION", id: namespaceId }];
