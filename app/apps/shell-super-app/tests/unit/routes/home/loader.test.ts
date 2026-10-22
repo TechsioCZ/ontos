@@ -442,3 +442,105 @@ it.effect('shows the welcome text the selected company provides on the Shell wel
     });
   }),
 );
+
+/** Server rendering: no browser document, like the SSR loader on Node and Workers. */
+const asServerRender = <Value, Failure>(operation: Effect.Effect<Value, Failure>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+      Reflect.deleteProperty(globalThis, 'document');
+      return descriptor;
+    }),
+    () => operation,
+    (descriptor) =>
+      Effect.sync(() => {
+        if (descriptor !== undefined) {
+          Object.defineProperty(globalThis, 'document', descriptor);
+        }
+      }),
+  );
+// happy-dom's Request drops the cookie header (a browser-forbidden name); the server's request carries it.
+const serverRequest = (url = 'https://shell.example.test/en') => {
+  const cookie = 'better-auth.session_token=test-session';
+  const headers = Object.assign(new Headers(), {
+    get: (name: string) => (name.toLowerCase() === 'cookie' ? cookie : null),
+  });
+  return Object.defineProperty(new Request(url), 'headers', { value: headers });
+};
+
+it.effect('server rendering starts composition, tenants, legal entities and the capability beside the session', () =>
+  Effect.gen(function* serverReadsStartTogether() {
+    const startedBeforeSession: string[] = [];
+    currentSessionMock.mockImplementation(() =>
+      Effect.sync(() => {
+        for (const [name, mock] of [
+          ['composition', shellCompositionMock],
+          ['legalEntities', availableLegalEntitiesMock],
+          ['peopleCapability', canManageDemoAccountsMock],
+          ['tenants', availableTenantsMock],
+        ] as const) {
+          if (mock.mock.calls.length > 0) {
+            startedBeforeSession.push(name);
+          }
+        }
+        return { identity, state: 'authenticated' as const };
+      }),
+    );
+    const model = yield* asServerRender(loadModel({ request: serverRequest() }));
+    expect(startedBeforeSession).toEqual(['composition', 'legalEntities', 'peopleCapability', 'tenants']);
+    expect(model).toMatchObject({
+      compositionRevision,
+      legalEntities: { state: 'available' },
+      state: 'authenticated',
+      tenants: { state: 'available' },
+    });
+    // The navigation offers no people administration, so the speculative capability answer is not used.
+    expect(model).toMatchObject({ navigation: { items: navigation } });
+  }),
+);
+
+it.effect('server rendering answers an anonymous session as before, whatever the started reads say', () =>
+  Effect.gen(function* serverAnonymous() {
+    currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' }));
+    shellCompositionMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellAuthenticationRequiredProblem' }));
+    expect(yield* asServerRender(loadModel({ request: serverRequest() }))).toEqual({ state: 'anonymous' });
+  }),
+);
+
+it.effect('server rendering leaves the Home component to the browser and keeps its candidates', () =>
+  Effect.gen(function* serverDefersHome() {
+    const homeComponents = [
+      {
+        entrypointKey: 'fixture.summary.component.home',
+        moduleId: 'fixture.summary',
+        order: 100,
+        requiresModules: ['fixture.summary', 'fixture.unlisted'],
+      },
+      {
+        entrypointKey: 'fixture.dashboard.component.home',
+        moduleId: 'fixture.dashboard',
+        order: 200,
+        requiresModules: ['fixture.dashboard'],
+      },
+    ];
+    shellCompositionMock.mockReturnValue(
+      Effect.succeed({
+        compositionRevision,
+        deniedAppIds: [],
+        homeComponents,
+        navigation: [{ ...navigation[0], moduleId: 'fixture.dashboard' }],
+        state: 'available',
+        unavailableDeployments: [],
+      }),
+    );
+    const model = yield* asServerRender(loadModel({ request: serverRequest() }));
+    expect(model).toMatchObject({ homeCandidates: [homeComponents[1]], state: 'authenticated' });
+    expect(model).not.toHaveProperty('homeContribution');
+    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
+    expect(executeLegalEntityDetailMock).not.toHaveBeenCalled();
+    const elsewhere = yield* asServerRender(
+      loadModel({ request: serverRequest('https://shell.example.test/en/ukoly') }),
+    );
+    expect(elsewhere).not.toHaveProperty('homeCandidates');
+  }),
+);

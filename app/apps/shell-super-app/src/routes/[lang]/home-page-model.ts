@@ -1,5 +1,5 @@
 import { getDocumentCompositionRevision, pinDocumentCompositionRevision } from '@app/shared-contracts';
-import { Effect, Match, Option } from 'effect';
+import { Effect, Fiber, Match, Option } from 'effect';
 
 import type {
   AvailableTenant,
@@ -26,7 +26,7 @@ import {
   withoutModuleAiApprovals,
   withPeopleAdministration,
 } from '../shell-platform-navigation.ts';
-import { loadHomeContribution } from './home-contribution-model.ts';
+import { homeContributionCandidates, resolveHomeContribution } from './home-contribution-model.ts';
 import type { HomeContribution } from './home-contribution-model.ts';
 import type { AvailableTenantsClientError, ShellAuthenticationClientOptions } from '../../api/auth-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
@@ -61,6 +61,11 @@ export interface AuthenticatedHomePageModel {
   readonly companyWelcome?: string;
   readonly compositionRevision?: string;
   readonly contextState: 'access_blocked' | 'authenticated' | 'selection_required';
+  /**
+   * Set instead of `homeContribution` by server rendering: the Home components the browser resolves after hydration,
+   * lowest order first.
+   */
+  readonly homeCandidates?: readonly ShellHomeComponent[];
   readonly homeContribution?: HomeContribution;
   readonly identity: SafeTenantIdentity;
   readonly legalEntities:
@@ -231,7 +236,12 @@ const tenantsFor = (identity: SafeTenantIdentity, options: ShellAuthenticationCl
 };
 
 /** What the selected company says about itself on Home; nothing when it provides no text or the read fails. */
-const companyWelcomeFor = (identity: SafeAuthenticatedIdentity, options: ShellAuthenticationClientOptions) =>
+interface HomeCompanyContext {
+  readonly legalEntityId: SafeAuthenticatedIdentity['legalEntityId'];
+  readonly tenantId: SafeTenantIdentity['tenantId'];
+}
+
+const companyWelcomeFor = (identity: HomeCompanyContext, options: ShellAuthenticationClientOptions) =>
   executeLegalEntityDetail(
     {
       legalEntityRef: {
@@ -247,18 +257,94 @@ const companyWelcomeFor = (identity: SafeAuthenticatedIdentity, options: ShellAu
     Effect.orElseSucceed(() => undefined),
   );
 
+export interface ResolvedHomeContribution {
+  readonly contribution: HomeContribution;
+  /** The company's own Home text; read only when the Shell shows its welcome page. */
+  readonly welcome?: string;
+}
+
+/** The first Home component the person may open, or the Shell's welcome page with the company's own text. */
+export const resolveHomeContributionWithWelcome = (
+  identity: HomeCompanyContext,
+  compositionRevision: string,
+  candidates: readonly ShellHomeComponent[],
+  options: ShellAuthenticationClientOptions,
+): Effect.Effect<ResolvedHomeContribution> =>
+  resolveHomeContribution(candidates, compositionRevision, options).pipe(
+    Effect.flatMap((contribution) =>
+      contribution.state === 'forbidden'
+        ? companyWelcomeFor(identity, options).pipe(
+            Effect.map((welcome) => (welcome === undefined ? { contribution } : { contribution, welcome })),
+          )
+        : Effect.succeed({ contribution }),
+    ),
+  );
+
+type HomeFields = Pick<AuthenticatedHomePageModel, 'companyWelcome' | 'homeCandidates' | 'homeContribution'>;
+
+/** Home's part of the model: the resolved component, or the candidates the browser resolves after hydration. */
+const homeFields = (
+  resolved: Option.Option<ResolvedHomeContribution>,
+  deferredCandidates: readonly ShellHomeComponent[] | undefined,
+): HomeFields => {
+  if (Option.isSome(resolved)) {
+    const { contribution, welcome } = resolved.value;
+    return welcome === undefined
+      ? { homeContribution: contribution }
+      : { companyWelcome: welcome, homeContribution: contribution };
+  }
+  return deferredCandidates === undefined ? {} : { homeCandidates: deferredCandidates };
+};
+
+/** Server rendering has no browser document; the document's reads there carry the visitor's cookie. */
+const isServerRender = () => !('document' in globalThis);
+
+const requestedCompositionRevision = (request: Request) =>
+  getDocumentCompositionRevision().pipe(
+    Effect.catchTag('DocumentCompositionRevisionError', (error) =>
+      error.reason === 'uninitialized' || error.reason === 'document-unavailable'
+        ? Effect.succeed(request.headers.get('x-ontos-composition-revision') ?? undefined)
+        : Effect.fail(error),
+    ),
+  );
+
+const startRead = <A, E>(read: Effect.Effect<A, E>) => Effect.forkChild(read, { startImmediately: true });
+
+/**
+ * Server rendering reads with the request's cookie and has no browser cache, so none of the document's reads needs the
+ * session answer first: they all start beside the session read instead of one round trip after another (session,
+ * then composition, then the people capability, then tenants and legal entities took 4-5 s on stage). Reads the
+ * answer turns out not to need are interrupted when the loader returns. The people capability is only a navigation
+ * hint; the server still authorizes the people page and every write.
+ */
+const startServerReads = Effect.fn('HomePageModel.startServerReads')(function* startServerReadsEffect(
+  request: Request,
+  options: ShellAuthenticationClientOptions,
+) {
+  const requestedRevision = yield* requestedCompositionRevision(request);
+  return {
+    composition: yield* startRead(
+      shellComposition(requestedRevision === undefined ? {} : { compositionRevision: requestedRevision }, options),
+    ),
+    legalEntities: yield* startRead(availableLegalEntities(options)),
+    peopleCapability: yield* startRead(canManageDemoAccounts(options)),
+    tenants: yield* startRead(availableTenants(options)),
+  };
+});
+
 export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
   function* loadHomePageModelEffect(request: Request) {
     const options = yield* shellAuthenticationClientOptionsFromRequest(request);
     if (isServerRenderWithoutSession(options)) {
       return anonymousModel;
     }
+    const serverReads = isServerRender() ? yield* startServerReads(request, options) : undefined;
     const session = yield* sessionFor(options);
     if (session.state === 'anonymous') {
       return anonymousModel;
     }
     let compositionRevision: string | undefined;
-    let homeComponents: readonly ShellHomeComponent[] = [];
+    let homeCandidates: readonly ShellHomeComponent[] | undefined;
     let navigation: AuthenticatedHomePageModel['navigation'] = {
       deniedAppIds: [],
       items: [],
@@ -267,14 +353,11 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       unavailableDeployments: [],
     };
     if (session.state === 'authenticated') {
-      const requestedRevision = yield* getDocumentCompositionRevision().pipe(
-        Effect.catchTag('DocumentCompositionRevisionError', (error) =>
-          error.reason === 'uninitialized' || error.reason === 'document-unavailable'
-            ? Effect.succeed(request.headers.get('x-ontos-composition-revision') ?? undefined)
-            : Effect.fail(error),
-        ),
-      );
-      const composition = yield* compositionFor(requestedRevision, session.identity, options);
+      const composition = yield* serverReads === undefined
+        ? requestedCompositionRevision(request).pipe(
+            Effect.flatMap((requestedRevision) => compositionFor(requestedRevision, session.identity, options)),
+          )
+        : Fiber.join(serverReads.composition);
       if (composition.state !== 'available') {
         return unavailableModel;
       }
@@ -283,10 +366,11 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
         yield* pinDocumentCompositionRevision(compositionRevision, globalThis.document);
       }
       const canManagePeople = offersPeopleAdministration(composition.navigation)
-        ? yield* peopleCapabilityFor(session.identity, options)
+        ? yield* serverReads === undefined
+            ? peopleCapabilityFor(session.identity, options)
+            : Fiber.join(serverReads.peopleCapability)
         : false;
       const presentable = withPeopleAdministration(composition.navigation, canManagePeople);
-      ({ homeComponents } = composition);
       navigation = {
         deniedAppIds: composition.deniedAppIds,
         items: withConnectedAppsNavigation(
@@ -300,10 +384,18 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
         state: 'available',
         unavailableDeployments: composition.unavailableDeployments,
       };
+      homeCandidates = homeContributionCandidates(
+        request,
+        composition.homeComponents,
+        new Set(navigation.items.map(({ moduleId }) => String(moduleId))),
+      );
     }
     const legalEntities =
       session.state === 'authenticated'
-        ? legalEntitiesFor(session.identity, options).pipe(
+        ? (serverReads === undefined
+            ? legalEntitiesFor(session.identity, options)
+            : Fiber.join(serverReads.legalEntities)
+          ).pipe(
             Effect.map((response) => ({
               items: response.legalEntities,
               state: 'available' as const,
@@ -317,30 +409,26 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
             items: session.state === 'selection_required' ? session.availableLegalEntities : ([] as const),
             state: 'available' as const,
           });
+    // The Home component is a browser-loaded remote, so the server never waits for it: the document streams the
+    // Shell frame and the browser resolves the candidates after hydration. Browser navigations resolve it here.
+    const deferHomeContribution = serverReads !== undefined && homeCandidates !== undefined;
     return yield* Effect.all(
       {
         homeContribution:
-          session.state === 'authenticated' && compositionRevision !== undefined
-            ? loadHomeContribution(
-                request,
-                compositionRevision,
-                options,
-                homeComponents,
-                new Set(navigation.items.map(({ moduleId }) => String(moduleId))),
-              ).pipe(
-                // The Shell's welcome page shows the company's own text, so only that case reads it.
-                Effect.flatMap((contribution) =>
-                  Option.exists(contribution, ({ state }) => state === 'forbidden')
-                    ? companyWelcomeFor(session.identity, options).pipe(
-                        Effect.map((welcome) => ({ contribution, welcome })),
-                      )
-                    : Effect.succeed({ contribution, welcome: undefined }),
-                ),
+          session.state === 'authenticated' &&
+          compositionRevision !== undefined &&
+          homeCandidates !== undefined &&
+          !deferHomeContribution
+            ? resolveHomeContributionWithWelcome(session.identity, compositionRevision, homeCandidates, options).pipe(
+                Effect.asSome,
               )
-            : Effect.succeed({ contribution: Option.none<HomeContribution>(), welcome: undefined }),
+            : Effect.succeedNone,
         legalEntities,
         navigation: Effect.succeed(navigation),
-        tenants: tenantsFor(session.identity, options).pipe(
+        tenants: (serverReads === undefined
+          ? tenantsFor(session.identity, options)
+          : Fiber.join(serverReads.tenants)
+        ).pipe(
           Effect.map(({ tenants }) => ({
             items: tenants,
             state: 'available' as const,
@@ -353,43 +441,31 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       },
       { concurrency: 3 },
     ).pipe(
-      Effect.map(
-        ({
-          homeContribution: { contribution: contributionOption, welcome },
+      Effect.map(({ homeContribution, legalEntities: choices, navigation: items, tenants }): HomePageModel => {
+        if (tenants.state === 'stale') {
+          return sessionEndedModel;
+        }
+        const baseModel = {
+          contextState: session.state,
+          identity: session.identity,
           legalEntities: choices,
           navigation: items,
+          state: 'authenticated' as const,
           tenants,
-        }): HomePageModel => {
-          if (tenants.state === 'stale') {
-            return sessionEndedModel;
-          }
-          const contribution = Option.getOrUndefined(contributionOption);
-          const baseModel = {
-            contextState: session.state,
-            identity: session.identity,
-            legalEntities: choices,
-            navigation: items,
-            state: 'authenticated' as const,
-            tenants,
-          };
-          const withContribution =
-            contribution === undefined
-              ? baseModel
-              : {
-                  ...baseModel,
-                  homeContribution: contribution,
-                  ...(welcome === undefined ? {} : { companyWelcome: welcome }),
-                };
-          const model =
-            compositionRevision === undefined ? withContribution : { ...withContribution, compositionRevision };
-          return session.state === 'authenticated'
-            ? {
-                ...model,
-                selectedLegalEntityId: session.identity.legalEntityId,
-              }
-            : model;
-        },
-      ),
+        };
+        const withContribution = {
+          ...baseModel,
+          ...homeFields(homeContribution, deferHomeContribution ? homeCandidates : undefined),
+        };
+        const model =
+          compositionRevision === undefined ? withContribution : { ...withContribution, compositionRevision };
+        return session.state === 'authenticated'
+          ? {
+              ...model,
+              selectedLegalEntityId: session.identity.legalEntityId,
+            }
+          : model;
+      }),
     );
   },
   Effect.matchEffect({

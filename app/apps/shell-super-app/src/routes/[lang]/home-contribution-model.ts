@@ -1,5 +1,4 @@
 import { Effect, Match, Schema } from 'effect';
-import type { Option } from 'effect';
 import { ResolveModuleTargetPayloadSchema } from '../../../shared/api.ts';
 import type { ResolvedModuleTarget, ShellHomeComponent } from '../../../shared/api.ts';
 import { resolveModuleTarget } from '../../api/auth-client.ts';
@@ -49,25 +48,33 @@ const resolveCandidate = (
     }),
   );
 
+const HOME_PATH = /^\/(?:[a-z]{2}\/?)?$/u;
+
 /**
- * Resolve the Home summary afresh, independent of cached navigation permission hints. Modules offer Home components
- * (lowest order first); a candidate is requested only when every module whose data it shows is in the persona's
- * navigation, so roles without them never cause a denied (403) request. A missing or denied candidate falls through
- * to the next one, and the shell shows its own welcome page when none applies.
+ * The Home components a document's Home may show, lowest order first: a candidate is offered only when every module
+ * whose data it shows is in the persona's navigation, so roles without them never cause a denied (403) request.
+ * Nothing on any page other than Home.
  */
-export const loadHomeContribution = (
+export const homeContributionCandidates = (
   request: Request,
-  compositionRevision: string,
-  options: ShellAuthenticationClientOptions,
   homeComponents: readonly ShellHomeComponent[],
   navigationModuleIds: ReadonlySet<string>,
-): Effect.Effect<Option.Option<HomeContribution>> => {
-  if (!/^\/(?:[a-z]{2}\/?)?$/u.test(new URL(request.url).pathname)) {
-    return Effect.succeedNone;
-  }
-  const candidates = homeComponents.filter(({ requiresModules }) =>
-    requiresModules.every((moduleId) => navigationModuleIds.has(moduleId)),
-  );
+): readonly ShellHomeComponent[] | undefined =>
+  HOME_PATH.test(new URL(request.url).pathname)
+    ? homeComponents.filter(({ requiresModules }) =>
+        requiresModules.every((moduleId) => navigationModuleIds.has(moduleId)),
+      )
+    : undefined;
+
+/**
+ * Resolve the Home summary afresh, independent of cached navigation permission hints. A missing or denied candidate
+ * falls through to the next one, and the shell shows its own welcome page when none applies.
+ */
+export const resolveHomeContribution = (
+  candidates: readonly ShellHomeComponent[],
+  compositionRevision: string,
+  options: ShellAuthenticationClientOptions,
+): Effect.Effect<HomeContribution> => {
   const tryFrom = (index: number): Effect.Effect<HomeContribution> => {
     const candidate = candidates[index];
     if (candidate === undefined) {
@@ -80,5 +87,5 @@ export const loadHomeContribution = (
       ),
     );
   };
-  return tryFrom(0).pipe(Effect.asSome);
+  return tryFrom(0);
 };
