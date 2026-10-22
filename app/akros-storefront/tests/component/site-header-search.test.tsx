@@ -167,11 +167,53 @@ describe("SiteHeader search", () => {
     ).toBeTruthy();
     expect(within(option).queryByText("Cena dle varianty")).toBeNull();
     expect(option.getAttribute("href")).toBe(
-      `/produkt/${product.slug}?${new URLSearchParams({ variant: variant.sku })}#product-variants`,
+      `/produkt/${product.slug}?${new URLSearchParams({ variantIds: variant.id })}#product-variants`,
     );
     await user.click(option);
     expect(push).toHaveBeenCalledOnce();
     expect(push).toHaveBeenCalledWith(option.getAttribute("href"));
+  });
+
+  it("routes a prefix-colliding SKU to the exact variant ID", async () => {
+    const user = userEvent.setup();
+    render(
+      <CartProvider storage={null}>
+        <SiteHeader />
+      </CartProvider>,
+    );
+    await user.type(
+      screen.getByRole("combobox", { name: "Vyhledat v katalogu" }),
+      "10197200040300",
+    );
+    const option = screen
+      .getAllByRole("option")
+      .find((item) =>
+        item.getAttribute("href")?.includes("matice-nytovaci-se-zapustnou-hlavou-an-1972-a2"),
+      )!;
+    expect(option.getAttribute("href")).toBe(
+      "/produkt/matice-nytovaci-se-zapustnou-hlavou-an-1972-a2?variantIds=item-9025#product-variants",
+    );
+    await user.click(option);
+    expect(push).toHaveBeenCalledWith(option.getAttribute("href"));
+  });
+
+  it("shows a shared SKU as a group instead of choosing one variant and price", async () => {
+    const user = userEvent.setup();
+    const product = getProducts().find((item) => item.slug === "dvojniply-typ-310-mat-1-4404")!;
+    render(
+      <CartProvider storage={null}>
+        <SiteHeader />
+      </CartProvider>,
+    );
+    await user.type(
+      screen.getByRole("combobox", { name: "Vyhledat v katalogu" }),
+      "3dn31028000000025",
+    );
+    const option = screen.getByRole("option", { name: product.name });
+    expect(within(option).getByText("Cena dle varianty")).toBeTruthy();
+    expect(option.getAttribute("href")).toBe(
+      `/produkt/${product.slug}?variant=3dn31028000000025#product-variants`,
+    );
   });
 
   it("submits a trimmed query through an accessible icon button", async () => {

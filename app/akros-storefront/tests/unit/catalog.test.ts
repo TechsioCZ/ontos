@@ -241,6 +241,23 @@ describe("mock catalog gateway", () => {
     expect(new Set(results.map(({ product }) => product.id)).size).toBe(results.length);
   });
 
+  it("keeps an exact SKU distinct from a longer SKU with the same prefix", () => {
+    const result = searchCatalog("10197200040300").find(
+      ({ product }) => product.slug === "matice-nytovaci-se-zapustnou-hlavou-an-1972-a2",
+    );
+    expect(result?.matchingVariants.map((variant) => variant.id)).toEqual(["item-9025"]);
+  });
+
+  it("preserves all exact variants when the source reuses a SKU", () => {
+    const result = searchCatalog("3dn31028000000025").find(
+      ({ product }) => product.slug === "dvojniply-typ-310-mat-1-4404",
+    );
+    expect(result?.matchingVariants.map((variant) => variant.id).sort()).toEqual([
+      "item-2238",
+      "item-37855",
+    ]);
+  });
+
   it("resolves categories by their public slug", () => {
     expect(getCategoryBySlug("srouby")?.name).toBe("Šrouby");
   });

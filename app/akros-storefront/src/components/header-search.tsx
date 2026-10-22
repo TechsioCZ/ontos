@@ -15,6 +15,7 @@ import {
 
 import { cs } from "@/i18n/cs";
 import { getCatalogPriceLabel } from "@/lib/product-price";
+import { buildVariantSelectionHref } from "@/lib/product-variant-links";
 import { normalizeCatalogSearchTerm } from "@/lib/product-variant-search";
 import { getCategories, getCategoryTrail, searchCatalog } from "@/mock-storefront/catalog";
 
@@ -86,12 +87,15 @@ export function HeaderSearch() {
               : product.detail.variants.length === 1
                 ? product.detail.variants[0]
                 : undefined;
-          const params = new URLSearchParams({ variant: variant?.sku ?? trimmedQuery });
+          const params = new URLSearchParams({ variant: trimmedQuery });
 
           return {
             value: `product:${product.id}`,
             label: variant ? `${product.name} – ${variant.label}` : product.name,
-            href: `/produkt/${product.slug}${matchingVariants.length ? `?${params}#product-variants` : ""}`,
+            href:
+              matchingVariants.length === 1
+                ? buildVariantSelectionHref(product.slug, [matchingVariants[0].id])
+                : `/produkt/${product.slug}${matchingVariants.length ? `?${params}#product-variants` : ""}`,
             data: {
               kind: "product",
               imageSrc: variant?.imageSrc ?? product.imageSrc,

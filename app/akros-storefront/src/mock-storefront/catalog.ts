@@ -321,11 +321,11 @@ export const searchCatalog = (query: string): CatalogSearchResult[] => {
     const matchingVariants = product.detail.variants.filter((variant) =>
       matchesProductVariantSearch(variant, normalizedQuery),
     );
-    const exactSkuMatch = matchingVariants.find(
+    const exactSkuMatches = matchingVariants.filter(
       (variant) => normalizeCatalogSearchTerm(variant.sku) === normalizedQuery,
     );
 
-    if (exactSkuMatch) return [{ product, matchingVariants: [exactSkuMatch] }];
+    if (exactSkuMatches.length > 0) return [{ product, matchingVariants: exactSkuMatches }];
     if (productMatches) return [{ product, matchingVariants: [] }];
     if (matchingVariants.length > 0) return [{ product, matchingVariants }];
     return [];

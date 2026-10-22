@@ -1,13 +1,13 @@
 ---
 name: akros-integrations
-overview: Připravit a po potvrzení externích kontraktů realizovat našeptávač, skutečnou změnu hesla a adresní předvyplnění podle TASK 11, 15 a 17.
+overview: Ověřit lokální našeptávač a připravit navazující vyhledávání, změnu hesla a adresní předvyplnění podle potvrzených externích kontraktů.
 todos:
   - id: confirm-integration-contracts
     content: Uzavřít D5, D7 a D8 pro autentizaci, pořadí a zdroj vyhledávání a adresního poskytovatele; bez nich nepředstírat připravenost integrací.
     status: pending
   - id: task-11-search-suggestions
-    content: TASK 11 – podle potvrzeného směru upravit existující našeptávač a přesné směrování výsledků na produkty a varianty.
-    status: pending
+    content: TASK 11 – ověřit existující lokální našeptávač a opravit přesné směrování výsledků na produkty a varianty; Meilisearch zůstává navazující integrací.
+    status: completed
   - id: task-15-change-password
     content: TASK 15 – přes skutečnou schválenou autentizační službu změnit heslo v osobních údajích včetně validace a ověření výsledku.
     status: pending
@@ -26,16 +26,24 @@ plně rozhodnuté. Výchozí pořadí je pozdější fáze; není to změna GitH
 `status:park` ani zrušení těchto požadavků. Kontrakty musí být konkrétní a potvrzené
 před implementací závislého kroku. Viz [hlavní plán](../IMPLEMENTATION-PLAN.md).
 
+Lokální frontend TASK 11 byl 22. 10. 2026 ověřen a dokončen samostatně.
+Jeho hotové chování neznamená schválené nebo nasazené Meilisearch; D7 zůstává
+rozhodnutím pro tuto případnou navazující integraci.
+
 Graf vede do této navazující fáze z `akros-detail`, `akros-cart` a
 `akros-account-navigation`. Jde o doporučené pořadí dodávky; produktové rozhodnutí
 může jednotlivou integraci přesunout dříve bez nutnosti čekat na nesouvisející úkoly.
 
 ### TASK 11 – našeptávač · #1309
 
+Rozbor 22. 10. 2026 potvrdil hotový lokální našeptávač a konkrétní chybu
+směrování kolidujících SKU. [TASK 11](akros-task-11-review.md) vlastní opravu
+tohoto původního požadavku; budoucí Meilisearch má samostatné neuzavřené D7.
+
 - Zachovat původní požadavek na vlastní vzhled a správné směrování návrhů při psaní.
   Existující `HeaderSearch` už má lokální katalogový našeptávač a kit
   `SearchSuggestions`; neduplikovat funkční ovládání.
-- Výslovně potvrdit návrh z
+- Pro případnou navazující integraci výslovně potvrdit návrh z
   [komentáře](https://github.com/TechsioCZ/ontos/issues/1309#issuecomment-6266134947):
   pozdější realizaci přes Meilisearch. Předem určit poskytovatele vyhledávání,
   veřejný endpoint, index produktů/variant, aktualizace dat a klientská oprávnění.
@@ -48,8 +56,9 @@ může jednotlivou integraci přesunout dříve bez nutnosti čekat na nesouvise
   indexu v browseru. Samotné zavedení Meilisearch infrastruktury není tímto plánem
   automaticky povolené.
 
-Dokončeno: potvrzený návrh, testy směrování produktu i varianty, pořadí výsledků,
-klávesnice a chybových stavů. Ceny v návrzích respektují TASK 06.
+Lokální část dokončena: ověřené směrování produktu i varianty, pořadí kategorií,
+klávesnice a prázdné výsledky. Ceny v návrzích respektují TASK 06. Vzdálené
+načítání a chybové stavy poskytovatele patří až k případné schválené integraci D7.
 
 ### TASK 15 – změna hesla · #1313
 

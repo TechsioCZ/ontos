@@ -6,6 +6,7 @@ import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { cs } from "@/i18n/cs";
 import { getProductStockStatus } from "@/lib/product-stock";
+import { buildVariantSelectionHref } from "@/lib/product-variant-links";
 import { searchCatalog, toProductSummary } from "@/mock-storefront/catalog";
 import type { CatalogSearchResult } from "@/mock-storefront/types";
 
@@ -20,8 +21,7 @@ const toSearchGridItem = (
   if (matchingVariants.length === 0) return summary;
 
   const matchedVariant = matchingVariants.length === 1 ? matchingVariants[0] : undefined;
-  const variantQuery = matchedVariant?.sku ?? query.trim();
-  const params = new URLSearchParams({ variant: variantQuery });
+  const params = new URLSearchParams({ variant: query.trim() });
 
   return {
     ...summary,
@@ -39,7 +39,9 @@ const toSearchGridItem = (
         unit: matchedVariant.unit,
       },
     }),
-    detailHref: `/produkt/${product.slug}?${params.toString()}#product-variants`,
+    detailHref: matchedVariant
+      ? buildVariantSelectionHref(product.slug, [matchedVariant.id])
+      : `/produkt/${product.slug}?${params.toString()}#product-variants`,
     searchMatchLabel: matchedVariant
       ? `Varianta: ${matchedVariant.label} · SKU ${matchedVariant.sku}`
       : `${matchingVariants.length.toLocaleString("cs-CZ")} odpovídajících variant`,

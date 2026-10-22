@@ -72,6 +72,11 @@ the Button API gap. Footer columns use the shared component's `layout="col"` and
 It also checks the six informational links, keyboard navigation to each page, active links,
 home via the logo and preserved desktop/mobile access to the catalog.
 
+`npm run test:search-routing` checks exact variant links from suggestions and full search
+results at 1920/1024/390/320 px. It covers prefix-colliding and duplicate SKUs, selection
+after reload, modal identity, keyboard/pointer navigation and variant/group prices.
+Screenshots and the report are saved under `test-results/search-routing/`.
+
 With the storefront running, `npm run test:home` checks homepage overflow, product stock rows
 and reachable carousel controls at 34 widths from 320 to 2560 px, including breakpoint edges.
 It also exercises every mobile indicator, both arrows and keyboard navigation. Set

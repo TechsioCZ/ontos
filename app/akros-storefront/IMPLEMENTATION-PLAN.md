@@ -54,7 +54,11 @@ včetně klávesnice, aktivních odkazů a zavírání menu.
 [TASK 10](plans/akros-task-10-review.md) je dokončený: nadpisy, popisy a názvy
 podkategorií jsou vycentrované. Ověřeno na pěti kategoriích a 12 šířkách, včetně
 dlouhých názvů a chybějícího popisu; změna nezasahuje vyhledávání ani boční katalog.
-Další je TASK 11 – rozbor stávajícího našeptávače a požadavku na jeho úpravu.
+[TASK 11](plans/akros-task-11-review.md) potvrdil existující vlastní našeptávač.
+Opravené odkazy používají pro jednoznačnou variantu její ID; sdílené SKU nevybírá
+automaticky první variantu a cenu. Ověřeny návrhy i úplné výsledky na desktopu a mobilu.
+Původní lokální rozsah je dokončený; případná Meilisearch integrace zůstává samostatné D7.
+Další v původním pořadí je TASK 12 – „Objednat znovu“.
 
 ## Zadání a porovnání s GitHubem
 
@@ -162,16 +166,16 @@ udržovat jako druhý nezávislý seznam hotových položek.
 
 ## Rozhodnutí potřebná před příslušným krokem
 
-| ID  | Co je potřeba určit                                                                                                                                                                                                                  | Které úkoly to podmiňuje                   |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------ |
-| D1  | Pro TASK 01 potvrzeno kompaktní černé „Koupit celé balení“ z rámce `8:1377`, tlačítko `8:1717` (desktop 128 × 38 px). Finální rozložení TASK 07–08 se upřesní samostatně.                                                            | 01 vyjasněné; 07–08 později                |
-| D2  | Pro výběr je zavedeno `variantIds` s přesnými ID; `variant` zůstává volným hledáním. Samostatná položka má referenci `variantId: null` a produktový odkaz. Otevření samotného variantního modalu a jeho historii ještě řeší TASK 07. | 02–03 vyřešené odkazy; návaznost 07, 11–13 |
-| D3  | Kg pro zobrazení vlastní hmotnosti varianty doloženo 22. 10. 2026. Pro TASK 16 zbývá ověřit přepočet kus/metr/balení; neúplné či nejednoznačné údaje nenahrazovat odhadem.                                                           | 07 vyřešené zobrazení; 16 přepočet zbývá   |
-| D4  | Zda mají být profil a adresy nadále lokální demo, nebo připojené k zákaznickému účtu; zda „uložené adresy“ znamenají dvě současná pole, nebo více adres.                                                                             | 14, návaznost 17                           |
-| D5  | Cílová autentizační služba a veřejný kontrakt změny hesla včetně ověření uživatele. Bez něj TASK 15 není implementačně připravený.                                                                                                   | 15                                         |
-| D6  | Schváleno: podmínky, o nás, blog, partnerský program, reklamace a kontakty. Domů přes logo, přihlášení samostatně, katalog v bočním/mobilním menu.                                                                                   | 09 vyřešené                                |
-| D7  | Potvrdit odklad TASK 11 a případný Meilisearch kontrakt; samotný komentář neurčuje index, API ani způsob nasazení.                                                                                                                   | 11                                         |
-| D8  | Dostupný publikovaný kontrakt vlastní adresní databáze versus FoxEntry; pokrytí, autentizace, data, provoz a chování při nedostupnosti.                                                                                              | 17                                         |
+| ID  | Co je potřeba určit                                                                                                                                                                                                                  | Které úkoly to podmiňuje                     |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| D1  | Pro TASK 01 potvrzeno kompaktní černé „Koupit celé balení“ z rámce `8:1377`, tlačítko `8:1717` (desktop 128 × 38 px). Finální rozložení TASK 07–08 se upřesní samostatně.                                                            | 01 vyjasněné; 07–08 později                  |
+| D2  | Pro výběr je zavedeno `variantIds` s přesnými ID; `variant` zůstává volným hledáním. Samostatná položka má referenci `variantId: null` a produktový odkaz. Otevření samotného variantního modalu a jeho historii ještě řeší TASK 07. | 02–03 vyřešené odkazy; návaznost 07, 11–13   |
+| D3  | Kg pro zobrazení vlastní hmotnosti varianty doloženo 22. 10. 2026. Pro TASK 16 zbývá ověřit přepočet kus/metr/balení; neúplné či nejednoznačné údaje nenahrazovat odhadem.                                                           | 07 vyřešené zobrazení; 16 přepočet zbývá     |
+| D4  | Zda mají být profil a adresy nadále lokální demo, nebo připojené k zákaznickému účtu; zda „uložené adresy“ znamenají dvě současná pole, nebo více adres.                                                                             | 14, návaznost 17                             |
+| D5  | Cílová autentizační služba a veřejný kontrakt změny hesla včetně ověření uživatele. Bez něj TASK 15 není implementačně připravený.                                                                                                   | 15                                           |
+| D6  | Schváleno: podmínky, o nás, blog, partnerský program, reklamace a kontakty. Domů přes logo, přihlášení samostatně, katalog v bočním/mobilním menu.                                                                                   | 09 vyřešené                                  |
+| D7  | Lokální našeptávač z TASK 11 je ověřený. Případná Meilisearch integrace stále potřebuje potvrzený index, veřejné API, aktualizaci dat a způsob nasazení.                                                                             | 11 lokální část hotová; Meilisearch navazuje |
+| D8  | Dostupný publikovaný kontrakt vlastní adresní databáze versus FoxEntry; pokrytí, autentizace, data, provoz a chování při nedostupnosti.                                                                                              | 17                                           |
 
 Tyto body jsou cílené vstupní brány pro konkrétní úkoly, nikoli důvod zastavit psaní
 plánu nebo nezávislé části. Návrhy v tomto plánu nejsou automaticky schválenými
