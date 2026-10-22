@@ -8,6 +8,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { getConfig } from "./config";
 import { readActiveRevision } from "./composition-revision";
+import { shellFetch } from "./shell-fetch";
 
 const GATEWAY_CONTEXT_PATH = "/shell-super-app-api/auth/api-key/gateway-context";
 
@@ -50,7 +51,7 @@ const fetchActiveRevision = async (): Promise<string | undefined> => {
 /** fetch that reports an unreachable shell as a retryable 503 instead of a TypeError. */
 const reach = async (url: string, init: RequestInit): Promise<Response> => {
   try {
-    return await fetch(url, init);
+    return await shellFetch(url, init);
   } catch (error) {
     throw new OntosError(
       `OntOS unreachable: ${url.replace(/\?.*$/u, "")} (${String((error as Error).cause ?? error)})`,

@@ -1,5 +1,6 @@
 import "server-only";
 import { getConfig } from "@/ontos/config";
+import { shellFetch } from "@/ontos/shell-fetch";
 
 const events = ["ORDER_CREATED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"];
 const statuses = ["SENDING", "SENT", "RETRY", "FAILED", "UNKNOWN", "SKIPPED"];
@@ -34,7 +35,7 @@ export async function GET(request: Request) {
       subjectNumber: orderNumber,
       recipient: email,
     });
-    const upstream = await fetch(
+    const upstream = await shellFetch(
       `${getConfig().shellUrl}/shell-super-app-api/email/deliveries?${params.toString()}`,
       {
         cache: "no-store",
