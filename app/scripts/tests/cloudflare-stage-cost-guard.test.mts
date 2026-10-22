@@ -8,6 +8,7 @@ import {
   checkUsage,
   costGuardChecks,
   killSwitchRule,
+  machineEndpointsRule,
   UsageConfiguration,
   usageReport,
 } from '../ops/cloudflare-stage-cost-guard.mts';
@@ -58,6 +59,19 @@ const HOSTNAMES = [
   'ontos-stage-inventory.stage.example.com',
   'ontos-stage-tax.stage.example.com',
   'ontos-stage-privacy.stage.example.com',
+  'ontos-stage-property-portfolio.stage.example.com',
+  'ontos-stage-property-leasing.stage.example.com',
+  'ontos-stage-legal-agreements.stage.example.com',
+  'ontos-stage-work-tasks.stage.example.com',
+  'ontos-stage-workforce.stage.example.com',
+  'ontos-stage-tagging.stage.example.com',
+  'ontos-stage-crm.stage.example.com',
+  'ontos-stage-sales-pipeline.stage.example.com',
+  'ontos-stage-merchandise.stage.example.com',
+  'ontos-stage-sales-insights.stage.example.com',
+  'ontos-stage-finance-billing.stage.example.com',
+  'ontos-stage-crm-activities.stage.example.com',
+  'ontos-stage-facility-operations.stage.example.com',
   SHELL_HOSTNAME,
 ];
 
@@ -82,6 +96,16 @@ const run = <A, E, R>(
       ),
     ),
   );
+
+const MACHINE_ENDPOINTS = 'ontos_stage_machine_endpoints';
+const MACHINE_ENDPOINTS_EXPRESSION = [
+  `(http.host eq "${SHELL_HOSTNAME}" and (http.request.uri.path in {"/mcp"}`,
+  ' or starts_with(http.request.uri.path, "/.well-known/oauth-authorization-server")',
+  ' or starts_with(http.request.uri.path, "/.well-known/oauth-protected-resource")',
+  ' or starts_with(http.request.uri.path, "/.well-known/openid-configuration")',
+  ' or starts_with(http.request.uri.path, "/shell-super-app-api/oauth/")',
+  ' or starts_with(http.request.uri.path, "/shell-super-app-api/mcp")))',
+].join('');
 
 const KILL_SWITCH_EXPRESSION = `(http.host in {${HOSTNAMES.map((hostname) => JSON.stringify(hostname)).join(' ')}})`;
 
@@ -119,6 +143,18 @@ it.effect('provisions every cost guard on an empty account and hands CI the zone
         },
         method: 'PUT',
         path: `/rulesets/phases/${CUSTOM_PHASE}/entrypoint`,
+      },
+      {
+        body: {
+          action: 'skip',
+          action_parameters: { products: ['bic', 'securityLevel'] },
+          description: 'OntOS stage: OAuth discovery, OAuth server and MCP are never challenged (machine clients)',
+          enabled: true,
+          expression: MACHINE_ENDPOINTS_EXPRESSION,
+          ref: MACHINE_ENDPOINTS,
+        },
+        method: 'POST',
+        path: `/rulesets/ruleset-${CUSTOM_PHASE}/rules`,
       },
       { body: { duration: '8760h', name: 'ontos-stage-ci' }, method: 'POST', path: '/access/service_tokens' },
       {
@@ -303,6 +339,7 @@ it.effect('adds the kill switch next to other projects rules, keeps a tripped on
     const ruleWrites = writes(account).filter(({ path }) => path.startsWith('/rulesets'));
     expect(ruleWrites.map(({ method, path }) => `${method} ${path}`)).toStrictEqual([
       'PATCH /rulesets/custom/rules/kill-1',
+      'POST /rulesets/custom/rules',
     ]);
     const custom = account.rulesets.find(({ phase }) => phase === CUSTOM_PHASE);
     expect(custom?.rules[0]).toStrictEqual(foreign);
@@ -321,8 +358,35 @@ it.effect('adds a missing kill switch to an entrypoint other projects already us
 
     expect(writes(account).filter(({ path }) => path.startsWith('/rulesets'))).toStrictEqual([
       { body: killSwitchRule(HOSTNAMES, false), method: 'POST', path: '/rulesets/custom/rules' },
+      { body: machineEndpointsRule(SHELL_HOSTNAME), method: 'POST', path: '/rulesets/custom/rules' },
     ]);
     expect(account.rulesets.find(({ phase }) => phase === CUSTOM_PHASE)?.rules[0]).toStrictEqual(foreign);
+  }),
+);
+
+it.effect('keeps OAuth and MCP free of challenges after the kill switch, which the skip never bypasses', () =>
+  Effect.gen(function* machineEndpoints() {
+    const killSwitch = { ...killSwitchRule(HOSTNAMES, true), id: 'kill-1' };
+    const disabled = { ...machineEndpointsRule(SHELL_HOSTNAME), enabled: false, id: 'skip-1' };
+    const account = fakeCloudflareAccount({
+      rulesets: [{ id: 'custom', kind: 'zone', phase: CUSTOM_PHASE, rules: [killSwitch, disabled] }],
+    });
+    const stage = fakeStage({});
+
+    yield* run(provisionCostGuards, { account, stage });
+
+    expect(writes(account).filter(({ path }) => path.startsWith('/rulesets'))).toStrictEqual([
+      { body: machineEndpointsRule(SHELL_HOSTNAME), method: 'PATCH', path: '/rulesets/custom/rules/skip-1' },
+    ]);
+    const rules = account.rulesets.find(({ phase }) => phase === CUSTOM_PHASE)?.rules ?? [];
+    expect(rules.map(({ id }) => id)).toStrictEqual(['kill-1', 'skip-1']);
+    expect(rules[0]).toMatchObject({ enabled: true, ref: KILL_SWITCH });
+    // Skipping products only: no `ruleset`/`phases`, so later custom, managed and rate-limit rules still run.
+    expect(machineEndpointsRule(SHELL_HOSTNAME).action_parameters).toStrictEqual({
+      products: ['bic', 'securityLevel'],
+    });
+    const checks = yield* run(costGuardChecks({ ...settings, hostnames: HOSTNAMES }), { account, stage });
+    expect(checks.find(([label]) => label.includes(MACHINE_ENDPOINTS))?.[1]).toStrictEqual(Option.none());
   }),
 );
 

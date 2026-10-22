@@ -43,7 +43,13 @@ import {
  *   ingress plus bypass applications for its public contracts and API-key gateway context. Immutable
  *   module artifacts use their own Workers endpoints, outside these Access applications.
  * - A WAF custom rule blocking exactly the OntOS stage hostnames, provisioned disabled. The WAF
- *   answers before a Worker runs, so blocked requests are never billed. There is no rate-limit
+ *   answers before a Worker runs, so blocked requests are never billed.
+ * - After it, a WAF custom `skip` rule so OAuth discovery, the OAuth server and MCP on the Shell
+ *   hostname never get a Browser Integrity Check or Security Level challenge: ChatGPT, Claude and
+ *   Codex call them from datacenter IPs with non-browser clients that cannot solve a challenge. It
+ *   skips only those two products, never later custom rules, so the kill switch still blocks these
+ *   paths, and managed and rate-limit rules still apply. Free-plan Bot Fight Mode runs outside the
+ *   Ruleset Engine and cannot be skipped by any rule; it must stay off on this zone. There is no rate-limit
  *   rule: the stage zone is shared and on the Free plan, whose rate-limit expressions cannot match
  *   a hostname, so one would throttle every other project in the zone.
  * - A Workers requests usage notification to STAGE_ACCESS_EMAILS.
@@ -70,6 +76,20 @@ export const ZONE_ID_VARIABLE = 'CLOUDFLARE_STAGE_ZONE_ID';
 
 export const KILL_SWITCH_PHASE = 'http_request_firewall_custom';
 export const KILL_SWITCH_RULE_REF = 'ontos_stage_kill_switch';
+export const MACHINE_ENDPOINTS_RULE_REF = 'ontos_stage_machine_endpoints';
+/**
+ * The Shell paths machine clients call: RFC 8414/OIDC and RFC 9728 discovery at the root, the OAuth
+ * issuer `/shell-super-app-api/oauth` (authorize, token, JWKS, its own discovery), the MCP endpoint
+ * `/mcp` and their BFF routes (`apps/shell-super-app/shared/mcp-resource.ts`, `oauth-metadata-routes.ts`).
+ */
+export const MACHINE_ENDPOINT_PATH_PREFIXES = [
+  '/.well-known/oauth-authorization-server',
+  '/.well-known/oauth-protected-resource',
+  '/.well-known/openid-configuration',
+  '/shell-super-app-api/oauth/',
+  '/shell-super-app-api/mcp',
+] as const;
+export const MACHINE_ENDPOINT_PATHS = ['/mcp'] as const;
 export const USAGE_ALERT_NAME = 'ontos-stage-workers-requests';
 /** Half the included 10M requests: an early warning, well before the kill switch threshold. */
 export const USAGE_ALERT_REQUESTS = 5_000_000;
@@ -104,6 +124,26 @@ export const killSwitchRule = (hostnames: readonly string[], enabled: boolean): 
   enabled,
   expression: ['(http.host in {', hostnames.map((hostname) => `"${hostname}"`).join(' '), '})'].join(''),
   ref: KILL_SWITCH_RULE_REF,
+});
+
+/** A rule-expression string literal; every value quoted here is a constant path without quotes or backslashes. */
+const quoted = (value: string) => `"${value}"`;
+
+/** Skips Browser Integrity Check and Security Level for the machine endpoints on the Shell hostname. */
+export const machineEndpointsRule = (shellHostname: string): RulesetRuleSpec => ({
+  action: 'skip',
+  action_parameters: { products: ['bic', 'securityLevel'] },
+  description: 'OntOS stage: OAuth discovery, OAuth server and MCP are never challenged (machine clients)',
+  enabled: true,
+  expression: [
+    `(http.host eq "${shellHostname}" and (`,
+    [
+      `http.request.uri.path in {${MACHINE_ENDPOINT_PATHS.map(quoted).join(' ')}}`,
+      ...MACHINE_ENDPOINT_PATH_PREFIXES.map((prefix) => `starts_with(http.request.uri.path, "${prefix}")`),
+    ].join(' or '),
+    '))',
+  ].join(''),
+  ref: MACHINE_ENDPOINTS_RULE_REF,
 });
 
 /** Anyone who signs in with a login method of the Zero Trust organization gets in. */
@@ -146,7 +186,14 @@ const requireAccess = <A, R>(effect: Effect.Effect<A, CloudflareApiError, R>) =>
 const ruleMatches = (rule: CloudflareRulesetRule, spec: RulesetRuleSpec) =>
   rule.action === spec.action &&
   rule.expression === spec.expression &&
-  Option.getOrElse(rule.description, () => '') === spec.description;
+  Option.getOrElse(rule.description, () => '') === spec.description &&
+  same(
+    rule.action_parameters.pipe(
+      Option.flatMap(({ products }) => products),
+      Option.getOrElse(() => []),
+    ),
+    [...(spec.action_parameters?.products ?? [])],
+  );
 
 const ruleSpec = (rule: CloudflareRulesetRule, enabled: boolean): RulesetRuleSpec => ({
   action: 'block',
@@ -174,9 +221,9 @@ const findZoneId = (stageZone: string) =>
     });
   });
 
-/** The zone's custom-rules entrypoint and the kill switch rule in it, found by its `ref`. */
-const findKillSwitch = (zoneId: string) =>
-  Effect.gen(function* findKillSwitchEffect() {
+/** The zone's custom-rules entrypoint and the owned rule in it, found by its `ref`. */
+const findRule = (zoneId: string, ref: string) =>
+  Effect.gen(function* findRuleEffect() {
     const api = yield* CloudflareApi;
     const entrypoint = (yield* api.zoneRulesets(zoneId)).find(
       (ruleset) => ruleset.kind === 'zone' && ruleset.phase === KILL_SWITCH_PHASE,
@@ -187,24 +234,22 @@ const findKillSwitch = (zoneId: string) =>
     const ruleset = yield* api.ruleset(zoneId, entrypoint.id);
     return {
       rule: Option.fromNullishOr(
-        Option.getOrElse(ruleset.rules, () => []).find(
-          (rule) => Option.getOrUndefined(rule.ref) === KILL_SWITCH_RULE_REF,
-        ),
+        Option.getOrElse(ruleset.rules, () => []).find((rule) => Option.getOrUndefined(rule.ref) === ref),
       ),
       rulesetId: Option.some(ruleset.id),
     };
   });
 
 /**
- * Converges the kill switch rule without touching the other rules in its phase, which may belong to
- * other projects in the zone: a missing entrypoint is created with the rule, a missing rule is added,
- * and a drifted rule is updated. Its on/off state is kept, so provisioning never resumes a tripped
- * kill switch.
+ * Converges an owned custom rule without touching the other rules in its phase, which may belong to
+ * other projects in the zone: a missing entrypoint is created with the rule, a missing rule is added
+ * at the end (so the kill switch, provisioned first, stays first), and a drifted rule is updated. The kill
+ * switch keeps its on/off state, so provisioning never resumes it; any other owned rule is turned on.
  */
-const ensureKillSwitchRule = (zoneId: string, spec: RulesetRuleSpec) =>
-  Effect.gen(function* ensureKillSwitchRuleEffect() {
+const ensureZoneRule = (zoneId: string, spec: RulesetRuleSpec) =>
+  Effect.gen(function* ensureZoneRuleEffect() {
     const api = yield* CloudflareApi;
-    const { rule, rulesetId } = yield* findKillSwitch(zoneId);
+    const { rule, rulesetId } = yield* findRule(zoneId, spec.ref);
     if (Option.isNone(rulesetId)) {
       return yield* perform(
         `create the ${KILL_SWITCH_PHASE} entrypoint with the rule ${spec.ref}`,
@@ -217,12 +262,13 @@ const ensureKillSwitchRule = (zoneId: string, spec: RulesetRuleSpec) =>
         api.addRulesetRule(zoneId, rulesetId.value, spec),
       );
     }
-    if (ruleMatches(rule.value, spec)) {
+    const enabled = spec.ref === KILL_SWITCH_RULE_REF ? isEnabled(rule.value) : spec.enabled;
+    if (ruleMatches(rule.value, spec) && isEnabled(rule.value) === enabled) {
       return yield* Console.log(`${KILL_SWITCH_PHASE} rule ${spec.ref} is current`);
     }
     return yield* perform(
       `update the ${KILL_SWITCH_PHASE} rule ${spec.ref}`,
-      api.updateRulesetRule(zoneId, rulesetId.value, rule.value.id, { ...spec, enabled: isEnabled(rule.value) }),
+      api.updateRulesetRule(zoneId, rulesetId.value, rule.value.id, { ...spec, enabled }),
     );
   });
 
@@ -230,7 +276,7 @@ const ensureKillSwitchRule = (zoneId: string, spec: RulesetRuleSpec) =>
 export const setKillSwitch = (zoneId: string, enabled: boolean) =>
   Effect.gen(function* setKillSwitchEffect() {
     const api = yield* CloudflareApi;
-    const { rule, rulesetId } = yield* findKillSwitch(zoneId);
+    const { rule, rulesetId } = yield* findRule(zoneId, KILL_SWITCH_RULE_REF);
     if (Option.isNone(rule) || Option.isNone(rulesetId)) {
       return yield* new StageOperationError({ message: `the kill switch rule ${KILL_SWITCH_RULE_REF} ${NOT_FOUND}` });
     }
@@ -457,7 +503,8 @@ export const ensureCostGuards = (plan: CostGuardPlan) =>
         setGithubVariable(plan.repository, STAGE_EDGE_ENVIRONMENT, ZONE_ID_VARIABLE, zoneId),
       );
     }
-    yield* ensureKillSwitchRule(zoneId, killSwitchRule(plan.hostnames, false));
+    yield* ensureZoneRule(zoneId, killSwitchRule(plan.hostnames, false));
+    yield* ensureZoneRule(zoneId, machineEndpointsRule(plan.shellHostname));
     yield* ensureAccess(plan);
     yield* ensureUsageAlert(plan.accessEmails);
   });
@@ -472,8 +519,10 @@ export const costGuardChecks = (plan: CostGuardPlan) =>
     const api = yield* CloudflareApi;
     const zoneId = yield* findZoneId(plan.stageZone);
     const variables = yield* listGithubVariables(plan.repository, STAGE_EDGE_ENVIRONMENT);
-    const killSwitch = yield* findKillSwitch(zoneId);
+    const killSwitch = yield* findRule(zoneId, KILL_SWITCH_RULE_REF);
     const killSwitchSpec = killSwitchRule(plan.hostnames, false);
+    const machineEndpoints = yield* findRule(zoneId, MACHINE_ENDPOINTS_RULE_REF);
+    const machineEndpointsSpec = machineEndpointsRule(plan.shellHostname);
     const access = yield* api.accessPolicies.pipe(
       Effect.map(Option.some),
       Effect.catchIf(isAccessNotEnabled, () => Effect.succeed(Option.none())),
@@ -501,6 +550,16 @@ export const costGuardChecks = (plan: CostGuardPlan) =>
             }
             return ruleMatches(rule, killSwitchSpec) ? Option.none<string>() : Option.some('it drifted; run provision');
           },
+        }),
+      ],
+      [
+        `the rule ${MACHINE_ENDPOINTS_RULE_REF} keeps OAuth and MCP free of challenges`,
+        Option.match(machineEndpoints.rule, {
+          onNone: () => Option.some(NOT_FOUND),
+          onSome: (rule) =>
+            isEnabled(rule) && ruleMatches(rule, machineEndpointsSpec)
+              ? Option.none<string>()
+              : Option.some('it is off or drifted; run provision'),
         }),
       ],
       [`the Access policy ${ACCESS_CI_POLICY} exists`, accessFailure(policyIds.has(ACCESS_CI_POLICY))],

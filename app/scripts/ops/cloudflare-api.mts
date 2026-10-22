@@ -81,6 +81,7 @@ const RulesetSummarySchema = Schema.Struct({ id: Schema.NonEmptyString, kind: Sc
 
 const RulesetRuleSchema = Schema.Struct({
   action: Schema.String,
+  action_parameters: optional(Schema.Struct({ products: optional(Schema.Array(Schema.String)) })),
   description: optional(Schema.String),
   enabled: optional(Schema.Boolean),
   expression: Schema.String,
@@ -164,9 +165,15 @@ export interface WorkersUsage {
   readonly scripts: readonly ScriptUsage[];
 }
 
+/** Zone security products a custom-rules `skip` action can skip (Browser Integrity Check, Security Level). */
+export const SkippableProductSchema = Schema.Literals(['bic', 'securityLevel']);
+export type SkippableProduct = typeof SkippableProductSchema.Type;
+
 /** One rule of a zone phase entrypoint, owned by the cut-over and found again by its `ref`. */
 export interface RulesetRuleSpec {
-  readonly action: 'block';
+  readonly action: 'block' | 'skip';
+  /** A `skip` rule names the zone security products it skips; without `ruleset` it never skips later custom rules. */
+  readonly action_parameters?: { readonly products: readonly SkippableProduct[] };
   readonly description: string;
   readonly enabled: boolean;
   readonly expression: string;
