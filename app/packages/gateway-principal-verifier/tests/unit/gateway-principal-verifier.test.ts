@@ -1,5 +1,4 @@
 import { HttpServerRequest } from 'effect/unstable/http';
-import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
 import {
   ActiveApplicationCompositionService,
   GatewayAssertionRedemptionUnavailableError,
@@ -718,8 +717,8 @@ it.effect(
       const snapshot = yield* gatewayComposition;
       expect(issued).toEqual({
         apiBaseUrl: new URL(
-          moduleReleaseApiBaseUrl('party-registry', GATEWAY_FIXTURE_BUILD_MARKER),
-          snapshot.composition.shell.runtimeContract.url,
+          '/party-registry-api',
+          snapshot.composition.modules.find((module) => module.deployment.appId === 'party-registry')?.backend.baseUrl,
         ).href,
         authorization: `Bearer ${fixture.token}`,
         compositionRevision: snapshot.composition.revision,

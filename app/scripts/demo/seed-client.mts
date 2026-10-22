@@ -62,10 +62,15 @@ const Revision = Schema.Struct({ revision: Schema.Int });
 const checked = (response: HttpClientResponse.HttpClientResponse, operation: string) =>
   response.status >= 200 && response.status < 300
     ? Effect.succeed(response)
-    : Effect.fail(
-        new DemoSeedError({
-          reason: `${operation}: HTTP ${response.status}. No automatic write retry; rerun after resolving the failure.`,
-        }),
+    : response.text.pipe(
+        Effect.orElseSucceed(() => ''),
+        Effect.flatMap((body) =>
+          Effect.fail(
+            new DemoSeedError({
+              reason: `${operation}: HTTP ${response.status} ${body.slice(0, 600)}. No automatic write retry; rerun after resolving the failure.`,
+            }),
+          ),
+        ),
       );
 const post = <P extends Schema.Top>(
   origin: string,
