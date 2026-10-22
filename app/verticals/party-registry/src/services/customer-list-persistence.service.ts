@@ -4,7 +4,7 @@ import { DateTime, Effect } from 'effect';
 import type { CustomerListItem } from '../../shared/apis/customer-list.ts';
 import { CounterpartyPersistenceUnavailable } from '../../shared/domain/counterparty-errors.ts';
 import type { PartyAliasResolutionError } from '../../shared/domain/merge-alias-resolution.ts';
-import { resolvePartyAlias } from '../merge/party-alias-resolution.service.ts';
+import { resolvePartyAliases } from '../merge/party-alias-resolution.service.ts';
 import {
   counterparties,
   counterpartyRolePeriods,
@@ -232,10 +232,10 @@ export const listCustomerRecords = Effect.fn('CustomerListPersistenceService.lis
     transaction: CustomerListTransaction,
     scope: CustomerListScope,
     query: CustomerListQuery,
-    resolveCanonicalPartyId: (partyId: string) => Effect.Effect<string, PartyAliasResolutionError> = (partyId) =>
-      resolvePartyAlias(transaction, scope.tenantId, partyId).pipe(
-        Effect.map(({ canonicalPartyId }) => canonicalPartyId),
-      ),
+    resolveCanonicalPartyIds: (
+      partyIds: readonly string[],
+    ) => Effect.Effect<ReadonlyMap<string, string>, PartyAliasResolutionError> = (partyIds) =>
+      resolvePartyAliases(transaction, scope.tenantId, partyIds),
   ) {
     const now = yield* DateTime.nowAsDate;
     const joinedRows: readonly CustomerCounterpartyRow[] = yield* transaction
@@ -273,15 +273,17 @@ export const listCustomerRecords = Effect.fn('CustomerListPersistenceService.lis
     if (counterpartyRows.length === 0) {
       return [];
     }
-    const rows = yield* Effect.forEach(
-      counterpartyRows,
-      (row) =>
-        resolveCanonicalPartyId(row.partyId).pipe(
-          Effect.mapError(unavailable),
-          Effect.map((canonicalPartyId) => ({ ...row, canonicalPartyId })),
-        ),
-      { concurrency: 1 },
+    // One set-based alias resolution for the whole page (was two queries per customer).
+    const canonical = yield* resolveCanonicalPartyIds(counterpartyRows.map((row) => row.partyId)).pipe(
+      Effect.mapError(unavailable),
     );
+    const rows = counterpartyRows.flatMap((row) => {
+      const canonicalPartyId = canonical.get(row.partyId);
+      return canonicalPartyId === undefined ? [] : [{ ...row, canonicalPartyId }];
+    });
+    if (rows.length !== counterpartyRows.length) {
+      return yield* unavailable();
+    }
     const partyIds = [...new Set(rows.map(({ canonicalPartyId }) => canonicalPartyId))];
     // One transaction connection: the three reads stay sequential (concurrency 1).
     const [partyRows, identifierRows, contactRows] = yield* Effect.all(

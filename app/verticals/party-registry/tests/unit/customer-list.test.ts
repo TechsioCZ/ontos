@@ -135,7 +135,8 @@ it.effect('reads scoped customers, resolves aliases, and loads Party facts in on
       transaction,
       { legalEntityId, tenantId },
       { includeArchived: false, limit: 50 },
-      (partyId) => Effect.succeed(partyId === aliasPartyId ? canonicalPartyId : partyId),
+      (partyIds) =>
+        Effect.succeed(new Map(partyIds.map((partyId) => [partyId, partyId === aliasPartyId ? canonicalPartyId : partyId]))),
     );
 
     expect(selectedTables).toEqual([
@@ -159,7 +160,7 @@ it.effect('returns an empty list without loading Party facts when no customer ro
       transaction,
       { legalEntityId, tenantId },
       { includeArchived: true, limit: 10 },
-      Effect.succeed,
+      (partyIds) => Effect.succeed(new Map(partyIds.map((partyId) => [partyId, partyId]))),
     );
 
     expect(items).toEqual([]);
