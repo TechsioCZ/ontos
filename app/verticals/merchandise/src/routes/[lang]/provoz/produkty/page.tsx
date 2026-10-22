@@ -12,7 +12,7 @@ import { Effect, Schema } from 'effect';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { BulkProductPatch } from '../../../../../shared/actions/apply-command.ts';
-import type { ProductRecord, RecordsResponse } from '../../../../../shared/apis/records.ts';
+import type { ProductCategoryCount, ProductRecord, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { ProductIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import type { CategoryNode } from '../../../../../shared/domain/merchandise-model.ts';
 import csResource from '../../../../../locales/cs/merchandise.json';
@@ -22,7 +22,7 @@ import type { SubjectTagFilter } from '../../../../tags/subject-tags.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
 import { formatKc } from '../../../../list-cells.tsx';
-import { loadCategoryTree, loadProducts, runCommand, productNavigationFailureKey } from './products-api.ts';
+import { loadCategoryChoices, loadProducts, runCommand, productNavigationFailureKey } from './products-api.ts';
 import type { FailureReason, ProductListQuery, ProductSort } from './products-api.ts';
 import { categoryTrails } from './product-catalog-content.tsx';
 import { useDebounced } from './product-reads.ts';
@@ -60,6 +60,14 @@ type LoadState =
   | { readonly status: 'loading' };
 
 const NO_CATEGORIES: readonly CategoryNode[] = [];
+const NO_PRODUCT_CATEGORIES: readonly ProductCategoryCount[] = [];
+
+interface CategoryChoices {
+  /** Distinct product category labels; the filter offers them when the company has no storefront tree. */
+  readonly labels: readonly ProductCategoryCount[];
+  readonly tree: readonly CategoryNode[];
+}
+const NO_CHOICES: CategoryChoices = { labels: NO_PRODUCT_CATEGORIES, tree: NO_CATEGORIES };
 
 type SetLoadState = (next: LoadState) => void;
 
@@ -87,40 +95,50 @@ const useProductPage = (query: ProductListQuery) => {
   return { reload: () => readPage(query, generation, setState), state };
 };
 
-const readTree = (setCategories: (next: readonly CategoryNode[]) => void): void =>
-  loadCategoryTree((outcome) => {
+const readChoices = (setChoices: (next: CategoryChoices) => void): void =>
+  loadCategoryChoices((outcome) => {
     if (outcome.ok) {
-      setCategories(outcome.response.categories ?? NO_CATEGORIES);
+      setChoices({
+        labels: outcome.response.productCategories ?? NO_PRODUCT_CATEGORIES,
+        tree: outcome.response.categories ?? NO_CATEGORIES,
+      });
     }
   });
 
-/** The storefront category tree for the category filter; reread after the category panel saves. */
-const useCategoryTree = () => {
-  const [categories, setCategories] = useState<readonly CategoryNode[]>(NO_CATEGORIES);
+/** The category filter's choices; reread after the category panel or a product's category changes. */
+const useCategoryChoices = () => {
+  const [choices, setChoices] = useState<CategoryChoices>(NO_CHOICES);
   useEffect(() => {
-    readTree(setCategories);
+    readChoices(setChoices);
   }, []);
-  return { categories, reload: () => readTree(setCategories) };
+  return { choices, reload: () => readChoices(setChoices) };
 };
 
-/** Category filter options: every tree node labelled with its path, in path order. */
-const categoryOptions = (categories: readonly CategoryNode[]) =>
-  [...categoryTrails(categories)]
-    .map(([value, label]) => ({ label, value }))
-    .toSorted((left, right) => left.label.localeCompare(right.label, 'cs'));
+/**
+ * Category filter options: every storefront tree node labelled with its path, in path order. Without a tree, the
+ * product category labels with their product counts.
+ */
+const categoryOptions = (choices: CategoryChoices) =>
+  choices.tree.length > 0
+    ? [...categoryTrails(choices.tree)]
+        .map(([value, label]) => ({ label, value }))
+        .toSorted((left, right) => left.label.localeCompare(right.label, 'cs'))
+    : choices.labels.flatMap((entry) =>
+        entry.name.trim() === '' ? [] : [{ label: `${entry.name} (${entry.productCount})`, value: entry.name }],
+      );
 
 /** With a tag filter active, row tags still loading read as loading and a failed load as error, never as no match. */
 const tableStatusFor = (
   productsStatus: LoadState['status'],
   tagStatus: SubjectTagFilter['status'],
 ): ProductsTableStatus => {
+  if (tagStatus === 'error') {
+    return 'error';
+  }
   if (productsStatus !== 'ready') {
     return productsStatus;
   }
-  if (tagStatus === 'loading') {
-    return 'loading';
-  }
-  return tagStatus === 'error' ? 'error' : 'ready';
+  return tagStatus === 'loading' ? 'loading' : 'ready';
 };
 
 interface ProductStatsProps {
@@ -171,6 +189,7 @@ const RecordsPageContent = () => {
   const k = (path: string) => t(`merchandise.pages.products.${path}`);
 
   const [search, setSearch] = useState('');
+  /** A storefront tree category id, or a product category label when the company has no tree. */
   const [categoryId, setCategoryId] = useState<string | null>(null);
   const [lowStockOnly, setLowStockOnly] = useState(false);
   const [sort, setSort] = useState<ProductSort | null>(null);
@@ -179,19 +198,26 @@ const RecordsPageContent = () => {
   const [dialog, setDialog] = useState<typeof DialogKind.Type | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const settledSearch = useDebounced(search);
+  const tagFilter = useSubjectTagFilter('product');
+  const { choices, reload: reloadCategories } = useCategoryChoices();
+  const byTree = choices.tree.length > 0;
+  const treeCategoryId = byTree ? categoryId : null;
+  const labelCategory = byTree ? null : categoryId;
+  const taggedIds = tagFilter.ids;
   const query = useMemo<ProductListQuery>(
     () => ({
-      categoryId,
+      category: labelCategory,
+      categoryId: treeCategoryId,
       limit: pagination.pageSize,
       lowStockOnly,
       offset: pagination.pageIndex * pagination.pageSize,
       search: settledSearch,
       sort,
+      taggedIds,
     }),
-    [categoryId, lowStockOnly, pagination, settledSearch, sort],
+    [labelCategory, lowStockOnly, pagination, settledSearch, sort, taggedIds, treeCategoryId],
   );
   const { reload, state } = useProductPage(query);
-  const { categories, reload: reloadCategories } = useCategoryTree();
 
   /** A filter change starts again at the first page. */
   const firstPage = () =>
@@ -201,12 +227,9 @@ const RecordsPageContent = () => {
   const products = ready?.products ?? [];
   const canWrite = (ready?.canManageCatalog ?? ready?.canWrite) === true;
   const productTags = useSubjectTags('product', canWrite ? products.map((product) => product.id) : []);
-  const tagFilter = useSubjectTagFilter(productTags);
   const revision = ready?.revision ?? 0;
-  const categoryItems = useMemo(() => categoryOptions(categories), [categories]);
+  const categoryItems = useMemo(() => categoryOptions(choices), [choices]);
 
-  // The tag filter has no server counterpart yet: it narrows the page on screen.
-  const rows = products.filter((product) => tagFilter.matches(product.id));
   const selectedIds = Object.keys(selection).filter(isProductId);
   const filtersActive = search.trim() !== '' || categoryId !== null || lowStockOnly || tagFilter.tagId !== null;
   const stale = state.status === 'ready' && state.query !== query;
@@ -215,6 +238,10 @@ const RecordsPageContent = () => {
   const onCommitted = (message: string) => {
     toaster.create({ duration: SUCCESS_TOAST_MS, title: message, type: 'success' });
     reload();
+    if (!byTree) {
+      // New products and category changes can add or empty a product category label.
+      reloadCategories();
+    }
   };
   const onCategoriesCommitted = (message: string) => {
     onCommitted(message);
@@ -362,7 +389,14 @@ const RecordsPageContent = () => {
           </div>
           {canWrite && (
             <div className="w-48">
-              <TagFilter kind="product" onChange={(tagId) => tagFilter.setTagId(tagId)} value={tagFilter.tagId} />
+              <TagFilter
+                kind="product"
+                onChange={(tagId) => {
+                  tagFilter.setTagId(tagId);
+                  firstPage();
+                }}
+                value={tagFilter.tagId}
+              />
             </div>
           )}
           <Switch
@@ -423,11 +457,12 @@ const RecordsPageContent = () => {
             }
             reload();
             productTags.refetch();
+            tagFilter.refetch();
           }}
           onSelectionChange={setSelection}
           pagination={pagination}
           rowCount={ready?.totalProducts ?? products.length}
-          rows={rows}
+          rows={products}
           selection={selection}
           status={tableStatus}
           tagsOf={productTags.tagsOf}
@@ -470,6 +505,10 @@ const RecordsPageContent = () => {
               onDone={() => {
                 setSelection({});
                 productTags.refetch();
+                if (tagFilter.tagId !== null) {
+                  // The selected tag gained or lost products: read its subjects (and so the page) again.
+                  tagFilter.refetch();
+                }
               }}
               onOpenChange={closeDialog}
               open={dialog === 'tags'}

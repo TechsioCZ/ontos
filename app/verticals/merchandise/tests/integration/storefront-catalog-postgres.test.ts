@@ -8,11 +8,13 @@ import {
   categoryTree,
   indicators,
   orderPage,
+  productCategoryCounts,
   productMovements,
   staffProducts,
   storefrontOrderStatus,
   storefrontProducts,
 } from '../../src/services/merchandise-queries.ts';
+import { resetToAkrosBaseline } from '../../src/services/akros-demo-reset.ts';
 import { loadHead } from '../../src/services/merchandise-store.ts';
 import type { MerchandiseFixture } from './support/merchandise-database.ts';
 import { catalogInput, catalogState, decodeState, withMerchandise } from './support/merchandise-database.ts';
@@ -384,6 +386,66 @@ it.live('staff reads page, filter and sort in SQL and indicators cover the whole
         productCount: 4,
         stockValueMinor: 500,
       });
+    }),
+  ),
+);
+
+it.live('staff list filters by tagged ids and product category label across pages, with grouped variant counts', () =>
+  onCatalog(({ db, scope }) =>
+    Effect.gen(function* staffTagAndCategoryFilters() {
+      const page = (view: RecordsView) =>
+        staffProducts(db, scope, { summary: true, ...view }, false).pipe(
+          Effect.map((result) => [result.total, result.products.map((product) => product.id)]),
+        );
+      expect(yield* page({ taggedProductIds: ['p2', 'p4', 'unknown'] })).toEqual([2, ['p2', 'p4']]);
+      expect(yield* page({ limit: 1, offset: 1, taggedProductIds: ['p2', 'p4'] })).toEqual([2, ['p4']]);
+      expect(yield* page({ taggedProductIds: [] })).toEqual([0, []]);
+      expect(yield* page({ category: 'Šrouby', taggedProductIds: ['p1', 'p2'] })).toEqual([1, ['p1']]);
+      expect(yield* productCategoryCounts(db, scope)).toEqual([
+        { name: 'Matice', productCount: 1 },
+        { name: 'Podložky', productCount: 1 },
+        { name: 'Šrouby', productCount: 2 },
+      ]);
+      const rows = yield* staffProducts(db, scope, { summary: true }, false);
+      expect(rows.products.map((product) => [product.id, product.variantCount])).toEqual([
+        ['p1', 1],
+        ['p2', 0],
+        ['p3', 0],
+        ['p4', 0],
+      ]);
+    }),
+  ),
+);
+
+it.live('order search matches customers resolved from the register and the tag filter narrows the total', () =>
+  onCatalog(({ db, scope }) =>
+    Effect.gen(function* orderCustomerSearch() {
+      const orderIds = (view: RecordsView) =>
+        orderPage(db, scope, view).pipe(Effect.map((result) => [result.total, result.orders.map((order) => order.id)]));
+      expect(yield* orderIds({ orderSearch: 'novák' })).toEqual([0, []]);
+      expect(yield* orderIds({ orderCustomerPartyIds: ['storefront-guest'], orderSearch: 'novák' })).toEqual([
+        1,
+        ['o1'],
+      ]);
+      expect(yield* orderIds({ orderCustomerPartyIds: ['someone-else'], orderSearch: 'novák' })).toEqual([0, []]);
+      expect(yield* orderIds({ orderCustomerPartyIds: ['someone-else'], orderSearch: '0001' })).toEqual([1, ['o1']]);
+      expect(yield* orderIds({ taggedOrderIds: ['o1'] })).toEqual([1, ['o1']]);
+      expect(yield* orderIds({ taggedOrderIds: ['o2'] })).toEqual([0, []]);
+    }),
+  ),
+);
+
+it.live('in-app AKROS reset writes the bundled baseline part by part and advances the revision', () =>
+  onCatalog(({ db, revision, scope }) =>
+    Effect.gen(function* akrosReset() {
+      const next = yield* db.transaction((transaction) => resetToAkrosBaseline(transaction, scope));
+      expect(next).toBe(revision + 1);
+      const totals = yield* indicators(db, scope);
+      expect(totals.productCount).toBe(1289);
+      expect(totals.orderCount).toBe(6);
+      const head = yield* loadHead(db, scope);
+      expect(head?.homepageFeaturedProductIds.length).toBeGreaterThan(0);
+      expect((yield* staffProducts(db, scope, { productIds: ['p1'], summary: true }, false)).total).toBe(0);
     }),
   ),
 );

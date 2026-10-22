@@ -1,9 +1,10 @@
-import { useTagsFor } from '@app/tagging/components/tag-controls';
+import { subjectsWithTag } from '@app/tagging/clients/records';
+import { runTagEffect, useTagsFor } from '@app/tagging/components/tag-controls';
 import type { TagsStatus } from '@app/tagging/components/tag-controls';
 import { SubjectIdSchema } from '@app/tagging/contracts/records';
 import type { SubjectId, SubjectKind, Tag, TagId } from '@app/tagging/contracts/records';
 import { Schema } from 'effect';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 const isSubjectId = Schema.is(SubjectIdSchema);
 
@@ -14,24 +15,67 @@ const isSubjectId = Schema.is(SubjectIdSchema);
 export const toSubjectIds = (ids: readonly string[]): readonly SubjectId[] => ids.filter(isSubjectId);
 
 export interface SubjectTagFilter {
-  /** No tag selected: every row passes. While the row tags load or after they failed, no row passes. */
-  readonly matches: (id: string) => boolean;
+  /**
+   * Ids of the subjects carrying the selected tag, for the server-side list filter. `null` while no tag is selected
+   * or its subjects are still loading (`status` tells which) or failed.
+   */
+  readonly ids: readonly string[] | null;
+  /** Reads the tag's subjects again (after a tag assignment changed them). */
+  readonly refetch: () => void;
   readonly setTagId: (tagId: TagId | null) => void;
   readonly status: 'idle' | TagsStatus;
   readonly tagId: TagId | null;
 }
 
+interface TaggedRead {
+  readonly ids: readonly string[] | null;
+  /** The request this answer belongs to; an answer for an older request never lands. */
+  readonly request: object;
+  readonly status: TagsStatus;
+}
+
 /**
- * Single-tag filter over the rows on screen. It reads the same tag data as the "Štítky" column, so the
- * filtered rows and the tags shown never disagree, and a refetch of the row tags refreshes the filter too.
+ * Single-tag filter of a server-paged list: the selected tag's subject ids (one tagging read) go into the list
+ * query, so the filter covers every page and the total counts only tagged rows.
  */
-export const useSubjectTagFilter = (rowTags: SubjectTags): SubjectTagFilter => {
+export const useSubjectTagFilter = (kind: SubjectKind): SubjectTagFilter => {
   const [tagId, setTagId] = useState<TagId | null>(null);
+  // A new object starts a new read, so a refetch re-runs the effect for the same tag.
+  const [request, setRequest] = useState<object>({});
+  const [read, setRead] = useState<TaggedRead | null>(null);
+  useEffect(() => {
+    let active = tagId !== null;
+    if (tagId !== null) {
+      runTagEffect(subjectsWithTag(kind, tagId), {
+        onFailure: () => {
+          if (active) {
+            setRead({ ids: null, request, status: 'error' });
+          }
+        },
+        onSuccess: (ids) => {
+          if (active) {
+            setRead({ ids, request, status: 'ready' });
+          }
+        },
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [kind, request, tagId]);
+  const current = read?.request === request ? read : null;
   return {
-    matches: (id) =>
-      tagId === null || (rowTags.status === 'ready' && rowTags.tagsOf(id).some((tag) => tag.id === tagId)),
-    setTagId,
-    status: tagId === null ? 'idle' : rowTags.status,
+    // While a newer read is pending the last ids stay, so the list query does not change (and read) twice.
+    ids: tagId === null ? null : (read?.ids ?? null),
+    refetch: () => setRequest({}),
+    setTagId: (next) => {
+      setTagId(next);
+      setRequest({});
+      if (next === null) {
+        setRead(null);
+      }
+    },
+    status: tagId === null ? 'idle' : (current?.status ?? 'loading'),
     tagId,
   };
 };

@@ -91,12 +91,17 @@ export type ProductSort = NonNullable<RecordsView['productSort']>;
 
 /** What the products list asks the server for: filters, sort and one page. */
 export interface ProductListQuery {
+  /** A product category label (companies without a storefront tree). */
+  readonly category: string | null;
+  /** A storefront tree category (with its subcategories). */
   readonly categoryId: string | null;
   readonly limit: number;
   readonly lowStockOnly: boolean;
   readonly offset: number;
   readonly search: string;
   readonly sort: ProductSort | null;
+  /** Ids of the products carrying the selected tag; null = no tag filter. */
+  readonly taggedIds: readonly string[] | null;
 }
 
 type ViewPayload = NonNullable<RecordsRequestEncoded['view']>;
@@ -109,6 +114,8 @@ export const productListView = (query: ProductListQuery): ViewPayload => ({
   summary: true,
   ...(query.search.trim() === '' ? {} : { search: query.search.trim() }),
   ...(query.categoryId === null ? {} : { categoryId: query.categoryId }),
+  ...(query.category === null ? {} : { category: query.category }),
+  ...(query.taggedIds === null ? {} : { taggedProductIds: [...query.taggedIds] }),
   ...(query.lowStockOnly ? { lowStockOnly: true } : {}),
   ...(query.sort === null ? {} : { productSort: query.sort }),
 });
@@ -133,6 +140,13 @@ export const loadProducts = (query: ProductListQuery, onOutcome: (outcome: LoadO
 /** The storefront category tree (navigation fields only), without products or orders. */
 export const loadCategoryTree = (onOutcome: (outcome: LoadOutcome) => void): void =>
   loadView({ includeCategories: true, limit: 0, ordersLimit: 0 }, onOutcome);
+
+/**
+ * The category filter's choices without products or orders: the storefront category tree (navigation fields only)
+ * and the distinct product category labels with counts, for companies without a tree.
+ */
+export const loadCategoryChoices = (onOutcome: (outcome: LoadOutcome) => void): void =>
+  loadView({ includeCategories: true, includeProductCategories: true, limit: 0, ordersLimit: 0 }, onOutcome);
 
 /** One category with its content fields and history, plus the tree around it. */
 export const loadCategoryDetail = (categoryId: string, onOutcome: (outcome: LoadOutcome) => void): void =>

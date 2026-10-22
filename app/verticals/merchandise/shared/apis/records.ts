@@ -71,6 +71,20 @@ export type StorefrontOrderStatusLookup = typeof StorefrontOrderStatusLookupSche
 const IdListSchema = Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))).check(
   Schema.isMaxLength(250),
 );
+/** Ids carrying the tag the staff list filters by (read from tagging); bounded by the size of a tag. */
+const TaggedIdListSchema = Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))).check(
+  Schema.isMaxLength(5000),
+);
+const CustomerPartyIdListSchema = Schema.Array(
+  Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+).check(Schema.isMaxLength(500));
+
+/** One distinct product category label (`products.category`) with the number of products filed under it. */
+export const ProductCategoryCountSchema = Schema.Struct({
+  name: Schema.String,
+  productCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type ProductCategoryCount = typeof ProductCategoryCountSchema.Type;
 
 /**
  * Optional filters. Every collection is bounded: no read returns the whole catalog.
@@ -81,8 +95,10 @@ const IdListSchema = Schema.Array(Schema.String.check(Schema.isMinLength(1), Sch
  * - movements: only with `productId` (that product's ledger, newest 500, oldest first).
  * - orders (staff): newest first, paged by `ordersOffset`/`ordersLimit` (default 100, max 250; 0 = none);
  *   `totalOrders` counts all matches.
+ *   `taggedProductIds` / `taggedOrderIds` narrow the list to the subjects carrying the selected tag.
  * - categories (`includeCategories`): the navigation tree; with `categoryId` that category also carries its
- *   content and history.
+ *   content and history. `includeProductCategories`: the distinct product category labels with counts (for
+ *   companies without a storefront tree; filter with `category`).
  * Indicators always cover the whole company and ignore filters.
  */
 export const RecordsViewSchema = Schema.Struct({
@@ -104,6 +120,10 @@ export const RecordsViewSchema = Schema.Struct({
   active: Schema.optionalKey(Schema.Boolean),
   category: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
   lowStockOnly: Schema.optionalKey(Schema.Boolean),
+  /** Staff reads: also return the distinct `products.category` labels with counts as `productCategories`. */
+  includeProductCategories: Schema.optionalKey(Schema.Boolean),
+  /** Only products with these ids: the products carrying the tag selected in the staff list. */
+  taggedProductIds: Schema.optionalKey(TaggedIdListSchema),
   /** Storefront lookup of one guest order by its submission id (only with `storefront: true`). */
   orderClientRequestId: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(8), Schema.isMaxLength(120))),
   orderStatus: Schema.optionalKey(OrderStatusSchema),
@@ -112,6 +132,13 @@ export const RecordsViewSchema = Schema.Struct({
   orderOpportunityId: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
   /** Order number, customer name, e-mail or phone (diacritics-insensitive). */
   orderSearch: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+  /**
+   * Customers (party ids) whose register name matches `orderSearch`, resolved by the caller from the customer
+   * register: their orders match the search as well.
+   */
+  orderCustomerPartyIds: Schema.optionalKey(CustomerPartyIdListSchema),
+  /** Only orders with these ids: the orders carrying the tag selected in the staff list. */
+  taggedOrderIds: Schema.optionalKey(TaggedIdListSchema),
   ordersOffset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   ordersLimit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 250 }))),
   productId: Schema.optionalKey(ProductIdSchema),
@@ -161,6 +188,7 @@ export const RecordsResponseSchema = Schema.Struct({
   /** AI proposals for this company's orders; present for staff principals with read_all. */
   aiChanges: Schema.optionalKey(MerchandiseAiSliceSchema),
   categories: Schema.optionalKey(Schema.Array(CategoryNodeSchema)),
+  productCategories: Schema.optionalKey(Schema.Array(ProductCategoryCountSchema)),
   homepageFeaturedProductIds: Schema.optionalKey(Schema.Array(Schema.String)),
   total: Schema.optionalKey(Schema.Int),
   totalOrders: Schema.optionalKey(Schema.Int),

@@ -87,6 +87,7 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
     readonly limit: number;
     readonly offset: number;
     readonly orderBy: readonly SQL[];
+    readonly variantCount?: boolean;
     readonly variants: boolean;
     readonly variantSummary?: boolean;
   },
@@ -122,6 +123,27 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
         'Variants could not be read',
       )
     : [];
+  // Staff list rows: sellable variants per product of the page, one grouped count.
+  const variantCounts =
+    input.variantCount === true
+      ? new Map(
+          (yield* query(
+            db
+              .select({ count: sql<number>`count(*)::int`, productId: productVariants.productId })
+              .from(productVariants)
+              .where(
+                and(
+                  whereScope(productVariants, scope),
+                  inArray(productVariants.productId, ids),
+                  sql`${productVariants.variantId} is not null`,
+                  sql`${productVariants.priceMinor} is not null`,
+                ),
+              )
+              .groupBy(productVariants.productId),
+            'Variant counts could not be read',
+          )).map((row) => [row.productId, row.count] as const),
+        )
+      : undefined;
   const tierRows = yield* query(
     db
       .select({
@@ -147,7 +169,10 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
     try: () =>
       hydrateProducts(rows, variantRows, tierRows).map(({ product, stock }, index): ProductRecord => {
         const row = rows[index]!;
-        const summary = 'variantSummary' in row ? { variantSummary: row.variantSummary as VariantSummary } : {};
+        const summary = {
+          ...('variantSummary' in row ? { variantSummary: row.variantSummary as VariantSummary } : {}),
+          ...(variantCounts === undefined ? {} : { variantCount: variantCounts.get(row.id) ?? 0 }),
+        };
         if (input.variants) return { ...toProductRecord(product, stock), ...summary };
         const { variants: _variants, ...rest } = product;
         void _variants;
@@ -170,6 +195,7 @@ const staffProductFilters = (view: RecordsView, storefront: boolean): (SQL | und
   ...(storefront ? [eq(products.active, true), eq(products.published, true)] : []),
   view.productId === undefined ? undefined : eq(products.id, view.productId),
   view.productIds === undefined ? undefined : idsFilter(products.id, view.productIds),
+  view.taggedProductIds === undefined ? undefined : idsFilter(products.id, view.taggedProductIds),
   view.slug === undefined ? undefined : eq(products.slug, view.slug),
   view.categoryId === undefined
     ? undefined
@@ -225,6 +251,7 @@ export const staffProducts = (
         : Math.min(view.limit ?? DETAIL_PAGE_LIMIT, input.detailLimit ?? DETAIL_PAGE_LIMIT),
     offset: view.offset ?? 0,
     orderBy: staffProductOrder(view.productSort),
+    variantCount: view.summary === true,
     variantSummary: view.summary === true,
     variants: view.summary !== true,
   }).pipe(
@@ -250,6 +277,30 @@ export const staffProducts = (
       }),
     })),
   );
+
+/** At most this many distinct product category labels; free-text categories of one company stay far below it. */
+const PRODUCT_CATEGORY_LIMIT = 500;
+
+/**
+ * The distinct `category` labels of the company's (non-archived) products with their product counts, in Czech
+ * alphabetical order: the staff category filter of companies without a storefront category tree.
+ */
+export const productCategoryCounts = Effect.fn('MerchandiseQueries.productCategoryCounts')(function* productCategoryCounts(
+  db: MerchandiseDb,
+  scope: StoreScope,
+) {
+  const rows = yield* query(
+    db
+      .select({ name: products.category, productCount: sql<number>`count(*)::int` })
+      .from(products)
+      .where(and(whereScope(products, scope), eq(products.archived, false)))
+      .groupBy(products.category)
+      .orderBy(asc(products.category))
+      .limit(PRODUCT_CATEGORY_LIMIT),
+    'Product categories could not be read',
+  );
+  return rows.toSorted((left, right) => left.name.localeCompare(right.name, 'cs'));
+});
 
 /** Category id of a storefront slug, or undefined. */
 const categoryIdBySlug = (db: MerchandiseDb, scope: StoreScope, slug: string) =>
@@ -444,6 +495,20 @@ const decodeHistory = Schema.decodeUnknownSync(Schema.Array(CatalogChangeSchema)
 
 // ------------------------------------------------------------------------------------------------ orders, movements
 
+/**
+ * Every search word occurs in the order's own text (number, guest contact), or the order belongs to a customer
+ * whose register name the caller matched (`orderCustomerPartyIds`): staff orders name a party, not a contact.
+ */
+const orderSearchFilter = (view: RecordsView): SQL | undefined => {
+  const words = wordsOf(view.orderSearch);
+  if (words.length === 0) {
+    return undefined;
+  }
+  const ownText = and(...containsAll(orders.searchText, words));
+  const partyIds = view.orderCustomerPartyIds ?? [];
+  return partyIds.length === 0 ? ownText : or(ownText, inArray(orders.partyId, [...partyIds]));
+};
+
 export const orderPage = Effect.fn('MerchandiseQueries.orderPage')(function* orderPage(
   db: MerchandiseDb,
   scope: StoreScope,
@@ -456,7 +521,8 @@ export const orderPage = Effect.fn('MerchandiseQueries.orderPage')(function* ord
     view.orderId === undefined ? undefined : eq(orders.id, view.orderId),
     view.orderIds === undefined ? undefined : idsFilter(orders.id, view.orderIds),
     view.orderOpportunityId === undefined ? undefined : eq(orders.opportunityId, view.orderOpportunityId),
-    ...containsAll(orders.searchText, wordsOf(view.orderSearch)),
+    view.taggedOrderIds === undefined ? undefined : idsFilter(orders.id, view.taggedOrderIds),
+    orderSearchFilter(view),
   );
   const limit = view.ordersLimit ?? DEFAULT_ORDER_LIMIT;
   const [counted] = yield* query(db.select({ total: sql<number>`count(*)::int` }).from(orders).where(where));

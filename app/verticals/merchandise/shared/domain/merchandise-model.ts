@@ -256,6 +256,8 @@ export const ProductRecordSchema = Schema.Struct({
    * Storefront reads: the product's active sellable variants in aggregate (count, lowest gross price, summed stock,
    * distinct units). Listing cards read only this; detail reads `variantRecords`.
    */
+  /** Staff list rows: number of sellable variants (active or not), counted in SQL; detail reads `variantRecords`. */
+  variantCount: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   variantSummary: Schema.optionalKey(
     Schema.Struct({
       count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),

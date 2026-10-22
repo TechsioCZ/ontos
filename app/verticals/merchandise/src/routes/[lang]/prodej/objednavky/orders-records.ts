@@ -11,10 +11,14 @@ import { readProductRecord } from '../../provoz/produkty/product-reads.ts';
 
 /** What the orders table asks the server for: filters and one page, newest first. */
 export interface OrdersQuery {
+  /** Customers whose register name matches `search`; their orders match it too. */
+  readonly customerPartyIds: readonly string[];
   readonly limit: number;
   readonly offset: number;
   readonly search: string;
   readonly status: OrderStatus | null;
+  /** Ids of the orders carrying the selected tag; null = no tag filter. */
+  readonly taggedIds: readonly string[] | null;
 }
 
 /** Header counts the indicators do not carry, each one counted by the server. */
@@ -56,7 +60,11 @@ export const ordersView = (query: OrdersQuery) => ({
   ordersLimit: query.limit,
   ordersOffset: query.offset,
   ...(query.search.trim() === '' ? {} : { orderSearch: query.search.trim() }),
+  ...(query.search.trim() === '' || query.customerPartyIds.length === 0
+    ? {}
+    : { orderCustomerPartyIds: [...query.customerPartyIds] }),
   ...(query.status === null ? {} : { orderStatus: query.status }),
+  ...(query.taggedIds === null ? {} : { taggedOrderIds: [...query.taggedIds] }),
 });
 
 const loadOrders = Effect.fn('OrdersRecords.load')(function* loadOrders(query: OrdersQuery) {

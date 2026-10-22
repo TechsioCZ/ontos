@@ -383,7 +383,8 @@ const insertProductRows = (
     }
   });
 
-const deleteScope = (db: MerchandiseDb, scope: StoreScope) =>
+/** Deletes every merchandise row of the company except its head row (seeds, demo reset). */
+export const deleteScope = (db: MerchandiseDb, scope: StoreScope) =>
   Effect.gen(function* deleteScope() {
     yield* query(db.delete(priceTiers).where(whereScope(priceTiers, scope)));
     yield* query(db.delete(productVariants).where(whereScope(productVariants, scope)));
@@ -394,32 +395,30 @@ const deleteScope = (db: MerchandiseDb, scope: StoreScope) =>
   });
 
 /**
- * Replaces the whole company's merchandise with `state` in batched inserts (seeds, admin demo reset).
- * The head row keeps existing and its revision advances, so open editors see a conflict, never stale data.
+ * Inserts `part` in batched statements: its categories, products (stock derived from the part's movements, so a
+ * part must carry every movement of its products), movements and orders. Rows insert in the part's order.
  */
-export const replaceSnapshot = Effect.fn('MerchandiseStore.replaceSnapshot')(function* replaceSnapshot(
+export const insertSnapshotPart = Effect.fn('MerchandiseStore.insertSnapshotPart')(function* insertSnapshotPart(
   db: MerchandiseDb,
   scope: StoreScope,
-  state: MerchandiseState,
+  part: MerchandiseState,
 ) {
   const rows = yield* attempt('Snapshot does not encode', () => {
     const byProduct = new Map<string, StockMovement[]>();
-    for (const movement of state.movements) {
+    for (const movement of part.movements) {
       const bucket = byProduct.get(movement.productId) ?? [];
       bucket.push(movement);
       byProduct.set(movement.productId, bucket);
     }
     return {
-      categories: (state.categories ?? []).map((category) => categoryRowOf(scope, category)),
-      movements: state.movements.map((movement) => movementRowOf(scope, movement)),
-      orders: state.orders.map((order) => orderRowOf(scope, order)),
-      products: state.products.map((product) =>
+      categories: (part.categories ?? []).map((category) => categoryRowOf(scope, category)),
+      movements: part.movements.map((movement) => movementRowOf(scope, movement)),
+      orders: part.orders.map((order) => orderRowOf(scope, order)),
+      products: part.products.map((product) =>
         productRowsOf(scope, product, stockLevelsOf(byProduct.get(product.id) ?? [], product.id)),
       ),
-      slice: state.aiChanges === undefined ? null : encodeSlice(state.aiChanges),
     };
   });
-  yield* deleteScope(db, scope);
   for (const batch of inBatches(rows.categories, 800)) {
     yield* query(db.insert(categories).values([...batch]), 'Categories could not be written');
   }
@@ -430,15 +429,29 @@ export const replaceSnapshot = Effect.fn('MerchandiseStore.replaceSnapshot')(fun
   for (const batch of inBatches(rows.orders, 400)) {
     yield* query(db.insert(orders).values([...batch]), 'Orders could not be written');
   }
+});
+
+/**
+ * Writes the company's head row after a replace: homepage selection and AI slice. The head row keeps existing and
+ * its revision advances, so open editors see a conflict, never stale data. Returns the new revision.
+ */
+export const writeSnapshotHead = Effect.fn('MerchandiseStore.writeSnapshotHead')(function* writeSnapshotHead(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  head: Pick<MerchandiseState, 'aiChanges' | 'homepageFeaturedProductIds'>,
+) {
+  const slice = yield* attempt('Snapshot does not encode', () =>
+    head.aiChanges === undefined ? null : encodeSlice(head.aiChanges),
+  );
   const now = DateTime.toDateUtc(yield* DateTime.now);
-  const featured = [...(state.homepageFeaturedProductIds ?? [])];
+  const featured = [...(head.homepageFeaturedProductIds ?? [])];
   const heads = yield* query(
     db
       .insert(catalogHeads)
-      .values({ ...scope, aiChanges: rows.slice, homepageFeaturedProductIds: featured, revision: 0, updatedAt: now })
+      .values({ ...scope, aiChanges: slice, homepageFeaturedProductIds: featured, revision: 0, updatedAt: now })
       .onConflictDoUpdate({
         set: {
-          aiChanges: rows.slice,
+          aiChanges: slice,
           homepageFeaturedProductIds: featured,
           revision: sql`${catalogHeads.revision} + 1`,
           updatedAt: now,
@@ -448,6 +461,17 @@ export const replaceSnapshot = Effect.fn('MerchandiseStore.replaceSnapshot')(fun
       .returning({ revision: catalogHeads.revision }),
   );
   return heads[0]?.revision ?? 0;
+});
+
+/** Replaces the whole company's merchandise with `state` in batched inserts (seeds); returns the new revision. */
+export const replaceSnapshot = Effect.fn('MerchandiseStore.replaceSnapshot')(function* replaceSnapshot(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  state: MerchandiseState,
+) {
+  yield* deleteScope(db, scope);
+  yield* insertSnapshotPart(db, scope, state);
+  return yield* writeSnapshotHead(db, scope, state);
 });
 
 // ------------------------------------------------------------------------------------------------ loading

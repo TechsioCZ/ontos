@@ -19,6 +19,7 @@
     "server",
     "api",
     "scripts/akros-baseline.ts",
+    "scripts/akros-baseline-parts.ts",
     "scripts/akros-merge.ts",
     "scripts/akros-price-tiers.ts",
     "scripts/company-snapshot.ts",

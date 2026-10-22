@@ -6,8 +6,17 @@ import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import { TagsCell, formatKc } from '../../../../list-cells.tsx';
 import { AvailabilityBadge, imageUrl } from './product-eshop.tsx';
 
+/** Czech plural of „varianta“ for a count. */
+const variantNoun = (count: number) => {
+  if (count === 1) {
+    return 'varianta';
+  }
+  return count < 5 ? 'varianty' : 'variant';
+};
+
 /**
- * Product table columns over summary rows (no variants). VAT, the active flag and variants live in the detail.
+ * Product table columns over summary rows (no variants, only their `variantCount`). VAT, the active flag and the
+ * variants themselves live in the detail.
  * Numbers are end-aligned, fixed widths.
  */
 export const productColumns = (
@@ -25,6 +34,8 @@ export const productColumns = (
     cell: (info) => {
       const product = info.row.original;
       const [image] = product.images ?? [];
+      const variants = product.variantCount ?? 0;
+      const variantsLabel = variants > 0 ? `${formatNumber(variants)} ${variantNoun(variants)}` : null;
       return (
         <span className="flex min-w-0 items-center gap-100">
           {image !== undefined && imageUrl(image) !== undefined && (
@@ -43,8 +54,12 @@ export const productColumns = (
           )}
           <span className="flex min-w-0 flex-col">
             <span className="truncate">{product.name}</span>
-            {product.published === false && (
-              <span className="truncate text-fg-secondary text-xs">skryto v e-shopu</span>
+            {(variants > 0 || product.published === false) && (
+              <span className="truncate text-fg-secondary text-xs">
+                {[variantsLabel, product.published === false ? 'skryto v e-shopu' : null]
+                  .filter((part) => part !== null)
+                  .join(' · ')}
+              </span>
             )}
           </span>
         </span>
@@ -56,12 +71,17 @@ export const productColumns = (
   { accessorKey: 'category', header: label('columns.category'), meta: { type: 'string', width: 110 } },
   {
     accessorKey: 'currentPriceMinor',
-    cell: (info) => (
-      <span className="flex flex-col items-end tabular-nums">
-        <span>{formatMoney(info.row.original.grossPriceMinor ?? info.getValue<number>())}</span>
-        <span className="text-fg-secondary text-xs">s DPH</span>
-      </span>
-    ),
+    cell: (info) => {
+      const product = info.row.original;
+      // With variants the list price is the lowest variant price.
+      const fromVariants = (product.variantCount ?? 0) > 0;
+      return (
+        <span className="flex flex-col items-end tabular-nums">
+          <span>{`${fromVariants ? 'od ' : ''}${formatMoney(product.grossPriceMinor ?? info.getValue<number>())}`}</span>
+          <span className="text-fg-secondary text-xs">s DPH</span>
+        </span>
+      );
+    },
     header: label('columns.price'),
     meta: { align: 'end', type: 'number', width: 100 },
   },

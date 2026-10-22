@@ -30,7 +30,7 @@ import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
 import { paginationProps } from '../../../../form-number.ts';
 import { formatKc } from '../../../../list-cells.tsx';
-import { useCustomerDirectory } from './customers-directory.ts';
+import { customersMatching, useCustomerDirectory } from './customers-directory.ts';
 import { OrderCancelDialog } from './order-cancel-dialog.tsx';
 import { OrderCreateDialog } from './order-create-dialog.tsx';
 import { OrderDetailDialog } from './order-detail-dialog.tsx';
@@ -93,14 +93,26 @@ const OrdersPageContent = () => {
   const [statusFilter, setStatusFilter] = useState<OrderStatus | null>(null);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: PAGE_SIZE });
   const settledSearch = useDebounced(search);
+  // Dispatch processes order snapshots; it has no customer-directory or tagging access. Known after the first read.
+  const [canEditOrders, setCanEditOrders] = useState(false);
+  const directory = useCustomerDirectory(canEditOrders);
+  const customerEntries = directory.entries;
+  const customerPartyIds = useMemo(
+    () => customersMatching(customerEntries, settledSearch),
+    [customerEntries, settledSearch],
+  );
+  const tagFilter = useSubjectTagFilter('order');
+  const taggedIds = tagFilter.ids;
   const query = useMemo<OrdersQuery>(
     () => ({
+      customerPartyIds,
       limit: pagination.pageSize,
       offset: pagination.pageIndex * pagination.pageSize,
       search: settledSearch,
       status: statusFilter,
+      taggedIds,
     }),
-    [pagination, settledSearch, statusFilter],
+    [customerPartyIds, pagination, settledSearch, statusFilter, taggedIds],
   );
   const orders$ = useOrders(query);
   const { state } = orders$;
@@ -129,14 +141,12 @@ const OrdersPageContent = () => {
     setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
     setSelectedOrders({});
   };
-  // Dispatch processes order snapshots; it has no customer-directory or tagging access.
-  const canEditOrders = (ready?.records.canEditOrders ?? canWrite) === true;
-  const directory = useCustomerDirectory(canEditOrders);
+  const recordsCanEditOrders = ready?.records.canEditOrders ?? canWrite;
+  if (ready !== undefined && recordsCanEditOrders !== canEditOrders) {
+    setCanEditOrders(recordsCanEditOrders);
+  }
   const orderTags = useSubjectTags('order', canEditOrders ? orders.map((order) => order.id) : []);
-  const tagFilter = useSubjectTagFilter(orderTags);
   const statusItems = [{ label: t(key('filters.allStatuses')), value: ALL_STATUSES }, ...bulkStatusItems];
-  // The tag filter has no server counterpart yet: it narrows the page on screen.
-  const visible = orders.filter((order) => tagFilter.matches(order.id));
   const selected = Object.values(selectedOrders);
   const selection: RowSelection = Object.fromEntries(selected.map((order) => [order.id, true]));
   const setSelection = (next: RowSelection) => {
@@ -282,7 +292,14 @@ const OrdersPageContent = () => {
           </div>
           {canEditOrders && (
             <div className="w-48">
-              <TagFilter kind="order" onChange={(tagId) => tagFilter.setTagId(tagId)} value={tagFilter.tagId} />
+              <TagFilter
+                kind="order"
+                onChange={(tagId) => {
+                  tagFilter.setTagId(tagId);
+                  refilter();
+                }}
+                value={tagFilter.tagId}
+              />
             </div>
           )}
         </div>
@@ -356,7 +373,8 @@ const OrdersPageContent = () => {
         <DataTable
           columnPinning={{ end: [], start: ['__select', 'number'] }}
           columns={ordersColumns(t, directory, orderTags.tagsOf)}
-          data={visible}
+          // A failed tag read never shows the unfiltered list as if it matched the tag.
+          data={tagFilter.status === 'error' ? [] : [...orders]}
           enableColumnPinning
           enablePagination
           enableRowSelection
@@ -426,7 +444,7 @@ const OrdersPageContent = () => {
               />
             );
           }}
-          rowCount={totalOrders}
+          rowCount={tagFilter.status === 'error' ? 0 : totalOrders}
           rowSelection={selection}
           size="sm"
           stickyHeader
@@ -483,6 +501,10 @@ const OrdersPageContent = () => {
           onDone={() => {
             setSelectedOrders({});
             orderTags.refetch();
+            if (tagFilter.tagId !== null) {
+              // The selected tag gained or lost orders: read its subjects (and so the page) again.
+              tagFilter.refetch();
+            }
           }}
           onOpenChange={setTagsOpen}
           open={tagsOpen}

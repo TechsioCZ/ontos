@@ -44,7 +44,7 @@ import type {
 import type { StorefrontIssue, StorefrontOrderResult } from '../../shared/actions/apply-command.ts';
 import { fullOrderTotals, lineGrossMinor, nextOrderNumber, orderTotals } from '../../shared/domain/order-totals.ts';
 import { AKROS_LEGAL_ENTITY_ID, staffCommandAllowed } from '../../shared/actions/command-guard.ts';
-import { loadAkrosBaseline } from './akros-demo-reset.ts';
+import { resetToAkrosBaseline } from './akros-demo-reset.ts';
 import { applyMerchandiseAiCommand, isMerchandiseAiCommand } from './ai-changes.ts';
 import { isOrderQuantityValid, orderQuantityRules } from '../../shared/domain/order-quantity.ts';
 import { assignCategory, updateCategoryCommand, withContentHistory } from './catalog-content.ts';
@@ -52,13 +52,14 @@ import {
   categoryTree,
   indicators,
   orderPage,
+  productCategoryCounts,
   ordersByClientRequest,
   productMovements,
   staffProducts,
   storefrontOrderStatus,
   storefrontProducts,
 } from './merchandise-queries.ts';
-import { loadHead, loadWorkingSet, persistChange, replaceSnapshot } from './merchandise-store.ts';
+import { loadHead, loadWorkingSet, persistChange } from './merchandise-store.ts';
 import type { StoreScope, WorkingSet, WorkingSetRequest } from './merchandise-store.ts';
 import {
   realVariantsOf,
@@ -1192,7 +1193,7 @@ export const evolveMerchandiseState = (
     Match.tag('PlaceStorefrontOrder', (value) => placeStorefrontOrder(state, value, input)),
     Match.tag('EditOrder', (value) => editOrder(state, value, input)),
     Match.tag('UpdateCategory', (value) => updateCategoryCommand(state, value, input)),
-    // Needs the baseline feed from disk, so persistence (applyOnce) performs it; the pure evolve never does.
+    // Replaces every row of the company in parts, so persistence (applyOnce) performs it; the pure evolve never does.
     Match.tag('ResetDemoData', () => Effect.fail(conflict('Demo reset runs only through persistence'))),
     Match.tag('ArchiveDemoProduct', (value) =>
       Effect.gen(function* () {
@@ -1457,8 +1458,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       }
       if (command._tag === 'ResetDemoData') {
         // Scoped by tenant + legal entity: no other company's rows are read or written.
-        const baseline = yield* loadAkrosBaseline();
-        const revision = yield* replaceSnapshot(transaction, store, baseline).pipe(Effect.mapError(unavailable));
+        const revision = yield* resetToAkrosBaseline(transaction, store).pipe(Effect.mapError(unavailable));
         return { entityIds: [], revision };
       }
       const working = yield* loadWorkingSet(transaction, store, head, workingSetRequestOf(command, resourceId)).pipe(
@@ -1648,6 +1648,10 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
               Effect.mapError(unavailable),
             )
           : undefined;
+      const productCategories =
+        staff && view.includeProductCategories === true
+          ? yield* productCategoryCounts(transaction, store).pipe(Effect.mapError(unavailable))
+          : undefined;
       // The storefront view never reveals staff totals: its indicators cover only what the view returns.
       const totals = staff
         ? yield* indicators(transaction, store).pipe(Effect.mapError(unavailable))
@@ -1677,6 +1681,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         products: [...page.products],
         revision: head.revision,
         ...(tree === undefined ? {} : { categories: [...tree] }),
+        ...(productCategories === undefined ? {} : { productCategories: [...productCategories] }),
       };
       return storefrontOrigin === undefined ? response : { ...response, storefrontOrigin };
     });
