@@ -22,6 +22,7 @@ import { PurchasingPage } from './src/routes/[lang]/provoz/nakupy/page.tsx';
 import { SecurityPage } from './src/routes/[lang]/provoz/bezpecnost/page.tsx';
 import { DocumentsPage } from './src/routes/[lang]/provoz/dokumenty/page.tsx';
 // </generated-module-manifest-imports>
+import { facilityOperationsMcpContribution } from './shared/mcp/contribution.ts';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -82,6 +83,7 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: facilityOperationsMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>

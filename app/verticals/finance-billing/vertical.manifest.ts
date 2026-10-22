@@ -14,6 +14,7 @@ import { invoiceResourceDescriptor } from './shared/resources/invoice.ts';
 import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/finance/page.tsx';
 // </generated-module-manifest-imports>
+import { financeBillingMcpContribution } from './shared/mcp/contribution.ts';
 
 const moduleId = 'finance.billing';
 const recordsPageKey = 'finance.billing.page.records';
@@ -61,6 +62,7 @@ export const financeBillingManifest = defineOntosModuleManifest({
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: financeBillingMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>

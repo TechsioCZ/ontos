@@ -17,6 +17,7 @@ import { RecordsPage } from './src/routes/[lang]/smlouvy/page.tsx';
 const OWNER_MODULE_KEY = 'legal.agreements';
 const RECORDS_PAGE_KEY = 'legal.agreements.page.records';
 // </generated-module-manifest-imports>
+import { legalAgreementsMcpContribution } from './shared/mcp/contribution.ts';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -61,6 +62,7 @@ export const legalAgreementsManifest = defineOntosModuleManifest({
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: legalAgreementsMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>
