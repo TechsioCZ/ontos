@@ -1,8 +1,9 @@
 // @rstest-environment node
 /**
- * Core, the Shell's MCP endpoint and the platform approval layer must not know any MicroVertical: every vertical
- * id, module id, tool name or label comes from the composed module contracts. This test fails when a vertical
- * id or module id appears in that source (as a quoted literal or a path segment for app ids, anywhere for module ids).
+ * Core and the Shell platform must not know any MicroVertical: every vertical id, module id, tool name, label,
+ * navigation entry, review rule or follow-up comes from the composed module contracts. This test fails when a
+ * vertical id appears in that source as a quoted literal or a path segment, or a module id appears anywhere.
+ * Allowed exceptions: demo guide content and seed data (tenant data, not platform behaviour).
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -13,26 +14,20 @@ import { expect, it } from '@rstest/core';
 const appRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
 const verticalsRoot = path.join(appRoot, 'verticals');
 
-/** Source that must stay free of vertical knowledge. */
+/** All of Core and the Shell server and UI. */
 const GUARDED = [
-  'apps/shell-super-app/api/mcp',
-  'apps/shell-super-app/api/oauth-connections',
-  'apps/shell-super-app/api/agent-platform/caller.ts',
-  'apps/shell-super-app/api/agent-platform/composed-modules.ts',
-  'apps/shell-super-app/api/agent-platform/legacy-normalize.ts',
-  'apps/shell-super-app/api/agent-platform/legacy-queue.ts',
-  'apps/shell-super-app/api/agent-platform/mappers.ts',
-  'apps/shell-super-app/api/agent-platform/module-call.ts',
-  'apps/shell-super-app/api/agent-platform/proposal-store.ts',
-  'apps/shell-super-app/api/auth/agent-entities.ts',
-  'apps/shell-super-app/api/auth/agent-entities-model.ts',
-  'packages/shared-contracts/src/agent-access.ts',
-  'packages/shared-contracts/src/agent-proposals.ts',
-  'apps/shell-super-app/shared/mcp-resource.ts',
-  'packages/core-runtime/src/modules/mcp-contribution.ts',
-  'packages/core-runtime/src/modules/manifest.ts',
+  'packages/core-runtime/src',
+  'packages/shared-contracts/src',
+  'apps/shell-super-app/api',
+  'apps/shell-super-app/server',
+  'apps/shell-super-app/shared',
+  'apps/shell-super-app/src',
   'scripts/ontos-mcp-contribution.mts',
 ];
+
+/** Demo guide content and seed data (`demo-seed/` directories) name the demo tenants' modules on purpose. */
+const EXCEPTIONS = ['apps/shell-super-app/src/demo-guide/guides/'];
+const SEED_DIRECTORY = `${path.sep}demo-seed${path.sep}`;
 
 const verticals = readdirSync(verticalsRoot).flatMap((directory) => {
   try {
@@ -57,6 +52,11 @@ const patterns = verticals.flatMap(({ appId, moduleId }) => [
   ...(moduleId === undefined ? [] : [{ id: moduleId, pattern: new RegExp(escape(moduleId), 'u') }]),
 ]);
 
+const isException = (file: string): boolean => {
+  const relative = path.relative(appRoot, file);
+  return file.includes(SEED_DIRECTORY) || EXCEPTIONS.some((exception) => relative.startsWith(exception));
+};
+
 const filesOf = (relative: string): string[] => {
   const absolute = path.join(appRoot, relative);
   if (statSync(absolute).isFile()) {
@@ -64,14 +64,18 @@ const filesOf = (relative: string): string[] => {
   }
   return readdirSync(absolute, { recursive: true })
     .map((entry) => path.join(absolute, String(entry)))
-    .filter((file) => /\.(?:mts|ts|tsx)$/u.test(file) && statSync(file).isFile());
+    .filter(
+      (file) =>
+        /\.(?:mts|ts|tsx)$/u.test(file) && !file.includes(`${path.sep}node_modules${path.sep}`) && statSync(file).isFile(),
+    )
+    .filter((file) => !isException(file));
 };
 
 it('finds the verticals of this workspace', () => {
   expect(verticals.length).toBeGreaterThan(5);
 });
 
-it('keeps Core, the MCP endpoint and the approval layer free of vertical ids', () => {
+it('keeps Core and the whole Shell platform free of vertical ids', () => {
   const hits = GUARDED.flatMap(filesOf).flatMap((file) => {
     const lines = readFileSync(file, 'utf-8').split('\n');
     return lines.flatMap((line, index) =>
