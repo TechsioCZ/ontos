@@ -89,7 +89,10 @@ const METADATA_CORS_HEADERS = {
   'access-control-allow-origin': '*',
 } as const;
 
-/** no-store on every authorization endpoint; anonymous CORS and a 5 minute cache on metadata and JWKS. */
+/**
+ * no-store on every authorization endpoint; anonymous CORS and a 5 minute cache on metadata and JWKS. Better Auth's own
+ * 15 second metadata lifetime is replaced: the Worker answers discovery from the edge cache for this lifetime.
+ */
 export const withOAuthResponseHeaders = (kind: 'endpoint' | 'metadata', response: Response): Response => {
   const headers = new Headers(response.headers);
   headers.delete('access-control-allow-credentials');
@@ -100,9 +103,7 @@ export const withOAuthResponseHeaders = (kind: 'endpoint' | 'metadata', response
     for (const [name, value] of Object.entries(METADATA_CORS_HEADERS)) {
       headers.set(name, value);
     }
-    if (!headers.has('cache-control')) {
-      headers.set('cache-control', 'public, max-age=300');
-    }
+    headers.set('cache-control', 'public, max-age=300');
   }
   return new Response(response.body, { headers, status: response.status, statusText: response.statusText });
 };

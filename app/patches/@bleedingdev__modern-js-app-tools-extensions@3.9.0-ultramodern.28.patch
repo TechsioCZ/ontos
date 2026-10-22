@@ -3421,7 +3421,7 @@ diff --git a/src/cloudflare/worker-manifest.ts b/src/cloudflare/worker-manifest.
 diff --git a/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs
 --- a/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs
 +++ b/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs
-@@ -1,5 +1,88 @@
+@@ -1,5 +1,104 @@
 +// OAuth discovery (RFC 8414 / OIDC) lives at the origin root, outside the BFF prefix. Paths the app
 +// declares in `deploy.worker.rootRoutes.metadata` are answered in-process by the named BFF route,
 +// with anonymous CORS: discovery is public metadata fetched cross-origin.
@@ -3461,6 +3461,15 @@ diff --git a/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/cj
 +  if (request.method === 'OPTIONS') {
 +    return new Response(null, { headers: OAUTH_METADATA_CORS_HEADERS, status: 204 });
 +  }
++  // Discovery metadata is public and the same for every caller of one deployment, so the colo cache
++  // answers it: no isolate, warm or cold, builds the BFF runtime for a cached document. A 200 from
++  // the BFF fills the cache for as long as its Cache-Control allows.
++  const cache = globalThis.caches?.default;
++  const cacheKey = new Request(url, { method: 'GET' });
++  const cached = cache ? await cache.match(cacheKey) : undefined;
++  if (cached) {
++    return request.method === 'HEAD' ? new Response(null, cached) : cached;
++  }
 +  const canonical = new URL(target, url);
 +  canonical.search = url.search;
 +  const response = await dispatchBffRequest(
@@ -3468,7 +3477,14 @@ diff --git a/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/cj
 +    env,
 +    ctx,
 +  );
-+  return response ? withOAuthMetadataCors(response) : null;
++  if (!response) {
++    return null;
++  }
++  const answer = withOAuthMetadataCors(response);
++  if (cache && request.method === 'GET' && answer.status === 200) {
++    ctx.waitUntil(cache.put(cacheKey, answer.clone()).catch(() => undefined));
++  }
++  return answer;
 +}
 +
 +// Root routes the BFF owns outside its prefix (for example `/mcp`), declared in
@@ -3513,7 +3529,7 @@ diff --git a/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/cj
 diff --git a/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs
 --- a/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs
 +++ b/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs
-@@ -1,5 +1,88 @@
+@@ -1,5 +1,104 @@
 +// OAuth discovery (RFC 8414 / OIDC) lives at the origin root, outside the BFF prefix. Paths the app
 +// declares in `deploy.worker.rootRoutes.metadata` are answered in-process by the named BFF route,
 +// with anonymous CORS: discovery is public metadata fetched cross-origin.
@@ -3553,6 +3569,15 @@ diff --git a/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/es
 +  if (request.method === 'OPTIONS') {
 +    return new Response(null, { headers: OAUTH_METADATA_CORS_HEADERS, status: 204 });
 +  }
++  // Discovery metadata is public and the same for every caller of one deployment, so the colo cache
++  // answers it: no isolate, warm or cold, builds the BFF runtime for a cached document. A 200 from
++  // the BFF fills the cache for as long as its Cache-Control allows.
++  const cache = globalThis.caches?.default;
++  const cacheKey = new Request(url, { method: 'GET' });
++  const cached = cache ? await cache.match(cacheKey) : undefined;
++  if (cached) {
++    return request.method === 'HEAD' ? new Response(null, cached) : cached;
++  }
 +  const canonical = new URL(target, url);
 +  canonical.search = url.search;
 +  const response = await dispatchBffRequest(
@@ -3560,7 +3585,14 @@ diff --git a/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/es
 +    env,
 +    ctx,
 +  );
-+  return response ? withOAuthMetadataCors(response) : null;
++  if (!response) {
++    return null;
++  }
++  const answer = withOAuthMetadataCors(response);
++  if (cache && request.method === 'GET' && answer.status === 200) {
++    ctx.waitUntil(cache.put(cacheKey, answer.clone()).catch(() => undefined));
++  }
++  return answer;
 +}
 +
 +// Root routes the BFF owns outside its prefix (for example `/mcp`), declared in
@@ -3605,7 +3637,7 @@ diff --git a/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/es
 diff --git a/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs
 --- a/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs
 +++ b/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs
-@@ -1,5 +1,88 @@
+@@ -1,5 +1,104 @@
 +// OAuth discovery (RFC 8414 / OIDC) lives at the origin root, outside the BFF prefix. Paths the app
 +// declares in `deploy.worker.rootRoutes.metadata` are answered in-process by the named BFF route,
 +// with anonymous CORS: discovery is public metadata fetched cross-origin.
@@ -3645,6 +3677,15 @@ diff --git a/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs b/di
 +  if (request.method === 'OPTIONS') {
 +    return new Response(null, { headers: OAUTH_METADATA_CORS_HEADERS, status: 204 });
 +  }
++  // Discovery metadata is public and the same for every caller of one deployment, so the colo cache
++  // answers it: no isolate, warm or cold, builds the BFF runtime for a cached document. A 200 from
++  // the BFF fills the cache for as long as its Cache-Control allows.
++  const cache = globalThis.caches?.default;
++  const cacheKey = new Request(url, { method: 'GET' });
++  const cached = cache ? await cache.match(cacheKey) : undefined;
++  if (cached) {
++    return request.method === 'HEAD' ? new Response(null, cached) : cached;
++  }
 +  const canonical = new URL(target, url);
 +  canonical.search = url.search;
 +  const response = await dispatchBffRequest(
@@ -3652,7 +3693,14 @@ diff --git a/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs b/di
 +    env,
 +    ctx,
 +  );
-+  return response ? withOAuthMetadataCors(response) : null;
++  if (!response) {
++    return null;
++  }
++  const answer = withOAuthMetadataCors(response);
++  if (cache && request.method === 'GET' && answer.status === 200) {
++    ctx.waitUntil(cache.put(cacheKey, answer.clone()).catch(() => undefined));
++  }
++  return answer;
 +}
 +
 +// Root routes the BFF owns outside its prefix (for example `/mcp`), declared in
@@ -3697,7 +3745,7 @@ diff --git a/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs b/di
 diff --git a/src/templates/cloudflare-entry.006-fetch-handler.mjs b/src/templates/cloudflare-entry.006-fetch-handler.mjs
 --- a/src/templates/cloudflare-entry.006-fetch-handler.mjs
 +++ b/src/templates/cloudflare-entry.006-fetch-handler.mjs
-@@ -1,5 +1,88 @@
+@@ -1,5 +1,104 @@
 +// OAuth discovery (RFC 8414 / OIDC) lives at the origin root, outside the BFF prefix. Paths the app
 +// declares in `deploy.worker.rootRoutes.metadata` are answered in-process by the named BFF route,
 +// with anonymous CORS: discovery is public metadata fetched cross-origin.
@@ -3737,6 +3785,15 @@ diff --git a/src/templates/cloudflare-entry.006-fetch-handler.mjs b/src/template
 +  if (request.method === 'OPTIONS') {
 +    return new Response(null, { headers: OAUTH_METADATA_CORS_HEADERS, status: 204 });
 +  }
++  // Discovery metadata is public and the same for every caller of one deployment, so the colo cache
++  // answers it: no isolate, warm or cold, builds the BFF runtime for a cached document. A 200 from
++  // the BFF fills the cache for as long as its Cache-Control allows.
++  const cache = globalThis.caches?.default;
++  const cacheKey = new Request(url, { method: 'GET' });
++  const cached = cache ? await cache.match(cacheKey) : undefined;
++  if (cached) {
++    return request.method === 'HEAD' ? new Response(null, cached) : cached;
++  }
 +  const canonical = new URL(target, url);
 +  canonical.search = url.search;
 +  const response = await dispatchBffRequest(
@@ -3744,7 +3801,14 @@ diff --git a/src/templates/cloudflare-entry.006-fetch-handler.mjs b/src/template
 +    env,
 +    ctx,
 +  );
-+  return response ? withOAuthMetadataCors(response) : null;
++  if (!response) {
++    return null;
++  }
++  const answer = withOAuthMetadataCors(response);
++  if (cache && request.method === 'GET' && answer.status === 200) {
++    ctx.waitUntil(cache.put(cacheKey, answer.clone()).catch(() => undefined));
++  }
++  return answer;
 +}
 +
 +// Root routes the BFF owns outside its prefix (for example `/mcp`), declared in

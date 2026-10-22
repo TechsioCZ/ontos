@@ -80,9 +80,12 @@ test('withOAuthResponseHeaders adds anonymous CORS and a 5 minute cache on metad
   expect(response.headers.get('cache-control')).toBe('public, max-age=300');
 });
 
-test('withOAuthResponseHeaders keeps an existing metadata cache-control value', () => {
-  const response = withOAuthResponseHeaders('metadata', new Response('{}', { headers: { 'cache-control': 'max-age=60' } }));
-  expect(response.headers.get('cache-control')).toBe('max-age=60');
+test("withOAuthResponseHeaders replaces Better Auth's short metadata cache with 5 minutes", () => {
+  const response = withOAuthResponseHeaders(
+    'metadata',
+    new Response('{}', { headers: { 'cache-control': 'public, max-age=15, stale-while-revalidate=15' } }),
+  );
+  expect(response.headers.get('cache-control')).toBe('public, max-age=300');
 });
 
 test('oauthPreflightResponse answers 204 with anonymous CORS', () => {
