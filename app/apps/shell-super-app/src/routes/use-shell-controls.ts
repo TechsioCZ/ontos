@@ -1,4 +1,8 @@
-import { pinDocumentCompositionRevision, pinDocumentDeniedApps } from '@app/shared-contracts';
+import {
+  pinDocumentCompositionRevision,
+  pinDocumentDeniedApps,
+  pinDocumentNavigationModules,
+} from '@app/shared-contracts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { Effect, Exit, Match, Schema } from 'effect';
@@ -54,6 +58,10 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
   // Pinned during render, so routed module pages (children) see it before their first reads.
   if (browserDocument !== undefined && model?.navigation.state === 'available') {
     pinDocumentDeniedApps(model.navigation.deniedAppIds, browserDocument);
+    // Remotes narrow optional cross-module reads with it instead of reading the composition again.
+    if (compositionRevision !== undefined) {
+      pinDocumentNavigationModules(model.navigation.moduleIds, browserDocument);
+    }
   }
   const [logoutPending, setLogoutPending] = useState(false);
   const [logoutFailed, setLogoutFailed] = useState(false);

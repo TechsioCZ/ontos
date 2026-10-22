@@ -14,7 +14,7 @@ export const authenticatedShellFixture = (): AuthenticatedHomePageModel => ({
     tenantId: 'tenant-1',
   }),
   legalEntities: { items: [], state: 'available' },
-  navigation: { deniedAppIds: [], items: [], state: 'available', unavailableDeployments: [] },
+  navigation: { deniedAppIds: [], items: [], moduleIds: [], state: 'available', unavailableDeployments: [] },
   selectedLegalEntityId: Schema.decodeUnknownSync(LegalEntityIdSchema)('20000000-0000-4000-8000-000000000001'),
   state: 'authenticated',
   tenants: { items: [], state: 'available' },

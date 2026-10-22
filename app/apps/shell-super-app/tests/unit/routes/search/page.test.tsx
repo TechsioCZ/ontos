@@ -150,6 +150,7 @@ const authenticatedShell = (): HomePageModel => ({
         writable: false,
       },
     ],
+    moduleIds: [inventoryModuleId],
     state: 'available',
     unavailableDeployments: [],
   },

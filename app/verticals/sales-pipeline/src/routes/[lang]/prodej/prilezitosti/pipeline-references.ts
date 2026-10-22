@@ -1,4 +1,4 @@
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
+import { documentNavigationModules } from '@app/shared-contracts';
 import { listProducts } from '@app/merchandise/clients/records';
 import type { ProductRecord } from '@app/merchandise/contracts/records';
 import { listCustomers } from '@app/party-registry/api/client';
@@ -96,28 +96,9 @@ const loadEmployees = listEmployees().pipe(
   Effect.map((items) => items.flatMap((item) => Option.toArray(toEmployeeOption(item)))),
 );
 
-// The shell publishes only modules permitted for the selected legal entity. A missing catalog is an
-// intentional composition choice; a failed composition lookup still surfaces the actual provider failure.
-const NavigationModuleIdSchema = Schema.String.pipe(Schema.brand('NavigationModuleId'));
-const NavigationApi = HttpApi.make('PipelineNavigationApi').add(
-  HttpApiGroup.make('composition').add(
-    HttpApiEndpoint.get('shellComposition', '/shell/composition', {
-      success: Schema.Struct({
-        navigation: Schema.Array(Schema.Struct({ moduleId: NavigationModuleIdSchema })),
-        state: Schema.String,
-      }),
-    }),
-  ),
-);
-const catalogReadable = makeEffectHttpApiClient(NavigationApi, { baseUrl: '/shell-super-app-api' }).pipe(
-  Effect.flatMap((client) => client.composition.shellComposition({})),
-  Effect.map(
-    ({ navigation, state }) =>
-      state !== 'available' || navigation.some(({ moduleId }) => moduleId === 'demo.merchandise'),
-  ),
-  Effect.timeout('3 seconds'),
-  Effect.orElseSucceed(() => true),
-);
+// The shell publishes only modules permitted for the selected legal entity and pins their ids on the document. A
+// missing catalog is an intentional composition choice; without the hint the provider's own answer decides.
+const catalogReadable = Effect.sync(() => documentNavigationModules()?.has('demo.merchandise') ?? true);
 const loadProducts = catalogReadable.pipe(
   Effect.flatMap((readable) =>
     readable

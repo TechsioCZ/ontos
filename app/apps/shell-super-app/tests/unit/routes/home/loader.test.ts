@@ -128,6 +128,7 @@ it.effect('resolves trusted context before returning one serializable compositio
       navigation: {
         deniedAppIds: [],
         items: navigation,
+        moduleIds: [...new Set(navigation.map(({ moduleId }) => moduleId))],
         state: 'available',
         unavailableDeployments: [],
       },

@@ -173,6 +173,7 @@ const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): Hom
         writable: false,
       },
     ],
+    moduleIds: [inventoryModuleId],
     state: 'available',
     unavailableDeployments: [],
   },

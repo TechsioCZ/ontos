@@ -123,6 +123,7 @@ export {
   pinDocumentCompositionRevision,
 } from './document-composition-revision.ts';
 export { isDocumentAppDenied, pinDocumentDeniedApps } from './document-denied-apps.ts';
+export { documentNavigationModules, pinDocumentNavigationModules } from './document-navigation-modules.ts';
 
 export const UltramodernPublicSitemapChangeFrequencySchema = Schema.Literals([
   'always',

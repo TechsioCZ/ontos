@@ -1,9 +1,9 @@
 // Records that hang off one business case (opportunity): its tasks, contracts and orders/offers in the owning modules.
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
+import { documentNavigationModules } from '@app/shared-contracts';
 import { listOrders } from '@app/merchandise/clients/records';
 import { executeRecords as executeAgreementsRecords } from '@app/legal-agreements/clients/records';
 import { listTasks } from '@app/work-tasks/clients/records';
-import { Effect, Random, Schema } from 'effect';
+import { Effect, Random } from 'effect';
 import { useEffect, useState } from 'react';
 import type { Opportunity } from '../../../../../shared/model/opportunity.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -44,27 +44,8 @@ export interface OpportunityRelated {
   readonly tasks: RelatedSection<RelatedTask>;
 }
 
-const ModuleIdSchema = Schema.String.pipe(Schema.brand('RelatedModuleId'));
-const CompositionApi = HttpApi.make('PipelineRelatedCompositionApi').add(
-  HttpApiGroup.make('composition').add(
-    HttpApiEndpoint.get('shellComposition', '/shell/composition', {
-      success: Schema.Struct({
-        navigation: Schema.Array(Schema.Struct({ moduleId: ModuleIdSchema })),
-        state: Schema.String,
-      }),
-    }),
-  ),
-);
-
-/** Modules the shell publishes for the selected company; `undefined` when the composition cannot be read. */
-const publishedModules = makeEffectHttpApiClient(CompositionApi, { baseUrl: '/shell-super-app-api' }).pipe(
-  Effect.flatMap((client) => client.composition.shellComposition({})),
-  Effect.map(({ navigation, state }) =>
-    state === 'available' ? new Set<string>(navigation.map(({ moduleId }) => moduleId)) : undefined,
-  ),
-  Effect.timeout('3 seconds'),
-  Effect.orElseSucceed(() => undefined),
-);
+/** Modules the shell pinned on the document for the selected company; `undefined` when it pinned none. */
+const publishedModules = Effect.sync(documentNavigationModules);
 
 const section = <Item, Failure>(
   published: ReadonlySet<string> | undefined,
