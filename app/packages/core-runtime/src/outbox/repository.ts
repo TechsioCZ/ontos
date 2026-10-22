@@ -130,6 +130,63 @@ const loadClaimInvocationEvidence = Effect.fnUntraced(function* loadClaimInvocat
   );
 });
 
+const matchUnmatchedInTransaction = (executor: CoreDbExecutor, compositionRevision: string, now: Date) =>
+  executor
+    .transaction(
+      Effect.fn('matchUnmatchedEffect')(function* matchUnmatchedEffect(transaction: CoreTransaction) {
+        const subscriptions = yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'match');
+        const messages = yield* transaction
+          .select({
+            messageId: outboxMessages.outboxMessageId,
+            producerModuleKey: outboxMessages.producerModuleKey,
+            topic: outboxMessages.topic,
+          })
+          .from(outboxMessages)
+          .where(isNull(outboxMessages.matchedAt))
+          .orderBy(asc(outboxMessages.createdAt), asc(outboxMessages.outboxMessageId))
+          .limit(100)
+          .for('update', { skipLocked: true });
+        const matchMessage = Effect.fn('OutboxRepository.matchMessage')(function* matchNextMessage(
+          messageIndex: number,
+          deliveriesCreated: number,
+        ): Effect.fn.Return<number, EffectDrizzleQueryError> {
+          const message = messages[messageIndex];
+          if (message === undefined) {
+            return deliveriesCreated;
+          }
+          const matches = subscriptions.filter(
+            (subscription) =>
+              subscription.producerModuleKey === message.producerModuleKey && subscription.topic === message.topic,
+          );
+          let nextDeliveriesCreated = deliveriesCreated;
+          if (matches.length > 0) {
+            const inserted = yield* transaction
+              .insert(outboxDeliveries)
+              .values(
+                matches.map((subscription) => ({
+                  consumerModuleKey: subscription.consumerModuleKey,
+                  outboxMessageId: message.messageId,
+                  workerKey: subscription.workerKey,
+                })),
+              )
+              .onConflictDoNothing()
+              .returning({ deliveryId: outboxDeliveries.outboxDeliveryId });
+            nextDeliveriesCreated += inserted.length;
+          }
+          yield* transaction
+            .update(outboxMessages)
+            .set({ matchedAt: now })
+            .where(and(eq(outboxMessages.outboxMessageId, message.messageId), isNull(outboxMessages.matchedAt)));
+          return yield* matchMessage(messageIndex + 1, nextDeliveriesCreated);
+        });
+        const deliveriesCreated = yield* matchMessage(0, 0);
+        return { deliveriesCreated, messagesMatched: messages.length };
+      }),
+    )
+    .pipe(
+      Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
+      Effect.mapError(compositionAuthorityOrPersistenceError),
+    );
 export const makeOutboxRepository = (executor: CoreDbExecutor): OutboxRepositoryService => ({
   claimNext: (registrations, claimOwner, now, compositionRevision) => {
     if (registrations.length === 0) {
@@ -450,64 +507,24 @@ export const makeOutboxRepository = (executor: CoreDbExecutor): OutboxRepository
         Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
         Effect.mapError(claimLostOrPersistenceError),
       ),
+  // Nearly every matcher tick finds no unmatched message. Probing the partial index first keeps an idle tick
+  // from opening the fenced transaction (lock plus subscription decode) on one of the few pooled connections.
   matchUnmatched: (compositionRevision, now) =>
     executor
-      .transaction(
-        Effect.fn('matchUnmatchedEffect')(function* matchUnmatchedEffect(transaction: CoreTransaction) {
-          const subscriptions = yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'match');
-          const messages = yield* transaction
-            .select({
-              messageId: outboxMessages.outboxMessageId,
-              producerModuleKey: outboxMessages.producerModuleKey,
-              topic: outboxMessages.topic,
-            })
-            .from(outboxMessages)
-            .where(isNull(outboxMessages.matchedAt))
-            .orderBy(asc(outboxMessages.createdAt), asc(outboxMessages.outboxMessageId))
-            .limit(100)
-            .for('update', { skipLocked: true });
-          const matchMessage = Effect.fn('OutboxRepository.matchMessage')(function* matchNextMessage(
-            messageIndex: number,
-            deliveriesCreated: number,
-          ): Effect.fn.Return<number, EffectDrizzleQueryError> {
-            const message = messages[messageIndex];
-            if (message === undefined) {
-              return deliveriesCreated;
-            }
-            const matches = subscriptions.filter(
-              (subscription) =>
-                subscription.producerModuleKey === message.producerModuleKey && subscription.topic === message.topic,
-            );
-            let nextDeliveriesCreated = deliveriesCreated;
-            if (matches.length > 0) {
-              const inserted = yield* transaction
-                .insert(outboxDeliveries)
-                .values(
-                  matches.map((subscription) => ({
-                    consumerModuleKey: subscription.consumerModuleKey,
-                    outboxMessageId: message.messageId,
-                    workerKey: subscription.workerKey,
-                  })),
-                )
-                .onConflictDoNothing()
-                .returning({ deliveryId: outboxDeliveries.outboxDeliveryId });
-              nextDeliveriesCreated += inserted.length;
-            }
-            yield* transaction
-              .update(outboxMessages)
-              .set({ matchedAt: now })
-              .where(and(eq(outboxMessages.outboxMessageId, message.messageId), isNull(outboxMessages.matchedAt)));
-            return yield* matchMessage(messageIndex + 1, nextDeliveriesCreated);
-          });
-          const deliveriesCreated = yield* matchMessage(0, 0);
-          return { deliveriesCreated, messagesMatched: messages.length };
-        }),
-      )
+      .select({ messageId: outboxMessages.outboxMessageId })
+      .from(outboxMessages)
+      .where(isNull(outboxMessages.matchedAt))
+      .limit(1)
       .pipe(
-        Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
-        Effect.mapError(compositionAuthorityOrPersistenceError),
+        Effect.mapError(outboxPersistenceFailure),
+        Effect.flatMap((pending) =>
+          pending.length === 0
+            ? Effect.succeed({ deliveriesCreated: 0, messagesMatched: 0 })
+            : matchUnmatchedInTransaction(executor, compositionRevision, now),
+        ),
       ),
 });
+
 export const OutboxRepositoryLive = Layer.effect(
   OutboxRepository,
   Effect.gen(function* makeOutboxRepositoryService() {

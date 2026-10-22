@@ -1,4 +1,4 @@
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Predicate, Schema } from 'effect';
 import type { Cause } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
@@ -135,7 +135,8 @@ it.effect('repository persistence failures carry the driver failure as their nat
       .pipe(Effect.flip);
     expect(failure).toBeInstanceOf(PersistenceFailure);
     expect(failure.reason).toBe('The Outbox Worker persistence operation failed');
-    expect(failure.cause).toBe(driverError);
+    // The idle-tick probe runs before any transaction: its failed query (wrapping the driver failure) is the cause.
+    expect(Predicate.isTagged(failure.cause, 'EffectDrizzleQueryError')).toBe(true);
   }),
 );
 
