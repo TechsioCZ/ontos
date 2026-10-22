@@ -269,35 +269,41 @@ jobs:
           database-url: ${{ secrets.DATABASE_URL }}
           database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
 
-      # Deploys only upload immutable release Workers; nothing serves them until publication.
+      # Deploys only upload immutable release Workers; nothing serves them until publication. Each upload
+      # locks only its own release identity, so four run side by side (Cloudflare API rate limits).
       - name: Upload every immutable release Worker
         working-directory: app
         env:
           ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+          UPLOAD_PARALLELISM: '4'
         run: |
-          mkdir -p "$RECEIPTS"
-          while IFS=$'\t' read -r id unit_path; do
-            export ONTOS_IMMUTABLE_RELEASE_SECRETS
-            ONTOS_IMMUTABLE_RELEASE_SECRETS="$(jq -cer --arg app "$id" '.[$app] | select(type == "object")' <<<"$ALL_RELEASE_SECRETS")"
-            script=scripts/immutable-application-release.mts
+          mkdir -p "$RECEIPTS" "$RUNNER_TEMP/upload-logs"
+          upload() {
+            local id="$1" unit_path="$2" script=scripts/immutable-application-release.mts started=$SECONDS
+            local log="$RUNNER_TEMP/upload-logs/$id.log"
             [[ "$id" == shell-super-app ]] && script=scripts/immutable-shell-release.mts
-            started=$SECONDS
+            ONTOS_IMMUTABLE_RELEASE_SECRETS="$(jq -cer --arg app "$id" '.[$app] | select(type == "object")' <<<"$ALL_RELEASE_SECRETS")" || return 1
+            export ONTOS_IMMUTABLE_RELEASE_SECRETS
             for attempt in 1 2 3; do
               if mise exec -- pnpm exec node "$script" deploy \
                 --app-directory "$unit_path" \
                 --plan-file ".codex/reports/releases/$id/plan.json" \
-                --receipt-file "$RECEIPTS/$id.json"; then
-                break
+                --receipt-file "$RECEIPTS/$id.json" >>"$log" 2>&1; then
+                echo "uploaded $id in $((SECONDS - started)) s (attempt $attempt)"
+                return 0
               fi
-              if [[ $attempt == 3 ]]; then
-                echo "::error title=Deploy failed::$id failed three times" >&2
-                exit 1
-              fi
-              echo "::warning title=Deploy retry::$id attempt $attempt failed; retrying"
+              echo "::warning title=Upload retry::$id attempt $attempt failed"
               sleep 15
             done
-            echo "deployed $id in $((SECONDS - started)) s"
-          done < <(jq -r '.[] | [.id, .path] | @tsv' <<<"$UNITS_JSON")
+            echo "::group::$id upload log"; tail -60 "$log"; echo '::endgroup::'
+            echo "::error title=Upload failed::$id failed three times"
+            return 1
+          }
+          export -f upload
+          export RECEIPTS
+          # shellcheck disable=SC2016
+          jq -r '.[] | [.id, .path] | @tsv' <<<"$UNITS_JSON" \
+            | xargs -P "$UPLOAD_PARALLELISM" -L 1 bash -c 'upload "$0" "$1"'
 
       - name: Assemble the composition candidate
         working-directory: app
