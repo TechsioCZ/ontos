@@ -93,8 +93,10 @@ export const crmActivitiesManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.modules',
-          order: 100,
+          groupKey: 'shell.navigation.sales',
+          icon: 'icon-[mdi--account-group-outline]',
+          label: { cs: 'Aktivity', en: 'Activities' },
+          order: 490,
           pageKey: recordsPageKey,
         }),
         // </generated-module-shell-navigation>

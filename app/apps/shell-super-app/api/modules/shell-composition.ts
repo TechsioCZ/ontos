@@ -6,6 +6,7 @@ import type {
   TenantModuleStateServiceContract,
 } from '@app/core-runtime';
 import { decideModuleStateAccess, isReservedShellRouteRoot, toContextPermissionAccessKey } from '@app/core-runtime';
+import type { LegalEntityNavigationExclusionsContract } from '@app/core-runtime/modules/legal-entity-navigation-exclusions';
 import { Context, Effect, Layer, Schema } from 'effect';
 
 import { ShellCompositionSchema, ShellNavigationItemSchema } from '../../shared/api.ts';
@@ -46,6 +47,8 @@ export interface ShellCompositionSources {
   readonly catalog: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogError>;
   readonly contextAccess: Pick<ContextAccessService, 'modules' | 'contextPermissions'>;
   readonly moduleStates: Pick<TenantModuleStateServiceContract, 'getTenantModuleStates'>;
+  /** Destinations the selected company does not offer (tenant data keyed by page entrypoint). */
+  readonly navigationExclusions: LegalEntityNavigationExclusionsContract;
 }
 
 const isVisibleState = Schema.is(ShellNavigationItemSchema.fields.state);
@@ -351,11 +354,20 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
     }
     const permissionByModule = new Map(decisions.map(({ decision, key }) => [key, decision]));
     const pages = pageByContributionKey(catalog);
-    const deniedEntrypoints = yield* resolveDeniedNavigationEntrypoints(
-      sources,
-      { ...context, legalEntityId: context.legalEntityId },
-      catalog,
-      permissionByModule,
+    // Sequential on purpose: both reads share the governed read's Core transaction.
+    const { deniedEntrypoints, excludedEntrypoints } = yield* Effect.all(
+      {
+        deniedEntrypoints: resolveDeniedNavigationEntrypoints(
+          sources,
+          { ...context, legalEntityId: context.legalEntityId },
+          catalog,
+          permissionByModule,
+        ),
+        excludedEntrypoints: sources.navigationExclusions
+          .listExcludedEntrypoints(context.tenantId, context.legalEntityId)
+          .pipe(Effect.mapError((cause) => new ShellCompositionUnavailableErrorConstructor({ cause }))),
+      },
+      { concurrency: 1 },
     );
     const navigation = catalog.contracts.flatMap((contract) => {
       const moduleId = contract.manifest.module.id;
@@ -365,10 +377,11 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
         return [];
       }
       return contract.manifest.publicSurface.shellContributions.navigation.flatMap((contribution) => {
-        const { authorization } = contribution.entrypoint;
+        const { authorization, entrypointKey } = contribution.entrypoint;
         if (
-          authorization.kind === 'context_permission' &&
-          deniedEntrypoints.has(toContextPermissionAccessKey({ moduleId, permission: authorization.permission }))
+          excludedEntrypoints.has(entrypointKey) ||
+          (authorization.kind === 'context_permission' &&
+            deniedEntrypoints.has(toContextPermissionAccessKey({ moduleId, permission: authorization.permission })))
         ) {
           return [];
         }
@@ -379,15 +392,19 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
             {
               appId: contract.deployment.appId,
               enabled: !unavailable,
+              entrypointKey: contribution.entrypoint.entrypointKey,
               groupKey: contribution.groupKey,
+              homeStart: contribution.homeStart,
             },
             !unavailable,
             'href',
             page?.routePath ?? '',
             {
-              label: contract.manifest.module.displayName,
+              icon: contribution.icon,
+              label: contribution.label,
               moduleId,
               order: Number(contribution.order),
+              requiresCapability: contribution.requiresCapability,
               state,
               unavailable,
               writable: state === 'active',
@@ -407,10 +424,29 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
           ),
         )
         .toSorted(),
+      homeComponents: catalog.contracts
+        .flatMap((contract) => {
+          const permission = permissionByModule.get(contract.manifest.module.id);
+          return permission === 'allowed'
+            ? contract.manifest.publicSurface.shellContributions.publicComponents.flatMap(({ entrypoint, home }) =>
+                home === undefined
+                  ? []
+                  : [
+                      {
+                        entrypointKey: entrypoint.entrypointKey,
+                        moduleId: entrypoint.moduleKey,
+                        order: Number(home.order),
+                        requiresModules: home.requiresModules,
+                      },
+                    ],
+              )
+            : [];
+        })
+        .toSorted((left, right) => left.order - right.order || left.entrypointKey.localeCompare(right.entrypointKey)),
       navigation: navigation.toSorted(
         (left, right) =>
           left.order - right.order ||
-          left.label.localeCompare(right.label) ||
+          left.label.cs.localeCompare(right.label.cs) ||
           left.moduleId.localeCompare(right.moduleId),
       ),
       state: 'available',

@@ -9,7 +9,8 @@ import {
 import type { LegacyEngineModule } from '../../../api/agent-platform/legacy-normalize.ts';
 
 /** A composed module that keeps its own AI change engine. */
-const crm: LegacyEngineModule = { appId: 'crm', label: 'CRM', moduleKey: 'demo.crm' };
+const crmApprovalsPage = { label: { cs: 'Otevřít v CRM', en: 'Open in CRM' }, path: '/crm/schvalovani-ai' };
+const crm: LegacyEngineModule = { appId: 'crm', approvalsPage: crmApprovalsPage, label: 'CRM', moduleKey: 'demo.crm' };
 
 const names = new Map([['principal-jana', 'Jana Nováková']]);
 
@@ -72,11 +73,16 @@ test('normalizeLegacySlice builds one batch with legacy keys and revert permissi
   expect(batch?.key).toBe(legacyBatchKey('crm', 'batch-1'));
   expect(batch?.key).toBe('legacy:crm:batch-1');
   expect(batch?.source).toBe('legacy');
+  expect(batch?.modulePage).toEqual(crmApprovalsPage);
   expect(batch?.canRevertAll).toBe(true);
   expect(batch?.items.map((item) => item.key)).toEqual(['legacy:crm:change-pending', 'legacy:crm:change-applied']);
 
   const [readOnly] = normalizeLegacySlice(crm, slice, { canDecide: false, names });
   expect(readOnly?.canRevertAll).toBe(false);
+
+  const { approvalsPage: _page, ...withoutApprovalsPage } = crm;
+  const [withoutPage] = normalizeLegacySlice(withoutApprovalsPage, slice, { canDecide: true, names });
+  expect(withoutPage !== undefined && 'modulePage' in withoutPage).toBe(false);
 
   const [reverted] = normalizeLegacySlice(
     crm,

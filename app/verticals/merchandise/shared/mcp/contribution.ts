@@ -4,6 +4,7 @@ import { OntosMcpHidden, defineOntosMcpContribution } from '@app/core-runtime';
 export const merchandiseMcpContribution = defineOntosMcpContribution({
   approvalReview: { read: 'agent-review' },
   approvals: true,
+  approvalsPage: { label: { cs: 'Otevřít v Prodeji', en: 'Open in Sales' }, path: '/prodej/schvalovani-ai' },
   ownProposalEngine: true,
   commands: {
     AiDecideChanges: 'hidden',

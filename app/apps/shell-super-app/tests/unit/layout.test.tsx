@@ -14,7 +14,7 @@ import type { ComponentProps, ReactNode } from 'react';
 import { AppIdSchema } from '../../shared/api';
 import { ultramodernUiMarker } from '../../shared/ultramodern-build.ts';
 import Layout from '../../src/routes/layout';
-import { AuthenticatedDashboardLayout } from '../../src/routes/shell-frame';
+import { AuthenticatedDashboardLayout, buildShellNavigation } from '../../src/routes/shell-frame';
 
 type HtmlAttributes = NonNullable<HelmetProps['htmlAttributes']>;
 
@@ -104,23 +104,6 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
         'shell.dashboard.navigation.groups.settings': 'Settings',
         'shell.dashboard.navigation.groups.team': 'People and tasks',
         'shell.dashboard.navigation.home': 'Home',
-        'shell.dashboard.navigation.inactive': 'Inactive',
-        'shell.dashboard.navigation.items.activities': 'Activities',
-        'shell.dashboard.navigation.items.agreements': 'Contracts and signatures',
-        'shell.dashboard.navigation.items.contacts': 'Contacts',
-        'shell.dashboard.navigation.items.customers': 'Customers',
-        'shell.dashboard.navigation.items.employees': 'Employees',
-        'shell.dashboard.navigation.items.integrations': 'Integrations',
-        'shell.dashboard.navigation.items.invoices': 'Invoices',
-        'shell.dashboard.navigation.items.occupancy': 'Leases and stays',
-        'shell.dashboard.navigation.items.opportunities': 'Opportunities',
-        'shell.dashboard.navigation.items.orders': 'Orders',
-        'shell.dashboard.navigation.items.products': 'Products and stock',
-        'shell.dashboard.navigation.items.properties': 'Properties',
-        'shell.dashboard.navigation.items.rentalOverview': 'Rental overview',
-        'shell.dashboard.navigation.items.statistics': 'Statistics',
-        'shell.dashboard.navigation.items.tags': 'Tags',
-        'shell.dashboard.navigation.items.tasks': 'Tasks',
         'shell.dashboard.navigation.label': 'Dashboard navigation',
         'shell.dashboard.navigation.pending': 'Loading page…',
         'shell.dashboard.sidebar.label': 'Dashboard sidebar',
@@ -159,23 +142,30 @@ const identity = {
   tenantId: 'tenant-1',
 };
 
+/** A composition navigation entry of a fixture module; the label is English in this test's language. */
+const entry = (
+  moduleId: string,
+  page: string,
+  groupKey: string,
+  label: string,
+  { enabled = true, href = `/${moduleId.replaceAll('.', '-')}/${page}` }: { enabled?: boolean; href?: string } = {},
+) => ({
+  enabled,
+  entrypointKey: `${moduleId}.page.${page}`,
+  groupKey,
+  href,
+  icon: 'icon-[mdi--view-grid-outline]' as const,
+  label: { cs: `${label} (cs)`, en: label },
+  moduleId,
+  state: 'active' as const,
+  unavailable: false,
+});
+
 const navigation = [
-  {
-    enabled: true,
+  entry('future-generated', 'records', 'shell.navigation.unlisted', 'Future generated', {
     href: '/modules/future-generated',
-    label: 'Future generated',
-    moduleId: 'future-generated',
-    state: 'active' as const,
-    unavailable: false,
-  },
-  {
-    enabled: true,
-    href: '/modules/testing.one',
-    label: 'Testing one',
-    moduleId: 'testing.one',
-    state: 'active' as const,
-    unavailable: false,
-  },
+  }),
+  entry('testing.one', 'records', 'shell.navigation.unlisted', 'Testing one', { href: '/modules/testing.one' }),
 ];
 const homeTitle = 'Home';
 const homeOverviewTitle = 'Home overview';
@@ -271,7 +261,6 @@ test('renders the default Home dashboard contract and preserves page children', 
   ]);
   expect(links[0]?.getAttribute('aria-current')).toBe('page');
   expect(links.slice(1).every((link) => link.tabIndex === 0)).toBe(true);
-  expect(navigationElement.textContent).not.toContain('inactive');
 });
 
 test('supports an alternate title and current MicroVertical without changing children', () => {
@@ -654,33 +643,23 @@ test.each(legalEntitySelectorStateCases)(
   },
 );
 
-const demoEntry = (moduleId: string, href: string, enabled = true) => ({
-  enabled,
-  href,
-  label: `${moduleId} owner`,
-  moduleId,
-  state: 'active' as const,
-  unavailable: false,
-});
+const estate = entry('fixture.estate', 'records', 'shell.navigation.real-estate', 'Properties');
+const leases = entry('fixture.leases', 'records', 'shell.navigation.real-estate', 'Leases and stays');
+const agreements = entry('fixture.agreements', 'records', 'shell.navigation.sales', 'Contracts and signatures');
+const orders = entry('fixture.shop', 'orders', 'shell.navigation.commerce', 'Orders');
+const products = entry('fixture.shop', 'products', 'shell.navigation.commerce', 'Products and stock');
+const tasks = entry('fixture.tasks', 'records', 'shell.navigation.team', 'Tasks');
+const invoices = entry('fixture.invoices', 'records', 'shell.navigation.finance', 'Invoices');
 
-test('groups permitted commercial and rental destinations from the composition', () => {
+test('places module destinations in the Shell sections they declare, in composition order', () => {
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      currentEntrypointKey="demo.merchandise.page.products"
-      currentModuleId="demo.merchandise"
+      currentEntrypointKey="fixture.shop.page.products"
+      currentModuleId="fixture.shop"
       identity={identity}
       logoutPending={false}
-      navigation={[
-        demoEntry('property.portfolio', '/nemovitosti'),
-        demoEntry('legal.agreements', '/smlouvy'),
-        demoEntry('property.leasing', '/najmy'),
-        ...navigation,
-        demoEntry('demo.merchandise', '/provoz/produkty'),
-        demoEntry('work.tasks', '/ukoly'),
-        demoEntry('demo.merchandise', '/prodej/objednavky'),
-        demoEntry('party.registry', '/contacts'),
-      ]}
+      navigation={[estate, agreements, leases, ...navigation, orders, products, tasks]}
       onLogout={noopLogout}
     >
       <section>Products</section>
@@ -692,7 +671,6 @@ test('groups permitted commercial and rental destinations from the composition',
     'Home',
     'Properties',
     'Leases and stays',
-    'Contacts',
     'Contracts and signatures',
     'Orders',
     'Products and stock',
@@ -702,13 +680,12 @@ test('groups permitted commercial and rental destinations from the composition',
   ]);
   expect(links.map((link) => link.getAttribute('href'))).toEqual([
     '/en/',
-    '/en/nemovitosti',
-    '/en/najmy',
-    '/en/contacts',
-    '/en/smlouvy',
-    '/en/prodej/objednavky',
-    '/en/provoz/produkty',
-    '/en/ukoly',
+    '/en/fixture-estate/records',
+    '/en/fixture-leases/records',
+    '/en/fixture-agreements/records',
+    '/en/fixture-shop/orders',
+    '/en/fixture-shop/products',
+    '/en/fixture-tasks/records',
     '/en/modules/future-generated',
     '/en/modules/testing.one',
   ]);
@@ -722,26 +699,24 @@ test('groups permitted commercial and rental destinations from the composition',
     'People and tasks',
     'Other modules',
   ]);
-  expect(navigationElement.textContent).not.toContain('Opportunities');
-  expect(navigationElement.textContent).not.toContain('Statistics');
-  expect(navigationElement.textContent).not.toContain('property.portfolio');
-  expect(navigationElement.textContent).not.toContain('property.leasing');
+  expect(navigationElement.textContent).not.toContain('(cs)');
   expect(screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent).toBe('E-commerceProducts and stock');
+});
+
+test('shows the Czech label a module declares for a Czech page', () => {
+  const model = buildShellNavigation(
+    { language: 'cs', navigation: [estate], unavailableDeployments: [] },
+    (key) => key,
+  );
+  expect(model.groups.flatMap(({ links }) => links.map(({ label }) => label))).toEqual(['Properties (cs)']);
 });
 
 const navigationText = () => screen.getByRole('navigation', { name: 'Dashboard navigation' }).textContent;
 
-test('replaces commercial destinations with rental destinations when the selected entity composition changes', () => {
+test('replaces destinations when the selected entity composition changes', () => {
   const props = { ...tenantProps, identity, logoutPending: false, onLogout: noopLogout };
   const { rerender } = render(
-    <AuthenticatedDashboardLayout
-      {...props}
-      navigation={[
-        demoEntry('demo.merchandise', '/prodej/objednavky'),
-        demoEntry('demo.merchandise', '/provoz/produkty'),
-        demoEntry('legal.agreements', '/smlouvy'),
-      ]}
-    >
+    <AuthenticatedDashboardLayout {...props} navigation={[orders, products, agreements]}>
       Content
     </AuthenticatedDashboardLayout>,
   );
@@ -751,11 +726,7 @@ test('replaces commercial destinations with rental destinations when the selecte
     <AuthenticatedDashboardLayout
       {...props}
       currentLegalEntityId="legal-entity-rental"
-      navigation={[
-        demoEntry('property.portfolio', '/nemovitosti'),
-        demoEntry('legal.agreements', '/smlouvy'),
-        demoEntry('finance.billing', '/finance'),
-      ]}
+      navigation={[estate, agreements, invoices]}
     >
       Content
     </AuthenticatedDashboardLayout>,
@@ -767,13 +738,13 @@ test('replaces commercial destinations with rental destinations when the selecte
   expect(navigationText()).not.toContain('Orders');
 });
 
-test('hides destinations the composition omits and keeps unavailable ones visible without links', () => {
+test('keeps unavailable destinations visible without links', () => {
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
       identity={identity}
       logoutPending={false}
-      navigation={[demoEntry('finance.billing', '/finance', false)]}
+      navigation={[{ ...invoices, enabled: false }]}
       onLogout={noopLogout}
     >
       <section>Current content</section>
@@ -782,10 +753,7 @@ test('hides destinations the composition omits and keeps unavailable ones visibl
   const navigationElement = screen.getByRole('navigation', { name: 'Dashboard navigation' });
   expect([...navigationElement.querySelectorAll('a')].map((link) => link.textContent)).toEqual(['Home']);
   expect(screen.getByText('Invoices')).toBeTruthy();
-  expect(screen.queryByText('Opportunities')).toBeNull();
-  expect(screen.queryByText('Inactive')).toBeNull();
   expect([...navigationElement.querySelectorAll('h2')].map((heading) => heading.textContent)).toEqual(['Finance']);
-  expect(navigationElement.textContent).not.toContain('Overview');
   expect(screen.queryByRole('navigation', { name: 'Breadcrumb' })).toBeNull();
 });
 
@@ -795,17 +763,17 @@ const currentLinkNames = () =>
     .map((link) => link.textContent);
 
 const customersAndContacts = [
-  demoEntry('party.registry', '/prodej/zakaznici'),
-  demoEntry('party.registry', '/contacts'),
-  demoEntry('demo.workforce', '/prodej/zamestnanci'),
+  entry('fixture.parties', 'customers', 'shell.navigation.sales', 'Customers'),
+  entry('fixture.parties', 'contacts', 'shell.navigation.sales', 'Contacts'),
+  entry('fixture.staff', 'records', 'shell.navigation.team', 'Employees'),
 ];
 
 test('marks only the page own destination current when two links share its module', () => {
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      currentEntrypointKey="party.registry.page.contacts"
-      currentModuleId="party.registry"
+      currentEntrypointKey="fixture.parties.page.contacts"
+      currentModuleId="fixture.parties"
       identity={identity}
       logoutPending={false}
       navigation={customersAndContacts}
@@ -818,17 +786,35 @@ test('marks only the page own destination current when two links share its modul
   expect(currentLinkNames()).toEqual(['Contacts']);
 });
 
+test('marks the sole destination of a module current on its other pages', () => {
+  render(
+    <AuthenticatedDashboardLayout
+      {...tenantProps}
+      currentEntrypointKey="fixture.staff.page.detail"
+      currentModuleId="fixture.staff"
+      identity={identity}
+      logoutPending={false}
+      navigation={customersAndContacts}
+      onLogout={noopLogout}
+    >
+      <section>Employee</section>
+    </AuthenticatedDashboardLayout>,
+  );
+
+  expect(currentLinkNames()).toEqual(['Employees']);
+});
+
 test('hides the previous page and marks the destination while the next page loads', () => {
   routerState.current = {
-    location: { pathname: '/en/contacts' },
-    resolvedLocation: { pathname: '/en/prodej/zamestnanci' },
+    location: { pathname: '/en/fixture-parties/contacts' },
+    resolvedLocation: { pathname: '/en/fixture-staff/records' },
   };
   const employeesOverviewTitle = 'Employees overview';
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      currentEntrypointKey="demo.workforce.page.records"
-      currentModuleId="demo.workforce"
+      currentEntrypointKey="fixture.staff.page.records"
+      currentModuleId="fixture.staff"
       identity={identity}
       logoutPending={false}
       navigation={customersAndContacts}
@@ -850,8 +836,8 @@ test('keeps the page visible when only search parameters or loader data refresh'
   render(
     <AuthenticatedDashboardLayout
       {...tenantProps}
-      currentEntrypointKey="demo.workforce.page.records"
-      currentModuleId="demo.workforce"
+      currentEntrypointKey="fixture.staff.page.records"
+      currentModuleId="fixture.staff"
       identity={identity}
       logoutPending={false}
       navigation={customersAndContacts}

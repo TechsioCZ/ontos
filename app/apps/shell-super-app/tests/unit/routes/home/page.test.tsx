@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 
 import {
   AppIdSchema,
+  EntrypointKeySchema,
   GroupKeySchema,
   LegalEntityAccessForbiddenProblemSchema,
   LegalEntityIdSchema,
@@ -160,9 +161,11 @@ const authenticatedModel = (options?: { readonly moduleEnabled?: boolean }): Hom
       {
         appId: inventoryAppId,
         enabled: options?.moduleEnabled ?? true,
+        entrypointKey: Schema.decodeUnknownSync(EntrypointKeySchema)('inventory.stock.page.records'),
         groupKey: navigationGroupKey,
         href: '/modules/inventory.stock',
-        label: 'Inventory',
+        icon: 'icon-[mdi--warehouse]',
+        label: { cs: 'Sklad', en: 'Inventory' },
         moduleId: inventoryModuleId,
         order: 10,
         state: 'read_only',

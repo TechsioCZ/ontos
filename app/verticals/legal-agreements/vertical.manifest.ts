@@ -91,8 +91,10 @@ export const legalAgreementsManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.modules',
-          order: 100,
+          groupKey: 'shell.navigation.sales',
+          icon: 'icon-[mdi--file-sign]',
+          label: { cs: 'Smlouvy a podpisy', en: 'Contracts and signatures' },
+          order: 480,
           pageKey: RECORDS_PAGE_KEY,
         }),
         // </generated-module-shell-navigation>

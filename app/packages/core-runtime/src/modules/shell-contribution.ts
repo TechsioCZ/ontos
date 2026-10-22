@@ -154,12 +154,36 @@ const writableApiEntrypoint = ModuleEntrypointSchema.pipe(
   ),
 );
 
+const navigationText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(80), Schema.isTrimmed());
+
+/** Czech and English text the Shell shows for a contribution; the Shell never names a module's destinations. */
+export const ShellContributionLabelSchema = Schema.Struct({ cs: navigationText, en: navigationText });
+export type ShellContributionLabel = typeof ShellContributionLabelSchema.Type;
+
+/** Iconify utility class of the destination, e.g. `icon-[mdi--home-outline]`. */
+export const ShellContributionIconSchema = Schema.TemplateLiteral(['icon-[', Schema.String, ']']).check(
+  Schema.isMaxLength(120),
+  Schema.isPattern(/^icon-\[[a-z0-9]+--[a-z0-9-]+\]$/u),
+);
+
+/** Platform capabilities the Shell decides per person; a destination needing one is listed only with it. */
+export const SHELL_NAVIGATION_CAPABILITIES = ['people_administration'] as const;
+
+/**
+ * A sidebar destination. `groupKey` places it in a Shell navigation section (`shell.navigation.<section>`); the Shell
+ * owns the sections, the module owns its label, icon and order within them.
+ */
 export const ShellNavigationContributionSchema = Schema.Struct({
   contributionKey,
   entrypoint: pageEntrypoint,
   groupKey,
+  /** Rank as the place to begin on the Shell Home (lower first); absent when the destination is no starting point. */
+  homeStart: Schema.optionalKey(order),
+  icon: ShellContributionIconSchema,
+  label: ShellContributionLabelSchema,
   order,
   pageKey,
+  requiresCapability: Schema.optionalKey(Schema.Literals(SHELL_NAVIGATION_CAPABILITIES)),
 });
 
 export const ShellPageContributionSchema = Schema.Struct({
@@ -170,11 +194,21 @@ export const ShellPageContributionSchema = Schema.Struct({
   routePath,
 });
 
+/**
+ * Offers a public component as the Home summary. The Shell renders the lowest `order` the person can open whose
+ * `requiresModules` (modules whose data it shows, including its own) are all in the person's navigation.
+ */
+export const ShellHomePlacementSchema = Schema.Struct({
+  order,
+  requiresModules: Schema.Array(stableKey).check(Schema.isMinLength(1)),
+});
+
 export const ShellPublicComponentContributionSchema = Schema.Struct({
   componentKey,
   contributionKey,
   entrypoint: componentEntrypoint,
   expose,
+  home: Schema.optionalKey(ShellHomePlacementSchema),
 });
 
 export const ShellSearchContributionSchema = Schema.Struct({

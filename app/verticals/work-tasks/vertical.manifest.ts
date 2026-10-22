@@ -12,10 +12,10 @@ import { AgentReviewApi } from './shared/apis/agent-review.ts';
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
 import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/ukoly/page.tsx';
-import { workTasksReadAllPermission } from './shared/permissions/work-tasks-read-all.ts';
-import { workTasksWriteAllPermission } from './shared/permissions/work-tasks-write-all.ts';
 import { taskCollectionResourceDescriptor } from './shared/resources/task-collection.ts';
 import { taskResourceDescriptor } from './shared/resources/task.ts';
+import { workTasksReadAllPermission } from './shared/permissions/work-tasks-read-all.ts';
+import { workTasksWriteAllPermission } from './shared/permissions/work-tasks-write-all.ts';
 // </generated-module-manifest-imports>
 import { workTasksMcpContribution } from './shared/mcp/contribution.ts';
 
@@ -97,8 +97,11 @@ export const workTasksManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.modules',
-          order: 100,
+          groupKey: 'shell.navigation.team',
+          homeStart: 100,
+          icon: 'icon-[mdi--clipboard-check-outline]',
+          label: { cs: 'Úkoly', en: 'Tasks' },
+          order: 600,
           pageKey: recordsPageKey,
         }),
         // </generated-module-shell-navigation>

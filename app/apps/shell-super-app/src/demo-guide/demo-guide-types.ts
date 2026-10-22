@@ -18,7 +18,7 @@ export interface DemoGuidePersona {
 export type DemoGuideTarget =
   | {
       readonly kind: 'app';
-      /** Staff-app path WITHOUT the language prefix; starts with `/`, may contain `?query`. Example: `/crm/klienti`. */
+      /** Staff-app path WITHOUT the language prefix; starts with `/`, may contain `?query`. Example: `/sprava/ke-schvaleni`. */
       readonly path: string;
     }
   | {

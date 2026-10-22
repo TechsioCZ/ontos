@@ -1,7 +1,7 @@
 import { Effect, Match, Schema } from 'effect';
 import type { Option } from 'effect';
 import { ResolveModuleTargetPayloadSchema } from '../../../shared/api.ts';
-import type { ResolvedModuleTarget } from '../../../shared/api.ts';
+import type { ResolvedModuleTarget, ShellHomeComponent } from '../../../shared/api.ts';
 import { resolveModuleTarget } from '../../api/auth-client.ts';
 import type { ShellAuthenticationClientOptions } from '../../api/auth-client.ts';
 
@@ -9,23 +9,8 @@ export type HomeContribution =
   | { readonly state: 'ready'; readonly target: ResolvedModuleTarget }
   | { readonly state: 'forbidden' | 'unavailable' };
 
-/**
- * Per-company Home components, most specific first. A candidate is requested only when its module is in the
- * persona's navigation, so roles without it never cause a denied (403) request; a missing or denied candidate falls
- * through to the next one, and the shell shows its own welcome page when none applies.
- */
-const homeComponentCandidates = [
-  // Prefer the CRM's own data over a generic sales dashboard for Hanák's managers.
-  { entrypointKey: 'demo.crm.component.home-summary', moduleId: 'demo.crm', sources: ['demo.crm'] },
-  {
-    entrypointKey: 'demo.sales-insights.component.crm-dashboard',
-    moduleId: 'demo.sales-insights',
-    sources: ['demo.sales-insights', 'demo.sales-pipeline', 'work.tasks', 'finance.billing'],
-  },
-] as const;
-
 const resolveCandidate = (
-  candidate: (typeof homeComponentCandidates)[number],
+  candidate: ShellHomeComponent,
   compositionRevision: string,
   options: ShellAuthenticationClientOptions,
 ): Effect.Effect<HomeContribution> =>
@@ -64,18 +49,24 @@ const resolveCandidate = (
     }),
   );
 
-/** Resolve the exact declared Home component afresh, independent of cached navigation permission hints. */
+/**
+ * Resolve the Home summary afresh, independent of cached navigation permission hints. Modules offer Home components
+ * (lowest order first); a candidate is requested only when every module whose data it shows is in the persona's
+ * navigation, so roles without them never cause a denied (403) request. A missing or denied candidate falls through
+ * to the next one, and the shell shows its own welcome page when none applies.
+ */
 export const loadHomeContribution = (
   request: Request,
   compositionRevision: string,
   options: ShellAuthenticationClientOptions,
+  homeComponents: readonly ShellHomeComponent[],
   navigationModuleIds: ReadonlySet<string>,
 ): Effect.Effect<Option.Option<HomeContribution>> => {
   if (!/^\/(?:[a-z]{2}\/?)?$/u.test(new URL(request.url).pathname)) {
     return Effect.succeedNone;
   }
-  const candidates = homeComponentCandidates.filter(({ sources }) =>
-    sources.every((moduleId) => navigationModuleIds.has(moduleId)),
+  const candidates = homeComponents.filter(({ requiresModules }) =>
+    requiresModules.every((moduleId) => navigationModuleIds.has(moduleId)),
   );
   const tryFrom = (index: number): Effect.Effect<HomeContribution> => {
     const candidate = candidates[index];

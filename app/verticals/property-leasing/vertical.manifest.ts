@@ -13,11 +13,11 @@ import { applyCommandAction } from './src/actions/apply-command.action.ts';
 import { occupancyResourceDescriptor } from './shared/resources/occupancy.ts';
 import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/najmy/page.tsx';
+// </generated-module-manifest-imports>
+import { propertyLeasingMcpContribution } from './shared/mcp/contribution.ts';
 
 const OWNER_MODULE_KEY = 'property.leasing';
 const RECORDS_PAGE_KEY = 'property.leasing.page.records';
-// </generated-module-manifest-imports>
-import { propertyLeasingMcpContribution } from './shared/mcp/contribution.ts';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -91,8 +91,11 @@ export const propertyLeasingManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.modules',
-          order: 100,
+          groupKey: 'shell.navigation.real-estate',
+          homeStart: 50,
+          icon: 'icon-[mdi--home-account]',
+          label: { cs: 'Nájmy a pobyty', en: 'Leases and stays' },
+          order: 120,
           pageKey: RECORDS_PAGE_KEY,
         }),
         // </generated-module-shell-navigation>

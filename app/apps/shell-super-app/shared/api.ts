@@ -439,18 +439,40 @@ export const SwitchLegalEntityResponseSchema = Schema.Struct({
   selectedLegalEntityId: LegalEntityIdSchema,
 });
 
+/** Czech and English text declared by the contributing module. */
+export const ShellLabelSchema = Schema.Struct({ cs: Schema.String, en: Schema.String });
+export type ShellLabel = typeof ShellLabelSchema.Type;
+
+/** Platform capability a destination needs beyond module access; the Shell decides it per person. */
+export const ShellNavigationCapabilitySchema = Schema.Literals(['people_administration']);
+
 export const ShellNavigationItemSchema = Schema.Struct({
   appId: AppIdSchema,
   enabled: Schema.Boolean,
+  entrypointKey: EntrypointKeySchema,
   groupKey: GroupKeySchema,
+  /** Rank of the destination as the place to begin on Home (lower first); absent when it is no starting point. */
+  homeStart: Schema.optional(Schema.Finite.check(Schema.isInt())),
   href: Schema.optionalKey(Schema.String),
-  label: Schema.String,
+  /** Iconify utility class, e.g. `icon-[mdi--home-outline]`. */
+  icon: Schema.TemplateLiteral(['icon-[', Schema.String, ']']),
+  label: ShellLabelSchema,
   moduleId: ModuleIdSchema,
   order: Schema.Finite.check(Schema.isInt()),
+  requiresCapability: Schema.optional(ShellNavigationCapabilitySchema),
   state: Schema.Literals(['active', 'deprecated', 'read_only']),
   unavailable: Schema.Boolean,
   writable: Schema.Boolean,
 });
+
+/** A public component a module offers as the Home summary (see the core `home` placement). */
+export const ShellHomeComponentSchema = Schema.Struct({
+  entrypointKey: EntrypointKeySchema,
+  moduleId: ModuleIdSchema,
+  order: Schema.Finite.check(Schema.isInt()),
+  requiresModules: Schema.Array(ModuleIdSchema),
+});
+export type ShellHomeComponent = typeof ShellHomeComponentSchema.Type;
 
 export const ShellUnavailableDeploymentSchema = Schema.Union([
   Schema.Struct({
@@ -480,6 +502,8 @@ export const ShellCompositionSchema = Schema.Union([
      * only (the gateway skips optional reads of them); every module still authorizes each request itself.
      */
     deniedAppIds: Schema.Array(AppIdSchema),
+    /** Home summary components of modules the person may open, lowest order first. */
+    homeComponents: Schema.Array(ShellHomeComponentSchema),
     navigation: Schema.Array(ShellNavigationItemSchema),
     state: Schema.Literal('available'),
     unavailableDeployments: Schema.Array(ShellUnavailableDeploymentSchema),

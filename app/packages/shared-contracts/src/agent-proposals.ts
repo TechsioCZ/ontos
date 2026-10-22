@@ -151,6 +151,10 @@ export const AgentQueueBatchSchema = Schema.Struct({
   /** `core:<batchId>` or `legacy:<appId>:<batchId>`; pass back unchanged in decide/revert requests. */
   key: Schema.String,
   moduleLabels: Schema.Array(Schema.String),
+  /** Page of the module that keeps its own AI changes, where the batch is also shown (module-declared). */
+  modulePage: Schema.optionalKey(
+    Schema.Struct({ label: Schema.Struct({ cs: Schema.String, en: Schema.String }), path: Schema.String }),
+  ),
   revertNote: Schema.optionalKey(Schema.String),
   revertedAt: Schema.optionalKey(Schema.String),
   revertedByName: Schema.optionalKey(Schema.String),

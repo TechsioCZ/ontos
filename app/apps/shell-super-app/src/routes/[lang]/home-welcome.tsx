@@ -5,33 +5,25 @@ import type { IconType } from '@techsio/ui-kit/atoms/icon';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 
 import type { ShellUnavailableDeployment } from '../../../shared/api.ts';
-import { buildShellNavigation, ShellRouteLink } from '../shell-frame';
+import { buildShellNavigation, navigationSections, ShellRouteLink } from '../shell-frame';
 import type { AuthenticatedDashboardLayoutProps, ShellNavigationLink } from '../shell-frame';
 
 /** Company profile shown on Home, keyed by the last three digits of the demo legal entity id. */
 const companyProfiles: Readonly<Record<string, { readonly icon: IconType; readonly key: string }>> = {
   '020': { icon: 'icon-[mdi--storefront-outline]', key: 'trading' },
-  '021': { icon: 'icon-[mdi--home-city-outline]', key: 'siampark' },
-  '022': { icon: 'icon-[mdi--account-group-outline]', key: 'crm' },
+  '021': { icon: 'icon-[mdi--home-city-outline]', key: 'estate' },
+  '022': { icon: 'icon-[mdi--account-group-outline]', key: 'wholesale' },
   '023': { icon: 'icon-[mdi--coffee-outline]', key: 'eshop' },
 };
 
-/** The destination each kind of work usually starts from; the first one the persona can open is offered. */
-const preferredStart = [
-  'crmPlan',
-  'crmClients',
-  'opsOverview',
-  'rentalOverview',
-  'occupancy',
-  'invoices',
-  'orders',
-  'opsAgenda',
-  'opportunities',
-  'tasks',
-  'products',
-] as const;
+/** Sections with a one-line hint on Home: every Shell navigation section. */
+const groupDescriptionKeys = new Set(navigationSections.map(({ key }) => key));
 
-const groupDescriptionKeys = new Set(['commerce', 'facility', 'finance', 'realEstate', 'sales', 'settings', 'team']);
+/** The destination work usually starts from: the lowest module-declared start rank, else the first destination. */
+const startLink = (links: readonly ShellNavigationLink[]): ShellNavigationLink | undefined =>
+  links
+    .filter((link) => link.homeStart !== undefined)
+    .toSorted((left, right) => (left.homeStart ?? 0) - (right.homeStart ?? 0))[0] ?? links[0];
 
 export interface HomeWelcomeProps {
   readonly companyName: string | undefined;
@@ -68,14 +60,16 @@ export const HomeWelcome = ({
   navigation,
   unavailableDeployments,
 }: HomeWelcomeProps) => {
-  const { t } = useModernI18n();
-  const model = buildShellNavigation({ homeCurrent: true, navigation, unavailableDeployments }, t);
+  const { language, t } = useModernI18n();
+  const model = buildShellNavigation(
+    { homeCurrent: true, language: language ?? '', navigation, unavailableDeployments },
+    t,
+  );
   const groups = model.groups
     .map((group) => ({ ...group, links: group.links.filter((link) => link.enabled && link.href !== null) }))
     .filter((group) => group.links.length > 0);
   const links = groups.flatMap((group) => group.links);
-  const start =
-    preferredStart.map((key) => links.find((link) => link.key === key)).find((link) => link !== undefined) ?? links[0];
+  const start = startLink(links);
   const profile = companyProfiles[legalEntityId?.slice(-3) ?? ''];
 
   return (

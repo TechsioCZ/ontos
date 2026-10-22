@@ -3,6 +3,7 @@ import { defineOntosMcpContribution } from '@app/core-runtime';
 
 export const salesPipelineMcpContribution = defineOntosMcpContribution({
   approvals: true,
+  approvalsPage: { label: { cs: 'Otevřít v Prodeji', en: 'Open in Sales' }, path: '/prodej/schvalovani-ai' },
   ownProposalEngine: true,
   commands: {
     AiDecideChanges: 'hidden',

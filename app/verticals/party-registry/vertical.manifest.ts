@@ -217,23 +217,6 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       navigation: [
         // <generated-module-shell-navigation>
         navigationContribution({
-          contributionKey: 'party.registry.navigation.contacts',
-          entrypoint: {
-            access: 'read',
-            authorization: {
-              kind: 'context_permission',
-              permission: 'module.access',
-            },
-            entrypointKey: 'party.registry.page.contacts',
-            moduleKey: 'party.registry',
-            role: 'page',
-            scope: 'tenant',
-          },
-          groupKey: 'shell.navigation.modules',
-          order: 100,
-          pageKey: 'party.registry.page.contacts',
-        }),
-        navigationContribution({
           contributionKey: 'party.registry.navigation.customers',
           entrypoint: {
             access: 'read',
@@ -243,8 +226,10 @@ export const partyRegistryManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.modules',
-          order: 90,
+          groupKey: 'shell.navigation.sales',
+          icon: 'icon-[mdi--domain]',
+          label: { cs: 'Zákazníci', en: 'Customers' },
+          order: 470,
           pageKey: 'party.registry.page.customers',
         }),
         // </generated-module-shell-navigation>

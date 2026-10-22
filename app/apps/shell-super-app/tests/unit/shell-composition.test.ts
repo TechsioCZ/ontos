@@ -1,4 +1,5 @@
 import type { ContextAccessDecision, ContextAccessService, TenantModuleState } from '@app/core-runtime';
+import { LegalEntityNavigationExclusionsUnavailableError } from '@app/core-runtime/modules/legal-entity-navigation-exclusions';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -61,6 +62,8 @@ const deployment = (appId: string, moduleId: string, displayName: string, order:
               scope: 'tenant',
             },
             groupKey: 'shell.navigation.modules',
+            icon: 'icon-[mdi--view-grid-outline]',
+            label: { cs: displayName, en: displayName },
             order,
             pageKey: `${moduleId}.page.home`,
           },
@@ -211,6 +214,9 @@ const contextAccess = (
 
 const context = { legalEntityId, principalId, tenantId } as const;
 
+/** Company navigation settings with nothing excluded. */
+const noExclusions = { listExcludedEntrypoints: () => Effect.succeed(new Set<string>()) };
+
 it.effect('composes one deterministic state and permission batch with lifecycle affordances', () =>
   Effect.gen(function* composesOneDeterministicStateAndPermission() {
     let stateBatches = 0;
@@ -233,18 +239,22 @@ it.effect('composes one deterministic state and permission batch with lifecycle 
           );
         },
       },
+      navigationExclusions: noExclusions,
     });
     const result = yield* composition.compose(context);
     expect(result).toEqual({
       compositionRevision: approvedCatalog.composition.revision,
       deniedAppIds: [],
+      homeComponents: [],
       navigation: [
         {
           appId: 'documents-center',
           enabled: true,
+          entrypointKey: 'documents.center.page.home',
           groupKey: 'shell.navigation.modules',
           href: '/documents-center',
-          label: 'Documents',
+          icon: 'icon-[mdi--view-grid-outline]',
+          label: { cs: 'Documents', en: 'Documents' },
           moduleId: 'documents.center',
           order: 10,
           state: 'read_only',
@@ -254,9 +264,11 @@ it.effect('composes one deterministic state and permission batch with lifecycle 
         {
           appId: 'property-registry',
           enabled: true,
+          entrypointKey: 'property.registry.page.home',
           groupKey: 'shell.navigation.modules',
           href: '/property-registry',
-          label: 'Property',
+          icon: 'icon-[mdi--view-grid-outline]',
+          label: { cs: 'Property', en: 'Property' },
           moduleId: 'property.registry',
           order: 20,
           state: 'deprecated',
@@ -287,6 +299,7 @@ it.effect('fails closed before permissions or lifecycle state when complete appr
           return Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' })));
         },
       },
+      navigationExclusions: noExclusions,
     })
       .compose(context)
       .pipe(Effect.flip);
@@ -307,6 +320,7 @@ it.effect('normalizes number-like module order before returning the public compo
         getTenantModuleStates: (_tenantId, moduleIds) =>
           Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
       },
+      navigationExclusions: noExclusions,
     }).compose(context);
 
     expect(result.navigation.map(({ order }) => order)).toEqual([10, 20]);
@@ -330,10 +344,12 @@ it.effect.each(['inactive', 'suspended', 'quarantined', 'archived'] as const)(
           getTenantModuleStates: (_tenantId, moduleIds) =>
             Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state }))),
         },
+        navigationExclusions: noExclusions,
       }).compose(context);
       expect(result).toEqual({
         compositionRevision: approvedCatalog.composition.revision,
         deniedAppIds: [],
+        homeComponents: [],
         navigation: [],
         state: 'available',
         unavailableDeployments: [],
@@ -353,6 +369,7 @@ it.effect('omits definite denial while preserving unavailable authorization as d
         getTenantModuleStates: (_tenantId, moduleIds) =>
           Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
       },
+      navigationExclusions: noExclusions,
     }).compose(context);
     expect(result.state).toBe('available');
     // Only the definite denial is a browser hint; unavailable authorization is never treated as denied.
@@ -361,8 +378,10 @@ it.effect('omits definite denial while preserving unavailable authorization as d
       {
         appId: 'property-registry',
         enabled: false,
+        entrypointKey: 'property.registry.page.home',
         groupKey: 'shell.navigation.modules',
-        label: 'Property',
+        icon: 'icon-[mdi--view-grid-outline]',
+        label: { cs: 'Property', en: 'Property' },
         moduleId: 'property.registry',
         order: 20,
         state: 'active',
@@ -388,6 +407,7 @@ it.effect('resolves direct targets independently with exhaustive safe outcomes a
         getTenantModuleStates: (_tenantId, moduleIds) =>
           Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state }))),
       },
+      navigationExclusions: noExclusions,
     });
     const resolved = yield* composition.resolveModuleTarget(context, {
       moduleId: 'property.registry',
@@ -442,6 +462,7 @@ it.effect('reports unknown direct modules, missing pages and canonical routes as
           return Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' })));
         },
       },
+      navigationExclusions: noExclusions,
     });
     expect(
       yield* composition.resolveModuleTarget(context, {
@@ -473,6 +494,7 @@ it.effect('returns the approved release and safe named parameters for canonical 
         getTenantModuleStates: (_tenantId, moduleIds) =>
           Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
       },
+      navigationExclusions: noExclusions,
     });
     const resolved = yield* composition.resolveModuleTarget(context, {
       canonicalPath: '/property-registry/customers/customer-123',
@@ -539,6 +561,7 @@ it.effect.each([
         getTenantModuleStates: (_tenantId, moduleIds) =>
           Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
       },
+      navigationExclusions: noExclusions,
     }).resolveModuleTarget(context, { canonicalPath, compositionRevision: approvedCatalog.composition.revision });
     expect(resolved).toMatchObject({
       compositionRevision: approvedCatalog.composition.revision,
@@ -569,6 +592,7 @@ it.effect.each([false, true])('prefers an earlier static segment with reversed d
         getTenantModuleStates: (_tenantId, moduleIds) =>
           Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
       },
+      navigationExclusions: noExclusions,
     }).resolveModuleTarget(context, { canonicalPath: '/contacts/customers/create/edit' });
     expect(resolved).toMatchObject({
       federation: { expose: './PageCustomerAction' },
@@ -596,6 +620,7 @@ it.effect('rejects ambiguous approved route authority before lifecycle or permis
           return Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' })));
         },
       },
+      navigationExclusions: noExclusions,
     })
       .resolveModuleTarget(context, { canonicalPath: '/contacts/customers/customer-123' })
       .pipe(Effect.flip);
@@ -641,6 +666,7 @@ it.effect('defensively denies an ambiguous injected catalog projection before li
           return Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' })));
         },
       },
+      navigationExclusions: noExclusions,
     }).resolveModuleTarget(context, { canonicalPath: '/contacts/customers/customer-123' });
     expect(result).toEqual({ outcome: 'not_found' });
     expect({ permissionBatches, stateBatches }).toEqual({ permissionBatches: 0, stateBatches: 0 });
@@ -660,6 +686,7 @@ it.effect('requires reload before checking permissions when the browser selected
           return Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' })));
         },
       },
+      navigationExclusions: noExclusions,
     });
     const result = yield* composition.resolveModuleTarget(context, {
       canonicalPath: '/property-registry',
@@ -683,6 +710,7 @@ it.effect.each([
         getTenantModuleStates: (_tenantId, moduleIds) =>
           Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
       },
+      navigationExclusions: noExclusions,
     }).resolveModuleTarget(context, { canonicalPath: `/property-registry/customers/${encoded}` });
     expect(result).toMatchObject({ outcome: 'resolved', routeParameters: { customerId: parameter } });
   }),
@@ -701,6 +729,7 @@ it.effect('rechecks access for the same pinned release after revocation', () =>
         getTenantModuleStates: (_tenantId, moduleIds) =>
           Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
       },
+      navigationExclusions: noExclusions,
     });
     const input = { canonicalPath: '/property-registry', compositionRevision: approvedCatalog.composition.revision };
     expect((yield* composition.resolveModuleTarget(context, input)).outcome).toBe('resolved');
@@ -739,6 +768,7 @@ it.effect.each([
         getTenantModuleStates: (_tenantId, moduleIds) =>
           Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
       },
+      navigationExclusions: noExclusions,
     }).resolveModuleTarget(context, { canonicalPath });
     expect(result).toEqual({ outcome: 'not_found' });
     expect(permissionBatches).toBe(0);
@@ -759,6 +789,7 @@ it.effect.each(['active', 'read_only', 'deprecated'] as const)(
           getTenantModuleStates: (_tenantId, moduleIds) =>
             Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state }))),
         },
+        navigationExclusions: noExclusions,
       });
       const landing = yield* composition.resolveModuleTarget(context, {
         moduleId: 'property.registry',
@@ -846,6 +877,7 @@ it.effect(
         moduleStates: {
           getTenantModuleStates: () => Effect.succeed([{ moduleKey: 'property.registry', state: 'active' as const }]),
         },
+        navigationExclusions: noExclusions,
       };
       const composition = makeShellComposition(source);
       const selector = { entrypointKey: 'property.registry.component.overview', moduleId: 'property.registry' };
@@ -916,6 +948,7 @@ it.effect('uses the selected legal entity for navigation and direct page authori
         getTenantModuleStates: (_tenantId, moduleIds) =>
           Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
       },
+      navigationExclusions: noExclusions,
     });
     const rentalContext = { ...context, legalEntityId: rentalLegalEntityId };
     expect((yield* composition.compose(context)).navigation.map(({ moduleId }) => moduleId)).toEqual([
@@ -931,5 +964,57 @@ it.effect('uses the selected legal entity for navigation and direct page authori
     expect((yield* composition.resolveModuleTarget(context, { canonicalPath: '/documents-center' })).outcome).toBe(
       'resolved',
     );
+  }),
+);
+
+it.effect('drops destinations the selected company excludes and keeps the others', () =>
+  Effect.gen(function* dropsExcludedDestinations() {
+    const asked: (readonly [string, string])[] = [];
+    const composition = makeShellComposition({
+      catalog: catalog(),
+      contextAccess: contextAccess({ 'documents.center': 'allowed', 'property.registry': 'allowed' }),
+      moduleStates: {
+        getTenantModuleStates: (_tenantId, moduleIds) =>
+          Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
+      },
+      navigationExclusions: {
+        listExcludedEntrypoints: (selectedTenantId, selectedLegalEntityId) => {
+          asked.push([selectedTenantId, selectedLegalEntityId]);
+          return Effect.succeed(new Set(['documents.center.page.home']));
+        },
+      },
+    });
+    const result = yield* composition.compose(context);
+    expect(result.navigation.map(({ entrypointKey }) => entrypointKey)).toEqual(['property.registry.page.home']);
+    expect(asked).toEqual([[tenantId, legalEntityId]]);
+    // Exclusion is navigation presentation only: the page itself still resolves for people who may open it.
+    expect((yield* composition.resolveModuleTarget(context, { canonicalPath: '/documents-center' })).outcome).toBe(
+      'resolved',
+    );
+  }),
+);
+
+it.effect('fails closed when the company navigation settings cannot be read', () =>
+  Effect.gen(function* failsClosedWithoutExclusions() {
+    const failure = yield* makeShellComposition({
+      catalog: catalog(),
+      contextAccess: contextAccess({ 'documents.center': 'allowed' }),
+      moduleStates: {
+        getTenantModuleStates: (_tenantId, moduleIds) =>
+          Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' }))),
+      },
+      navigationExclusions: {
+        listExcludedEntrypoints: () =>
+          Effect.fail(
+            new LegalEntityNavigationExclusionsUnavailableError({
+              code: 'legal_entity_navigation_exclusions_unavailable',
+              reason: 'unavailable in test',
+            }),
+          ),
+      },
+    })
+      .compose(context)
+      .pipe(Effect.flip);
+    expect(failure).toBeInstanceOf(ShellCompositionUnavailableError);
   }),
 );

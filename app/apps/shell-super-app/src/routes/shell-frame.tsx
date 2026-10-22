@@ -18,7 +18,7 @@ import type { SidebarExpandedChangeDetails, SidebarSide } from '@techsio/ui-kit/
 import { useEffect, useEffectEvent, useSyncExternalStore } from 'react';
 import type { ComponentProps, CSSProperties, ReactNode } from 'react';
 
-import type { ShellUnavailableDeployment } from '../../shared/api.ts';
+import type { ShellLabel, ShellUnavailableDeployment } from '../../shared/api.ts';
 import { DemoGuidePanel, DemoGuideToggleButton, demoGuidePageAttribute } from '../demo-guide/demo-guide-panel.tsx';
 import { demoGuideFor } from '../demo-guide/demo-guide-registry.ts';
 import { guideWidthCss, useDemoGuideOpen, useDemoGuideWidth } from '../demo-guide/demo-guide-store.ts';
@@ -35,8 +35,13 @@ interface DashboardNavigationItem {
   /** Deployment of the destination; also the gateway audience of its module API. */
   readonly appId?: string;
   readonly enabled: boolean;
+  readonly entrypointKey: string;
+  /** Shell navigation section the module places the destination in. */
+  readonly groupKey: string;
+  readonly homeStart?: number | undefined;
   readonly href?: string;
-  readonly label: string;
+  readonly icon: IconType;
+  readonly label: ShellLabel;
   readonly moduleId: string;
   readonly state: 'active' | 'deprecated' | 'read_only';
   readonly unavailable: boolean;
@@ -93,320 +98,34 @@ interface DashboardSelectorProps {
   readonly statusText: string | null;
 }
 
-const propertyModuleId = 'property.portfolio';
-
-interface DemoNavigationItemPresentation {
-  /** Page entrypoint keys that mark this destination as current. */
-  readonly entrypoints: readonly string[];
-  /** Module-contributed hrefs this destination accepts, most specific first. */
-  readonly hrefs: readonly string[];
+interface NavigationSection {
+  readonly groupKey: string;
   readonly icon: IconType;
-  readonly key: string;
-  readonly moduleId: string;
-}
-
-interface DemoNavigationGroupPresentation {
-  readonly icon: IconType;
-  readonly items: readonly DemoNavigationItemPresentation[];
+  /** Translation key below `shell.dashboard.navigation.groups`. */
   readonly key: string;
 }
 
 /**
- * Demo navigation grouped by functional domain. Destinations still come from module-contributed entries: an item
- * links only when its module publishes an enabled entry with one of the accepted hrefs (or, for single-page
- * modules, any entry). A group renders only when one of its destinations is claimed.
+ * Sidebar sections by functional area, in order. Modules place each destination in one by its navigation `groupKey`
+ * and bring its label, icon and order; destinations of an unknown section are listed under „Další moduly“.
  */
-const demoNavigationPresentation: readonly DemoNavigationGroupPresentation[] = [
-  {
-    // Real estate: rental overview, properties and leases.
-    icon: 'icon-[mdi--home-city-outline]',
-    items: [
-      {
-        entrypoints: ['property.portfolio.page.overview'],
-        hrefs: ['/nemovitosti/prehled'],
-        icon: 'icon-[mdi--view-dashboard-outline]',
-        key: 'rentalOverview',
-        moduleId: propertyModuleId,
-      },
-      {
-        entrypoints: ['property.portfolio.page.records'],
-        hrefs: ['/nemovitosti'],
-        icon: 'icon-[mdi--office-building-outline]',
-        key: 'properties',
-        moduleId: propertyModuleId,
-      },
-      {
-        entrypoints: ['property.leasing.page.records'],
-        hrefs: ['/najmy'],
-        icon: 'icon-[mdi--home-account]',
-        key: 'occupancy',
-        moduleId: 'property.leasing',
-      },
-    ],
-    key: 'realEstate',
-  },
-  {
-    // Facility operations: one destination per agenda; restricted agendas are listed only with read_all.
-    icon: 'icon-[mdi--cog-transfer-outline]',
-    items: [
-      {
-        entrypoints: ['facility.operations.page.overview'],
-        hrefs: ['/provoz/prehled'],
-        icon: 'icon-[mdi--view-dashboard-variant-outline]',
-        key: 'opsOverview',
-        moduleId: 'facility.operations',
-      },
-      {
-        entrypoints: ['facility.operations.page.agenda'],
-        hrefs: ['/provoz/agenda'],
-        icon: 'icon-[mdi--calendar-account-outline]',
-        key: 'opsAgenda',
-        moduleId: 'facility.operations',
-      },
-      {
-        entrypoints: ['facility.operations.page.assets'],
-        hrefs: ['/provoz/majetek'],
-        icon: 'icon-[mdi--archive-outline]',
-        key: 'opsAssets',
-        moduleId: 'facility.operations',
-      },
-      {
-        entrypoints: ['facility.operations.page.meters'],
-        hrefs: ['/provoz/meridla'],
-        icon: 'icon-[mdi--gauge]',
-        key: 'opsMeters',
-        moduleId: 'facility.operations',
-      },
-      {
-        entrypoints: ['facility.operations.page.purchasing'],
-        hrefs: ['/provoz/nakupy'],
-        icon: 'icon-[mdi--truck-delivery-outline]',
-        key: 'opsPurchasing',
-        moduleId: 'facility.operations',
-      },
-      {
-        entrypoints: ['facility.operations.page.security'],
-        hrefs: ['/provoz/bezpecnost'],
-        icon: 'icon-[mdi--shield-check-outline]',
-        key: 'opsSecurity',
-        moduleId: 'facility.operations',
-      },
-      {
-        entrypoints: ['facility.operations.page.documents'],
-        hrefs: ['/provoz/dokumenty'],
-        icon: 'icon-[mdi--folder-file-outline]',
-        key: 'opsDocuments',
-        moduleId: 'facility.operations',
-      },
-    ],
-    key: 'facility',
-  },
-  {
-    // Finance: invoices.
-    icon: 'icon-[mdi--cash-multiple]',
-    items: [
-      {
-        entrypoints: ['finance.billing.page.records'],
-        hrefs: ['/finance', '/prodej/faktury'],
-        icon: 'icon-[mdi--receipt-text-outline]',
-        key: 'invoices',
-        moduleId: 'finance.billing',
-      },
-    ],
-    key: 'finance',
-  },
-  {
-    // Sales and CRM: clients, visits, deals, customers, contacts, contracts, activities and statistics.
-    icon: 'icon-[mdi--handshake-outline]',
-    items: [
-      {
-        entrypoints: ['demo.crm.page.clients'],
-        hrefs: ['/crm/klienti'],
-        icon: 'icon-[mdi--account-tie-outline]',
-        key: 'crmClients',
-        moduleId: 'demo.crm',
-      },
-      {
-        entrypoints: ['demo.crm.page.plan'],
-        hrefs: ['/crm/k-osloveni'],
-        icon: 'icon-[mdi--phone-outgoing-outline]',
-        key: 'crmPlan',
-        moduleId: 'demo.crm',
-      },
-      {
-        entrypoints: ['demo.crm.page.visits'],
-        hrefs: ['/crm/navstevy'],
-        icon: 'icon-[mdi--map-marker-check-outline]',
-        key: 'crmVisits',
-        moduleId: 'demo.crm',
-      },
-      {
-        entrypoints: ['demo.crm.page.imports'],
-        hrefs: ['/crm/importy'],
-        icon: 'icon-[mdi--file-import-outline]',
-        key: 'crmImports',
-        moduleId: 'demo.crm',
-      },
-      {
-        entrypoints: ['demo.crm.page.pairing'],
-        hrefs: ['/crm/parovani'],
-        icon: 'icon-[mdi--link-variant]',
-        key: 'crmPairing',
-        moduleId: 'demo.crm',
-      },
-      {
-        entrypoints: ['demo.crm.page.reports'],
-        hrefs: ['/crm/prehled-prodeju'],
-        icon: 'icon-[mdi--chart-areaspline]',
-        key: 'crmReports',
-        moduleId: 'demo.crm',
-      },
-      {
-        entrypoints: ['demo.sales-pipeline.page.records', 'demo.sales-pipeline.page.opportunities'],
-        hrefs: ['/prodej/prilezitosti'],
-        icon: 'icon-[mdi--target-account]',
-        key: 'opportunities',
-        moduleId: 'demo.sales-pipeline',
-      },
-      {
-        entrypoints: ['party.registry.page.customers'],
-        hrefs: ['/prodej/zakaznici', '/zakaznici', '/customers'],
-        icon: 'icon-[mdi--domain]',
-        key: 'customers',
-        moduleId: 'party.registry',
-      },
-      {
-        entrypoints: ['party.registry.page.contacts'],
-        hrefs: ['/contacts'],
-        icon: 'icon-[mdi--card-account-details-outline]',
-        key: 'contacts',
-        moduleId: 'party.registry',
-      },
-      {
-        entrypoints: ['legal.agreements.page.records'],
-        hrefs: ['/smlouvy'],
-        icon: 'icon-[mdi--file-sign]',
-        key: 'agreements',
-        moduleId: 'legal.agreements',
-      },
-      {
-        entrypoints: ['crm.activities.page.records'],
-        hrefs: ['/aktivity'],
-        icon: 'icon-[mdi--account-group-outline]',
-        key: 'activities',
-        moduleId: 'crm.activities',
-      },
-      {
-        entrypoints: ['demo.sales-insights.page.records', 'demo.sales-insights.page.statistics'],
-        hrefs: ['/prehledy/statistiky', '/statistiky'],
-        icon: 'icon-[mdi--chart-line]',
-        key: 'statistics',
-        moduleId: 'demo.sales-insights',
-      },
-    ],
-    key: 'sales',
-  },
-  {
-    // E-commerce: orders and products.
-    icon: 'icon-[mdi--storefront-outline]',
-    items: [
-      {
-        entrypoints: ['demo.merchandise.page.orders'],
-        hrefs: ['/prodej/objednavky'],
-        icon: 'icon-[mdi--cart-outline]',
-        key: 'orders',
-        moduleId: 'demo.merchandise',
-      },
-      {
-        entrypoints: ['demo.merchandise.page.products'],
-        hrefs: ['/provoz/produkty'],
-        icon: 'icon-[mdi--package-variant-closed]',
-        key: 'products',
-        moduleId: 'demo.merchandise',
-      },
-    ],
-    key: 'commerce',
-  },
-  {
-    // People and tasks.
-    icon: 'icon-[mdi--account-multiple-check-outline]',
-    items: [
-      {
-        entrypoints: ['work.tasks.page.records'],
-        hrefs: ['/ukoly', '/provoz/ukoly'],
-        icon: 'icon-[mdi--clipboard-check-outline]',
-        key: 'tasks',
-        moduleId: 'work.tasks',
-      },
-      {
-        entrypoints: ['demo.workforce.page.records', 'demo.workforce.page.employees'],
-        hrefs: ['/prodej/zamestnanci', '/provoz/zamestnanci'],
-        icon: 'icon-[mdi--badge-account-horizontal-outline]',
-        key: 'employees',
-        moduleId: 'demo.workforce',
-      },
-    ],
-    key: 'team',
-  },
-  {
-    // Settings: tags, people and roles, integrations.
-    icon: 'icon-[mdi--tune-variant]',
-    items: [
-      {
-        entrypoints: ['demo.tagging.page.records', 'demo.tagging.page.tags'],
-        hrefs: ['/nastaveni/stitky'],
-        icon: 'icon-[mdi--tag-multiple-outline]',
-        key: 'tags',
-        moduleId: 'demo.tagging',
-      },
-      {
-        entrypoints: ['demo.workforce.page.people'],
-        hrefs: ['/sprava/lide'],
-        icon: 'icon-[mdi--account-key-outline]',
-        key: 'people',
-        moduleId: 'demo.workforce',
-      },
-      {
-        entrypoints: ['property.portfolio.page.integrations'],
-        hrefs: ['/nemovitosti/integrace'],
-        icon: 'icon-[mdi--connection]',
-        key: 'integrations',
-        moduleId: propertyModuleId,
-      },
-      // Platform approval layer for AI agents of every module.
-      {
-        entrypoints: ['shell-super-app.page.agent-approvals'],
-        hrefs: ['/sprava/ke-schvaleni'],
-        icon: 'icon-[mdi--clipboard-check-outline]',
-        key: 'agentApprovals',
-        moduleId: 'shell-super-app',
-      },
-      {
-        entrypoints: ['shell-super-app.page.agent-activity'],
-        hrefs: ['/sprava/aktivita-agentu'],
-        icon: 'icon-[mdi--robot-outline]',
-        key: 'agentActivity',
-        moduleId: 'shell-super-app',
-      },
-      {
-        entrypoints: ['shell-super-app.page.connected-apps'],
-        hrefs: ['/sprava/pripojene-aplikace'],
-        icon: 'icon-[mdi--connection]',
-        key: 'connectedApps',
-        moduleId: 'shell-super-app',
-      },
-    ],
-    key: 'settings',
-  },
+export const navigationSections: readonly NavigationSection[] = [
+  { groupKey: 'shell.navigation.real-estate', icon: 'icon-[mdi--home-city-outline]', key: 'realEstate' },
+  { groupKey: 'shell.navigation.facility', icon: 'icon-[mdi--cog-transfer-outline]', key: 'facility' },
+  { groupKey: 'shell.navigation.finance', icon: 'icon-[mdi--cash-multiple]', key: 'finance' },
+  { groupKey: 'shell.navigation.sales', icon: 'icon-[mdi--handshake-outline]', key: 'sales' },
+  { groupKey: 'shell.navigation.commerce', icon: 'icon-[mdi--storefront-outline]', key: 'commerce' },
+  { groupKey: 'shell.navigation.team', icon: 'icon-[mdi--account-multiple-check-outline]', key: 'team' },
+  { groupKey: 'shell.navigation.settings', icon: 'icon-[mdi--tune-variant]', key: 'settings' },
 ];
 
 export interface ShellNavigationLink {
   readonly current: boolean;
   readonly enabled: boolean;
+  /** Rank as the place to begin on Home (lower first); absent when the destination is no starting point. */
+  readonly homeStart?: number | undefined;
   readonly href: string | null;
   readonly icon: IconType;
-  /** No module publishes this destination yet (not installed, inactive or not permitted). */
-  readonly inactive: boolean;
   readonly key: string;
   readonly label: string;
   /** Typed reason text when the destination cannot be opened. */
@@ -443,12 +162,8 @@ export const ShellRouteLink = ({
   <LocalizedLink activeOptions={{ exact: true }} prefetch="intent" {...props} />
 );
 
-const entryNotice = (entry: DashboardNavigationItem | undefined, t: Translate): string | null => {
-  if (entry === undefined) {
-    return t('shell.dashboard.navigation.inactive');
-  }
-  return entry.unavailable ? t('shell.modules.unavailable') : null;
-};
+const entryNotice = (entry: DashboardNavigationItem, t: Translate): string | null =>
+  entry.unavailable ? t('shell.modules.unavailable') : null;
 
 /** How a destination relates to the rendered page: its own entrypoint, or only the same module. */
 type MatchedNavigationLink = Omit<ShellNavigationLink, 'current'> & {
@@ -456,98 +171,73 @@ type MatchedNavigationLink = Omit<ShellNavigationLink, 'current'> & {
   readonly moduleMatch: boolean;
 };
 
+const navigationLink = (
+  entry: DashboardNavigationItem,
+  language: string,
+  matches: Pick<MatchedNavigationLink, 'entrypointMatch' | 'moduleMatch'>,
+  t: Translate,
+): MatchedNavigationLink => ({
+  enabled: entry.enabled && entry.href !== undefined,
+  ...matches,
+  homeStart: entry.homeStart,
+  href: entry.href ?? null,
+  icon: entry.icon,
+  key: `${entry.entrypointKey}:${entry.href ?? ''}`,
+  label: language === 'en' ? entry.label.en : entry.label.cs,
+  notice: entryNotice(entry, t),
+  state: entry.state,
+});
+
 export const buildShellNavigation = (
   props: Pick<
     AuthenticatedDashboardLayoutProps,
     'currentEntrypointKey' | 'currentModuleId' | 'homeCurrent' | 'navigation' | 'unavailableDeployments'
   > & {
+    /** Page language; module-declared labels are shown in it. */
+    readonly language: string;
     /** Destination href of a navigation whose page is still loading; it alone is current until the page settles. */
     readonly pendingHref?: string | undefined;
   },
   t: Translate,
 ): ShellNavigationModel => {
-  const { currentEntrypointKey, currentModuleId, homeCurrent = true, pendingHref } = props;
+  const { currentEntrypointKey, currentModuleId, homeCurrent = true, language, pendingHref } = props;
+  // The composition lists only destinations the principal may open, in module order: a role never sees a menu item
+  // it cannot open, and a section without destinations is not shown.
   const visible = props.navigation;
-  const demoItems = demoNavigationPresentation.flatMap((group) => group.items);
-  const claimed = new Map<DemoNavigationItemPresentation, DashboardNavigationItem>();
-  const isClaimed = (entry: DashboardNavigationItem) => [...claimed.values()].includes(entry);
-  const soleModuleItem = (item: DemoNavigationItemPresentation) =>
-    demoItems.filter((candidate) => candidate.moduleId === item.moduleId).length === 1;
-
-  for (const item of demoItems) {
-    const byHref = item.hrefs
-      .map((href) => visible.find((entry) => entry.href === href && !isClaimed(entry)))
-      .find((entry) => entry !== undefined);
-    if (byHref !== undefined) {
-      claimed.set(item, byHref);
-    }
-  }
-  for (const item of demoItems) {
-    if (!claimed.has(item) && soleModuleItem(item)) {
-      const moduleEntries = visible.filter((entry) => entry.moduleId === item.moduleId && !isClaimed(entry));
-      const byModule = moduleEntries.find((entry) => entry.enabled) ?? moduleEntries[0];
-      if (byModule !== undefined) {
-        claimed.set(item, byModule);
-      }
-    }
-  }
-
-  // The composition lists only modules the principal may open, so a destination no entry claims is hidden, and
-  // so is a group left without destinations: a role never sees a menu item it cannot open.
-  const shownGroups = demoNavigationPresentation.flatMap((group) => {
-    const items = group.items.filter((item) => claimed.has(item));
-    return items.length === 0 ? [] : [{ ...group, items }];
-  });
-  const demoGroups = shownGroups.map((group) => ({
-    icon: group.icon,
-    key: group.key,
-    label: t(`shell.dashboard.navigation.groups.${group.key}`),
-    links: group.items.map((item): MatchedNavigationLink => {
-      const entry = claimed.get(item);
-      const entrypointCurrent = currentEntrypointKey !== undefined && item.entrypoints.includes(currentEntrypointKey);
-      const moduleCurrent =
-        entry !== undefined &&
-        soleModuleItem(item) &&
-        currentModuleId !== undefined &&
-        currentModuleId === entry.moduleId;
-      return {
-        enabled: entry !== undefined && entry.enabled && entry.href !== undefined,
-        entrypointMatch: entrypointCurrent,
-        href: entry?.href ?? null,
-        icon: item.icon,
-        inactive: entry === undefined,
-        key: item.key,
-        label: t(`shell.dashboard.navigation.items.${item.key}`),
-        moduleMatch: moduleCurrent,
-        notice: entryNotice(entry, t),
-        state: entry?.state ?? 'active',
-      };
-    }),
-  }));
-
-  const otherLinks = visible
-    .filter((entry) => !isClaimed(entry))
-    .map(
-      (entry): MatchedNavigationLink => ({
-        enabled: entry.enabled && entry.href !== undefined,
-        entrypointMatch: false,
-        href: entry.href ?? null,
-        icon: 'icon-[mdi--view-grid-outline]',
-        inactive: false,
-        key: entry.href ?? entry.moduleId,
-        label: entry.label,
-        moduleMatch: currentModuleId === entry.moduleId,
-        notice: entryNotice(entry, t),
-        state: entry.state,
-      }),
+  const known = new Set(navigationSections.map(({ groupKey }) => groupKey));
+  const soleModuleEntry = (entry: DashboardNavigationItem) =>
+    visible.filter((candidate) => candidate.moduleId === entry.moduleId).length === 1;
+  const linkOf = (entry: DashboardNavigationItem) =>
+    navigationLink(
+      entry,
+      language,
+      {
+        entrypointMatch: currentEntrypointKey !== undefined && entry.entrypointKey === currentEntrypointKey,
+        moduleMatch: currentModuleId !== undefined && currentModuleId === entry.moduleId && soleModuleEntry(entry),
+      },
+      t,
     );
+  const sectionGroups = navigationSections.flatMap((section) => {
+    const links = visible.flatMap((entry) => (entry.groupKey === section.groupKey ? [linkOf(entry)] : []));
+    return links.length === 0
+      ? []
+      : [
+          {
+            icon: section.icon,
+            key: section.key,
+            label: t(`shell.dashboard.navigation.groups.${section.key}`),
+            links,
+          },
+        ];
+  });
+
+  const otherLinks = visible.flatMap((entry) => (known.has(entry.groupKey) ? [] : [linkOf(entry)]));
   const deploymentLinks = props.unavailableDeployments.map((deployment): MatchedNavigationLink => ({
     enabled: false,
     entrypointMatch: false,
     href: null,
     icon: 'icon-[mdi--cloud-off-outline]',
-    inactive: false,
-    key: `deployment:${deployment.appId}`,
+      key: `deployment:${deployment.appId}`,
     label: deployment.appId,
     moduleMatch: false,
     notice: t(`shell.modules.discovery.${deployment.status === 'unavailable' ? deployment.reason : deployment.status}`),
@@ -559,7 +249,7 @@ export const buildShellNavigation = (
     label: t('shell.dashboard.navigation.groups.other'),
     links: [...otherLinks, ...deploymentLinks],
   };
-  const candidates = otherGroup.links.length === 0 ? demoGroups : [...demoGroups, otherGroup];
+  const candidates = otherGroup.links.length === 0 ? sectionGroups : [...sectionGroups, otherGroup];
   // A page's own destination wins over destinations that only share its module, so one link is current.
   const exactMatch = candidates.some((group) => group.links.some((link) => link.entrypointMatch));
   const settleLink = ({ entrypointMatch, moduleMatch, ...link }: MatchedNavigationLink): ShellNavigationLink => {
@@ -586,8 +276,7 @@ export const buildShellNavigation = (
       enabled: true,
       href: '/',
       icon: 'icon-[mdi--home-outline]',
-      inactive: false,
-      key: 'home',
+          key: 'home',
       label: t('shell.dashboard.navigation.home'),
       notice: null,
       state: 'active',
@@ -882,17 +571,10 @@ const DashboardNavigationLink = ({
       <span className="flex h-form-control-sm items-center gap-button-sm p-button-sm text-button-sm text-fg-secondary">
         <Icon icon={link.icon} size="sm" />
         <Sidebar.Label className="min-w-0 flex-1 truncate">{link.label}</Sidebar.Label>
-        {link.inactive && link.notice !== null ? (
-          <Sidebar.Expanded>
-            <Badge size="sm" variant="outline">
-              {link.notice}
-            </Badge>
-          </Sidebar.Expanded>
-        ) : null}
       </span>
     );
   const content =
-    badge === null && (link.notice === null || link.inactive) ? (
+    badge === null && link.notice === null ? (
       destination
     ) : (
       <div className="grid gap-50">
@@ -1051,8 +733,9 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
   const { language, t } = useModernI18n();
   const { tenantSwitchFailed } = props;
   const pendingPath = usePendingNavigationPath();
-  const pendingHref = pendingPath === undefined ? undefined : navigationHrefFromPath(pendingPath, language ?? '');
-  const model = buildShellNavigation({ ...props, pendingHref }, t);
+  const pageLanguage = language ?? '';
+  const pendingHref = pendingPath === undefined ? undefined : navigationHrefFromPath(pendingPath, pageLanguage);
+  const model = buildShellNavigation({ ...props, language: pageLanguage, pendingHref }, t);
   useIdleRoutePreload(props.navigation);
 
   // Back after sign-out or a tenant switch can restore this page from the back/forward cache with the old session's

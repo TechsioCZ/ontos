@@ -93,8 +93,10 @@ export const taggingManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.modules',
-          order: 100,
+          groupKey: 'shell.navigation.settings',
+          icon: 'icon-[mdi--tag-multiple-outline]',
+          label: { cs: 'Štítky', en: 'Tags' },
+          order: 700,
           pageKey: recordsPageKey,
         }),
         // </generated-module-shell-navigation>

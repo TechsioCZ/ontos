@@ -10,21 +10,21 @@ import {
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
 import { AgentReviewApi } from './shared/apis/agent-review.ts';
+import { AiApprovalsPage } from './src/routes/[lang]/crm/schvalovani-ai/page.tsx';
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
-import { HomeSummary } from './src/components/home-summary.tsx';
-import { RecordsApi } from './shared/apis/records.ts';
 import { ClientsPage } from './src/routes/[lang]/crm/klienti/page.tsx';
-import { VisitsPage } from './src/routes/[lang]/crm/navstevy/page.tsx';
-import { PlanPage } from './src/routes/[lang]/crm/k-osloveni/page.tsx';
+import { crmAssignPermission } from './shared/permissions/crm-assign.ts';
+import { crmReadAllPermission } from './shared/permissions/crm-read-all.ts';
+import { crmReadAssignedPermission } from './shared/permissions/crm-read-assigned.ts';
+import { crmWriteAllPermission } from './shared/permissions/crm-write-all.ts';
+import { crmWriteAssignedPermission } from './shared/permissions/crm-write-assigned.ts';
+import { HomeSummary } from './src/components/home-summary.tsx';
 import { ImportsPage } from './src/routes/[lang]/crm/importy/page.tsx';
 import { PairingPage } from './src/routes/[lang]/crm/parovani/page.tsx';
-import { AiApprovalsPage } from './src/routes/[lang]/crm/schvalovani-ai/page.tsx';
+import { PlanPage } from './src/routes/[lang]/crm/k-osloveni/page.tsx';
+import { RecordsApi } from './shared/apis/records.ts';
 import { ReportsPage } from './src/routes/[lang]/crm/prehled-prodeju/page.tsx';
-import { crmReadAllPermission } from './shared/permissions/crm-read-all.ts';
-import { crmWriteAllPermission } from './shared/permissions/crm-write-all.ts';
-import { crmReadAssignedPermission } from './shared/permissions/crm-read-assigned.ts';
-import { crmWriteAssignedPermission } from './shared/permissions/crm-write-assigned.ts';
-import { crmAssignPermission } from './shared/permissions/crm-assign.ts';
+import { VisitsPage } from './src/routes/[lang]/crm/navstevy/page.tsx';
 // </generated-module-manifest-imports>
 import { crmMcpContribution } from './shared/mcp/contribution.ts';
 
@@ -116,8 +116,11 @@ export const crmManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.modules',
-          order: 100,
+          groupKey: 'shell.navigation.sales',
+          homeStart: 20,
+          icon: 'icon-[mdi--account-tie-outline]',
+          label: { cs: 'Klienti', en: 'Clients' },
+          order: 400,
           pageKey: 'demo.crm.page.clients',
         }),
         navigationContribution({
@@ -130,8 +133,10 @@ export const crmManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.modules',
-          order: 110,
+          groupKey: 'shell.navigation.sales',
+          icon: 'icon-[mdi--map-marker-check-outline]',
+          label: { cs: 'Návštěvy', en: 'Visits' },
+          order: 420,
           pageKey: 'demo.crm.page.visits',
         }),
         navigationContribution({
@@ -144,8 +149,11 @@ export const crmManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.modules',
-          order: 120,
+          groupKey: 'shell.navigation.sales',
+          homeStart: 10,
+          icon: 'icon-[mdi--phone-outgoing-outline]',
+          label: { cs: 'K oslovení', en: 'To contact' },
+          order: 410,
           pageKey: 'demo.crm.page.plan',
         }),
         navigationContribution({
@@ -158,8 +166,10 @@ export const crmManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.modules',
-          order: 130,
+          groupKey: 'shell.navigation.sales',
+          icon: 'icon-[mdi--file-import-outline]',
+          label: { cs: 'Importy objednávek', en: 'Order imports' },
+          order: 430,
           pageKey: 'demo.crm.page.imports',
         }),
         navigationContribution({
@@ -172,8 +182,10 @@ export const crmManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.modules',
-          order: 140,
+          groupKey: 'shell.navigation.sales',
+          icon: 'icon-[mdi--link-variant]',
+          label: { cs: 'Párování', en: 'Matching' },
+          order: 440,
           pageKey: 'demo.crm.page.pairing',
         }),
         navigationContribution({
@@ -186,8 +198,10 @@ export const crmManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.modules',
-          order: 150,
+          groupKey: 'shell.navigation.sales',
+          icon: 'icon-[mdi--chart-areaspline]',
+          label: { cs: 'Přehled prodejů', en: 'Sales overview' },
+          order: 450,
           pageKey: 'demo.crm.page.reports',
         }),
         navigationContribution({
@@ -200,8 +214,10 @@ export const crmManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.modules',
-          order: 160,
+          groupKey: 'shell.navigation.agent-approvals',
+          icon: 'icon-[mdi--robot-outline]',
+          label: { cs: 'AI změny ke schválení', en: 'AI changes for approval' },
+          order: 460,
           pageKey: 'demo.crm.page.ai',
         }),
         // </generated-module-shell-navigation>
@@ -322,6 +338,7 @@ export const crmManifest = defineOntosModuleManifest({
             scope: 'tenant',
           },
           expose: './HomeSummary',
+          home: { order: 100, requiresModules: [moduleKey] },
         }),
         // </generated-module-shell-components>
       ],

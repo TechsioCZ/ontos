@@ -6,6 +6,7 @@ import type {
   LegalEntityChoice,
   SafeAuthenticatedIdentity,
   SafeTenantIdentity,
+  ShellHomeComponent,
   ShellNavigationItem,
   ShellUnavailableDeployment,
 } from '../../../shared/api.ts';
@@ -18,11 +19,12 @@ import {
 } from '../../api/auth-client.ts';
 import {
   hasModuleAiApprovals,
-  presentableDemoNavigation,
+  offersPeopleAdministration,
   withAgentPlatformNavigation,
-  withoutModuleAiApprovals,
   withConnectedAppsNavigation,
-} from '../shell-demo-presentation.ts';
+  withoutModuleAiApprovals,
+  withPeopleAdministration,
+} from '../shell-platform-navigation.ts';
 import { loadHomeContribution } from './home-contribution-model.ts';
 import type { HomeContribution } from './home-contribution-model.ts';
 import type { AvailableTenantsClientError, ShellAuthenticationClientOptions } from '../../api/auth-client.ts';
@@ -228,6 +230,7 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       return anonymousModel;
     }
     let compositionRevision: string | undefined;
+    let homeComponents: readonly ShellHomeComponent[] = [];
     let navigation: AuthenticatedHomePageModel['navigation'] = {
       deniedAppIds: [],
       items: [],
@@ -250,13 +253,11 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       if ('document' in globalThis) {
         yield* pinDocumentCompositionRevision(compositionRevision, globalThis.document);
       }
-      const hasPeoplePage = composition.navigation.some(({ href }) => href === '/sprava/lide');
-      const canManagePeople = hasPeoplePage ? yield* peopleCapabilityFor(session.identity, options) : false;
-      const presentable = presentableDemoNavigation(
-        composition.navigation,
-        canManagePeople,
-        session.identity.legalEntityId,
-      );
+      const canManagePeople = offersPeopleAdministration(composition.navigation)
+        ? yield* peopleCapabilityFor(session.identity, options)
+        : false;
+      const presentable = withPeopleAdministration(composition.navigation, canManagePeople);
+      ({ homeComponents } = composition);
       navigation = {
         deniedAppIds: composition.deniedAppIds,
         items: withConnectedAppsNavigation(
@@ -294,6 +295,7 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
                 request,
                 compositionRevision,
                 options,
+                homeComponents,
                 new Set(navigation.items.map(({ moduleId }) => String(moduleId))),
               )
             : Effect.succeedNone,

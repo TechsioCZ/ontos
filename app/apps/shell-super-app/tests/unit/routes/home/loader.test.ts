@@ -47,9 +47,11 @@ const navigation = [
   {
     appId: 'future-generated',
     enabled: true,
-    groupKey: 'shell.navigation.modules',
+    entrypointKey: 'future.generated.page.records',
+    groupKey: 'shell.navigation.unlisted',
     href: '/modules/future.generated',
-    label: 'Future generated',
+    icon: 'icon-[mdi--view-grid-outline]',
+    label: { cs: 'Budoucí modul', en: 'Future generated' },
     moduleId: 'future.generated',
     order: 10,
     state: 'active' as const,
@@ -92,6 +94,7 @@ beforeEach(() => {
     Effect.succeed({
       compositionRevision,
       deniedAppIds: [],
+      homeComponents: [],
       navigation,
       state: 'available' as const,
       unavailableDeployments: [],
@@ -333,7 +336,21 @@ it.effect('rechecks Home contribution permissions on every visit even when navig
       Effect.succeed({
         compositionRevision,
         deniedAppIds: [],
-        navigation: ['demo.sales-insights', 'demo.sales-pipeline', 'work.tasks', 'finance.billing'].map((moduleId) => ({
+        homeComponents: [
+          {
+            entrypointKey: 'fixture.summary.component.home',
+            moduleId: 'fixture.summary',
+            order: 100,
+            requiresModules: ['fixture.summary', 'fixture.unlisted'],
+          },
+          {
+            entrypointKey: 'fixture.dashboard.component.home',
+            moduleId: 'fixture.dashboard',
+            order: 200,
+            requiresModules: ['fixture.dashboard', 'fixture.sales', 'fixture.tasks'],
+          },
+        ],
+        navigation: ['fixture.dashboard', 'fixture.sales', 'fixture.tasks'].map((moduleId) => ({
           ...navigation[0],
           moduleId,
         })),
@@ -346,8 +363,8 @@ it.effect('rechecks Home contribution permissions on every visit even when navig
     expect(resolveModuleTargetMock).toHaveBeenCalledTimes(2);
     expect(resolveModuleTargetMock.mock.calls[0]?.[0]).toEqual({
       compositionRevision,
-      entrypointKey: 'demo.sales-insights.component.crm-dashboard',
-      moduleId: 'demo.sales-insights',
+      entrypointKey: 'fixture.dashboard.component.home',
+      moduleId: 'fixture.dashboard',
     });
     resolveModuleTargetMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellCapabilityUnavailableProblem' }));
     expect(yield* loadHomePageModel(request())).toMatchObject({ homeContribution: { state: 'unavailable' } });
@@ -372,7 +389,11 @@ it.effect.each([false, true])(
         Effect.succeed({
           compositionRevision,
           deniedAppIds: [],
-          navigation: ['/contacts', '/sprava/lide', '/crm/klienti'].map((href) => ({ ...navigation[0], href })),
+          homeComponents: [],
+          navigation: [
+            { ...navigation[0], href: '/fixture/people', requiresCapability: 'people_administration' },
+            { ...navigation[0], href: '/fixture/clients' },
+          ],
           state: 'available',
           unavailableDeployments: [],
         }),
@@ -384,13 +405,13 @@ it.effect.each([false, true])(
           deniedAppIds: [],
           items: allowed
             ? [
-                expect.objectContaining({ href: '/sprava/lide' }),
-                expect.objectContaining({ href: '/crm/klienti' }),
+                expect.objectContaining({ href: '/fixture/people' }),
+                expect.objectContaining({ href: '/fixture/clients' }),
                 expect.objectContaining({ href: '/sprava/ke-schvaleni' }),
                 expect.objectContaining({ href: '/sprava/aktivita-agentu' }),
                 expect.objectContaining({ href: '/sprava/pripojene-aplikace' }),
               ]
-            : [expect.objectContaining({ href: '/crm/klienti' })],
+            : [expect.objectContaining({ href: '/fixture/clients' })],
         },
       });
       expect(canManageDemoAccountsMock).toHaveBeenCalledTimes(1);

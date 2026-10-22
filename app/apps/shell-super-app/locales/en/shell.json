@@ -38,8 +38,8 @@
         "noAreas": "This account has no area assigned yet. Ask an administrator for a role.",
         "company": {
           "trading": "Wholesale with an online shop: customers, opportunities, orders, stock and invoices in one place.",
-          "siampark": "Estate management: properties, leases, contracts, operations, energy and finance under one roof.",
-          "crm": "Wholesale sales team: clients, contact plan, visits, order imports and sales overview.",
+          "estate": "Estate management: properties, leases, contracts, operations, energy and finance under one roof.",
+          "wholesale": "Wholesale sales team: clients, contact plan, visits, order imports and sales overview.",
           "eshop": "Coffee and tea online shop: products, variants, orders and dispatch."
         },
         "groupHints": {
@@ -65,7 +65,6 @@
         "home": "Home",
         "label": "Dashboard navigation",
         "pending": "Loading page…",
-        "inactive": "Inactive",
         "close": "Close navigation",
         "toggle": "Toggle navigation",
         "groups": {
@@ -77,41 +76,6 @@
           "team": "People and tasks",
           "settings": "Settings",
           "other": "Other modules"
-        },
-        "items": {
-          "opportunities": "Opportunities",
-          "customers": "Customers",
-          "orders": "Orders",
-          "invoices": "Invoices",
-          "tasks": "Tasks",
-          "employees": "Employees",
-          "products": "Products and stock",
-          "statistics": "Statistics",
-          "tags": "Tags",
-          "people": "People and roles",
-          "agreements": "Contracts and signatures",
-          "properties": "Properties",
-          "occupancy": "Leases and stays",
-          "crmClients": "Clients",
-          "crmPlan": "To contact",
-          "crmVisits": "Visits",
-          "crmImports": "Order imports",
-          "crmPairing": "Matching",
-          "agentApprovals": "Approvals",
-          "agentActivity": "Agent activity",
-          "connectedApps": "Connected apps",
-          "crmReports": "Sales overview",
-          "opsOverview": "Operations overview",
-          "opsAgenda": "My agenda",
-          "opsAssets": "Assets",
-          "opsMeters": "Meters and energy",
-          "opsPurchasing": "Stock and purchasing",
-          "opsSecurity": "Security",
-          "opsDocuments": "Documents",
-          "activities": "Activities",
-          "contacts": "Contacts",
-          "integrations": "Integrations",
-          "rentalOverview": "Rental overview"
         }
       },
       "sidebar": {

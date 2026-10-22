@@ -5,6 +5,8 @@
 @source '../../../../packages/admin-ui/src';
 /* A glob segment cannot resolve to a directory, so the scan needs an explicit file glob or it matches nothing. */
 @source '../../../../verticals/*/src/**/*';
+/* Sidebar icons are declared by each module's navigation contributions in its manifest. */
+@source '../../../../verticals/*/vertical.manifest.ts';
 
 /* The theme sets --radius-checkbox to --radius-sm (0.5rem), which draws an 18 px checkbox as a circle. Keep it square. */
 :root {

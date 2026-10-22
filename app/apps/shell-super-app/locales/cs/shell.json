@@ -38,8 +38,8 @@
         "noAreas": "Tento účet zatím nemá přiřazenou žádnou agendu. Požádejte správce o přidělení role.",
         "company": {
           "trading": "Velkoobchod s e-shopem: zákazníci, příležitosti, objednávky, sklad a faktury na jednom místě.",
-          "siampark": "Správa areálu: nemovitosti, nájmy, smlouvy, provoz, energie a finance pod jednou střechou.",
-          "crm": "Obchodní tým velkoobchodu: klienti, plán oslovení, návštěvy, importy objednávek a přehled prodejů.",
+          "estate": "Správa areálu: nemovitosti, nájmy, smlouvy, provoz, energie a finance pod jednou střechou.",
+          "wholesale": "Obchodní tým velkoobchodu: klienti, plán oslovení, návštěvy, importy objednávek a přehled prodejů.",
           "eshop": "E-shop s kávou, čajem a potřebami pro přípravu: produkty, varianty, objednávky a expedice."
         },
         "groupHints": {
@@ -65,7 +65,6 @@
         "home": "Domů",
         "label": "Navigace přehledu",
         "pending": "Načítání stránky…",
-        "inactive": "Neaktivní",
         "close": "Zavřít navigaci",
         "toggle": "Přepnout navigaci",
         "groups": {
@@ -77,41 +76,6 @@
           "team": "Lidé a úkoly",
           "settings": "Nastavení",
           "other": "Další moduly"
-        },
-        "items": {
-          "opportunities": "Příležitosti",
-          "customers": "Zákazníci",
-          "orders": "Objednávky",
-          "invoices": "Faktury",
-          "tasks": "Úkoly",
-          "employees": "Zaměstnanci",
-          "products": "Produkty a sklad",
-          "statistics": "Statistiky",
-          "tags": "Štítky",
-          "people": "Lidé a role",
-          "agreements": "Smlouvy a podpisy",
-          "properties": "Nemovitosti",
-          "occupancy": "Nájmy a pobyty",
-          "crmClients": "Klienti",
-          "crmPlan": "K oslovení",
-          "crmVisits": "Návštěvy",
-          "crmImports": "Importy objednávek",
-          "crmPairing": "Párování",
-          "agentApprovals": "Ke schválení",
-          "agentActivity": "Aktivita agentů",
-          "connectedApps": "Připojené aplikace",
-          "crmReports": "Přehled prodejů",
-          "opsOverview": "Přehled provozu",
-          "opsAgenda": "Moje agenda",
-          "opsAssets": "Majetek",
-          "opsMeters": "Měřidla a energie",
-          "opsPurchasing": "Sklad a nákupy",
-          "opsSecurity": "Bezpečnost",
-          "opsDocuments": "Dokumenty",
-          "activities": "Aktivity",
-          "contacts": "Kontakty",
-          "integrations": "Integrace",
-          "rentalOverview": "Přehled pronájmů"
         }
       },
       "sidebar": {

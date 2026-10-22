@@ -279,6 +279,8 @@ const installedPageCatalog = () =>
                     scope: 'tenant',
                   },
                   groupKey: 'shell.navigation.modules',
+                  icon: 'icon-[mdi--view-grid-outline]',
+                  label: { cs: 'Domů', en: 'Home' },
                   order: 100,
                   pageKey: 'testing.pages.page.home',
                 },

@@ -29,7 +29,6 @@ const pageContribution = (value: PageContributionInput) =>
 
 const moduleKey = 'property.portfolio';
 const accessPermission = 'module.access';
-const navigationGroup = 'shell.navigation.modules';
 const integrationsPageKey = 'property.portfolio.page.integrations';
 const overviewPageKey = 'property.portfolio.page.overview';
 const recordsPageKey = 'property.portfolio.page.records';
@@ -101,8 +100,10 @@ export const propertyPortfolioManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: navigationGroup,
-          order: 100,
+          groupKey: 'shell.navigation.settings',
+          icon: 'icon-[mdi--connection]',
+          label: { cs: 'Integrace', en: 'Integrations' },
+          order: 720,
           pageKey: integrationsPageKey,
         }),
         navigationContribution({
@@ -115,7 +116,10 @@ export const propertyPortfolioManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: navigationGroup,
+          groupKey: 'shell.navigation.real-estate',
+          homeStart: 40,
+          icon: 'icon-[mdi--view-dashboard-outline]',
+          label: { cs: 'Přehled pronájmů', en: 'Rental overview' },
           order: 100,
           pageKey: overviewPageKey,
         }),
@@ -129,8 +133,10 @@ export const propertyPortfolioManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: navigationGroup,
-          order: 100,
+          groupKey: 'shell.navigation.real-estate',
+          icon: 'icon-[mdi--office-building-outline]',
+          label: { cs: 'Nemovitosti', en: 'Properties' },
+          order: 110,
           pageKey: recordsPageKey,
         }),
         // </generated-module-shell-navigation>

@@ -96,7 +96,7 @@ const SearchResultItem = ({
 };
 
 const SearchPage = () => {
-  const { t } = useModernI18n();
+  const { language, t } = useModernI18n();
   const model = useLoaderData({ from: '/$lang/search' });
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
   if (model.state === 'reload_required' || model.shell.state === 'reload_required' || controls.reloadRequired) {
@@ -121,7 +121,10 @@ const SearchPage = () => {
     );
   }
   const currentTenantId = model.shell.identity.tenantId;
-  const agendaLinks = buildShellNavigation({ navigation: model.shell.navigation.items, unavailableDeployments: [] }, t)
+  const agendaLinks = buildShellNavigation(
+    { language: language ?? '', navigation: model.shell.navigation.items, unavailableDeployments: [] },
+    t,
+  )
     .groups.flatMap(({ links }) => links)
     .filter(({ enabled, href }) => enabled && href !== null);
   const content =

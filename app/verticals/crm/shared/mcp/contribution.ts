@@ -5,6 +5,7 @@ export const crmMcpContribution = defineOntosMcpContribution({
   // Clients are private per salesperson: proposals about clients the reader cannot see stay hidden.
   approvalReview: { privateRecords: true, read: 'agent-review' },
   approvals: true,
+  approvalsPage: { label: { cs: 'Otevřít v CRM', en: 'Open in CRM' }, path: '/crm/schvalovani-ai' },
   ownProposalEngine: true,
   commands: {
     AddContactPerson: { title: { cs: 'Přidat kontaktní osobu', en: 'Add a contact person' } },

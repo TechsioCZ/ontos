@@ -91,8 +91,11 @@ export const financeBillingManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.modules',
-          order: 100,
+          groupKey: 'shell.navigation.finance',
+          homeStart: 60,
+          icon: 'icon-[mdi--receipt-text-outline]',
+          label: { cs: 'Faktury', en: 'Invoices' },
+          order: 300,
           pageKey: recordsPageKey,
         }),
         // </generated-module-shell-navigation>

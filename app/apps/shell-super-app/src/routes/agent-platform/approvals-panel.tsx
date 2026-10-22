@@ -11,16 +11,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { decideAgentItems, formatAgentTime, loadAgentQueue, revertAgentBatch } from './agent-platform-client.ts';
 import { batchKeyFromSearch } from './batch-link.ts';
 
-/** In-module AI approval pages that keep showing their own batches next to this platform page. */
-const moduleApprovalPage: Readonly<Record<string, { readonly label: string; readonly path: string }>> = {
-  crm: { label: 'Otevřít v CRM', path: '/crm/schvalovani-ai' },
-  merchandise: { label: 'Otevřít v Prodeji', path: '/prodej/schvalovani-ai' },
-  'sales-pipeline': { label: 'Otevřít v Prodeji', path: '/prodej/schvalovani-ai' },
-};
-
-const moduleApprovalPageFor = (batch: AgentQueueBatch) =>
-  batch.source === 'legacy' ? moduleApprovalPage[batch.key.split(':')[1] ?? ''] : undefined;
-
 type Decision = 'approve' | 'reject';
 
 /** Batches shown per step in „Všechny dávky“. */
@@ -202,7 +192,8 @@ const BatchCard = ({
   const applied = batch.items.filter((item) => item.status === 'applied');
   const trimmedNote = note.trim();
   const decide = (keys: readonly string[], decision: Decision) => onDecide(batch, keys, decision, trimmedNote);
-  const modulePage = moduleApprovalPageFor(batch);
+  // Modules with their own AI change engine declare the page that shows these batches too.
+  const { modulePage } = batch;
   const badge =
     batch.revertedAt !== undefined
       ? { label: 'Dávka vrácena', variant: 'outline' as const }
@@ -230,7 +221,7 @@ const BatchCard = ({
               ))}
               {modulePage !== undefined && (
                 <LinkButton as={LocalizedLink} size="sm" theme="outlined" to={modulePage.path} variant="primary">
-                  {modulePage.label}
+                  {modulePage.label.cs}
                 </LinkButton>
               )}
             </div>

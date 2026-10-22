@@ -101,8 +101,10 @@ export const salesInsightsManifest = defineOntosModuleManifest({
             role: 'page',
             scope: 'tenant',
           },
-          groupKey: 'shell.navigation.modules',
-          order: 100,
+          groupKey: 'shell.navigation.sales',
+          icon: 'icon-[mdi--chart-line]',
+          label: { cs: 'Statistiky', en: 'Statistics' },
+          order: 495,
           pageKey: recordsPageKey,
         }),
         // </generated-module-shell-navigation>
@@ -139,6 +141,11 @@ export const salesInsightsManifest = defineOntosModuleManifest({
             scope: 'tenant',
           },
           expose: './CrmDashboard',
+          // Sales dashboard on Home; it reads opportunities, tasks and invoices, so it needs those modules too.
+          home: {
+            order: 200,
+            requiresModules: ['demo.sales-insights', 'demo.sales-pipeline', 'work.tasks', 'finance.billing'],
+          },
         }),
         // </generated-module-shell-components>
       ],

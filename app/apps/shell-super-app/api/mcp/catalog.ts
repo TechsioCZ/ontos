@@ -22,6 +22,8 @@ export interface McpCatalogModule {
   /** The module's agent review read the approval platform asks (undefined: generic handling). */
   readonly approvalReview: OntosMcpContribution['approvalReview'];
   readonly approvals: boolean;
+  /** Shell page where people review the module's own AI changes (undefined: none). */
+  readonly approvalsPage: OntosMcpContribution['approvalsPage'];
   readonly description: OntosMcpText;
   readonly keywords: string;
   readonly label: OntosMcpText;
@@ -120,6 +122,7 @@ export const buildMcpCatalog = (composition: {
           appId,
           approvalReview: contribution.approvalReview,
           approvals: contribution.approvals,
+          approvalsPage: contribution.approvalsPage,
           description: contribution.description,
           keywords: contribution.keywords,
           label: contribution.label,

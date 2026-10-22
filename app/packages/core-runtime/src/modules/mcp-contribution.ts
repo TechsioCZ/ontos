@@ -72,8 +72,22 @@ export const OntosMcpApprovalReviewSchema = Schema.Struct({
 });
 export type OntosMcpApprovalReview = typeof OntosMcpApprovalReviewSchema.Type;
 
+const shellPagePath = Schema.String.check(Schema.isPattern(/^\/[a-z0-9/-]*$/u));
+
+/**
+ * Shell page where people review the module's own AI changes (its `ownProposalEngine` batches). The approval queue
+ * („Ke schválení“) links each such batch there with `label`, e.g. „Otevřít v CRM“.
+ */
+export const OntosMcpApprovalsPageSchema = Schema.Struct({
+  label: OntosMcpTextSchema,
+  /** Shell page below `/<lang>`, e.g. `/ukoly/schvalovani-ai`. */
+  path: shellPagePath,
+});
+export type OntosMcpApprovalsPage = typeof OntosMcpApprovalsPageSchema.Type;
+
 export const OntosMcpContributionSchema = Schema.Struct({
   approvalReview: Schema.optionalKey(OntosMcpApprovalReviewSchema),
+  approvalsPage: Schema.optionalKey(OntosMcpApprovalsPageSchema),
   /** Proposals for this module may go to the platform approval queue („Ke schválení“). */
   approvals: Schema.Boolean,
   /** Shared JSON Schema definitions of the tools (`#/$defs/<key>`). */
@@ -92,7 +106,7 @@ export const OntosMcpContributionSchema = Schema.Struct({
   /** The module keeps its own AI change engine (`aiChanges`, AiDecideChanges, AiRevertBatch) the queue also shows. */
   ownProposalEngine: Schema.optionalKey(Schema.Boolean),
   /** Shell page of the module below `/<lang>`, e.g. `/ukoly`. */
-  page: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\/[a-z0-9/-]*$/u))),
+  page: Schema.optionalKey(shellPagePath),
   revision: Schema.optionalKey(OntosMcpRevisionSchema),
   tools: Schema.Array(OntosMcpToolSchema),
 });
@@ -126,6 +140,8 @@ export interface OntosMcpContributionInput {
   /** Read slug of the module's agent review read (see {@link OntosMcpApprovalReviewSchema}). */
   readonly approvalReview?: { readonly privateRecords?: boolean; readonly read: string };
   readonly approvals: boolean;
+  /** See {@link OntosMcpApprovalsPageSchema}; needs `ownProposalEngine`. */
+  readonly approvalsPage?: OntosMcpApprovalsPage;
   readonly commands?: Readonly<Record<string, OntosMcpWriteInput | OntosMcpHidden>>;
   readonly description: OntosMcpText;
   readonly keywords: string;
@@ -179,6 +195,9 @@ export const defineOntosMcpContribution = <const Input extends OntosMcpContribut
   }
   if (input.approvalReview !== undefined && !(input.approvalReview.read in input.reads)) {
     fail(`MCP approval review read ${input.approvalReview.read} is not one of the module's reads`);
+  }
+  if (input.approvalsPage !== undefined && input.ownProposalEngine !== true) {
+    fail('MCP approvals page needs ownProposalEngine');
   }
   if (input.approvalReview !== undefined && !input.approvals) {
     fail('MCP approval review needs approvals');

@@ -11,6 +11,8 @@ type Rec = Readonly<Record<string, unknown>>;
 /** A composed module that keeps its own AI change engine (`aiChanges` in its records read). */
 export interface LegacyEngineModule {
   readonly appId: string;
+  /** Module page that shows these batches too; the queue links each batch there. */
+  readonly approvalsPage?: AgentQueueBatch['modulePage'];
   readonly label: string;
   readonly moduleKey: string;
 }
@@ -185,6 +187,7 @@ export const normalizeLegacySlice = (
         key: legacyBatchKey(module.appId, id),
         moduleLabels: [module.label],
         source: 'legacy',
+        ...(module.approvalsPage === undefined ? {} : { modulePage: module.approvalsPage }),
         ...(revertedAt === undefined ? {} : { revertedAt }),
         ...(revertedBy === undefined ? {} : { revertedByName: options.names.get(revertedBy) ?? 'Neznámý uživatel' }),
         ...(revertNote === undefined ? {} : { revertNote }),

@@ -401,6 +401,14 @@ export const deriveOntosMcpContribution = (
           },
         }),
     approvals: authored.approvals,
+    ...(authored.approvalsPage === undefined
+      ? {}
+      : {
+          approvalsPage: {
+            label: { cs: authored.approvalsPage.label.cs, en: authored.approvalsPage.label.en },
+            path: authored.approvalsPage.path,
+          },
+        }),
     definitions,
     description: authored.description,
     keywords: authored.keywords,
