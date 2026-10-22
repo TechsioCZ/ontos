@@ -44,6 +44,8 @@ import {
   createZephyrRspackPlugin,
   resolveCloudflareExternal,
 } from '../../packages/shared-contracts/tooling/modern-config.ts';
+import { ROOT_ROUTES } from './shared/mcp-resource.ts';
+import { OAUTH_METADATA_ROUTES } from './shared/oauth-metadata-routes.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -192,6 +194,11 @@ export default defineConfig(
           compatibilityDate: '2026-06-02',
           // server/modern.server.ts is Node middleware; the Worker serves its root routes through the BFF hooks.
           publicAssetExcludes: ['server'],
+          // Root OAuth discovery and the MCP endpoint live outside the BFF prefix; the Worker serves them in-process.
+          rootRoutes: {
+            metadata: Object.fromEntries(OAUTH_METADATA_ROUTES),
+            routes: Object.fromEntries(ROOT_ROUTES),
+          },
           name: cloudflareWorkerName,
           security: createCloudflareWorkerSecurity(),
           ssr: true,

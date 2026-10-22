@@ -2512,8 +2512,6 @@ const apiRuntime = makeShellAuthenticationApiRuntime(
 export default apiRuntime;
 
 // The Cloudflare entry calls these optional BFF hooks before its normal prefix dispatch.
-export { oauthMetadataTarget } from '../shared/oauth-metadata-routes.ts';
-export { rootRouteTarget } from '../shared/mcp-resource.ts';
 
 let rootRouteHandler: ReturnType<typeof apiRuntime.createHandler> | undefined;
 
