@@ -15,6 +15,7 @@ import { RecordsPage } from './src/routes/[lang]/aktivity/page.tsx';
 import { crmActivitiesReadAllPermission } from './shared/permissions/crm-activities-read-all.ts';
 import { crmActivitiesWriteAllPermission } from './shared/permissions/crm-activities-write-all.ts';
 // </generated-module-manifest-imports>
+import { crmActivitiesMcpContribution } from './shared/mcp/contribution.ts';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -64,6 +65,7 @@ export const crmActivitiesManifest = defineOntosModuleManifest({
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: crmActivitiesMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>

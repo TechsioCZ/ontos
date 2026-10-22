@@ -25,6 +25,7 @@ import { crmReadAssignedPermission } from './shared/permissions/crm-read-assigne
 import { crmWriteAssignedPermission } from './shared/permissions/crm-write-assigned.ts';
 import { crmAssignPermission } from './shared/permissions/crm-assign.ts';
 // </generated-module-manifest-imports>
+import { crmMcpContribution } from './shared/mcp/contribution.ts';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -86,6 +87,7 @@ export const crmManifest = defineOntosModuleManifest({
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: crmMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>
