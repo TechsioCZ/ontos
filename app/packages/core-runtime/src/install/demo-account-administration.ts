@@ -6,7 +6,7 @@
  * demo permission scripts write, without re-implementing the role matrix.
  */
 import { v1 } from '@authzed/authzed-node';
-import { spiceDbTransport } from '#spicedb-transport';
+import { openSpiceDbRpc } from '../permissions/spicedb-transaction-guard.ts';
 import { Effect, Schema } from 'effect';
 
 import { IdentityPersistenceUnavailableError } from '../auth/principal-management-errors.ts';
@@ -237,7 +237,7 @@ export const openDemoAccountGrants = Effect.acquireRelease(
   loadSpiceDbConfig().pipe(
     Effect.mapError(unavailable),
     Effect.flatMap((configuration) =>
-      Effect.try({ catch: unavailable, try: () => spiceDbTransport.open(configuration, 10_000) }),
+      Effect.try({ catch: unavailable, try: () => openSpiceDbRpc(configuration, 10_000) }),
     ),
   ),
   (rpc) => Effect.sync(() => rpc.close()),

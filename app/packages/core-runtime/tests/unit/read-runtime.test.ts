@@ -1,6 +1,8 @@
 import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Option, Predicate, Schema } from 'effect';
+import { constVoid } from 'effect/Function';
 /* oxlint-disable sonarjs/use-type-alias, typescript/no-unsafe-type-assertion -- Existing compatibility boundary; expires: 2026-12-31. */
 import { expect, it } from 'effect-rstest';
+import { v1 } from '@authzed/authzed-node';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 
 import { defineGlobalPolicy, denyPolicy } from '../../src/actions/policy.ts';
@@ -22,7 +24,10 @@ import type {
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
 } from '../../src/permissions/owner-authorization-overlay.ts';
-import { allowOwnerAuthorizationOverlay } from '../../src/permissions/owner-authorization-overlay.ts';
+import {
+  allowOwnerAuthorizationOverlay,
+  transactionalOwnerAuthorization,
+} from '../../src/permissions/owner-authorization-overlay.ts';
 import {
   defineRead,
   defineReadConditionalPermission,
@@ -35,6 +40,8 @@ import {
   ReadPolicyDenied,
 } from '../../src/reads/errors.ts';
 import { makeReadRuntime, READ_RUNTIME_STAGES } from '../../src/reads/runtime.ts';
+import { guardSpiceDbRpc } from '../../src/permissions/spicedb-transaction-guard.ts';
+import type { SpiceDbRpc } from '../../src/permissions/spicedb-rpc.ts';
 import { makeTestDatabase } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
@@ -621,13 +628,13 @@ it.effect('runs the owner authorization overlay inside the transaction before th
   Effect.gen(function* ownerOverlayReadTest() {
     let handlerCalls = 0;
     const ownerInputs: OwnerAuthorizationInput[] = [];
-    const ownerAuthorizationOverlay: OwnerAuthorizationOverlayService = {
-      authorize: (_transaction, input) =>
+    const ownerAuthorizationOverlay: OwnerAuthorizationOverlayService = transactionalOwnerAuthorization(
+      (_transaction, input) =>
         Effect.sync(() => {
           ownerInputs.push(input);
           return 'denied' as const;
         }),
-    };
+    );
     const harness = yield* makeHarness({
       contextPermissionDecision: 'allowed',
       ownerAuthorizationOverlay,
@@ -670,12 +677,10 @@ it.effect('fails closed before owner authorization when PostgreSQL cannot provid
     const harness = yield* makeHarness({
       contextPermissionDecision: 'allowed',
       failTransactionTimestamp: true,
-      ownerAuthorizationOverlay: {
-        authorize: () => {
-          overlayCalls += 1;
-          return Effect.succeed('allowed' as const);
-        },
-      },
+      ownerAuthorizationOverlay: transactionalOwnerAuthorization(() => {
+        overlayCalls += 1;
+        return Effect.succeed('allowed' as const);
+      }),
       permissionDecision: 'allowed',
     });
     const testRegistration = defineRead(
@@ -1031,12 +1036,10 @@ it.effect('rejects stale, draining, sealed, migrated, expired, or missing Read a
       });
       const harness = yield* makeHarness({
         compositionAuthority,
-        ownerAuthorizationOverlay: {
-          authorize: () => {
-            overlayCalls += 1;
-            return Effect.succeed('allowed' as const);
-          },
-        },
+        ownerAuthorizationOverlay: transactionalOwnerAuthorization(() => {
+          overlayCalls += 1;
+          return Effect.succeed('allowed' as const);
+        }),
       });
       const scopedRegistration = defineRead(
         { ...registration().descriptor, policies: [{ denialStatus: 422, policyKey: policy.policyKey }] },
@@ -1305,6 +1308,136 @@ it.effect('runs owner prepare before the transaction, only owner load inside it,
     expect(events.lastIndexOf('spicedb')).toBeLessThan(begin);
     expect(events.indexOf('owner-spicedb-row-filter')).toBeGreaterThan(commit);
     expect(harness.evidence()).toBe(1);
+  }),
+);
+
+const unusedSpiceDbRpc = () => Effect.die(new Error('unused SpiceDB RPC'));
+
+/** A SpiceDB RPC behind the production transaction guard; each round trip that reaches it is recorded. */
+const guardedSpiceDb = (events: string[]): SpiceDbRpc =>
+  guardSpiceDbRpc({
+    checkBulkPermissions: unusedSpiceDbRpc,
+    checkPermission: () =>
+      Effect.sync(() => {
+        events.push('spicedb-rpc');
+        return v1.CheckPermissionResponse.create({
+          permissionship: v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+        });
+      }),
+    close: constVoid,
+    readRelationships: unusedSpiceDbRpc,
+    writeRelationships: unusedSpiceDbRpc,
+    writeSchema: unusedSpiceDbRpc,
+  });
+const spiceDbCheck = (rpc: SpiceDbRpc) => rpc.checkPermission(v1.CheckPermissionRequest.create({}));
+const diedInsideTransaction = (exit: Exit.Exit<unknown, unknown>, readKey: string): boolean =>
+  Exit.isFailure(exit) &&
+  exit.cause.reasons.some(
+    (reason) =>
+      Cause.isDieReason(reason) &&
+      Predicate.isTagged(reason.defect, 'SpiceDbInsideTransaction') &&
+      Predicate.hasProperty(reason.defect, 'operationKey') &&
+      reason.defect.operationKey === readKey,
+  );
+
+it.effect('lets owner prepare, finish, and the owner overlay preparation reach SpiceDB outside the transaction', () =>
+  Effect.gen(function* spiceDbOutsideTransaction() {
+    const events: string[] = [];
+    const spiceDb = guardedSpiceDb(events);
+    const harness = yield* makeHarness({
+      ownerAuthorizationOverlay: {
+        prepare: () =>
+          spiceDbCheck(spiceDb).pipe(
+            Effect.orDie,
+            Effect.as(() =>
+              Effect.sync(() => {
+                events.push('owner-overlay-check');
+                return 'allowed' as const;
+              }),
+            ),
+          ),
+      },
+      permissionDecision: 'allowed',
+      sqlEvents: events,
+    });
+    const read = defineRead(
+      registration().descriptor,
+      {
+        // oxlint-disable perfectionist/sort-objects -- Steps stay in execution order: each step's types infer from the previous one.
+        prepare: () => spiceDbCheck(spiceDb).pipe(Effect.orDie),
+        load: () => Effect.sync(() => events.push('owner-load')),
+        finish: () => spiceDbCheck(spiceDb).pipe(Effect.orDie, Effect.as({ evidence: { resultCount: 0 }, result: [] })),
+        // oxlint-enable perfectionist/sort-objects
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    expect(
+      yield* harness.runtime.runRead({
+        input: {},
+        principal: scope,
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      }),
+    ).toEqual([]);
+    expect(events).toEqual([
+      'spicedb-rpc',
+      'spicedb-rpc',
+      'BEGIN',
+      'owner-overlay-check',
+      'owner-load',
+      'COMMIT',
+      'spicedb-rpc',
+    ]);
+  }),
+);
+
+it.effect('refuses SpiceDB between BEGIN and COMMIT: owner load, service factory, and owner overlay check die', () =>
+  Effect.gen(function* spiceDbInsideTransaction() {
+    const events: string[] = [];
+    const spiceDb = guardedSpiceDb(events);
+    const { readKey } = registration().descriptor;
+    const runWith = (
+      options: Parameters<typeof makeHarness>[0],
+      load: () => Effect.Effect<unknown>,
+      services: () => Effect.Effect<object> = () => Effect.succeed({}),
+    ) =>
+      Effect.gen(function* runReadWithSpiceDb() {
+        const harness = yield* makeHarness({ permissionDecision: 'allowed', sqlEvents: events, ...options });
+        return yield* Effect.exit(
+          harness.runtime.runRead({
+            input: {},
+            principal: scope,
+            registration: defineRead(
+              registration().descriptor,
+              { load: () => load().pipe(Effect.as({ evidence: { resultCount: 0 }, result: [] })) },
+              services,
+              () => ({ kind: 'module', moduleId: 'core.shell' }),
+            ),
+            transport: { correlationId: scope.correlationId },
+          }),
+        );
+      });
+    const inLoad = yield* runWith({}, () => spiceDbCheck(spiceDb).pipe(Effect.orDie));
+    const inServiceFactory = yield* runWith(
+      {},
+      () => Effect.void,
+      () => spiceDbCheck(spiceDb).pipe(Effect.orDie, Effect.as({})),
+    );
+    const inOverlayCheck = yield* runWith(
+      {
+        ownerAuthorizationOverlay: transactionalOwnerAuthorization(() =>
+          spiceDbCheck(spiceDb).pipe(Effect.orDie, Effect.as('allowed' as const)),
+        ),
+      },
+      () => Effect.void,
+    );
+    expect(diedInsideTransaction(inLoad, readKey)).toBe(true);
+    expect(diedInsideTransaction(inServiceFactory, readKey)).toBe(true);
+    expect(diedInsideTransaction(inOverlayCheck, readKey)).toBe(true);
+    // The guard fails before the transport: no round trip ran, and every transaction rolled back.
+    expect(events.filter((event) => event === 'spicedb-rpc')).toEqual([]);
+    expect(events.filter((event) => event === 'ROLLBACK')).toHaveLength(3);
   }),
 );
 

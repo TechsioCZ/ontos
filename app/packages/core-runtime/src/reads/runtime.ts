@@ -39,6 +39,7 @@ import {
   failClosedOwnerAuthorizationOverlay,
 } from '../permissions/owner-authorization-overlay.ts';
 import type { OwnerAuthorizationTarget } from '../permissions/owner-authorization-overlay.ts';
+import { insideDatabaseTransaction } from '../permissions/spicedb-transaction-guard.ts';
 import type {
   AssortmentPermissionAccessTarget,
   AssortmentPermissionCommercialScope,
@@ -1471,25 +1472,31 @@ const readRuntimeFromDependencies = <
     const ownerContext = Object.freeze({ readKey: input.registration.descriptor.readKey, scope });
 
     const executeAuthorizedRead = Effect.fn('ReadRuntime.executeAuthorizedRead')(function* executeAuthorizedRead() {
-      // Owner `prepare`: SpiceDB grants and other remote calls, before any transaction exists.
-      const loadWith = yield* getReadStages(input.registration)(decodedInput, ownerContext).pipe(sanitizeOwnerFailure);
-      // Owner work: the transaction holds only the scope installation, owner authorization state, and `load`.
-      const finishOwner = yield* admittedTransaction(
-        Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBody(transaction: CoreTransaction) {
-          const scoped = yield* installOperationalScope(transaction, scope);
-          stage('scope_installed');
-          const operationAt = yield* trustedTransactionTime(transaction);
-          const ownerAuthorizationDecision = yield* ownerAuthorizationOverlay.authorize(
-            scoped,
+      // Owner `prepare` and the owner authorization overlay's remote inputs: SpiceDB grants and other
+      // remote calls, before any transaction exists.
+      const [loadWith, ownerAuthorizationCheck] = yield* Effect.all(
+        [
+          getReadStages(input.registration)(decodedInput, ownerContext).pipe(sanitizeOwnerFailure),
+          ownerAuthorizationOverlay.prepare(
             Object.freeze({
               operation: 'read' as const,
-              operationAt,
               operationKey: input.registration.descriptor.readKey,
               owningModuleKey: input.registration.descriptor.owningModuleKey,
               scope,
               targets: ownerAuthorizationTargets,
             }),
-          );
+          ),
+        ],
+        { concurrency: 2 },
+      );
+      // Owner work: the transaction holds only the scope installation, owner authorization state, and `load`.
+      // SpiceDB refuses to run inside it (`insideDatabaseTransaction`).
+      const finishOwner = yield* admittedTransaction(
+        Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBody(transaction: CoreTransaction) {
+          const scoped = yield* installOperationalScope(transaction, scope);
+          stage('scope_installed');
+          const operationAt = yield* trustedTransactionTime(transaction);
+          const ownerAuthorizationDecision = yield* ownerAuthorizationCheck(scoped, operationAt);
           if (ownerAuthorizationDecision === 'denied') {
             return yield* new ReadPermissionDenied({
               code: 'read_permission_denied',
@@ -1507,7 +1514,7 @@ const readRuntimeFromDependencies = <
           stage('handler_executed');
           return finish;
         }),
-      );
+      ).pipe(insideDatabaseTransaction(input.registration.descriptor.readKey));
       // The connection is back in the pool: owner `finish`, result validation, result authorization, and evidence.
       const handlerResult = yield* finishOwner.pipe(sanitizeOwnerFailure);
       const result = yield* Schema.decodeUnknownEffect(Schema.toType(input.registration.descriptor.resultSchema), {

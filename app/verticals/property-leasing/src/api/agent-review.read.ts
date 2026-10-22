@@ -7,7 +7,7 @@ import type { AgentReviewRequest } from '../../shared/apis/agent-review.ts';
 import { OccupancySchema } from '../../shared/apis/records.ts';
 import type { OccupancyState } from '../../shared/apis/records.ts';
 import { reviewOccupancyProposal, targetOccupancyId } from './agent-review.ts';
-import { makeRecordsServices } from './records.read.ts';
+import { makeRecordsServices, occupancyWriteCapability } from './records.read.ts';
 import type { Services } from './records.read.ts';
 
 const OWNER_MODULE_KEY = 'property.leasing';
@@ -21,6 +21,12 @@ const agentReviewEntrypoint = defineTenantModuleEntrypoint({
 });
 
 const encodeOccupancy = Schema.encodeSync(OccupancySchema);
+
+/** Proposals still to decide (or undos of a known lease) need the leases and the write right. */
+const reviewsLiveProposals = (input: AgentReviewRequest): boolean =>
+  input.items.some(
+    (item) => item.stage === 'proposed' || (item.stage === 'undo' && targetOccupancyId(item.command) !== undefined),
+  );
 
 export const agentReviewRead = defineRead(
   {
@@ -40,12 +46,13 @@ export const agentReviewRead = defineRead(
     schemaVersion: '1',
   },
   {
-    load: (input: AgentReviewRequest, context: ReadLoadContext<Services>) =>
+    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
+    // The write right is a SpiceDB round trip: it is decided before the transaction opens.
+    prepare: (input: AgentReviewRequest, context) =>
+      reviewsLiveProposals(input) ? occupancyWriteCapability(context.scope) : Effect.succeed(false),
+    load: (input: AgentReviewRequest, context: ReadLoadContext<Services, boolean>) =>
       Effect.gen(function* () {
-        const live = input.items.some(
-          (item) =>
-            item.stage === 'proposed' || (item.stage === 'undo' && targetOccupancyId(item.command) !== undefined),
-        );
+        const live = reviewsLiveProposals(input);
         // The leases as the person's records read shows them; a failed read leaves every answer open.
         const snapshot: OccupancyState | undefined = live
           ? yield* context.services.load().pipe(
@@ -54,7 +61,7 @@ export const agentReviewRead = defineRead(
               Effect.map(Option.getOrUndefined),
             )
           : undefined;
-        const read = snapshot === undefined ? undefined : { canWrite: context.services.canWrite };
+        const read = snapshot === undefined ? undefined : { canWrite: context.prepared };
         const items = input.items.map((request) => {
           const resourceId = targetOccupancyId(request.command);
           const occupancy =
@@ -70,6 +77,7 @@ export const agentReviewRead = defineRead(
         });
         return { evidence: { resultCount: items.length }, result: { items, seesAllRecords: true } };
       }),
+    // oxlint-enable perfectionist/sort-objects
   },
   makeRecordsServices,
   () => ({ kind: 'module', moduleId: OWNER_MODULE_KEY }),

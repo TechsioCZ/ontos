@@ -39,6 +39,7 @@ import type {
   ClaimCounterpartyAccessInvitationInput,
   CounterpartyInvitationClaimAuthorityService,
   CounterpartyInvitationProofLifecycleService,
+  CounterpartyAccessCheckInput,
   CounterpartyAccessDomainError,
   CounterpartyAccessPortService,
   CreateCounterpartyAccessInvitationOutcome,
@@ -1381,32 +1382,47 @@ const finishInvitationClaim = Effect.fn('AccessPersistence.finishInvitationClaim
   },
 );
 
+const counterpartyAccessCheckInScope = (
+  scope: OperationalScope & { readonly legalEntityId: string },
+  trustedStorefrontId: string | undefined,
+  input: CounterpartyAccessCheckInput,
+): boolean =>
+  exactScope(scope, { counterpartyRef: input.counterpartyRef, principalRefs: [input.principal] }) &&
+  (input.scope.kind === 'counterparty' || trustedStorefrontId === input.scope.storefrontKey);
+
+/**
+ * Core's relationship decision for a Counterparty access check, read through SpiceDB before the owner
+ * transaction opens. The port's `check` combines it with the owner-local grant inside the transaction.
+ */
+export const counterpartyAccessCoreDecision = (
+  contextAccess: Pick<ContextAccessService, 'businessPermissions'>,
+  scope: OperationalScope & { readonly legalEntityId: string },
+  input: CounterpartyAccessCheckInput,
+): Effect.Effect<CounterpartyAccessDecision> => {
+  const check = contextAccess.businessPermissions;
+  if (check === undefined || !counterpartyAccessCheckInScope(scope, scope.trustedStorefrontId, input)) {
+    return Effect.succeed('UNAVAILABLE' as const);
+  }
+  return check({
+    principal: input.principal,
+    targets: [
+      { permission: input.permission, target: businessTarget(scope, input.counterpartyRef.resourceId, input.scope) },
+    ],
+    ...(input.scope.kind === 'storefront' && scope.trustedStorefrontId !== undefined
+      ? { trustedStorefrontId: scope.trustedStorefrontId }
+      : {}),
+  }).pipe(Effect.map(([result]) => accessDecision(result)));
+};
+
 export const counterpartyAccessPortForTransaction = (
   dependencies: CounterpartyAccessPersistenceContext,
 ): CounterpartyAccessPortService => {
   const service: CounterpartyAccessPortService = {
     bootstrapAdministrator: (input) => grantAccess(dependencies, input, true),
-    check: (input) => {
-      if (
-        !exactScope(dependencies.scope, {
-          counterpartyRef: input.counterpartyRef,
-          principalRefs: [input.principal],
-        }) ||
-        !isTrustedPermissionScope(dependencies, input.scope) ||
-        dependencies.contextAccess.businessPermissions === undefined
-      ) {
+    check: (input, coreDecision) => {
+      if (!counterpartyAccessCheckInScope(dependencies.scope, dependencies.trustedStorefrontId, input)) {
         return Effect.succeed('UNAVAILABLE' as const);
       }
-      const target = businessTarget(dependencies.scope, input.counterpartyRef.resourceId, input.scope);
-      const checkCore = dependencies.contextAccess
-        .businessPermissions({
-          principal: input.principal,
-          targets: [{ permission: input.permission, target }],
-          ...(input.scope.kind === 'storefront' && dependencies.trustedStorefrontId !== undefined
-            ? { trustedStorefrontId: dependencies.trustedStorefrontId }
-            : {}),
-        })
-        .pipe(Effect.map(([result]) => accessDecision(result)));
       if (dependencies.currentOwnerAccess === undefined) {
         // The owner-local grant is conjunctive with Core's relationship projection. Do not
         // silently downgrade to Core-only authorization when the owner adapter is absent.
@@ -1420,12 +1436,7 @@ export const counterpartyAccessPortForTransaction = (
           principal: input.principal,
           scope: input.scope,
         })
-        .pipe(
-          Effect.filterOrElse(
-            (decision) => decision !== 'ALLOWED',
-            () => checkCore,
-          ),
-        );
+        .pipe(Effect.map((decision) => (decision === 'ALLOWED' ? coreDecision : decision)));
     },
     claimInvitation: (input: ClaimCounterpartyAccessInvitationInput) => {
       if (

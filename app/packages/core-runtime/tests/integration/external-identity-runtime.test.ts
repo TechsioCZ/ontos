@@ -18,7 +18,10 @@ import {
   PrincipalIdSchema,
   TenantIdSchema,
 } from '../../src/auth/external-identity-contracts.ts';
-import type { AuthBindingStatusSchema } from '../../src/auth/external-identity-contracts.ts';
+import type {
+  AuthBindingStatusSchema,
+  ReadPrincipalBindingPayloadSchema,
+} from '../../src/auth/external-identity-contracts.ts';
 import { externalIdentityFailure } from '../../src/auth/external-identity/errors.ts';
 import type { ExternalIdentityFailure } from '../../src/auth/external-identity/errors.ts';
 import type {
@@ -37,6 +40,8 @@ import type {
   TrustedAdmissionObservationService,
 } from '../../src/auth/external-identity/verifier.ts';
 import { externalIdentityRepositoryFromTransaction } from '../../src/auth/external-identity/repository.ts';
+import { readPrincipalBinding } from '../../src/auth/external-identity/read.ts';
+import { runReadOwnerSteps } from '../../src/reads/definition.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { installOperationalScope } from '../../src/db/scoped-transaction.ts';
 import {
@@ -330,44 +335,41 @@ it.live('converges concurrent neutral reservations and protects the complete bin
       yield* admin.select().from(principalAuthBindings).where(eq(principalAuthBindings.tenantId, tenantId)),
     ).toHaveLength(1);
 
-    const deniedRead = yield* database.transaction((transaction) =>
-      installOperationalScope(transaction, scope).pipe(
-        Effect.flatMap((scopedTransaction) =>
-          externalIdentityRepositoryFromTransaction(scopedTransaction, {
-            authorizeReadNamespace: () =>
-              Effect.fail(externalIdentityFailure('identity_forbidden', 'integration namespace read denied')),
-            registry,
-          }).read({
-            authBindingId: preparedA.authBindingId,
-            lookup: 'binding',
-            tenantId,
-          }),
-        ),
-      ),
-    );
-    expect(deniedRead.outcome).toBe('NOT_FOUND');
-
-    const deniedSubjectRead = yield* database
-      .transaction((transaction) =>
+    // The Read authorizes namespaces outside its transaction: the owner steps run against a context that
+    // denies every namespace and identity administration.
+    const namespaceDeniedAccess: ContextAccessService = {
+      ...actionContextAccess,
+      identityNamespaces: ({ authenticationNamespaceIds }) => deniedContextResults(authenticationNamespaceIds),
+      tenants: ({ tenantIds }) => deniedContextResults(tenantIds),
+    };
+    const runDeniedRead = (input: typeof ReadPrincipalBindingPayloadSchema.Type) =>
+      database.transaction((transaction) =>
         installOperationalScope(transaction, scope).pipe(
           Effect.flatMap((scopedTransaction) =>
-            externalIdentityRepositoryFromTransaction(scopedTransaction, {
-              authorizeReadNamespace: () =>
-                Effect.fail(externalIdentityFailure('identity_forbidden', 'integration namespace read denied')),
-              registry,
-            }).read({
-              authenticationNamespaceId: namespaceId,
-              lookup: 'subject',
-              providerSubjectId: subject.providerSubjectId,
-              subjectType: subject.subjectType,
-              tenantId,
+            runReadOwnerSteps(readPrincipalBinding, input, {
+              readKey: readPrincipalBinding.descriptor.readKey,
+              scope,
+              services: { loadForRead: externalIdentityRepositoryFromTransaction(scopedTransaction).loadForRead },
             }),
           ),
+          Effect.provideService(ContextAccess, namespaceDeniedAccess),
+          Effect.provideService(AuthenticationNamespaceRegistry, registry),
         ),
-      )
-      .pipe(Effect.flip);
-    expect(Predicate.isTagged(deniedSubjectRead, 'ExternalIdentityFailure')).toBe(true);
-    if (Predicate.isTagged(deniedSubjectRead, 'ExternalIdentityFailure')) {
+      );
+    const deniedRead = yield* runDeniedRead({
+      authBindingId: Schema.decodeSync(AuthBindingIdSchema)(preparedA.authBindingId),
+      lookup: 'binding',
+    });
+    expect(deniedRead.result.outcome).toBe('NOT_FOUND');
+
+    const deniedSubjectRead = yield* runDeniedRead({
+      authenticationNamespaceId: namespaceId,
+      lookup: 'subject',
+      providerSubjectId: subject.providerSubjectId,
+      subjectType: subject.subjectType,
+    }).pipe(Effect.flip);
+    expect(Predicate.isTagged(deniedSubjectRead, 'ExternalIdentityError')).toBe(true);
+    if (Predicate.isTagged(deniedSubjectRead, 'ExternalIdentityError')) {
       expect(deniedSubjectRead.code).toBe('identity_forbidden');
     }
 

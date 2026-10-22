@@ -225,12 +225,16 @@ export {
   OwnerAuthorizationOverlay,
   OwnerAuthorizationOverlayAllowLive,
   allowOwnerAuthorizationOverlay,
+  failClosedOwnerAuthorizationDecision,
   failClosedOwnerAuthorizationOverlay,
+  transactionalOwnerAuthorization,
 } from './permissions/owner-authorization-overlay.ts';
 export type {
+  OwnerAuthorizationCheck,
   OwnerAuthorizationDecision,
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
+  OwnerAuthorizationRequest,
   OwnerAuthorizationTarget,
 } from './permissions/owner-authorization-overlay.ts';
 export {

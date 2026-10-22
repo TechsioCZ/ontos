@@ -16,6 +16,7 @@ import {
   accessAuthorizationMutationReconciliationForWorker,
   accessAuthorizationMutationReconciliationForTransaction,
   accessAuthorizationReconcilerForTransaction,
+  counterpartyAccessCoreDecision,
   counterpartyAccessPortForTransaction,
   currentOwnerAccessForTransaction,
   lockingCurrentOwnerAccessForTransaction,
@@ -376,12 +377,15 @@ it.effect('denies an allowed Core relation while the owner revoke is still pendi
       }),
     );
 
-    const decision = yield* port.check({
-      counterpartyRef,
-      permission: 'counterparty.access.manage',
-      principal: recipient,
-      scope: { kind: 'counterparty' },
-    });
+    const decision = yield* port.check(
+      {
+        counterpartyRef,
+        permission: 'counterparty.access.manage',
+        principal: recipient,
+        scope: { kind: 'counterparty' },
+      },
+      'ALLOWED',
+    );
     expect(decision).toBe('DENIED');
   }),
 );
@@ -397,12 +401,15 @@ it.effect('returns unavailable when owner access is indeterminate during reconci
       }),
     );
 
-    const decision = yield* port.check({
-      counterpartyRef,
-      permission: 'counterparty.access.manage',
-      principal: recipient,
-      scope: { kind: 'counterparty' },
-    });
+    const decision = yield* port.check(
+      {
+        counterpartyRef,
+        permission: 'counterparty.access.manage',
+        principal: recipient,
+        scope: { kind: 'counterparty' },
+      },
+      'ALLOWED',
+    );
     expect(decision).toBe('UNAVAILABLE');
   }),
 );
@@ -412,13 +419,64 @@ it.effect('fails closed when the owner access reader is omitted', () =>
     const transaction = invokerWith(() => [grantRow('ACTIVE')]);
     const dependencies = dependenciesWith(transaction);
     const { currentOwnerAccess: _omittedOwnerReader, ...withoutOwnerReader } = dependencies;
-    const decision = yield* counterpartyAccessPortForTransaction(withoutOwnerReader).check({
-      counterpartyRef,
-      permission: 'counterparty.access.manage',
-      principal: recipient,
-      scope: { kind: 'counterparty' },
-    });
+    const decision = yield* counterpartyAccessPortForTransaction(withoutOwnerReader).check(
+      {
+        counterpartyRef,
+        permission: 'counterparty.access.manage',
+        principal: recipient,
+        scope: { kind: 'counterparty' },
+      },
+      'ALLOWED',
+    );
     expect(decision).toBe('UNAVAILABLE');
+  }),
+);
+
+it.effect('keeps Core denial when the owner grant is active (owner grant and Core relation are conjunctive)', () =>
+  Effect.gen(function* coreDenialWins() {
+    const port = counterpartyAccessPortForTransaction(dependenciesWith(invokerWith(() => [])));
+    const input = {
+      counterpartyRef,
+      permission: 'counterparty.access.manage' as const,
+      principal: recipient,
+      scope: { kind: 'counterparty' as const },
+    };
+    expect(yield* port.check(input, 'DENIED')).toBe('DENIED');
+    expect(yield* port.check(input, 'UNAVAILABLE')).toBe('UNAVAILABLE');
+    expect(yield* port.check(input, 'ALLOWED')).toBe('ALLOWED');
+  }),
+);
+
+it.effect('reads the Core decision for an access check through one business permission check', () =>
+  Effect.gen(function* coreDecisionBeforeTransaction() {
+    const checked: unknown[] = [];
+    const contextAccess = {
+      businessPermissions: ({ targets }: { readonly targets: readonly { readonly permission: string }[] }) =>
+        Effect.sync(() => {
+          checked.push(...targets);
+          return targets.map(({ permission }) => ({ decision: 'denied' as const, key: permission }));
+        }),
+    };
+    const input = {
+      counterpartyRef,
+      permission: 'counterparty.access.manage' as const,
+      principal: recipient,
+      scope: { kind: 'counterparty' as const },
+    };
+    expect(yield* counterpartyAccessCoreDecision(contextAccess, scope, input)).toBe('DENIED');
+    expect(checked).toEqual([
+      {
+        permission: 'counterparty.access.manage',
+        target: { counterpartyId: counterpartyRef.resourceId, kind: 'counterparty', legalEntityId, tenantId },
+      },
+    ]);
+    expect(
+      yield* counterpartyAccessCoreDecision(contextAccess, scope, {
+        ...input,
+        counterpartyRef: { ...counterpartyRef, tenantId: '20000000-0000-4000-8000-00000000ffff' },
+      }),
+    ).toBe('UNAVAILABLE');
+    expect(checked).toHaveLength(1);
   }),
 );
 

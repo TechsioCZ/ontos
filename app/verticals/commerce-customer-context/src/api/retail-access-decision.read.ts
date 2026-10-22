@@ -18,7 +18,11 @@ import type {
 } from '../../shared/apis/retail-access-decision.ts';
 import { decideRetailPortalAccess } from '../../shared/domain/profile-decisions.ts';
 import type { RetailPortalProfileBindingRef } from '../../shared/resources/retail-portal-profile-binding.ts';
-import { profileServicesForVerifiedScope } from '../profile-service-factory.ts';
+import type { RetailPermissionReader } from '../integrations/retail-permission-reader.ts';
+import {
+  prepareRetailPermissions,
+  profileServicesWithRetailPermissionsForVerifiedScope,
+} from '../profile-service-factory.ts';
 
 export interface RetailAccessDecisionServices {
   readonly decideAccess: (
@@ -27,6 +31,9 @@ export interface RetailAccessDecisionServices {
     tenantId: string,
   ) => Effect.Effect<RetailAccessDecisionResponse, ReadHandlerNotFound | ReadHandlerUnavailable>;
 }
+
+/** The services a Read's `load` uses, over the Retail Portal permission snapshot its `prepare` read. */
+type RetailAccessDecisionServicesFor = (readRetailPermissions: RetailPermissionReader) => RetailAccessDecisionServices;
 
 const unavailable = () =>
   new ReadHandlerUnavailable({
@@ -130,14 +137,24 @@ export const retailAccessDecisionRead = defineRead(
     schemaVersion: '1',
   },
   {
-    load: (input, context: ReadLoadContext<RetailAccessDecisionServices>) =>
-      decideRetailAccessFromServices(input, context.scope.principalId, context.scope.tenantId, context.services).pipe(
-        Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
-      ),
+    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
+    prepare: (input, context) => prepareRetailPermissions(context.scope, input.profileRef.resourceId),
+    load: (input, context: ReadLoadContext<RetailAccessDecisionServicesFor, RetailPermissionReader>) =>
+      decideRetailAccessFromServices(
+        input,
+        context.scope.principalId,
+        context.scope.tenantId,
+        context.services(context.prepared),
+      ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
+    // oxlint-enable perfectionist/sort-objects
   },
   (transaction, scope) =>
-    profileServicesForVerifiedScope(transaction, scope).pipe(
-      Effect.map(({ retailAccessDecision }) => retailAccessDecision),
+    profileServicesWithRetailPermissionsForVerifiedScope(transaction, scope).pipe(
+      Effect.map(
+        (withRetailPermissions): RetailAccessDecisionServicesFor =>
+          (readRetailPermissions): RetailAccessDecisionServices =>
+            withRetailPermissions(readRetailPermissions).retailAccessDecision,
+      ),
     ),
   retailAccessDecisionPermissionTarget,
 );

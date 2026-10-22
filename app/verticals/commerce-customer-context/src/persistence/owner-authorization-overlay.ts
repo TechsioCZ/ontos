@@ -1,7 +1,7 @@
 import type {
   OwnerAuthorizationDecision,
-  OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
+  OwnerAuthorizationRequest,
   OwnerAuthorizationTarget,
   ScopedTransactionExecutor,
 } from '@app/core-runtime';
@@ -17,7 +17,12 @@ import { CounterpartyPermissionCodeSchema } from '../../shared/domain/permission
 import { RetailAccessDecisionRequestSchema } from '../../shared/apis/retail-access-decision.ts';
 import { RetailCustomerProfileRefSchema } from '../../shared/resources/retail-customer-profile.ts';
 import { RetailPortalPermissionCodeSchema } from '../../shared/domain/profile-contracts.ts';
-import { ProfileRetailPermissionReaderFactory } from '../integrations/retail-permission-reader.ts';
+import {
+  ProfileRetailPermissionReaderFactory,
+  prefetchRetailPermissions,
+  unreadRetailPermissions,
+} from '../integrations/retail-permission-reader.ts';
+import type { RetailPermissionReader } from '../integrations/retail-permission-reader.ts';
 import { lockingCurrentOwnerAccessForTransaction } from './access-persistence.ts';
 import { profilePersistenceServicesForTransaction } from './profile-persistence.ts';
 
@@ -60,7 +65,7 @@ type CounterpartyBusinessTarget = Extract<
 const counterpartyTargetMatchesScope = (
   target: CounterpartyBusinessTarget,
   trustedStorefrontId: BusinessPermissionTarget['trustedStorefrontId'],
-  scope: OwnerAuthorizationInput['scope'],
+  scope: OwnerAuthorizationRequest['scope'],
 ): boolean =>
   scope.legalEntityId !== undefined &&
   target.tenantId === scope.tenantId &&
@@ -71,7 +76,7 @@ const counterpartyTargetMatchesScope = (
 const decodeCounterpartyTargetValues = (
   target: CounterpartyBusinessTarget,
   permissionCode: BusinessPermissionTarget['permission'],
-  scope: OwnerAuthorizationInput['scope'],
+  scope: OwnerAuthorizationRequest['scope'],
 ): Option.Option<DecodedCounterpartyTarget> => {
   const permission = Schema.decodeUnknownResult(CounterpartyPermissionCodeSchema)(permissionCode);
   const counterpartyRef = Schema.decodeResult(CounterpartyRefSchema)({
@@ -100,7 +105,7 @@ const decodeCounterpartyTargetValues = (
 
 const decodeCounterpartyTarget = (
   target: Extract<OwnerAuthorizationTarget, { readonly kind: 'business_permission' }>,
-  scope: OwnerAuthorizationInput['scope'],
+  scope: OwnerAuthorizationRequest['scope'],
 ): Effect.Effect<Option.Option<DecodedCounterpartyTarget>> => {
   if (target.target.kind !== 'counterparty' && target.target.kind !== 'counterparty_storefront') {
     return Effect.succeedNone;
@@ -114,7 +119,7 @@ const decodeCounterpartyTarget = (
 const checkCounterpartyTarget = (
   transaction: ScopedTransactionExecutor,
   target: Extract<OwnerAuthorizationTarget, { readonly kind: 'business_permission' }>,
-  scope: OwnerAuthorizationInput['scope'],
+  scope: OwnerAuthorizationRequest['scope'],
 ): Effect.Effect<OwnerAuthorizationDecision> =>
   decodeCounterpartyTarget(target, scope).pipe(
     Effect.flatMap((decoded) => {
@@ -137,18 +142,24 @@ const checkCounterpartyTarget = (
     }),
   );
 
+type RetailTarget = Extract<OwnerAuthorizationTarget, { readonly kind: 'business_permission' }>;
+
+const isRetailTargetInScope = (target: RetailTarget, scope: OwnerAuthorizationRequest['scope']): boolean =>
+  target.target.kind === 'retail_profile' &&
+  scope.legalEntityId !== undefined &&
+  target.target.tenantId === scope.tenantId &&
+  target.target.legalEntityId === scope.legalEntityId;
+
 const checkRetailTarget = (
   transaction: ScopedTransactionExecutor,
-  target: Extract<OwnerAuthorizationTarget, { readonly kind: 'business_permission' }>,
-  scope: OwnerAuthorizationInput['scope'],
-  // oxlint-disable-next-line effect-native/no-dependency-parameters -- The pure helper is also exercised with a deterministic reader factory in unit tests.
-  readerFactory: (typeof ProfileRetailPermissionReaderFactory)['Service'],
+  target: RetailTarget,
+  scope: OwnerAuthorizationRequest['scope'],
+  readRetailPermissions: RetailPermissionReader,
 ): Effect.Effect<OwnerAuthorizationDecision> => {
   if (
     target.target.kind !== 'retail_profile' ||
     scope.legalEntityId === undefined ||
-    target.target.tenantId !== scope.tenantId ||
-    target.target.legalEntityId !== scope.legalEntityId
+    !isRetailTargetInScope(target, scope)
   ) {
     return Effect.succeed('unavailable' as const);
   }
@@ -176,13 +187,7 @@ const checkRetailTarget = (
       principalId: scope.principalId,
       tenantId: scope.tenantId,
     },
-    {
-      readRetailPermissions: readerFactory.make({
-        legalEntityId: scope.legalEntityId,
-        principalId: scope.principalId,
-        tenantId: scope.tenantId,
-      }),
-    },
+    { readRetailPermissions },
   );
   return services.retailAccessDecision
     .decideAccess(
@@ -207,26 +212,59 @@ const checkRetailTarget = (
     );
 };
 
+/**
+ * Before the transaction: the Retail Portal permission snapshots of every retail target, read through
+ * SpiceDB once. Inside it, retail and Counterparty targets are decided from owner state only.
+ */
+const prepareRetailPermissions = (
+  request: OwnerAuthorizationRequest,
+  // oxlint-disable-next-line effect-native/no-dependency-parameters -- The pure helper is also exercised with a deterministic reader factory in unit tests.
+  readerFactory: (typeof ProfileRetailPermissionReaderFactory)['Service'],
+): Effect.Effect<RetailPermissionReader> => {
+  const { legalEntityId, principalId, tenantId } = request.scope;
+  const profileIds = request.targets.flatMap((target) =>
+    target.kind === 'business_permission' &&
+    target.target.kind === 'retail_profile' &&
+    isRetailTargetInScope(target, request.scope)
+      ? [target.target.profileId]
+      : [],
+  );
+  if (legalEntityId === undefined || profileIds.length === 0) {
+    return Effect.succeed(unreadRetailPermissions);
+  }
+  const readerScope = { legalEntityId, principalId, tenantId };
+  return prefetchRetailPermissions(readerFactory.make(readerScope), readerScope, profileIds);
+};
+
+/** Inside the transaction: every business target decided from owner state and the prefetched snapshots. */
+const decideOwnerTargets = (
+  transaction: ScopedTransactionExecutor,
+  request: OwnerAuthorizationRequest,
+  readRetailPermissions: RetailPermissionReader,
+): Effect.Effect<OwnerAuthorizationDecision> =>
+  Effect.forEach(
+    request.targets,
+    (target) => {
+      if (target.kind !== 'business_permission') {
+        return Effect.succeed(Option.none<OwnerAuthorizationDecision>());
+      }
+      if (target.target.kind === 'retail_profile') {
+        return checkRetailTarget(transaction, target, request.scope, readRetailPermissions).pipe(Effect.asSome);
+      }
+      return checkCounterpartyTarget(transaction, target, request.scope).pipe(Effect.asSome);
+    },
+    { concurrency: 1 },
+  ).pipe(Effect.map((decisions) => combineOwnerDecisions(decisions.flatMap(Option.toArray))));
+
 export const makeCommerceCustomerContextOwnerAuthorizationOverlay = (
   // oxlint-disable-next-line effect-native/no-dependency-parameters -- The pure helper is also exercised with a deterministic reader factory in unit tests.
   readerFactory: (typeof ProfileRetailPermissionReaderFactory)['Service'],
 ): OwnerAuthorizationOverlayService => ({
-  authorize: (transaction, input) =>
-    Effect.forEach(
-      input.targets,
-      (target) => {
-        if (target.kind !== 'business_permission') {
-          return Effect.succeed(Option.none<OwnerAuthorizationDecision>());
-        }
-        if (target.target.kind === 'retail_profile') {
-          return checkRetailTarget(transaction, target, input.scope, readerFactory).pipe(Effect.asSome);
-        }
-        return checkCounterpartyTarget(transaction, target, input.scope).pipe(Effect.asSome);
-      },
-      { concurrency: 1 },
-    ).pipe(
-      Effect.map((decisions) =>
-        combineOwnerDecisions(decisions.flatMap((decision) => (Option.isSome(decision) ? [decision.value] : []))),
+  prepare: (request) =>
+    prepareRetailPermissions(request, readerFactory).pipe(
+      Effect.map(
+        (readRetailPermissions) => (transaction: ScopedTransactionExecutor) =>
+          decideOwnerTargets(transaction, request, readRetailPermissions),
       ),
     ),
 });

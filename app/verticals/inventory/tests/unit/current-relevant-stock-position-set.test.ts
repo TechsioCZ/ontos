@@ -2,21 +2,46 @@ import { ContextAccess, ReadPermissionDenied, toBusinessPermissionAccessKey } fr
 import type { ContextAccessService } from '@app/core-runtime';
 import { makePositionSetAuthorization } from '../../src/api/current-relevant-stock-position-set.read.ts';
 import { PricingPurchaseContextVerificationResponseSchema } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
-import { DateTime, Effect, Exit, Schema } from 'effect';
+import { DateTime, Effect, Exit, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import {
   RelevantStockPositionSetRequestSchema,
   RelevantStockPositionSetUnavailable,
 } from '../../shared/domain/current-relevant-stock-position-set.ts';
+import type { RelevantStockPositionSetRequest } from '../../shared/domain/current-relevant-stock-position-set.ts';
+import type { RelevantStockPositionSetObservation } from '../../src/persistence/current-relevant-stock-position-set-repository.ts';
 import {
   PositionSetCommerceVerifier,
-  currentRelevantStockPositionSetService,
   evaluateRelevantStockPositionSet,
+  finishRelevantStockPositionSet,
+  prepareRelevantStockPositionSet,
 } from '../../src/services/current-relevant-stock-position-set.service.ts';
 import { scope, request, observation, position, sharing } from '../support/current-relevant-stock-position-set.ts';
 
 const unusedPermissionChecks = () => Effect.succeed([]);
+
+/** The read's owner steps in order: prepare (Commerce verification), the observation, finish (authorization). */
+const readPositionSet = (dependencies: {
+  readonly authorizePositions: Parameters<typeof finishRelevantStockPositionSet>[4];
+  readonly observe: (
+    requested: RelevantStockPositionSetRequest['scope'],
+  ) => Effect.Effect<RelevantStockPositionSetObservation, RelevantStockPositionSetUnavailable>;
+  readonly scope: typeof scope;
+}) => ({
+  read: (input: RelevantStockPositionSetRequest) =>
+    Effect.gen(function* readPositionSetSteps() {
+      const prepared = yield* prepareRelevantStockPositionSet(input, dependencies.scope);
+      const loaded = prepared.kind === 'RESULT' ? Option.none() : Option.some(yield* dependencies.observe(input.scope));
+      return yield* finishRelevantStockPositionSet(
+        input,
+        prepared,
+        loaded,
+        dependencies.scope,
+        dependencies.authorizePositions,
+      );
+    }),
+});
 
 describe('Inventory owner Position-set completeness', () => {
   it.effect('produces complete empty separately from unproven owner scope', () =>
@@ -92,7 +117,7 @@ describe('Inventory owner Position-set completeness', () => {
         mode: 'POTENTIALLY_RELEVANT_POSITIONS',
         scope: request.scope,
       });
-      const result = yield* currentRelevantStockPositionSetService({
+      const result = yield* readPositionSet({
         authorizePositions: (refs) =>
           Effect.sync(() => {
             authorizedCount = refs.length;
@@ -175,7 +200,7 @@ describe('Inventory owner Position-set completeness', () => {
         retryable: true,
       });
       const failed = yield* Effect.exit(
-        currentRelevantStockPositionSetService({
+        readPositionSet({
           authorizePositions: () => Effect.void,
           observe: () => Effect.fail(unavailable),
           scope,
@@ -183,7 +208,7 @@ describe('Inventory owner Position-set completeness', () => {
       );
       expect(Exit.isFailure(failed)).toBe(true);
       const denied = yield* Effect.exit(
-        currentRelevantStockPositionSetService({
+        readPositionSet({
           authorizePositions: () =>
             Effect.fail(new ReadPermissionDenied({ code: 'read_permission_denied', reason: 'Forbidden Position' })),
           observe: () => Effect.succeed(observation),
@@ -299,7 +324,7 @@ describe('Inventory owner Position-set completeness', () => {
       ];
       for (const interval of cases) {
         yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(interval.applicationTime)));
-        const result = yield* currentRelevantStockPositionSetService({
+        const result = yield* readPositionSet({
           authorizePositions: () => Effect.void,
           observe: () => Effect.succeed(observation),
           scope,
@@ -352,7 +377,7 @@ describe('Inventory owner Position-set completeness', () => {
   it.effect('does not observe owner data without a server Commerce verifier', () =>
     Effect.gen(function* positionSetScenario9() {
       let observed = false;
-      const result = yield* currentRelevantStockPositionSetService({
+      const result = yield* readPositionSet({
         authorizePositions: () => Effect.void,
         observe: () => {
           observed = true;

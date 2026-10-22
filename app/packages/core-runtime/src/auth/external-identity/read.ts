@@ -6,21 +6,30 @@ import {
   ReadPrincipalBindingPayloadSchema,
   ReadPrincipalBindingResultSchema,
 } from '../external-identity-contracts.ts';
-import { externalIdentityRepositoryFromTransaction } from './repository.ts';
-import type { ExternalIdentityRepositoryService } from './repository.ts';
+import {
+  authenticationNamespaceRegistration,
+  externalIdentityRepositoryFromTransaction,
+  principalBindingReadResult,
+} from './repository.ts';
+import type {
+  ExternalIdentityBindingRecord,
+  ExternalIdentityRepositoryService,
+  PrincipalBindingLookup,
+} from './repository.ts';
 import { AuthenticationNamespaceRegistry } from './verifier.ts';
 import { externalIdentityFailure } from './errors.ts';
+import type { ExternalIdentityFailure } from './errors.ts';
 import { ContextAccess } from '../../permissions/context-access.ts';
 import { defineSystemModuleEntrypoint } from '../../modules/module-entrypoint.ts';
 import { defineRead } from '../../reads/definition.ts';
 import type { ReadPermissionTargetResolver } from '../../reads/definition.ts';
-import type { ReadLoadContext } from '../../reads/context.ts';
+import type { ReadFinishContext, ReadPrepareContext } from '../../reads/context.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 
 export type ReadPrincipalBindingPayload = Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>;
 
 type ReadPrincipalBindingServices = Readonly<{
-  readonly read: ExternalIdentityRepositoryService['read'];
+  readonly loadForRead: ExternalIdentityRepositoryService['loadForRead'];
 }>;
 
 const permissionTargetResolver: ReadPermissionTargetResolver<ReadPrincipalBindingPayload> = () => ({
@@ -78,29 +87,91 @@ const authorizeReadNamespace = (
     );
 };
 
-const handle = (input: ReadPrincipalBindingPayload, context: ReadLoadContext<ReadPrincipalBindingServices>) => {
-  const readInput =
-    input.lookup === 'binding'
-      ? {
-          authBindingId: input.authBindingId,
-          lookup: 'binding' as const,
-          tenantId: context.scope.tenantId,
-        }
-      : {
-          authenticationNamespaceId: input.authenticationNamespaceId,
-          lookup: 'subject' as const,
-          providerSubjectId: input.providerSubjectId,
-          subjectType: input.subjectType,
-          tenantId: context.scope.tenantId,
-        };
-  return context.services.read(readInput).pipe(
-    Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })),
-    Effect.map((result) => ({
-      evidence: { resultCount: result.outcome === 'FOUND' ? 1 : 0 },
-      result,
-    })),
+type ReadNamespaceAuthorization = (authenticationNamespaceId: string) => Effect.Effect<void, ExternalIdentityFailure>;
+
+const namespaceAuthorization = (scope: OperationalScope) =>
+  Effect.map(
+    Effect.serviceOption(ContextAccess),
+    (contextAccess): ReadNamespaceAuthorization =>
+      (authenticationNamespaceId) =>
+        authorizeReadNamespace(contextAccess, scope, authenticationNamespaceId),
   );
-};
+
+const registryDependencies = Effect.map(Effect.serviceOption(AuthenticationNamespaceRegistry), (registry) =>
+  Option.isSome(registry) ? { registry: registry.value } : {},
+);
+
+const readFailure = (failure: ExternalIdentityFailure) => new ExternalIdentityError({ code: failure.code });
+
+/**
+ * Before the transaction: a subject lookup authorizes the supplied namespace first, so a missing subject
+ * cannot be told apart from one the caller may not read, and resolves the namespace's trusted provider.
+ */
+const prepare = Effect.fn('ReadPrincipalBinding.prepare')(function* preparePrincipalBindingRead(
+  input: ReadPrincipalBindingPayload,
+  context: ReadPrepareContext,
+) {
+  if (input.lookup === 'binding') {
+    return {
+      lookup: { authBindingId: input.authBindingId, lookup: 'binding', tenantId: context.scope.tenantId },
+    } satisfies PreparedLookup;
+  }
+  const authorize = yield* namespaceAuthorization(context.scope);
+  yield* authorize(input.authenticationNamespaceId);
+  const registration = yield* authenticationNamespaceRegistration(
+    yield* registryDependencies,
+    input.authenticationNamespaceId,
+  );
+  return {
+    authorizedNamespaceId: input.authenticationNamespaceId,
+    lookup: {
+      authenticationNamespaceId: input.authenticationNamespaceId,
+      lookup: 'subject',
+      provider: registration.provider,
+      providerSubjectId: input.providerSubjectId,
+      subjectType: input.subjectType,
+      tenantId: context.scope.tenantId,
+    },
+  } satisfies PreparedLookup;
+}, Effect.mapError(readFailure));
+
+interface PreparedLookup {
+  /** The namespace `prepare` already authorized (subject lookups). */
+  readonly authorizedNamespaceId?: string;
+  readonly lookup: PrincipalBindingLookup;
+}
+
+/**
+ * After commit: binding identifiers are opaque, so a binding in a namespace the caller may not read is
+ * normalized to the same result as an absent one.
+ */
+const finish = Effect.fn('ReadPrincipalBinding.finish')(
+  function* finishPrincipalBindingRead(
+    _input: ReadPrincipalBindingPayload,
+    context: ReadFinishContext<PreparedLookup, Option.Option<ExternalIdentityBindingRecord>>,
+  ) {
+    if (Option.isNone(context.loaded)) {
+      return { outcome: 'NOT_FOUND' as const };
+    }
+    const binding = context.loaded.value;
+    if (binding.authenticationNamespaceId !== context.prepared.authorizedNamespaceId) {
+      const authorize = yield* namespaceAuthorization(context.scope);
+      const canRead = yield* authorize(binding.authenticationNamespaceId).pipe(
+        Effect.as(true),
+        Effect.catchIf(
+          (failure) => failure.code === 'identity_forbidden',
+          () => Effect.succeed(false),
+        ),
+      );
+      if (!canRead) {
+        return { outcome: 'NOT_FOUND' as const };
+      }
+    }
+    return yield* principalBindingReadResult(yield* registryDependencies, binding);
+  },
+  Effect.mapError(readFailure),
+  Effect.map((result) => ({ evidence: { resultCount: result.outcome === 'FOUND' ? 1 : 0 }, result })),
+);
 
 export const readPrincipalBinding = defineRead<
   typeof ReadPrincipalBindingPayloadSchema,
@@ -109,7 +180,12 @@ export const readPrincipalBinding = defineRead<
   ReadPrincipalBindingServices,
   ExternalIdentityError,
   never,
-  typeof ExternalIdentityError
+  typeof ExternalIdentityError,
+  PreparedLookup,
+  Option.Option<ExternalIdentityBindingRecord>,
+  ExternalIdentityError,
+  never,
+  ExternalIdentityError
 >(
   {
     accessKind: 'detail',
@@ -134,19 +210,13 @@ export const readPrincipalBinding = defineRead<
     resultSchema: ReadPrincipalBindingResultSchema,
     schemaVersion: '1',
   },
-  { load: handle },
-  Effect.fn('ReadPrincipalBinding.services')(function* makeServices(transaction, scope) {
-    const registry = yield* Effect.serviceOption(AuthenticationNamespaceRegistry);
-    const contextAccess = yield* Effect.serviceOption(ContextAccess);
-    const dependencies = {
-      authorizeReadNamespace: (authenticationNamespaceId: string) =>
-        authorizeReadNamespace(contextAccess, scope, authenticationNamespaceId),
-    };
-    if (Option.isSome(registry)) {
-      Object.assign(dependencies, { registry: registry.value });
-    }
-    const repository = externalIdentityRepositoryFromTransaction(transaction, dependencies);
-    return { read: repository.read };
-  }),
+  {
+    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
+    prepare,
+    load: (_input, context) => context.services.loadForRead(context.prepared.lookup).pipe(Effect.mapError(readFailure)),
+    finish,
+    // oxlint-enable perfectionist/sort-objects
+  },
+  (transaction) => Effect.succeed({ loadForRead: externalIdentityRepositoryFromTransaction(transaction).loadForRead }),
   permissionTargetResolver,
 );

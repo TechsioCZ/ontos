@@ -16,19 +16,31 @@ import type {
 } from './persistence/profile-persistence.ts';
 import { ProfileCounterpartyRoleEligibilityResolverFactory } from './profile-counterparty-role-eligibility.ts';
 import type { ProfileReconciliationOwnerVerifierService } from './profile-reconciliation-owner-verifier.ts';
-import { ProfileRetailPermissionReaderFactory } from './integrations/retail-permission-reader.ts';
+import {
+  ProfileRetailPermissionReaderFactory,
+  prefetchRetailPermissions,
+  unreadRetailPermissions,
+} from './integrations/retail-permission-reader.ts';
+import type { RetailPermissionReader } from './integrations/retail-permission-reader.ts';
 import { PartyRegistryGuestResolverFactory } from './integrations/party-registry-guest-resolver.ts';
 import { PartyRegistryRetailPartyResolverFactory } from './integrations/party-registry-retail-party-resolver.ts';
 
-export const profileServicesForVerifiedScope = (
+type ProfileServicesForRetailPermissions = (
+  readRetailPermissions: RetailPermissionReader,
+) => ProfilePersistenceServices;
+
+/**
+ * Profile services whose Retail Portal permission reader the caller supplies. A Read passes the snapshot
+ * it read in its `prepare` step, so the profile services it uses inside the transaction never call SpiceDB.
+ */
+export const profileServicesWithRetailPermissionsForVerifiedScope = (
   transaction: ProfileScopedRoutineInvoker,
   scope: OperationalScope,
 ): Effect.Effect<
-  ProfilePersistenceServices,
+  ProfileServicesForRetailPermissions,
   OperationContextUnavailable,
   | ProfileCounterpartyRoleEligibilityResolverFactory
   | ProfileReactivationEligibilityEvaluatorFactory
-  | ProfileRetailPermissionReaderFactory
   | PartyRegistryGuestResolverFactory
   | PartyRegistryRetailPartyResolverFactory
 > => {
@@ -52,7 +64,6 @@ export const profileServicesForVerifiedScope = (
   return Effect.gen(function* profileServices() {
     const roleResolverFactory = yield* ProfileCounterpartyRoleEligibilityResolverFactory;
     const reactivationEvaluatorFactory = yield* ProfileReactivationEligibilityEvaluatorFactory;
-    const retailPermissionReaderFactory = yield* ProfileRetailPermissionReaderFactory;
     const guestResolverFactory = yield* PartyRegistryGuestResolverFactory;
     const retailPartyResolverFactory = yield* PartyRegistryRetailPartyResolverFactory;
     const resolveCounterpartyRole = roleResolverFactory.make({
@@ -64,11 +75,6 @@ export const profileServicesForVerifiedScope = (
       resolveCounterpartyRole,
       scope: verifiedScope,
       transaction,
-    });
-    const readRetailPermissions = retailPermissionReaderFactory.make({
-      legalEntityId: verifiedScope.legalEntityId,
-      principalId: verifiedScope.principalId,
-      tenantId: verifiedScope.tenantId,
     });
     const resolveGuestParty = guestResolverFactory.make({
       legalEntityId: verifiedScope.legalEntityId,
@@ -93,13 +99,53 @@ export const profileServicesForVerifiedScope = (
         return profileOwnerVerifier.verify(request, context);
       },
     };
-    return profilePersistenceServicesForTransaction(transaction, verifiedScope, {
-      evaluateReactivation,
-      readRetailPermissions,
-      reconciliationOwnerVerifier,
-      resolveCounterpartyRole,
-      resolveGuestParty,
-      resolveRetailParty,
-    });
+    return (readRetailPermissions: RetailPermissionReader) =>
+      profilePersistenceServicesForTransaction(transaction, verifiedScope, {
+        evaluateReactivation,
+        readRetailPermissions,
+        reconciliationOwnerVerifier,
+        resolveCounterpartyRole,
+        resolveGuestParty,
+        resolveRetailParty,
+      });
   });
 };
+
+/** Profile services with the live Retail Portal permission reader (Actions and Reads that never use it). */
+export const profileServicesForVerifiedScope = Effect.fn('ProfileServiceFactory.profileServicesForVerifiedScope')(
+  function* profileServicesWithLiveRetailPermissions(
+    transaction: ProfileScopedRoutineInvoker,
+    scope: OperationalScope,
+  ) {
+    const withRetailPermissions = yield* profileServicesWithRetailPermissionsForVerifiedScope(transaction, scope);
+    const retailPermissionReaderFactory = yield* ProfileRetailPermissionReaderFactory;
+    return withRetailPermissions(
+      scope.legalEntityId === undefined
+        ? unreadRetailPermissions
+        : retailPermissionReaderFactory.make({
+            legalEntityId: scope.legalEntityId,
+            principalId: scope.principalId,
+            tenantId: scope.tenantId,
+          }),
+    );
+  },
+);
+
+/**
+ * A Read's `prepare` step: the caller's Retail Portal permission snapshot for one profile, read before the
+ * transaction. Without a trusted Legal Entity there is nothing to read; the Read fails closed inside.
+ */
+export const prepareRetailPermissions = Effect.fn('ProfileServiceFactory.prepareRetailPermissions')(
+  function* prepareRetailPermissionSnapshot(scope: OperationalScope, profileId: string) {
+    if (scope.legalEntityId === undefined) {
+      return unreadRetailPermissions;
+    }
+    const readerFactory = yield* ProfileRetailPermissionReaderFactory;
+    const readerScope = {
+      legalEntityId: scope.legalEntityId,
+      principalId: scope.principalId,
+      tenantId: scope.tenantId,
+    };
+    return yield* prefetchRetailPermissions(readerFactory.make(readerScope), readerScope, [profileId]);
+  },
+);

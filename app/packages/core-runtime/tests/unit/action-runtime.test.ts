@@ -37,7 +37,10 @@ import {
 } from '../../src/actions/repository.ts';
 import type { ActionRuntimeOptions, ActionRuntimeStage } from '../../src/actions/runtime.ts';
 import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
-import { allowOwnerAuthorizationOverlay } from '../../src/permissions/owner-authorization-overlay.ts';
+import {
+  allowOwnerAuthorizationOverlay,
+  transactionalOwnerAuthorization,
+} from '../../src/permissions/owner-authorization-overlay.ts';
 import type {
   OwnerAuthorizationInput,
   OwnerAuthorizationOverlayService,
@@ -946,12 +949,10 @@ it.effect('rejects missing, stale, draining, and expired composition authority b
       let ownerAuthorizationCalls = 0;
       const harness = yield* makeHarness({
         compositionAuthority,
-        ownerAuthorizationOverlay: {
-          authorize: () => {
-            ownerAuthorizationCalls += 1;
-            return Effect.succeed('allowed' as const);
-          },
-        },
+        ownerAuthorizationOverlay: transactionalOwnerAuthorization(() => {
+          ownerAuthorizationCalls += 1;
+          return Effect.succeed('allowed' as const);
+        }),
       });
       const failure = yield* Effect.flip(
         harness.runtime.runAction({
@@ -1102,12 +1103,10 @@ it.effect(
   Effect.fn(function* testOwnerOverlayDenial() {
     const ownerInputs: OwnerAuthorizationInput[] = [];
     const harness = yield* makeHarness({
-      ownerAuthorizationOverlay: {
-        authorize: (_transaction, input) => {
-          ownerInputs.push(input);
-          return Effect.succeed('denied' as const);
-        },
-      },
+      ownerAuthorizationOverlay: transactionalOwnerAuthorization((_transaction, input) => {
+        ownerInputs.push(input);
+        return Effect.succeed('denied' as const);
+      }),
     });
     const failure = yield* Effect.flip(
       harness.runtime.runAction({
@@ -1138,12 +1137,10 @@ it.effect('fails closed before owner authorization when PostgreSQL cannot provid
     let overlayCalls = 0;
     const harness = yield* makeHarness({
       failTransactionTimestamp: true,
-      ownerAuthorizationOverlay: {
-        authorize: () => {
-          overlayCalls += 1;
-          return Effect.succeed('allowed' as const);
-        },
-      },
+      ownerAuthorizationOverlay: transactionalOwnerAuthorization(() => {
+        overlayCalls += 1;
+        return Effect.succeed('allowed' as const);
+      }),
     });
     const failure = yield* Effect.flip(
       harness.runtime.runAction({

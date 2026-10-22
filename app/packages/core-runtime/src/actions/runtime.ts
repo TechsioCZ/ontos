@@ -1788,6 +1788,18 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     );
     const allowedPolicies = yield* authorizeAndEvaluatePolicies();
     const admittedCompositionRevision = yield* resolveCompositionRevision(principal);
+    // The owner adapter's remote inputs (SpiceDB) are fetched before the transaction opens, and only after
+    // Core admitted the composition revision.
+    // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Authorization stays ordered after composition admission.
+    const ownerAuthorizationCheck = yield* ownerAuthorizationOverlay.prepare(
+      Object.freeze({
+        operation: 'action' as const,
+        operationKey: input.registration.descriptor.actionKey,
+        owningModuleKey: input.registration.descriptor.owningModuleKey,
+        scope,
+        targets: frozenOwnerAuthorizationTargets,
+      }),
+    );
 
     const executeTransactionAndHandleExit = Effect.fn('ActionRuntime.executeTransactionAndHandleExit')(
       function* executeTransactionAndHandleExitEffect() {
@@ -1843,17 +1855,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           }
           notifyStage('module_state_rechecked');
           const operationAt = yield* trustedTransactionTime(drizzleTransaction);
-          const ownerAuthorizationDecision = yield* ownerAuthorizationOverlay.authorize(
-            scopedTransaction,
-            Object.freeze({
-              operation: 'action' as const,
-              operationAt,
-              operationKey: input.registration.descriptor.actionKey,
-              owningModuleKey: input.registration.descriptor.owningModuleKey,
-              scope,
-              targets: frozenOwnerAuthorizationTargets,
-            }),
-          );
+          const ownerAuthorizationDecision = yield* ownerAuthorizationCheck(scopedTransaction, operationAt);
           if (ownerAuthorizationDecision !== 'allowed') {
             return yield* ownerAuthorizationFailure(ownerAuthorizationDecision);
           }

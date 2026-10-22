@@ -16,6 +16,7 @@ import type {
   ContextAccessDecision,
   ContextAccessService,
 } from '../permissions/context-access.ts';
+import { transactionalOwnerAuthorization } from '../permissions/owner-authorization-overlay.ts';
 import { ReadRuntime, makeReadRuntime } from '../reads/runtime.ts';
 import type { ReadRuntimeStage } from '../reads/runtime.ts';
 import { scriptedPgClientLayer } from './scripted-pg-client.ts';
@@ -183,7 +184,9 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
     onStage: (stage) => {
       stages.push(stage);
     },
-    ownerAuthorizationOverlay: { authorize: () => Effect.succeed(options.ownerAuthorizationDecision ?? 'denied') },
+    ownerAuthorizationOverlay: transactionalOwnerAuthorization(() =>
+      Effect.succeed(options.ownerAuthorizationDecision ?? 'denied'),
+    ),
   });
   return {
     layer: Layer.mergeAll(Layer.succeed(ReadRuntime, runtime), Layer.succeed(ContextAccess, contextAccess)),

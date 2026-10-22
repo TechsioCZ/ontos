@@ -4,7 +4,7 @@
  * tenant access. Writes go through the same SpiceDB RPC port the other demo grant helpers use.
  */
 import { v1 } from '@authzed/authzed-node';
-import { spiceDbTransport } from '#spicedb-transport';
+import { openSpiceDbRpc } from './spicedb-transaction-guard.ts';
 import { Effect } from 'effect';
 
 import { IdentityPersistenceUnavailableError } from '../auth/principal-management-errors.ts';
@@ -12,9 +12,17 @@ import { loadSpiceDbConfig } from './config.ts';
 import type { SpiceDbRpc } from './spicedb-rpc.ts';
 
 const unavailable = (cause: unknown) =>
-  Object.defineProperty(new IdentityPersistenceUnavailableError({ code: 'identity_persistence_unavailable', reason: 'Agent operators are temporarily unavailable' }), 'cause', { configurable: true, value: cause });
+  Object.defineProperty(
+    new IdentityPersistenceUnavailableError({
+      code: 'identity_persistence_unavailable',
+      reason: 'Agent operators are temporarily unavailable',
+    }),
+    'cause',
+    { configurable: true, value: cause },
+  );
 const fullyConsistent = v1.Consistency.create({ requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } });
-const principalObject = (principalId: string) => v1.ObjectReference.create({ objectId: principalId, objectType: 'principal' });
+const principalObject = (principalId: string) =>
+  v1.ObjectReference.create({ objectId: principalId, objectType: 'principal' });
 
 /** Pure: which operator relations to add and remove to reach `desired`. */
 export const operatorChanges = (current: readonly string[], desired: readonly string[]) => {
@@ -25,10 +33,19 @@ export const operatorChanges = (current: readonly string[], desired: readonly st
 
 export interface PrincipalOperators {
   /** `principal:{agent}#operate@principal:{operator}` (operator relation AND operator's tenant access). */
-  readonly canOperate: (agentPrincipalId: string, operatorPrincipalId: string) => Effect.Effect<boolean, IdentityPersistenceUnavailableError>;
-  readonly operatorsOf: (agentPrincipalId: string) => Effect.Effect<readonly string[], IdentityPersistenceUnavailableError>;
+  readonly canOperate: (
+    agentPrincipalId: string,
+    operatorPrincipalId: string,
+  ) => Effect.Effect<boolean, IdentityPersistenceUnavailableError>;
+  readonly operatorsOf: (
+    agentPrincipalId: string,
+  ) => Effect.Effect<readonly string[], IdentityPersistenceUnavailableError>;
   /** Writes `principal:{agent}#tenant@tenant:{tenantId}` and makes `operatorPrincipalIds` the complete operator set. */
-  readonly replaceOperators: (input: { readonly agentPrincipalId: string; readonly operatorPrincipalIds: readonly string[]; readonly tenantId: string }) => Effect.Effect<{ readonly added: number; readonly removed: number }, IdentityPersistenceUnavailableError>;
+  readonly replaceOperators: (input: {
+    readonly agentPrincipalId: string;
+    readonly operatorPrincipalIds: readonly string[];
+    readonly tenantId: string;
+  }) => Effect.Effect<{ readonly added: number; readonly removed: number }, IdentityPersistenceUnavailableError>;
 }
 
 const makeOperators = (rpc: SpiceDbRpc): PrincipalOperators => {
@@ -37,12 +54,18 @@ const makeOperators = (rpc: SpiceDbRpc): PrincipalOperators => {
       .readRelationships(
         v1.ReadRelationshipsRequest.create({
           consistency: fullyConsistent,
-          relationshipFilter: v1.RelationshipFilter.create({ optionalRelation: 'operator', optionalResourceId: agentPrincipalId, resourceType: 'principal' }),
+          relationshipFilter: v1.RelationshipFilter.create({
+            optionalRelation: 'operator',
+            optionalResourceId: agentPrincipalId,
+            resourceType: 'principal',
+          }),
         }),
       )
       .pipe(
         Effect.map((responses) =>
-          responses.flatMap(({ relationship }) => (relationship?.subject?.object === undefined ? [] : [relationship.subject.object.objectId])),
+          responses.flatMap(({ relationship }) =>
+            relationship?.subject?.object === undefined ? [] : [relationship.subject.object.objectId],
+          ),
         ),
         Effect.mapError(unavailable),
       );
@@ -59,7 +82,9 @@ const makeOperators = (rpc: SpiceDbRpc): PrincipalOperators => {
           }),
         )
         .pipe(
-          Effect.map((response) => response.permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+          Effect.map(
+            (response) => response.permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+          ),
           Effect.mapError(unavailable),
         ),
     operatorsOf,
@@ -67,7 +92,12 @@ const makeOperators = (rpc: SpiceDbRpc): PrincipalOperators => {
       const current = yield* operatorsOf(input.agentPrincipalId);
       const { add, remove } = operatorChanges(current, input.operatorPrincipalIds);
       const resource = principalObject(input.agentPrincipalId);
-      const relationUpdate = (operation: v1.RelationshipUpdate_Operation, relation: string, objectId: string, objectType: string) =>
+      const relationUpdate = (
+        operation: v1.RelationshipUpdate_Operation,
+        relation: string,
+        objectId: string,
+        objectType: string,
+      ) =>
         v1.RelationshipUpdate.create({
           operation,
           relationship: v1.Relationship.create({
@@ -81,7 +111,9 @@ const makeOperators = (rpc: SpiceDbRpc): PrincipalOperators => {
         ...add.map((id) => relationUpdate(v1.RelationshipUpdate_Operation.TOUCH, 'operator', id, 'principal')),
         ...remove.map((id) => relationUpdate(v1.RelationshipUpdate_Operation.DELETE, 'operator', id, 'principal')),
       ];
-      yield* rpc.writeRelationships(v1.WriteRelationshipsRequest.create({ updates })).pipe(Effect.mapError(unavailable));
+      yield* rpc
+        .writeRelationships(v1.WriteRelationshipsRequest.create({ updates }))
+        .pipe(Effect.mapError(unavailable));
       return { added: add.length, removed: remove.length };
     }),
   };
@@ -92,7 +124,7 @@ export const openPrincipalOperators = Effect.acquireRelease(
   loadSpiceDbConfig().pipe(
     Effect.mapError(unavailable),
     Effect.flatMap((configuration) =>
-      Effect.try({ catch: unavailable, try: () => spiceDbTransport.open(configuration, 10_000) }),
+      Effect.try({ catch: unavailable, try: () => openSpiceDbRpc(configuration, 10_000) }),
     ),
   ),
   (rpc) => Effect.sync(() => rpc.close()),

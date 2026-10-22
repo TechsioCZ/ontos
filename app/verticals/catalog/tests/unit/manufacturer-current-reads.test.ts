@@ -8,11 +8,17 @@ import {
   productVariants,
   products,
 } from '../../src/database/schema.ts';
-import { manufacturerCurrentReadsForScope } from '../../src/persistence/manufacturer-current-reads.ts';
+import {
+  manufacturerCurrentReadsForScope,
+  resolveManufacturerCurrentOwner,
+} from '../../src/persistence/manufacturer-current-reads.ts';
 import { ManufacturerPersistenceUnavailable } from '../../src/persistence/manufacturer-persistence.ts';
 import { ManufacturerTargetAbsent } from '../../src/persistence/manufacturer-target-absent.ts';
 import { ManufacturerTargetForbidden } from '../../src/persistence/manufacturer-target-forbidden.ts';
-import { makeManufacturerTargetResolver } from '../../src/persistence/manufacturer-target-resolver.ts';
+import {
+  makeManufacturerTargetResolver,
+  manufacturerTargetResolver,
+} from '../../src/persistence/manufacturer-target-resolver.ts';
 import { ManufacturerTargetUnavailable } from '../../src/persistence/manufacturer-target-unavailable.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -89,11 +95,25 @@ const resolver = (status: 'active' | 'suspended' | 'archived' = 'active') =>
     readPartyDetail: () => Effect.fail({ _tag: 'PartyDetailUnavailableProblem' }),
   });
 
+/** The read's two steps: the Catalog transaction's current assertion, then its owner after commit. */
+const currentReads = (
+  transaction: Parameters<typeof manufacturerCurrentReadsForScope>[0],
+  targetResolver: typeof manufacturerTargetResolver = manufacturerTargetResolver,
+) => {
+  const reads = manufacturerCurrentReadsForScope(transaction, scope);
+  return {
+    effective: (subject: Parameters<typeof reads.effective>[0], instant: string) =>
+      reads
+        .effective(subject, instant)
+        .pipe(Effect.flatMap((stored) => resolveManufacturerCurrentOwner(targetResolver, scope, stored))),
+  };
+};
+
 describe('Manufacturer Current reads', () => {
   it.effect('returns the original Product provenance and owner-verified managed Legal Entity', () =>
     Effect.gen(function* current() {
       // @ts-expect-error Mock implements only exercised query chains.
-      const read = manufacturerCurrentReadsForScope(mock(rows()), scope, { targetResolver: resolver() });
+      const read = currentReads(mock(rows()), resolver());
       const result = yield* read.effective(productRef, at);
       expect(result).toMatchObject({
         claim: {
@@ -113,7 +133,7 @@ describe('Manufacturer Current reads', () => {
     Effect.gen(function* variant() {
       const data = rows();
       // @ts-expect-error Mock implements only exercised query chains.
-      const read = manufacturerCurrentReadsForScope(mock(data), scope, { targetResolver: resolver() });
+      const read = currentReads(mock(data), resolver());
       expect((yield* read.effective(variantRef, at)).kind).toBe('CURRENT');
       data.set(manufacturerRelations, []);
       expect(yield* read.effective(variantRef, at)).toEqual({ kind: 'ABSENT' });
@@ -123,15 +143,13 @@ describe('Manufacturer Current reads', () => {
   it.effect('preserves archived status and fails closed without the managed-owner port', () =>
     Effect.gen(function* archived() {
       // @ts-expect-error Mock implements only exercised query chains.
-      const archivedRead = manufacturerCurrentReadsForScope(mock(rows()), scope, {
-        targetResolver: resolver('archived'),
-      });
+      const archivedRead = currentReads(mock(rows()), resolver('archived'));
       expect(yield* archivedRead.effective(productRef, at)).toMatchObject({
         claim: { owner: { state: 'ARCHIVED' } },
         kind: 'CURRENT',
       });
       // @ts-expect-error Mock implements only exercised query chains.
-      const noOwnerRead = manufacturerCurrentReadsForScope(mock(rows()), scope);
+      const noOwnerRead = currentReads(mock(rows()));
       expect(Schema.is(ManufacturerTargetUnavailable)(yield* Effect.flip(noOwnerRead.effective(productRef, at)))).toBe(
         true,
       );
@@ -150,7 +168,7 @@ describe('Manufacturer Current reads', () => {
           readPartyDetail: () => Effect.fail({ _tag: 'PartyDetailUnavailableProblem' }),
         });
         // @ts-expect-error Mock implements only exercised query chains.
-        const read = manufacturerCurrentReadsForScope(mock(rows()), scope, { targetResolver });
+        const read = currentReads(mock(rows()), targetResolver);
         expect(Schema.is(expected)(yield* Effect.flip(read.effective(productRef, at)))).toBe(true);
       }
     }),
@@ -168,7 +186,7 @@ describe('Manufacturer Current reads', () => {
         readPartyDetail: () => Effect.fail({ _tag: 'PartyDetailUnavailableProblem' }),
       });
       // @ts-expect-error Mock implements only exercised query chains.
-      const read = manufacturerCurrentReadsForScope(mock(data), scope, { targetResolver });
+      const read = currentReads(mock(data), targetResolver);
       data.set(manufacturerRelations, [
         head,
         { ...head, productId: null, relationId: '88888888-8888-4888-8888-888888888888', variantId },

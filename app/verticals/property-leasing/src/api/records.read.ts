@@ -16,10 +16,14 @@ import { persistenceService, filterOccupancyRecords } from '../services/persiste
 
 const OWNER_MODULE_KEY = 'property.leasing';
 
-export type Services = Effect.Success<ReturnType<typeof persistenceService>> & { readonly canWrite: boolean };
+export type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
-/** Same Core decision the gateway applies to `apply-command`, so the UI only offers permitted actions. */
-const occupancyWriteCapability = (scope: Pick<OperationalScope, 'principalId' | 'correlationId'>) =>
+/**
+ * Same Core decision the gateway applies to `apply-command`, so the UI only offers permitted actions. It is a
+ * SpiceDB round trip, so the reads run it in `prepare`, before their transaction opens. A read-only or
+ * approval-only MCP connection never offers direct changes.
+ */
+const occupancyActionPermission = (scope: Pick<OperationalScope, 'principalId' | 'correlationId'>) =>
   ActionPermission.pipe(
     Effect.flatMap((permission) =>
       permission.checkActionPermission({
@@ -33,16 +37,12 @@ const occupancyWriteCapability = (scope: Pick<OperationalScope, 'principalId' | 
     Effect.orElseSucceed(() => false),
   );
 
-/** Also the agent review read's services: it reads leases and the write right exactly as this read does. */
-export const makeRecordsServices: ReadServiceFactory<Services, ActionPermission> = (transaction, scope) =>
-  // A read-only or approval-only MCP connection never offers direct changes.
-  Effect.all({
-    persistence: persistenceService(transaction, scope),
-    canWrite: isConnectionWriteAllowed(scope, OWNER_MODULE_KEY)
-      ? occupancyWriteCapability(scope)
-      : Effect.succeed(false),
-  }).pipe(
-    Effect.map(({ persistence, canWrite }) => ({ ...persistence, canWrite })),
+export const occupancyWriteCapability = (scope: OperationalScope): Effect.Effect<boolean, never, ActionPermission> =>
+  isConnectionWriteAllowed(scope, OWNER_MODULE_KEY) ? occupancyActionPermission(scope) : Effect.succeed(false);
+
+/** Also the agent review read's services: it reads leases exactly as this read does. */
+export const makeRecordsServices: ReadServiceFactory<Services> = (transaction, scope) =>
+  persistenceService(transaction, scope).pipe(
     Effect.mapError((cause) =>
       Object.defineProperty(
         new OperationContextUnavailable({
@@ -81,7 +81,9 @@ export const recordsRead = defineRead(
     schemaVersion: '1',
   },
   {
-    load: (input, context: ReadLoadContext<Services>) =>
+    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
+    prepare: (_input, context) => occupancyWriteCapability(context.scope),
+    load: (input, context: ReadLoadContext<Services, boolean>) =>
       context.services.load().pipe(
         Effect.mapError((cause) =>
           Object.defineProperty(
@@ -103,9 +105,10 @@ export const recordsRead = defineRead(
                   reason: 'Record is not present in the authorized scope',
                 }),
               )
-            : Effect.succeed({ evidence: { resultCount }, result: { ...result, canWrite: context.services.canWrite } });
+            : Effect.succeed({ evidence: { resultCount }, result: { ...result, canWrite: context.prepared } });
         }),
       ),
+    // oxlint-enable perfectionist/sort-objects
   },
   makeRecordsServices,
   () => ({ kind: 'module', moduleId: OWNER_MODULE_KEY }),

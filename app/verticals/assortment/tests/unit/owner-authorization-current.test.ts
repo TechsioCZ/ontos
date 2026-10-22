@@ -301,6 +301,13 @@ it.effect('evaluates Binding intervals while preserving foreign failure for acti
   }),
 );
 
+/** Core's two phases in one call: the overlay's `prepare` before the transaction, then its check inside. */
+const authorizeNow = (
+  ownerOverlay: OwnerAuthorizationOverlayService,
+  ownerTransaction: ScopedTransactionExecutor,
+  { operationAt: ownerOperationAt, ...request }: OwnerAuthorizationInput,
+) => Effect.flatMap(ownerOverlay.prepare(request), (check) => check(ownerTransaction, ownerOperationAt));
+
 const ownerInput = (
   targets: readonly AssortmentPermissionAccessTarget[],
   overrides: Partial<OwnerAuthorizationInput> = {},
@@ -340,7 +347,7 @@ it.effect('allows only currently provable local Rule and ALL Revision targets th
     } as const;
     for (const target of [retireTarget, revisionTarget, configurationTarget]) {
       expect(
-        yield* assortmentOwnerAuthorizationOverlay.authorize(transaction([[stableRule], []]), ownerInput([target])),
+        yield* authorizeNow(assortmentOwnerAuthorizationOverlay, transaction([[stableRule], []]), ownerInput([target])),
       ).toBe('allowed');
     }
     const revisionConfiguration = {
@@ -352,7 +359,8 @@ it.effect('allows only currently provable local Rule and ALL Revision targets th
       },
     } as const;
     expect(
-      yield* assortmentOwnerAuthorizationOverlay.authorize(
+      yield* authorizeNow(
+        assortmentOwnerAuthorizationOverlay,
         transaction([[allRevision]]),
         ownerInput([revisionConfiguration], { operation: 'read' }),
       ),
@@ -363,22 +371,25 @@ it.effect('allows only currently provable local Rule and ALL Revision targets th
 it.effect('uses Core operationAt for retired Rule denial and permits a not-yet-effective retirement', () =>
   Effect.gen(function* overlayTrustedTime() {
     expect(
-      yield* assortmentOwnerAuthorizationOverlay.authorize(
+      yield* authorizeNow(
+        assortmentOwnerAuthorizationOverlay,
         transaction([[stableRule], [{ retiredAt: futureAt }]]),
         ownerInput([revisionTarget]),
       ),
     ).toBe('allowed');
     expect(
-      yield* assortmentOwnerAuthorizationOverlay.authorize(
+      yield* authorizeNow(
+        assortmentOwnerAuthorizationOverlay,
         transaction([[stableRule], [{ retiredAt: futureAt }]]),
         ownerInput([revisionTarget], { operationAt: afterFutureAt }),
       ),
     ).toBe('denied');
-    expect(yield* assortmentOwnerAuthorizationOverlay.authorize(transaction([]), ownerInput([revisionTarget]))).toBe(
-      'unavailable',
-    );
     expect(
-      yield* assortmentOwnerAuthorizationOverlay.authorize(
+      yield* authorizeNow(assortmentOwnerAuthorizationOverlay, transaction([]), ownerInput([revisionTarget])),
+    ).toBe('unavailable');
+    expect(
+      yield* authorizeNow(
+        assortmentOwnerAuthorizationOverlay,
         transaction([Effect.fail('owner persistence unavailable')]),
         ownerInput([revisionTarget]),
       ),
@@ -412,16 +423,18 @@ it.effect('denies known future or ended Boundary state without promoting live fo
       permission: 'assortment.boundary.end',
     } as const;
     expect(
-      yield* assortmentOwnerAuthorizationOverlay.authorize(transaction([[boundary], []]), ownerInput([target])),
+      yield* authorizeNow(assortmentOwnerAuthorizationOverlay, transaction([[boundary], []]), ownerInput([target])),
     ).toBe('denied');
     expect(
-      yield* assortmentOwnerAuthorizationOverlay.authorize(
+      yield* authorizeNow(
+        assortmentOwnerAuthorizationOverlay,
         transaction([[{ ...boundary, effectiveFrom: at }], [{ effectiveTo: futureAt }]]),
         ownerInput([target], { operationAt: afterFutureAt }),
       ),
     ).toBe('denied');
     expect(
-      yield* assortmentOwnerAuthorizationOverlay.authorize(
+      yield* authorizeNow(
+        assortmentOwnerAuthorizationOverlay,
         transaction([[{ ...boundary, effectiveFrom: at }], []]),
         ownerInput([target]),
       ),
@@ -438,13 +451,14 @@ it.effect('rejects wrong owner or installed scope and preserves the existing no-
       { scope: { ...scope, legalEntityId: '90000000-0000-4000-8000-000000000009' } },
     ]) {
       expect(
-        yield* assortmentOwnerAuthorizationOverlay.authorize(noReads, ownerInput([revisionTarget], overrides)),
+        yield* authorizeNow(assortmentOwnerAuthorizationOverlay, noReads, ownerInput([revisionTarget], overrides)),
       ).toBe('unavailable');
     }
     const { legalEntityId: _legalEntityId, ...tenantScope } = scope;
     const tenantTransaction = { ...noReads, scope: { tenantId } } as ScopedTransactionExecutor;
     expect(
-      yield* assortmentOwnerAuthorizationOverlay.authorize(
+      yield* authorizeNow(
+        assortmentOwnerAuthorizationOverlay,
         tenantTransaction,
         ownerInput([configurationTarget], { scope: tenantScope }),
       ),
@@ -480,7 +494,8 @@ it.effect('keeps live Binding state unavailable even when its Revision is self-c
       permission: 'assortment.binding.end',
     } as const;
     expect(
-      yield* assortmentOwnerAuthorizationOverlay.authorize(
+      yield* authorizeNow(
+        assortmentOwnerAuthorizationOverlay,
         transaction([[binding], [allRevision], []]),
         ownerInput([target]),
       ),
@@ -518,11 +533,12 @@ it.effect('keeps proposed creation and Catalog-dependent or decision targets una
     ];
     for (const target of targets) {
       expect(
-        yield* assortmentOwnerAuthorizationOverlay.authorize(transaction([[stableRule], []]), ownerInput([target])),
+        yield* authorizeNow(assortmentOwnerAuthorizationOverlay, transaction([[stableRule], []]), ownerInput([target])),
       ).toBe('unavailable');
     }
     expect(
-      yield* assortmentOwnerAuthorizationOverlay.authorize(
+      yield* authorizeNow(
+        assortmentOwnerAuthorizationOverlay,
         transaction([
           [
             {
@@ -565,20 +581,23 @@ it.effect('requires every alternative Current instead of borrowing Currentness a
       [foreign, revisionTarget],
     ]) {
       expect(
-        yield* assortmentOwnerAuthorizationOverlay.authorize(
+        yield* authorizeNow(
+          assortmentOwnerAuthorizationOverlay,
           transaction([[stableRule], [], [stableRule], []]),
           ownerInput(targets),
         ),
       ).toBe('unavailable');
     }
     expect(
-      yield* assortmentOwnerAuthorizationOverlay.authorize(
+      yield* authorizeNow(
+        assortmentOwnerAuthorizationOverlay,
         transaction([[stableRule], [], [secondRule], [{ retiredAt: at }]]),
         ownerInput([revisionTarget, secondTarget]),
       ),
     ).toBe('denied');
     expect(
-      yield* assortmentOwnerAuthorizationOverlay.authorize(
+      yield* authorizeNow(
+        assortmentOwnerAuthorizationOverlay,
         transaction([[stableRule], [], [secondRule], []]),
         ownerInput([revisionTarget, secondTarget]),
       ),
@@ -598,10 +617,10 @@ it.effect('preserves Core fallback continuity for neutral targets and refuses ot
         { kind: 'resource', permission: 'read', resource: stableRuleTarget },
       ],
     });
-    expect(yield* assortmentOwnerAuthorizationOverlay.authorize(noReads, neutral)).toBe(
-      yield* failClosedOwnerAuthorizationOverlay.authorize(noReads, neutral),
+    expect(yield* authorizeNow(assortmentOwnerAuthorizationOverlay, noReads, neutral)).toBe(
+      yield* authorizeNow(failClosedOwnerAuthorizationOverlay, noReads, neutral),
     );
-    expect(yield* assortmentOwnerAuthorizationOverlay.authorize(noReads, neutral)).toBe('allowed');
+    expect(yield* authorizeNow(assortmentOwnerAuthorizationOverlay, noReads, neutral)).toBe('allowed');
     const business = {
       kind: 'business_permission',
       permission: 'counterparty.read',
@@ -611,7 +630,7 @@ it.effect('preserves Core fallback continuity for neutral targets and refuses ot
       [business],
       [business, { kind: 'assortment_permission' as const, target: revisionTarget }],
     ]) {
-      expect(yield* assortmentOwnerAuthorizationOverlay.authorize(noReads, ownerInput([], { targets }))).toBe(
+      expect(yield* authorizeNow(assortmentOwnerAuthorizationOverlay, noReads, ownerInput([], { targets }))).toBe(
         'unavailable',
       );
     }
@@ -633,15 +652,15 @@ it.effect('installs the real owner overlay through the production read and actio
       );
       const omitted = yield* InstalledOwnerRuntime.pipe(Effect.provide(runtime));
       expect(
-        yield* omitted.authorize(transaction([[stableRule], []]), ownerInput([revisionTarget], { operation })),
+        yield* authorizeNow(omitted, transaction([[stableRule], []]), ownerInput([revisionTarget], { operation })),
       ).toBe('unavailable');
       const installed = yield* InstalledOwnerRuntime.pipe(
         Effect.provide(withAssortmentOwnerAuthorizationOverlay(runtime)),
       );
       expect(
-        yield* installed.authorize(transaction([[stableRule], []]), ownerInput([revisionTarget], { operation })),
+        yield* authorizeNow(installed, transaction([[stableRule], []]), ownerInput([revisionTarget], { operation })),
       ).toBe('allowed');
-      expect(yield* installed.authorize(transaction([]), ownerInput([revisionTarget], { operation }))).toBe(
+      expect(yield* authorizeNow(installed, transaction([]), ownerInput([revisionTarget], { operation }))).toBe(
         'unavailable',
       );
     }

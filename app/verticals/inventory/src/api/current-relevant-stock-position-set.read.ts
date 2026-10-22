@@ -8,19 +8,36 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadLoadContext, BusinessPermissionAccessTarget, OperationalScope } from '@app/core-runtime';
+import type {
+  BusinessPermissionAccessTarget,
+  OperationalScope,
+  ReadFinishContext,
+  ReadLoadContext,
+} from '@app/core-runtime';
 import type { RelevantStockPositionSetRequest } from '../../shared/domain/current-relevant-stock-position-set.ts';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import {
   CurrentRelevantStockPositionSetRequestSchema,
   CurrentRelevantStockPositionSetResponseSchema,
 } from '../../shared/apis/current-relevant-stock-position-set.ts';
 
 import { observeRelevantStockPositionSet } from '../persistence/current-relevant-stock-position-set-repository.ts';
-import { currentRelevantStockPositionSetService } from '../services/current-relevant-stock-position-set.service.ts';
+import type { RelevantStockPositionSetObservation } from '../persistence/current-relevant-stock-position-set-repository.ts';
+import {
+  finishRelevantStockPositionSet,
+  prepareRelevantStockPositionSet,
+} from '../services/current-relevant-stock-position-set.service.ts';
+import type { RelevantStockPositionSetPrepared } from '../services/current-relevant-stock-position-set.service.ts';
+
+/** The read's only transaction work: the owner observation of the requested Position-set scope. */
+interface PositionSetServices {
+  readonly observe: (
+    requested: RelevantStockPositionSetRequest['scope'],
+  ) => ReturnType<typeof observeRelevantStockPositionSet>;
+}
 
 const INVENTORY_READ_PERMISSION = 'inventory.resource.read' as const;
-type PositionRefs = Parameters<Parameters<typeof currentRelevantStockPositionSetService>[0]['authorizePositions']>[0];
+type PositionRefs = Parameters<Parameters<typeof finishRelevantStockPositionSet>[4]>[0];
 export const makePositionSetAuthorization = Effect.fn('PositionSet.makeAuthorization')(function* makeAuthorization(
   scope: OperationalScope,
 ) {
@@ -66,7 +83,10 @@ export const makePositionSetAuthorization = Effect.fn('PositionSet.makeAuthoriza
     return yield* Effect.void;
   });
 });
-type ServiceFailure = Effect.Error<ReturnType<ReturnType<typeof currentRelevantStockPositionSetService>['read']>>;
+// `prepare` fails with the same unavailability as the observation.
+type ServiceFailure =
+  | Effect.Error<ReturnType<typeof observeRelevantStockPositionSet>>
+  | Effect.Error<ReturnType<typeof finishRelevantStockPositionSet>>;
 const mapPositionSetReadFailure = (error: ServiceFailure) => {
   if (Schema.is(ReadPermissionDenied)(error) || Schema.is(ReadPermissionUnavailable)(error)) {
     return error;
@@ -105,25 +125,45 @@ export const currentRelevantStockPositionSetRead = defineRead(
     schemaVersion: '1',
   },
   {
-    load: (
-      input: RelevantStockPositionSetRequest,
-      context: ReadLoadContext<ReturnType<typeof currentRelevantStockPositionSetService>>,
-    ) =>
-      context.services.read(input).pipe(
-        Effect.map((result) => ({
-          evidence: { resultCount: result.outcome === 'COMPLETE' ? result.positionRefs.length : 0 },
-          result,
-        })),
-        Effect.mapError(mapPositionSetReadFailure),
-      ),
+    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
+    prepare: (input: RelevantStockPositionSetRequest, context) =>
+      prepareRelevantStockPositionSet(input, context.scope).pipe(Effect.mapError(mapPositionSetReadFailure)),
+    load: (input, context: ReadLoadContext<PositionSetServices, RelevantStockPositionSetPrepared>) =>
+      context.prepared.kind === 'RESULT'
+        ? Effect.succeedNone
+        : context.services
+            .observe(input.scope)
+            .pipe(Effect.map(Option.some), Effect.mapError(mapPositionSetReadFailure)),
+    finish: Effect.fn('CurrentRelevantStockPositionSetRead.finish')(
+      function* finishPositionSetRead(
+        input: RelevantStockPositionSetRequest,
+        context: ReadFinishContext<
+          RelevantStockPositionSetPrepared,
+          Option.Option<RelevantStockPositionSetObservation>
+        >,
+      ) {
+        const authorizePositions = yield* makePositionSetAuthorization(context.scope);
+        return yield* finishRelevantStockPositionSet(
+          input,
+          context.prepared,
+          context.loaded,
+          context.scope,
+          authorizePositions,
+        );
+      },
+      Effect.map((result) => ({
+        evidence: { resultCount: result.outcome === 'COMPLETE' ? result.positionRefs.length : 0 },
+        result,
+      })),
+      Effect.mapError(mapPositionSetReadFailure),
+    ),
+    // oxlint-enable perfectionist/sort-objects
   },
-  Effect.fn('PositionSet.makeServices')(function* makeServices(transaction, scope) {
-    return currentRelevantStockPositionSetService({
-      authorizePositions: yield* makePositionSetAuthorization(scope),
-      observe: (requested) => observeRelevantStockPositionSet(transaction, scope, requested),
-      scope,
-    });
-  }),
+  (transaction, scope) =>
+    Effect.succeed({
+      observe: (requested: RelevantStockPositionSetRequest['scope']) =>
+        observeRelevantStockPositionSet(transaction, scope, requested),
+    }),
   (input, scope) => ({
     businessPermission: {
       permission: INVENTORY_READ_PERMISSION,

@@ -1,5 +1,5 @@
 import { v1 } from '@authzed/authzed-node';
-import { spiceDbTransport } from '#spicedb-transport';
+import { openSpiceDbRpc } from './spicedb-transaction-guard.ts';
 import { Data, Effect } from 'effect';
 import type { Scope } from 'effect';
 
@@ -42,7 +42,7 @@ export const createSpiceDbPermissionClient = (
   configuration: SpiceDbConfigValue,
   timeoutMilliseconds: number,
 ): SpiceDbPermissionClient => {
-  const rpc = spiceDbTransport.open(configuration, timeoutMilliseconds);
+  const rpc = openSpiceDbRpc(configuration, timeoutMilliseconds);
   return {
     checkBulkPermissions: (request) =>
       rpc.checkBulkPermissions(request).pipe(Effect.mapError(({ cause }) => spiceDbPermissionClientError(cause))),

@@ -198,12 +198,15 @@ describe('Counterparty Commerce Access decisions', () => {
   it.effect('exposes a typed unavailable port that always fails closed', () =>
     Effect.gen(function* unavailablePortFailsClosed() {
       const result = yield* Effect.exit(
-        unavailableCounterpartyAccessPort('relationship store offline').check({
-          counterpartyRef,
-          permission: 'counterparty.profile.read',
-          principal: recipient,
-          scope: counterpartyScope,
-        }),
+        unavailableCounterpartyAccessPort('relationship store offline').check(
+          {
+            counterpartyRef,
+            permission: 'counterparty.profile.read',
+            principal: recipient,
+            scope: counterpartyScope,
+          },
+          'ALLOWED',
+        ),
       );
       expect(Exit.isFailure(result)).toBe(true);
     }),

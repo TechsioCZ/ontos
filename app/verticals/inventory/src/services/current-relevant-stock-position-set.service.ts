@@ -207,72 +207,112 @@ export const evaluateRelevantStockPositionSet = Effect.fn('PositionSet.evaluate'
   }),
 );
 
-export const currentRelevantStockPositionSetService = (dependencies: {
-  readonly authorizePositions: (
-    refs: readonly {
-      readonly moduleId: 'commerce.inventory';
-      readonly resourceId: string;
-      readonly resourceType: string;
-      readonly tenantId: string;
-    }[],
-  ) => Effect.Effect<void, RelevantStockPositionSetUnavailable | ReadPermissionDenied | ReadPermissionUnavailable>;
-  readonly observe: (
-    requested: RelevantStockPositionSetScope,
-  ) => Effect.Effect<RelevantStockPositionSetObservation, RelevantStockPositionSetUnavailable>;
-  readonly scope: OperationalScope;
-}) => ({
-  read: Effect.fn('CurrentRelevantStockPositionSetService.read')(function* read(
-    input: RelevantStockPositionSetRequest,
+type PositionRefsAuthorization = (
+  refs: readonly {
+    readonly moduleId: 'commerce.inventory';
+    readonly resourceId: string;
+    readonly resourceType: string;
+    readonly tenantId: string;
+  }[],
+) => Effect.Effect<void, RelevantStockPositionSetUnavailable | ReadPermissionDenied | ReadPermissionUnavailable>;
+
+type RelevantStockPositionSetResult = Effect.Success<ReturnType<typeof evaluateRelevantStockPositionSet>>;
+
+/**
+ * What the read established before its transaction: an early unproven result, or the owner observation to
+ * take, bounded by the Commerce verification window when the exact Commerce scope was verified.
+ */
+export type RelevantStockPositionSetPrepared =
+  | { readonly kind: 'RESULT'; readonly result: RelevantStockPositionSetResult }
+  | {
+      readonly kind: 'OBSERVE';
+      readonly validFrom?: number;
+      readonly validTo?: number | null;
+    };
+
+/**
+ * Before the transaction: the remote Commerce verification of an exact Commerce scope. The owner
+ * observation follows it, so the observation time is never earlier than the verified window.
+ */
+export const prepareRelevantStockPositionSet = Effect.fn('CurrentRelevantStockPositionSet.prepare')(function* prepare(
+  input: RelevantStockPositionSetRequest,
+  scope: OperationalScope,
+) {
+  if (input.mode === 'POTENTIALLY_RELEVANT_POSITIONS') {
+    return { kind: 'OBSERVE' } satisfies RelevantStockPositionSetPrepared;
+  }
+  const request = input.commerceVerificationRequest;
+  if (
+    request === undefined ||
+    request.tenantId !== scope.tenantId ||
+    request.purchasingContext.sellingLegalEntityId !== scope.legalEntityId ||
+    request.actor.kind !== 'AUTHENTICATED_CUSTOMER' ||
+    request.actor.principalId !== scope.principalId ||
+    !['B2C', 'B2B'].includes(request.purchasingContext.channelId)
   ) {
-    const { scope } = dependencies;
-    if (input.mode === 'POTENTIALLY_RELEVANT_POSITIONS') {
-      const observation = yield* dependencies.observe(input.scope);
-      const result = yield* evaluateRelevantStockPositionSet(input, observation, scope);
-      if (result.outcome === 'COMPLETE') {
-        yield* dependencies.authorizePositions(result.positionRefs);
-      }
-      return result;
-    }
-    const request = input.commerceVerificationRequest;
-    if (
-      request === undefined ||
-      request.tenantId !== scope.tenantId ||
-      request.purchasingContext.sellingLegalEntityId !== scope.legalEntityId ||
-      request.actor.kind !== 'AUTHENTICATED_CUSTOMER' ||
-      request.actor.principalId !== scope.principalId ||
-      !['B2C', 'B2B'].includes(request.purchasingContext.channelId)
-    ) {
-      return unproven('COMMERCE_CONTEXT_UNVERIFIABLE');
-    }
-    const verifier = yield* Effect.serviceOption(PositionSetCommerceVerifier);
-    if (Option.isNone(verifier)) {
-      return unproven('COMMERCE_CONTEXT_UNVERIFIABLE');
-    }
-    const observedAt = yield* DateTime.now;
-    const ownerRequest = { ...request, operationTime: DateTime.formatIso(observedAt) };
-    const response = yield* verifier.value.verify(ownerRequest, scope);
-    if (
-      !Schema.is(PricingPurchaseContextVerificationResponseSchema)(response) ||
-      response.outcome !== 'PURCHASE_CONTEXT_VERIFIED' ||
-      !Schema.toEquivalence(PricingPurchaseContextVerificationRequestSchema)(response.request, ownerRequest)
-    ) {
-      return unproven('COMMERCE_CONTEXT_UNVERIFIABLE');
-    }
-    const observation = yield* dependencies.observe(input.scope);
-    const observationTime = observation.observedAt;
-    if (
-      observationTime === undefined ||
-      observationTime.getTime() <
-        DateTime.toEpochMillis(DateTime.makeUnsafe(response.evidence.currentness.validFrom)) ||
-      (response.evidence.currentness.validTo !== null &&
-        observationTime.getTime() >= DateTime.toEpochMillis(DateTime.makeUnsafe(response.evidence.currentness.validTo)))
-    ) {
-      return unproven('COMMERCE_CONTEXT_UNVERIFIABLE');
-    }
-    const result = yield* evaluateRelevantStockPositionSet(input, observation, scope);
-    if (result.outcome === 'COMPLETE') {
-      yield* dependencies.authorizePositions(result.positionRefs);
-    }
-    return result;
-  }),
+    return {
+      kind: 'RESULT',
+      result: unproven('COMMERCE_CONTEXT_UNVERIFIABLE'),
+    } satisfies RelevantStockPositionSetPrepared;
+  }
+  const verifier = yield* Effect.serviceOption(PositionSetCommerceVerifier);
+  if (Option.isNone(verifier)) {
+    return {
+      kind: 'RESULT',
+      result: unproven('COMMERCE_CONTEXT_UNVERIFIABLE'),
+    } satisfies RelevantStockPositionSetPrepared;
+  }
+  const observedAt = yield* DateTime.now;
+  const ownerRequest = { ...request, operationTime: DateTime.formatIso(observedAt) };
+  const response = yield* verifier.value.verify(ownerRequest, scope);
+  if (
+    !Schema.is(PricingPurchaseContextVerificationResponseSchema)(response) ||
+    response.outcome !== 'PURCHASE_CONTEXT_VERIFIED' ||
+    !Schema.toEquivalence(PricingPurchaseContextVerificationRequestSchema)(response.request, ownerRequest)
+  ) {
+    return {
+      kind: 'RESULT',
+      result: unproven('COMMERCE_CONTEXT_UNVERIFIABLE'),
+    } satisfies RelevantStockPositionSetPrepared;
+  }
+  const { validFrom, validTo } = response.evidence.currentness;
+  return {
+    kind: 'OBSERVE',
+    validFrom: DateTime.toEpochMillis(DateTime.makeUnsafe(validFrom)),
+    validTo: validTo === null ? null : DateTime.toEpochMillis(DateTime.makeUnsafe(validTo)),
+  } satisfies RelevantStockPositionSetPrepared;
+});
+
+/**
+ * After commit: evaluates the observation (inside the Commerce verification window, if any) and
+ * authorizes every Position it returns through SpiceDB.
+ */
+export const finishRelevantStockPositionSet = Effect.fn('CurrentRelevantStockPositionSet.finish')(function* finish(
+  input: RelevantStockPositionSetRequest,
+  prepared: RelevantStockPositionSetPrepared,
+  loaded: Option.Option<RelevantStockPositionSetObservation>,
+  scope: OperationalScope,
+  authorizePositions: PositionRefsAuthorization,
+) {
+  if (prepared.kind === 'RESULT') {
+    return prepared.result;
+  }
+  if (Option.isNone(loaded)) {
+    return unproven('OWNER_SCOPE_UNVERIFIABLE');
+  }
+  const observation = loaded.value;
+  const observationTime = observation.observedAt?.getTime();
+  if (
+    prepared.validFrom !== undefined &&
+    (observationTime === undefined ||
+      observationTime < prepared.validFrom ||
+      (prepared.validTo !== null && prepared.validTo !== undefined && observationTime >= prepared.validTo))
+  ) {
+    return unproven('COMMERCE_CONTEXT_UNVERIFIABLE');
+  }
+  const result = yield* evaluateRelevantStockPositionSet(input, observation, scope);
+  if (result.outcome === 'COMPLETE') {
+    yield* authorizePositions(result.positionRefs);
+  }
+  return result;
 });

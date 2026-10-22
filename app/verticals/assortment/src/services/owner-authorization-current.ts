@@ -1,5 +1,9 @@
 import { DateTime, Effect, Layer, Match, Schema } from 'effect';
-import { failClosedOwnerAuthorizationOverlay, OwnerAuthorizationOverlay } from '@app/core-runtime';
+import {
+  failClosedOwnerAuthorizationDecision,
+  OwnerAuthorizationOverlay,
+  transactionalOwnerAuthorization,
+} from '@app/core-runtime';
 import type {
   AssortmentPermissionAccessTarget,
   OperationalScope,
@@ -224,17 +228,17 @@ export const assortmentAuthorizationCurrentForTransaction = (
  * Core checks exact Permissions independently. Require every Assortment alternative to be
  * Current so a grant on one target cannot borrow the Current state of another target.
  */
-export const assortmentOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = {
-  authorize: (transaction, input) => {
+export const assortmentOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = transactionalOwnerAuthorization(
+  (transaction, input) => {
     if (input.targets.some((target) => target.kind === 'business_permission')) {
-      return failClosedOwnerAuthorizationOverlay.authorize(transaction, input);
+      return Effect.succeed(failClosedOwnerAuthorizationDecision(input));
     }
     const targets = input.targets.filter(
       (target): target is Extract<OwnerAuthorizationTarget, { readonly kind: 'assortment_permission' }> =>
         target.kind === 'assortment_permission',
     );
     if (targets.length === 0) {
-      return failClosedOwnerAuthorizationOverlay.authorize(transaction, input);
+      return Effect.succeed(failClosedOwnerAuthorizationDecision(input));
     }
     if (
       input.owningModuleKey !== 'commerce.assortment' ||
@@ -257,7 +261,7 @@ export const assortmentOwnerAuthorizationOverlay: OwnerAuthorizationOverlayServi
       }),
     );
   },
-};
+);
 
 export const assortmentOwnerAuthorizationOverlayLive = Layer.succeed(
   OwnerAuthorizationOverlay,

@@ -173,16 +173,25 @@ type ClaimCounterpartyAccessInvitationOutcome =
       readonly rejection: InvitationClaimRejection;
     }>;
 
+export interface CounterpartyAccessCheckInput {
+  readonly counterpartyRef: CounterpartyRef;
+  readonly permission: CounterpartyPermissionCode;
+  readonly principal: PrincipalRef;
+  readonly scope: CounterpartyPermissionScope;
+}
+
 export interface CounterpartyAccessPortService {
   readonly bootstrapAdministrator: (
     input: GrantCounterpartyAccessInput,
   ) => Effect.Effect<BootstrapCounterpartyAccessAdministratorOutcome, CounterpartyAccessDomainError>;
-  readonly check: (input: {
-    readonly counterpartyRef: CounterpartyRef;
-    readonly permission: CounterpartyPermissionCode;
-    readonly principal: PrincipalRef;
-    readonly scope: CounterpartyPermissionScope;
-  }) => Effect.Effect<CounterpartyAccessDecision, CounterpartyAccessUnavailable>;
+  /**
+   * Database only. `coreDecision` is Core's relationship decision for the same check, read before the
+   * transaction (`counterpartyAccessCoreDecision`); the owner-local grant is conjunctive with it.
+   */
+  readonly check: (
+    input: CounterpartyAccessCheckInput,
+    coreDecision: CounterpartyAccessDecision,
+  ) => Effect.Effect<CounterpartyAccessDecision, CounterpartyAccessUnavailable>;
   readonly claimInvitation: (
     input: ClaimCounterpartyAccessInvitationInput,
   ) => Effect.Effect<ClaimCounterpartyAccessInvitationOutcome, CounterpartyAccessDomainError>;

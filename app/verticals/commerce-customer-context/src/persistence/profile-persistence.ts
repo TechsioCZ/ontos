@@ -1229,7 +1229,6 @@ export interface ProfilePersistenceDependencies {
     ProfilePersistenceDependencyFailure
   >;
   readonly readRetailPermissions?: (input: {
-    readonly bindingId: string;
     readonly legalEntityId: string;
     readonly principalId: string;
     readonly profileId: string;
@@ -2177,7 +2176,6 @@ const readServices = (
     );
 
   const readRetailPermissionProjection = (
-    bindingId: string,
     profileId: string,
     principalId: string,
     observedAt: string,
@@ -2194,7 +2192,6 @@ const readServices = (
       });
     }
     return readPermissions({
-      bindingId,
       legalEntityId: scope.legalEntityId,
       principalId,
       profileId,
@@ -2806,12 +2803,7 @@ const readServices = (
                                   ? ('CURRENT' as const)
                                   : ('INDETERMINATE' as const),
                             };
-                            return readRetailPermissionProjection(
-                              raw.bindingId,
-                              raw.profileId,
-                              principalId,
-                              raw.updatedAt,
-                            ).pipe(
+                            return readRetailPermissionProjection(raw.profileId, principalId, raw.updatedAt).pipe(
                               Effect.map(({ freshness, permissions }) => {
                                 const decision = decideRetailPortalAccess({
                                   authorizationOperation,
@@ -2908,7 +2900,7 @@ const readServices = (
                   ? ('CURRENT' as const)
                   : ('INDETERMINATE' as const),
               };
-              return readRetailPermissionProjection(raw.bindingId, raw.profileId, principalId, observedAt).pipe(
+              return readRetailPermissionProjection(raw.profileId, principalId, observedAt).pipe(
                 Effect.map(({ freshness, permissions }): RetailPortalProfileBindingReadResponse => {
                   const binding = {
                     authorizationOperation,

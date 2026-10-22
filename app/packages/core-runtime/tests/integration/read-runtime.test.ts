@@ -19,6 +19,7 @@ import {
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../../src/operations/context.ts';
 import { OperationContextUnavailable } from '../../src/operations/errors.ts';
+import { transactionalOwnerAuthorization } from '../../src/permissions/owner-authorization-overlay.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { ReadHandlerUnavailable, ReadPermissionDenied, ReadPolicyDenied } from '../../src/reads/errors.ts';
@@ -312,9 +313,7 @@ it.live('holds native Read authority through owner work and commits denial evide
       testOperationalScopeResolver,
       contextAccess,
       {
-        ownerAuthorizationOverlay: {
-          authorize: () => Effect.sync(() => ownerAuthorizationDecision),
-        },
+        ownerAuthorizationOverlay: transactionalOwnerAuthorization(() => Effect.sync(() => ownerAuthorizationDecision)),
       },
     );
     const run = (signedRevision: string) =>

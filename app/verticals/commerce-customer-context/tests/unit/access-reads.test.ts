@@ -163,14 +163,14 @@ it.effect('returns exact allowed and denied decisions and maps unavailable check
     };
     for (const decision of ['ALLOWED', 'DENIED'] as const) {
       expect(
-        yield* checkCounterpartyCommerceAccessFromServices(input, principalId, tenantId, {
+        yield* checkCounterpartyCommerceAccessFromServices(input, principalId, tenantId, 'ALLOWED', {
           check: () => Effect.succeed(decision),
         }),
       ).toEqual({ decision });
     }
 
     const failure = yield* Effect.flip(
-      checkCounterpartyCommerceAccessFromServices(input, principalId, tenantId, {
+      checkCounterpartyCommerceAccessFromServices(input, principalId, tenantId, 'ALLOWED', {
         check: () => Effect.fail(unavailableFailure()),
       }),
     );
@@ -190,6 +190,7 @@ it.effect('rejects cross-tenant checks before consulting the access adapter', ()
         },
         principalId,
         tenantId,
+        'ALLOWED',
         {
           check: () => {
             called = true;
