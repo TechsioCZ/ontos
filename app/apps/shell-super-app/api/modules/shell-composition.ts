@@ -668,11 +668,69 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
     },
   );
 
+  /**
+   * Asks SpiceDB, in one round trip, for every decision a composition read of the captured release checks: the read
+   * entrypoint's module access, each module's access and the navigation permissions. Run beside the read under
+   * `withRequestPermissionDecisions`, the read's own checks join these decisions instead of paying a round trip each
+   * (scope, entrypoint and composition checks were three sequential round trips). Failures are the read's to report.
+   */
+  const prefetchCompositionDecisions = (context: ShellCompositionContext, entrypointModuleId: string) =>
+    Effect.gen(function* prefetchCompositionDecisionsEffect() {
+      const { legalEntityId } = context;
+      if (legalEntityId === undefined) {
+        return;
+      }
+      const catalog = yield* loadCatalog(sources);
+      yield* Effect.all(
+        [
+          sources.contextAccess.modules({
+            legalEntityId,
+            moduleIds: [...new Set([entrypointModuleId, ...catalog.moduleIds])],
+            principalId: context.principalId,
+            tenantId: context.tenantId,
+          }),
+          resolveDeniedNavigationEntrypoints(sources, { ...context, legalEntityId }, catalog),
+        ],
+        { concurrency: 2, discard: true },
+      );
+    }).pipe(Effect.ignore);
+
+  /** The module target's counterpart of `prefetchCompositionDecisions`: the entrypoint, target module and page checks. */
+  const prefetchModuleTargetDecisions = (
+    context: ShellCompositionContext,
+    input: Parameters<typeof authorizeModuleTarget>[1],
+    entrypointModuleId: string,
+  ) =>
+    Effect.gen(function* prefetchModuleTargetDecisionsEffect() {
+      const { legalEntityId } = context;
+      if (legalEntityId === undefined) {
+        return;
+      }
+      const selected = resolvePageSelection(yield* loadCatalog(sources), input);
+      if (selected === null) {
+        return;
+      }
+      yield* Effect.all(
+        [
+          sources.contextAccess.modules({
+            legalEntityId,
+            moduleIds: [...new Set([entrypointModuleId, selected.contract.manifest.module.id])],
+            principalId: context.principalId,
+            tenantId: context.tenantId,
+          }),
+          resolvePublicComponentPermission(sources, context, selected.page),
+        ],
+        { concurrency: 2, discard: true },
+      );
+    }).pipe(Effect.ignore);
+
   return Object.freeze({
     authorizeComposition,
     authorizeModuleTarget,
     finishComposition,
     finishModuleTarget: finishShellModuleTarget,
+    prefetchCompositionDecisions,
+    prefetchModuleTargetDecisions,
   });
 };
 

@@ -189,6 +189,8 @@ export {
   ContextAccessLive,
   makeContextAccess,
   makeContextAccessLive,
+  RequestPermissionDecisions,
+  withRequestPermissionDecisions,
   assortmentPermissionTargetRequiresLegalEntity,
   toAssortmentPermissionAccessKey,
   toAssortmentPermissionAccessObjectId,

@@ -1,6 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
 import { createHash } from 'node:crypto';
-import { Context, Effect, Layer, Result, Schema } from 'effect';
+import { Context, Deferred, Effect, Layer, Option, Result, Schema } from 'effect';
 import type { Scope } from 'effect';
 
 import {
@@ -13,6 +13,7 @@ import {
 import type { SpiceDbPermissionClient } from './client.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
 import { loadSpiceDbConfig } from './config.ts';
+import { OpenDatabaseTransaction } from '../db/transaction-io-guard.ts';
 import type { SpiceDbConfigValue } from './config.ts';
 import { isTaxSellingLegalEntityPermission } from './business-permission.ts';
 import type { BusinessPermissionCode } from './business-permission.ts';
@@ -755,7 +756,127 @@ const sameRequest = (
   sameObjectReference(expected.resource, actual.resource) &&
   sameObjectReference(expected.subject?.object, actual.subject?.object);
 
+/**
+ * The SpiceDB decisions one request has already asked for, keyed by the exact check (resource, permission and
+ * subject), each settled once by whichever check asked first. Checks are fully consistent and a request reads the
+ * same relationships throughout, so a later check of the same request reuses the decision instead of paying
+ * another round trip; a check still in flight is joined, not repeated. It is request state only: nothing outlives
+ * the effect that `withRequestPermissionDecisions` wraps, and an `unavailable` decision is never reused. Wrap
+ * only work that writes no relationships.
+ */
+type RequestPermissionDecisionMemo = Map<string, Deferred.Deferred<ContextAccessDecision>>;
+
+export const RequestPermissionDecisions = Context.Reference<Option.Option<RequestPermissionDecisionMemo>>(
+  '@app/core-runtime/permissions/context-access/RequestPermissionDecisions',
+  { defaultValue: Option.none },
+);
+
+/**
+ * Shares SpiceDB decisions among every check `effect` makes (see `RequestPermissionDecisions`); inside work that
+ * already shares them, `effect` joins the same decisions.
+ */
+export const withRequestPermissionDecisions = <Value, Failure, Requirements>(
+  effect: Effect.Effect<Value, Failure, Requirements>,
+): Effect.Effect<Value, Failure, Requirements> =>
+  Effect.updateService(effect, RequestPermissionDecisions, (current) =>
+    Option.isSome(current) ? current : Option.some<RequestPermissionDecisionMemo>(new Map()),
+  );
+
+/** SpiceDB's own relationship notation; object types, ids and relations never contain `:`, `#` or `@`. */
+const requestIdentity = (request: v1.CheckBulkPermissionsRequestItem): string =>
+  `${request.resource?.objectType}:${request.resource?.objectId}#${request.permission}@${request.subject?.object?.objectType}:${request.subject?.object?.objectId}#${request.subject?.optionalRelation ?? ''}`;
+
+interface OwnedDecision {
+  readonly deferred: Deferred.Deferred<ContextAccessDecision>;
+  readonly identity: string;
+  readonly request: v1.CheckBulkPermissionsRequestItem;
+}
+
+/** Settles the checks this call asked for; an `unavailable` one is forgotten so a later check asks again. */
+const settleOwnedDecisions = (
+  memo: RequestPermissionDecisionMemo,
+  owned: readonly OwnedDecision[],
+  decisions: readonly ContextAccessDecision[],
+) =>
+  Effect.sync(() => {
+    for (const [index, entry] of owned.entries()) {
+      const decision = decisions[index] ?? 'unavailable';
+      if (decision === 'unavailable') {
+        memo.delete(entry.identity);
+      }
+      Deferred.doneUnsafe(entry.deferred, Effect.succeed(decision));
+    }
+  });
+
+/** Claims every check of `requests` this request has not asked for yet; the rest join their pending decision. */
+const claimDecisions = (
+  memo: RequestPermissionDecisionMemo,
+  requests: readonly v1.CheckBulkPermissionsRequestItem[],
+) => {
+  const owned: OwnedDecision[] = [];
+  const pending = requests.map((request) => {
+    const identity = requestIdentity(request);
+    const known = memo.get(identity);
+    if (known !== undefined) {
+      return known;
+    }
+    const deferred = Deferred.makeUnsafe<ContextAccessDecision>();
+    memo.set(identity, deferred);
+    owned.push({ deferred, identity, request });
+    return deferred;
+  });
+  return { owned, pending };
+};
+
 export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAccessService => {
+  /** One CheckBulkPermissions call: a decision per request, or every one `unavailable` when the answer does not match. */
+  const decide = (
+    requests: readonly v1.CheckBulkPermissionsRequestItem[],
+  ): Effect.Effect<readonly ContextAccessDecision[]> => {
+    const unavailableAll = requests.map((): ContextAccessDecision => 'unavailable');
+    return client
+      .checkBulkPermissions(
+        v1.CheckBulkPermissionsRequest.create({
+          consistency: fullyConsistent,
+          items: [...requests],
+          withTracing: false,
+        }),
+      )
+      .pipe(
+        Effect.map((response) => {
+          if (response.pairs.length !== requests.length) {
+            return unavailableAll;
+          }
+          const decisions = response.pairs.map((pair, index) => {
+            const expected = requests[index];
+            return expected === undefined || !sameRequest(expected, pair.request) ? null : classifyPair(pair);
+          });
+          return decisions.every((decision): decision is ContextAccessDecision => decision !== null)
+            ? decisions
+            : unavailableAll;
+        }),
+        Effect.catchTag('SpiceDbPermissionClientError', () => Effect.succeed(unavailableAll)),
+      );
+  };
+
+  /**
+   * Joins the decisions this request already has or is waiting for and asks SpiceDB, in one call, only for the
+   * rest. Inside a governed transaction the memo is bypassed, so the transaction guard still refuses the call.
+   */
+  const decideWithin = Effect.fn('ContextAccess.decideWithinRequest')(function* decideWithinRequest(
+    memo: RequestPermissionDecisionMemo,
+    requests: readonly v1.CheckBulkPermissionsRequestItem[],
+  ) {
+    const { owned, pending } = claimDecisions(memo, requests);
+    if (owned.length > 0) {
+      yield* decide(owned.map(({ request }) => request)).pipe(
+        Effect.flatMap((decisions) => settleOwnedDecisions(memo, owned, decisions)),
+        Effect.onInterrupt(() => settleOwnedDecisions(memo, owned, [])),
+      );
+    }
+    return yield* Effect.forEach(pending, (deferred) => Deferred.await(deferred), { concurrency: pending.length });
+  });
+
   const checkBatch = (
     items: readonly BatchItem[],
     principalId: string,
@@ -772,35 +893,14 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
       return Effect.succeed([]);
     }
     const requests = items.map((item) => makeRequestItem(item, principalId));
-    return client
-      .checkBulkPermissions(
-        v1.CheckBulkPermissionsRequest.create({
-          consistency: fullyConsistent,
-          items: requests,
-          withTracing: false,
-        }),
-      )
-      .pipe(
-        Effect.map((response) => {
-          if (response.pairs.length !== requests.length) {
-            return unavailable(keys);
-          }
-          const seen = new Set<string>();
-          const decisions = response.pairs.map((pair, index) => {
-            const expected = requests[index];
-            const key = keys[index];
-            if (expected === undefined || key === undefined || !sameRequest(expected, pair.request) || seen.has(key)) {
-              return null;
-            }
-            seen.add(key);
-            return { decision: classifyPair(pair), key };
-          });
-          return decisions.every((decision): decision is ContextAccessResult => decision !== null)
-            ? decisions
-            : unavailable(keys);
-        }),
-        Effect.catchTag('SpiceDbPermissionClientError', () => Effect.succeed(unavailable(keys))),
-      );
+    return Effect.all([Effect.service(RequestPermissionDecisions), Effect.service(OpenDatabaseTransaction)], {
+      concurrency: 2,
+    }).pipe(
+      Effect.flatMap(([memo, transaction]) =>
+        Option.isSome(memo) && Option.isNone(transaction) ? decideWithin(memo.value, requests) : decide(requests),
+      ),
+      Effect.map((decisions) => keys.map((key, index) => ({ decision: decisions[index] ?? 'unavailable', key }))),
+    );
   };
 
   const service: ContextAccessService = {

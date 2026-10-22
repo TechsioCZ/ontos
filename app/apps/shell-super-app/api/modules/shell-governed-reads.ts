@@ -7,6 +7,7 @@ import {
   TenantModuleStateService,
   defineRead,
   defineSystemModuleEntrypoint,
+  withRequestPermissionDecisions,
 } from '@app/core-runtime';
 import type {
   ReadCoreError,
@@ -447,7 +448,35 @@ const makeRegistrations = Effect.fn('ShellGovernedReads.makeRegistrations')(func
     serviceFactory,
     () => ({ kind: 'legal_entity' }),
   );
-  return { composition, moduleTarget, resourceDetail, search } as const;
+  return {
+    composition,
+    moduleTarget,
+    prefetchCompositionDecisions: (principal: TrustedPrincipalContext) =>
+      compositionAccess.prefetchCompositionDecisions(
+        principal.legalEntityId === undefined
+          ? { principalId: principal.principalId, tenantId: principal.tenantId }
+          : {
+              legalEntityId: principal.legalEntityId,
+              principalId: principal.principalId,
+              tenantId: principal.tenantId,
+            },
+        compositionEntrypoint.moduleKey,
+      ),
+    prefetchModuleTargetDecisions: (principal: TrustedPrincipalContext, selector: MutableModuleTargetSelector) =>
+      compositionAccess.prefetchModuleTargetDecisions(
+        principal.legalEntityId === undefined
+          ? { principalId: principal.principalId, tenantId: principal.tenantId }
+          : {
+              legalEntityId: principal.legalEntityId,
+              principalId: principal.principalId,
+              tenantId: principal.tenantId,
+            },
+        selector,
+        moduleTargetEntrypoint.moduleKey,
+      ),
+    resourceDetail,
+    search,
+  } as const;
 });
 
 export const createShellGovernedReadsLayer = (
@@ -463,13 +492,22 @@ export const createShellGovernedReadsLayer = (
       const runtime = yield* ReadRuntime;
       const registrations = yield* makeRegistrations(gateways, assertionIssuer, scopedModuleStateFactory);
       return {
+        // The read's SpiceDB checks join decisions asked for beside it, in one round trip with the read's own start.
         composition: (request) =>
-          runtime.runRead({
-            input: {},
-            principal: request.principal,
-            registration: registrations.composition,
-            transport: { correlationId: request.correlationId },
-          }),
+          withRequestPermissionDecisions(
+            Effect.all(
+              [
+                registrations.prefetchCompositionDecisions(request.principal),
+                runtime.runRead({
+                  input: {},
+                  principal: request.principal,
+                  registration: registrations.composition,
+                  transport: { correlationId: request.correlationId },
+                }),
+              ],
+              { concurrency: 2 },
+            ).pipe(Effect.map(([, composition]) => composition)),
+          ),
         moduleTarget: (request) => {
           const input: MutableModuleTargetSelector = {};
           if (request.compositionRevision !== undefined) {
@@ -488,12 +526,20 @@ export const createShellGovernedReadsLayer = (
             request.moduleId === undefined
               ? { correlationId: request.correlationId }
               : { correlationId: request.correlationId, targetModuleKey: request.moduleId };
-          return runtime.runRead({
-            input,
-            principal: request.principal,
-            registration: registrations.moduleTarget,
-            transport,
-          });
+          return withRequestPermissionDecisions(
+            Effect.all(
+              [
+                registrations.prefetchModuleTargetDecisions(request.principal, input),
+                runtime.runRead({
+                  input,
+                  principal: request.principal,
+                  registration: registrations.moduleTarget,
+                  transport,
+                }),
+              ],
+              { concurrency: 2 },
+            ).pipe(Effect.map(([, target]) => target)),
+          );
         },
         resourceDetail: (request) =>
           runtime.runRead({
