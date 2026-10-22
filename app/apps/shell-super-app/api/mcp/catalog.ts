@@ -2,10 +2,12 @@
  * MCP catalog of the active Application Composition. Each admitted MicroVertical's deployment contract carries its
  * `publicSurface.mcp` contribution (module texts, approvals, revision read) and pins its tools as a separate artifact
  * of the same release by SHA-256. Every runtime reads only the small contribution; the Shell loads a module's tools
- * from its release when the MCP endpoint needs them, verifies the digest and keeps them per isolate by digest. The
- * Shell knows no vertical, tool or schema; a module that is not composed contributes nothing.
+ * from its approved release (service binding on Workers, URL on Node) when the MCP endpoint needs them, verifies
+ * the digest and keeps them per isolate by digest. The Shell knows no vertical, tool or schema; a module that is not
+ * composed contributes nothing.
  */
 import type { ApplicationComposition } from '@app/core-runtime';
+import { moduleReleaseFetch } from '@app/core-runtime/unit-service-fetch';
 import { OntosMcpContributionSchema, OntosMcpToolCatalogJsonSchema } from '@app/core-runtime/modules/mcp-contribution';
 import type {
   OntosMcpCommandFieldLabels,
@@ -14,8 +16,7 @@ import type {
   OntosMcpTool,
   OntosMcpToolCatalog,
 } from '@app/core-runtime/modules/mcp-contribution';
-import { Data, Duration, Effect, Option, Ref, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
+import { Data, Duration, Effect, Option, Ref, Result, Schema } from 'effect';
 
 export type JsonObject = { readonly [key: string]: Schema.Json };
 
@@ -44,8 +45,8 @@ export interface McpModule {
   readonly ownProposalEngine: boolean;
   readonly page: string | undefined;
   readonly revision: OntosMcpContribution['revision'];
-  /** Where the module's release serves its tools and the digest the contract pins. */
-  readonly toolCatalog: { readonly sha256: string; readonly toolCount: number; readonly url: string };
+  /** Where the module's release serves its tools (path on its origin) and the digest the contract pins. */
+  readonly toolCatalog: { readonly path: string; readonly sha256: string; readonly toolCount: number };
 }
 
 export interface McpCatalogModule extends McpModule {
@@ -122,10 +123,7 @@ const uniqueNames = (modules: readonly McpCatalogModule[]): McpCatalogModule[] =
   }));
 };
 
-type ComposedModule = Pick<
-  ApplicationComposition['modules'][number],
-  'contract' | 'contractDocument' | 'deployment' | 'moduleId'
->;
+type ComposedModule = ApplicationComposition['modules'][number];
 interface ComposedRevision {
   readonly modules: readonly ComposedModule[];
   readonly revision: string;
@@ -159,11 +157,7 @@ export const buildMcpModules = (composition: ComposedRevision): McpModules => {
           ownProposalEngine: contribution.ownProposalEngine === true,
           page: contribution.page,
           revision: contribution.revision,
-          toolCatalog: {
-            sha256: contribution.toolCatalog.sha256,
-            toolCount: contribution.toolCatalog.toolCount,
-            url: new URL(contribution.toolCatalog.path, module.contract.url).href,
-          },
+          toolCatalog: contribution.toolCatalog,
         },
       ];
     })
@@ -184,16 +178,25 @@ export const mcpModulesOf = (composition: ComposedRevision): McpModules => {
   return directory;
 };
 
-/** The complete catalog from the contributions and the tool catalogs loaded for them (by module id). */
+/**
+ * The complete catalog from the contributions and the tool catalogs loaded for them (by module id); `unavailable`
+ * names why a module's tools could not be loaded.
+ */
 export const buildMcpCatalog = (
   directory: McpModules,
-  toolCatalogs: ReadonlyMap<string, OntosMcpToolCatalog>,
+  loaded: {
+    readonly toolCatalogs: ReadonlyMap<string, OntosMcpToolCatalog>;
+    readonly unavailable?: ReadonlyMap<string, string>;
+  },
 ): McpCatalog => {
+  const { toolCatalogs, unavailable = new Map<string, string>() } = loaded;
   const warnings = [...directory.warnings];
   const modules = directory.modules.flatMap((module): McpCatalogModule[] => {
     const toolCatalog = toolCatalogs.get(module.moduleId);
     if (toolCatalog === undefined) {
-      warnings.push(`${module.moduleId}: MCP tools are unavailable`);
+      warnings.push(
+        `${module.moduleId}: MCP tools are unavailable (${unavailable.get(module.moduleId) ?? 'not loaded'})`,
+      );
       return [];
     }
     return [
@@ -220,14 +223,20 @@ const TOOL_CATALOG_TIMEOUT = Duration.seconds(10);
 const hex = (digest: ArrayBuffer) =>
   [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 
-/** Reads one module's tool catalog from its release and admits it only with the digest its contract pins. */
+/** Reads one module's tool catalog from its approved release and admits it only with the digest its contract pins. */
 const fetchToolCatalog = Effect.fn('Mcp.fetchToolCatalog')(
-  function* fetchToolCatalog(module: McpModule) {
-    const fetch = yield* FetchHttpClient.Fetch;
-    const response = yield* Effect.tryPromise({
-      catch: (cause) => new McpToolCatalogUnavailable({ cause, reason: 'release did not answer' }),
-      try: (signal): PromiseLike<Response> => fetch(module.toolCatalog.url, { redirect: 'error', signal }),
-    });
+  function* fetchToolCatalog(module: McpModule, release: ComposedModule) {
+    const response = yield* moduleReleaseFetch(
+      new Request(new URL(module.toolCatalog.path, 'https://module-release.invalid')),
+      release,
+    ).pipe(
+      Effect.catchTags({
+        ModuleReleaseIdentityError: (cause) =>
+          Effect.fail(new McpToolCatalogUnavailable({ cause, reason: 'release identity is invalid' })),
+        ModuleReleaseTransportError: (cause) =>
+          Effect.fail(new McpToolCatalogUnavailable({ cause, reason: cause.reason })),
+      }),
+    );
     if (!response.ok) {
       return yield* new McpToolCatalogUnavailable({ reason: `release answered ${response.status}` });
     }
@@ -267,31 +276,46 @@ export const loadMcpCatalog = Effect.fn('Mcp.loadCatalog')(function* loadMcpCata
     return cached;
   }
   const directory = mcpModulesOf(composition);
+  const releases = new Map(composition.modules.map((module) => [module.moduleId, module]));
   const known = yield* Ref.get(toolCatalogsByDigest);
   const loaded = yield* Effect.forEach(
     directory.modules,
     (module) => {
       const verified = known.get(module.toolCatalog.sha256);
-      return (verified === undefined ? fetchToolCatalog(module) : Effect.succeed(verified)).pipe(
-        Effect.map((toolCatalog) => [module, toolCatalog] as const),
+      const release = releases.get(module.moduleId);
+      let load: Effect.Effect<OntosMcpToolCatalog, McpToolCatalogUnavailable> = Effect.fail(
+        new McpToolCatalogUnavailable({ reason: 'module is not composed' }),
+      );
+      if (verified !== undefined) {
+        load = Effect.succeed(verified);
+      } else if (release !== undefined) {
+        load = fetchToolCatalog(module, release);
+      }
+      return load.pipe(
+        Effect.map((toolCatalog) => ({ module, toolCatalog })),
         Effect.tapError((error) =>
           Effect.logWarning(`MCP tools of ${module.moduleId} are unavailable: ${error.reason}`),
         ),
-        Effect.option,
+        Effect.result,
       );
     },
     { concurrency: 8 },
   );
-  const available = loaded.flatMap((entry) => (Option.isSome(entry) ? [entry.value] : []));
+  const available = loaded.flatMap((entry) => (Result.isSuccess(entry) ? [entry.success] : []));
+  const unavailable = new Map(
+    loaded.flatMap((entry, index) =>
+      Result.isFailure(entry) ? [[directory.modules[index]?.moduleId ?? '', entry.failure.reason] as const] : [],
+    ),
+  );
   // Keep only the digests of this revision, so retired releases do not accumulate in a long-lived isolate.
   yield* Ref.set(
     toolCatalogsByDigest,
-    new Map(available.map(([module, toolCatalog]) => [module.toolCatalog.sha256, toolCatalog])),
+    new Map(available.map(({ module, toolCatalog }) => [module.toolCatalog.sha256, toolCatalog])),
   );
-  const catalog = buildMcpCatalog(
-    directory,
-    new Map(available.map(([module, toolCatalog]) => [module.moduleId, toolCatalog])),
-  );
+  const catalog = buildMcpCatalog(directory, {
+    toolCatalogs: new Map(available.map(({ module, toolCatalog }) => [module.moduleId, toolCatalog])),
+    unavailable,
+  });
   if (available.length === directory.modules.length) {
     yield* Ref.set(completeCatalog, catalog);
   }

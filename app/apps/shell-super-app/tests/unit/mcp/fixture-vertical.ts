@@ -4,7 +4,9 @@
  */
 import { createHash } from 'node:crypto';
 
+import { ApplicationCompositionModuleSchema } from '@app/core-runtime';
 import type { ConnectionDescription } from '@app/shared-contracts/oauth-connections';
+import { Schema } from 'effect';
 
 import { buildMcpCatalog, buildMcpModules } from '../../../api/mcp/catalog.ts';
 
@@ -59,8 +61,7 @@ export const fixtureToolCatalog = {
 } as const;
 
 export const FIXTURE_TOOL_CATALOG_TEXT = JSON.stringify(fixtureToolCatalog);
-export const FIXTURE_RELEASE_ORIGIN = 'https://assets-fixture-notes.example';
-export const FIXTURE_TOOL_CATALOG_URL = `${FIXTURE_RELEASE_ORIGIN}/.well-known/ontos-module-mcp-tools.json`;
+export const FIXTURE_TOOL_CATALOG_PATH = '/.well-known/ontos-module-mcp-tools.json';
 
 const contribution = {
   approvals: true,
@@ -70,41 +71,51 @@ const contribution = {
   page: '/poznamky',
   revision: { field: 'revision', fieldsByCommandPrefix: [], path: '/reads/records', query: {} },
   toolCatalog: {
-    path: '/.well-known/ontos-module-mcp-tools.json',
+    path: FIXTURE_TOOL_CATALOG_PATH,
     sha256: createHash('sha256').update(FIXTURE_TOOL_CATALOG_TEXT).digest('hex'),
     toolCount: fixtureToolCatalog.tools.length,
   },
 };
 
+/** One composed module served by a Node release at `origin` (loopback in tests). */
+export const fixtureModule = (moduleId: string, appId: string, contractDocument: string, origin: string) =>
+  Schema.decodeUnknownSync(ApplicationCompositionModuleSchema)({
+    allowedContributions: [],
+    backend: { baseUrl: `${origin}/`, transport: 'node-http' },
+    contract: { sha256: '0'.repeat(64), url: `${origin}/.well-known/ontos-module-manifest.json` },
+    contractDocument,
+    dependencies: [],
+    deployment: { appId, buildMarker: '0123456789abcdef' },
+    federation: { execution: 'server' },
+    moduleId,
+    publicContract: { id: moduleId, sha256: '0'.repeat(64), version: '2' },
+    requiredCoreCapabilities: [],
+    requiredShellAbi: { id: 'ontos.shell-contributions', version: '1' },
+    sharedSingletons: [],
+  });
+
+export const FIXTURE_CONTRACT_DOCUMENT = JSON.stringify({
+  deployment: { appId: FIXTURE_APP_ID, buildMarker: 'fixture' },
+  manifest: { publicSurface: { mcp: contribution } },
+});
+
 /** The test composition: one fixture module whose deployment contract carries the contribution. */
-export const fixtureComposition = {
+export const fixtureCompositionAt = (origin: string, revision = 'f'.repeat(64)) => ({
   modules: [
-    {
-      contract: { sha256: '0'.repeat(64), url: `${FIXTURE_RELEASE_ORIGIN}/.well-known/ontos-module-manifest.json` },
-      contractDocument: JSON.stringify({
-        deployment: { appId: FIXTURE_APP_ID, buildMarker: 'fixture' },
-        manifest: { publicSurface: { mcp: contribution } },
-      }),
-      deployment: { appId: FIXTURE_APP_ID, buildMarker: 'fixture' },
-      moduleId: FIXTURE_MODULE_ID,
-    },
-    {
-      // A composed module without an MCP contribution offers nothing.
-      contract: {
-        sha256: '0'.repeat(64),
-        url: 'https://assets-fixture-silent.example/.well-known/ontos-module-manifest.json',
-      },
-      contractDocument: JSON.stringify({ manifest: { publicSurface: {} } }),
-      deployment: { appId: 'fixture-silent', buildMarker: 'fixture' },
-      moduleId: 'fixture.silent',
-    },
+    fixtureModule(FIXTURE_MODULE_ID, FIXTURE_APP_ID, FIXTURE_CONTRACT_DOCUMENT, origin),
+    // A composed module without an MCP contribution offers nothing.
+    fixtureModule('fixture.silent', 'fixture-silent', JSON.stringify({ manifest: { publicSurface: {} } }), origin),
   ],
-  revision: 'f'.repeat(64),
-};
+  revision,
+});
+
+export const fixtureComposition = fixtureCompositionAt('http://127.0.0.1:9');
 
 /** The fixture composition's catalog with its tools already loaded. */
 export const fixtureCatalog = () =>
-  buildMcpCatalog(buildMcpModules(fixtureComposition), new Map([[FIXTURE_MODULE_ID, fixtureToolCatalog]]));
+  buildMcpCatalog(buildMcpModules(fixtureComposition), {
+    toolCatalogs: new Map([[FIXTURE_MODULE_ID, fixtureToolCatalog]]),
+  });
 
 export const connectionDescription = (overrides: Partial<ConnectionDescription> = {}): ConnectionDescription => ({
   acting: { displayName: 'Jana Testerová', kind: 'human', principalId: 'principal-1' },
