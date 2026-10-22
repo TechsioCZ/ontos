@@ -384,14 +384,16 @@ const configurationSourceForScope = (
 
 export const assortmentConfigurationReadSourceForScope = configurationSourceForScope;
 
+/** Rule lineage and Rule Revisions are tenant-owned; bindings and boundaries are Legal Entity-owned. */
+const CONFIGURATION_RESOURCE_SCOPES: ReadonlyMap<string, 'legal_entity' | 'tenant'> = new Map([
+  ['commerce.assortment.stable-rule', 'tenant'],
+  ['commerce.assortment.rule-revision', 'tenant'],
+  ['commerce.assortment.applicability-binding', 'legal_entity'],
+  ['commerce.assortment.closed-assortment-boundary', 'legal_entity'],
+]);
+
 const isOwnedResource = (resource: ConfigurationResource): boolean =>
-  resource.moduleId === MODULE_ID &&
-  [
-    'commerce.assortment.stable-rule',
-    'commerce.assortment.rule-revision',
-    'commerce.assortment.applicability-binding',
-    'commerce.assortment.closed-assortment-boundary',
-  ].includes(resource.resourceType);
+  resource.moduleId === MODULE_ID && CONFIGURATION_RESOURCE_SCOPES.has(resource.resourceType);
 
 export const assortmentConfigurationReadService = (
   source: AssortmentConfigurationReadSource,
@@ -416,10 +418,12 @@ export const configurationPermissionTarget = (
   request: AssortmentConfigurationRequest,
   scope: OperationalScope,
 ): Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_configuration' }> => {
+  const resourceScope = CONFIGURATION_RESOURCE_SCOPES.get(request.resource.resourceType);
   if (
     scope.legalEntityId === undefined ||
     request.resource.tenantId !== scope.tenantId ||
-    !isOwnedResource(request.resource)
+    !isOwnedResource(request.resource) ||
+    resourceScope === undefined
   ) {
     throw unavailable();
   }
@@ -431,5 +435,6 @@ export const configurationPermissionTarget = (
       resourceId: request.resource.resourceId,
       resourceType: request.resource.resourceType,
     },
+    resourceScope,
   };
 };

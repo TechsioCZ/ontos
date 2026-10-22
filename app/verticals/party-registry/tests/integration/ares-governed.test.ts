@@ -110,8 +110,10 @@ it.live(
             updatePartyAction,
           ].map(({ descriptor }) => descriptor.actionKey),
           // The runtime's action boundary registers the staff namespace Shell-issued assertions name.
+          audience: 'party-registry',
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           compositionRevision: compositionSnapshot.composition.revision,
+          moduleKey: 'party.registry',
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         }).pipe(Effect.orDie),
         (resource) => resource.close().pipe(Effect.orDie),

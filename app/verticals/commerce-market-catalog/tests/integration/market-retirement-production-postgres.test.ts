@@ -301,8 +301,10 @@ it.live(
         const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
         const fixture = yield* makeLiveOperationFixture({
           actionKeys: [RETIRE_ACTION_KEY],
+          audience: 'party-registry',
           authenticationNamespaceId: 'market-retirement-production-postgres',
           compositionRevision: FIXTURE_COMPOSITION_REVISION,
+          moduleKey: 'party.registry',
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));

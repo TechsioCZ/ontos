@@ -392,6 +392,7 @@ const stageFixtureTenant = (tenant: string) => ({
     registrationCountry: 'CZ',
     registrationNumber: `FIXTURE-${tenant.toUpperCase()}`,
   },
+  moduleKey: 'party.registry',
   moduleStateId: `40000000-0000-4000-8000-0000000000${tenant}0`,
   slug: `tenant-${tenant}`,
   tenantId: `10000000-0000-4000-8000-0000000000${tenant}0`,

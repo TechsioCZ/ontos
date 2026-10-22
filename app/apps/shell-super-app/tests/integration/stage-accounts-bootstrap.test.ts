@@ -42,6 +42,7 @@ const oneAccountFileSource = (): string =>
           registrationCountry: 'CZ',
           registrationNumber: 'FIXTURE-A',
         },
+        moduleKey: 'party.registry',
         moduleStateId: randomUUID(),
         slug: 'tenant-a',
         tenantId: randomUUID(),

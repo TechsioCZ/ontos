@@ -25,8 +25,6 @@ import type { StageAccountsFile, StageRetiredTenant } from './stage-accounts-fil
 type Comparable = boolean | null | number | string;
 type ExactRecord = Readonly<Record<string, Comparable>>;
 
-const STAGE_MODULE_ID = 'party.registry';
-
 /** One stage account resolved from the operator accounts file, with the grants it holds as data. */
 export interface StageContext {
   readonly authBindingId: string;
@@ -54,7 +52,7 @@ export const stageContextsFromAccountsFile = (file: StageAccountsFile): readonly
       defaultLocale: tenant.defaultLocale,
       legalEntityId: tenant.legalEntity.legalEntityId,
       legalName: tenant.legalEntity.legalName,
-      moduleId: STAGE_MODULE_ID,
+      moduleId: tenant.moduleKey,
       moduleStateId: tenant.moduleStateId,
       principalDisplayName: account.displayName,
       principalId: account.principalId,
@@ -405,7 +403,7 @@ export const buildRetiredStageContextRelationships = Effect.fn('StageContextBoot
     context: StageRetiredTenant,
   ): Effect.fn.Return<readonly StageContextBootstrapRelationship[], StageContextBootstrapError> {
     const legalEntityObjectId = toLegalEntityAccessObjectId(context.tenantId, context.legalEntityId);
-    const moduleObjectId = toModuleAccessObjectId(context.tenantId, context.legalEntityId, STAGE_MODULE_ID);
+    const moduleObjectId = toModuleAccessObjectId(context.tenantId, context.legalEntityId, context.moduleKey);
     if (legalEntityObjectId === undefined || moduleObjectId === undefined) {
       return yield* failure('The retired stage authorization object IDs are invalid');
     }

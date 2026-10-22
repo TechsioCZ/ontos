@@ -7,6 +7,7 @@ import {
 } from '@app/core-runtime';
 import type {
   CoreSearchIngestion,
+  CoreSearchIngestionRegistry,
   CoreSearchProjectionStore,
   CoreSearchWorkerSnapshot,
   OutboxRuntime,
@@ -14,6 +15,7 @@ import type {
 import { OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
 import { Layer } from 'effect';
 
+import { PartySearchIngestionRegistryLive } from '../search/ingestion-registrations.ts';
 import { PartySearchProjectionSourceLive } from '../services/party-search-projection-source.service.ts';
 import type { PartySearchProjectionSource } from '../services/party-search-projection-source.service.ts';
 import { PartySearchProjectorLive } from '../services/party-search-projection.service.ts';
@@ -40,7 +42,8 @@ type OutboxWorkerHandlerLayers = Readonly<{
     CoreSearchIngestion | CoreSearchProjectionStore | PartySearchProjectionSource
   >;
   projectionSource: Layer.Layer<PartySearchProjectionSource, never, CoreSearchWorkerSnapshot>;
-  searchIngestion: Layer.Layer<CoreSearchIngestion, never, CoreSearchProjectionStore>;
+  searchIngestion: Layer.Layer<CoreSearchIngestion, never, CoreSearchIngestionRegistry | CoreSearchProjectionStore>;
+  searchIngestionRegistry: Layer.Layer<CoreSearchIngestionRegistry>;
   searchProjectionStore: Layer.Layer<
     CoreSearchProjectionStore,
     never,
@@ -58,6 +61,7 @@ export const outboxWorkerHandlerLayers: OutboxWorkerHandlerLayers = Object.freez
   projector: PartySearchProjectorLive,
   projectionSource: PartySearchProjectionSourceLive,
   searchIngestion: CoreSearchIngestionLive,
+  searchIngestionRegistry: PartySearchIngestionRegistryLive,
   searchProjectionStore: CoreSearchProjectionStoreLive,
   searchWorkerSnapshot: CoreSearchWorkerSnapshotLive,
 });

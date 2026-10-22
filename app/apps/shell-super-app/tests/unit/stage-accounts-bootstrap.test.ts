@@ -42,6 +42,7 @@ const validAccountsFile = {
         registrationCountry: 'CZ',
         registrationNumber: 'FIXTURE-A',
       },
+      moduleKey: 'party.registry',
       moduleStateId: '40000000-0000-4000-8000-0000000000a0',
       slug: 'tenant-a',
       tenantId: '10000000-0000-4000-8000-0000000000a0',

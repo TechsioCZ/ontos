@@ -533,21 +533,18 @@ export {
   makePostgresCoreSearchProjectionStore,
 } from './search/persistence.ts';
 export {
-  CORE_SEARCH_INGESTION_REGISTRATIONS,
-  CORE_SEARCH_PARTY_LIFECYCLE_TOPICS,
-  CORE_SEARCH_PARTY_PROJECTOR_WORKER_KEYS,
   CoreSearchIngestion,
   CoreSearchIngestionLive,
   CoreSearchIngestionObservationSchema,
   makeCoreSearchIngestion,
 } from './search/ingestion.ts';
-export type {
-  CoreSearchIngestionObservation,
-  CoreSearchIngestionRegistration,
-  CoreSearchIngestionService,
-  CoreSearchPartyLifecycleTopic,
-  CoreSearchPartyProjectorWorkerKey,
-} from './search/ingestion.ts';
+export type { CoreSearchIngestionObservation, CoreSearchIngestionService } from './search/ingestion.ts';
+export {
+  CoreSearchIngestionRegistry,
+  coreSearchIngestionRegistryLayer,
+  defineCoreSearchIngestionRegistrations,
+} from './search/ingestion-registry.ts';
+export type { CoreSearchIngestionRegistration } from './search/ingestion-registry.ts';
 export { CoreSearchWorkerSnapshot, CoreSearchWorkerSnapshotLive } from './search/worker-snapshot.ts';
 export type {
   CoreSearchSnapshotReadExecutor,

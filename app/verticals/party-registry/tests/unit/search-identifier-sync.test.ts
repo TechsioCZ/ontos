@@ -26,6 +26,7 @@ import {
   handleProjectOfficialIdentifierUpdatedToSearch,
   projectOfficialIdentifierUpdatedToSearchWorker,
 } from '../../src/workers/project-official-identifier-updated-to-search.worker.ts';
+import { partySearchIngestionRegistrations } from '../../src/search/ingestion-registrations.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const partyRef = {
@@ -107,7 +108,7 @@ const makeSearchFixture = (identifiers: readonly PartySearchSourceValue[]) => {
           return canonical;
         }),
     },
-    makeCoreSearchIngestion(store),
+    makeCoreSearchIngestion(store, partySearchIngestionRegistrations),
     store,
   );
   const replaceIdentifiers = (values: readonly PartySearchSourceValue[]) =>

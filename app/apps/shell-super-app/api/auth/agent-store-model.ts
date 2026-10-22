@@ -1,9 +1,12 @@
 // Agent profiles, pure part (lane agent-entities). No database imports; the DB side lives in agent-store.ts.
-// Seeded AI principals match scripts/demo/ai-profiles.mts; administrator edits are audit evidence.
+// Seeded AI principals and their profiles are demo seed data (demo-seed/agent-profiles.ts, matching
+// scripts/demo/ai-profiles.mts); administrator edits are audit evidence.
 // Profiles also carry the administrator's description and the responsible person (owner).
 import { AgentModuleGrantSchema, AgentWritePolicySchema } from '@app/shared-contracts/agent-access';
 import type { AgentModuleGrant, AgentWritePolicy } from '@app/shared-contracts/agent-access';
 import { Option, Schema } from 'effect';
+
+import { seededAgentProfiles } from './demo-seed/agent-profiles.ts';
 
 export interface AgentProfile {
   readonly description: string | null;
@@ -21,77 +24,12 @@ export const DEFAULT_AGENT_PROFILE: AgentProfile = {
   writePolicy: 'read_only',
 };
 
-const OBCHOD = '71000000-0000-4000-8000-000000000020';
-const HANAK = '71000000-0000-4000-8000-000000000022';
-
-const obchodReads = [
-  'commerce.customer-context',
-  'demo.merchandise',
-  'demo.sales-insights',
-  'demo.sales-pipeline',
-  'demo.tagging',
-  'demo.workforce',
-  'party.registry',
-  'finance.billing',
-  'work.tasks',
-];
-const hanakReads = ['demo.crm', 'demo.tagging', 'demo.workforce', 'party.registry', 'work.tasks'];
-
-const withWrites = (reads: readonly string[], writes: readonly string[]): readonly AgentModuleGrant[] =>
-  reads.map((moduleId) => ({ access: writes.includes(moduleId) ? 'write' : 'read', moduleId }));
-
-export const seededAgentProfiles: Readonly<
-  Record<
-    string,
-    {
-      readonly legalEntityId: string;
-      readonly modules: readonly AgentModuleGrant[];
-      readonly writePolicy: AgentWritePolicy;
-    }
-  >
-> = {
-  // ai-agent-a-obchod
-  '35b748a0-d93a-520e-bd52-91433c8d15b8': {
-    legalEntityId: OBCHOD,
-    modules: withWrites(obchodReads, []),
-    writePolicy: 'read_only',
-  },
-  // ai-agent-b-obchod
-  'e931e0fd-adba-56fd-9e17-e5f3adb3efa0': {
-    legalEntityId: OBCHOD,
-    modules: withWrites(obchodReads, ['work.tasks']),
-    writePolicy: 'direct',
-  },
-  // ai-agent-c-obchod
-  '3619acbd-a1bf-50f9-a8d5-d56df7096e0f': {
-    legalEntityId: OBCHOD,
-    modules: withWrites(obchodReads, ['demo.merchandise', 'demo.sales-pipeline']),
-    writePolicy: 'approval',
-  },
-  // ai-agent-a-hanak
-  '40052c4b-ea18-5c8c-ae8d-5d80548cec33': {
-    legalEntityId: HANAK,
-    modules: withWrites(hanakReads, []),
-    writePolicy: 'read_only',
-  },
-  // ai-agent-b-hanak
-  'c771c6f7-8d32-5ba7-af67-de4bd05eabc7': {
-    legalEntityId: HANAK,
-    modules: withWrites(hanakReads, ['work.tasks']),
-    writePolicy: 'direct',
-  },
-  // ai-agent-c-hanak
-  '6300a06d-e532-5f52-8f66-5f1d4752a75e': {
-    legalEntityId: HANAK,
-    modules: withWrites(hanakReads, ['demo.crm']),
-    writePolicy: 'approval',
-  },
-};
-
 const ModulesJson = Schema.fromJsonString(Schema.Array(AgentModuleGrantSchema));
 
+const seeds = new Map(Object.entries(seededAgentProfiles));
+
 const seedOf = (principalId: string): AgentProfile | undefined => {
-  const seed = Object.hasOwn(seededAgentProfiles, principalId) ? seededAgentProfiles[principalId] : undefined;
+  const seed = seeds.get(principalId);
   return seed === undefined
     ? undefined
     : { description: null, modules: seed.modules, ownerPrincipalId: null, seeded: true, writePolicy: seed.writePolicy };

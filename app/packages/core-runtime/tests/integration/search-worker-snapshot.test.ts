@@ -18,6 +18,16 @@ import {
 } from '../../src/search/worker-snapshot.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient, makeTestPgSession } from '../support/database.ts';
 import { installSearchTestAuthority } from '../support/search-authority.ts';
+import { defineCoreSearchIngestionRegistrations } from '../../src/search/ingestion-registry.ts';
+
+const registrations = defineCoreSearchIngestionRegistrations(
+  ['party-updated', 'official-identifier-updated'].map((event) => ({
+    consumerModuleKey: 'party.registry',
+    producerModuleKey: 'party.registry',
+    topic: `party.registry.${event}.v1`,
+    workerKey: `party.registry.project-${event}-to-search`,
+  })),
+);
 
 const readLegalEntitySettings = (executor: CoreSearchSnapshotReadExecutor, eventId: string) =>
   executor
@@ -72,6 +82,7 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
     makePostgresCoreSearchSnapshotBackend({
       executor: yield* makeTestDatabaseFromClient(runtime, coreRelations),
     }),
+    registrations,
   );
   const insertEvent = (id: string) =>
     Effect.gen(function* insertDomainEvent() {

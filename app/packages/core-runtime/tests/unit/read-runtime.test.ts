@@ -504,7 +504,7 @@ it.effect(
     }),
 );
 
-it.effect('derives configuration read scope from the exact resource type', () =>
+it.effect('derives configuration read scope from the scope the owning module declares', () =>
   Effect.gen(function* derivesConfigurationReadScope() {
     let handlerCalls = 0;
     const stableRuleTarget: AssortmentPermissionAccessTarget = {
@@ -515,6 +515,7 @@ it.effect('derives configuration read scope from the exact resource type', () =>
         resourceId: 'stable-rule-1',
         resourceType: 'commerce.assortment.stable-rule',
       },
+      resourceScope: 'tenant',
     };
     const bindingTarget: AssortmentPermissionAccessTarget = {
       kind: 'assortment_configuration',
@@ -524,10 +525,11 @@ it.effect('derives configuration read scope from the exact resource type', () =>
         resourceId: 'binding-1',
         resourceType: 'commerce.assortment.applicability-binding',
       },
+      resourceScope: 'legal_entity',
     };
     const unknownTarget: AssortmentPermissionAccessTarget = {
       ...bindingTarget,
-      resource: { ...bindingTarget.resource, resourceType: 'commerce.assortment.configuration' },
+      resource: { ...bindingTarget.resource, resourceType: 'foreign.module.configuration' },
     };
     const configurationRegistration = (target: AssortmentPermissionAccessTarget) =>
       defineRead(

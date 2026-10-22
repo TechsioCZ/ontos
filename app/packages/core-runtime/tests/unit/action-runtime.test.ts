@@ -2725,7 +2725,7 @@ it.effect('checks every plural Assortment target conjunctively before the handle
   }),
 );
 
-it.effect('fails closed for an unknown Assortment configuration resource type', () =>
+it.effect('fails closed for a configuration resource type outside its module namespace', () =>
   Effect.gen(function* rejectsUnknownConfigurationType() {
     let handlerCalls = 0;
     let serviceFactoryCalls = 0;
@@ -2740,8 +2740,9 @@ it.effect('fails closed for an unknown Assortment configuration resource type', 
             resource: {
               moduleId: 'commerce.assortment',
               resourceId: 'configuration-1',
-              resourceType: 'commerce.assortment.configuration',
+              resourceType: 'foreign.module.configuration',
             },
+            resourceScope: 'tenant',
           },
         ]),
         auditProfile: 'standard',

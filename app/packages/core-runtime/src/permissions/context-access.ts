@@ -1,6 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
 import { createHash } from 'node:crypto';
-import { Context, Effect, Layer, Match, Result, Schema } from 'effect';
+import { Context, Effect, Layer, Result, Schema } from 'effect';
 import type { Scope } from 'effect';
 
 import {
@@ -97,6 +97,8 @@ export type AssortmentPermissionAccessTarget =
       readonly kind: 'assortment_configuration';
       readonly permission: 'assortment.configuration.read';
       readonly resource: ResourceAccessTarget;
+      /** Declared by the owning module for this resource type, never taken from client input. */
+      readonly resourceScope: AssortmentConfigurationResourceScope;
     }>
   | Readonly<{
       readonly catalogSelection: ResourceAccessTarget;
@@ -171,29 +173,17 @@ export type AssortmentPermissionAccessTarget =
 export const AssortmentConfigurationResourceScopeSchema = Schema.Literals(['legal_entity', 'tenant']);
 export type AssortmentConfigurationResourceScope = typeof AssortmentConfigurationResourceScopeSchema.Type;
 
-const AssortmentConfigurationResourceTypeSchema = Schema.Literals([
-  'commerce.assortment.applicability-binding',
-  'commerce.assortment.closed-assortment-boundary',
-  'commerce.assortment.rule-revision',
-  'commerce.assortment.stable-rule',
-]);
-
 const assortmentConfigurationResourceScope = (
-  resource: ResourceAccessTarget,
+  target: Extract<AssortmentPermissionAccessTarget, { readonly kind: 'assortment_configuration' }>,
 ): AssortmentConfigurationResourceScope | undefined => {
-  if (resource.moduleId !== 'commerce.assortment' || resource.resourceId.length === 0) {
-    return undefined;
-  }
-  if (!Schema.is(AssortmentConfigurationResourceTypeSchema)(resource.resourceType)) {
-    return undefined;
-  }
-  return Match.value(resource.resourceType).pipe(
-    Match.when('commerce.assortment.stable-rule', () => 'tenant' as const),
-    Match.when('commerce.assortment.rule-revision', () => 'tenant' as const),
-    Match.when('commerce.assortment.applicability-binding', () => 'legal_entity' as const),
-    Match.when('commerce.assortment.closed-assortment-boundary', () => 'legal_entity' as const),
-    Match.exhaustive,
-  );
+  const { resource } = target;
+  return resource.moduleId.length > 0 &&
+    resource.resourceId.length > 0 &&
+    resource.resourceType.length > resource.moduleId.length + 1 &&
+    resource.resourceType.startsWith(`${resource.moduleId}.`) &&
+    Schema.is(AssortmentConfigurationResourceScopeSchema)(target.resourceScope)
+    ? target.resourceScope
+    : undefined;
 };
 
 const assortmentRefParts = (ref: ResourceAccessTarget): readonly string[] => [
@@ -203,13 +193,12 @@ const assortmentRefParts = (ref: ResourceAccessTarget): readonly string[] => [
 ];
 
 /**
- * Configuration targets are restricted to the four canonical Assortment
- * resources. Scope is derived from that trusted resource type, never from a
- * caller-supplied discriminator.
+ * Configuration targets name a resource type namespaced under its module. The
+ * owning module declares that resource type's scope when it builds the target.
  */
 export const isAssortmentPermissionTargetValid = (target: AssortmentPermissionAccessTarget): boolean =>
   target.kind === 'assortment_configuration'
-    ? assortmentConfigurationResourceScope(target.resource) !== undefined
+    ? assortmentConfigurationResourceScope(target) !== undefined
     : target.kind !== 'assortment_boundary' ||
       target.mode !== 'create' ||
       (Array.isArray(target.admissionSet.entries) &&
@@ -227,10 +216,10 @@ export const isAssortmentPermissionTargetValid = (target: AssortmentPermissionAc
             : entry.target !== undefined && assortmentRefParts(entry.target).every((part) => part.length > 0),
         ));
 
-/** Rule lineage and Rule Revisions are tenant-owned; other config is Legal Entity-owned. */
+/** Configuration declared tenant-scoped needs no Legal Entity; every other target does, except rules. */
 export const assortmentPermissionTargetRequiresLegalEntity = (target: AssortmentPermissionAccessTarget): boolean => {
   if (target.kind === 'assortment_configuration') {
-    return assortmentConfigurationResourceScope(target.resource) !== 'tenant';
+    return assortmentConfigurationResourceScope(target) !== 'tenant';
   }
   return target.kind !== 'assortment_rule';
 };
@@ -273,7 +262,7 @@ export type BusinessAccessTarget =
   | Readonly<{
       kind: 'inventory_resource';
       resource: Readonly<{
-        moduleId: 'commerce.inventory';
+        moduleId: string;
         resourceId: string;
         resourceType: string;
       }>;
@@ -295,7 +284,7 @@ export const PricingAuthorizationResourceIdSchema = canonicalPricingAuthorizatio
 
 const canonicalInventoryAuthorizationResourceId = Schema.String.check(Schema.isUUID());
 const canonicalInventoryAuthorizationResourceType = Schema.String.check(
-  Schema.isPattern(/^commerce\.inventory\.[a-z][a-z0-9-]*$/u),
+  Schema.isPattern(/^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/u),
 );
 
 /** Durable Inventory resource identity. Location/item tuples and display keys are never valid targets. */
@@ -320,9 +309,11 @@ export const hasCanonicalPricingAuthorizationTargetIds = (target: BusinessAccess
     : Schema.is(PricingAuthorizationResourceIdSchema)(target.pricingCatalogId) &&
       (target.kind !== 'price_group' || Schema.is(PricingAuthorizationResourceIdSchema)(target.priceGroupId));
 
+/** An inventory resource type is namespaced under the module that owns it. */
 export const hasCanonicalInventoryAuthorizationTarget = (target: BusinessAccessTarget): boolean =>
   target.kind !== 'inventory_resource' ||
-  (target.resource.moduleId === 'commerce.inventory' &&
+  (target.resource.moduleId.length > 0 &&
+    target.resource.resourceType.startsWith(`${target.resource.moduleId}.`) &&
     Schema.is(InventoryAuthorizationResourceIdSchema)(target.resource.resourceId) &&
     Schema.is(InventoryAuthorizationResourceTypeSchema)(target.resource.resourceType));
 

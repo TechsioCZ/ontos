@@ -451,7 +451,9 @@ it.live(
         );
         const fixture = yield* makeLiveOperationFixture({
           actionKeys: [ACTION_KEY],
+          audience: 'party-registry',
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          moduleKey: 'party.registry',
           compositionRevision: snapshot.composition.revision,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
@@ -633,7 +635,9 @@ it.live(
         );
         const fixture = yield* makeLiveOperationFixture({
           actionKeys: [ACTION_KEY],
+          audience: 'party-registry',
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          moduleKey: 'party.registry',
           compositionRevision: snapshot.composition.revision,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
@@ -783,7 +787,9 @@ it.live(
         );
         const fixture = yield* makeLiveOperationFixture({
           actionKeys: [ACTION_KEY],
+          audience: 'party-registry',
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          moduleKey: 'party.registry',
           compositionRevision: snapshot.composition.revision,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });

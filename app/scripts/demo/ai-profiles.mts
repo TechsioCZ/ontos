@@ -11,7 +11,7 @@
  *
  * The principals are agent entities (Core kind `agent`) shown in /cs/sprava/lide › Agentní entity. Write policies:
  * A = Jen čtení (read only), B = Zápis přímo (úkoly, direct), C = Zápis jen přes schválení člověkem (approval).
- * Their profiles are seeded in apps/shell-super-app/api/auth/agent-store-model.ts until an administrator edits them.
+ * Their profiles are seeded in apps/shell-super-app/api/auth/demo-seed/agent-profiles.ts until an administrator edits them.
  *
  * Level A: read-only. Module access + `read_all` context permissions; NO Action executor grant at all, so every
  *          apply-command (tasks, opportunities, tags, orders, …) is denied by Core with 403 and a denied audit.

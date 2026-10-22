@@ -80,6 +80,7 @@ it('retains an exact Assortment permission resolver as an immutable read declara
           resourceId: 'configuration-1',
           resourceType: 'commerce.assortment.configuration',
         },
+        resourceScope: 'tenant' as const,
       },
       kind: 'assortment_permission' as const,
     }),

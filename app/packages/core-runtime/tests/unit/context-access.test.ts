@@ -199,6 +199,7 @@ it.effect('derives configuration scope from the exact canonical resource type an
         resourceId: 'stable-rule-1',
         resourceType: 'commerce.assortment.stable-rule',
       },
+      resourceScope: 'tenant' as const,
     };
     const ruleRevisionTarget = {
       ...stableRuleTarget,
@@ -215,6 +216,7 @@ it.effect('derives configuration scope from the exact canonical resource type an
         resourceId: 'binding-1',
         resourceType: 'commerce.assortment.applicability-binding',
       },
+      resourceScope: 'legal_entity' as const,
     };
     const boundaryTarget = {
       ...stableRuleTarget,
@@ -223,10 +225,12 @@ it.effect('derives configuration scope from the exact canonical resource type an
         resourceId: 'boundary-1',
         resourceType: 'commerce.assortment.closed-assortment-boundary',
       },
+      resourceScope: 'legal_entity' as const,
     };
+    // A resource type outside its module's namespace is never a valid configuration target.
     const unknownTarget = {
-      ...stableRuleTarget,
-      resource: { ...stableRuleTarget.resource, resourceType: 'commerce.assortment.configuration' },
+      ...bindingTarget,
+      resource: { ...bindingTarget.resource, resourceType: 'foreign.module.configuration' },
     };
 
     expect(toAssortmentPermissionAccessKey(tenantId, undefined, stableRuleTarget)).toBeDefined();

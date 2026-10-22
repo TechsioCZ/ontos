@@ -30,6 +30,7 @@ import { OperationalScopeResolver } from '../operations/context.ts';
 import {
   ContextAccess,
   InventoryAuthorizationResourceIdSchema,
+  AssortmentConfigurationResourceScopeSchema,
   InventoryAuthorizationResourceTypeSchema,
   PricingAuthorizationResourceIdSchema,
   isBusinessPermissionTargetCompatible,
@@ -509,7 +510,9 @@ const BusinessAccessTargetSchema = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal('inventory_resource'),
     resource: Schema.Struct({
-      moduleId: Schema.Literal('commerce.inventory'),
+      moduleId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(
+        Schema.brand('InventoryModuleId'),
+      ),
       resourceId: InventoryAuthorizationResourceIdSchema,
       resourceType: InventoryAuthorizationResourceTypeSchema,
     }),
@@ -675,6 +678,7 @@ const AssortmentPermissionTargetSchema = Schema.Union([
     kind: Schema.Literal('assortment_configuration'),
     permission: Schema.Literal('assortment.configuration.read'),
     resource: AssortmentResourceTargetSchema,
+    resourceScope: AssortmentConfigurationResourceScopeSchema,
   }),
   Schema.Struct({
     catalogSelection: AssortmentResourceTargetSchema,
@@ -1761,7 +1765,9 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       });
       // MCP OAuth connections: the grant's write scope is a policy every Action must pass (ONTOS-MCP-AUTH-DESIGN.md §4.3).
       const connectionPolicies: readonly ActionPolicy<typeof payload, Owner>[] =
-        principal.authMethod === 'oauth_connection' ? [connectionScopePolicy as ActionPolicy<typeof payload, Owner>] : [];
+        principal.authMethod === 'oauth_connection'
+          ? [connectionScopePolicy as ActionPolicy<typeof payload, Owner>]
+          : [];
       const allowedPolicies = yield* Effect.forEach(
         [...connectionPolicies, ...input.registration.descriptor.policies],
         evaluateActionPolicy,

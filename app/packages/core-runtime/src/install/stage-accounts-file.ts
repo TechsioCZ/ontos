@@ -12,6 +12,9 @@ const LegalEntityIdSchema = uuid.pipe(Schema.brand('LegalEntityId'));
 const ModuleStateIdSchema = uuid.pipe(Schema.brand('ModuleStateId'));
 const PrincipalIdSchema = uuid.pipe(Schema.brand('PrincipalId'));
 const AuthBindingIdSchema = uuid.pipe(Schema.brand('AuthBindingId'));
+const ModuleKeySchema = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/u)).pipe(
+  Schema.brand('ModuleKey'),
+);
 const SlugSchema = Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u));
 const ActionKeySchema = Schema.String.check(Schema.isPattern(/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/u)).pipe(
   Schema.brand('ActionKey'),
@@ -51,6 +54,8 @@ const StageTenantSchema = Schema.Struct({
     registrationCountry: Schema.String.check(Schema.isPattern(/^[A-Z]{2}$/u)),
     registrationNumber: TrimmedNonEmptyString,
   }),
+  /** The module the stage Tenant activates for its accounts; operator data, never fixed in code. */
+  moduleKey: ModuleKeySchema,
   moduleStateId: ModuleStateIdSchema,
   slug: SlugSchema,
   tenantId: TenantIdSchema,
@@ -59,6 +64,7 @@ const StageTenantSchema = Schema.Struct({
 /** A former stage Tenant whose bootstrap relationships are deleted and whose Core rows are archived. */
 const StageRetiredTenantSchema = Schema.Struct({
   legalEntityId: LegalEntityIdSchema,
+  moduleKey: ModuleKeySchema,
   principalIds: Schema.Array(PrincipalIdSchema),
   tenantId: TenantIdSchema,
 });

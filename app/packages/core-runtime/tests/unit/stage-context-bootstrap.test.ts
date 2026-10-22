@@ -15,6 +15,7 @@ const accountsFileSource = JSON.stringify({
   retiredTenants: [
     {
       legalEntityId: '11000000-0000-4000-8000-0000000000b0',
+      moduleKey: 'party.registry',
       principalIds: ['20000000-0000-4000-8000-0000000000b1'],
       tenantId: '10000000-0000-4000-8000-0000000000b0',
     },
@@ -48,6 +49,7 @@ const accountsFileSource = JSON.stringify({
         registrationCountry: 'CZ',
         registrationNumber: 'FIXTURE-A',
       },
+      moduleKey: 'party.registry',
       moduleStateId: '40000000-0000-4000-8000-0000000000a0',
       slug: 'tenant-a',
       tenantId: '10000000-0000-4000-8000-0000000000a0',

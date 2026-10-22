@@ -14,6 +14,7 @@ import {
   demoCompanyTenantId,
   rentalDemoCompany,
 } from './demo-company-profiles.ts';
+import { demoCompanyActiveModuleKeys } from './demo-seed/demo-company-modules.ts';
 
 const rentalRegistrationNumber = 'DEMO-SIAMPARK-RENTAL';
 const commercialRegistrationNumber = 'DEMO-SIAMPARK';
@@ -143,7 +144,7 @@ const persistenceFromTransaction = (
     })
     .pipe(Effect.mapError(persistenceFailure), Effect.asVoid),
   ensureModules: Effect.forEach(
-    ['property.portfolio', 'property.leasing', 'legal.agreements'],
+    demoCompanyActiveModuleKeys,
     (moduleKey, index) =>
       transaction
         .insert(tenantModuleStates)

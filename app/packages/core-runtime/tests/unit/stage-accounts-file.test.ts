@@ -22,6 +22,7 @@ const tenant = (suffix: string) => ({
     registrationCountry: 'CZ',
     registrationNumber: `FIXTURE-${suffix.toUpperCase()}`,
   },
+  moduleKey: 'party.registry',
   moduleStateId: `40000000-0000-4000-8000-0000000000${suffix}0`,
   slug: `tenant-${suffix}`,
   tenantId: `10000000-0000-4000-8000-0000000000${suffix}0`,
@@ -32,6 +33,7 @@ const validFile = {
   retiredTenants: [
     {
       legalEntityId: '11000000-0000-4000-8000-0000000000c0',
+      moduleKey: 'party.registry',
       principalIds: ['20000000-0000-4000-8000-0000000000c1'],
       tenantId: '10000000-0000-4000-8000-0000000000c0',
     },
@@ -134,7 +136,12 @@ it.effect('rejects duplicate identities, unknown relations, and overlapping reti
       yield* rejectionReason({
         ...validFile,
         retiredTenants: [
-          { legalEntityId: first?.legalEntity.legalEntityId, principalIds: [], tenantId: first?.tenantId },
+          {
+            legalEntityId: first?.legalEntity.legalEntityId,
+            moduleKey: first?.moduleKey,
+            principalIds: [],
+            tenantId: first?.tenantId,
+          },
         ],
       }),
     ).toMatch(/Retired/u);

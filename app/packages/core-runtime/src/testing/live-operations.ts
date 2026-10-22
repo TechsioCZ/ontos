@@ -60,8 +60,14 @@ const relationship = (
 const ActionKeySchema = Schema.String.pipe(Schema.brand('ActionKey'));
 const LiveOperationFixtureConfigurationSchema = Schema.Struct({
   actionKeys: Schema.optional(Schema.Array(ActionKeySchema)),
+  /** Deployment app id whose gateway assertions the fixture namespace accepts. */
+  audience: Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9-]*$/u)),
   authenticationNamespaceId: AuthenticationNamespaceIdSchema,
   compositionRevision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
+  /** The module under test: the fixture activates it and grants its module access. */
+  moduleKey: Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9-]*(?:\.[a-z][a-z0-9-]*)+$/u)).pipe(
+    Schema.brand('ModuleKey'),
+  ),
   runtimeConnectionString: Schema.Redacted(Schema.String),
 });
 
@@ -197,6 +203,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
     readonly legalEntityId: string;
     readonly legalEntityOnly: FixtureActor;
     readonly manager: FixtureActor;
+    readonly moduleKey: string;
     readonly spice: FixtureSpiceClient;
     readonly tenantId: string;
   }) {
@@ -224,7 +231,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
     yield* input.executor
       .insert(tenantModuleStates)
       .values({
-        moduleKey: 'party.registry',
+        moduleKey: input.moduleKey,
         state: 'active',
         tenantId: input.tenantId,
       })
@@ -238,7 +245,7 @@ const setupLiveOperationFixture = Effect.fn('LiveOperations.setupLiveOperationFi
       .values(fixtureAuthBindingValues(input.actors, input.tenantId, input.authenticationNamespaceId))
       .pipe(Effect.mapError((cause) => fixtureFailure('Unable to bind the live fixture principals', cause)));
     const entityObject = toLegalEntityAccessObjectId(input.tenantId, input.legalEntityId);
-    const moduleObject = toModuleAccessObjectId(input.tenantId, input.legalEntityId, 'party.registry');
+    const moduleObject = toModuleAccessObjectId(input.tenantId, input.legalEntityId, input.moduleKey);
     if (entityObject === undefined || moduleObject === undefined) {
       return yield* fixtureFailure('Invalid fixture authorization scope');
     }
@@ -409,6 +416,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
       legalEntityId,
       legalEntityOnly,
       manager,
+      moduleKey: configuration.moduleKey,
       spice,
       tenantId,
     }).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? closeResources : Effect.void)));
@@ -424,7 +432,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
     const readDatabase = { executor } satisfies (typeof CoreDatabase)['Service'];
     const authenticationNamespaceRegistry = makeAuthenticationNamespaceRegistry([
       {
-        allowedAudiences: ['party-registry'],
+        allowedAudiences: [configuration.audience],
         authenticationNamespaceId: configuration.authenticationNamespaceId,
         provider: 'live-fixture',
         requiresOperationAdmission: false,

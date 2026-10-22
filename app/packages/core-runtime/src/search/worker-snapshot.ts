@@ -11,7 +11,8 @@ import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
 import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
 import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
 import { isVerifiedOutboxWorkerHandlerContext } from '../outbox/definition.ts';
-import { CORE_SEARCH_INGESTION_REGISTRATIONS } from './ingestion.ts';
+import { CoreSearchIngestionRegistry, isCoreSearchIngestionRegistered } from './ingestion-registry.ts';
+import type { CoreSearchIngestionRegistration } from './ingestion-registry.ts';
 import type { CoreSearchProjectionUnavailableError } from './projection.ts';
 import { CoreSearchProjectionInvalid, CoreSearchProjectionUnavailable } from './projection.ts';
 
@@ -133,7 +134,10 @@ const viewForSnapshot = (
   };
 };
 
-export const makeCoreSearchWorkerSnapshot = (backend: CoreSearchSnapshotBackend): CoreSearchWorkerSnapshotService => ({
+export const makeCoreSearchWorkerSnapshot = (
+  backend: CoreSearchSnapshotBackend,
+  registrations: readonly CoreSearchIngestionRegistration[],
+): CoreSearchWorkerSnapshotService => ({
   read: <Value, Error>(
     context: OutboxWorkerHandlerContext,
     read: (snapshot: CoreSearchWorkerSnapshotView) => Effect.Effect<Value, Error>,
@@ -141,12 +145,11 @@ export const makeCoreSearchWorkerSnapshot = (backend: CoreSearchSnapshotBackend)
     if (
       !isVerifiedOutboxWorkerHandlerContext(context) ||
       !/^[a-f0-9]{64}$/u.test(context.compositionRevision) ||
-      !CORE_SEARCH_INGESTION_REGISTRATIONS.some(
-        (registration) =>
-          registration.producerModuleKey === context.producerModuleKey &&
-          registration.topic === context.topic &&
-          registration.workerKey === context.workerKey,
-      )
+      !isCoreSearchIngestionRegistered(registrations, {
+        producerModuleKey: context.producerModuleKey,
+        topic: context.topic,
+        workerKey: context.workerKey,
+      })
     ) {
       return Effect.fail(invalid());
     }
@@ -355,6 +358,7 @@ export const CoreSearchWorkerSnapshotLive = Layer.effect(
   CoreSearchWorkerSnapshot,
   Effect.gen(function* makeCoreSearchWorkerSnapshotLive() {
     const database = yield* CoreDatabase;
-    return makeCoreSearchWorkerSnapshot(makePostgresCoreSearchSnapshotBackend(database));
+    const registrations = yield* CoreSearchIngestionRegistry;
+    return makeCoreSearchWorkerSnapshot(makePostgresCoreSearchSnapshotBackend(database), registrations);
   }),
 );

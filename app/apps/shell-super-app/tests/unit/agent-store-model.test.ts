@@ -1,10 +1,7 @@
 import { expect, test } from 'effect-rstest';
 
-import {
-  DEFAULT_AGENT_PROFILE,
-  foldAgentProfiles,
-  seededAgentProfiles,
-} from '../../api/auth/agent-store-model.ts';
+import { DEFAULT_AGENT_PROFILE, foldAgentProfiles } from '../../api/auth/agent-store-model.ts';
+import { seededAgentProfiles } from '../../api/auth/demo-seed/agent-profiles.ts';
 
 const OBCHOD_B = 'e931e0fd-adba-56fd-9e17-e5f3adb3efa0';
 const HANAK_C = '6300a06d-e532-5f52-8f66-5f1d4752a75e';
@@ -111,4 +108,3 @@ test('a later configure-agent without description clears it', () => {
   };
   expect(foldAgentProfiles([agent], [created, configured]).get(agent)?.description).toBeNull();
 });
-

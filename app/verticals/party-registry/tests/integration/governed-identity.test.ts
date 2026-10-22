@@ -114,7 +114,9 @@ it.live(
         const fixture = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
             actionKeys,
+            audience: 'party-registry',
             authenticationNamespaceId: testAuthenticationNamespaceId,
+            moduleKey: 'party.registry',
             compositionRevision: compositionSnapshot.composition.revision,
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
           }).pipe(Effect.orDie),
@@ -123,7 +125,9 @@ it.live(
         const other = yield* Effect.acquireRelease(
           makeLiveOperationFixture({
             actionKeys,
+            audience: 'party-registry',
             authenticationNamespaceId: testAuthenticationNamespaceId,
+            moduleKey: 'party.registry',
             compositionRevision: compositionSnapshot.composition.revision,
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
           }).pipe(Effect.orDie),

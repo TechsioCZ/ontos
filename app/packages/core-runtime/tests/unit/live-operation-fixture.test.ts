@@ -10,8 +10,10 @@ it.effect(
       for (const compositionRevision of ['', 'latest', 'a'.repeat(63), 'A'.repeat(64)]) {
         const failure = yield* Effect.flip(
           makeLiveOperationFixture({
+            audience: 'example-records',
             authenticationNamespaceId: 'fixture-release-unit',
             compositionRevision,
+            moduleKey: 'example.records',
             runtimeConnectionString: Redacted.make('postgresql://unit:unit@127.0.0.1/unit'),
           }),
         );

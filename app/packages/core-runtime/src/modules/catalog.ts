@@ -85,7 +85,7 @@ export interface InstalledModuleCatalogServiceContract {
 export class InstalledModuleCatalogService extends Context.Service<
   InstalledModuleCatalogService,
   InstalledModuleCatalogServiceContract
->()('@app/core-runtime/modules/catalog/InstalledModuleCatalogService') {}
+>()('@app/core-runtime/modules/InstalledModuleCatalogService') {}
 
 const invalid = (reason: string): OntosModuleCatalogValidationError =>
   new OntosModuleCatalogValidationErrorValue({

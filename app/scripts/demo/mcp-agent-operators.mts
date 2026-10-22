@@ -6,7 +6,7 @@
  *   node scripts/demo/mcp-agent-operators.mts [--agent <agentPrincipalId>:<legalEntityId> ...]
  *
  * Each agent keeps its current operators; the company administrator is added. The tenant relation is written
- * to the demo tenant. Seeded agents are listed in apps/shell-super-app/api/auth/agent-store-model.ts.
+ * to the demo tenant. Seeded agents are listed in apps/shell-super-app/api/auth/demo-seed/agent-profiles.ts.
  */
 import { openPrincipalOperators } from '@app/core-runtime';
 import { Effect } from 'effect';

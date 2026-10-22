@@ -40,6 +40,7 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
     Layer.provide(outboxWorkerHandlerLayers.searchIngestion),
     Layer.provide(outboxWorkerHandlerLayers.searchProjectionStore),
     Layer.provide(outboxWorkerHandlerLayers.searchWorkerSnapshot),
+    Layer.provide(outboxWorkerHandlerLayers.searchIngestionRegistry),
     Layer.provide(outboxWorkerRepositoryLive),
     Layer.provide(outboxWorkerCorePersistenceLive),
     Layer.provide(outboxWorkerDatabaseConfigLive),

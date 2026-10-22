@@ -170,6 +170,7 @@ The operator supplies every stage Tenant, account, and grant in a JSON file outs
       "slug": "<lowercase-slug>",
       "displayName": "<name>",
       "defaultLocale": "<locale>",
+      "moduleKey": "<module the Tenant activates, e.g. party.registry>",
       "moduleStateId": "<uuid>",
       "legalEntity": {
         "legalEntityId": "<uuid>",
@@ -192,7 +193,7 @@ The operator supplies every stage Tenant, account, and grant in a JSON file outs
       ]
     }
   ],
-  "retiredTenants": [{ "tenantId": "<uuid>", "legalEntityId": "<uuid>", "principalIds": ["<uuid>"] }],
+  "retiredTenants": [{ "tenantId": "<uuid>", "legalEntityId": "<uuid>", "moduleKey": "<module>", "principalIds": ["<uuid>"] }],
   "retiredAccountEmails": ["<email>"]
 }
 ```

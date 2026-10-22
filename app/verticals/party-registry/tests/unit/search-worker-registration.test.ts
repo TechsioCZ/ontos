@@ -1,10 +1,10 @@
-import { CORE_SEARCH_INGESTION_REGISTRATIONS } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 
+import { partySearchIngestionRegistrations } from '../../src/search/ingestion-registrations.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
 
 it('every accepted Party search lifecycle and explicit rebuild topic has its exact generated self-consumer', () => {
-  for (const registration of CORE_SEARCH_INGESTION_REGISTRATIONS) {
+  for (const registration of partySearchIngestionRegistrations) {
     const matches = outboxWorkers.filter(({ descriptor }) => descriptor.workerKey === registration.workerKey);
     expect(matches.length, registration.workerKey).toBe(1);
     const [worker] = matches;
@@ -18,5 +18,5 @@ it('every accepted Party search lifecycle and explicit rebuild topic has its exa
     expect(worker.descriptor.entrypoint.access).toBe('background');
     expect(worker.descriptor.entrypoint.scope).toBe('tenant');
   }
-  expect(CORE_SEARCH_INGESTION_REGISTRATIONS.length).toBe(15);
+  expect(partySearchIngestionRegistrations.length).toBe(15);
 });
