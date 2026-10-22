@@ -66,6 +66,13 @@ const scope: OperationalScope = Object.freeze({
   correlationId: 'correlation-1',
 });
 const transactionOperationAt = DateTime.toDateUtc(DateTime.makeUnsafe(Date.parse('2026-09-28T09:00:00.000Z')));
+
+/** The Read installs its scope and reads the start time in one statement; `set_config` echoes what it set. */
+const transactionTimeRow = (text: string, values: readonly unknown[]) =>
+  text.includes('set_config')
+    ? { legal_entity_id: values[1], operation_at: transactionOperationAt, tenant_id: values[0] }
+    : { operation_at: transactionOperationAt };
+
 const approvedCompositionRevision = 'a'.repeat(64);
 interface ReadAuthorityFixture {
   readonly phase: 'active' | 'draining' | 'sealed' | 'migrated';
@@ -191,7 +198,7 @@ const makeHarness = Effect.fn(function* makeHarness(
             reason: new ConnectionError({ cause: new Error('transaction clock unavailable') }),
           });
         }
-        return [{ operation_at: transactionOperationAt }];
+        return [transactionTimeRow(text, values)];
       }
       if (text.includes('data_access_events')) {
         if (options.failEvidence === true) {

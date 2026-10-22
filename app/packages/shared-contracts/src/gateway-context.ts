@@ -239,6 +239,7 @@ export const GatewayContextApi = HttpApi.make('shellGatewayContextApi').add(Gate
 
 export const shellGatewayContextContract = {
   apiPrefix: '/shell-super-app-api',
+  documentContextPath: '/shell-super-app-api/shell/document-context',
   issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context',
   issueDocumentGatewayContextsPath: '/shell-super-app-api/auth/gateway-contexts',
   issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
@@ -268,6 +269,15 @@ export const gatewayContextAuthorizationEntrypoints = [
     entrypointKey: 'shell.gateway-contexts.issue.session',
     owner: shellGatewayContextContract.ownerId,
     path: shellGatewayContextContract.issueDocumentGatewayContextsPath,
+    surface: 'capability_issuance',
+  },
+  // Server rendering's one context read also signs the document's assertions, so they need no second invocation.
+  {
+    authorization: { credential: 'session', kind: 'capability_issuance' },
+    deployment: shellGatewayContextContract.ownerId,
+    entrypointKey: 'shell.document-context.issue.session',
+    owner: shellGatewayContextContract.ownerId,
+    path: shellGatewayContextContract.documentContextPath,
     surface: 'capability_issuance',
   },
 ] as const;

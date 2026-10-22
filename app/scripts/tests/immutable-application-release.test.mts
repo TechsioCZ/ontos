@@ -935,7 +935,8 @@ const refusesExistingProviderRelease = (existingBackend: boolean) =>
             ),
           );
         }
-        const status = existingBackend || requests.length > 1 ? 200 : 404;
+        const existing = existingBackend ? plan.backendScriptName : plan.assetsScriptName;
+        const status = destination.pathname.endsWith(`/workers/scripts/${existing}`) ? 200 : 404;
         requests.push({ method: request.method, url: destination.href });
         return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status })));
       });
@@ -970,18 +971,17 @@ const refusesExistingProviderRelease = (existingBackend: boolean) =>
       expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
       expect(failure.message).toBe('an immutable release identity already exists; publication must never overwrite it');
       expect(commands).toEqual([]);
-      expect(requests.map(({ method }) => method)).toEqual(existingBackend ? ['GET', 'GET'] : ['GET', 'GET', 'GET']);
+      // Both identities' absence checks run side by side and only read; either existing one refuses.
+      expect(requests.map(({ method }) => method)).toEqual(['GET', 'GET', 'GET']);
       expect(requests[0]?.url).toBe(
         `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/subdomain`,
       );
-      expect(requests[1]?.url).toBe(
-        `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.backendScriptName}`,
-      );
-      if (!existingBackend) {
-        expect(requests[2]?.url).toBe(
+      expect(requests.slice(1).map(({ url }) => url).sort()).toEqual(
+        [
+          `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.backendScriptName}`,
           `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.assetsScriptName}`,
-        );
-      }
+        ].sort(),
+      );
       expect(yield* fileSystem.exists(nodePath.join(output, '.wrangler-immutable-backend.json'))).toBe(false);
       expect(yield* fileSystem.exists(nodePath.join(output, '.wrangler-immutable-assets.json'))).toBe(false);
       expect(yield* fileSystem.readFileString(nodePath.join(publicDirectory, '_headers'))).toBe(compiledHeaders);
@@ -1049,8 +1049,6 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly recoveryWorkerName?: string;
     readonly recoveryWorkerStatuses?: readonly number[];
     readonly resolvedWranglerVersion?: string;
-    readonly secretStatus?: number;
-    readonly secretSuccess?: boolean;
     readonly stallAssetBody?: boolean;
     readonly tamperWorkerAfterEnvelope?: boolean;
     readonly tamperWorkerDuringPackaging?: boolean;
@@ -1125,6 +1123,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   const commands: OpsCommand[] = [];
   const timeline: string[] = [];
   const capturedConfigs: Readonly<Record<string, Schema.Json>>[] = [];
+  const capturedSecrets: { readonly file: string; readonly secrets: Schema.Json }[] = [];
   const publishedInventories: (readonly ReleaseFile[])[] = [];
   const requests: string[] = [];
   const providerWrites: { readonly method: string; readonly url: string }[] = [];
@@ -1238,16 +1237,6 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
               },
               success: true,
             }),
-          ),
-      ),
-      Match.when(
-        (path) => path.endsWith('/secrets'),
-        () =>
-          Effect.sync(() =>
-            Response.json(
-              { result: { name: 'OWNER_BINDING', type: 'secret_text' }, success: options.secretSuccess ?? true },
-              { status: options.secretStatus ?? 200 },
-            ),
           ),
       ),
       Match.orElse(() =>
@@ -1401,6 +1390,15 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
           Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
         )(yield* fileSystem.readFileString(config));
         capturedConfigs.push(capturedConfig);
+        if (command.args.includes('--secrets-file')) {
+          const file = command.args[command.args.indexOf('--secrets-file') + 1] ?? '';
+          capturedSecrets.push({
+            file,
+            secrets: yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(
+              yield* fileSystem.readFileString(file),
+            ),
+          });
+        }
         const assetsConfig = yield* Schema.decodeUnknownEffect(
           Schema.Struct({ assets: Schema.Struct({ directory: Schema.String }) }),
         )(capturedConfig);
@@ -1464,6 +1462,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     assetReadStarted,
     canceledAssetBodies: () => canceledAssetBodies,
     capturedConfigs,
+    capturedSecrets,
     commands,
     deploy: deployImmutableApplicationRelease({ appDirectory, plan }).pipe(Effect.provide(layer)),
     headerReadinessBodies,
@@ -1591,7 +1590,12 @@ it.effect('publishes the complete captured native package and leaves compiled as
       expect(fixture.requests).toContain(`${backendEndpoint}/content/v2`);
       expect(fixture.requests).toContain(`${backendEndpoint}/subdomain`);
       expect(fixture.requests).toContain(`${backendEndpoint}/deployments`);
-      expect(fixture.providerWrites).toEqual([{ method: 'PUT', url: `${backendEndpoint}/secrets` }]);
+      // The secrets go up with the backend upload itself; nothing is written to the provider API afterwards.
+      expect(fixture.providerWrites).toEqual([]);
+      expect(fixture.commands[1]?.args).toContain('--secrets-file');
+      expect(fixture.capturedSecrets.map(({ secrets }) => secrets)).toEqual([{ OWNER_BINDING: OWNER_SECRET_VALUE }]);
+      expect(yield* fileSystem.exists(fixture.capturedSecrets[0]?.file ?? '')).toBe(false);
+      expect(fixture.capturedSecrets[0]?.file.startsWith(fixture.output)).toBe(false);
       expect(fixture.capturedConfigs[1]?.rules).toContainEqual({
         fallthrough: true,
         globs: ['**/*.js', '**/*.mjs'],
@@ -1609,59 +1613,18 @@ it.effect('publishes the complete captured native package and leaves compiled as
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect('accepts a successful 201 secret creation before publishing retained module assets', () =>
+it.effect('uploads a unit without secrets without a secrets file', () =>
   Effect.scoped(
-    Effect.gen(function* createdOwnerSecret() {
-      const fixture = yield* prepareDeployment({
-        ownerSecrets: { OWNER_BINDING: OWNER_SECRET_VALUE },
-        secretStatus: 201,
-      });
+    Effect.gen(function* releaseWithoutSecrets() {
+      const fixture = yield* prepareDeployment();
       const receipt = yield* fixture.deploy;
-      expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
       expect(receipt.backend.versionId).toBe(BACKEND_VERSION_ID);
-      expect(fixture.commands).toHaveLength(3);
-      expect(fixture.providerWrites).toEqual([
-        {
-          method: 'PUT',
-          url: `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${fixture.plan.backendScriptName}/secrets`,
-        },
-      ]);
-      expect(fixture.requests).toContain(`${fixture.plan.assetsOrigin}mf-manifest.json`);
+      expect(fixture.commands.every(({ args }) => !args.includes('--secrets-file'))).toBe(true);
+      expect(fixture.capturedSecrets).toEqual([]);
+      expect(fixture.providerWrites).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
-
-for (const response of [
-  { secretStatus: 201, secretSuccess: false },
-  { secretStatus: 403, secretSuccess: true },
-  { secretStatus: 403, secretSuccess: false },
-]) {
-  it.effect(
-    `refuses secret HTTP ${response.secretStatus} success=${response.secretSuccess} before publishing module assets`,
-    () =>
-      Effect.scoped(
-        Effect.gen(function* refusedOwnerSecret() {
-          const fixture = yield* prepareDeployment({
-            ...response,
-            ownerSecrets: { OWNER_BINDING: OWNER_SECRET_VALUE },
-          });
-          const failure = yield* fixture.deploy.pipe(Effect.flip);
-          expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
-          expect(failure.message).toMatch(/secret/u);
-          expect(fixture.providerWrites).toHaveLength(1);
-          expect(fixture.providerWrites[0]?.method).toBe('PUT');
-          expect(fixture.providerWrites[0]?.url).toMatch(/\/secrets$/u);
-          expect(fixture.commands).toHaveLength(2);
-          expect(fixture.requests.some((url) => url.startsWith(fixture.plan.assetsOrigin))).toBe(false);
-          expect(
-            fixture.requests.some((url) =>
-              url.endsWith(`/workers/scripts/${fixture.plan.assetsScriptName}/deployments`),
-            ),
-          ).toBe(false);
-        }),
-      ).pipe(Effect.provide(NodeServices.layer)),
-  );
-}
 
 it.effect('rejects another source revision before inspecting output or making provider requests', () =>
   Effect.scoped(

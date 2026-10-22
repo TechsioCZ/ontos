@@ -105,6 +105,17 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       ) {
         return [{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }];
       }
+      if (
+        text ===
+        "select set_config('ontos.tenant_id', $1, true) as tenant_id, set_config('ontos.legal_entity_id', $2, true) as legal_entity_id, transaction_timestamp() as operation_at"
+      ) {
+        [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(params).pipe(
+          Effect.orDie,
+        );
+        return [
+          { legal_entity_id: scope.legalEntityId, operation_at: options.operationTime, tenant_id: scope.tenantId },
+        ];
+      }
       if (text === 'select transaction_timestamp() as operation_at') {
         return [{ operation_at: options.operationTime }];
       }

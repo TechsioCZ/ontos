@@ -285,6 +285,11 @@ it('classifies every Shell token-issuing endpoint as a capability issuer with it
       entrypointKey: 'shell.gateway-contexts.issue.session',
       path: '/shell-super-app-api/auth/gateway-contexts',
     },
+    {
+      credential: 'session',
+      entrypointKey: 'shell.document-context.issue.session',
+      path: '/shell-super-app-api/shell/document-context',
+    },
   ]);
   for (const entrypoint of gatewayContextAuthorizationEntrypoints) {
     expect(entrypoint.authorization.kind).toBe('capability_issuance');

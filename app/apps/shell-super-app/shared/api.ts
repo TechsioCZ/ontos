@@ -26,7 +26,7 @@ import {
   ManageAgentEntityRequestSchema,
   ManageAgentEntityResponseSchema,
 } from '@app/shared-contracts/agent-access';
-import { DocumentGatewayApiGroup } from './document-gateway-api.ts';
+import { DocumentGatewayApiGroup, DocumentGatewayAssertionSchema } from './document-gateway-api.ts';
 import { OAuthConnectApiGroup } from './oauth-connect-api.ts';
 // @ontos-codesmith-core-read-contract-imports:start
 
@@ -534,13 +534,15 @@ export const ShellDocumentCompositionSchema = Schema.Union([
 
 /**
  * What server rendering of a Shell document reads, from one resolution of the session's context: the session, its
- * legal entities and tenants, the composition and the people-administration navigation hint. Each part carries its
- * own outcome, so a failing part degrades only itself. Signed-out sessions get the session only; sessions without a
- * selected legal entity get no composition data or capability.
+ * legal entities and tenants, the composition, the people-administration navigation hint and the gateway assertions
+ * of the composition's audiences. Each part carries its own outcome, so a failing part degrades only itself.
+ * Signed-out sessions get the session only; sessions without a selected legal entity get no composition data,
+ * capability or assertions.
  */
 export const ShellDocumentContextSchema = Schema.Struct({
   canManagePeople: Schema.optionalKey(Schema.Boolean),
   composition: Schema.optionalKey(ShellDocumentCompositionSchema),
+  gatewayAssertions: Schema.optionalKey(Schema.Array(DocumentGatewayAssertionSchema)),
   legalEntities: Schema.optionalKey(AvailableLegalEntitiesResponseSchema),
   session: CurrentSessionSchema,
   tenants: Schema.optionalKey(ShellDocumentTenantsSchema),
@@ -750,6 +752,24 @@ const AgentApiKeyHeadersSchema = Schema.Struct({
 export const AgentOwnProposalsRequestSchema = Schema.Struct({ legalEntityId: Schema.String.check(Schema.isUUID()) });
 const AgentQueueRequestSchema = Schema.Struct({});
 
+/**
+ * Server rendering's one read per Shell document. It signs the document's gateway assertions too, so it is a classified
+ * session capability issuer (`shell.document-context.issue.session` in `gatewayContextAuthorizationEntrypoints`) and,
+ * like every issuer, a no-store POST.
+ */
+export const ShellDocumentContextApiGroup = HttpApiGroup.make('documentContext').add(
+  HttpApiEndpoint.post('documentContext', '/shell/document-context', {
+    error: [
+      InvalidCredentialsProblemSchema,
+      OntosIdentityForbiddenProblemSchema,
+      AuthenticationUnavailableProblemSchema,
+      AuthenticationInternalProblemSchema,
+    ],
+    payload: ShellCompositionRequestSchema,
+    success: ShellDocumentContextSchema,
+  }),
+);
+
 export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   .add(
     HttpApiGroup.make('authentication')
@@ -916,18 +936,6 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   )
   .add(
     HttpApiGroup.make('composition')
-      .add(
-        HttpApiEndpoint.get('documentContext', '/shell/document-context', {
-          error: [
-            InvalidCredentialsProblemSchema,
-            OntosIdentityForbiddenProblemSchema,
-            AuthenticationUnavailableProblemSchema,
-            AuthenticationInternalProblemSchema,
-          ],
-          query: ShellCompositionRequestSchema,
-          success: ShellDocumentContextSchema,
-        }),
-      )
       .add(
         HttpApiEndpoint.get('shellComposition', '/shell/composition', {
           error: [
@@ -1180,6 +1188,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   )
   .add(GatewayContextApiGroup)
   .add(DocumentGatewayApiGroup)
+  .add(ShellDocumentContextApiGroup)
   .add(ExternalIdentityApiGroup)
   .add(OAuthConnectApiGroup);
 
