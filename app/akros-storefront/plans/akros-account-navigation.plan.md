@@ -7,7 +7,7 @@ todos:
     status: completed
   - id: task-10-category-alignment
     content: TASK 10 – sjednotit středové zarovnání názvů a doprovodných textů kategorií.
-    status: pending
+    status: completed
   - id: task-14-profile-addresses
     content: TASK 14 – podle D4 doplnit chybějící editaci profilu a správu adres a ověřit ukládání i následné zobrazení.
     status: pending
@@ -39,6 +39,8 @@ Dokončeno: horní seznam obsahuje dohodnuté textové odkazy, žádný z nich o
 nevede do kategorie a odstraněné vstupy do katalogu mají nadále funkční náhradu.
 
 ### TASK 10 – texty kategorií · #1308
+
+Aktuální rozsah a ověření vlastní [rozbor TASK 10](akros-task-10-review.md).
 
 - Vycentrovat názvy a související doprovodný text ve výpisu kategorií; zkontrolovat
   zvlášť nadpis/popisek kategorie „Šrouby“ i názvy podkategorií v kartách.

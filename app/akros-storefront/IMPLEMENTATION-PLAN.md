@@ -50,7 +50,11 @@ Ověřeno na desktopu, tabletu, mobilu a hranicích breakpointu, včetně hmotno
 [TASK 09](plans/akros-task-09-review.md) je dokončený: horní lišta a mobilní informace
 obsahují jen šest schválených textových odkazů. Úvod je dostupný přes logo,
 přihlášení samostatně a katalog přes boční/mobilní navigaci. Ověřeno na 12 šířkách,
-včetně klávesnice, aktivních odkazů a zavírání menu. Další je TASK 10 – zarovnání kategorií.
+včetně klávesnice, aktivních odkazů a zavírání menu.
+[TASK 10](plans/akros-task-10-review.md) je dokončený: nadpisy, popisy a názvy
+podkategorií jsou vycentrované. Ověřeno na pěti kategoriích a 12 šířkách, včetně
+dlouhých názvů a chybějícího popisu; změna nezasahuje vyhledávání ani boční katalog.
+Další je TASK 11 – rozbor stávajícího našeptávače a požadavku na jeho úpravu.
 
 ## Zadání a porovnání s GitHubem
 

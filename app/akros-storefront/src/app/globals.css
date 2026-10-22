@@ -283,6 +283,10 @@ body {
   margin: 0;
 }
 
+.akros-category-heading--centered {
+  text-align: center;
+}
+
 .akros-category-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -297,6 +301,7 @@ body {
   background: var(--color-base);
   color: var(--color-fg-primary);
   text-decoration: none;
+  text-align: center;
 }
 
 .akros-category-card img {
