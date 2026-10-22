@@ -26,7 +26,7 @@ import { executeApplyCommand } from '../../../../api/apply-command-action-client
 import { executeRecords, subjectsWithTag } from '../../../../api/records-client.ts';
 import { loadSubjectNames } from '../../../../api/subject-names.ts';
 import type { SubjectNames } from '../../../../api/subject-names.ts';
-import { runTagEffect, TagI18n, tagColorValue } from '../../../../components/tag-controls.tsx';
+import { runTagEffect, TagI18n, tagColorValue } from '../../../../tags/tag-controls.tsx';
 import type { TaggingCommand } from '../../../../../shared/actions/apply-command.ts';
 import { subjectKindValues, tagColorValues } from '../../../../../shared/apis/records.ts';
 import type { SubjectId, SubjectKind, TagColor, TagId, TagWithCounts } from '../../../../../shared/apis/records.ts';

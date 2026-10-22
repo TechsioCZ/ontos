@@ -7,7 +7,7 @@
     "./api/client": "./src/api/tagging-client.ts",
     "./clients/apply-command": "./src/api/apply-command-action-client.ts",
     "./clients/records": "./src/api/records-client.ts",
-    "./components/tag-controls": "./src/components/tag-controls.tsx",
+    "./components/tag-controls": "./src/tags/tag-controls.tsx",
     "./contracts/apply-command": "./shared/actions/apply-command.ts",
     "./contracts/records": "./shared/apis/records.ts",
     "./permissions/demo.tagging.read_all": "./shared/permissions/tagging-read-all.ts",

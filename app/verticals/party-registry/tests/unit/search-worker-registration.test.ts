@@ -1,6 +1,6 @@
 import { expect, it } from 'effect-rstest';
 
-import { partySearchIngestionRegistrations } from '../../src/search/ingestion-registrations.ts';
+import { partySearchIngestionRegistrations } from '../../src/worker-host/search-ingestion-registrations.ts';
 import { outboxWorkers } from '../../src/workers/index.ts';
 
 it('every accepted Party search lifecycle and explicit rebuild topic has its exact generated self-consumer', () => {

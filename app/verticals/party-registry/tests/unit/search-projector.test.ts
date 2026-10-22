@@ -18,7 +18,7 @@ import {
   makePartySearchProjector,
 } from '../../src/services/party-search-projection.service.ts';
 import type { PartySearchSourceSnapshot } from '../../src/services/party-search-projection.service.ts';
-import { partySearchIngestionRegistrations } from '../../src/search/ingestion-registrations.ts';
+import { partySearchIngestionRegistrations } from '../../src/worker-host/search-ingestion-registrations.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const partyRef = {

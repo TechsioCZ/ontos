@@ -15,7 +15,7 @@ import type {
 import { OutboxWorkerInfrastructureLive } from '@app/core-runtime/outbox/worker';
 import { Layer } from 'effect';
 
-import { PartySearchIngestionRegistryLive } from '../search/ingestion-registrations.ts';
+import { PartySearchIngestionRegistryLive } from './search-ingestion-registrations.ts';
 import { PartySearchProjectionSourceLive } from '../services/party-search-projection-source.service.ts';
 import type { PartySearchProjectionSource } from '../services/party-search-projection-source.service.ts';
 import { PartySearchProjectorLive } from '../services/party-search-projection.service.ts';
