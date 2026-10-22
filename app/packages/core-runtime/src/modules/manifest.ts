@@ -7,6 +7,8 @@ import { isActionRegistration } from '../actions/definition.ts';
 import { TENANT_PERMISSION_KEYS } from '../permissions/context-permissions.ts';
 import { BusinessPermissionDescriptorSchema, defineBusinessPermission } from '../permissions/business-permission.ts';
 import type { BusinessPermissionDescriptor } from '../permissions/business-permission.ts';
+import { OntosExternalIdentityProviderSchema } from '../auth/external-identity-provider.ts';
+import type { OntosExternalIdentityProviderInput } from '../auth/external-identity-provider.ts';
 import { OntosMcpContributionSchema } from './mcp-contribution.ts';
 import type { OntosMcpContributionInput } from './mcp-contribution.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';
@@ -153,6 +155,8 @@ export const OntosSerializedPublicSurfaceSchema = Schema.Struct({
   businessPermissions: Schema.optionalKey(Schema.Array(BusinessPermissionDescriptorSchema)),
   components: Schema.Array(OntosComponentContractSchema),
   events: Schema.Array(OntosPublicEventContractSchema),
+  /** External identity providers the module's own sign-in offers (absent: none). */
+  externalIdentityProviders: Schema.optionalKey(Schema.Array(OntosExternalIdentityProviderSchema)),
   /** MCP tools the module offers to agents (absent: none). */
   mcp: Schema.optionalKey(OntosMcpContributionSchema),
   reports: Schema.Array(OntosReportDescriptorSchema),
@@ -219,6 +223,8 @@ export interface OntosAuthoredPublicSurface {
   readonly businessPermissions?: readonly BusinessPermissionDescriptor[];
   readonly components: Readonly<Record<string, OntosManifestComponentValue>>;
   readonly events: readonly OntosAuthoredPublicEvent[];
+  /** External identity providers the module's own sign-in offers. */
+  readonly externalIdentityProviders?: readonly OntosExternalIdentityProviderInput[];
   /** MCP tool contribution; the contract generator derives schemas and handler paths from the module's own values. */
   readonly mcp?: OntosMcpContributionInput;
   readonly reports: readonly OntosReportDescriptor[];
@@ -300,6 +306,7 @@ export const validateOntosModuleManifestFields = <Input extends object, PublicSu
       'businessPermissions',
       'components',
       'events',
+      'externalIdentityProviders',
       'mcp',
       'reports',
       'resourceTypes',
@@ -427,6 +434,14 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
   assertUnique(
     events.map(({ key }) => key),
     'public event key',
+  );
+
+  // External identity providers stay as authored (spread with the public surface); they only have to decode.
+  assertUnique(
+    (input.publicSurface.externalIdentityProviders ?? []).map(
+      (provider) => exactDecode(OntosExternalIdentityProviderSchema, provider).authenticationNamespaceId,
+    ),
+    'external identity provider namespace',
   );
 
   const search = input.publicSurface.search.map((descriptor) => exactDecode(OntosSearchDescriptorSchema, descriptor));

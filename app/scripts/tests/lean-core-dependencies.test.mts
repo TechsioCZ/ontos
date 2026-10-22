@@ -24,9 +24,6 @@ it.live(
         // Market Catalog: allowed exact owner-client composition seam.
         'verticals/commerce-market-catalog/src/integrations/market-subject-restrictions.ts':
           "import { execute } from '@app/commerce-customer-context/api/market-subject-restrictions-current/client';\n",
-        // Shell: allowed documented composition seams.
-        'apps/shell-super-app/api/auth/commerce-external-identity.ts':
-          "import { verify } from '@app/commerce-customer-context/portal-auth/verification/client';\n",
         // Shell: violates via the bare Commerce package specifier (no subpath), resolved against the
         // exports map's "." entry, which points at Commerce's private src.
         'apps/shell-super-app/api/auth/external-identity/bare-specifier-import.ts':

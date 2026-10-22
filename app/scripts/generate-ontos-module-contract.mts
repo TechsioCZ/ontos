@@ -139,7 +139,10 @@ const repositoryEsbuildPath = (): string => {
 
 const sourceOnlyReactPackages = [
   { entry: 'packages/admin-ui/src/index.ts', name: '@app/admin-ui' },
-  { entry: 'verticals/facility-operations/src/ui/record-discussion.tsx', name: '@app/facility-operations/ui/record-discussion' },
+  {
+    entry: 'verticals/facility-operations/src/ui/record-discussion.tsx',
+    name: '@app/facility-operations/ui/record-discussion',
+  },
   { entry: 'verticals/tagging/src/components/tag-controls.tsx', name: '@app/tagging/components/tag-controls' },
 ] as const;
 
@@ -457,6 +460,9 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
           businessPermissions: owner.manifest.publicSurface.businessPermissions ?? [],
           components: sorted(components, (left, right) => left.key.localeCompare(right.key)),
           events: sorted(events, (left, right) => left.key.localeCompare(right.key)),
+          ...(owner.manifest.publicSurface.externalIdentityProviders === undefined
+            ? {}
+            : { externalIdentityProviders: owner.manifest.publicSurface.externalIdentityProviders }),
           ...(mcp === undefined ? {} : { mcp }),
           reports: owner.manifest.publicSurface.reports,
           resourceTypes: owner.manifest.publicSurface.resourceTypes,

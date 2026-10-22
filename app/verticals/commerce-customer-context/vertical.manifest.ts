@@ -172,6 +172,7 @@ import { VerifyEffectiveCustomerGroupMembershipSetV1Api } from './shared/apis/ve
 import { VerifyRetailPurchasingSubjectCurrentV1Api } from './shared/apis/verify-retail-purchasing-subject-current-v1.ts';
 // </generated-module-manifest-imports>
 import { commerceCustomerContextMcpContribution } from './shared/mcp/contribution.ts';
+import { commercePortalExternalIdentityProvider } from './shared/portal-auth-verification.ts';
 
 export const commerceCustomerContextManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
@@ -348,6 +349,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       // </generated-module-manifest-components>
     },
     events: [],
+    externalIdentityProviders: [commercePortalExternalIdentityProvider],
     mcp: commerceCustomerContextMcpContribution,
     reports: [
       // <generated-module-manifest-reports>

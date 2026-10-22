@@ -680,18 +680,6 @@ const allowedCompositionSeams: readonly AllowedCompositionSeam[] = [
     reason: 'Commerce publishes this as its sanctioned read-only API client for Shell composition.',
     specifier: `${commercePackageSpecifierPrefix}/api/client`,
   },
-  {
-    importer: 'apps/shell-super-app/api/auth/commerce-external-identity.ts',
-    reason:
-      'Shell composition seam for Commerce portal-auth verification during external-identity admission; scoped to the verification client only.',
-    specifier: `${commercePackageSpecifierPrefix}/portal-auth/verification/client`,
-  },
-  {
-    importer: 'apps/shell-super-app/api/auth/external-identity/commerce-admission-observation.ts',
-    reason:
-      'Shell composition seam for Commerce portal-auth verification during external-identity admission; scoped to the verification client only.',
-    specifier: `${commercePackageSpecifierPrefix}/portal-auth/verification/client`,
-  },
 ];
 
 const isAllowedCompositionSeam = (importer: string, specifier: string): boolean =>

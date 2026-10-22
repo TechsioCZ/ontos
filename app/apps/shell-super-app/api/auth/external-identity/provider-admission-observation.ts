@@ -1,3 +1,8 @@
+/**
+ * Admission observation for the installed external identity provider: validates the workload request context,
+ * asks the provider module's declared verification endpoint, and projects its answer into a Core observation that
+ * stays valid for the admission deadline the module declares.
+ */
 import {
   externalIdentityFailure,
   TrustedAdmissionObservation,
@@ -6,7 +11,6 @@ import type {
   AuthenticationAdmissionRequest,
   ExternalIdentityFailure,
   ExternalSubjectAdmissionMatch,
-  TrustedAdmissionObservationService,
 } from '@app/core-runtime/auth/external-identity-admission';
 import {
   AuthenticationAdmissionObservationSchema,
@@ -16,26 +20,22 @@ import type {
   AuthenticationAdmissionObservation,
   ExternalSubjectAdmissionObservation,
 } from '@app/core-runtime/auth/external-identity-contracts';
-import {
-  COMMERCE_ADMISSION_DEADLINE_MS,
-  COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-} from '@app/commerce-customer-context/portal-auth/contracts';
-import {
-  COMMERCE_PORTAL_AUTH_VERIFY_OPERATION,
-  CommercePortalAuthVerificationRequestSchema,
-} from '@app/commerce-customer-context/portal-auth/verification';
-import { CommercePortalAuthVerificationClient } from '@app/commerce-customer-context/portal-auth/verification/client';
+import { ExternalIdentityVerificationRequestSchema } from '@app/core-runtime/auth/external-identity-provider';
+import type {
+  ExternalIdentityVerificationRequest,
+  ExternalIdentityVerificationResult,
+} from '@app/core-runtime/auth/external-identity-provider';
 import { DateTime, Effect, Layer, Schema } from 'effect';
 
-import type { CommerceExternalIdentityConfiguration } from '../commerce-external-identity.ts';
+import { ExternalIdentityProviderConfigurationService } from '../external-identity-provider.ts';
+import type {
+  ExternalIdentityProviderConfiguration,
+  InstalledExternalIdentityProvider,
+} from '../external-identity-provider.ts';
+import { InstalledExternalIdentityProviderResolver } from './provider-resolver.ts';
+import { ExternalIdentityVerificationClient } from './provider-verification-client.ts';
 import { ExternalIdentityHttpWorkloadContext } from './request-context.ts';
 import type { ExternalIdentityHttpWorkloadContextValue } from './request-context.ts';
-
-type CommercePortalAuthVerificationClientPort = CommercePortalAuthVerificationClient['Service'];
-type CommercePortalAuthVerificationRequest = Schema.Schema.Type<typeof CommercePortalAuthVerificationRequestSchema>;
-type VerifyExternalAuthenticationResult = Effect.Success<
-  ReturnType<CommercePortalAuthVerificationClient['Service']['verify']>
->;
 
 const invalid = (reason: string, cause?: unknown): ExternalIdentityFailure =>
   externalIdentityFailure('identity_invalid', reason, cause);
@@ -44,10 +44,10 @@ const unavailable = (reason: string, cause?: unknown): ExternalIdentityFailure =
   externalIdentityFailure('identity_unavailable', reason, cause);
 
 const providerUnavailable = (cause: unknown): ExternalIdentityFailure =>
-  unavailable('Commerce provider verification transport failed', cause);
+  unavailable('Provider verification transport failed', cause);
 
 const mapProviderResult = (cause: unknown): ExternalIdentityFailure =>
-  invalid('Commerce provider verification response is invalid', cause);
+  invalid('Provider verification response is invalid', cause);
 
 const getRequestContext = (): Effect.Effect<ExternalIdentityHttpWorkloadContextValue, ExternalIdentityFailure> =>
   Effect.serviceOption(ExternalIdentityHttpWorkloadContext).pipe(
@@ -68,7 +68,7 @@ const validateSharedContext = (
     readonly subjectType: string;
     readonly tenantId: string;
   },
-  configuration: CommerceExternalIdentityConfiguration,
+  configuration: ExternalIdentityProviderConfiguration,
 ): Effect.Effect<void, ExternalIdentityFailure> => {
   if (!isWorkloadPrincipal(context)) {
     return Effect.fail(invalid('The external identity workload principal is not a direct API-key principal'));
@@ -82,12 +82,8 @@ const validateSharedContext = (
   if (context.providerSubjectId.length === 0) {
     return Effect.fail(invalid('The external identity provider subject is unavailable'));
   }
-  if (
-    input.authenticationNamespaceId !== configuration.authenticationNamespaceId ||
-    input.authenticationNamespaceId !== COMMERCE_AUTHENTICATION_NAMESPACE_ID ||
-    input.subjectType !== 'user'
-  ) {
-    return Effect.fail(invalid('The external identity subject is not a Commerce user'));
+  if (input.authenticationNamespaceId !== configuration.authenticationNamespaceId || input.subjectType !== 'user') {
+    return Effect.fail(invalid('The external identity subject is not a user of the configured provider'));
   }
   if (context.targetAuthenticationNamespaceId !== input.authenticationNamespaceId) {
     return Effect.fail(invalid('The external identity target namespace changed during admission'));
@@ -104,7 +100,7 @@ const validateSharedContext = (
 const validateSubjectContext = (
   context: ExternalIdentityHttpWorkloadContextValue,
   input: ExternalSubjectAdmissionMatch,
-  configuration: CommerceExternalIdentityConfiguration,
+  configuration: ExternalIdentityProviderConfiguration,
 ): Effect.Effect<void, ExternalIdentityFailure> =>
   validateSharedContext(context, input, configuration).pipe(
     Effect.flatMap(() =>
@@ -132,7 +128,7 @@ const validateSubjectContext = (
 const validateAuthenticationContext = (
   context: ExternalIdentityHttpWorkloadContextValue,
   input: AuthenticationAdmissionRequest,
-  configuration: CommerceExternalIdentityConfiguration,
+  configuration: ExternalIdentityProviderConfiguration,
 ): Effect.Effect<void, ExternalIdentityFailure> =>
   validateSharedContext(context, input, configuration).pipe(
     Effect.flatMap(() =>
@@ -157,25 +153,26 @@ const validateAuthenticationContext = (
 
 const makeProviderRequest = (input: {
   readonly admission: AuthenticationAdmissionRequest | ExternalSubjectAdmissionMatch;
-  readonly configuration: CommerceExternalIdentityConfiguration;
+  readonly configuration: ExternalIdentityProviderConfiguration;
   readonly context: ExternalIdentityHttpWorkloadContextValue;
-}): Effect.Effect<CommercePortalAuthVerificationRequest, ExternalIdentityFailure> =>
-  Schema.decodeEffect(CommercePortalAuthVerificationRequestSchema)({
-    // The request is received by Commerce; the Core audience remains bound in the admission below.
+  readonly installed: InstalledExternalIdentityProvider;
+}): Effect.Effect<ExternalIdentityVerificationRequest, ExternalIdentityFailure> =>
+  Schema.decodeEffect(ExternalIdentityVerificationRequestSchema)({
+    // The request is received by the provider; the Core audience remains bound in the admission below.
     audience: input.configuration.providerEndpointAudience,
-    authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+    authenticationNamespaceId: input.configuration.authenticationNamespaceId,
     nonce: input.admission.nonce,
-    operation: COMMERCE_PORTAL_AUTH_VERIFY_OPERATION,
+    operation: input.installed.declaration.verification.operation,
     operationRef: input.admission.operationRef,
     providerSubjectId: input.context.providerSubjectId,
     sessionRef: input.context.authenticationRef,
     subjectType: 'user',
     tenantId: input.admission.tenantId,
-  }).pipe(Effect.mapError((cause) => invalid('The Commerce provider request is malformed', cause)));
+  }).pipe(Effect.mapError((cause) => invalid('The provider verification request is malformed', cause)));
 
 const matchesProviderResult = (
-  result: Extract<VerifyExternalAuthenticationResult, { readonly outcome: 'ALLOWED' }>,
-  request: CommercePortalAuthVerificationRequest,
+  result: Extract<ExternalIdentityVerificationResult, { readonly outcome: 'ALLOWED' }>,
+  request: ExternalIdentityVerificationRequest,
 ): boolean =>
   result.authenticationNamespaceId === request.authenticationNamespaceId &&
   result.providerSubjectId === request.providerSubjectId &&
@@ -186,30 +183,31 @@ const matchesProviderResult = (
   result.enrollmentAttemptId === request.enrollmentAttemptId;
 
 const observedExpiry = (
-  result: VerifyExternalAuthenticationResult,
+  result: ExternalIdentityVerificationResult,
   deadlineMillis: number,
 ): Effect.Effect<DateTime.Utc, ExternalIdentityFailure> => {
   const observedAt = DateTime.toEpochMillis(result.observedAt);
   return Number.isFinite(observedAt)
     ? Effect.succeed(DateTime.makeUnsafe(observedAt + deadlineMillis))
-    : Effect.fail(invalid('Commerce provider observation time is invalid'));
+    : Effect.fail(invalid('Provider observation time is invalid'));
 };
 
 const observeSubjectResult = (
-  result: VerifyExternalAuthenticationResult,
-  request: CommercePortalAuthVerificationRequest,
+  result: ExternalIdentityVerificationResult,
+  request: ExternalIdentityVerificationRequest,
   input: ExternalSubjectAdmissionMatch,
+  deadlineMillis: number,
 ): Effect.Effect<ExternalSubjectAdmissionObservation, ExternalIdentityFailure> => {
   if (result.outcome === 'UNAVAILABLE') {
-    return Effect.fail(unavailable('Commerce provider verification is unavailable'));
+    return Effect.fail(unavailable('Provider verification is unavailable'));
   }
   if (result.outcome === 'REJECTED') {
-    return Effect.fail(externalIdentityFailure('identity_forbidden', 'Commerce provider verification was rejected'));
+    return Effect.fail(externalIdentityFailure('identity_forbidden', 'Provider verification was rejected'));
   }
   if (!matchesProviderResult(result, request)) {
-    return Effect.fail(invalid('Commerce provider verification did not match the operation'));
+    return Effect.fail(invalid('Provider verification did not match the operation'));
   }
-  return observedExpiry(result, COMMERCE_ADMISSION_DEADLINE_MS).pipe(
+  return observedExpiry(result, deadlineMillis).pipe(
     Effect.flatMap((expiresAt) =>
       Schema.decodeEffect(ExternalSubjectAdmissionObservationSchema)({
         audience: input.audience,
@@ -229,25 +227,26 @@ const observeSubjectResult = (
 };
 
 const observeAuthenticationResult = (
-  result: VerifyExternalAuthenticationResult,
-  request: CommercePortalAuthVerificationRequest,
+  result: ExternalIdentityVerificationResult,
+  request: ExternalIdentityVerificationRequest,
   input: AuthenticationAdmissionRequest,
   context: ExternalIdentityHttpWorkloadContextValue,
+  deadlineMillis: number,
 ): Effect.Effect<AuthenticationAdmissionObservation, ExternalIdentityFailure> => {
   if (result.outcome === 'UNAVAILABLE') {
-    return Effect.fail(unavailable('Commerce provider verification is unavailable'));
+    return Effect.fail(unavailable('Provider verification is unavailable'));
   }
   if (result.outcome === 'REJECTED') {
-    return Effect.fail(externalIdentityFailure('identity_forbidden', 'Commerce provider verification was rejected'));
+    return Effect.fail(externalIdentityFailure('identity_forbidden', 'Provider verification was rejected'));
   }
   if (!matchesProviderResult(result, request)) {
-    return Effect.fail(invalid('Commerce provider verification did not match the operation'));
+    return Effect.fail(invalid('Provider verification did not match the operation'));
   }
   const { binding } = context;
   if (binding === undefined) {
     return Effect.fail(invalid('The external identity binding projection is unavailable'));
   }
-  return observedExpiry(result, COMMERCE_ADMISSION_DEADLINE_MS).pipe(
+  return observedExpiry(result, deadlineMillis).pipe(
     Effect.flatMap((expiresAt) =>
       Schema.decodeEffect(AuthenticationAdmissionObservationSchema)({
         audience: input.audience,
@@ -267,41 +266,49 @@ const observeAuthenticationResult = (
   );
 };
 
-const verifyProvider = (
-  client: CommercePortalAuthVerificationClientPort,
-  request: CommercePortalAuthVerificationRequest,
-): Effect.Effect<VerifyExternalAuthenticationResult, ExternalIdentityFailure> =>
-  client.verify(request, { requestCorrelation: request.operationRef }).pipe(Effect.mapError(providerUnavailable));
-
-export const makeCommerceAdmissionObservationService = (
-  client: CommercePortalAuthVerificationClientPort,
-  configuration: CommerceExternalIdentityConfiguration,
-): TrustedAdmissionObservationService => ({
-  observeAuthentication: Effect.fn('CommerceAdmissionObservation.observeAuthentication')(
-    function* observeAuthentication(input) {
-      const context = yield* getRequestContext();
-      yield* validateAuthenticationContext(context, input, configuration);
-      const providerRequest = yield* makeProviderRequest({ admission: input, configuration, context });
-      const result = yield* verifyProvider(client, providerRequest);
-      return yield* observeAuthenticationResult(result, providerRequest, input, context);
-    },
-  ),
-  observeExternalSubject: Effect.fn('CommerceAdmissionObservation.observeExternalSubject')(
-    function* observeSubject(input) {
-      const context = yield* getRequestContext();
-      yield* validateSubjectContext(context, input, configuration);
-      const providerRequest = yield* makeProviderRequest({ admission: input, configuration, context });
-      const result = yield* verifyProvider(client, providerRequest);
-      return yield* observeSubjectResult(result, providerRequest, input);
-    },
-  ),
-});
-
-export const commerceAdmissionObservationLive = (configuration: CommerceExternalIdentityConfiguration) =>
-  Layer.effect(
-    TrustedAdmissionObservation,
-    Effect.gen(function* makeCommerceAdmissionObservationEffect() {
-      const client = yield* CommercePortalAuthVerificationClient;
-      return makeCommerceAdmissionObservationService(client, configuration);
-    }),
-  );
+/** Observes admissions through the verification endpoint the provider module declares. */
+export const ProviderAdmissionObservationLive = Layer.effect(
+  TrustedAdmissionObservation,
+  Effect.gen(function* makeProviderAdmissionObservation() {
+    const configuration = yield* ExternalIdentityProviderConfigurationService;
+    const resolver = yield* InstalledExternalIdentityProviderResolver;
+    const client = yield* ExternalIdentityVerificationClient;
+    return {
+      observeAuthentication: Effect.fn('ProviderAdmissionObservation.observeAuthentication')(
+        function* observeAuthentication(admission) {
+          const context = yield* getRequestContext();
+          yield* validateAuthenticationContext(context, admission, configuration);
+          const installed = yield* resolver.resolve;
+          const providerRequest = yield* makeProviderRequest({ admission, configuration, context, installed });
+          const result = yield* client
+            .verify(installed, providerRequest, { requestCorrelation: providerRequest.operationRef })
+            .pipe(Effect.mapError(providerUnavailable));
+          return yield* observeAuthenticationResult(
+            result,
+            providerRequest,
+            admission,
+            context,
+            installed.declaration.admissionDeadlineMs,
+          );
+        },
+      ),
+      observeExternalSubject: Effect.fn('ProviderAdmissionObservation.observeExternalSubject')(
+        function* observeSubject(admission) {
+          const context = yield* getRequestContext();
+          yield* validateSubjectContext(context, admission, configuration);
+          const installed = yield* resolver.resolve;
+          const providerRequest = yield* makeProviderRequest({ admission, configuration, context, installed });
+          const result = yield* client
+            .verify(installed, providerRequest, { requestCorrelation: providerRequest.operationRef })
+            .pipe(Effect.mapError(providerUnavailable));
+          return yield* observeSubjectResult(
+            result,
+            providerRequest,
+            admission,
+            installed.declaration.admissionDeadlineMs,
+          );
+        },
+      ),
+    };
+  }),
+);

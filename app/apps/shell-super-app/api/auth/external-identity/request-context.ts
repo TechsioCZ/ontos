@@ -15,7 +15,7 @@ export const provideExternalIdentityHttpCorrelation = <Value, Failure, Requireme
 
 /**
  * Request scoped projection of the already authenticated Shell workload and
- * the binding that the handler is about to admit.  The Commerce adapter reads
+ * the binding that the handler is about to admit.  The provider admission observation reads
  * this context only for the duration of one provider call; it is never cached
  * or shared between requests.
  */

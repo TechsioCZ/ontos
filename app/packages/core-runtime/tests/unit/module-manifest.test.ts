@@ -341,3 +341,26 @@ it('deployment contract decoding is exact and versioned', () => {
   expect(() => decodeOntosModuleDeploymentContract({ ...contract, schemaVersion: '0' })).toThrow();
   expect(() => decodeOntosModuleDeploymentContract({ ...contract, schemaVersion: '999' })).toThrow();
 });
+
+it('accepts declared external identity providers and rejects malformed or duplicate namespaces', () => {
+  const provider = {
+    admissionDeadlineMs: 5000,
+    authenticationNamespaceId: 'ontos.example.portal.v1',
+    provider: 'example-provider',
+    verification: { operation: 'example-portal.verify.v1', path: '/portal/internal/verify' },
+  };
+  const withProviders = (externalIdentityProviders: readonly (typeof provider)[]) => ({
+    ...emptyManifestInput(),
+    publicSurface: { ...emptyManifestInput().publicSurface, externalIdentityProviders },
+  });
+  expect(defineOntosModuleManifest(withProviders([provider])).publicSurface.externalIdentityProviders).toEqual([
+    provider,
+  ]);
+  expect(() => defineOntosModuleManifest(withProviders([provider, provider]))).toThrow();
+  expect(() => defineOntosModuleManifest(withProviders([{ ...provider, admissionDeadlineMs: 0 }]))).toThrow();
+  expect(() =>
+    defineOntosModuleManifest(
+      withProviders([{ ...provider, verification: { ...provider.verification, path: 'portal/verify' } }]),
+    ),
+  ).toThrow();
+});

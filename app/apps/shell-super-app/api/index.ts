@@ -120,9 +120,9 @@ import { oauthConnectGroupLive } from './oauth-connections/connect-http.ts';
 import { McpTransportLive } from './mcp/transport.ts';
 import { OAuthServerTransportLive } from './auth/oauth-server/transport.ts';
 import {
-  CommerceExternalIdentityContextAccessLive,
-  CommerceExternalIdentityDeploymentLive,
-} from './auth/commerce-external-identity-deployment.ts';
+  ExternalIdentityProviderContextAccessLive,
+  ExternalIdentityProviderDeploymentLive,
+} from './auth/external-identity-provider-deployment.ts';
 import type { AuthenticationRuntimeError, SwitchTenantRuntimeError } from './auth/errors.ts';
 import {
   GatewayIssuer,
@@ -2503,10 +2503,10 @@ const apiRuntime = makeShellAuthenticationApiRuntime(
   tenantModuleStateServiceLive,
   undefined,
   true,
-  CommerceExternalIdentityContextAccessLive,
+  ExternalIdentityProviderContextAccessLive.pipe(Layer.provide(approvedModuleCatalogLive)),
   unavailableResourceGateways,
   defaultScopedModuleStateFactory,
-  CommerceExternalIdentityDeploymentLive,
+  ExternalIdentityProviderDeploymentLive.pipe(Layer.provide(approvedModuleCatalogLive)),
 );
 
 export default apiRuntime;
