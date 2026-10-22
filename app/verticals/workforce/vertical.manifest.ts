@@ -17,6 +17,7 @@ import { workforceWriteAllPermission } from './shared/permissions/workforce-writ
 import { employeeCollectionResourceDescriptor } from './shared/resources/employee-collection.ts';
 import { employeeResourceDescriptor } from './shared/resources/employee.ts';
 // </generated-module-manifest-imports>
+import { workforceMcpContribution } from './shared/mcp/contribution.ts';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -68,6 +69,7 @@ export const workforceManifest = defineOntosModuleManifest({
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: workforceMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>
