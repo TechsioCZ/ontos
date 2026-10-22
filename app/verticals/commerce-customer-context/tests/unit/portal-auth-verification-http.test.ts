@@ -602,17 +602,22 @@ it.effect('authorizes only a fresh, exact api_key workload grant', () =>
     );
     expect(Schema.is(CommercePortalAuthVerificationWorkloadUnavailable)(compositionUnavailable)).toBe(true);
 
-    const replay = yield* Effect.flip(
-      runWorkloadAuthorization(`Bearer ${fixture.token}`, request, workloadGrantConfiguration, {
+    // A durable replay of a still-valid assertion is accepted (fb57a2a48: one assertion per audience until
+    // it expires); the verifier's own tests reject a replay once the assertion has expired.
+    const validReplay = yield* runWorkloadAuthorization(
+      `Bearer ${fixture.token}`,
+      request,
+      workloadGrantConfiguration,
+      {
         consume: () =>
           Effect.fail(
             new GatewayAssertionReplayError({
               reason: 'replayed workload assertion',
             }),
           ),
-      }).pipe(Effect.provide(verifierLayer)),
-    );
-    expect(Schema.is(CommercePortalAuthVerificationWorkloadRejected)(replay)).toBe(true);
+      },
+    ).pipe(Effect.provide(verifierLayer));
+    expect(validReplay).toBeUndefined();
 
     const wrongAudience = yield* Effect.flip(
       runWorkloadAuthorization(`Bearer ${fixture.token}`, {
