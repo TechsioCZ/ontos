@@ -2021,6 +2021,19 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
     ),
 );
 
+/** Error tags and messages down the (often non-enumerable) `cause` chain, for operator logs. */
+const causeChain = (cause: unknown): string[] => {
+  const chain: string[] = [];
+  let current: unknown = cause;
+  while (current !== undefined && current !== null && chain.length < 6) {
+    const tag: unknown = Predicate.isObject(current) ? Reflect.get(current, '_tag') : undefined;
+    const message: unknown = Predicate.isObject(current) ? Reflect.get(current, 'message') : current;
+    chain.push(`${typeof tag === 'string' ? tag : 'Error'}: ${String(message).slice(0, 300)}`);
+    current = Predicate.isObject(current) ? Reflect.get(current, 'cause') : undefined;
+  }
+  return chain;
+};
+
 // "Připojené aplikace" management (lane mcp-connections-ui): session callers; grants via connection-grants services.
 const connectionsAdminFailure = (error: ConnectionsAdminError) => {
   switch (error._tag) {
@@ -2066,7 +2079,7 @@ const connectionsAdminFailure = (error: ConnectionsAdminError) => {
       );
     default:
       // Unavailability is retryable for the caller, but the operator needs the underlying cause.
-      return Effect.logWarning('Connections administration unavailable', error.cause).pipe(
+      return Effect.logWarning('Connections administration unavailable', causeChain(error.cause)).pipe(
         Effect.andThen(failIdentityProblem(shellCapabilityUnavailableProblem())),
       );
   }

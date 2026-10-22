@@ -100,7 +100,8 @@ const relationshipsOf = (rpc: SpiceDbRpc, principalId: string) =>
             ),
           ),
         ),
-    { concurrency: 5 },
+    // Workers allow six concurrent outbound connections per request and callers fan out over several principals.
+    { concurrency: 2 },
   ).pipe(
     Effect.map((groups) => groups.flat()),
     Effect.mapError(unavailable),

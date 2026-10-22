@@ -106,7 +106,7 @@ const companyCatalog = (tenantId: string, legalEntityId: string, grants: DemoAcc
       roles,
       (role) =>
         grants.relationshipsOf(role.templatePrincipalId).pipe(Effect.map((relationships) => ({ relationships, role }))),
-      { concurrency: 3 },
+      { concurrency: 1 },
     ).pipe(Effect.mapError(unavailable));
     const union = templates.flatMap(({ relationships }) => relationships);
     const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(unavailable));
