@@ -897,7 +897,8 @@ it.live(
     expect(yield* Effect.tryPromise(() => activeModulesResponse.json())).toEqual({
       compositionRevision: testRevision,
       deniedAppIds: [],
-      gatewayAudiences: [],
+      gatewayAudiences: ['inventory-stock'],
+      homeComponents: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -1425,6 +1426,8 @@ it.live(
     // Ordered child-before-parent within the owned fixture rows.
     const cleanup = Effect.fnUntraced(function* runIntegration7() {
       yield* coreDatabase.delete(dataAccessEvents).where(inArray(dataAccessEvents.tenantId, fixtureTenants));
+      // The switch to a disabled principal records an authn.rejected audit event bound to its auth binding.
+      yield* coreDatabase.delete(auditEvents).where(inArray(auditEvents.tenantId, fixtureTenants));
       const existingUsers = yield* authDatabase.select({ id: user.id }).from(user).where(eq(user.email, multiEmail));
       const existingUserIds = existingUsers.map(({ id }) => id);
       if (existingUserIds.length > 0) {
@@ -1632,7 +1635,8 @@ it.live(
     expect(yield* Effect.tryPromise(() => firstModules.json())).toEqual({
       compositionRevision: testRevision,
       deniedAppIds: [],
-      gatewayAudiences: [],
+      gatewayAudiences: ['inventory-stock', 'testing-second'],
+      homeComponents: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -1774,7 +1778,8 @@ it.live(
     expect(yield* Effect.tryPromise(() => secondModules.json())).toEqual({
       compositionRevision: testRevision,
       deniedAppIds: [],
-      gatewayAudiences: [],
+      gatewayAudiences: ['inventory-stock', 'testing-second'],
+      homeComponents: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -1909,6 +1914,7 @@ it.live(
     // resolver can still prove that an existing selected session rejects a genuinely missing row.
     yield* purgeFixtureRows([
       coreDatabase.delete(dataAccessEvents).where(eq(dataAccessEvents.tenantId, secondTenantId)),
+      coreDatabase.delete(auditEvents).where(eq(auditEvents.tenantId, secondTenantId)),
       coreDatabase.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, secondTenantId)),
     ]);
     yield* assertSessionForbidden(
