@@ -8,7 +8,9 @@ import { Config, Duration, Effect, FileSystem, Layer, Redacted, Schema } from 'e
 import { Command, Flag } from 'effect/unstable/cli';
 import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
+import { moduleReleaseServiceBinding } from '../packages/core-runtime/src/http/module-release-identity.ts';
 import { OntosShellRuntimeContractSchema } from '../packages/core-runtime/src/modules/application-composition.ts';
+import type { ApplicationCompositionModule } from '../packages/core-runtime/src/modules/application-composition.ts';
 import {
   ApplicationCompositionAuthorityAdminDatabaseLive,
   withApplicationCompositionPublicationLock,
@@ -221,6 +223,18 @@ export const deployImmutableShellRelease = Effect.fn('ImmutableShellRelease.depl
   withApplicationCompositionPublicationLock,
 );
 
+/**
+ * The ingress binds every Worker release the published composition approves, so the Shell reaches each
+ * release on its own machine instead of over its public origin. Core's `moduleReleaseFetch` selects a
+ * binding only by its exact release, so a release published after this deploy keeps its HTTPS origin.
+ */
+export const shellReleaseServiceBindings = (modules: readonly Pick<ApplicationCompositionModule, 'backend'>[]) =>
+  modules.flatMap(({ backend }) =>
+    backend.transport === 'cloudflare-worker'
+      ? [{ binding: moduleReleaseServiceBinding(backend.workerName), service: backend.workerName }]
+      : [],
+  );
+
 /** The one public Shell ingress is deployed separately from its retained frontend artifact release. */
 export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingress')(
   function* deployShellIngress(input: {
@@ -276,7 +290,7 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
     yield* verifyRetainedShellAssetBytes(receipt.plan, retainedAssets);
     yield* requirePlannedSourceRevision(input.appDirectory, receipt.plan, SOURCE_MISMATCH);
     yield* readVerifiedReleaseFiles(output, receipt.plan, [], SHELL_RELEASE_ENVELOPE_KIND);
-    yield* assertPublishedShellIngressSnapshot({
+    const approved = yield* assertPublishedShellIngressSnapshot({
       deployment: { appId: receipt.plan.appId, buildMarker: receipt.plan.buildMarker },
       federationManifest: receipt.artifacts.federationManifest,
       runtimeContract: receipt.artifacts.runtimeContract,
@@ -287,11 +301,15 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
       prefix: '.wrangler-immutable-shell-ingress-',
       suffix: '.json',
     });
-    const nativeConfig = yield* Schema.decodeUnknownEffect(
+    const { services: nativeServices = [], ...nativeConfig } = yield* Schema.decodeUnknownEffect(
       Schema.fromJsonString(
-        Schema.StructWithRest(Schema.Struct({ assets: Schema.Record(Schema.String, Schema.Json) }), [
-          Schema.Record(Schema.String, Schema.Json),
-        ]),
+        Schema.StructWithRest(
+          Schema.Struct({
+            assets: Schema.Record(Schema.String, Schema.Json),
+            services: Schema.optionalKey(Schema.Array(Schema.Record(Schema.String, Schema.Json))),
+          }),
+          [Schema.Record(Schema.String, Schema.Json)],
+        ),
       ),
     )(yield* fileSystem.readFileString(path.join(output, 'wrangler.json')));
     yield* fileSystem.writeFileString(
@@ -300,6 +318,7 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
         ...nativeConfig,
         assets: { ...nativeConfig.assets, directory: ingressAssets },
         main: path.resolve(output, config.main),
+        services: [...nativeServices, ...shellReleaseServiceBindings(approved.composition.modules)],
       }),
     );
     yield* readVerifiedReleaseFiles(output, receipt.plan, [ingressAssets, ingressConfig], SHELL_RELEASE_ENVELOPE_KIND);

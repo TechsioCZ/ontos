@@ -352,7 +352,7 @@ export const assertPublishedShellIngressSnapshot = Effect.fn('ActiveApplicationC
     ) {
       return yield* providerFailure('Shell ingress receipt does not match the current approved release')();
     }
-    return yield* Effect.void;
+    return approved;
   },
 );
 

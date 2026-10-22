@@ -28,6 +28,8 @@ import { expect, it } from 'effect-rstest';
 
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
+import { moduleReleaseWorkerName } from '../../packages/core-runtime/src/http/module-release-identity.ts';
+import { ApplicationCompositionCloudflareWorkerBackendSchema } from '../../packages/core-runtime/src/modules/application-composition-backend.ts';
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
@@ -46,6 +48,7 @@ import {
 import {
   deployImmutableShellIngress,
   deployImmutableShellRelease,
+  shellReleaseServiceBindings,
   validateImmutableShellReleaseArtifacts,
 } from '../immutable-shell-release.mts';
 import type { OpsCommand } from '../ops/ops-shell.mts';
@@ -594,6 +597,9 @@ const deploymentLayer = (
                     main: Schema.optional(Schema.String),
                     name: Schema.String,
                     preview_urls: Schema.optional(Schema.Boolean),
+                    services: Schema.optional(
+                      Schema.Array(Schema.Struct({ binding: Schema.String, service: Schema.String })),
+                    ),
                     workers_dev: Schema.optional(Schema.Boolean),
                   }),
                 ),
@@ -609,6 +615,8 @@ const deploymentLayer = (
                 const resolvedEntrypoint = nodePath.resolve(nodePath.dirname(configPath), config.main ?? '');
                 expect(config.main).toBe(expectedEntrypoint);
                 expect(resolvedEntrypoint).toBe(expectedEntrypoint);
+                // The fixture's published composition approves no module release, so nothing is bound.
+                expect(config.services).toEqual([]);
                 expect(yield* fileSystem.readFileString(resolvedEntrypoint)).toBe(
                   'export default { fetch() { return new Response("Shell"); } };',
                 );
@@ -1183,6 +1191,32 @@ it.effect(
         expect(events.filter((event) => event.includes(PUBLICATION_LOCK))).toHaveLength(2);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const fixtureWorkerBackend = (workerName: string) => ({
+  baseUrl: `https://${workerName}.fixture.workers.dev/`,
+  transport: 'cloudflare-worker' as const,
+  versionId: Schema.decodeSync(ApplicationCompositionCloudflareWorkerBackendSchema.fields.versionId)(
+    '123e4567-e89b-42d3-a456-426614174000',
+  ),
+  workerName,
+});
+
+it.effect('binds the ingress to exactly the Worker releases of the published composition', () =>
+  Effect.gen(function* bindsPublishedWorkerReleases() {
+    const catalog = yield* moduleReleaseWorkerName('catalog', BUILD_MARKER);
+    const pricing = yield* moduleReleaseWorkerName('pricing', BUILD_MARKER);
+    expect(
+      shellReleaseServiceBindings([
+        { backend: fixtureWorkerBackend(catalog) },
+        { backend: { baseUrl: 'http://127.0.0.1:3041/', transport: 'node-http' } },
+        { backend: fixtureWorkerBackend(pricing) },
+      ]),
+    ).toEqual([
+      { binding: `ONTOS_RELEASE_${catalog.slice('ontos-'.length)}`, service: catalog },
+      { binding: `ONTOS_RELEASE_${pricing.slice('ontos-'.length)}`, service: pricing },
+    ]);
+  }),
 );
 
 it.effect('publishes the exact Shell receipt identity and artifact pins and refuses an absent approved snapshot', () =>

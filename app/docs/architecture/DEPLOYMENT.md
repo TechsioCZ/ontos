@@ -421,17 +421,18 @@ Each Worker's runtime configuration is set once, outside CI, before its first de
 (`wrangler secret put`, for example `SPICEDB_PRESHARED_KEY` and `BETTER_AUTH_SECRET`); the
 Hyperdrive config and Workers VPC service the IDs above name are account objects.
 
-Inside the account the Workers call each other through service bindings where the topology allows
-it: a binding call goes straight to the target Worker, without a public round trip or a routable
-hostname. The Shell discovers each UI vertical's module
-contract through its `VERTICAL_<UNIT>_WORKER` binding (the reference topology's
-`workerDispatch.serviceBinding`), and Commerce calls Price Group Catalog through
-`VERTICAL_PRICE_GROUP_CATALOG_WORKER` (Core's `#unit-service-fetch`). On Node both keep their URLs.
-Calls a binding cannot carry go by URL: gateway credentials come from the Shell, which binds every
-vertical, so a vertical binding the Shell would be a deploy cycle no first seed can satisfy. Those
-URLs must be the Shell's and verticals' routable custom domains. Every OntOS Worker sets
-`global_fetch_strictly_public`, the flag under which Cloudflare lets a Worker fetch another Worker
-on the same zone.
+Inside the account the Shell reaches module releases through service bindings: a binding call runs
+the target Worker on the caller's machine, without a public round trip. `immutable-shell-release.mts
+ingress-deploy` reads the published Application Composition and binds every Worker release it
+approves as `ONTOS_RELEASE_<hash>` (the release's `workerName` without `ontos-`). Core's
+`moduleReleaseFetch` (`#unit-service-fetch`) forwards a module API request through the binding of
+that exact release, and to the release's HTTPS `backend.baseUrl` when the ingress has none, for
+example for a release published after the last ingress deploy. On Node every call keeps its URL. The
+AKROS storefront binds the Shell ingress as `ONTOS_SHELL` (`ONTOS_SHELL_WORKER_NAME` when its
+Cloudflare config is generated). Other calls go by URL: owner-to-owner reads target the referenced
+release's `backend.baseUrl`, and verticals reach the Shell at its custom domain. Every OntOS Worker
+sets `global_fetch_strictly_public`, the flag under which Cloudflare lets a Worker fetch another
+Worker on the same zone.
 
 The gate workflow builds the delivery units in parallel shards: each `node-artifact-build` or
 `cloudflare-artifact-build` matrix job builds a few units for its target (`node` with `build`,
@@ -625,7 +626,7 @@ applications:
   key. On every vertical it is `/mf-manifest.json`, `/remoteEntry.js`, `/static/*` and `/locales/*`,
   because the browser loads federated remotes cross-origin without credentials. Cloudflare applies
   the more specific path application before the hostname one. Pages and BFF calls still need a login;
-  the browser reaches the BFFs through the Shell, which calls verticals over service bindings.
+  the browser reaches the BFFs through the Shell, which calls module releases over service bindings.
 - `ontos-stage-contracts` bypasses Access for the build-time contracts the Application Composition
   publisher reads from CI: the Shell's `/.well-known/ontos-shell-runtime.json` and `/mf-manifest.json`,
   and every vertical's `/.well-known/ontos-module-manifest.json`. They hold build metadata, never data.

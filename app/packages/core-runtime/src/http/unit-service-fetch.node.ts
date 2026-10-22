@@ -8,16 +8,11 @@ import { ApplicationCompositionBackendSchema } from '../modules/application-comp
 import type { ApplicationCompositionModule } from '../modules/application-composition.ts';
 import { moduleReleaseWorkerName } from './module-release-identity.ts';
 import { ModuleReleaseTransportError } from './module-release-transport-error.ts';
-import type { ModuleReleaseFetch, UnitRoutedFetch, UnitServiceFetch } from './unit-service-fetch.ts';
+import type { ModuleReleaseFetch } from './unit-service-fetch.ts';
 
 // Node exposes the same native streams through two incompatible declaration files.
 const NodeRequestBodySchema = Schema.instanceOf(NodeReadableStream<Uint8Array>);
 const WebResponseBodySchema = Schema.instanceOf(globalThis.ReadableStream<Uint8Array>);
-
-/** Node reaches every unit at its configured URL. */
-export const unitServiceFetch: UnitServiceFetch = () => globalThis.fetch;
-
-export const unitRoutedFetch: UnitRoutedFetch = () => globalThis.fetch;
 
 /** Node sends bytes to an independently executing, explicitly approved owner release. */
 export const moduleReleaseFetch: ModuleReleaseFetch = Effect.fn('ModuleRelease.fetchNode')(function* fetchNodeRelease(
