@@ -7,6 +7,7 @@ import type {
   PrincipalResolutionError,
   ReadCoreError,
   TenantModuleStateService,
+  TrustedPrincipalContext,
 } from '@app/core-runtime';
 import {
   makeActionRuntimeLive,
@@ -1139,12 +1140,44 @@ const captureShellRelease = Effect.fn('Shell.captureRelease')(function* captureS
 
 const PEOPLE_ADMINISTRATION = 'people_administration';
 
+/** Signing is local CPU work; a few in flight keep one document's assertions from monopolising the isolate. */
+const DOCUMENT_GATEWAY_SIGNING_CONCURRENCY = 8;
+
+/**
+ * One assertion per audience for an authenticated session principal, from the same issuer as `issueGatewayContext`
+ * (same audience binding and lifetime). An audience the release does not admit is left out instead of failing the
+ * others; the browser asks for it alone and gets the single 400.
+ */
+const issueDocumentGatewayAssertions = Effect.fn('ShellGateway.issueDocumentAssertions')(
+  function* issueDocumentGatewayAssertionsEffect(
+    principal: TrustedPrincipalContext,
+    compositionRevision: string,
+    audiences: readonly string[],
+  ) {
+    const issued = yield* Effect.forEach(
+      audiences,
+      (audience) =>
+        issueGatewayContextAssertion({ audience, compositionRevision, principal }).pipe(
+          Effect.map((assertion) => Option.some({ ...assertion, audience })),
+          Effect.catchIf(
+            (error) => error.code === 'gateway_audience_invalid',
+            () => Effect.succeedNone,
+          ),
+        ),
+      { concurrency: DOCUMENT_GATEWAY_SIGNING_CONCURRENCY },
+    );
+    return issued.flatMap((assertion) => (Option.isSome(assertion) ? [assertion.value] : []));
+  },
+);
+
 /**
  * Server rendering of a Shell document reads everything it needs here, from one resolution of the session's context:
  * reading session, legal entities, tenants, composition and the people capability as separate requests resolved the
  * same context (Better Auth session plus legal-entity checks) five times per document, each in its own invocation on
- * the document's isolate. Each part keeps its own outcome; the browser keeps the separate, cached endpoints. It issues
- * no gateway assertions: those come only from the classified issuer endpoints.
+ * the document's isolate. Each part keeps its own outcome; the browser keeps the separate, cached endpoints.
+ * It also signs the gateway assertions of the composition's audiences for the session principal (it is classified as
+ * `shell.document-context.issue.session`): a separate batch call had to wait for this answer and then resolved the
+ * session a second time. When signing fails the document goes without them and the browser asks the batch issuer.
  */
 const documentContextHandler = Effect.fn('shell.composition.documentContext')(function* documentContextHandlerEffect(
   request: RequestWithHeaders,
@@ -1233,27 +1266,42 @@ const documentContextHandler = Effect.fn('shell.composition.documentContext')(fu
   if (documentComposition.state !== 'available') {
     return base;
   }
+  const assertions = yield* Effect.forkChild(
+    issueDocumentGatewayAssertions(
+      context.principal,
+      documentComposition.compositionRevision,
+      documentComposition.gatewayAudiences,
+    ).pipe(
+      Effect.tapError((error) => logGatewayIssuerFailure('session', request, error)),
+      Effect.option,
+    ),
+    { startImmediately: true },
+  );
   const canManagePeople = documentComposition.navigation.some(
     ({ requiresCapability }) => requiresCapability === PEOPLE_ADMINISTRATION,
   )
     ? yield* Fiber.join(capability)
     : false;
-  return { ...base, canManagePeople };
+  return Option.match(yield* Fiber.join(assertions), {
+    onNone: () => ({ ...base, canManagePeople }),
+    onSome: (gatewayAssertions) => ({ ...base, canManagePeople, gatewayAssertions }),
+  });
 });
+
+// Session, legal-entity and composition checks of one document share their SpiceDB decisions.
+const documentContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentContext', (handlers) =>
+  handlers.handle('documentContext', ({ payload, request }) =>
+    withRequestPermissionDecisions(documentContextHandler(request, payload.compositionRevision)).pipe(
+      Effect.flatMap((response) => decodeResponse(ShellDocumentContextSchema, response, authenticationInternalProblem)),
+      recoverUnexpectedDefect(request, 'Unexpected Shell document context defect', () =>
+        Effect.fail(authenticationInternalProblem()),
+      ),
+    ),
+  ),
+);
 
 const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'composition', (handlers) =>
   handlers
-    // Session, legal-entity and composition checks of one document share their SpiceDB decisions.
-    .handle('documentContext', ({ query, request }) =>
-      withRequestPermissionDecisions(documentContextHandler(request, query.compositionRevision)).pipe(
-        Effect.flatMap((response) =>
-          decodeResponse(ShellDocumentContextSchema, response, authenticationInternalProblem),
-        ),
-        recoverUnexpectedDefect(request, 'Unexpected Shell document context defect', () =>
-          Effect.fail(authenticationInternalProblem()),
-        ),
-      ),
-    )
     .handle('shellComposition', ({ query, request }) =>
       Effect.gen(function* shellCompositionHandler() {
         const session = yield* requireShellSession(request.headers);
@@ -2000,11 +2048,8 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
     ),
 );
 
-/** Signing is local CPU work; a few in flight keep one batch from monopolising the isolate. */
-const DOCUMENT_GATEWAY_SIGNING_CONCURRENCY = 8;
-// One session issuance for every module audience of a Shell document: one release check and one session read, then
-// the same issuer per audience as `issueGatewayContext` (same audience binding and lifetime). An audience the release
-// does not admit is left out instead of failing the others; the browser asks for it alone and gets the single 400.
+// One session issuance for every module audience of a Shell document a browser navigation needs: one release check and
+// one session read, then the document assertions of `issueDocumentGatewayAssertions`.
 const documentGatewayGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentGateway', (handlers) =>
   handlers.handle('issueDocumentGatewayContexts', ({ payload, request }) =>
     Effect.gen(function* issueDocumentGatewayContextsHandler() {
@@ -2018,23 +2063,15 @@ const documentGatewayGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'd
       if (sessionResult.state !== 'authenticated') {
         return yield* failGatewayProblem(gatewayAuthenticationRequiredProblem());
       }
-      const { principal } = sessionResult;
-      const issued = yield* Effect.forEach(
+      const assertions = yield* issueDocumentGatewayAssertions(
+        sessionResult.principal,
+        payload.compositionRevision,
         payload.audiences,
-        (audience) =>
-          issueGatewayContextAssertion({ audience, compositionRevision: payload.compositionRevision, principal }).pipe(
-            Effect.map((assertion) => Option.some({ ...assertion, audience })),
-            Effect.catchIf(
-              (error) => error.code === 'gateway_audience_invalid',
-              () => Effect.succeedNone,
-            ),
-          ),
-        { concurrency: DOCUMENT_GATEWAY_SIGNING_CONCURRENCY },
       ).pipe(
         Effect.tapError((error) => logGatewayIssuerFailure('session', request, error)),
         Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)),
       );
-      return { assertions: issued.flatMap((assertion) => (Option.isSome(assertion) ? [assertion.value] : [])) };
+      return { assertions };
     }).pipe(
       recoverUnexpectedDefect(request, 'Unexpected Shell document gateway assertions defect', () =>
         failGatewayProblem(gatewayInternalProblem()),
@@ -2639,6 +2676,7 @@ export const makeShellAuthenticationApiRuntime = (
     tenantGroupLive,
     legalEntityGroupLive,
     compositionGroupLive,
+    documentContextGroupLive,
     resourcesGroupLive,
     gatewayContextGroupLive,
     documentGatewayGroupLive,

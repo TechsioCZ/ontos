@@ -1,5 +1,4 @@
-import { ConfigProvider, Effect, Fiber } from 'effect';
-import { TestClock } from 'effect/testing';
+import { ConfigProvider, Effect } from 'effect';
 import { beforeEach, expect, rstest, it } from 'effect-rstest';
 
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
@@ -677,41 +676,34 @@ const gatewayAssertion = {
   token: 'assertion-token',
 };
 
+const audienceComposition = () => availableComposition({ gatewayAudiences: ['future-generated'] });
+
 const withGatewayAudiences = () =>
+  documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({ composition: audienceComposition() })));
+
+const withSignedGatewayAssertions = () =>
   documentContextMock.mockReturnValue(
-    Effect.succeed(
-      documentContextOf({ composition: availableComposition({ gatewayAudiences: ['future-generated'] }) }),
-    ),
+    Effect.succeed(documentContextOf({ composition: audienceComposition(), gatewayAssertions: [gatewayAssertion] })),
   );
 
-it.effect('server rendering embeds the document gateway assertions from one batch after the context', () =>
+it.effect('server rendering embeds the gateway assertions the document context signed, with no second call', () =>
   Effect.gen(function* serverEmbedsAssertions() {
-    withGatewayAudiences();
-    issueDocumentGatewayContextsMock.mockReturnValue(Effect.succeed({ assertions: [gatewayAssertion] }));
+    withSignedGatewayAssertions();
     expect(yield* serverModel('https://shell.example.test/en/ukoly')).toMatchObject({
       gatewayAssertions: [gatewayAssertion],
       gatewayAudiences: ['future-generated'],
     });
-    expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(1);
-    expect(issueDocumentGatewayContextsMock.mock.calls[0]?.[0]).toEqual({
-      audiences: ['future-generated'],
-      compositionRevision,
-    });
+    expect(documentContextMock).toHaveBeenCalledTimes(1);
+    expect(issueDocumentGatewayContextsMock).not.toHaveBeenCalled();
   }),
 );
 
-it.effect(
-  'server rendering does not hold the document for a slow or failed batch; the browser obtains it instead',
-  () =>
-    Effect.gen(function* serverSkipsSlowAssertions() {
-      withGatewayAudiences();
-      issueDocumentGatewayContextsMock.mockReturnValueOnce(Effect.never);
-      const loading = yield* serverModel('https://shell.example.test/en/ukoly').pipe(Effect.forkChild);
-      yield* TestClock.adjust('1 second');
-      const slow = yield* Fiber.join(loading);
-      expect(slow).toMatchObject({ gatewayAudiences: ['future-generated'], state: 'authenticated' });
-      expect(slow).not.toHaveProperty('gatewayAssertions');
-      issueDocumentGatewayContextsMock.mockReturnValueOnce(Effect.fail({ _tag: 'GatewayUnavailableProblem' }));
-      expect(yield* serverModel('https://shell.example.test/en/ukoly')).not.toHaveProperty('gatewayAssertions');
-    }),
+it.effect('server rendering without signed assertions leaves them to the browser batch', () =>
+  Effect.gen(function* serverWithoutAssertions() {
+    withGatewayAudiences();
+    const model = yield* serverModel('https://shell.example.test/en/ukoly');
+    expect(model).toMatchObject({ gatewayAudiences: ['future-generated'], state: 'authenticated' });
+    expect(model).not.toHaveProperty('gatewayAssertions');
+    expect(issueDocumentGatewayContextsMock).not.toHaveBeenCalled();
+  }),
 );

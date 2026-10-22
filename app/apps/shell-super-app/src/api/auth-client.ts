@@ -240,7 +240,7 @@ export const documentContext = (
   payload: ShellCompositionRequest,
   options: ShellAuthenticationClientOptions = {},
 ): ShellAuthenticationClientEffect<ShellDocumentContext> =>
-  invokeShellAuthenticationClient(options, (client) => client.composition.documentContext({ query: payload }));
+  invokeShellAuthenticationClient(options, (client) => client.documentContext.documentContext({ payload }));
 
 export const resolveModuleTarget = (
   payload: ResolveModuleTargetPayload,

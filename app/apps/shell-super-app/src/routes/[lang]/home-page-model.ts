@@ -19,7 +19,6 @@ import {
   currentSession,
   documentContext,
   executeLegalEntityDetail,
-  issueDocumentGatewayContexts,
   shellComposition,
 } from '../../api/auth-client.ts';
 import type { DocumentGatewayAssertion } from '../../../shared/document-gateway-api.ts';
@@ -357,32 +356,11 @@ const legalEntitiesWithoutSelection = (session: Exclude<CurrentSession, { readon
 const unavailableLegalEntities = { items: [] as const, state: 'unavailable' as const };
 
 /**
- * How long server rendering waits for the document's gateway assertions once its context has answered; when the issuer
- * is slower or fails, the document goes without them and the browser obtains them in one batch right after hydration
- * (the Shell issuer reuses what it already signed).
- */
-const SERVER_ASSERTIONS_GRACE = '750 millis';
-
-/** The document's gateway assertions from the classified batch issuer, one per module audience, when they come in time. */
-const serverDocumentAssertions = (
-  compositionRevision: string,
-  audiences: readonly string[],
-  options: ShellAuthenticationClientOptions,
-): Effect.Effect<Option.Option<readonly DocumentGatewayAssertion[]>> =>
-  audiences.length === 0
-    ? Effect.succeedNone
-    : issueDocumentGatewayContexts({ audiences, compositionRevision }, options).pipe(
-        Effect.map(({ assertions }) => assertions),
-        Effect.timeout(SERVER_ASSERTIONS_GRACE),
-        Effect.option,
-      );
-
-/**
  * Server rendering reads the whole document context in ONE request: the BFF resolves the session's context once and
- * answers session, legal entities, tenants, composition and the people-administration hint together; only the
- * document's gateway assertions follow, from their own issuer, because they need the composition's audiences.
- * Separate reads resolved that context five times, each in its own invocation on the document's isolate (stage: 4-5 s
- * sequential, then 2.6 s concurrent with ~1 s of their CPU queued on the document's thread).
+ * answers session, legal entities, tenants, composition, the people-administration hint and the gateway assertions of
+ * the composition's audiences together. Separate reads resolved that context five times, each in its own invocation
+ * on the document's isolate (stage: 4-5 s sequential, then 2.6 s concurrent with ~1 s of their CPU queued on the
+ * document's thread), and a separate assertion batch waited for the composition before resolving the session again.
  * The Home component is a browser-loaded remote, so the server never resolves it: the model carries its candidates
  * and the browser resolves them after hydration.
  */
@@ -443,15 +421,8 @@ const loadServerHomePageModel = Effect.fn('HomePageModel.loadServerHomePageModel
       state: 'authenticated',
       tenants,
     };
-    const assertions = yield* serverDocumentAssertions(
-      composition.compositionRevision,
-      composition.gatewayAudiences,
-      options,
-    );
-    const withAssertions = Option.match(assertions, {
-      onNone: () => model,
-      onSome: (gatewayAssertions) => ({ ...model, gatewayAssertions }),
-    });
+    const withAssertions =
+      context.gatewayAssertions === undefined ? model : { ...model, gatewayAssertions: context.gatewayAssertions };
     return homeCandidates === undefined ? withAssertions : { ...withAssertions, homeCandidates };
   },
 );
