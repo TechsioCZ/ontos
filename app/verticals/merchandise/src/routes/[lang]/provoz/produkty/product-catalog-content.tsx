@@ -8,26 +8,22 @@ import { formatDateTime, SectionCard, surfaceTileClassName } from '@app/admin-ui
 import { DateTime } from 'effect';
 import { useMemo, useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
-import type { CatalogCategory } from '../../../../../shared/domain/merchandise-model.ts';
+import type { CategoryNode } from '../../../../../shared/domain/merchandise-model.ts';
 import { runCommand } from './products-api.ts';
 import { useCommandFailure } from './product-forms.tsx';
 import { CATEGORY_RESULT_LIMIT, searchCategories } from './category-search.ts';
 
 export interface CatalogContentPanelProps {
   readonly canWrite: boolean;
-  readonly categories: readonly CatalogCategory[];
+  readonly categories: readonly CategoryNode[];
   readonly onCommitted: (message: string) => void;
   readonly onReload: () => void;
   readonly product: ProductRecord;
   readonly revision: number;
 }
 
-/** Walks parentId up to the root and joins the names root-first. A missing or unknown category reads as a dash. */
-export const categoryTrail = (categories: readonly CatalogCategory[], id: string | undefined): string => {
-  if (id === undefined) {
-    return '—';
-  }
-  const byId = new Map(categories.map((category) => [category.id, category] as const));
+/** Walks parentId up to the root and joins the names root-first. */
+const trailOf = (byId: ReadonlyMap<string, CategoryNode>, id: string): string => {
   let current = byId.get(id);
   if (current === undefined) {
     return '—';
@@ -38,6 +34,12 @@ export const categoryTrail = (categories: readonly CatalogCategory[], id: string
     current = current.parentId === null ? undefined : byId.get(current.parentId);
   }
   return names.join(' › ');
+};
+
+/** Path label of every category, keyed by id. */
+export const categoryTrails = (categories: readonly CategoryNode[]): ReadonlyMap<string, string> => {
+  const byId = new Map(categories.map((category) => [category.id, category] as const));
+  return new Map(categories.map((category) => [category.id, trailOf(byId, category.id)] as const));
 };
 
 interface ParameterDraft {
@@ -84,17 +86,21 @@ export const CatalogContentPanel = ({
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
-  const trails = useMemo(
-    () => new Map(categories.map((category) => [category.id, categoryTrail(categories, category.id)] as const)),
-    [categories],
+  const trails = useMemo(() => categoryTrails(categories), [categories]);
+  const found = useMemo(
+    () => searchCategories(categories, trails, categorySearch),
+    [categories, trails, categorySearch],
   );
-  const found = useMemo(() => searchCategories(categories, trails, categorySearch), [categories, trails, categorySearch]);
   const matches = found.slice(0, CATEGORY_RESULT_LIMIT);
 
-  const parametersInvalid = parameters.some((parameter) => parameter.label.trim() === '' || parameter.value.trim() === '');
+  const parametersInvalid = parameters.some(
+    (parameter) => parameter.label.trim() === '' || parameter.value.trim() === '',
+  );
 
   const patchParameter = (key: number, next: Partial<ParameterDraft>) =>
-    setParameters((current) => current.map((parameter) => (parameter.key === key ? { ...parameter, ...next } : parameter)));
+    setParameters((current) =>
+      current.map((parameter) => (parameter.key === key ? { ...parameter, ...next } : parameter)),
+    );
 
   const save = () => {
     if (busy || parametersInvalid) {
@@ -141,7 +147,8 @@ export const CatalogContentPanel = ({
         ) : (
           <>
             <p className="text-sm">
-              Aktuální kategorie: <strong>{categoryTrail(categories, categoryId)}</strong>
+              Aktuální kategorie:{' '}
+              <strong>{(categoryId === undefined ? undefined : trails.get(categoryId)) ?? '—'}</strong>
             </p>
             {canWrite ? (
               <FormInput

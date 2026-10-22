@@ -3,7 +3,11 @@ import { expect, it } from 'effect-rstest';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
-import { evolveMerchandiseState, toProductRecord } from '../../src/services/persistence.service.ts';
+import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
+import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
+
+const recordOf = (product: Parameters<typeof toProductRecord>[0], movements: Parameters<typeof stockLevelsOf>[0]) =>
+  toProductRecord(product, stockLevelsOf(movements, product.id));
 
 const actor = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };
 const at = '2026-10-19T08:00:00.000Z';
@@ -61,7 +65,7 @@ const order = (quantity: number, clientRequestId: string) => ({
   lines: [{ productId: 'product-1', variantId: 'item-1', quantity, expectedUnitPriceMinor: 7 }],
 });
 const stockOf = (current: MerchandiseState) =>
-  toProductRecord(current.products[0]!, current.movements).variantRecords?.[0]?.stockOnHand;
+  recordOf(current.products[0]!, current.movements).variantRecords?.[0]?.stockOnHand;
 
 it.effect('placed storefront order decrements variant stock with one ORDER movement', () =>
   Effect.gen(function* () {

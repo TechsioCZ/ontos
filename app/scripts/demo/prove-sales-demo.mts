@@ -44,6 +44,9 @@ const Revision = Schema.Struct({ revision: Schema.Number });
 const ErrorCode = Schema.Struct({ _tag: Schema.optionalKey(Schema.String), code: Schema.optionalKey(Schema.String) });
 const UnchangedResult = Schema.Struct({ changed: Schema.Literal(false) });
 const EmptyRead = Schema.Struct({});
+const MerchandiseRead = Schema.Struct({
+  view: Schema.Struct({ limit: Schema.Number, ordersLimit: Schema.Number, summary: Schema.Boolean }),
+});
 const InvoiceReference = Schema.Struct({
   moduleId: Schema.Literal('finance.billing'),
   resourceId: Schema.toEncoded(Schema.String.pipe(Schema.brand('DemoProofResourceId'))),
@@ -195,7 +198,11 @@ export const makePrincipalClient = (shellUrl: string, credential: Redacted.Redac
           ...headers,
         }).pipe(Effect.flatMap(outcome));
       });
-    const read = (audience: string) => call(audience, '/reads/records', EmptyRead, {});
+    // Merchandise reads are bounded: list rows (summary) for the whole sales-demo catalog and its orders.
+    const read = (audience: string) =>
+      audience === 'merchandise'
+        ? call(audience, '/reads/records', MerchandiseRead, { view: { limit: 250, ordersLimit: 250, summary: true } })
+        : call(audience, '/reads/records', EmptyRead, {});
     const records = <S extends Schema.Top>(audience: string, schema: S) =>
       Effect.gen(function* readRecords() {
         const result = yield* read(audience);

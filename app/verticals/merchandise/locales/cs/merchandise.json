@@ -71,7 +71,6 @@
           "failed": "Objednávku se nepodařilo vytvořit. Zkuste to znovu.",
           "lines": "Položky",
           "noMatch": "Žádný produkt neodpovídá.",
-          "noProducts": "Žádné produkty k výběru.",
           "priceNote": "Ceny se při vytvoření objednávky zafixují.",
           "product": "Produkt",
           "productMeta": "Cena {{price}}, skladem {{stock}} ks",
@@ -82,7 +81,13 @@
           "title": "Nová objednávka",
           "customerPlaceholder": "Hledat zákazníka…",
           "customersFailed": "Seznam zákazníků se nepodařilo načíst.",
-          "noCustomerMatch": "Žádný zákazník neodpovídá."
+          "noCustomerMatch": "Žádný zákazník neodpovídá.",
+          "productsFailed": "Produkty se nepodařilo načíst.",
+          "variant": "Varianta",
+          "variantPlaceholder": "Vyberte variantu",
+          "errorVariant": "Vyberte variantu produktu.",
+          "productLoading": "Načítám produkt…",
+          "productFailed": "Produkt se nepodařilo načíst. Vyberte ho znovu."
         },
         "description": "Objednávky zákazníků se snímkem cen.",
         "detail": {
@@ -101,7 +106,11 @@
           "source": "Zdroj",
           "title": "Objednávka {{number}}",
           "updatedAt": "Naposledy změněno",
-          "vatTotal": "DPH"
+          "vatTotal": "DPH",
+          "loadingTitle": "Objednávka",
+          "loading": "Načítám objednávku…",
+          "notFound": "Objednávka nebyla nalezena.",
+          "failed": "Objednávku se nepodařilo načíst. Zkuste to znovu."
         },
         "filters": {
           "allStatuses": "Všechny stavy",
@@ -115,8 +124,8 @@
           "cancelled": "Stornováno",
           "open": "Otevřené",
           "openHint": "Nové a ve zpracování",
-          "shippedThisMonth": "Předáno dopravci tento měsíc",
-          "total": "Objednávky celkem"
+          "total": "Objednávky celkem",
+          "shipped": "Předáno dopravci"
         },
         "states": {
           "clearFilters": "Zrušit filtry",
@@ -359,7 +368,18 @@
           "measurement": "Zadejte celé číslo od 1 do 1 000 000 000 nebo ponechte prázdné.",
           "metadata": "Zkontrolujte popisy, názvy variant a rozměry."
         },
-        "selectPlaceholder": "Vyberte…"
+        "selectPlaceholder": "Vyberte…",
+        "sort": {
+          "label": "Řazení",
+          "default": "Výchozí pořadí",
+          "name": "Název A–Z",
+          "sku": "SKU A–Z",
+          "price-asc": "Cena od nejnižší",
+          "price-desc": "Cena od nejvyšší",
+          "stock-asc": "Zásoba od nejmenší",
+          "stock-desc": "Zásoba od největší",
+          "updated-desc": "Naposledy změněné"
+        }
       },
       "records": {
         "title": "Objednávky a produkty"

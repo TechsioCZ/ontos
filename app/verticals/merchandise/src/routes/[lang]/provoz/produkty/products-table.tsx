@@ -12,29 +12,44 @@ import { useTableTranslations } from './products-format.ts';
 const ProductsTableStatusSchema = Schema.Literals(['loading', 'error', 'ready']);
 export type ProductsTableStatus = typeof ProductsTableStatusSchema.Type;
 
+export interface ProductsPage {
+  readonly pageIndex: number;
+  readonly pageSize: number;
+}
+
 export interface ProductsTableProps {
   readonly canWrite: boolean;
   readonly filtersActive: boolean;
   readonly onClearFilters: () => void;
   readonly onCreate: () => void;
   readonly onOpen: (id: ProductRecord['id']) => void;
+  readonly onPaginationChange: (next: ProductsPage) => void;
   readonly onRetry: () => void;
   readonly onSelectionChange: (next: Record<string, true>) => void;
+  /** The page the server returned; `rowCount` is the number of all matching products. */
+  readonly pagination: ProductsPage;
+  readonly rowCount: number;
   readonly rows: readonly ProductRecord[];
   readonly selection: Record<string, true>;
   readonly status: ProductsTableStatus;
   readonly tagsOf: (id: string) => readonly Tag[];
 }
 
-/** Products DataTable with the three empty states: load error, no filter results, first use. */
+/**
+ * Products DataTable over one server page: paging asks the server for the next page, sorting is the page's sort
+ * control. Three empty states: load error, no filter results, first use.
+ */
 export const ProductsTable = ({
   canWrite,
   filtersActive,
   onClearFilters,
   onCreate,
   onOpen,
+  onPaginationChange,
   onRetry,
   onSelectionChange,
+  pagination,
+  rowCount,
   rows,
   selection,
   status,
@@ -50,16 +65,19 @@ export const ProductsTable = ({
       data={status === 'ready' ? [...rows] : []}
       enablePagination
       enableRowSelection
+      enableSorting={false}
       enableVirtualization
-      enableSorting
       getRowId={(row) => row.id}
       getRowLabel={(row) => row.original.name}
       loading={status === 'loading'}
       loadingRowCount={12}
+      manualPagination
       maxHeight="calc(100dvh - 15rem)"
+      onPaginationChange={onPaginationChange}
       onRowClick={(row) => onOpen(row.original.id)}
       onRowSelectionChange={onSelectionChange}
       pageSizeOptions={[50, 100, 200]}
+      pagination={pagination}
       paginationProps={paginationProps(t)}
       renderEmpty={() => {
         if (status === 'error') {
@@ -101,6 +119,7 @@ export const ProductsTable = ({
           />
         );
       }}
+      rowCount={rowCount}
       rowSelection={selection}
       size="sm"
       stickyHeader

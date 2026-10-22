@@ -3,8 +3,11 @@ import { expect, it } from 'effect-rstest';
 import { MerchandiseCommandSchema, MerchandiseLifecycleConflict } from '../../shared/actions/apply-command.ts';
 import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { assertStorefrontScope } from '../../shared/actions/command-guard.ts';
-import { evolveMerchandiseState, toProductRecord } from '../../src/services/persistence.service.ts';
-import { storefrontCatalogPage } from '../../src/services/storefront-catalog.ts';
+import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
+import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
+
+const recordOf = (product: Parameters<typeof toProductRecord>[0], movements: Parameters<typeof stockLevelsOf>[0]) =>
+  toProductRecord(product, stockLevelsOf(movements, product.id));
 
 const actor = {
   principalId: '20000000-0000-4000-8000-000000000002',
@@ -74,7 +77,7 @@ it.effect('variants get identities, gross prices and their own availability', ()
   Effect.gen(function* variantRecords() {
     const state = yield* seeded;
     const [product] = state.products;
-    const record = toProductRecord(product!, state.movements);
+    const record = recordOf(product!, state.movements);
     expect(
       record.variantRecords?.map((variant) => [variant.id, variant.grossPriceMinor, variant.availability]),
     ).toEqual([
@@ -227,7 +230,7 @@ it.effect('ChangePrice on a variant appends its own price history', () =>
       { _tag: 'ChangePrice', id: 'p1', priceMinor: 26_696, variantId: 'u1-v1' },
       'c1',
     );
-    const record = toProductRecord(changed.state.products[0]!, changed.state.movements);
+    const record = recordOf(changed.state.products[0]!, changed.state.movements);
     const variant = record.variantRecords?.[0];
     expect(variant?.grossPriceMinor).toBe(29_900);
     expect(variant?.priceHistory).toHaveLength(2);
@@ -275,14 +278,6 @@ it.effect('CreateProduct generates a public, unique slug without extra storefron
       'sroub-din-933-nerez-m8-2',
       'sroub-din-933-nerez-m8-3',
     ]);
-    for (const product of third.state.products) {
-      const page = storefrontCatalogPage({
-        state: third.state,
-        records: third.state.products.map((entry) => toProductRecord(entry, [])),
-        query: { slug: product.slug },
-      });
-      expect(page.products.map((entry) => entry.id)).toEqual([product.id]);
-    }
     const renamed = yield* apply(third.state, { _tag: 'UpdateProduct', id: 'p1', patch: { name: 'Nový název' } }, 'u1');
     expect(renamed.state.products[0]?.slug).toBe('sroub-din-933-nerez-m8');
     const explicit = yield* apply(renamed.state, { ...command, sku: 'AKR-M8-4', slug: 'moje-adresa' }, 'p4');

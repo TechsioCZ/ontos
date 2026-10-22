@@ -1,0 +1,2478 @@
+{
+  "version": "8",
+  "dialect": "postgres",
+  "id": "028aba63-5055-40b7-b9b9-5a13be7dedae",
+  "prevIds": [
+    "e003ab7e-bb12-4403-aaf6-b0fcab0df05d"
+  ],
+  "ddl": [
+    {
+      "name": "demo_merchandise",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "catalog_heads",
+      "entityType": "tables",
+      "schema": "demo_merchandise"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "categories",
+      "entityType": "tables",
+      "schema": "demo_merchandise"
+    },
+    {
+      "isRlsEnabled": false,
+      "name": "gateway_assertion_redemptions",
+      "entityType": "tables",
+      "schema": "demo_merchandise"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "orders",
+      "entityType": "tables",
+      "schema": "demo_merchandise"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "price_tiers",
+      "entityType": "tables",
+      "schema": "demo_merchandise"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "product_variants",
+      "entityType": "tables",
+      "schema": "demo_merchandise"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "products",
+      "entityType": "tables",
+      "schema": "demo_merchandise"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "stock_movements",
+      "entityType": "tables",
+      "schema": "demo_merchandise"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "catalog_heads"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "catalog_heads"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "ai_changes",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "catalog_heads"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 1,
+      "default": "'{}'",
+      "generated": null,
+      "identity": null,
+      "name": "homepage_featured_product_ids",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "catalog_heads"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "0",
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "catalog_heads"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "catalog_heads"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "description",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "has_children",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "heading",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "history",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "image_alt",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "image_src",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "long_description",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "name",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": {
+        "type": "byDefault",
+        "name": "categories_ordinal_seq",
+        "increment": "1",
+        "startWith": "1",
+        "minValue": "1",
+        "maxValue": "9223372036854775807",
+        "cache": 1,
+        "cycle": false
+      },
+      "name": "ordinal",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "parent_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "type": "double precision",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "position",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "published",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "slug",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "audience",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "expires_at",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "issuer",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "jti",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "channel",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "client_request_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "document",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "number",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "opportunity_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": {
+        "type": "byDefault",
+        "name": "orders_ordinal_seq",
+        "increment": "1",
+        "startWith": "1",
+        "minValue": "1",
+        "maxValue": "9223372036854775807",
+        "cache": 1,
+        "cycle": false
+      },
+      "name": "ordinal",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "party_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "removed",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "search_text",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "status",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "total_minor",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "price_tiers"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "price_tiers"
+    },
+    {
+      "type": "double precision",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "minimum_quantity",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "price_tiers"
+    },
+    {
+      "type": "smallint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "position",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "price_tiers"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "price_excluding_vat_minor",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "price_tiers"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "price_minor",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "price_tiers"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "product_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "price_tiers"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "variant_position",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "price_tiers"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "active",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "document",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "gross_price_minor",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "name",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "position",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "price_minor",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "product_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "sku",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "type": "double precision",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_on_hand",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "unit",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "variant_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "active",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "archived",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "availability",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "category",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "category_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 1,
+      "default": "'{}'",
+      "generated": null,
+      "identity": null,
+      "name": "category_path_ids",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "current_price_minor",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "document",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "double precision",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "featured_position",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "gross_price_minor",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "has_photo",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "is_action",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "is_new",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "is_recommended",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "is_sale",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "low_stock",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "name",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "name_key",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": {
+        "type": "byDefault",
+        "name": "products_ordinal_seq",
+        "increment": "1",
+        "startWith": "1",
+        "minValue": "1",
+        "maxValue": "9223372036854775807",
+        "cache": 1,
+        "cycle": false
+      },
+      "name": "ordinal",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "boolean",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "published",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "search_text",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "sku",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "sku_key",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "slug",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "source_group_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "double precision",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_on_hand",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_value_minor",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "at",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    },
+    {
+      "type": "double precision",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "delta",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "note",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    },
+    {
+      "type": "bigint",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": {
+        "type": "byDefault",
+        "name": "stock_movements_ordinal_seq",
+        "increment": "1",
+        "startWith": "1",
+        "minValue": "1",
+        "maxValue": "9223372036854775807",
+        "cache": 1,
+        "cycle": false
+      },
+      "name": "ordinal",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "product_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reference",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "variant_id",
+      "entityType": "columns",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "slug",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "demo_merchandise_categories_slug",
+      "entityType": "indexes",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "expires_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "demo_merchandise_redemption_expiry",
+      "entityType": "indexes",
+      "schema": "demo_merchandise",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "number",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "demo_merchandise_orders_number",
+      "entityType": "indexes",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "client_request_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "demo_merchandise_orders_client_request",
+      "entityType": "indexes",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "created_at",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "demo_merchandise_orders_created",
+      "entityType": "indexes",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "opportunity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "demo_merchandise_orders_opportunity",
+      "entityType": "indexes",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "product_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "variant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "demo_merchandise_variants_id",
+      "entityType": "indexes",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "sku_key",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "demo_merchandise_products_sku",
+      "entityType": "indexes",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "ordinal",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "demo_merchandise_products_ordinal",
+      "entityType": "indexes",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "slug",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "demo_merchandise_products_slug",
+      "entityType": "indexes",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "category_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "demo_merchandise_products_category",
+      "entityType": "indexes",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "category_path_ids",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "gin",
+      "concurrently": false,
+      "name": "demo_merchandise_products_category_path",
+      "entityType": "indexes",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "gross_price_minor",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "demo_merchandise_products_price",
+      "entityType": "indexes",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "product_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "ordinal",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "demo_merchandise_movements_product",
+      "entityType": "indexes",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "reference",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "demo_merchandise_movements_reference",
+      "entityType": "indexes",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "legal_entity_id"
+      ],
+      "nameExplicit": false,
+      "name": "catalog_heads_pkey",
+      "entityType": "pks",
+      "schema": "demo_merchandise",
+      "table": "catalog_heads"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "categories_pkey",
+      "entityType": "pks",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "columns": [
+        "issuer",
+        "audience",
+        "jti"
+      ],
+      "nameExplicit": false,
+      "name": "gateway_assertion_redemptions_pkey",
+      "entityType": "pks",
+      "schema": "demo_merchandise",
+      "table": "gateway_assertion_redemptions"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "orders_pkey",
+      "entityType": "pks",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "product_id",
+        "variant_position",
+        "position"
+      ],
+      "nameExplicit": false,
+      "name": "price_tiers_pkey",
+      "entityType": "pks",
+      "schema": "demo_merchandise",
+      "table": "price_tiers"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "product_id",
+        "position"
+      ],
+      "nameExplicit": false,
+      "name": "product_variants_pkey",
+      "entityType": "pks",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "products_pkey",
+      "entityType": "pks",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "stock_movements_pkey",
+      "entityType": "pks",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    },
+    {
+      "value": "\"revision\" >= 0",
+      "name": "demo_merchandise_head_revision_nonnegative",
+      "entityType": "checks",
+      "schema": "demo_merchandise",
+      "table": "catalog_heads"
+    },
+    {
+      "value": "jsonb_typeof(\"document\") = 'object'",
+      "name": "demo_merchandise_order_document_object",
+      "entityType": "checks",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "value": "jsonb_typeof(\"document\") = 'object'",
+      "name": "demo_merchandise_variant_document_object",
+      "entityType": "checks",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "value": "jsonb_typeof(\"document\") = 'object'",
+      "name": "demo_merchandise_product_document_object",
+      "entityType": "checks",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"catalog_heads\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"catalog_heads\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "demo_merchandise_head_scope_select",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "catalog_heads"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"demo_merchandise\".\"catalog_heads\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"catalog_heads\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "demo_merchandise_head_scope_insert",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "catalog_heads"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"catalog_heads\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"catalog_heads\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"demo_merchandise\".\"catalog_heads\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"catalog_heads\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "demo_merchandise_head_scope_update",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "catalog_heads"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"catalog_heads\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"catalog_heads\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "demo_merchandise_head_scope_delete",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "catalog_heads"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"categories\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"categories\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "demo_merchandise_category_scope_select",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"demo_merchandise\".\"categories\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"categories\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "demo_merchandise_category_scope_insert",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"categories\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"categories\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"demo_merchandise\".\"categories\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"categories\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "demo_merchandise_category_scope_update",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"categories\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"categories\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "demo_merchandise_category_scope_delete",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "categories"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"orders\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"orders\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "demo_merchandise_order_scope_select",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"demo_merchandise\".\"orders\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"orders\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "demo_merchandise_order_scope_insert",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"orders\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"orders\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"demo_merchandise\".\"orders\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"orders\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "demo_merchandise_order_scope_update",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"orders\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"orders\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "demo_merchandise_order_scope_delete",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "orders"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"price_tiers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"price_tiers\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "demo_merchandise_tier_scope_select",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "price_tiers"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"demo_merchandise\".\"price_tiers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"price_tiers\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "demo_merchandise_tier_scope_insert",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "price_tiers"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"price_tiers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"price_tiers\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"demo_merchandise\".\"price_tiers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"price_tiers\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "demo_merchandise_tier_scope_update",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "price_tiers"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"price_tiers\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"price_tiers\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "demo_merchandise_tier_scope_delete",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "price_tiers"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"product_variants\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"product_variants\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "demo_merchandise_variant_scope_select",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"demo_merchandise\".\"product_variants\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"product_variants\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "demo_merchandise_variant_scope_insert",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"product_variants\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"product_variants\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"demo_merchandise\".\"product_variants\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"product_variants\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "demo_merchandise_variant_scope_update",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"product_variants\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"product_variants\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "demo_merchandise_variant_scope_delete",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "product_variants"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"products\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"products\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "demo_merchandise_product_scope_select",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"demo_merchandise\".\"products\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"products\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "demo_merchandise_product_scope_insert",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"products\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"products\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"demo_merchandise\".\"products\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"products\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "demo_merchandise_product_scope_update",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"products\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"products\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "demo_merchandise_product_scope_delete",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "products"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"stock_movements\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"stock_movements\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "demo_merchandise_movement_scope_select",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"demo_merchandise\".\"stock_movements\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"stock_movements\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "demo_merchandise_movement_scope_insert",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"stock_movements\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"stock_movements\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"demo_merchandise\".\"stock_movements\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"stock_movements\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "demo_merchandise_movement_scope_update",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"demo_merchandise\".\"stock_movements\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"demo_merchandise\".\"stock_movements\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "demo_merchandise_movement_scope_delete",
+      "entityType": "policies",
+      "schema": "demo_merchandise",
+      "table": "stock_movements"
+    }
+  ],
+  "renames": []
+}

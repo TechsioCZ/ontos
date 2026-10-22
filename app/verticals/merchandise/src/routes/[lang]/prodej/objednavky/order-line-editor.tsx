@@ -1,87 +1,83 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
+import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
-import { formatMoney, formatNumber, comboboxTranslations, surfaceTileClassName } from '@app/admin-ui';
+import { SelectTemplate } from '@techsio/ui-kit/templates/select';
+import { formatMoney, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
-import type { ProductId, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
+import type { VariantId, VariantRecord } from '../../../../../shared/domain/merchandise-model.ts';
 import { WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
+import { loadProductRecord } from '../../provoz/produkty/product-reads.ts';
+import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
+import { ProductSearchCombobox } from '../../provoz/produkty/product-search.tsx';
 
 export interface DraftLine {
   readonly key: string;
-  readonly productId: ProductId | null;
+  /** The picked list row; its full record arrives in `record`. */
+  readonly picked: Pick<ProductRecord, 'id' | 'name' | 'sku'> | null;
+  /** Full record of the picked product (variants, prices), read on pick. */
+  readonly record: ProductRecordState;
   readonly quantity: number;
   /** The quantity input's text, kept as typed so "2,5" reaches validation instead of becoming 25. */
   readonly quantityText: string;
   /** Chosen variant of a product with sellable variants. */
-  readonly variantId?: VariantId | null;
+  readonly variantId: VariantId | null;
 }
 
-export type DraftLinePatch = Partial<Pick<DraftLine, 'productId' | 'quantity' | 'quantityText' | 'variantId'>>;
+export type DraftLinePatch = Partial<Pick<DraftLine, 'picked' | 'quantity' | 'quantityText' | 'record' | 'variantId'>>;
 
-/** One pickable unit: a product without variants, or one active variant of a product. */
-export const pickItems = (products: readonly ProductRecord[]) =>
-  products.flatMap((item) => {
-    const variants = (item.variantRecords ?? []).filter((variant) => variant.active);
-    return variants.length === 0
-      ? [{ id: item.id, label: `${item.name} (${item.sku})`, value: item.id }]
-      : variants.map((variant) => ({
-          id: `${item.id}|${variant.id}`,
-          label: `${item.name} — ${variant.name} (${variant.sku})`,
-          value: `${item.id}|${variant.id}`,
-        }));
-  });
+/** The full record of a line's product once it has loaded. */
+export const lineProduct = (line: DraftLine): ProductRecord | null =>
+  line.record.status === 'ready' ? line.record.product : null;
+
+/** Active variants of a product; a product without them is sold as itself. */
+export const activeVariants = (product: ProductRecord | null): readonly VariantRecord[] =>
+  (product?.variantRecords ?? []).filter((variant) => variant.active);
 
 const key = (path: string) => `merchandise.pages.orders.${path}`;
-
-const firstValue = (value: string | string[]) => (Array.isArray(value) ? value[0] : value);
 
 interface OrderLineEditorProps {
   readonly canRemove: boolean;
   readonly error: string | undefined;
   readonly line: DraftLine;
   readonly onChange: (patch: DraftLinePatch) => void;
+  /** The picked product's record arrived; the caller keeps it only while that product is still picked. */
+  readonly onRecord: (productId: ProductRecord['id'], record: ProductRecordState) => void;
   readonly onRemove: () => void;
-  /** Active products only; the caller filters them. */
-  readonly products: readonly ProductRecord[];
 }
 
-/** One order line: product pick with its current price and stock, quantity, remove. */
-export const OrderLineEditor = ({ canRemove, error, line, onChange, onRemove, products }: OrderLineEditorProps) => {
+/**
+ * One order line: product search (active products), variant when the product has some, its current price and
+ * stock, quantity, remove. The full product record is read once the product is picked.
+ */
+export const OrderLineEditor = ({ canRemove, error, line, onChange, onRecord, onRemove }: OrderLineEditorProps) => {
   const { t } = useModernI18n();
-  const product = products.find((item) => item.id === line.productId);
-  const variant = product?.variantRecords?.find((entry) => entry.id === line.variantId);
-  const selected =
-    line.productId === null
-      ? []
-      : [
-          line.variantId === undefined || line.variantId === null
-            ? line.productId
-            : `${line.productId}|${line.variantId}`,
-        ];
-
+  const product = lineProduct(line);
+  const variants = activeVariants(product);
+  const variant = variants.find((entry) => entry.id === line.variantId);
   return (
     <div className={`${surfaceTileClassName} flex flex-col gap-100 p-150`}>
       <div className="grid grid-cols-[minmax(0,1fr)_7rem_auto] items-end gap-150">
         <div className="min-w-0">
-          {/* Not clearable: ui-kit names the clear control "Clear value" in English; picking another product replaces it. */}
-          <Combobox
-            clearable={false}
-            translations={comboboxTranslations}
+          <ProductSearchCombobox
+            activeOnly
+            errorMessage={t(key('create.productsFailed'))}
             {...(error === undefined ? {} : { helpText: error })}
-            items={pickItems(products)}
+            id={`orders-create-product-${line.key}`}
             label={t(key('create.product'))}
+            loadingMessage={t('merchandise.loading')}
             noResultsMessage={t(key('create.noMatch'))}
-            onChange={(values) => {
-              const [productPart, variantPart] = (firstValue(values) ?? '').split('|');
-              const picked = products.find((item) => item.id === productPart);
-              const pickedVariant = picked?.variantRecords?.find((entry) => entry.id === variantPart);
-              onChange({ productId: picked?.id ?? null, variantId: pickedVariant?.id ?? null });
+            onSelect={(picked) => {
+              onChange({ picked, record: { status: picked === null ? 'idle' : 'loading' }, variantId: null });
+              if (picked !== null) {
+                loadProductRecord(picked.id, (record) => onRecord(picked.id, record));
+              }
             }}
             placeholder={t(key('create.product'))}
+            retryLabel={t(key('states.retry'))}
+            selected={line.picked}
             validateStatus={error === undefined ? 'default' : 'error'}
-            value={selected}
           />
         </div>
         <div className="min-w-0">
@@ -111,7 +107,26 @@ export const OrderLineEditor = ({ canRemove, error, line, onChange, onRemove, pr
           variant="secondary"
         />
       </div>
-      {product !== undefined && (
+      {variants.length > 0 && (
+        <SelectTemplate
+          items={variants.map((entry) => ({ label: `${entry.name} (${entry.sku})`, value: entry.id }))}
+          label={t(key('create.variant'))}
+          name={`variant-${line.key}`}
+          onValueChange={(details) => {
+            const [next] = details.value;
+            onChange({ variantId: variants.find((entry) => entry.id === next)?.id ?? null });
+          }}
+          placeholder={t(key('create.variantPlaceholder'))}
+          size="sm"
+          value={line.variantId === null ? [] : [line.variantId]}
+        />
+      )}
+      {line.record.status === 'error' && (
+        <StatusText showIcon status="error">
+          {t(key('create.productFailed'))}
+        </StatusText>
+      )}
+      {product !== null && (
         <p className="text-fg-secondary text-xs">
           {t(key('create.productMeta'), {
             price: formatMoney(variant?.priceMinor ?? product.currentPriceMinor),

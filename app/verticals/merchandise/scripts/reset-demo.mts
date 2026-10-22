@@ -1,6 +1,5 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Command, Flag } from 'effect/unstable/cli';
 import { Config, ConfigProvider, Console, DateTime, Effect, Layer, Schema } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
@@ -18,8 +17,7 @@ import { MerchandiseStateSchema } from '../shared/apis/records.ts';
 import type { MerchandiseState } from '../shared/apis/records.ts';
 import { OrderLineSchema } from '../shared/domain/merchandise-model.ts';
 import { ORDER_NUMBER_PREFIX, orderTotals } from '../shared/domain/order-totals.ts';
-import { merchandiseRelations, merchandiseStates } from '../src/database/schema.ts';
-import { and, eq } from 'drizzle-orm';
+import { readCompanySnapshot, writeCompanySnapshot } from './company-snapshot.ts';
 import { refreshObchodOrderPresentation } from './order-presentation.ts';
 
 class ResetInputError extends Schema.TaggedError<ResetInputError>()('ResetInputError', { reason: Schema.String }) {}
@@ -171,50 +169,25 @@ const AdminDatabaseLive = Layer.effect(
   }),
 ).pipe(Layer.provide(Reactivity.layer));
 
+const scope = { legalEntityId: demoLegalEntityId, tenantId: demoTenantId };
+
 const writeState = Effect.fn('Merchandise.writeDemoState')(function* writeDemoState(state: MerchandiseState) {
-  const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(state);
-  const db = yield* makeWithDefaults({ relations: merchandiseRelations });
-  const now = yield* DateTime.now;
-  yield* db
-    .insert(merchandiseStates)
-    .values({
-      legalEntityId: demoLegalEntityId,
-      revision: 0,
-      state: encoded,
-      tenantId: demoTenantId,
-      updatedAt: DateTime.toDateUtc(now),
-    })
-    .onConflictDoUpdate({
-      set: { revision: 0, state: encoded, updatedAt: DateTime.toDateUtc(now) },
-      target: [merchandiseStates.tenantId, merchandiseStates.legalEntityId],
-    });
+  const revision = yield* writeCompanySnapshot(scope, state);
   yield* Console.log(
-    `merchandise demo state reset to revision 0 (${state.products.length} products, ${state.movements.length} movements, ${state.orders.length} orders)`,
+    `merchandise demo data reset at revision ${revision} (${state.products.length} products, ${state.movements.length} movements, ${state.orders.length} orders)`,
   );
 });
 
 /** Explicit non-destructive mode: patch only untouched old open fixtures in Obchodní firma. */
 const repairOrderPresentation = Effect.gen(function* repairOrderPresentation() {
-  const db = yield* makeWithDefaults({ relations: merchandiseRelations });
-  const scope = and(
-    eq(merchandiseStates.tenantId, demoTenantId),
-    eq(merchandiseStates.legalEntityId, demoLegalEntityId),
-  );
-  const [row] = yield* db.select().from(merchandiseStates).where(scope).limit(1);
-  if (row === undefined) return yield* Effect.fail(new Error('Obchodní firma aggregate must already exist'));
-  const repaired = refreshObchodOrderPresentation(row.state as EncodedMerchandiseState);
-  if (JSON.stringify(repaired) === JSON.stringify(row.state))
+  const current = yield* readCompanySnapshot(scope);
+  if (current === undefined) return yield* Effect.fail(new Error('Obchodní firma merchandise must already exist'));
+  const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(current.state);
+  const repaired = refreshObchodOrderPresentation(encoded);
+  if (JSON.stringify(repaired) === JSON.stringify(encoded))
     return yield* Console.log('Obchodní firma open orders already presentable; nothing changed');
   const state = yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(repaired);
-  const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(state);
-  const now = yield* DateTime.now;
-  const changed = yield* db
-    .update(merchandiseStates)
-    .set({ revision: row.revision + 1, state: encoded, updatedAt: DateTime.toDateUtc(now) })
-    .where(and(scope, eq(merchandiseStates.revision, row.revision)))
-    .returning({ revision: merchandiseStates.revision });
-  if (changed.length !== 1)
-    return yield* Effect.fail(new Error('Obchodní firma changed concurrently; retry the scoped repair'));
+  yield* writeCompanySnapshot(scope, state);
   yield* Console.log(
     'Obchodní firma: five old open fixture dates and matching stock timestamps refreshed; completed history, prices and statuses preserved',
   );

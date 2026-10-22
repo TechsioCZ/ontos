@@ -71,7 +71,6 @@
           "failed": "The order could not be created. Try again.",
           "lines": "Items",
           "noMatch": "No product matches.",
-          "noProducts": "No products to choose from.",
           "priceNote": "Prices are fixed when the order is created.",
           "product": "Product",
           "productMeta": "Price {{price}}, on hand {{stock}} pcs",
@@ -82,7 +81,13 @@
           "title": "New order",
           "customerPlaceholder": "Search for a customer…",
           "customersFailed": "The customer list could not be loaded.",
-          "noCustomerMatch": "No customer matches."
+          "noCustomerMatch": "No customer matches.",
+          "productsFailed": "Products could not be loaded.",
+          "variant": "Variant",
+          "variantPlaceholder": "Choose a variant",
+          "errorVariant": "Choose the product variant.",
+          "productLoading": "Loading the product…",
+          "productFailed": "The product could not be loaded. Pick it again."
         },
         "description": "Customer orders with price snapshots.",
         "detail": {
@@ -101,7 +106,11 @@
           "source": "Source",
           "title": "Order {{number}}",
           "updatedAt": "Last changed",
-          "vatTotal": "VAT"
+          "vatTotal": "VAT",
+          "loadingTitle": "Order",
+          "loading": "Loading the order…",
+          "notFound": "The order was not found.",
+          "failed": "The order could not be loaded. Try again."
         },
         "filters": {
           "allStatuses": "All statuses",
@@ -115,8 +124,8 @@
           "cancelled": "Cancelled",
           "open": "Open",
           "openHint": "New and confirmed",
-          "shippedThisMonth": "Shipped this month",
-          "total": "Orders total"
+          "total": "Orders total",
+          "shipped": "Handed to carrier"
         },
         "states": {
           "clearFilters": "Clear filters",
@@ -359,7 +368,18 @@
           "measurement": "Enter a whole number from 1 to 1,000,000,000, or leave blank.",
           "metadata": "Check descriptions, variant names and measurements."
         },
-        "selectPlaceholder": "Select…"
+        "selectPlaceholder": "Select…",
+        "sort": {
+          "label": "Sort",
+          "default": "Default order",
+          "name": "Name A–Z",
+          "sku": "SKU A–Z",
+          "price-asc": "Price, lowest first",
+          "price-desc": "Price, highest first",
+          "stock-asc": "Stock, lowest first",
+          "stock-desc": "Stock, highest first",
+          "updated-desc": "Recently changed"
+        }
       },
       "records": {
         "title": "Orders and products"

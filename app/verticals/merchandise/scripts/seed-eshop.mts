@@ -11,8 +11,6 @@
  */
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { PgClient } from '@effect/sql-pg';
-import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { and, eq } from 'drizzle-orm';
 import { Command, Flag } from 'effect/unstable/cli';
 import { Config, ConfigProvider, Console, DateTime, Effect, Layer, Schema } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
@@ -22,7 +20,7 @@ import type { MerchandiseState } from '../shared/apis/records.ts';
 import { grossUnitPriceMinor, shippingMethods } from '../shared/domain/merchandise-model.ts';
 import type { OrderStatus, ShippingMethod } from '../shared/domain/merchandise-model.ts';
 import { fullOrderTotals, ORDER_NUMBER_PREFIX } from '../shared/domain/order-totals.ts';
-import { merchandiseRelations, merchandiseStates } from '../src/database/schema.ts';
+import { readCompanySnapshot, writeCompanySnapshot } from './company-snapshot.ts';
 
 export const eshopLegalEntityId = '71000000-0000-4000-8000-000000000023' as const;
 
@@ -784,10 +782,7 @@ const AdminDatabaseLive = Layer.effect(
   }),
 ).pipe(Layer.provide(Reactivity.layer));
 
-const whereEshop = and(
-  eq(merchandiseStates.tenantId, demoTenantId),
-  eq(merchandiseStates.legalEntityId, eshopLegalEntityId),
-);
+const eshopScope = { legalEntityId: eshopLegalEntityId, tenantId: demoTenantId };
 
 /** Restores seed products (prices, variants, images, flags) to their seed definition; keeps orders and extra data. */
 export const restoreCatalog = (current: MerchandiseState, seed: MerchandiseState): MerchandiseState => {
@@ -801,30 +796,14 @@ const writeState = Effect.fn('Merchandise.writeEshopState')(function* writeEshop
   restore: boolean,
 ) {
   const seed = yield* buildEshopState();
-  const db = yield* makeWithDefaults({ relations: merchandiseRelations });
-  const now = DateTime.toDateUtc(yield* DateTime.now);
-  const rows = yield* db.select().from(merchandiseStates).where(whereEshop).limit(1);
-  const [row] = rows;
-  if (row === undefined || reset) {
-    const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(seed);
-    yield* db
-      .insert(merchandiseStates)
-      .values({
-        legalEntityId: eshopLegalEntityId,
-        revision: 0,
-        state: encoded,
-        tenantId: demoTenantId,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        set: { revision: 0, state: encoded, updatedAt: now },
-        target: [merchandiseStates.tenantId, merchandiseStates.legalEntityId],
-      });
+  const stored = yield* readCompanySnapshot(eshopScope);
+  if (stored === undefined || reset) {
+    yield* writeCompanySnapshot(eshopScope, seed);
     return yield* Console.log(
       `e-shop merchandise (Kavárna Doma) ${reset ? 'reset' : 'created'}: ${seed.products.length} products, ${seed.movements.length} movements, ${seed.orders.length} orders`,
     );
   }
-  const current = yield* Schema.decodeUnknownEffect(MerchandiseStateSchema)(row.state);
+  const current = stored.state;
   const merged = restore ? restoreCatalog(current, seed) : mergeSeed(current, seed);
   const added =
     merged.products.length -
@@ -838,11 +817,7 @@ const writeState = Effect.fn('Merchandise.writeEshopState')(function* writeEshop
       `e-shop merchandise (Kavárna Doma) already seeded: ${current.products.length} products, ${current.orders.length} orders; nothing changed`,
     );
   }
-  const encoded = yield* Schema.encodeEffect(MerchandiseStateSchema)(merged);
-  yield* db
-    .update(merchandiseStates)
-    .set({ revision: row.revision + 1, state: encoded, updatedAt: now })
-    .where(and(whereEshop, eq(merchandiseStates.revision, row.revision)));
+  yield* writeCompanySnapshot(eshopScope, merged);
   return yield* Console.log(
     restore
       ? `e-shop merchandise (Kavárna Doma) catalog restored to seed prices/variants; ${current.orders.length} orders kept`

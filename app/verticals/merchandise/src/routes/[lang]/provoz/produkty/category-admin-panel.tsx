@@ -5,17 +5,20 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SidePanel, formatDateTime } from '@app/admin-ui';
-import { DateTime, Effect, Random } from 'effect';
+import { DateTime } from 'effect';
 import { useMemo, useState } from 'react';
-import { executeRecords } from '../../../../api/records-client.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import type { CatalogCategory } from '../../../../../shared/domain/merchandise-model.ts';
-import { runCommand } from './products-api.ts';
+import type { CategoryNode } from '../../../../../shared/domain/merchandise-model.ts';
+import { loadCategoryDetail, loadCategoryTree, runCommand } from './products-api.ts';
 import { useCommandFailure } from './product-forms.tsx';
 
 type Loaded =
   | { readonly status: 'idle' | 'loading' | 'error' }
-  | { readonly status: 'ready'; readonly categories: readonly CatalogCategory[]; readonly revision: number };
+  | { readonly categories: readonly CategoryNode[]; readonly revision: number; readonly status: 'ready' };
+
+/** The category being edited: the tree carries only navigation fields, so its content is read on selection. */
+type Selected =
+  | { readonly id: string; readonly status: 'loading' | 'error' }
+  | { readonly category: CategoryNode; readonly id: string; readonly revision: number; readonly status: 'ready' };
 
 interface CategoryDraft {
   readonly published: boolean;
@@ -26,39 +29,29 @@ interface CategoryDraft {
   readonly positionText: string;
 }
 
-const NO_CATEGORIES: readonly CatalogCategory[] = [];
+const NO_CATEGORIES: readonly CategoryNode[] = [];
 
 /** The storefront's own order: position, then Czech name. */
-const byStorefrontOrder = (a: CatalogCategory, b: CatalogCategory) =>
+const byStorefrontOrder = (a: CategoryNode, b: CategoryNode) =>
   a.position - b.position || a.name.localeCompare(b.name, 'cs');
 
-const draftOf = (c: CatalogCategory): CategoryDraft => ({
-  published: c.published !== false,
+const draftOf = (c: CategoryNode): CategoryDraft => ({
+  description: c.description ?? '',
+  heading: c.heading ?? '',
+  longDescription: c.longDescription ?? '',
   name: c.name,
-  heading: c.heading,
-  description: c.description,
-  longDescription: c.longDescription,
   positionText: String(c.position),
+  published: c.published !== false,
 });
 
-const loadCategories = (onLoaded: (next: Loaded) => void): void => {
-  void browserRuntime.runPromise(
-    Random.nextInt.pipe(
-      Effect.flatMap((nonce) =>
-        executeRecords({ view: { includeCategories: true, limit: 1 } }, `merchandise:categories:${nonce}`),
-      ),
-      Effect.match({
-        onFailure: (): Loaded => ({ status: 'error' }),
-        onSuccess: (response): Loaded => ({
-          categories: response.categories ?? [],
-          revision: response.revision,
-          status: 'ready',
-        }),
-      }),
-      Effect.map(onLoaded),
+const loadCategories = (onLoaded: (next: Loaded) => void): void =>
+  loadCategoryTree((outcome) =>
+    onLoaded(
+      outcome.ok
+        ? { categories: outcome.response.categories ?? [], revision: outcome.response.revision, status: 'ready' }
+        : { status: 'error' },
     ),
   );
-};
 
 interface CategoryAdminButtonProps {
   readonly onCommitted: (message: string) => void;
@@ -71,13 +64,13 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState<Loaded>({ status: 'idle' });
   const [search, setSearch] = useState('');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selection, setSelection] = useState<Selected | null>(null);
   const [draft, setDraft] = useState<CategoryDraft | null>(null);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
   const categories = loaded.status === 'ready' ? loaded.categories : NO_CATEGORIES;
-  const selected = categories.find((c) => c.id === selectedId);
+  const selected = selection?.status === 'ready' ? selection.category : undefined;
   const parentId = selected?.parentId ?? null;
   const parentName = parentId === null ? undefined : categories.find((c) => c.id === parentId)?.name;
   // Siblings in storefront order, so the editor can see where a position puts the category.
@@ -93,9 +86,26 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
     setLoaded({ status: 'loading' });
     loadCategories(setLoaded);
   };
+  /** Reads the category's content and history; the draft starts from that fresh copy. */
+  const select = (id: string) => {
+    setSelection({ id, status: 'loading' });
+    setDraft(null);
+    setServerError(null);
+    loadCategoryDetail(id, (outcome) => {
+      const category = outcome.ok ? outcome.response.categories?.find((c) => c.id === id) : undefined;
+      if (!outcome.ok || category === undefined) {
+        setSelection((current) => (current?.id === id ? { id, status: 'error' } : current));
+        return;
+      }
+      setSelection((current) =>
+        current?.id === id ? { category, id, revision: outcome.response.revision, status: 'ready' } : current,
+      );
+      setDraft(draftOf(category));
+    });
+  };
   const openPanel = () => {
     setOpen(true);
-    setSelectedId(null);
+    setSelection(null);
     setDraft(null);
     reload();
   };
@@ -120,22 +130,16 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
   const nameInvalid = draft !== null && (draft.name.trim() === '' || draft.name.trim().length > 200);
 
   const save = () => {
-    if (
-      selected === undefined ||
-      draft === null ||
-      loaded.status !== 'ready' ||
-      busy ||
-      positionInvalid ||
-      nameInvalid
-    ) {
+    if (selection?.status !== 'ready' || draft === null || busy || positionInvalid || nameInvalid) {
       return;
     }
+    const { category, revision } = selection;
     setBusy(true);
     setServerError(null);
     runCommand(
       {
         _tag: 'UpdateCategory',
-        id: selected.id,
+        id: category.id,
         patch: {
           name: draft.name.trim(),
           heading: draft.heading.trim(),
@@ -145,21 +149,22 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
           published: draft.published,
         },
       },
-      loaded.revision,
+      revision,
       (outcome) => {
         setBusy(false);
         if (!outcome.ok) {
-          setServerError(failure(outcome.reason, reload));
+          setServerError(failure(outcome.reason, () => select(category.id)));
           return;
         }
         onCommitted('Kategorie uložena. Změnu uvidí zákazník v e-shopu po obnovení stránky.');
         reload();
+        select(category.id);
       },
     );
   };
 
   const backToList = () => {
-    setSelectedId(null);
+    setSelection(null);
     setDraft(null);
     setServerError(null);
   };
@@ -171,7 +176,11 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
       </Button>
       <SidePanel
         actions={
-          selected !== undefined ? (
+          selection === null ? (
+            <Button onClick={() => setOpen(false)} theme="outlined" variant="secondary">
+              Zavřít
+            </Button>
+          ) : (
             <>
               <Button onClick={backToList} theme="outlined" variant="secondary">
                 Zpět
@@ -180,10 +189,6 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
                 Uložit
               </Button>
             </>
-          ) : (
-            <Button onClick={() => setOpen(false)} theme="outlined" variant="secondary">
-              Zavřít
-            </Button>
           )
         }
         onOpenChange={setOpen}
@@ -207,7 +212,7 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
           {loaded.status === 'ready' && categories.length === 0 && (
             <p className="text-fg-secondary text-sm">Tato firma nemá kategorie e-shopu.</p>
           )}
-          {loaded.status === 'ready' && categories.length > 0 && selected === undefined && (
+          {loaded.status === 'ready' && categories.length > 0 && selection === null && (
             <>
               <FormInput
                 id="category-admin-search"
@@ -227,11 +232,7 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
                 {list.map((c) => (
                   <li key={c.id}>
                     <Button
-                      onClick={() => {
-                        setSelectedId(c.id);
-                        setDraft(draftOf(c));
-                        setServerError(null);
-                      }}
+                      onClick={() => select(c.id)}
                       className="h-auto w-full justify-start whitespace-normal text-left"
                       size="sm"
                       theme="borderless"
@@ -248,7 +249,18 @@ export const CategoryAdminButton = ({ onCommitted }: CategoryAdminButtonProps) =
               </ul>
             </>
           )}
-          {loaded.status === 'ready' && selected !== undefined && draft !== null && (
+          {selection?.status === 'loading' && <StatusText>Načítám kategorii…</StatusText>}
+          {selection?.status === 'error' && (
+            <>
+              <StatusText showIcon status="error">
+                Kategorii se nepodařilo načíst.
+              </StatusText>
+              <Button onClick={() => select(selection.id)} variant="secondary">
+                Zkusit znovu
+              </Button>
+            </>
+          )}
+          {selected !== undefined && draft !== null && (
             <>
               <p className="text-fg-secondary text-sm">
                 {`Adresa v e-shopu: /${selected.slug}${parentName === undefined ? '' : ` · nadřazená kategorie: ${parentName}`}`}

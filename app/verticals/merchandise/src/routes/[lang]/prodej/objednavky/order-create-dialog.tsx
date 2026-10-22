@@ -6,12 +6,13 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DetailList, formatMoney, SidePanel, comboboxTranslations } from '@app/admin-ui';
 import { Effect } from 'effect';
 import { useRef, useState } from 'react';
-import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { CustomerDirectory, CustomerEntry } from './customers-directory.ts';
 import { lineAmounts, sumAmounts } from './orders-model.ts';
+import type { ProductId } from '../../../../../shared/domain/merchandise-model.ts';
+import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
 import { createOrder, isRevisionConflict } from './orders-records.ts';
-import { OrderLineEditor } from './order-line-editor.tsx';
+import { OrderLineEditor, activeVariants, lineProduct } from './order-line-editor.tsx';
 import type { DraftLine, DraftLinePatch } from './order-line-editor.tsx';
 
 const key = (path: string) => `merchandise.pages.orders.${path}`;
@@ -23,6 +24,15 @@ interface Draft {
 
 const isValidQuantity = (quantity: number) => Number.isInteger(quantity) && quantity >= 1;
 
+const emptyLine = (lineKey: string): DraftLine => ({
+  key: lineKey,
+  picked: null,
+  quantity: 1,
+  quantityText: '1',
+  record: { status: 'idle' },
+  variantId: null,
+});
+
 const firstValue = (value: string | string[]) => (Array.isArray(value) ? value[0] : value);
 
 interface OrderCreateDialogProps {
@@ -30,35 +40,26 @@ interface OrderCreateDialogProps {
   readonly onCreated: () => void;
   readonly onOpenChange: (open: boolean) => void;
   readonly open: boolean;
-  readonly products: readonly ProductRecord[];
   readonly revision: number;
 }
 
-export const OrderCreateDialog = ({
-  customers,
-  onCreated,
-  onOpenChange,
-  open,
-  products,
-  revision,
-}: OrderCreateDialogProps) => {
+export const OrderCreateDialog = ({ customers, onCreated, onOpenChange, open, revision }: OrderCreateDialogProps) => {
   const { t } = useModernI18n();
   const toaster = useToast();
   const lineSequence = useRef(1);
   const newLine = (): DraftLine => {
     lineSequence.current += 1;
-    return { key: `line-${lineSequence.current}`, productId: null, quantity: 1, quantityText: '1' };
+    return emptyLine(`line-${lineSequence.current}`);
   };
   const emptyDraft = (): Draft => ({ lines: [newLine()], partyId: '' });
 
   const [draft, setDraft] = useState<Draft>(() => ({
-    lines: [{ key: 'line-1', productId: null, quantity: 1, quantityText: '1' }],
+    lines: [emptyLine('line-1')],
     partyId: '',
   }));
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
-  const activeProducts = products.filter((product) => product.active);
 
   const updateLine = (lineKey: string, patch: DraftLinePatch) =>
     setDraft((current) => ({
@@ -66,22 +67,38 @@ export const OrderCreateDialog = ({
       lines: current.lines.map((line) => (line.key === lineKey ? { ...line, ...patch } : line)),
     }));
 
+  /** A record that arrives after the line picked another product is dropped. */
+  const receiveRecord = (lineKey: string, productId: ProductId, record: ProductRecordState) =>
+    setDraft((current) => ({
+      ...current,
+      lines: current.lines.map((line) =>
+        line.key === lineKey && line.picked?.id === productId ? { ...line, record } : line,
+      ),
+    }));
+
   const removeLine = (lineKey: string) =>
     setDraft((current) => ({ ...current, lines: current.lines.filter((line) => line.key !== lineKey) }));
 
   const partyError = draft.partyId.trim() === '' ? t(key('create.errorCustomer')) : undefined;
   const lineErrors = draft.lines.map((line) => {
-    if (line.productId === null) {
+    if (line.picked === null) {
       return t(key('create.errorProduct'));
+    }
+    const product = lineProduct(line);
+    if (product === null) {
+      return t(key(line.record.status === 'error' ? 'create.productFailed' : 'create.productLoading'));
+    }
+    if (activeVariants(product).length > 0 && line.variantId === null) {
+      return t(key('create.errorVariant'));
     }
     return isValidQuantity(line.quantity) ? undefined : t(key('create.errorQuantity'));
   });
   const valid = partyError === undefined && lineErrors.every((error) => error === undefined);
 
   const priced = draft.lines.flatMap((line) => {
-    const product = activeProducts.find((item) => item.id === line.productId);
+    const product = lineProduct(line);
     const variant = product?.variantRecords?.find((entry) => entry.id === line.variantId);
-    return product === undefined || !isValidQuantity(line.quantity)
+    return product === null || !isValidQuantity(line.quantity)
       ? []
       : [lineAmounts(variant?.priceMinor ?? product.currentPriceMinor, line.quantity, product.vatRate)];
   });
@@ -100,13 +117,13 @@ export const OrderCreateDialog = ({
       return;
     }
     const lines = draft.lines.flatMap((line) =>
-      line.productId === null
+      line.picked === null
         ? []
         : [
             {
-              productId: line.productId,
+              productId: line.picked.id,
               quantity: line.quantity,
-              ...(line.variantId === undefined || line.variantId === null ? {} : { variantId: line.variantId }),
+              ...(line.variantId === null ? {} : { variantId: line.variantId }),
             },
           ],
     );
@@ -208,8 +225,8 @@ export const OrderCreateDialog = ({
               key={line.key}
               line={line}
               onChange={(patch) => updateLine(line.key, patch)}
+              onRecord={(productId, record) => receiveRecord(line.key, productId, record)}
               onRemove={() => removeLine(line.key)}
-              products={activeProducts}
             />
           ))}
           <div>
@@ -223,7 +240,6 @@ export const OrderCreateDialog = ({
               {t(key('create.addLine'))}
             </Button>
           </div>
-          {activeProducts.length === 0 && <p className="text-fg-secondary text-xs">{t(key('create.noProducts'))}</p>}
         </div>
 
         <DetailList

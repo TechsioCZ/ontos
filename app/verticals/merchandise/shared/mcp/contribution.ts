@@ -58,5 +58,5 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
     'agent-review': OntosMcpHidden,
     records: { title: { cs: 'Přehled produktů, skladu a objednávek', en: 'Products, stock and orders overview' } },
   },
-  revision: { query: { view: {} }, read: 'records' },
+  revision: { query: { view: { limit: 0, ordersLimit: 0 } }, read: 'records' },
 });

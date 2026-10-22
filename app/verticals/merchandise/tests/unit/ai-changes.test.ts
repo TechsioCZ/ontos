@@ -7,7 +7,8 @@ import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { assertCommandAllowed } from '../../shared/actions/command-guard.ts';
 import { ProductIdSchema } from '../../shared/domain/merchandise-model.ts';
 import { applyMerchandiseAiCommand } from '../../src/services/ai-changes.ts';
-import { evolveMerchandiseState, stockOnHandOf } from '../../src/services/persistence.service.ts';
+import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
+import { stockOnHandOf } from '../../src/services/stock-levels.ts';
 
 const agent = { principalId: '20000000-0000-4000-8000-0000000000c1', tenantId: '20000000-0000-4000-8000-000000000001' };
 const approver = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };

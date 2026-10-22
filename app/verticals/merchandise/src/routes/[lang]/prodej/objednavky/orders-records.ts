@@ -1,15 +1,32 @@
-import { DateTime, Effect, Exit, Match, Random, Schema } from 'effect';
-import { useEffect, useState } from 'react';
+import { Effect, Exit, Match, Random, Schema } from 'effect';
+import { useEffect, useRef, useState } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
-import type { Order, RecordsResponse } from '../../../../../shared/apis/records.ts';
+import type { Order, ProductRecord, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { OrderStatus, ProductId, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
 import { OrderIdSchema, PartyIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeRecords } from '../../../../api/records-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { readProductRecord } from '../../provoz/produkty/product-reads.ts';
+
+/** What the orders table asks the server for: filters and one page, newest first. */
+export interface OrdersQuery {
+  readonly limit: number;
+  readonly offset: number;
+  readonly search: string;
+  readonly status: OrderStatus | null;
+}
+
+/** Header counts the indicators do not carry, each one counted by the server. */
+export interface OrderCounts {
+  readonly cancelled: number;
+  readonly shipped: number;
+}
 
 export interface OrdersSnapshot {
-  readonly now: DateTime.Utc;
+  /** Null until the counts land or when they failed. */
+  readonly counts: OrderCounts | null;
+  readonly query: OrdersQuery;
   readonly records: RecordsResponse;
 }
 
@@ -33,12 +50,33 @@ const randomToken = Effect.all([Random.nextInt, Random.nextInt, Random.nextInt, 
   concurrency: 1,
 }).pipe(Effect.map((parts) => parts.map((part) => (part + 2 ** 31).toString(16).padStart(8, '0')).join('')));
 
-const loadOrders = Effect.fn('OrdersRecords.load')(function* loadOrders() {
-  const requestCorrelation = yield* correlation('records');
-  const records = yield* executeRecords({}, requestCorrelation);
-  const now = yield* DateTime.now;
-  return { now, records } satisfies OrdersSnapshot;
+/** One page of orders and no products. */
+export const ordersView = (query: OrdersQuery) => ({
+  limit: 0,
+  ordersLimit: query.limit,
+  ordersOffset: query.offset,
+  ...(query.search.trim() === '' ? {} : { orderSearch: query.search.trim() }),
+  ...(query.status === null ? {} : { orderStatus: query.status }),
 });
+
+const loadOrders = Effect.fn('OrdersRecords.load')(function* loadOrders(query: OrdersQuery) {
+  const requestCorrelation = yield* correlation('records');
+  return yield* executeRecords({ view: ordersView(query) }, requestCorrelation);
+});
+
+/** Number of orders in one status; no rows travel. */
+const countOrders = (status: OrderStatus) =>
+  correlation('count').pipe(
+    Effect.flatMap((id) => executeRecords({ view: { limit: 0, ordersLimit: 0, orderStatus: status } }, id)),
+    Effect.map((response) => response.totalOrders ?? 0),
+  );
+
+const loadCounts = Effect.all(
+  { cancelled: countOrders('CANCELLED'), shipped: countOrders('SHIPPED') },
+  {
+    concurrency: 2,
+  },
+);
 
 type LoadFailure = Effect.Error<ReturnType<typeof loadOrders>>;
 
@@ -138,27 +176,162 @@ export const loadFailureKind = (error: LoadFailure): 'error' | 'forbidden' =>
     Match.orElse((): 'error' => 'error'),
   );
 
-const loadInto = (setState: (next: OrdersState) => void): void => {
+/** Reads one page; only the newest read may land, so a slow earlier page never replaces the current one. */
+const readPage = (query: OrdersQuery, generation: { current: number }, setState: (next: OrdersState) => void): void => {
+  generation.current += 1;
+  const requested = generation.current;
+  const land = (next: OrdersState) => {
+    if (requested === generation.current) {
+      setState(next);
+    }
+  };
   void browserRuntime.runPromise(
-    loadOrders().pipe(
+    loadOrders(query).pipe(
       Effect.match({
-        onFailure: (error) => setState({ kind: loadFailureKind(error) }),
-        onSuccess: (snapshot) => setState({ kind: 'ready', ...snapshot }),
+        onFailure: (error): OrdersState => ({ kind: loadFailureKind(error) }),
+        onSuccess: (records): OrdersState => ({ counts: null, kind: 'ready', query, records }),
       }),
+      Effect.map(land),
     ),
   );
 };
 
-/** Loads the orders page on mount. A refresh keeps the current rows until the new read lands. */
-export const useOrders = () => {
+/** The header counts; a failed count reads as unknown (a dash), never as zero. */
+const readCounts = (setCounts: (next: OrderCounts | null) => void): void => {
+  void browserRuntime.runPromise(
+    loadCounts.pipe(
+      Effect.match({
+        onFailure: (): OrderCounts | null => null,
+        onSuccess: (counts): OrderCounts | null => counts,
+      }),
+      Effect.map(setCounts),
+    ),
+  );
+};
+
+/**
+ * Loads one page of orders for `query`; a new query reads again. `load` refreshes the page and the header counts
+ * after a change. A refresh keeps the current rows until the new read lands.
+ */
+export const useOrders = (query: OrdersQuery) => {
   const [state, setState] = useState<OrdersState>({ kind: 'loading' });
+  const [counts, setCounts] = useState<OrderCounts | null>(null);
+  const generation = useRef(0);
   useEffect(() => {
-    loadInto(setState);
+    readPage(query, generation, setState);
+  }, [query]);
+  useEffect(() => {
+    readCounts(setCounts);
   }, []);
   return {
-    load: () => loadInto(setState),
-    state,
+    load: () => {
+      readPage(query, generation, setState);
+      readCounts(setCounts);
+    },
+    state: state.kind === 'ready' ? { ...state, counts } : state,
   };
+};
+
+export interface OrderDetailRecords {
+  /** The order wrote ORDER stock movements (checked on the ledger of its first line's product). */
+  readonly movesStock: boolean;
+  /**
+   * The products on the order's lines: list rows, and full records (with variants) for products a line sells as a
+   * variant, since the variant carries that line's stock and quantity rules.
+   */
+  readonly products: readonly ProductRecord[];
+  readonly revision: number;
+}
+
+/** The products of the order's lines, and whether the order took goods from stock. */
+const loadOrderDetail = Effect.fn('OrdersRecords.loadDetail')(function* loadOrderDetail(order: Order) {
+  const productIds = [...new Set(order.lines.map((line) => line.productId))].slice(0, 250);
+  const variantProductIds = [
+    ...new Set(order.lines.flatMap((line) => (line.variantId === undefined ? [] : [line.productId]))),
+  ];
+  const [rows, full, ledgers] = yield* Effect.all(
+    [
+      correlation('detail-products').pipe(
+        Effect.flatMap((id) =>
+          executeRecords({ view: { limit: productIds.length, ordersLimit: 0, productIds, summary: true } }, id),
+        ),
+      ),
+      Effect.forEach(variantProductIds, readProductRecord, { concurrency: 2 }),
+      // Movements come only with a single `productId`: the first line's product ledger tells whether stock moved.
+      Effect.forEach(
+        productIds.slice(0, 1),
+        (productId) =>
+          correlation('detail-ledger').pipe(
+            Effect.flatMap((id) =>
+              executeRecords({ view: { limit: 1, ordersLimit: 0, productId, summary: true } }, id),
+            ),
+          ),
+        { concurrency: 1 },
+      ),
+    ],
+    { concurrency: 3 },
+  );
+  const fullById = new Map(full.flatMap((product) => (product === undefined ? [] : [[product.id, product] as const])));
+  return {
+    movesStock: ledgers.some((ledger) =>
+      ledger.movements.some((movement) => movement.reason === 'ORDER' && movement.reference === order.number),
+    ),
+    products: rows.products.map((product) => fullById.get(product.id) ?? product),
+    revision: Math.max(rows.revision, ...ledgers.map((ledger) => ledger.revision)),
+  } satisfies OrderDetailRecords;
+});
+
+/** One order by id: the detail reads its own copy, so it is fresh after a change and works from a link. */
+const loadOrderById = (orderId: string) =>
+  correlation('detail-order').pipe(
+    Effect.flatMap((id) => executeRecords({ view: { limit: 0, orderId, ordersLimit: 1 } }, id)),
+    Effect.map((response) => response.orders.find((order) => order.id === orderId)),
+  );
+
+export type OrderDetailState =
+  | { readonly status: 'idle' | 'loading' | 'error' | 'not-found' }
+  | ({ readonly order: Order; readonly status: 'ready' } & OrderDetailRecords);
+
+/**
+ * The open order with the product records its detail and edit form need. `version` changes after every change the
+ * page makes, so the detail reads again.
+ */
+export const useOrderDetail = (orderId: string | null, version: number): OrderDetailState => {
+  // Each answer names the request it answers, so a newer request reads as loading without a synchronous reset.
+  const [answer, setAnswer] = useState<{ readonly request: string; readonly state: OrderDetailState } | null>(null);
+  const request = `${orderId ?? ''}:${version}`;
+  useEffect(() => {
+    const fiber =
+      orderId === null
+        ? undefined
+        : browserRuntime.runFork(
+            loadOrderById(orderId).pipe(
+              Effect.flatMap((order) =>
+                order === undefined
+                  ? Effect.succeed<OrderDetailState>({ status: 'not-found' })
+                  : loadOrderDetail(order).pipe(
+                      Effect.map((records): OrderDetailState => ({ ...records, order, status: 'ready' })),
+                    ),
+              ),
+              Effect.match({
+                onFailure: (): OrderDetailState => ({ status: 'error' }),
+                onSuccess: (state): OrderDetailState => state,
+              }),
+              Effect.map((state) => setAnswer({ request, state })),
+            ),
+          );
+    return () => {
+      fiber?.interruptUnsafe();
+    };
+  }, [orderId, request]);
+  if (orderId === null) {
+    return { status: 'idle' };
+  }
+  if (answer?.request === request) {
+    return answer.state;
+  }
+  // A reread after a change keeps showing the same order until the fresh copy lands.
+  return answer?.state.status === 'ready' && answer.state.order.id === orderId ? answer.state : { status: 'loading' };
 };
 
 export const removeDemoOrder = (id: Order['id'], reason: string, revision: number) =>

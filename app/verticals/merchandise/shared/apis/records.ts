@@ -7,6 +7,7 @@ import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref'
 import {
   MinorAmountSchema,
   CatalogCategorySchema,
+  CategoryNodeSchema,
   OrderSchema,
   OrderStatusSchema,
   ProductIdSchema,
@@ -24,7 +25,8 @@ export type { Order, OrderLine, Product, ProductRecord, StockMovement } from '..
  * products (`homepageFeaturedProductIds` order, then `isRecommended`). Defaults: page 1, pageSize 24, fields `full`,
  * includeCategories true, source order unless `sort`. `availability` in-stock = IN_STOCK|LOW_STOCK,
  * out-of-stock = OUT_OF_STOCK|UNKNOWN. `minMinor`/`maxMinor` compare the gross `grossPriceMinor`.
- * `fields: 'card'` omits variantRecords, description, descriptionParagraphs and parameters (listing pages).
+ * `fields: 'card'` omits variantRecords, description, descriptionParagraphs and parameters (listing pages); every
+ * product carries `variantSummary`. A `full` page holds at most 2 products unless `variantIds` narrows the variants.
  */
 export const StorefrontCatalogQuerySchema = Schema.Struct({
   page: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
@@ -40,6 +42,11 @@ export const StorefrontCatalogQuerySchema = Schema.Struct({
   availability: Schema.optionalKey(Schema.Literals(['in-stock', 'out-of-stock'])),
   sort: Schema.optionalKey(Schema.Literals(['name', 'price-asc', 'price-desc'])),
   fields: Schema.optionalKey(Schema.Literals(['card', 'full'])),
+  /**
+   * Cart/checkout: with `fields: 'full'`, each product's `variantRecords` hold only these variants and up to 50
+   * products are returned. Without it a `full` page holds at most 2 products (one product can carry 400 variants).
+   */
+  variantIds: Schema.optionalKey(Schema.Array(Schema.String).check(Schema.isMaxLength(200))),
   includeCategories: Schema.optionalKey(Schema.Boolean),
 });
 export type StorefrontCatalogQuery = typeof StorefrontCatalogQuerySchema.Type;
@@ -61,7 +68,23 @@ export const StorefrontOrderStatusLookupSchema = Schema.Struct({
 });
 export type StorefrontOrderStatusLookup = typeof StorefrontOrderStatusLookupSchema.Type;
 
-/** Optional filters. Each field narrows only the collection it names; indicators ignore filters. */
+const IdListSchema = Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))).check(
+  Schema.isMaxLength(250),
+);
+
+/**
+ * Optional filters. Every collection is bounded: no read returns the whole catalog.
+ * - products: filters combine with AND, paged by `offset`/`limit`, ordered by `productSort` (default: catalog
+ *   order). `totalProducts` counts all matches. `summary: true` = list rows without variants, price and content
+ *   history (default limit 50, max 250; 0 = none). Without `summary` each product carries its variants (detail) and a
+ *   page holds at most 2 products.
+ * - movements: only with `productId` (that product's ledger, newest 500, oldest first).
+ * - orders (staff): newest first, paged by `ordersOffset`/`ordersLimit` (default 100, max 250; 0 = none);
+ *   `totalOrders` counts all matches.
+ * - categories (`includeCategories`): the navigation tree; with `categoryId` that category also carries its
+ *   content and history.
+ * Indicators always cover the whole company and ignore filters.
+ */
 export const RecordsViewSchema = Schema.Struct({
   /** Storefront catalog page; response adds total/page/pageSize/categories/homepageFeaturedProductIds. */
   storefrontCatalog: Schema.optionalKey(StorefrontCatalogQuerySchema),
@@ -71,9 +94,12 @@ export const RecordsViewSchema = Schema.Struct({
   includeCategories: Schema.optionalKey(Schema.Boolean),
   slug: Schema.optionalKey(Schema.String),
   categoryId: Schema.optionalKey(Schema.String),
-  search: Schema.optionalKey(Schema.String),
+  search: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
   offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 250 }))),
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 250 }))),
+  productSort: Schema.optionalKey(
+    Schema.Literals(['name', 'sku', 'price-asc', 'price-desc', 'stock-asc', 'stock-desc', 'updated-desc']),
+  ),
   summary: Schema.optionalKey(Schema.Boolean),
   active: Schema.optionalKey(Schema.Boolean),
   category: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
@@ -81,7 +107,15 @@ export const RecordsViewSchema = Schema.Struct({
   /** Storefront lookup of one guest order by its submission id (only with `storefront: true`). */
   orderClientRequestId: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(8), Schema.isMaxLength(120))),
   orderStatus: Schema.optionalKey(OrderStatusSchema),
+  orderId: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
+  orderIds: Schema.optionalKey(IdListSchema),
+  orderOpportunityId: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
+  /** Order number, customer name, e-mail or phone (diacritics-insensitive). */
+  orderSearch: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+  ordersOffset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  ordersLimit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 250 }))),
   productId: Schema.optionalKey(ProductIdSchema),
+  productIds: Schema.optionalKey(IdListSchema),
   /** Customer projection: only published, active products; no movements; orders only by `orderClientRequestId`. */
   storefront: Schema.optionalKey(Schema.Boolean),
 });
@@ -100,7 +134,14 @@ export const MerchandiseStateSchema = Schema.Struct({
   movements: Schema.Array(StockMovementSchema),
   orders: Schema.Array(OrderSchema),
   products: Schema.Array(ProductSchema),
+  /**
+   * Working-set facts a command needs beyond its loaded rows: the highest order number of the company and
+   * whether its catalog is an imported source catalog (AKROS pickup label). Seeds and resets leave them out.
+   */
+  lastOrderNumber: Schema.optionalKey(Schema.String),
+  sourceCatalog: Schema.optionalKey(Schema.Boolean),
 });
+/** A company's merchandise data, or the slice of it one command works on (only the affected rows). */
 export type MerchandiseState = typeof MerchandiseStateSchema.Type;
 
 export const RecordsRequestSchema = Schema.Struct({
@@ -110,8 +151,8 @@ export type RecordsRequest = typeof RecordsRequestSchema.Type;
 export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
 
 /**
- * `products` carries derived stock fields; `movements` and `orders` are raw ledger and snapshot rows.
- * `indicators` are computed over the whole state, not the view filter:
+ * `products` carries derived stock fields; `movements` and `orders` are raw ledger and snapshot rows, each bounded
+ * by the view (see `RecordsViewSchema`). `indicators` are computed over the whole company, not the view filter:
  * - productCount: all products; lowStockCount: products at or below their threshold
  * - stockValueMinor: sum of stockOnHand * currentPriceMinor across all products (signed)
  * - orderCount: all orders; openOrderValueMinor: totalMinor of NEW, CONFIRMED and SHIPPED orders
@@ -119,9 +160,10 @@ export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
 export const RecordsResponseSchema = Schema.Struct({
   /** AI proposals for this company's orders; present for staff principals with read_all. */
   aiChanges: Schema.optionalKey(MerchandiseAiSliceSchema),
-  categories: Schema.optionalKey(Schema.Array(CatalogCategorySchema)),
+  categories: Schema.optionalKey(Schema.Array(CategoryNodeSchema)),
   homepageFeaturedProductIds: Schema.optionalKey(Schema.Array(Schema.String)),
   total: Schema.optionalKey(Schema.Int),
+  totalOrders: Schema.optionalKey(Schema.Int),
   page: Schema.optionalKey(Schema.Int),
   pageSize: Schema.optionalKey(Schema.Int),
   orderStatus: Schema.optionalKey(Schema.NullOr(StorefrontOrderStatusSchema)),

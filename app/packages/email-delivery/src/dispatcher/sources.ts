@@ -24,9 +24,9 @@ export const readAkrosOrders = (enabledSince: string) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient;
     const rows = yield* sql<{ readonly order: unknown }>`
-      select o as "order" from demo_merchandise.merchandise_states s, jsonb_array_elements(coalesce(s.state->'orders', '[]'::jsonb)) o
-      where s.tenant_id = ${DEMO_TENANT_ID}::uuid and s.legal_entity_id = ${AKROS_LEGAL_ENTITY_ID}::uuid
-        and o->>'channel' = 'STOREFRONT' and (o->>'createdAt')::timestamptz >= ${enabledSince}::timestamptz
+      select r.document as "order" from demo_merchandise.orders r, lateral (select r.document as o) d
+      where r.tenant_id = ${DEMO_TENANT_ID}::uuid and r.legal_entity_id = ${AKROS_LEGAL_ENTITY_ID}::uuid
+        and r.channel = 'STOREFRONT' and r.created_at >= ${enabledSince}::timestamptz
         and coalesce(trim(o->'contact'->>'email'), '') <> ''
         and exists (
           select 1 from (
@@ -42,10 +42,10 @@ export const readAkrosOrders = (enabledSince: string) =>
           ) e where e.event is not null
             and (o->'demoCleanup'->>'at' is null or e.at::timestamptz < (o->'demoCleanup'->>'at')::timestamptz)
             and not exists (select 1 from demo_email.deliveries d
-              where d.dedupe_key = 'akros-order:' || (o->>'id') || ':' || e.event
+              where d.dedupe_key = 'akros-order:' || r.id || ':' || e.event
                 and (d.status <> 'RETRY' or d.updated_at >= now() - make_interval(secs => least(60, 10 * power(2, least(d.attempts - 1, 3))))))
         )
-      order by o->>'createdAt', o->>'id' limit ${SOURCE_PAGE_SIZE}`;
+      order by r.created_at, r.id limit ${SOURCE_PAGE_SIZE}`;
     return rows.map((row) => json<AkrosOrderInput>(row.order));
   });
 

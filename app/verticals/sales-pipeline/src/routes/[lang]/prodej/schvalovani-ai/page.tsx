@@ -34,7 +34,12 @@ const i18nResources = {
 type ModuleKey = 'opportunities' | 'orders';
 type MerchandiseCommand = MerchandisePayload['command'];
 type AiCommand =
-  | { readonly _tag: 'AiDecideChanges'; readonly changeIds: readonly string[]; readonly decision: 'approve' | 'reject'; readonly note?: string }
+  | {
+      readonly _tag: 'AiDecideChanges';
+      readonly changeIds: readonly string[];
+      readonly decision: 'approve' | 'reject';
+      readonly note?: string;
+    }
   | { readonly _tag: 'AiRevertBatch'; readonly batchId: string; readonly note?: string };
 
 interface ModuleSlice {
@@ -62,36 +67,70 @@ interface RunGroup {
   readonly createdAt: string;
   readonly instruction: string;
   readonly key: string;
-  readonly parts: readonly { readonly batch: AiBatch; readonly changes: readonly AiChange<unknown>[]; readonly module: ModuleKey }[];
+  readonly parts: readonly {
+    readonly batch: AiBatch;
+    readonly changes: readonly AiChange<unknown>[];
+    readonly module: ModuleKey;
+  }[];
 }
 
 const correlation = (name: string) => Random.nextInt.pipe(Effect.map((nonce) => `sales-pipeline:ai:${name}:${nonce}`));
 
 const loadOpportunities = correlation('records').pipe(
   Effect.flatMap((key) => executePipelineRecords({}, key)),
-  Effect.map(
-    (response): ModuleSlice => ({
-      batches: response.aiChanges?.batches ?? [],
-      partyOf: new Map(response.items.map((item) => [item.id as string, item.partyId as string] as const)),
-      canWrite: response.canWrite,
-      changes: response.aiChanges?.changes ?? [],
-      log: response.aiChanges?.log ?? [],
-      revision: response.revision,
-    }),
-  ),
+  Effect.map((response): ModuleSlice => ({
+    batches: response.aiChanges?.batches ?? [],
+    partyOf: new Map(response.items.map((item) => [item.id as string, item.partyId as string] as const)),
+    canWrite: response.canWrite,
+    changes: response.aiChanges?.changes ?? [],
+    log: response.aiChanges?.log ?? [],
+    revision: response.revision,
+  })),
 );
 
+/** Merchandise reads at most 250 orders by id per call. */
+const ORDER_ID_BATCH = 250;
+
+/** Customer of each proposed order: only the orders the proposals target, read by id. */
+const orderPartiesOf = (changes: readonly AiChange<unknown>[]) => {
+  const ids = [...new Set(changes.flatMap((change) => (change.target.id === undefined ? [] : [change.target.id])))];
+  const batches = Array.from({ length: Math.ceil(ids.length / ORDER_ID_BATCH) }, (_, index) =>
+    ids.slice(index * ORDER_ID_BATCH, (index + 1) * ORDER_ID_BATCH),
+  );
+  return Effect.forEach(
+    batches,
+    (orderIds) =>
+      correlation('order-parties').pipe(
+        Effect.flatMap((key) =>
+          executeMerchandiseRecords({ view: { limit: 0, orderIds, ordersLimit: ORDER_ID_BATCH } }, key),
+        ),
+      ),
+    { concurrency: 2 },
+  ).pipe(
+    Effect.map(
+      (responses) =>
+        new Map(
+          responses.flatMap((response) =>
+            response.orders.map((order) => [order.id as string, order.partyId as string] as const),
+          ),
+        ),
+    ),
+  );
+};
+
 const loadOrders = correlation('orders').pipe(
-  Effect.flatMap((key) => executeMerchandiseRecords({ view: { limit: 1, summary: true } }, key)),
-  Effect.map(
-    (response): ModuleSlice => ({
-      batches: response.aiChanges?.batches ?? [],
-      canWrite: response.canWrite,
-      changes: response.aiChanges?.changes ?? [],
-      log: response.aiChanges?.log ?? [],
-      partyOf: new Map(response.orders.map((order) => [order.id as string, order.partyId as string] as const)),
-      revision: response.revision,
-    }),
+  Effect.flatMap((key) => executeMerchandiseRecords({ view: { limit: 0, ordersLimit: 0 } }, key)),
+  Effect.flatMap((response) =>
+    orderPartiesOf(response.aiChanges?.changes ?? []).pipe(
+      Effect.map((partyOf): ModuleSlice => ({
+        batches: response.aiChanges?.batches ?? [],
+        canWrite: response.canWrite,
+        changes: response.aiChanges?.changes ?? [],
+        log: response.aiChanges?.log ?? [],
+        partyOf,
+        revision: response.revision,
+      })),
+    ),
   ),
 );
 
@@ -101,13 +140,15 @@ const refusal = (error: unknown): string => {
     typeof error === 'object' && error !== null && 'detail' in error && typeof error.detail === 'string'
       ? error.detail
       : undefined;
-  return detail !== undefined && !detail.startsWith('The ') ? detail : 'Záznam se mezitím změnil nebo k akci nemáte oprávnění.';
+  return detail !== undefined && !detail.startsWith('The ')
+    ? detail
+    : 'Záznam se mezitím změnil nebo k akci nemáte oprávnění.';
 };
 
 const sendOrders = (command: AiCommand) =>
   Effect.gen(function* send() {
     const key = yield* correlation('orders-command');
-    const { revision } = yield* executeMerchandiseRecords({ view: { limit: 1, summary: true } }, `${key}:revision`);
+    const { revision } = yield* executeMerchandiseRecords({ view: { limit: 0, ordersLimit: 0 } }, `${key}:revision`);
     return yield* executeMerchandiseCommand(
       { command: command as MerchandiseCommand, expectedRevision: revision },
       key,
@@ -118,7 +159,10 @@ const sendOrders = (command: AiCommand) =>
     Effect.retry({
       times: 1,
       while: (error) =>
-        typeof error === 'object' && error !== null && 'code' in error && error.code === 'merchandise_revision_conflict',
+        typeof error === 'object' &&
+        error !== null &&
+        'code' in error &&
+        error.code === 'merchandise_revision_conflict',
     }),
   );
 
@@ -163,7 +207,11 @@ const useModule = (load: typeof loadOpportunities, reloadKey: number): ModuleSta
       load.pipe(
         Effect.match({
           onFailure: (error) => {
-            const forbidden = typeof error === 'object' && error !== null && '_tag' in error && String(error._tag).includes('Forbidden');
+            const forbidden =
+              typeof error === 'object' &&
+              error !== null &&
+              '_tag' in error &&
+              String(error._tag).includes('Forbidden');
             if (active) setState({ status: forbidden ? 'absent' : 'error' });
           },
           onSuccess: (slice) => {
@@ -232,7 +280,9 @@ const ChangeCard = ({
         <p className="text-fg-secondary text-sm">{targetLabel}</p>
       </div>
       <div className="sp-ai-review-actions">
-        <Badge variant={change.status === 'pending' ? 'warning' : change.status === 'applied' ? 'success' : 'secondary'}>
+        <Badge
+          variant={change.status === 'pending' ? 'warning' : change.status === 'applied' ? 'success' : 'secondary'}
+        >
           {aiStatusLabel[change.status]}
         </Badge>
         <span className="text-fg-secondary text-xs">{aiRiskLabel[change.risk]}</span>
@@ -270,7 +320,13 @@ const ChangeCard = ({
     {change.decisionNote && <p className="text-fg-secondary text-sm">Poznámka schvalovatele: {change.decisionNote}</p>}
     {change.status === 'pending' && canWrite && (
       <div className="sp-ai-review-actions sp-ai-review-end">
-        <Button disabled={busy} onClick={() => decide([change.id], 'reject')} size="sm" theme="outlined" variant="secondary">
+        <Button
+          disabled={busy}
+          onClick={() => decide([change.id], 'reject')}
+          size="sm"
+          theme="outlined"
+          variant="secondary"
+        >
           Zamítnout změnu
         </Button>
         <Button disabled={busy} onClick={() => decide([change.id], 'approve')} size="sm">
@@ -294,7 +350,10 @@ const RunCard = ({
   readonly canWrite: (module: ModuleKey) => boolean;
   readonly group: RunGroup;
   readonly nameOf: (principalId: string | undefined) => string;
-  readonly run: (steps: readonly { readonly command: AiCommand; readonly module: ModuleKey }[], success: string) => void;
+  readonly run: (
+    steps: readonly { readonly command: AiCommand; readonly module: ModuleKey }[],
+    success: string,
+  ) => void;
   readonly targetLabel: (module: ModuleKey, change: AiChange<unknown>) => string;
   readonly valueLabel: (field: string, value: string | undefined) => string | undefined;
 }) => {
@@ -309,7 +368,10 @@ const RunCard = ({
     (part) => part.batch.revertedAt === undefined && part.changes.some((change) => change.status === 'applied'),
   );
   const reverted = group.parts.find((part) => part.batch.revertedAt !== undefined)?.batch;
-  const decideMany = (entries: readonly { readonly change: AiChange<unknown>; readonly module: ModuleKey }[], decision: 'approve' | 'reject') => {
+  const decideMany = (
+    entries: readonly { readonly change: AiChange<unknown>; readonly module: ModuleKey }[],
+    decision: 'approve' | 'reject',
+  ) => {
     const steps = (['opportunities', 'orders'] as const).flatMap((module) => {
       const ids = entries.filter((entry) => entry.module === module).map((entry) => entry.change.id);
       return ids.length === 0
@@ -340,7 +402,15 @@ const RunCard = ({
             <h2 className="sp-ai-review-instruction">{group.instruction}</h2>
           </div>
           <Badge
-            variant={reverted !== undefined ? 'secondary' : pending.length > 0 ? 'warning' : revertible.length > 0 ? 'success' : 'secondary'}
+            variant={
+              reverted !== undefined
+                ? 'secondary'
+                : pending.length > 0
+                  ? 'warning'
+                  : revertible.length > 0
+                    ? 'success'
+                    : 'secondary'
+            }
           >
             {reverted !== undefined
               ? 'Dávka vrácena'
@@ -354,7 +424,9 @@ const RunCard = ({
         {pending.length > decidable.length && (
           <p className="text-fg-secondary text-sm">
             Část změn může schválit jen uživatel s právem zápisu do daného modulu (
-            {[...new Set(pending.filter((entry) => !canWrite(entry.module)).map((entry) => moduleLabel[entry.module]))].join(', ')}
+            {[
+              ...new Set(pending.filter((entry) => !canWrite(entry.module)).map((entry) => moduleLabel[entry.module])),
+            ].join(', ')}
             ).
           </p>
         )}
@@ -371,7 +443,13 @@ const RunCard = ({
               <Button disabled={busy} onClick={() => decideMany(decidable, 'approve')} size="sm">
                 Schválit dávku ({decidable.length})
               </Button>
-              <Button disabled={busy} onClick={() => decideMany(decidable, 'reject')} size="sm" theme="outlined" variant="secondary">
+              <Button
+                disabled={busy}
+                onClick={() => decideMany(decidable, 'reject')}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
                 Zamítnout dávku
               </Button>
             </div>
@@ -379,7 +457,13 @@ const RunCard = ({
         )}
         {revertible.length > 0 && revertible.every((part) => canWrite(part.module)) && (
           <div className="sp-ai-review-revert">
-            <Button disabled={busy} onClick={() => setConfirmRevert(!confirmRevert)} theme="outlined" variant="secondary" size="sm">
+            <Button
+              disabled={busy}
+              onClick={() => setConfirmRevert(!confirmRevert)}
+              theme="outlined"
+              variant="secondary"
+              size="sm"
+            >
               Vrátit vše
             </Button>
             <span className="text-fg-secondary text-xs">
@@ -472,7 +556,9 @@ const AiApprovalsContent = () => {
     () =>
       new Map(
         references.customers.status === 'ready'
-          ? references.customers.items.map((customer) => [customer.id as string, customer.name ?? 'Zákazník bez názvu'] as const)
+          ? references.customers.items.map(
+              (customer) => [customer.id as string, customer.name ?? 'Zákazník bez názvu'] as const,
+            )
           : [],
       ),
     [references.customers],
@@ -541,7 +627,8 @@ const AiApprovalsContent = () => {
   const loading = opportunities.status === 'loading' || orders.status === 'loading';
   const noAccess = opportunities.status !== 'ready' && orders.status !== 'ready' && !loading;
   const visibleGroups = groups.filter(
-    (group) => filter === 'all' || group.parts.some((part) => part.changes.some((change) => change.status === 'pending')),
+    (group) =>
+      filter === 'all' || group.parts.some((part) => part.changes.some((change) => change.status === 'pending')),
   );
   const log = (['opportunities', 'orders'] as const)
     .flatMap((module) => {
@@ -561,7 +648,13 @@ const AiApprovalsContent = () => {
         description="AI připraví návrh změn příležitostí a objednávek. Vy porovnáte údaje a rozhodnete. Bez vašeho souhlasu se nic nezmění."
         meta={<Badge variant="secondary">Úroveň C</Badge>}
         actions={
-          <Button disabled={busy} onClick={() => setReloadKey((key) => key + 1)} theme="outlined" variant="secondary" size="sm">
+          <Button
+            disabled={busy}
+            onClick={() => setReloadKey((key) => key + 1)}
+            theme="outlined"
+            variant="secondary"
+            size="sm"
+          >
             Obnovit seznam
           </Button>
         }
@@ -578,8 +671,9 @@ const AiApprovalsContent = () => {
           <div className="sp-ai-review-safety">
             <span aria-hidden className="icon-[mdi--shield-check-outline] size-250" />
             <p>
-              <strong>Pod kontrolou člověka.</strong> Agent úrovně C smí příležitosti a objednávky pouze navrhovat. Přímý
-              zápis mu systém odmítne. Každé rozhodnutí má autora, čas a výsledek v auditu. Provedenou dávku lze vrátit.
+              <strong>Pod kontrolou člověka.</strong> Agent úrovně C smí příležitosti a objednávky pouze navrhovat.
+              Přímý zápis mu systém odmítne. Každé rozhodnutí má autora, čas a výsledek v auditu. Provedenou dávku lze
+              vrátit.
             </p>
           </div>
           {(opportunities.status === 'error' || orders.status === 'error') && (
@@ -644,8 +738,7 @@ const AiApprovalsContent = () => {
                 {log.slice(0, showFullLog ? log.length : 8).map(({ entry, module }) => (
                   <li key={`${module}:${entry.id}`}>
                     <div className="text-fg-secondary text-xs">
-                      {formatDateTime(entry.at)} · {moduleLabel[module]} ·{' '}
-                      {nameOf(entry.actorPrincipalId)} ·{' '}
+                      {formatDateTime(entry.at)} · {moduleLabel[module]} · {nameOf(entry.actorPrincipalId)} ·{' '}
                       {entry.actorKind === 'agent' ? 'AI návrh' : 'Rozhodnutí člověka'}
                     </div>
                     <p className="text-sm">{entry.message}</p>

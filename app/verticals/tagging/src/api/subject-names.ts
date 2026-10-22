@@ -27,8 +27,27 @@ const toNames = <T>(
     }),
   );
 
-/** Reads every record of one kind and labels it. Each branch is one cross-vertical read. */
-const readNames = (kind: SubjectKind) =>
+/** Merchandise reads at most 250 products or orders by id per call. */
+const ID_BATCH = 250;
+
+/** Runs one id-filtered read per batch of `ID_BATCH` ids and concatenates the rows. */
+const inBatches = <T, E>(
+  ids: readonly SubjectId[],
+  read: (batch: readonly string[]) => Effect.Effect<readonly T[], E>,
+) =>
+  Effect.forEach(
+    Array.from({ length: Math.ceil(ids.length / ID_BATCH) }, (_, index) =>
+      ids.slice(index * ID_BATCH, (index + 1) * ID_BATCH),
+    ),
+    read,
+    { concurrency: 2 },
+  ).pipe(Effect.map((pages) => pages.flat()));
+
+/**
+ * Labels the subjects of one kind. Products and orders are read by id; the other kinds have no id filter
+ * and read their whole (small) population.
+ */
+const readNames = (kind: SubjectKind, ids: readonly SubjectId[]) =>
   Match.value(kind).pipe(
     Match.when('customer', () =>
       listCustomers({ includeArchived: true, limit: 500 }).pipe(
@@ -53,8 +72,11 @@ const readNames = (kind: SubjectKind) =>
       ),
     ),
     Match.when('product', () =>
-      correlation('product').pipe(
-        Effect.flatMap((id) => listProducts(id)),
+      inBatches(ids, (productIds) =>
+        correlation('product').pipe(
+          Effect.flatMap((id) => listProducts(id, { limit: ID_BATCH, ordersLimit: 0, productIds, summary: true })),
+        ),
+      ).pipe(
         Effect.map((items) =>
           toNames(
             items,
@@ -65,8 +87,11 @@ const readNames = (kind: SubjectKind) =>
       ),
     ),
     Match.when('order', () =>
-      correlation('order').pipe(
-        Effect.flatMap((id) => listOrders(id)),
+      inBatches(ids, (orderIds) =>
+        correlation('order').pipe(
+          Effect.flatMap((id) => listOrders(id, { limit: 0, orderIds, ordersLimit: ID_BATCH })),
+        ),
+      ).pipe(
         Effect.map((items) =>
           toNames(
             items,
@@ -102,5 +127,5 @@ export const loadSubjectNames = Effect.fn('Tagging.loadSubjectNames')(function* 
   if (ids.length === 0) {
     return noNames;
   }
-  return yield* readNames(kind);
+  return yield* readNames(kind, ids);
 });

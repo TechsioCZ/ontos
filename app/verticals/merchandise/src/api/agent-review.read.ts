@@ -6,7 +6,7 @@ import { storefrontReadRequest } from '../../shared/actions/command-guard.ts';
 import { AgentReviewRequestSchema, AgentReviewResponseSchema } from '../../shared/apis/agent-review.ts';
 import type { AgentReviewRequest } from '../../shared/apis/agent-review.ts';
 import { ProductRecordSchema } from '../../shared/apis/records.ts';
-import type { RecordsResponse } from '../../shared/apis/records.ts';
+import type { RecordsResponse, RecordsView } from '../../shared/apis/records.ts';
 import { persistenceService } from '../services/persistence.service.ts';
 import { reviewProductProposal, targetProductId } from './agent-review.ts';
 
@@ -62,10 +62,17 @@ export const agentReviewRead = defineRead(
       const live = input.items.some(
         (item) => item.stage === 'proposed' || (item.stage === 'undo' && targetProductId(item.command) !== undefined),
       );
-      // The person's own records read (catalog rights and products); a failed read leaves every answer open.
+      const productIds = [
+        ...new Set(input.items.flatMap((item) => Option.toArray(Option.fromUndefinedOr(targetProductId(item.command))))),
+      ];
+      // The person's own records read (catalog rights and only the targeted products); a failed read leaves every
+      // answer open.
+      const view: RecordsView = { limit: productIds.length, ordersLimit: 0, productIds };
       const records: RecordsResponse | undefined = live
         ? yield* context.services
-            .records(storefrontReadRequest(context.scope.authMethod, context.scope.legalEntityId, { view: {} }))
+            .records(storefrontReadRequest(context.scope.authMethod, context.scope.legalEntityId, { view }), {
+              detailLimit: productIds.length,
+            })
             .pipe(
               Effect.map(Option.some<RecordsResponse>),
               Effect.orElseSucceed(Option.none<RecordsResponse>),

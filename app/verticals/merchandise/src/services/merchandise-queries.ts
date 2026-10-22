@@ -1,0 +1,573 @@
+// Bounded reads over the normalized merchandise tables. Every list is paged and filtered in PostgreSQL; the
+// largest unit a read ever materializes is one page of products (with variants only for detail reads).
+import { and, asc, desc, eq, inArray, like, or, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
+import { Effect, Schema } from 'effect';
+import type { RecordsView, StorefrontCatalogQuery, StorefrontOrderStatus } from '../../shared/apis/records.ts';
+import { CatalogChangeSchema } from '../../shared/domain/merchandise-model.ts';
+import type { CategoryNode, Order, OrderStatus, ProductRecord, StockMovement } from '../../shared/domain/merchandise-model.ts';
+import { categories, orders, priceTiers, productVariants, products, stockMovements } from '../database/schema.ts';
+import {
+  decodeMovementRow,
+  decodeOrderDocument,
+  hydrateProducts,
+  MerchandiseStoreFailure,
+  query,
+  whereScope,
+} from './merchandise-store.ts';
+import type { MerchandiseDb, StoreScope } from './merchandise-store.ts';
+import { toProductRecord } from './stock-levels.ts';
+import { DEFAULT_STOREFRONT_PAGE_SIZE, normalizeSearchText, storefrontStatusOf, toStorefrontProduct } from './storefront-catalog.ts';
+
+export const DEFAULT_PRODUCT_LIMIT = 50;
+/** Products per page that carry their variants (one AKROS product can hold ~400 variants, ~400 kB). */
+export const DETAIL_PAGE_LIMIT = 2;
+const CART_PAGE_LIMIT = 50;
+export const DEFAULT_ORDER_LIMIT = 100;
+const MOVEMENT_LIMIT = 500;
+
+/** Order statuses that count as open order value. DELIVERED and CANCELLED are closed. */
+const OPEN_ORDER_STATUSES: readonly OrderStatus[] = ['NEW', 'CONFIRMED', 'PACKING', 'SHIPPED'];
+
+const likeEscape = (value: string) => value.replaceAll(/[\\%_]/gu, (match) => `\\${match}`);
+const wordsOf = (text: string | undefined) =>
+  normalizeSearchText(text ?? '')
+    .split(/\s+/u)
+    .filter((word) => word !== '');
+const containsAll = (column: SQL | AnyPgColumn, words: readonly string[]) =>
+  words.map((word) => like(column, `%${likeEscape(word)}%`));
+const textArray = (values: readonly string[]) =>
+  values.length === 0 ? sql`'{}'::text[]` : sql`array[${sql.join(values.map((value) => sql`${value}`), sql`, `)}]::text[]`;
+const idsFilter = (column: AnyPgColumn, ids: readonly string[]) =>
+  ids.length === 0 ? sql`false` : inArray(column, [...ids]);
+
+// ------------------------------------------------------------------------------------------------ products
+
+const productSelection = {
+  availability: products.availability,
+  document: products.document,
+  grossPriceMinor: products.grossPriceMinor,
+  id: products.id,
+  lowStock: products.lowStock,
+  stockOnHand: products.stockOnHand,
+  stockValueMinor: products.stockValueMinor,
+};
+
+type VariantSummary = NonNullable<ProductRecord['variantSummary']>;
+
+/**
+ * Active sellable variants of the row's product in aggregate, computed inside the page query (no N+1). The scope
+ * is bound as parameters: an unqualified outer column would resolve to the variant row itself.
+ */
+const variantSummarySql = (scope: StoreScope) => sql<VariantSummary>`(select json_build_object(
+    'count', count(*)::int,
+    'minGrossPriceMinor', min(v.gross_price_minor),
+    'stockOnHand', coalesce(sum(v.stock_on_hand), 0),
+    'units', coalesce(array_agg(distinct v.unit order by v.unit), '{}'::text[]))
+  from ${productVariants} v
+  where v.tenant_id = ${scope.tenantId}::uuid and v.legal_entity_id = ${scope.legalEntityId}::uuid
+    and v.product_id = ${sql.raw('"products"."id"')} and v.variant_id is not null and v.price_minor is not null
+    and v.active)`;
+
+interface ProductPage {
+  readonly products: readonly ProductRecord[];
+  readonly total: number;
+}
+
+/**
+ * One page of product records. `variants: false` (list rows) leaves variants out and takes the derived stock
+ * fields from their stored columns; detail pages hydrate variants and derive records exactly like a write does.
+ */
+const productPage = Effect.fn('MerchandiseQueries.productPage')(function* productPage(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  input: {
+    readonly filters: readonly (SQL | undefined)[];
+    readonly limit: number;
+    readonly offset: number;
+    readonly orderBy: readonly SQL[];
+    readonly variants: boolean;
+    readonly variantSummary?: boolean;
+  },
+) {
+  const where = and(whereScope(products, scope), ...input.filters);
+  const [counted] = yield* query(db.select({ total: sql<number>`count(*)::int` }).from(products).where(where));
+  const total = counted?.total ?? 0;
+  if (input.limit === 0 || total === 0) return { products: [], total } satisfies ProductPage;
+  const rows = yield* query(
+    db
+      .select({ ...productSelection, ...(input.variantSummary === true ? { variantSummary: variantSummarySql(scope) } : {}) })
+      .from(products)
+      .where(where)
+      .orderBy(...input.orderBy)
+      .limit(input.limit)
+      .offset(input.offset),
+    'Products could not be read',
+  );
+  if (rows.length === 0) return { products: [], total } satisfies ProductPage;
+  const ids = rows.map((row) => row.id);
+  const variantRows = input.variants
+    ? yield* query(
+        db
+          .select({
+            document: productVariants.document,
+            position: productVariants.position,
+            productId: productVariants.productId,
+            stockOnHand: productVariants.stockOnHand,
+            variantId: productVariants.variantId,
+          })
+          .from(productVariants)
+          .where(and(whereScope(productVariants, scope), inArray(productVariants.productId, ids))),
+        'Variants could not be read',
+      )
+    : [];
+  const tierRows = yield* query(
+    db
+      .select({
+        minimumQuantity: priceTiers.minimumQuantity,
+        position: priceTiers.position,
+        priceExcludingVatMinor: priceTiers.priceExcludingVatMinor,
+        priceMinor: priceTiers.priceMinor,
+        productId: priceTiers.productId,
+        variantPosition: priceTiers.variantPosition,
+      })
+      .from(priceTiers)
+      .where(
+        and(
+          whereScope(priceTiers, scope),
+          inArray(priceTiers.productId, ids),
+          ...(input.variants ? [] : [eq(priceTiers.variantPosition, -1)]),
+        ),
+      ),
+    'Price tiers could not be read',
+  );
+  const records = yield* Effect.try({
+    catch: (cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored rows do not decode' }),
+    try: () =>
+      hydrateProducts(rows, variantRows, tierRows).map(({ product, stock }, index): ProductRecord => {
+        const row = rows[index]!;
+        const summary = 'variantSummary' in row ? { variantSummary: row.variantSummary as VariantSummary } : {};
+        if (input.variants) return { ...toProductRecord(product, stock), ...summary };
+        const { variants: _variants, ...rest } = product;
+        void _variants;
+        return {
+          ...rest,
+          availability: row.availability as NonNullable<ProductRecord['availability']>,
+          ...(row.grossPriceMinor === null ? {} : { grossPriceMinor: row.grossPriceMinor }),
+          lowStock: row.lowStock,
+          stockOnHand: row.stockOnHand,
+          stockValueMinor: row.stockValueMinor,
+          ...summary,
+        };
+      }),
+  });
+  return { products: records, total } satisfies ProductPage;
+});
+
+const staffProductFilters = (view: RecordsView, storefront: boolean): (SQL | undefined)[] => [
+  eq(products.archived, false),
+  ...(storefront ? [eq(products.active, true), eq(products.published, true)] : []),
+  view.productId === undefined ? undefined : eq(products.id, view.productId),
+  view.productIds === undefined ? undefined : idsFilter(products.id, view.productIds),
+  view.slug === undefined ? undefined : eq(products.slug, view.slug),
+  view.categoryId === undefined
+    ? undefined
+    : or(eq(products.categoryId, view.categoryId), sql`${products.categoryPathIds} @> ${textArray([view.categoryId])}`),
+  ...containsAll(products.searchText, wordsOf(view.search)),
+  view.active === undefined ? undefined : eq(products.active, view.active),
+  view.category === undefined ? undefined : eq(products.category, view.category),
+  view.lowStockOnly === true ? eq(products.lowStock, true) : undefined,
+];
+
+const staffProductOrder = (sort: RecordsView['productSort']): SQL[] => {
+  switch (sort) {
+    case 'name': {
+      return [asc(products.nameKey), asc(products.ordinal)];
+    }
+    case 'sku': {
+      return [asc(products.skuKey)];
+    }
+    case 'price-asc': {
+      return [sql`${products.grossPriceMinor} asc nulls last`, asc(products.ordinal)];
+    }
+    case 'price-desc': {
+      return [sql`${products.grossPriceMinor} desc nulls last`, asc(products.ordinal)];
+    }
+    case 'stock-asc': {
+      return [asc(products.stockOnHand), asc(products.ordinal)];
+    }
+    case 'stock-desc': {
+      return [desc(products.stockOnHand), asc(products.ordinal)];
+    }
+    case 'updated-desc': {
+      return [desc(products.updatedAt), asc(products.ordinal)];
+    }
+    case undefined: {
+      return [asc(products.ordinal)];
+    }
+  }
+};
+
+/** Staff (and plain storefront) product page; customers never see price or content history. */
+export const staffProducts = (
+  db: MerchandiseDb,
+  scope: StoreScope,
+  view: RecordsView,
+  storefront: boolean,
+  input: { readonly detailLimit?: number } = {},
+) =>
+  productPage(db, scope, {
+    filters: staffProductFilters(view, storefront),
+    limit:
+      view.summary === true
+        ? (view.limit ?? DEFAULT_PRODUCT_LIMIT)
+        : Math.min(view.limit ?? DETAIL_PAGE_LIMIT, input.detailLimit ?? DETAIL_PAGE_LIMIT),
+    offset: view.offset ?? 0,
+    orderBy: staffProductOrder(view.productSort),
+    variantSummary: view.summary === true,
+    variants: view.summary !== true,
+  }).pipe(
+    Effect.map((page) => ({
+      ...page,
+      products: page.products.map((record): ProductRecord => {
+        if (view.summary === true) {
+          const { contentHistory: _history, ...summary } = record;
+          void _history;
+          return { ...summary, priceHistory: [] };
+        }
+        if (!storefront) return record;
+        const { variants: _raw, contentHistory: _content, ...publicProduct } = record;
+        void _raw;
+        void _content;
+        return {
+          ...publicProduct,
+          priceHistory: [],
+          ...(record.variantRecords === undefined
+            ? {}
+            : { variantRecords: record.variantRecords.map((variant) => ({ ...variant, priceHistory: [] })) }),
+        };
+      }),
+    })),
+  );
+
+/** Category id of a storefront slug, or undefined. */
+const categoryIdBySlug = (db: MerchandiseDb, scope: StoreScope, slug: string) =>
+  query(
+    db
+      .select({ id: categories.id })
+      .from(categories)
+      .where(and(whereScope(categories, scope), eq(categories.slug, slug)))
+      .limit(1),
+  ).pipe(Effect.map((rows) => rows[0]?.id));
+
+const labelFilter = (label: NonNullable<StorefrontCatalogQuery['label']>) =>
+  label === 'action'
+    ? eq(products.isAction, true)
+    : label === 'recommended'
+      ? eq(products.isRecommended, true)
+      : label === 'sale'
+        ? eq(products.isSale, true)
+        : eq(products.isNew, true);
+
+const IN_STOCK = ['IN_STOCK', 'LOW_STOCK'];
+
+/**
+ * Storefront catalog page: visible products (active, published, not archived), filters AND-ed, relevance or price
+ * order, one page. Listing cards (`fields: 'card'`) never load variants; every product carries `variantSummary`.
+ */
+export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProducts')(function* storefrontProducts(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  input: { readonly featuredIds: readonly string[]; readonly query: StorefrontCatalogQuery },
+) {
+  const catalog = input.query;
+  const categoryId = catalog.categorySlug === undefined ? undefined : yield* categoryIdBySlug(db, scope, catalog.categorySlug);
+  const words = wordsOf(catalog.q);
+  const needle = normalizeSearchText(catalog.q ?? '');
+  const filters: (SQL | undefined)[] = [
+    eq(products.archived, false),
+    eq(products.active, true),
+    eq(products.published, true),
+    catalog.featured === true
+      ? or(sql`${products.id} = any(${textArray(input.featuredIds)})`, eq(products.isRecommended, true))
+      : undefined,
+    catalog.productIds === undefined ? undefined : idsFilter(products.id, catalog.productIds),
+    catalog.slug === undefined ? undefined : eq(products.slug, catalog.slug),
+    catalog.categorySlug === undefined
+      ? undefined
+      : categoryId === undefined
+        ? sql`false`
+        : or(eq(products.categoryId, categoryId), sql`${products.categoryPathIds} @> ${textArray([categoryId])}`),
+    catalog.label === undefined ? undefined : labelFilter(catalog.label),
+    ...containsAll(products.searchText, words),
+    catalog.minMinor === undefined ? undefined : sql`coalesce(${products.grossPriceMinor}, 0) >= ${catalog.minMinor}`,
+    catalog.maxMinor === undefined ? undefined : sql`coalesce(${products.grossPriceMinor}, 0) <= ${catalog.maxMinor}`,
+    catalog.availability === 'in-stock' ? inArray(products.availability, IN_STOCK) : undefined,
+    catalog.availability === 'out-of-stock' ? sql`${products.availability} not in ('IN_STOCK', 'LOW_STOCK')` : undefined,
+  ];
+  const nameSku = sql`${products.nameKey} || ' ' || ${products.skuKey}`;
+  const relevance =
+    words.length === 0
+      ? []
+      : [
+          sql`case
+            when ${products.nameKey} = ${needle} or ${products.skuKey} = ${needle} then 0
+            when ${products.nameKey} like ${`%${likeEscape(needle)}%`} or ${products.skuKey} like ${`%${likeEscape(needle)}%`} then 1
+            when ${and(...containsAll(nameSku, words))} then 2
+            else 3 end`,
+          desc(products.hasPhoto),
+        ];
+  const base: SQL[] =
+    catalog.productIds !== undefined
+      ? [sql`array_position(${textArray(catalog.productIds)}, ${products.id})`]
+      : catalog.featured === true
+        ? [sql`array_position(${textArray(input.featuredIds)}, ${products.id}) asc nulls last`, asc(products.ordinal)]
+        : [asc(products.ordinal)];
+  const named = catalog.sort === 'name' || (catalog.sort === undefined && words.length > 0);
+  const ranked = named ? [...relevance, asc(products.nameKey), asc(products.ordinal)] : base;
+  const orderBy =
+    catalog.sort === 'price-asc'
+      ? [sql`${products.grossPriceMinor} asc nulls last`, ...ranked]
+      : catalog.sort === 'price-desc'
+        ? [sql`${products.grossPriceMinor} desc nulls last`, ...ranked]
+        : ranked;
+  const fields = catalog.fields ?? 'full';
+  const requested = catalog.pageSize ?? DEFAULT_STOREFRONT_PAGE_SIZE;
+  const pageSize =
+    fields === 'card'
+      ? requested
+      : Math.min(requested, catalog.variantIds === undefined ? DETAIL_PAGE_LIMIT : CART_PAGE_LIMIT);
+  const page = catalog.page ?? 1;
+  const variantIds = catalog.variantIds === undefined ? undefined : new Set(catalog.variantIds);
+  const result = yield* productPage(db, scope, {
+    filters,
+    limit: pageSize,
+    offset: (page - 1) * pageSize,
+    orderBy,
+    variants: fields === 'full',
+    variantSummary: true,
+  });
+  return {
+    page,
+    pageSize,
+    products: result.products.map((record) =>
+      toStorefrontProduct(
+        variantIds === undefined || record.variantRecords === undefined
+          ? record
+          : { ...record, variantRecords: record.variantRecords.filter((variant) => variantIds.has(variant.id)) },
+        fields,
+      ),
+    ),
+    total: result.total,
+  };
+});
+
+// ------------------------------------------------------------------------------------------------ categories
+
+/**
+ * The category tree in one query (navigation fields only). `detail` names categories that also carry their
+ * content (storefront: roots, the active category and its children; staff: the selected one with its history).
+ * The storefront tree hides every category below an unpublished one.
+ */
+export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(function* categoryTree(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  input: { readonly activeId?: string | undefined; readonly activeSlug?: string | undefined; readonly storefront: boolean },
+) {
+  const activeId =
+    input.activeId ?? (input.activeSlug === undefined ? undefined : yield* categoryIdBySlug(db, scope, input.activeSlug));
+  const active = activeId === undefined ? sql`false` : eq(categories.id, activeId);
+  // Storefront tiles and the sidebar show images of roots and of the active category's children.
+  const shown = input.storefront
+    ? or(sql`${categories.parentId} is null`, active, activeId === undefined ? sql`false` : eq(categories.parentId, activeId))
+    : active;
+  const rows = yield* query(
+    db
+      .select({
+        description: sql<string | null>`case when ${shown} then ${categories.description} end`,
+        hasChildren: categories.hasChildren,
+        heading: sql<string | null>`case when ${active} then ${categories.heading} end`,
+        history: input.storefront ? sql<unknown>`null` : sql<unknown>`case when ${active} then ${categories.history} end`,
+        id: categories.id,
+        imageAlt: sql<string | null>`case when ${shown} then ${categories.imageAlt} end`,
+        imageSrc: sql<string | null>`case when ${shown} then ${categories.imageSrc} end`,
+        longDescription: sql<string | null>`case when ${active} then ${categories.longDescription} end`,
+        name: categories.name,
+        parentId: categories.parentId,
+        position: categories.position,
+        published: categories.published,
+        slug: categories.slug,
+      })
+      .from(categories)
+      .where(whereScope(categories, scope))
+      .orderBy(asc(categories.ordinal)),
+    'Categories could not be read',
+  );
+  const byId = new Map(rows.map((row) => [row.id, row] as const));
+  const visible = (id: string) => {
+    const seen = new Set<string>();
+    let current = byId.get(id);
+    while (current !== undefined && !seen.has(current.id)) {
+      if (current.published === false) return false;
+      seen.add(current.id);
+      current = current.parentId === null ? undefined : byId.get(current.parentId);
+    }
+    return true;
+  };
+  return yield* Effect.try({
+    catch: (cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored rows do not decode' }),
+    try: () =>
+      rows
+        .filter((row) => !input.storefront || visible(row.id))
+        .map(
+          (row): CategoryNode => ({
+            hasChildren: row.hasChildren,
+            id: row.id,
+            name: row.name,
+            parentId: row.parentId,
+            position: row.position,
+            slug: row.slug,
+            ...(row.published === null ? {} : { published: row.published }),
+            ...(row.heading === null ? {} : { heading: row.heading }),
+            ...(row.description === null ? {} : { description: row.description }),
+            ...(row.longDescription === null ? {} : { longDescription: row.longDescription }),
+            ...(row.imageSrc === null ? {} : { imageSrc: row.imageSrc }),
+            ...(row.imageAlt === null ? {} : { imageAlt: row.imageAlt }),
+            ...(row.history === null || row.history === undefined ? {} : { history: decodeHistory(row.history) }),
+          }),
+        ),
+  });
+});
+
+const decodeHistory = Schema.decodeUnknownSync(Schema.Array(CatalogChangeSchema));
+
+// ------------------------------------------------------------------------------------------------ orders, movements
+
+export const orderPage = Effect.fn('MerchandiseQueries.orderPage')(function* orderPage(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  view: RecordsView,
+) {
+  const where = and(
+    whereScope(orders, scope),
+    eq(orders.removed, false),
+    view.orderStatus === undefined ? undefined : eq(orders.status, view.orderStatus),
+    view.orderId === undefined ? undefined : eq(orders.id, view.orderId),
+    view.orderIds === undefined ? undefined : idsFilter(orders.id, view.orderIds),
+    view.orderOpportunityId === undefined ? undefined : eq(orders.opportunityId, view.orderOpportunityId),
+    ...containsAll(orders.searchText, wordsOf(view.orderSearch)),
+  );
+  const limit = view.ordersLimit ?? DEFAULT_ORDER_LIMIT;
+  const [counted] = yield* query(db.select({ total: sql<number>`count(*)::int` }).from(orders).where(where));
+  const total = counted?.total ?? 0;
+  if (limit === 0 || total === 0) return { orders: [] as readonly Order[], total };
+  const rows = yield* query(
+    db
+      .select({ document: orders.document })
+      .from(orders)
+      .where(where)
+      .orderBy(desc(orders.createdAt), desc(orders.ordinal))
+      .limit(limit)
+      .offset(view.ordersOffset ?? 0),
+    'Orders could not be read',
+  );
+  const decoded = yield* Effect.try({ catch: (cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored rows do not decode' }), try: () => rows.map((row) => decodeOrderDocument(row.document)) });
+  return { orders: decoded as readonly Order[], total };
+});
+
+/** Guest orders of one storefront submission (replay lookup); never removed ones. */
+export const ordersByClientRequest = Effect.fn('MerchandiseQueries.ordersByClientRequest')(function* ordersByClientRequest(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  clientRequestId: string,
+) {
+  const rows = yield* query(
+    db
+      .select({ document: orders.document })
+      .from(orders)
+      .where(and(whereScope(orders, scope), eq(orders.clientRequestId, clientRequestId), eq(orders.removed, false)))
+      .limit(5),
+  );
+  return yield* Effect.try({ catch: (cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored rows do not decode' }), try: () => rows.map((row) => decodeOrderDocument(row.document)) });
+});
+
+/** Customer-safe status of one storefront order; null unless id AND clientRequestId match a visible order. */
+export const storefrontOrderStatus = Effect.fn('MerchandiseQueries.storefrontOrderStatus')(function* storefrontOrderStatus(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  lookup: { readonly clientRequestId: string; readonly orderId: string },
+) {
+  const rows = yield* query(
+    db
+      .select({ document: orders.document })
+      .from(orders)
+      .where(
+        and(
+          whereScope(orders, scope),
+          eq(orders.id, lookup.orderId),
+          eq(orders.clientRequestId, lookup.clientRequestId),
+          eq(orders.channel, 'STOREFRONT'),
+          eq(orders.removed, false),
+        ),
+      )
+      .limit(1),
+  );
+  const [row] = rows;
+  if (row === undefined) return null;
+  const order = yield* Effect.try({ catch: (cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored rows do not decode' }), try: () => decodeOrderDocument(row.document) });
+  return storefrontStatusOf(order) satisfies StorefrontOrderStatus;
+});
+
+/** One product's ledger: the newest 500 movements, oldest first. */
+export const productMovements = Effect.fn('MerchandiseQueries.productMovements')(function* productMovements(
+  db: MerchandiseDb,
+  scope: StoreScope,
+  productId: string,
+) {
+  const rows = yield* query(
+    db
+      .select()
+      .from(stockMovements)
+      .where(and(whereScope(stockMovements, scope), eq(stockMovements.productId, productId)))
+      .orderBy(desc(stockMovements.ordinal))
+      .limit(MOVEMENT_LIMIT),
+  );
+  return yield* Effect.try({
+    catch: (cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored rows do not decode' }),
+    try: (): readonly StockMovement[] => rows.toReversed().map(decodeMovementRow),
+  });
+});
+
+/** Company-wide indicators in two aggregate queries. */
+export const indicators = Effect.fn('MerchandiseQueries.indicators')(function* indicators(
+  db: MerchandiseDb,
+  scope: StoreScope,
+) {
+  const [catalog] = yield* query(
+    db
+      .select({
+        lowStockCount: sql<number>`count(*) filter (where ${products.lowStock})::int`,
+        productCount: sql<number>`count(*)::int`,
+        stockValueMinor: sql<number>`coalesce(sum(${products.stockValueMinor}), 0)::bigint`,
+      })
+      .from(products)
+      .where(and(whereScope(products, scope), eq(products.archived, false))),
+  );
+  const [sales] = yield* query(
+    db
+      .select({
+        openOrderValueMinor: sql<number>`coalesce(sum(${orders.totalMinor}) filter (where ${inArray(orders.status, [...OPEN_ORDER_STATUSES])}), 0)::bigint`,
+        orderCount: sql<number>`count(*)::int`,
+      })
+      .from(orders)
+      .where(and(whereScope(orders, scope), eq(orders.removed, false))),
+  );
+  return {
+    lowStockCount: catalog?.lowStockCount ?? 0,
+    openOrderValueMinor: Number(sales?.openOrderValueMinor ?? 0),
+    orderCount: sales?.orderCount ?? 0,
+    productCount: catalog?.productCount ?? 0,
+    stockValueMinor: Number(catalog?.stockValueMinor ?? 0),
+  };
+});

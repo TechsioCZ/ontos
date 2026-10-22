@@ -141,6 +141,27 @@ export const CatalogCategorySchema = Schema.Struct({
 });
 export type CatalogCategory = typeof CatalogCategorySchema.Type;
 
+/**
+ * Category as reads return it. Trees carry only the navigation fields (id, parent, name, slug, position,
+ * children flag, published); the content fields are present for the category a read asks about in detail.
+ */
+export const CategoryNodeSchema = Schema.Struct({
+  id: Schema.String,
+  parentId: Schema.NullOr(Schema.String),
+  name: Schema.String,
+  slug: Schema.String,
+  position: Schema.Finite,
+  hasChildren: Schema.Boolean,
+  published: Schema.optionalKey(Schema.Boolean),
+  heading: Schema.optionalKey(Schema.String),
+  description: Schema.optionalKey(Schema.String),
+  longDescription: Schema.optionalKey(Schema.String),
+  imageSrc: Schema.optionalKey(Schema.String),
+  imageAlt: Schema.optionalKey(Schema.String),
+  history: Schema.optionalKey(Schema.Array(CatalogChangeSchema)),
+});
+export type CategoryNode = typeof CategoryNodeSchema.Type;
+
 export const ProductMetadataSchema = Schema.Struct({
   ...CatalogFieldsSchema.fields,
   /** Alt text of the main image (storefront `imageAlt`). The gallery is `images`; paragraphs derive from `description`. */
@@ -231,6 +252,18 @@ export const ProductRecordSchema = Schema.Struct({
   stockOnHand: Schema.Finite,
   stockValueMinor: Schema.Int,
   variantRecords: Schema.optionalKey(Schema.Array(VariantRecordSchema)),
+  /**
+   * Storefront reads: the product's active sellable variants in aggregate (count, lowest gross price, summed stock,
+   * distinct units). Listing cards read only this; detail reads `variantRecords`.
+   */
+  variantSummary: Schema.optionalKey(
+    Schema.Struct({
+      count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      minGrossPriceMinor: Schema.NullOr(MinorAmountSchema),
+      stockOnHand: Schema.Finite,
+      units: Schema.Array(Schema.String),
+    }),
+  ),
   /** Storefront-only derived fields: `description` split on blank lines, and `images` (or `[imageSrc]`). */
   descriptionParagraphs: Schema.optionalKey(Schema.Array(Schema.String)),
   gallery: Schema.optionalKey(Schema.Array(Schema.String)),

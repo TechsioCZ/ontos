@@ -122,7 +122,7 @@ const loadProducts = catalogReadable.pipe(
   Effect.flatMap((readable) =>
     readable
       ? correlated('products').pipe(
-          Effect.flatMap((id) => listProducts(id)),
+          Effect.flatMap((id) => listProducts(id, { limit: 250, ordersLimit: 0, summary: true })),
           Effect.map((items) => items.flatMap((item) => Option.toArray(toProductOption(item)))),
         )
       : Effect.succeed<readonly ProductOption[]>([]),

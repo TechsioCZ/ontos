@@ -51,7 +51,7 @@ interface Product {
   readonly id: string;
   readonly name: string;
   readonly sku: string;
-  readonly variants?: readonly unknown[];
+  readonly variantSummary?: { readonly count: number };
 }
 interface MerchandiseRecords {
   readonly products: readonly Product[];
@@ -106,14 +106,14 @@ const gatewayBody = gateway.body as GatewayResponse;
 // 3. Read the merchandise records through the gateway.
 const records = await post(
   `${gatewayBody.apiBaseUrl}/reads/records`,
-  { view: {} },
+  { view: { active: true, limit: 250, ordersLimit: 0, productSort: 'name', summary: true } },
   { authorization: `Bearer ${gatewayBody.token}`, 'x-ontos-composition-revision': revision },
 );
 assert.equal(records.status, 200, JSON.stringify(records.body));
 
 // 4. Pick the product and compute the new price.
 const product = (records.body as MerchandiseRecords).products
-  .filter((entry) => entry.active && entry.currentPriceMinor >= 10_000 && (entry.variants ?? []).length === 0)
+  .filter((entry) => entry.active && entry.currentPriceMinor >= 10_000 && (entry.variantSummary?.count ?? 0) === 0)
   .toSorted((left, right) => left.name.localeCompare(right.name, 'cs'))[0];
 assert.ok(product, 'V Obchodní firmě chybí aktivní produkt bez variant s cenou alespoň 100 Kč');
 const newPriceMinor = Math.round((product.currentPriceMinor * 1.05) / 100) * 100;

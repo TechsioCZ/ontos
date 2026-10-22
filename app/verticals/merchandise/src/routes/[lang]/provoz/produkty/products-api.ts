@@ -6,7 +6,7 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import { ProductIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import type { ProductRecord } from '../../../../../shared/domain/merchandise-model.ts';
-import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
+import type { RecordsRequestEncoded, RecordsResponse, RecordsView } from '../../../../../shared/apis/records.ts';
 
 /**
  * `conflict` is a stale revision (someone else changed the data); `rejected` is a business rule the
@@ -87,11 +87,36 @@ const commandReason = (error: CommandFailure): FailureReason =>
     Match.orElse((): FailureReason => 'unavailable'),
   );
 
-/** Full records read: products with derived stock, indicators, movements and the write capability. */
-export const loadProducts = (onOutcome: (outcome: LoadOutcome) => void): void => {
+export type ProductSort = NonNullable<RecordsView['productSort']>;
+
+/** What the products list asks the server for: filters, sort and one page. */
+export interface ProductListQuery {
+  readonly categoryId: string | null;
+  readonly limit: number;
+  readonly lowStockOnly: boolean;
+  readonly offset: number;
+  readonly search: string;
+  readonly sort: ProductSort | null;
+}
+
+type ViewPayload = NonNullable<RecordsRequestEncoded['view']>;
+
+/** List rows only (no variants or histories) and no orders: one bounded page of the catalog. */
+export const productListView = (query: ProductListQuery): ViewPayload => ({
+  limit: query.limit,
+  offset: query.offset,
+  ordersLimit: 0,
+  summary: true,
+  ...(query.search.trim() === '' ? {} : { search: query.search.trim() }),
+  ...(query.categoryId === null ? {} : { categoryId: query.categoryId }),
+  ...(query.lowStockOnly ? { lowStockOnly: true } : {}),
+  ...(query.sort === null ? {} : { productSort: query.sort }),
+});
+
+const loadView = (view: ViewPayload, onOutcome: (outcome: LoadOutcome) => void): void => {
   void browserRuntime.runPromise(
     newId.pipe(
-      Effect.flatMap((correlation) => executeRecords({}, correlation)),
+      Effect.flatMap((correlation) => executeRecords({ view }, correlation)),
       Effect.match({
         onFailure: (error): LoadOutcome => ({ ok: false, reason: recordsReason(error) }),
         onSuccess: (response): LoadOutcome => ({ ok: true, response }),
@@ -101,19 +126,21 @@ export const loadProducts = (onOutcome: (outcome: LoadOutcome) => void): void =>
   );
 };
 
-/** Detail read: one product with its own movements and the storefront category tree (not the whole catalog). */
-export const loadProductDetail = (productId: string, onOutcome: (outcome: LoadOutcome) => void): void => {
-  void browserRuntime.runPromise(
-    newId.pipe(
-      Effect.flatMap((correlation) => executeRecords({ view: { includeCategories: true, productId } }, correlation)),
-      Effect.match({
-        onFailure: (error): LoadOutcome => ({ ok: false, reason: recordsReason(error) }),
-        onSuccess: (response): LoadOutcome => ({ ok: true, response }),
-      }),
-      Effect.map(onOutcome),
-    ),
-  );
-};
+/** One page of the products list with the company indicators and the write capability. */
+export const loadProducts = (query: ProductListQuery, onOutcome: (outcome: LoadOutcome) => void): void =>
+  loadView(productListView(query), onOutcome);
+
+/** The storefront category tree (navigation fields only), without products or orders. */
+export const loadCategoryTree = (onOutcome: (outcome: LoadOutcome) => void): void =>
+  loadView({ includeCategories: true, limit: 0, ordersLimit: 0 }, onOutcome);
+
+/** One category with its content fields and history, plus the tree around it. */
+export const loadCategoryDetail = (categoryId: string, onOutcome: (outcome: LoadOutcome) => void): void =>
+  loadView({ categoryId, includeCategories: true, limit: 0, ordersLimit: 0 }, onOutcome);
+
+/** Detail read: one product with its variants, its own movements and the storefront category tree. */
+export const loadProductDetail = (productId: string, onOutcome: (outcome: LoadOutcome) => void): void =>
+  loadView({ includeCategories: true, ordersLimit: 0, productId }, onOutcome);
 
 /** One command against the single merchandise apply-command action. Each call gets its own idempotency key. */
 export const runCommand = (

@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord, StockMovement } from '../../../../../shared/apis/records.ts';
 import type {
+  CategoryNode,
   ProductMetadata,
   ProductUnit,
   ProductVariant,
@@ -43,14 +44,13 @@ import {
 import { EMPTY_MOVEMENT_DRAFT, MovementForm, MovementsTable, isMovementDraftDirty } from './product-movements.tsx';
 import { AvailabilityBadge, EshopPanel, VariantsPanel, VariantPriceHistory } from './product-eshop.tsx';
 import { CatalogContentPanel } from './product-catalog-content.tsx';
-import type { CatalogCategory } from '../../../../../shared/domain/merchandise-model.ts';
 import type { MovementDraft } from './product-movements.tsx';
 
 export interface ProductDetailViewProps {
   readonly storefrontOrigin?: string;
   readonly canWrite: boolean;
   readonly canMoveStock?: boolean;
-  readonly categories?: readonly CatalogCategory[];
+  readonly categories?: readonly CategoryNode[];
   readonly movements: readonly StockMovement[];
   readonly onBack: () => void;
   readonly onCommitted: (message: string) => void;

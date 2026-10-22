@@ -2,12 +2,11 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { SidePanel, comboboxTranslations, dialogCloseLabel } from '@app/admin-ui';
+import { SidePanel, dialogCloseLabel } from '@app/admin-ui';
 import { useState } from 'react';
 import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import type { ProductUnit, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
@@ -15,6 +14,7 @@ import { sameSku } from '../../../../../shared/domain/merchandise-model.ts';
 import { MONEY_FORMAT, WHOLE_NUMBER_FORMAT } from '../../../../form-number.ts';
 import { runCommand } from './products-api.ts';
 import type { FailureReason } from './products-api.ts';
+import { ProductSearchCombobox } from './product-search.tsx';
 
 export interface FormDialogProps {
   /** Called after a successful command. The page shows the toast and reloads. */
@@ -64,9 +64,6 @@ export const useCommandFailure = () => {
     return label('messages.failed');
   };
 };
-
-/** Combobox reports a single value as a string or a one-item array; both shapes collapse to the picked id. */
-const pickFirst = (values: string | string[]): string | undefined => (Array.isArray(values) ? values[0] : values);
 
 /** Price in Kč, haléře allowed (the input keeps two decimals): a finite number above zero. An emptied input reports NaN. */
 export const priceErrorKey = (priceCzk: number): string | undefined =>
@@ -182,17 +179,10 @@ const ErrorLine = ({ message }: { readonly message: string | null }) =>
   );
 
 /**
- * Create product: SKU, name, unit, category, VAT, price, minimum stock. Sends CreateProduct. A SKU already in
- * the loaded list is refused before sending; the server still refuses one created meanwhile by someone else.
+ * Create product: SKU, name, unit, category, VAT, price, minimum stock. Sends CreateProduct. The server refuses a
+ * SKU the catalog already has; the field then shows that message until the SKU changes.
  */
-export const CreateProductDialog = ({
-  onCommitted,
-  onOpenChange,
-  onReload,
-  open,
-  products,
-  revision,
-}: FormDialogProps & { readonly products: readonly ProductRecord[] }) => {
+export const CreateProductDialog = ({ onCommitted, onOpenChange, onReload, open, revision }: FormDialogProps) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
   const failure = useCommandFailure();
@@ -215,9 +205,7 @@ export const CreateProductDialog = ({
   const dirty = sku !== '' || name !== '' || category !== '' || priceText !== '' || lowStock !== 0;
   const { discardOpen, requestClose, setDiscardOpen } = useDraftClose(dirty, onOpenChange);
 
-  const skuTaken =
-    (takenSku !== null && sameSku(takenSku, sku)) || products.some((product) => sameSku(product.sku, sku));
-  const skuTakenError = skuTaken ? k('validation.skuTaken') : undefined;
+  const skuTakenError = takenSku !== null && sameSku(takenSku, sku) ? k('validation.skuTaken') : undefined;
   const skuError = sku.trim() === '' ? k(REQUIRED_KEY) : (skuTakenError ?? tooLongMessage(k, sku, PRODUCT_LIMITS.sku));
   const nameError = name.trim() === '' ? k(REQUIRED_KEY) : tooLongMessage(k, name, PRODUCT_LIMITS.name);
   const categoryError = category.trim() === '' ? k(REQUIRED_KEY) : tooLongMessage(k, category, PRODUCT_LIMITS.category);
@@ -433,18 +421,12 @@ export const CreateProductDialog = ({
 };
 
 /** Goods receipt: pick a product, enter a positive quantity, record RECEIPT with a positive delta. */
-export const ReceiptDialog = ({
-  onCommitted,
-  onOpenChange,
-  onReload,
-  open,
-  products,
-  revision,
-}: FormDialogProps & { readonly products: readonly ProductRecord[] }) => {
+export const ReceiptDialog = ({ onCommitted, onOpenChange, onReload, open, revision }: FormDialogProps) => {
   const k = useProductLabel();
   const { t } = useModernI18n();
   const failure = useCommandFailure();
-  const [productId, setProductId] = useState<ProductRecord['id'] | null>(null);
+  const [product, setProduct] = useState<ProductRecord | null>(null);
+  const productId = product?.id ?? null;
   const [quantity, setQuantity] = useState(1);
   const [quantityText, setQuantityText] = useState('1');
   const [note, setNote] = useState('');
@@ -459,7 +441,7 @@ export const ReceiptDialog = ({
   const noteError = tooLongMessage(k, note, PRODUCT_LIMITS.note);
 
   const clearForm = () => {
-    setProductId(null);
+    setProduct(null);
     setQuantity(1);
     setQuantityText('1');
     setNote('');
@@ -527,25 +509,16 @@ export const ReceiptDialog = ({
           }}
         >
           <ErrorLine message={serverError} />
-          {/* Not clearable: ui-kit names the clear control "Clear value" in English; picking another product replaces it. */}
-          <Combobox
-            clearable={false}
+          <ProductSearchCombobox
+            errorMessage={k('states.error')}
             id="receipt-product"
-            items={products.map((product) => ({
-              id: product.id,
-              label: `${product.name} (${product.sku})`,
-              value: product.id,
-            }))}
             label={k('fields.product')}
-            name="product"
+            loadingMessage={t('merchandise.loading')}
             noResultsMessage={k('states.noResults')}
-            onChange={(values) => {
-              const picked = pickFirst(values);
-              setProductId(products.find((product) => product.id === picked)?.id ?? null);
-            }}
+            onSelect={setProduct}
             placeholder={k('filters.search')}
-            translations={comboboxTranslations}
-            value={productId === null ? [] : [productId]}
+            retryLabel={k('common.retry')}
+            selected={product}
             {...fieldError(submitted, productError)}
           />
           <FormNumericInput

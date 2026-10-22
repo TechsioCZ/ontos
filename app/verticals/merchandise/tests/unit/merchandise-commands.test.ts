@@ -10,11 +10,8 @@ import type { MerchandiseState } from '../../shared/apis/records.ts';
 import { ProductIdSchema } from '../../shared/domain/merchandise-model.ts';
 import type { OrderStatus } from '../../shared/domain/merchandise-model.ts';
 import { orderTotals } from '../../shared/domain/order-totals.ts';
-import {
-  evolveMerchandiseState,
-  percentChangedPriceMinor,
-  stockOnHandOf,
-} from '../../src/services/persistence.service.ts';
+import { evolveMerchandiseState, percentChangedPriceMinor } from '../../src/services/persistence.service.ts';
+import { stockOnHandOf } from '../../src/services/stock-levels.ts';
 
 const actor = {
   principalId: '20000000-0000-4000-8000-000000000002',

@@ -6,13 +6,15 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Switch } from '@techsio/ui-kit/molecules/switch';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { PageHeader, StatCard, StatRow, foldSearchText, formatNumber, Toaster } from '@app/admin-ui';
+import { PageHeader, StatCard, StatRow, formatNumber, Toaster } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
 import { Effect, Schema } from 'effect';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { BulkProductPatch } from '../../../../../shared/actions/apply-command.ts';
 import type { ProductRecord, RecordsResponse } from '../../../../../shared/apis/records.ts';
+import { ProductIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
+import type { CategoryNode } from '../../../../../shared/domain/merchandise-model.ts';
 import csResource from '../../../../../locales/cs/merchandise.json';
 import enResource from '../../../../../locales/en/merchandise.json';
 import { toSubjectIds, useSubjectTagFilter, useSubjectTags } from '../../../../tags/subject-tags.ts';
@@ -20,8 +22,10 @@ import type { SubjectTagFilter } from '../../../../tags/subject-tags.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
 import { formatKc } from '../../../../list-cells.tsx';
-import { loadProducts, runCommand, productNavigationFailureKey } from './products-api.ts';
-import type { FailureReason, LoadOutcome } from './products-api.ts';
+import { loadCategoryTree, loadProducts, runCommand, productNavigationFailureKey } from './products-api.ts';
+import type { FailureReason, ProductListQuery, ProductSort } from './products-api.ts';
+import { categoryTrails } from './product-catalog-content.tsx';
+import { useDebounced } from './product-reads.ts';
 import { ProductBulkBar } from './product-bulk-bar.tsx';
 import { CategoryAdminButton } from './category-admin-panel.tsx';
 import { CategoryDialog, CreateProductDialog, PriceChangeDialog, ReceiptDialog } from './product-forms.tsx';
@@ -34,17 +38,76 @@ const merchandiseI18nResources = {
 } as const;
 
 const ALL_CATEGORIES = '__all__';
+const DEFAULT_SORT = '__default__';
+const PAGE_SIZE = 50;
+const SORTS: readonly ProductSort[] = [
+  'name',
+  'sku',
+  'price-asc',
+  'price-desc',
+  'stock-asc',
+  'stock-desc',
+  'updated-desc',
+];
+const isProductId = Schema.is(ProductIdSchema);
 const DialogKind = Schema.Literals(['create', 'receipt', 'price', 'category', 'tags']);
 /** The category filter keeps its label for assistive tech only, so it lines up with the other filter controls. */
 const srOnlyLabelProps = { className: 'sr-only' };
 
 type LoadState =
   | { readonly reason: FailureReason; readonly status: 'error' }
-  | { readonly response: RecordsResponse; readonly status: 'ready' }
+  | { readonly query: ProductListQuery; readonly response: RecordsResponse; readonly status: 'ready' }
   | { readonly status: 'loading' };
 
-const toLoadState = (outcome: LoadOutcome): LoadState =>
-  outcome.ok ? { response: outcome.response, status: 'ready' } : { reason: outcome.reason, status: 'error' };
+const NO_CATEGORIES: readonly CategoryNode[] = [];
+
+type SetLoadState = (next: LoadState) => void;
+
+/** Reads one page; only the newest read may land, so a slow earlier page never replaces the page the user moved to. */
+const readPage = (query: ProductListQuery, generation: { current: number }, setState: SetLoadState): void => {
+  generation.current += 1;
+  const requested = generation.current;
+  loadProducts(query, (outcome) => {
+    if (requested !== generation.current) {
+      return;
+    }
+    setState(
+      outcome.ok ? { query, response: outcome.response, status: 'ready' } : { reason: outcome.reason, status: 'error' },
+    );
+  });
+};
+
+/** The products page for `query`. A refresh keeps the rows on screen; only the first load shows the loading state. */
+const useProductPage = (query: ProductListQuery) => {
+  const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const generation = useRef(0);
+  useEffect(() => {
+    readPage(query, generation, setState);
+  }, [query]);
+  return { reload: () => readPage(query, generation, setState), state };
+};
+
+const readTree = (setCategories: (next: readonly CategoryNode[]) => void): void =>
+  loadCategoryTree((outcome) => {
+    if (outcome.ok) {
+      setCategories(outcome.response.categories ?? NO_CATEGORIES);
+    }
+  });
+
+/** The storefront category tree for the category filter; reread after the category panel saves. */
+const useCategoryTree = () => {
+  const [categories, setCategories] = useState<readonly CategoryNode[]>(NO_CATEGORIES);
+  useEffect(() => {
+    readTree(setCategories);
+  }, []);
+  return { categories, reload: () => readTree(setCategories) };
+};
+
+/** Category filter options: every tree node labelled with its path, in path order. */
+const categoryOptions = (categories: readonly CategoryNode[]) =>
+  [...categoryTrails(categories)]
+    .map(([value, label]) => ({ label, value }))
+    .toSorted((left, right) => left.label.localeCompare(right.label, 'cs'));
 
 /** With a tag filter active, row tags still loading read as loading and a failed load as error, never as no match. */
 const tableStatusFor = (
@@ -101,38 +164,38 @@ const bulkFailureKey = (reason: FailureReason): string => {
   return reason === 'rejected' ? 'messages.rejected' : 'messages.failed';
 };
 
-/** Folded name and SKU contain the folded query, so diacritics on either side do not matter. */
-const matchesSearch = (product: ProductRecord, foldedQuery: string): boolean =>
-  foldSearchText(
-    `${product.name} ${product.sku} ${product.variants?.map((variant) => `${variant.name} ${variant.sku ?? ''}`).join(' ') ?? ''}`,
-  ).includes(foldedQuery);
-
 const RecordsPageContent = () => {
   const { language, t } = useModernI18n();
   const navigate = useNavigate();
   const toaster = useToast();
   const k = (path: string) => t(`merchandise.pages.products.${path}`);
 
-  const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [search, setSearch] = useState('');
-  const [category, setCategory] = useState(ALL_CATEGORIES);
+  const [categoryId, setCategoryId] = useState<string | null>(null);
   const [lowStockOnly, setLowStockOnly] = useState(false);
+  const [sort, setSort] = useState<ProductSort | null>(null);
+  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: PAGE_SIZE });
   const [selection, setSelection] = useState<Record<string, true>>({});
   const [dialog, setDialog] = useState<typeof DialogKind.Type | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
+  const settledSearch = useDebounced(search);
+  const query = useMemo<ProductListQuery>(
+    () => ({
+      categoryId,
+      limit: pagination.pageSize,
+      lowStockOnly,
+      offset: pagination.pageIndex * pagination.pageSize,
+      search: settledSearch,
+      sort,
+    }),
+    [categoryId, lowStockOnly, pagination, settledSearch, sort],
+  );
+  const { reload, state } = useProductPage(query);
+  const { categories, reload: reloadCategories } = useCategoryTree();
 
-  useEffect(() => {
-    loadProducts((outcome) => {
-      setState(toLoadState(outcome));
-    });
-  }, []);
-
-  // A refresh keeps the rows on screen; only the first load shows the loading state.
-  const reload = () => {
-    loadProducts((outcome) => {
-      setState(toLoadState(outcome));
-    });
-  };
+  /** A filter change starts again at the first page. */
+  const firstPage = () =>
+    setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
 
   const ready = state.status === 'ready' ? state.response : undefined;
   const products = ready?.products ?? [];
@@ -140,31 +203,29 @@ const RecordsPageContent = () => {
   const productTags = useSubjectTags('product', canWrite ? products.map((product) => product.id) : []);
   const tagFilter = useSubjectTagFilter(productTags);
   const revision = ready?.revision ?? 0;
-  const categories = [...new Set(products.map((product) => product.category))].toSorted((left, right) =>
-    left.localeCompare(right, 'cs'),
-  );
+  const categoryItems = useMemo(() => categoryOptions(categories), [categories]);
 
-  const query = foldSearchText(search.trim());
-  const filtered = products.filter(
-    (product) =>
-      (query === '' || matchesSearch(product, query)) &&
-      (category === ALL_CATEGORIES || product.category === category) &&
-      (!lowStockOnly || product.lowStock) &&
-      tagFilter.matches(product.id),
-  );
-  const selectedIds = products.flatMap((product) => (selection[product.id] === true ? [product.id] : []));
-  const filtersActive = query !== '' || category !== ALL_CATEGORIES || lowStockOnly || tagFilter.tagId !== null;
-  const tableStatus = tableStatusFor(state.status, tagFilter.status);
+  // The tag filter has no server counterpart yet: it narrows the page on screen.
+  const rows = products.filter((product) => tagFilter.matches(product.id));
+  const selectedIds = Object.keys(selection).filter(isProductId);
+  const filtersActive = search.trim() !== '' || categoryId !== null || lowStockOnly || tagFilter.tagId !== null;
+  const stale = state.status === 'ready' && state.query !== query;
+  const tableStatus = stale ? 'loading' : tableStatusFor(state.status, tagFilter.status);
 
   const onCommitted = (message: string) => {
     toaster.create({ duration: SUCCESS_TOAST_MS, title: message, type: 'success' });
     reload();
   };
+  const onCategoriesCommitted = (message: string) => {
+    onCommitted(message);
+    reloadCategories();
+  };
   const clearFilters = () => {
     setSearch('');
-    setCategory(ALL_CATEGORIES);
+    setCategoryId(null);
     setLowStockOnly(false);
     tagFilter.setTagId(null);
+    firstPage();
   };
 
   const runBulk = (patch: BulkProductPatch, message: string) => {
@@ -227,7 +288,7 @@ const RecordsPageContent = () => {
           actions={
             canWrite ? (
               <div className="flex flex-wrap items-center gap-100">
-                <CategoryAdminButton onCommitted={onCommitted} />
+                <CategoryAdminButton onCommitted={onCategoriesCommitted} />
                 <Button
                   icon="icon-[mdi--package-down]"
                   onClick={() => openDialog('receipt')}
@@ -253,28 +314,50 @@ const RecordsPageContent = () => {
           <Input
             aria-label={k('filters.search')}
             className="w-64"
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => {
+              setSearch(event.target.value);
+              firstPage();
+            }}
             placeholder={k('filters.search')}
             size="sm"
             type="search"
             value={search}
           />
+          {categoryItems.length > 0 && (
+            <div className="w-64">
+              <SelectTemplate
+                items={[{ label: k('filters.allCategories'), value: ALL_CATEGORIES }, ...categoryItems]}
+                label={k('filters.category')}
+                labelProps={srOnlyLabelProps}
+                name="category"
+                onValueChange={(details) => {
+                  const [next] = details.value;
+                  setCategoryId(next === undefined || next === ALL_CATEGORIES ? null : next);
+                  firstPage();
+                }}
+                placeholder={t('merchandise.selectPlaceholder')}
+                size="sm"
+                value={[categoryId ?? ALL_CATEGORIES]}
+              />
+            </div>
+          )}
           <div className="w-48">
             <SelectTemplate
               items={[
-                { label: k('filters.allCategories'), value: ALL_CATEGORIES },
-                ...categories.map((value) => ({ label: value, value })),
+                { label: k('sort.default'), value: DEFAULT_SORT },
+                ...SORTS.map((value) => ({ label: k(`sort.${value}`), value })),
               ]}
-              label={k('filters.category')}
+              label={k('sort.label')}
               labelProps={srOnlyLabelProps}
-              name="category"
+              name="sort"
               onValueChange={(details) => {
                 const [next] = details.value;
-                setCategory(next ?? ALL_CATEGORIES);
+                setSort(SORTS.find((candidate) => candidate === next) ?? null);
+                firstPage();
               }}
               placeholder={t('merchandise.selectPlaceholder')}
               size="sm"
-              value={[category]}
+              value={[sort ?? DEFAULT_SORT]}
             />
           </div>
           {canWrite && (
@@ -282,7 +365,14 @@ const RecordsPageContent = () => {
               <TagFilter kind="product" onChange={(tagId) => tagFilter.setTagId(tagId)} value={tagFilter.tagId} />
             </div>
           )}
-          <Switch checked={lowStockOnly} name="lowStockOnly" onCheckedChange={setLowStockOnly}>
+          <Switch
+            checked={lowStockOnly}
+            name="lowStockOnly"
+            onCheckedChange={(checked) => {
+              setLowStockOnly(checked);
+              firstPage();
+            }}
+          >
             {k('filters.lowStockOnly')}
           </Switch>
         </div>
@@ -325,6 +415,7 @@ const RecordsPageContent = () => {
           onClearFilters={clearFilters}
           onCreate={() => openDialog('create')}
           onOpen={openDetail}
+          onPaginationChange={setPagination}
           onRetry={() => {
             if (state.status === 'error' && state.reason === 'reload-required') {
               window.location.reload();
@@ -334,7 +425,9 @@ const RecordsPageContent = () => {
             productTags.refetch();
           }}
           onSelectionChange={setSelection}
-          rows={filtered}
+          pagination={pagination}
+          rowCount={ready?.totalProducts ?? products.length}
+          rows={rows}
           selection={selection}
           status={tableStatus}
           tagsOf={productTags.tagsOf}
@@ -347,7 +440,6 @@ const RecordsPageContent = () => {
               onOpenChange={closeDialog}
               onReload={reload}
               open={dialog === 'create'}
-              products={products}
               revision={revision}
             />
             <ReceiptDialog
@@ -355,7 +447,6 @@ const RecordsPageContent = () => {
               onOpenChange={closeDialog}
               onReload={reload}
               open={dialog === 'receipt'}
-              products={products}
               revision={revision}
             />
             <PriceChangeDialog

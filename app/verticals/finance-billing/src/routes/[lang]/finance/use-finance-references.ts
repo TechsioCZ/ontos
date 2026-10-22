@@ -80,7 +80,7 @@ export const useFinanceReferences = () => {
         },
       }),
     );
-    const loadProducts = listProducts('finance-billing.products').pipe(
+    const loadProducts = listProducts('finance-billing.products', { limit: 250, ordersLimit: 0, summary: true }).pipe(
       Effect.match({
         onFailure: (cause) => recordFailure('products', cause),
         onSuccess: (items) => {

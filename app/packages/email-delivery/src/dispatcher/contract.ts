@@ -100,7 +100,7 @@ export const emailStatusLabels: Readonly<Record<EmailDeliveryStatus, string>> = 
 export const SIAMPARK_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000021';
 export const OBCHODNI_FIRMA_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000020';
 
-/** Minimal read shape of a persisted AKROS order (demo_merchandise state JSON, encoded form). */
+/** Minimal read shape of a persisted AKROS order (demo_merchandise.orders document, encoded form). */
 export interface AkrosOrderInput {
   readonly channel?: string;
   readonly contact?: { readonly email: string; readonly name: string; readonly phone?: string };

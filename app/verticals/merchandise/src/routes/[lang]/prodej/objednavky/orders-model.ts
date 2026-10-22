@@ -1,4 +1,3 @@
-import { DateTime } from 'effect';
 import type { Order } from '../../../../../shared/apis/records.ts';
 import type { OrderStatus, VatRate } from '../../../../../shared/domain/merchandise-model.ts';
 import type { OrdersSnapshot } from './orders-records.ts';
@@ -55,34 +54,25 @@ export const statusDoneKey = (status: OrderStatus) => statusDoneKeys[status];
 
 const sum = (values: readonly number[]) => values.reduce((total, value) => total + value, 0);
 
-const sameUtcMonth = (left: DateTime.Utc, right: DateTime.Utc) =>
-  DateTime.getPartUtc(left, 'year') === DateTime.getPartUtc(right, 'year') &&
-  DateTime.getPartUtc(left, 'month') === DateTime.getPartUtc(right, 'month');
-
 /**
- * Header statistics over all loaded orders. "Shipped this month" uses `updatedAt` as its date because
- * the order carries no shipping timestamp yet.
+ * Route-oriented values for a pending or loaded page. The header counts cover the whole company: totals and the
+ * open value come from the indicators, cancelled and shipped from server counts (dashes until they land).
  */
-export const orderStats = (orders: readonly Order[], now: DateTime.Utc) => {
-  const open = orders.filter(
-    (order) => order.status === 'NEW' || order.status === 'CONFIRMED' || order.status === 'PACKING',
-  );
-  return {
-    cancelled: orders.filter((order) => order.status === 'CANCELLED').length,
-    openCount: open.length,
-    openValueMinor: sum(open.map((order) => order.totalMinor)),
-    shippedThisMonth: orders.filter((order) => order.status === 'SHIPPED' && sameUtcMonth(order.updatedAt, now)).length,
-    total: orders.length,
-  };
-};
-
-/** Route-oriented values for a pending or loaded records snapshot. */
 export const ordersPageSummary = (snapshot: OrdersSnapshot | undefined) => {
   const orders = snapshot?.records.orders ?? [];
   return {
     canWrite: snapshot?.records.canWrite === true,
     orders,
-    stats: snapshot === undefined ? undefined : orderStats(orders, snapshot.now),
+    stats:
+      snapshot === undefined
+        ? undefined
+        : {
+            cancelled: snapshot.counts?.cancelled,
+            openValueMinor: snapshot.records.indicators.openOrderValueMinor,
+            shipped: snapshot.counts?.shipped,
+            total: snapshot.records.indicators.orderCount,
+          },
+    totalOrders: snapshot?.records.totalOrders ?? orders.length,
   };
 };
 

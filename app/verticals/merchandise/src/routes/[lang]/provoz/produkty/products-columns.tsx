@@ -6,7 +6,10 @@ import type { ProductRecord } from '../../../../../shared/apis/records.ts';
 import { TagsCell, formatKc } from '../../../../list-cells.tsx';
 import { AvailabilityBadge, imageUrl } from './product-eshop.tsx';
 
-/** Product table columns. VAT and the active flag live in the detail dialog. Numbers are end-aligned, fixed widths. */
+/**
+ * Product table columns over summary rows (no variants). VAT, the active flag and variants live in the detail.
+ * Numbers are end-aligned, fixed widths.
+ */
 export const productColumns = (
   label: (path: string) => string,
   tagsOf: (id: string) => readonly Tag[],
@@ -22,7 +25,6 @@ export const productColumns = (
     cell: (info) => {
       const product = info.row.original;
       const [image] = product.images ?? [];
-      const variants = product.variantRecords?.length ?? 0;
       return (
         <span className="flex min-w-0 items-center gap-100">
           {image !== undefined && imageUrl(image) !== undefined && (
@@ -41,17 +43,8 @@ export const productColumns = (
           )}
           <span className="flex min-w-0 flex-col">
             <span className="truncate">{product.name}</span>
-            {(variants > 0 || product.published === false) && (
-              <span className="truncate text-fg-secondary text-xs">
-                {[
-                  variants > 0
-                    ? `${variants} ${variants === 1 ? 'varianta' : variants < 5 ? 'varianty' : 'variant'}`
-                    : null,
-                  product.published === false ? 'skryto v e-shopu' : null,
-                ]
-                  .filter((part) => part !== null)
-                  .join(' · ')}
-              </span>
+            {product.published === false && (
+              <span className="truncate text-fg-secondary text-xs">skryto v e-shopu</span>
             )}
           </span>
         </span>
@@ -63,16 +56,12 @@ export const productColumns = (
   { accessorKey: 'category', header: label('columns.category'), meta: { type: 'string', width: 110 } },
   {
     accessorKey: 'currentPriceMinor',
-    cell: (info) => {
-      const product = info.row.original;
-      const fromVariants = (product.variantRecords?.length ?? 0) > 0;
-      return (
-        <span className="flex flex-col items-end tabular-nums">
-          <span>{`${fromVariants ? 'od ' : ''}${formatMoney(product.grossPriceMinor ?? info.getValue<number>())}`}</span>
-          <span className="text-fg-secondary text-xs">s DPH</span>
-        </span>
-      );
-    },
+    cell: (info) => (
+      <span className="flex flex-col items-end tabular-nums">
+        <span>{formatMoney(info.row.original.grossPriceMinor ?? info.getValue<number>())}</span>
+        <span className="text-fg-secondary text-xs">s DPH</span>
+      </span>
+    ),
     header: label('columns.price'),
     meta: { align: 'end', type: 'number', width: 100 },
   },

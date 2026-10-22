@@ -1,13 +1,12 @@
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { NumericInput } from '@techsio/ui-kit/atoms/numeric-input';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormNumericInput } from '@techsio/ui-kit/molecules/form-numeric-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { comboboxTranslations, formatMoney, SectionCard, surfaceTileClassName } from '@app/admin-ui';
+import { formatMoney, SectionCard, surfaceTileClassName } from '@app/admin-ui';
 import { Effect } from 'effect';
 import { useState } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
@@ -24,6 +23,10 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { MONEY_FORMAT, moneyInputText } from '../../../../form-number.ts';
 import { shippingOptions } from './order-eshop.ts';
 import { editOrder, isRevisionConflict } from './orders-records.ts';
+import { activeVariants } from './order-line-editor.tsx';
+import { loadProductRecord } from '../../provoz/produkty/product-reads.ts';
+import type { ProductRecordState } from '../../provoz/produkty/product-reads.ts';
+import { ProductSearchCombobox } from '../../provoz/produkty/product-search.tsx';
 
 type EditCommand = Extract<MerchandiseCommand, { readonly _tag: 'EditOrder' }>;
 
@@ -94,47 +97,40 @@ const draftOf = (order: Order): Draft => ({
 });
 
 interface SellableUnit {
-  readonly label: string;
   readonly name: string;
   readonly netMinor: number;
   readonly productId: ProductId;
   readonly sku: string;
-  readonly value: string;
   readonly variantId?: VariantId;
   readonly variantName?: string;
   readonly vatRate: DraftLine['vatRate'];
 }
 
-const sellableUnits = (products: readonly ProductRecord[]): readonly SellableUnit[] =>
-  products
-    .filter((product) => product.active)
-    .flatMap((product): SellableUnit[] => {
-      const variants = (product.variantRecords ?? []).filter((variant) => variant.active);
-      if (variants.length === 0) {
-        return [
-          {
-            label: `${product.name} (${product.sku})`,
-            name: product.name,
-            netMinor: product.currentPriceMinor,
-            productId: product.id,
-            sku: product.sku,
-            value: product.id,
-            vatRate: product.vatRate,
-          },
-        ];
-      }
-      return variants.map((variant) => ({
-        label: `${product.name} — ${variant.name} (${variant.sku})`,
+/** The unit a pick adds: the product itself, or its chosen active variant. Undefined until that choice is complete. */
+const sellableUnit = (product: ProductRecord, variantId: VariantId | null): SellableUnit | undefined => {
+  const variants = activeVariants(product);
+  if (variants.length === 0) {
+    return {
+      name: product.name,
+      netMinor: product.currentPriceMinor,
+      productId: product.id,
+      sku: product.sku,
+      vatRate: product.vatRate,
+    };
+  }
+  const variant = variants.find((entry) => entry.id === variantId);
+  return variant === undefined
+    ? undefined
+    : {
         name: product.name,
         netMinor: variant.priceMinor,
         productId: product.id,
         sku: variant.sku,
-        value: `${product.id}|${variant.id}`,
         variantId: variant.id,
         variantName: variant.name,
         vatRate: product.vatRate,
-      }));
-    });
+      };
+};
 
 const sameAddress = (order: Order, draft: Draft) =>
   (order.deliveryAddress?.street ?? '') === draft.street.trim() &&
@@ -153,6 +149,7 @@ interface OrderEditFormProps {
   readonly onCancel: () => void;
   readonly onSaved: (message: string) => void;
   readonly order: Order;
+  /** Full records of the products on the order's lines. */
   readonly products: readonly ProductRecord[];
   readonly revision: number;
 }
@@ -165,18 +162,37 @@ interface OrderEditFormProps {
 export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, revision }: OrderEditFormProps) => {
   const [draft, setDraft] = useState<Draft>(() => draftOf(order));
   const [sequence, setSequence] = useState(0);
-  const [pick, setPick] = useState<string | null>(null);
+  // The product picked for a new line, with its full record (variants) read on pick.
+  const [pick, setPick] = useState<{
+    readonly product: Pick<ProductRecord, 'id' | 'name' | 'sku'>;
+    readonly record: ProductRecordState;
+  } | null>(null);
+  const [pickedVariantId, setPickedVariantId] = useState<VariantId | null>(null);
+  // Products added in this edit, so their quantity rules are known next to the order's own line products.
+  const [addedProducts, setAddedProducts] = useState<readonly ProductRecord[]>([]);
+  const pickedProduct = pick?.record.status === 'ready' ? pick.record.product : null;
+  const pickProduct = (next: Pick<ProductRecord, 'id' | 'name' | 'sku'> | null) => {
+    setPickedVariantId(null);
+    setPick(next === null ? null : { product: next, record: { status: 'loading' } });
+    if (next !== null) {
+      // A record that arrives after another pick is dropped.
+      loadProductRecord(next.id, (record) =>
+        setPick((current) => (current?.product.id === next.id ? { ...current, record } : current)),
+      );
+    }
+  };
+  const pickedVariants = activeVariants(pickedProduct);
+  const unit = pickedProduct === null ? undefined : sellableUnit(pickedProduct, pickedVariantId);
   const [busy, setBusy] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const gross = order.pricesIncludeVat === true;
-  const units = sellableUnits(products);
   const patch = (next: Partial<Draft>) => setDraft((current) => ({ ...current, ...next }));
   const patchLine = (key: string, next: Partial<DraftLine>) =>
     patch({ lines: draft.lines.map((line) => (line.key === key ? { ...line, ...next } : line)) });
 
   const rulesFor = (line: Pick<DraftLine, 'productId' | 'variantId'>) => {
-    const product = products.find((entry) => entry.id === line.productId);
+    const product = [...products, ...addedProducts].find((entry) => entry.id === line.productId);
     const unit =
       line.variantId === undefined ? product : product?.variantRecords?.find((entry) => entry.id === line.variantId);
     return orderQuantityRules(unit ?? { stockOnHand: 1_000_000 });
@@ -307,18 +323,24 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
     );
   };
 
+  const clearPick = () => pickProduct(null);
   const addLine = () => {
-    const unit = units.find((entry) => entry.value === pick);
-    if (unit === undefined) {
+    if (unit === undefined || pickedProduct === null) {
       return;
     }
+    setAddedProducts((current) => [...current.filter((entry) => entry.id !== pickedProduct.id), pickedProduct]);
     const existing = draft.lines.find((line) => line.productId === unit.productId && line.variantId === unit.variantId);
     if (existing !== undefined) {
       const quantity = parseQuantity(existing.quantityText) ?? 0;
       patchLine(existing.key, { quantityText: String(quantity + rulesFor(existing).step) });
-      setPick(null);
+      clearPick();
       return;
     }
+    const rules = orderQuantityRules(
+      unit.variantId === undefined
+        ? pickedProduct
+        : (pickedProduct.variantRecords?.find((entry) => entry.id === unit.variantId) ?? pickedProduct),
+    );
     const unitPrice = gross ? grossUnitPriceMinor(unit.netMinor, unit.vatRate) : unit.netMinor;
     patch({
       lines: [
@@ -328,7 +350,7 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
           name: unit.name,
           priceText: moneyInputText(unitPrice / 100),
           productId: unit.productId,
-          quantityText: String(Math.ceil(rulesFor(unit).minimum / rulesFor(unit).step) * rulesFor(unit).step),
+          quantityText: String(Math.ceil(rules.minimum / rules.step) * rules.step),
           sku: unit.sku,
           ...(unit.variantId === undefined ? {} : { variantId: unit.variantId }),
           ...(unit.variantName === undefined ? {} : { variantName: unit.variantName }),
@@ -337,7 +359,7 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
       ],
     });
     setSequence(sequence + 1);
-    setPick(null);
+    clearPick();
   };
 
   const akros = products.some((product) => product.sourceGroupId !== undefined);
@@ -357,8 +379,7 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
       }}
     >
       <p className="text-fg-secondary text-sm">
-        Úprava DEMO objednávky. Součty přepočítá server, změna se zapíše do historie s autorem a časem. Ceník se
-        nemění.{' '}
+        Úprava DEMO objednávky. Součty přepočítá server, změna se zapíše do historie s autorem a časem. Ceník se nemění.{' '}
         {movesStock
           ? 'Objednávka už zboží odepsala ze skladu: přidané kusy se ze skladu odepíšou, ubrané se vrátí (uvidíte je v Pohybech produktu).'
           : 'Tato objednávka sklad neodepsala, změna množství zásoby nemění.'}
@@ -466,30 +487,50 @@ export const OrderEditForm = ({ movesStock, onCancel, onSaved, order, products, 
             </Table.Body>
           </Table>
         </div>
-        <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-150 p-200">
-          <Combobox
-            clearable={false}
-            items={units.map((unit) => ({ id: unit.value, label: unit.label, value: unit.value }))}
-            label="Přidat položku"
-            noResultsMessage="Žádný produkt neodpovídá."
-            onChange={(values) => {
-              const next = Array.isArray(values) ? values[0] : values;
-              setPick(next ?? null);
-            }}
-            placeholder="Hledat produkt nebo variantu…"
-            translations={comboboxTranslations}
-            value={pick === null ? [] : [pick]}
-          />
-          <Button
-            disabled={pick === null}
-            icon="icon-[mdi--plus]"
-            onClick={addLine}
-            theme="outlined"
-            type="button"
-            variant="secondary"
-          >
-            Přidat
-          </Button>
+        <div className="flex flex-col gap-150 p-200">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-150">
+            <ProductSearchCombobox
+              activeOnly
+              errorMessage="Produkty se nepodařilo načíst."
+              id="order-edit-add-product"
+              label="Přidat položku"
+              loadingMessage="Načítám…"
+              noResultsMessage="Žádný produkt neodpovídá."
+              onSelect={pickProduct}
+              placeholder="Hledat produkt…"
+              retryLabel="Zkusit znovu"
+              selected={pick?.product ?? null}
+            />
+            <Button
+              disabled={unit === undefined}
+              icon="icon-[mdi--plus]"
+              onClick={addLine}
+              theme="outlined"
+              type="button"
+              variant="secondary"
+            >
+              Přidat
+            </Button>
+          </div>
+          {pickedVariants.length > 0 && (
+            <SelectTemplate
+              items={pickedVariants.map((entry) => ({ label: `${entry.name} (${entry.sku})`, value: entry.id }))}
+              label="Varianta"
+              name="order-edit-add-variant"
+              onValueChange={(details) => {
+                const [next] = details.value;
+                setPickedVariantId(pickedVariants.find((entry) => entry.id === next)?.id ?? null);
+              }}
+              placeholder="Vyberte variantu"
+              size="sm"
+              value={pickedVariantId === null ? [] : [pickedVariantId]}
+            />
+          )}
+          {pick?.record.status === 'error' && (
+            <StatusText showIcon status="error">
+              Produkt se nepodařilo načíst. Vyberte ho znovu.
+            </StatusText>
+          )}
         </div>
       </SectionCard>
 

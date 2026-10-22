@@ -32,10 +32,8 @@ const Database = Layer.effect(
 const removedOrderNumbers = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient;
   const rows = yield* sql<{ readonly number: string }>`
-    select o->>'number' as "number"
-    from demo_merchandise.merchandise_states s, jsonb_array_elements(coalesce(s.state->'orders', '[]'::jsonb)) o
-    where s.tenant_id = ${DEMO_TENANT_ID}::uuid and s.legal_entity_id = ${AKROS_LEGAL_ENTITY_ID}::uuid
-      and o ? 'demoCleanup'`;
+    select number from demo_merchandise.orders
+    where tenant_id = ${DEMO_TENANT_ID}::uuid and legal_entity_id = ${AKROS_LEGAL_ENTITY_ID}::uuid and removed`;
   return new Set(rows.map((row) => row.number));
 });
 

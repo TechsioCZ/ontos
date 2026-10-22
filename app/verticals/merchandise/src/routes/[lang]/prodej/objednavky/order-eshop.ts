@@ -73,7 +73,3 @@ export const shippingOptions = (Object.keys(shippingMethods) as ShippingMethod[]
   method,
   priceMinor: shippingMethods[method].grossPriceMinor,
 }));
-
-/** Text the orders table search runs against: number, customer, e-mail. */
-export const orderSearchText = (order: Order, customers: CustomerDirectory): string =>
-  [order.number, orderCustomerName(order, customers) ?? '', order.contact?.email ?? ''].join(' ');

@@ -1,12 +1,15 @@
 // Admin category picker search: by any part of the category path, case- and diacritics-insensitive.
 import { foldSearchText } from '@app/admin-ui';
-import type { CatalogCategory } from '../../../../../shared/domain/merchandise-model.ts';
+import type { CategoryNode } from '../../../../../shared/domain/merchandise-model.ts';
 
 export const CATEGORY_RESULT_LIMIT = 50;
 const PATH_SEPARATORS = /[\s›>/]+/u;
 
 const WORD_SEPARATORS = /[^\p{L}\p{N}]+/u;
-const wordsOf = (text: string) => foldSearchText(text).split(WORD_SEPARATORS).filter((word) => word !== '');
+const wordsOf = (text: string) =>
+  foldSearchText(text)
+    .split(WORD_SEPARATORS)
+    .filter((word) => word !== '');
 
 /** Query words matched, in order, by the starts of the path's words (`din 912 a 2` in `DIN 912 › A 2`). */
 const matchesInOrder = (query: readonly string[], path: readonly string[]): boolean => {
@@ -26,10 +29,10 @@ const matchesInOrder = (query: readonly string[], path: readonly string[]): bool
  * shallower paths, so an ambiguous leaf like „A 2“ is told apart by its parents.
  */
 export const searchCategories = (
-  categories: readonly CatalogCategory[],
+  categories: readonly CategoryNode[],
   trails: ReadonlyMap<string, string>,
   query: string,
-): readonly CatalogCategory[] => {
+): readonly CategoryNode[] => {
   const words = foldSearchText(query.trim())
     .split(PATH_SEPARATORS)
     .filter((word) => word !== '');
@@ -37,7 +40,7 @@ export const searchCategories = (
     return [];
   }
   const scored: {
-    readonly category: CatalogCategory;
+    readonly category: CategoryNode;
     readonly depth: number;
     readonly score: number;
     readonly trail: string;
@@ -50,10 +53,7 @@ export const searchCategories = (
     }
     const nameWords = wordsOf(category.name);
     let suffix = 0;
-    while (
-      suffix < words.length &&
-      nameWords.some((word) => word.startsWith(words[words.length - 1 - suffix] ?? ''))
-    ) {
+    while (suffix < words.length && nameWords.some((word) => word.startsWith(words[words.length - 1 - suffix] ?? ''))) {
       suffix += 1;
     }
     const exactness = nameWords.length === 0 ? 0 : Math.min(suffix, nameWords.length) / nameWords.length;

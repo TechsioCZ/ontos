@@ -2,26 +2,14 @@ import { DateTime, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { staffCommandAllowed, AKROS_LEGAL_ENTITY_ID } from '../../shared/actions/command-guard.ts';
 import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
-import { CatalogCategorySchema } from '../../shared/domain/merchandise-model.ts';
-import type { CatalogCategory } from '../../shared/domain/merchandise-model.ts';
+import { CategoryNodeSchema } from '../../shared/domain/merchandise-model.ts';
+import type { CategoryNode } from '../../shared/domain/merchandise-model.ts';
 import { searchCategories } from '../../src/routes/[lang]/provoz/produkty/category-search.ts';
 import { moveImage } from '../../src/routes/[lang]/provoz/produkty/product-images.ts';
 import { isOrderScopedEdit } from '../../src/services/persistence.service.ts';
 
-const category = (id: string, parentId: string | null, name: string, slug: string): CatalogCategory =>
-  Schema.decodeUnknownSync(CatalogCategorySchema)({
-    description: '',
-    hasChildren: false,
-    heading: name,
-    id,
-    imageAlt: name,
-    imageSrc: '',
-    longDescription: '',
-    name,
-    parentId,
-    position: 0,
-    slug,
-  });
+const category = (id: string, parentId: string | null, name: string, slug: string): CategoryNode =>
+  Schema.decodeUnknownSync(CategoryNodeSchema)({ hasChildren: false, id, name, parentId, position: 0, slug });
 
 const categories = [
   category('root', null, 'Šrouby', 'srouby'),
@@ -53,14 +41,12 @@ it('finds an ambiguous leaf category by its parent path, diacritics-insensitive'
     'a2-6912',
     'cert',
   ]);
-  expect(searchCategories(categories, trails, 'srouby › din 933 › a 2').map((entry) => entry.id)).toEqual([
-    'a2-933',
-  ]);
-  expect(searchCategories(categories, trails, 'a 2').map((entry) => entry.id).slice(0, 3)).toEqual([
-    'a2-6912',
-    'a2-912',
-    'a2-933',
-  ]);
+  expect(searchCategories(categories, trails, 'srouby › din 933 › a 2').map((entry) => entry.id)).toEqual(['a2-933']);
+  expect(
+    searchCategories(categories, trails, 'a 2')
+      .map((entry) => entry.id)
+      .slice(0, 3),
+  ).toEqual(['a2-6912', 'a2-912', 'a2-933']);
   expect(searchCategories(categories, trails, '   ')).toEqual([]);
 });
 
@@ -78,7 +64,11 @@ it('lets only an AKROS administrator reset the demo data', () => {
   expect(staffCommandAllowed(AKROS_LEGAL_ENTITY_ID, false, 'ResetDemoData')).toBe(false);
   expect(staffCommandAllowed('71000000-0000-4000-8000-000000000020', true, 'ResetDemoData')).toBe(false);
   expect(() =>
-    Schema.decodeUnknownSync(MerchandiseCommandSchema)({ _tag: 'ResetDemoData', confirmation: 'ANO', reason: 'Před ukázkou' }),
+    Schema.decodeUnknownSync(MerchandiseCommandSchema)({
+      _tag: 'ResetDemoData',
+      confirmation: 'ANO',
+      reason: 'Před ukázkou',
+    }),
   ).toThrow();
 });
 

@@ -103,15 +103,13 @@ export const loadOpportunityRelated = (opportunity: Opportunity, counterpartyId:
                   Effect.map((records) =>
                     records.contracts
                       .filter((contract) => contract.counterpartyRef.resourceId === counterpartyId)
-                      .map(
-                        (contract): RelatedContract => ({
-                          id: contract.contractRef.resourceId,
-                          kind: contract.kind,
-                          lifecycleState: contract.lifecycleState,
-                          startDate: contract.startDate,
-                          subject: contract.subject,
-                        }),
-                      ),
+                      .map((contract): RelatedContract => ({
+                        id: contract.contractRef.resourceId,
+                        kind: contract.kind,
+                        lifecycleState: contract.lifecycleState,
+                        startDate: contract.startDate,
+                        subject: contract.subject,
+                      })),
                   ),
                 ),
           ),
@@ -119,18 +117,16 @@ export const loadOpportunityRelated = (opportunity: Opportunity, counterpartyId:
             published,
             'demo.merchandise',
             correlation('orders').pipe(
-              Effect.flatMap((id) => listOrders(id)),
+              Effect.flatMap((id) =>
+                listOrders(id, { limit: 0, orderOpportunityId: opportunity.id, ordersLimit: 250 }),
+              ),
               Effect.map((orders) =>
-                orders
-                  .filter((order) => order.opportunityId === opportunity.id)
-                  .map(
-                    (order): RelatedOrder => ({
-                      id: order.id,
-                      number: order.number,
-                      status: order.status,
-                      totalMinor: order.totalMinor,
-                    }),
-                  ),
+                orders.map((order): RelatedOrder => ({
+                  id: order.id,
+                  number: order.number,
+                  status: order.status,
+                  totalMinor: order.totalMinor,
+                })),
               ),
             ),
           ),

@@ -18,7 +18,7 @@ import {
 } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
 import { Effect } from 'effect';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { Order } from '../../../../../shared/apis/records.ts';
 import type { OrderStatus } from '../../../../../shared/domain/merchandise-model.ts';
 import csResource from '../../../../../locales/cs/merchandise.json';
@@ -35,7 +35,6 @@ import { OrderCancelDialog } from './order-cancel-dialog.tsx';
 import { OrderCreateDialog } from './order-create-dialog.tsx';
 import { OrderDetailDialog } from './order-detail-dialog.tsx';
 import { ResetDemoDialog } from './reset-demo-dialog.tsx';
-import { orderSearchText } from './order-eshop.ts';
 import {
   commonOrderTransitions,
   ordersPageSummary,
@@ -43,7 +42,9 @@ import {
   statusDoneKey,
   transitionsFrom,
 } from './orders-model.ts';
-import { changeOrderStatuses, useOrders } from './orders-records.ts';
+import { changeOrderStatuses, useOrderDetail, useOrders } from './orders-records.ts';
+import type { OrdersQuery } from './orders-records.ts';
+import { useDebounced } from '../../provoz/produkty/product-reads.ts';
 import { ordersColumns, ordersTranslations } from './orders-table.tsx';
 
 const merchandiseI18nResources = {
@@ -57,6 +58,7 @@ type OrderTableProps = DataTableProps<Order>;
 type RowSelection = NonNullable<OrderTableProps['rowSelection']>;
 
 const ALL_STATUSES = '__all__';
+const PAGE_SIZE = 50;
 const bulkStatusItems = orderStatuses.map((value) => ({ label: statusPresentation('order', value).label, value }));
 
 /** With a tag filter active, order tags still loading read as loading, never as no match. */
@@ -87,10 +89,23 @@ const statusChangeNotification = (
 const OrdersPageContent = () => {
   const { t } = useModernI18n();
   const toaster = useToast();
-  const { load, state } = useOrders();
-  const [selection, setSelection] = useState<RowSelection>({});
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<OrderStatus | null>(null);
+  const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: PAGE_SIZE });
+  const settledSearch = useDebounced(search);
+  const query = useMemo<OrdersQuery>(
+    () => ({
+      limit: pagination.pageSize,
+      offset: pagination.pageIndex * pagination.pageSize,
+      search: settledSearch,
+      status: statusFilter,
+    }),
+    [pagination, settledSearch, statusFilter],
+  );
+  const orders$ = useOrders(query);
+  const { state } = orders$;
+  // Selected orders by id, kept across pages: bulk actions need each order's status, not only its id.
+  const [selectedOrders, setSelectedOrders] = useState<Readonly<Record<string, Order>>>({});
   const [createOpen, setCreateOpen] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   // `?orderId=` (e.g. from an opportunity's related orders) opens that order's detail.
@@ -100,30 +115,49 @@ const OrdersPageContent = () => {
   const [pendingCancel, setPendingCancel] = useState<readonly Order[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
+  const [detailVersion, setDetailVersion] = useState(0);
+  const detail = useOrderDetail(detailId, detailVersion);
   const ready = state.kind === 'ready' ? state : undefined;
-  const { canWrite, orders, stats } = ordersPageSummary(ready);
+  const { canWrite, orders, stats, totalOrders } = ordersPageSummary(ready);
+  /** Every change reloads the page, the header counts and the open detail. */
+  const load = () => {
+    orders$.load();
+    setDetailVersion((current) => current + 1);
+  };
+  /** A filter change starts again at the first page and drops the selection made under the old filter. */
+  const refilter = () => {
+    setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
+    setSelectedOrders({});
+  };
   // Dispatch processes order snapshots; it has no customer-directory or tagging access.
   const canEditOrders = (ready?.records.canEditOrders ?? canWrite) === true;
   const directory = useCustomerDirectory(canEditOrders);
   const orderTags = useSubjectTags('order', canEditOrders ? orders.map((order) => order.id) : []);
   const tagFilter = useSubjectTagFilter(orderTags);
   const statusItems = [{ label: t(key('filters.allStatuses')), value: ALL_STATUSES }, ...bulkStatusItems];
-  const query = search.trim().toLowerCase();
-  const visible = orders.filter(
-    (order) =>
-      (query === '' || orderSearchText(order, directory).toLowerCase().includes(query)) &&
-      (statusFilter === null || order.status === statusFilter) &&
-      tagFilter.matches(order.id),
-  );
-  const selected = visible.filter((order) => selection[order.id] === true);
+  // The tag filter has no server counterpart yet: it narrows the page on screen.
+  const visible = orders.filter((order) => tagFilter.matches(order.id));
+  const selected = Object.values(selectedOrders);
+  const selection: RowSelection = Object.fromEntries(selected.map((order) => [order.id, true]));
+  const setSelection = (next: RowSelection) => {
+    const onPage = new Map<string, Order>(orders.map((order) => [order.id, order]));
+    setSelectedOrders((current) =>
+      Object.fromEntries(
+        Object.keys(next).flatMap((id) => {
+          const order = onPage.get(id) ?? current[id];
+          return next[id] === true && order !== undefined ? [[id, order] as const] : [];
+        }),
+      ),
+    );
+  };
   const availableBulkStatuses = commonOrderTransitions(selected);
   const selectedOrdersAreFinal = selected.every((order) => transitionsFrom(order.status).length === 0);
   const selectedStatusItems = availableBulkStatuses.map((value) => ({
     label: statusPresentation('order', value).label,
     value,
   }));
-  const detailOrder = orders.find((order) => order.id === detailId);
-  const filtered = query !== '' || statusFilter !== null || tagFilter.tagId !== null;
+  const filtered = search.trim() !== '' || statusFilter !== null || tagFilter.tagId !== null;
+  const stale = ready !== undefined && ready.query !== query;
 
   const runStatusChange = (targets: readonly Order[], status: OrderStatus, reason?: string) => {
     if (ready === undefined) {
@@ -140,7 +174,7 @@ const OrdersPageContent = () => {
         Effect.flatMap(({ changed, failed }) =>
           Effect.sync(() => {
             toaster.create(statusChangeNotification(t, status, targets.length, changed, failed));
-            setSelection({});
+            setSelectedOrders({});
             setBusy(false);
             setPendingCancel(null);
             load();
@@ -209,12 +243,12 @@ const OrdersPageContent = () => {
             value={stats === undefined ? '—' : formatKc(stats.openValueMinor)}
           />
           <StatCard
-            label={t(key('stats.shippedThisMonth'))}
-            value={stats === undefined ? '—' : formatNumber(stats.shippedThisMonth)}
+            label={t(key('stats.shipped'))}
+            value={stats?.shipped === undefined ? '—' : formatNumber(stats.shipped)}
           />
           <StatCard
             label={t(key('stats.cancelled'))}
-            value={stats === undefined ? '—' : formatNumber(stats.cancelled)}
+            value={stats?.cancelled === undefined ? '—' : formatNumber(stats.cancelled)}
           />
         </StatRow>
 
@@ -222,7 +256,10 @@ const OrdersPageContent = () => {
           <Input
             aria-label={t(key('table.searchLabel'))}
             className="w-64"
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => {
+              setSearch(event.target.value);
+              refilter();
+            }}
             placeholder={t(key('table.searchPlaceholder'))}
             size="sm"
             type="search"
@@ -236,6 +273,7 @@ const OrdersPageContent = () => {
               onValueChange={(details) => {
                 const [next] = details.value;
                 setStatusFilter(orderStatuses.find((candidate) => candidate === next) ?? null);
+                refilter();
               }}
               placeholder={t('merchandise.selectPlaceholder')}
               size="sm"
@@ -267,7 +305,7 @@ const OrdersPageContent = () => {
                 ),
               )}
             </StatusText>
-            <BulkActionBar onClear={() => setSelection({})} selectedCount={selected.length}>
+            <BulkActionBar onClear={() => setSelectedOrders({})} selectedCount={selected.length}>
               {orderTags.canWrite && (
                 <Button
                   disabled={busy}
@@ -322,15 +360,18 @@ const OrdersPageContent = () => {
           enableColumnPinning
           enablePagination
           enableRowSelection
-          enableSorting
+          enableSorting={false}
           getRowId={(row) => row.id}
           getRowLabel={(row) => row.original.number}
-          loading={isTableLoading(state.kind === 'loading', tagFilter.status)}
+          loading={isTableLoading(state.kind === 'loading' || stale, tagFilter.status)}
           loadingRowCount={12}
+          manualPagination
           maxHeight="calc(100dvh - 15rem)"
+          onPaginationChange={setPagination}
           onRowClick={(row) => setDetailId(row.original.id)}
           onRowSelectionChange={setSelection}
           pageSizeOptions={[50, 100, 200]}
+          pagination={pagination}
           paginationProps={paginationProps(t)}
           renderEmpty={() => {
             if (state.kind === 'error') {
@@ -358,6 +399,7 @@ const OrdersPageContent = () => {
                         setSearch('');
                         setStatusFilter(null);
                         tagFilter.setTagId(null);
+                        refilter();
                       }}
                       size="sm"
                       theme="outlined"
@@ -384,6 +426,7 @@ const OrdersPageContent = () => {
               />
             );
           }}
+          rowCount={totalOrders}
           rowSelection={selection}
           size="sm"
           stickyHeader
@@ -396,7 +439,6 @@ const OrdersPageContent = () => {
           onCreated={load}
           onOpenChange={setCreateOpen}
           open={createOpen}
-          products={ready?.records.products ?? []}
           revision={ready?.records.revision ?? 0}
         />
 
@@ -407,21 +449,14 @@ const OrdersPageContent = () => {
           canCleanupDemo={ready?.records.canCleanupDemo === true}
           currentPrincipalId={ready?.records.actorPrincipalRef.principalId}
           customers={directory}
+          detail={detail}
           onClose={() => setDetailId(null)}
           onEdited={(message) => {
             toaster.create({ title: message, type: 'success' });
             load();
           }}
           onStatus={(order, status) => requestStatus([order], status)}
-          order={detailOrder}
-          orderMovesStock={
-            detailOrder !== undefined &&
-            (ready?.records.movements ?? []).some(
-              (movement) => movement.reason === 'ORDER' && movement.reference === detailOrder.number,
-            )
-          }
-          products={ready?.records.products ?? []}
-          revision={ready?.records.revision ?? 0}
+          revision={Math.max(ready?.records.revision ?? 0, detail.status === 'ready' ? detail.revision : 0)}
         />
 
         <ResetDemoDialog
@@ -446,7 +481,7 @@ const OrdersPageContent = () => {
         <BulkTagDialog
           kind="order"
           onDone={() => {
-            setSelection({});
+            setSelectedOrders({});
             orderTags.refetch();
           }}
           onOpenChange={setTagsOpen}

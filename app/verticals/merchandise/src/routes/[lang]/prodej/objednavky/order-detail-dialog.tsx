@@ -4,14 +4,23 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { DetailList, formatDateTime, formatMoney, SectionCard, SidePanel, StatusBadge, surfaceTileClassName } from '@app/admin-ui';
+import {
+  DetailList,
+  formatDateTime,
+  formatMoney,
+  SectionCard,
+  SidePanel,
+  StatusBadge,
+  surfaceTileClassName,
+} from '@app/admin-ui';
 import { DateTime, Effect } from 'effect';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { removeDemoOrder } from './orders-records.ts';
+import type { OrderDetailState } from './orders-records.ts';
 import { useState } from 'react';
-import type { Order, ProductRecord } from '../../../../../shared/apis/records.ts';
+import type { Order } from '../../../../../shared/apis/records.ts';
 import type { OrderStatus } from '../../../../../shared/domain/merchandise-model.ts';
 import { lineGrossMinor } from '../../../../../shared/domain/order-totals.ts';
 import type { CustomerDirectory } from './customers-directory.ts';
@@ -35,15 +44,20 @@ interface OrderDetailDialogProps {
   readonly canCleanupDemo?: boolean;
   readonly currentPrincipalId: string | undefined;
   readonly customers: CustomerDirectory;
+  /** The open order with its line products and whether it took goods from stock (quantity edits then move stock). */
+  readonly detail: OrderDetailState;
   readonly onClose: () => void;
   readonly onEdited: (message: string) => void;
   readonly onStatus: (order: Order, status: OrderStatus) => void;
-  readonly order: Order | undefined;
-  /** True when the order wrote ORDER stock movements, so editing quantities moves stock too. */
-  readonly orderMovesStock?: boolean;
-  readonly products: readonly ProductRecord[];
   readonly revision: number;
 }
+
+/** Text of a detail that is not ready yet: reading, gone, or failed. */
+const pendingDetailKeys = {
+  error: 'merchandise.pages.orders.detail.failed',
+  loading: 'merchandise.pages.orders.detail.loading',
+  'not-found': 'merchandise.pages.orders.detail.notFound',
+} as const satisfies Record<Exclude<OrderDetailState['status'], 'idle' | 'ready'>, string>;
 
 const DEMO_NOTICE = 'E-shop je prezentační demo. Žádné zboží nebude doručeno a nic se neplatí.';
 
@@ -150,19 +164,44 @@ export const OrderDetailDialog = ({
   canCleanupDemo = false,
   currentPrincipalId,
   customers,
+  detail,
   onClose,
   onEdited,
   onStatus,
-  order,
-  orderMovesStock,
-  products,
   revision,
 }: OrderDetailDialogProps) => {
   const { language, t } = useModernI18n();
   const [editingId, setEditingId] = useState<string | null>(null);
-  if (order === undefined) {
+  if (detail.status === 'idle') {
     return null;
   }
+  if (detail.status !== 'ready') {
+    return (
+      <SidePanel
+        actions={
+          <Button onClick={onClose} size="sm" theme="outlined" variant="secondary">
+            {t('merchandise.pages.orders.detail.close')}
+          </Button>
+        }
+        onOpenChange={(next) => {
+          if (!next) {
+            onClose();
+          }
+        }}
+        open
+        resizeLabel={t('merchandise.sidePanel.resize')}
+        size="xl"
+        title={t('merchandise.pages.orders.detail.loadingTitle')}
+      >
+        <div className="py-200">
+          <StatusText showIcon={detail.status !== 'loading'} status={detail.status === 'loading' ? 'default' : 'error'}>
+            {t(pendingDetailKeys[detail.status])}
+          </StatusText>
+        </div>
+      </SidePanel>
+    );
+  }
+  const { movesStock: orderMovesStock, order, products } = detail;
   const editing = editingId === order.id;
   const storefront = isStorefrontOrder(order);
   const akros = products.some((product) => product.sourceGroupId !== undefined);
@@ -245,12 +284,12 @@ export const OrderDetailDialog = ({
       {editing ? (
         <div className="py-200">
           <OrderEditForm
+            movesStock={orderMovesStock}
             onCancel={() => setEditingId(null)}
             onSaved={(message) => {
               setEditingId(null);
               onEdited(message);
             }}
-            movesStock={orderMovesStock === true}
             order={order}
             products={products}
             revision={revision}

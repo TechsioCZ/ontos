@@ -2,12 +2,7 @@ import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
-import {
-  computeProductRecords,
-  evolveMerchandiseState,
-} from '../../src/services/persistence.service.ts';
-import { storefrontCatalogPage } from '../../src/services/storefront-catalog.ts';
-import { cachedProductRecords, getCachedState, setCachedState } from '../../src/services/state-cache.ts';
+import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
 
 const actor = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };
 const at = '2026-10-19T08:00:00.000Z';
@@ -115,34 +110,3 @@ it.effect('renames a category and carries the new name to its products', () =>
     expect(renamed.state.products[0]?.category).toBe('Metrické šrouby');
   }),
 );
-
-it('filters the storefront catalog by category path', () => {
-  const page = storefrontCatalogPage({
-    state,
-    records: computeProductRecords(state),
-    query: { categorySlug: 'srouby' },
-  });
-  expect(page.total).toBe(1);
-});
-
-it('caches the decoded state per scope and revision key', () => {
-  const other = Schema.decodeUnknownSync(MerchandiseStateSchema)(baseState);
-  setCachedState('t|l|1|5', state);
-  expect(getCachedState('t|l|1|5')).toBe(state);
-  expect(getCachedState('t|l|2|5')).toBeUndefined();
-  setCachedState('t|l|2|6', other);
-  expect(getCachedState('t|l|1|5')).toBeUndefined();
-  expect(getCachedState('t|l|2|6')).toBe(other);
-});
-
-it('computes product records once per state object', () => {
-  let calls = 0;
-  const compute = (value: typeof state) => {
-    calls += 1;
-    return computeProductRecords(value);
-  };
-  const first = cachedProductRecords(state, compute);
-  const second = cachedProductRecords(state, compute);
-  expect(second).toBe(first);
-  expect(calls).toBe(1);
-});

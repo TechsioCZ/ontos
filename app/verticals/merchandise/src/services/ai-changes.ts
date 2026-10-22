@@ -27,9 +27,8 @@ import {
   describeShipping,
   evolveMerchandiseState,
   orderStatusLabels,
-  stockOnHandOf,
-  variantStockOf,
 } from './persistence.service.ts';
+import { stockOnHandOf, variantStockOf } from './stock-levels.ts';
 
 type AiCommand = Extract<MerchandiseCommand, { readonly _tag: 'AiDecideChanges' | 'AiProposeChanges' | 'AiRevertBatch' }>;
 
