@@ -10,6 +10,7 @@ import { Context } from 'effect';
 import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
 import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/api.ts';
+import type { DocumentGatewayContextsRequest } from '../../shared/document-gateway-api.ts';
 // @ontos-codesmith-core-read-client-imports:start
 
 // @ontos-core-read legal-entity-detail
@@ -238,6 +239,15 @@ export const resolveModuleTarget = (
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ResolvedModuleTarget, ShellTargetClientError> =>
   invokeShellAuthenticationClient(options, (client) => client.composition.resolveModuleTarget({ payload }));
+
+/** Gateway assertions for a document's module audiences, one per audience, in one request. */
+export const issueDocumentGatewayContexts = (
+  payload: DocumentGatewayContextsRequest,
+  options: ShellAuthenticationClientOptions = {},
+) =>
+  invokeShellAuthenticationClient(options, (client) =>
+    client.documentGateway.issueDocumentGatewayContexts({ payload }),
+  );
 
 /** Navigation capability only: the server still authorizes the people page and every write. */
 export const canManageDemoAccounts = (options: ShellAuthenticationClientOptions = {}) =>

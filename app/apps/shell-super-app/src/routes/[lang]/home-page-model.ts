@@ -16,8 +16,11 @@ import {
   canManageDemoAccounts,
   currentSession,
   executeLegalEntityDetail,
+  issueDocumentGatewayContexts,
   shellComposition,
 } from '../../api/auth-client.ts';
+import type { DocumentGatewayAssertion } from '../../../shared/document-gateway-api.ts';
+import { warmDocumentGatewayAssertions } from '../document-gateway-assertions.ts';
 import {
   hasModuleAiApprovals,
   offersPeopleAdministration,
@@ -62,6 +65,13 @@ export interface AuthenticatedHomePageModel {
   readonly companyWelcome?: string;
   readonly compositionRevision?: string;
   readonly contextState: 'access_blocked' | 'authenticated' | 'selection_required';
+  /**
+   * Server rendering only, when the batch answered in time: the document's gateway assertions, one per module audience,
+   * so the browser's first module reads need no assertion round trip. Kept in memory (document-gateway-assertions.ts).
+   */
+  readonly gatewayAssertions?: readonly DocumentGatewayAssertion[];
+  /** Module deployments this document may call; the browser obtains their assertions in one batch. */
+  readonly gatewayAudiences?: readonly string[];
   /**
    * Set instead of `homeContribution` by server rendering: the Home components the browser resolves after hydration,
    * lowest order first.
@@ -309,6 +319,50 @@ const requestedCompositionRevision = (request: Request) =>
 const startRead = <A, E>(read: Effect.Effect<A, E>) => Effect.forkChild(read, { startImmediately: true });
 
 /**
+ * How long server rendering still waits for the document's gateway assertions once its other reads have answered. The
+ * batch starts as soon as the composition names the audiences; when it is slower, the document goes without it and the
+ * browser obtains the assertions itself right after hydration (the Shell issuer reuses what it already signed).
+ */
+const SERVER_ASSERTIONS_GRACE = '750 millis';
+
+type StartedAssertions = Option.Option<Fiber.Fiber<Option.Option<readonly DocumentGatewayAssertion[]>>>;
+
+/**
+ * Server rendering starts the batch beside the page's other reads; the browser warms the document's assertions
+ * (detached, deduplicated) so remotes join it instead of asking one by one.
+ */
+const startDocumentGatewayAssertions = (
+  compositionRevision: string,
+  audiences: readonly string[],
+  options: ShellAuthenticationClientOptions,
+): Effect.Effect<StartedAssertions> => {
+  if (audiences.length === 0) {
+    return Effect.succeedNone;
+  }
+  if (!isServerRender()) {
+    return warmDocumentGatewayAssertions(compositionRevision, audiences).pipe(Effect.as(Option.none()));
+  }
+  return startRead(
+    issueDocumentGatewayContexts({ audiences, compositionRevision }, options).pipe(
+      Effect.map(({ assertions }) => assertions),
+      Effect.option,
+    ),
+  ).pipe(Effect.map(Option.some));
+};
+
+const embeddedAssertions = (
+  started: StartedAssertions,
+): Effect.Effect<Option.Option<readonly DocumentGatewayAssertion[]>> =>
+  Option.match(started, {
+    onNone: () => Effect.succeedNone,
+    onSome: (fiber) =>
+      Fiber.join(fiber).pipe(
+        Effect.timeout(SERVER_ASSERTIONS_GRACE),
+        Effect.orElseSucceed(() => Option.none()),
+      ),
+  });
+
+/**
  * Server rendering reads with the request's cookie and has no browser cache, so none of the document's reads needs the
  * session answer first: they all start beside the session read instead of one round trip after another (session,
  * then composition, then the people capability, then tenants and legal entities took 4-5 s on stage). Reads the
@@ -342,6 +396,8 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       return anonymousModel;
     }
     let compositionRevision: string | undefined;
+    let gatewayAudiences: readonly string[] = [];
+    let assertionsStarted: StartedAssertions = Option.none();
     let homeCandidates: readonly ShellHomeComponent[] | undefined;
     let navigation: AuthenticatedHomePageModel['navigation'] = {
       deniedAppIds: [],
@@ -359,7 +415,8 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       if (composition.state !== 'available') {
         return unavailableModel;
       }
-      ({ compositionRevision } = composition);
+      ({ compositionRevision, gatewayAudiences } = composition);
+      assertionsStarted = yield* startDocumentGatewayAssertions(compositionRevision, gatewayAudiences, options);
       if ('document' in globalThis) {
         yield* pinDocumentCompositionRevision(compositionRevision, globalThis.document);
       }
@@ -439,31 +496,50 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
       },
       { concurrency: 3 },
     ).pipe(
-      Effect.map(({ homeContribution, legalEntities: choices, navigation: items, tenants }): HomePageModel => {
-        if (tenants.state === 'stale') {
-          return sessionEndedModel;
-        }
-        const baseModel = {
-          contextState: session.state,
-          identity: session.identity,
+      Effect.flatMap((reads) =>
+        embeddedAssertions(assertionsStarted).pipe(
+          Effect.map((gatewayAssertions) => ({ ...reads, gatewayAssertions })),
+        ),
+      ),
+      Effect.map(
+        ({
+          gatewayAssertions,
+          homeContribution,
           legalEntities: choices,
           navigation: items,
-          state: 'authenticated' as const,
           tenants,
-        };
-        const withContribution = {
-          ...baseModel,
-          ...homeFields(homeContribution, deferHomeContribution ? homeCandidates : undefined),
-        };
-        const model =
-          compositionRevision === undefined ? withContribution : { ...withContribution, compositionRevision };
-        return session.state === 'authenticated'
-          ? {
-              ...model,
-              selectedLegalEntityId: session.identity.legalEntityId,
-            }
-          : model;
-      }),
+        }): HomePageModel => {
+          if (tenants.state === 'stale') {
+            return sessionEndedModel;
+          }
+          const baseModel = {
+            contextState: session.state,
+            identity: session.identity,
+            legalEntities: choices,
+            navigation: items,
+            state: 'authenticated' as const,
+            tenants,
+          };
+          const withContribution = {
+            ...baseModel,
+            ...homeFields(homeContribution, deferHomeContribution ? homeCandidates : undefined),
+          };
+          const withAssertions = Option.match(gatewayAssertions, {
+            onNone: () => withContribution,
+            onSome: (assertions) => ({ ...withContribution, gatewayAssertions: assertions }),
+          });
+          const model =
+            compositionRevision === undefined
+              ? withAssertions
+              : { ...withAssertions, compositionRevision, gatewayAudiences };
+          return session.state === 'authenticated'
+            ? {
+                ...model,
+                selectedLegalEntityId: session.identity.legalEntityId,
+              }
+            : model;
+        },
+      ),
     );
   },
   Effect.matchEffect({

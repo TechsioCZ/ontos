@@ -648,6 +648,7 @@ export default defineConfig({
     {
       // These tests inspect complete public/module surfaces; namespace imports are the assertion.
       files: [
+        'apps/shell-super-app/tests/unit/routes/document-gateway-assertions.test.ts',
         'apps/shell-super-app/tests/unit/routes/home/loader.test.ts',
         'apps/shell-super-app/tests/unit/routes/modules/loader.test.ts',
         'packages/core-runtime/tests/unit/action-public-surface.test.ts',

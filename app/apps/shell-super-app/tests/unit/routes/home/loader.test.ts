@@ -1,4 +1,5 @@
-import { ConfigProvider, Effect } from 'effect';
+import { ConfigProvider, Effect, Fiber } from 'effect';
+import { TestClock } from 'effect/testing';
 import { beforeEach, expect, rstest, it } from 'effect-rstest';
 
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
@@ -13,6 +14,7 @@ const {
   canManageDemoAccountsMock,
   currentSessionMock,
   executeLegalEntityDetailMock,
+  issueDocumentGatewayContextsMock,
   resolveModuleTargetMock,
   shellCompositionMock,
 } = rstest.hoisted(() => ({
@@ -22,6 +24,7 @@ const {
   canManageDemoAccountsMock: rstest.fn(),
   currentSessionMock: rstest.fn(),
   executeLegalEntityDetailMock: rstest.fn(),
+  issueDocumentGatewayContextsMock: rstest.fn(),
   resolveModuleTargetMock: rstest.fn(),
   shellCompositionMock: rstest.fn(),
 }));
@@ -33,6 +36,7 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
   canManageDemoAccounts: canManageDemoAccountsMock,
   currentSession: currentSessionMock,
   executeLegalEntityDetail: executeLegalEntityDetailMock,
+  issueDocumentGatewayContexts: issueDocumentGatewayContextsMock,
   resolveModuleTarget: resolveModuleTargetMock,
   shellComposition: shellCompositionMock,
 }));
@@ -98,6 +102,7 @@ beforeEach(() => {
     Effect.succeed({
       compositionRevision,
       deniedAppIds: [],
+      gatewayAudiences: [],
       homeComponents: [],
       navigation,
       state: 'available' as const,
@@ -119,6 +124,7 @@ it.effect('resolves trusted context before returning one serializable compositio
     expect(yield* loadModel({ request: request() })).toEqual({
       compositionRevision,
       contextState: 'authenticated',
+      gatewayAudiences: [],
       homeContribution: { state: 'forbidden' },
       identity,
       legalEntities: {
@@ -341,6 +347,7 @@ it.effect('rechecks Home contribution permissions on every visit even when navig
       Effect.succeed({
         compositionRevision,
         deniedAppIds: [],
+        gatewayAudiences: [],
         homeComponents: [
           {
             entrypointKey: 'fixture.summary.component.home',
@@ -394,6 +401,7 @@ it.effect.each([false, true])(
         Effect.succeed({
           compositionRevision,
           deniedAppIds: [],
+          gatewayAudiences: [],
           homeComponents: [],
           navigation: [
             { ...navigation[0], href: '/fixture/people', requiresCapability: 'people_administration' },
@@ -527,6 +535,7 @@ it.effect('server rendering leaves the Home component to the browser and keeps i
       Effect.succeed({
         compositionRevision,
         deniedAppIds: [],
+        gatewayAudiences: [],
         homeComponents,
         navigation: [{ ...navigation[0], moduleId: 'fixture.dashboard' }],
         state: 'available',
@@ -542,5 +551,54 @@ it.effect('server rendering leaves the Home component to the browser and keeps i
       loadModel({ request: serverRequest('https://shell.example.test/en/ukoly') }),
     );
     expect(elsewhere).not.toHaveProperty('homeCandidates');
+  }),
+);
+
+const gatewayAssertion = {
+  apiBaseUrl: '/shell-super-app-api/module-api/future-generated/build/future-generated-api',
+  audience: 'future-generated',
+  compositionRevision,
+  expiresAt: 1_700_000_300,
+  token: 'assertion-token',
+};
+
+const withGatewayAudiences = () =>
+  shellCompositionMock.mockReturnValue(
+    Effect.succeed({
+      compositionRevision,
+      deniedAppIds: [],
+      gatewayAudiences: ['future-generated'],
+      homeComponents: [],
+      navigation,
+      state: 'available',
+      unavailableDeployments: [],
+    }),
+  );
+
+it.effect('server rendering embeds the document gateway assertions from one batch', () =>
+  Effect.gen(function* serverEmbedsAssertions() {
+    withGatewayAudiences();
+    issueDocumentGatewayContextsMock.mockReturnValue(Effect.succeed({ assertions: [gatewayAssertion] }));
+    const model = yield* asServerRender(loadModel({ request: serverRequest('https://shell.example.test/en/ukoly') }));
+    expect(model).toMatchObject({ gatewayAssertions: [gatewayAssertion], gatewayAudiences: ['future-generated'] });
+    expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(1);
+    expect(issueDocumentGatewayContextsMock.mock.calls[0]?.[0]).toEqual({
+      audiences: ['future-generated'],
+      compositionRevision,
+    });
+  }),
+);
+
+it.effect('server rendering does not hold the document for a slow batch; the browser obtains it instead', () =>
+  Effect.gen(function* serverSkipsSlowAssertions() {
+    withGatewayAudiences();
+    issueDocumentGatewayContextsMock.mockReturnValue(Effect.never);
+    const loading = yield* asServerRender(
+      loadModel({ request: serverRequest('https://shell.example.test/en/ukoly') }),
+    ).pipe(Effect.forkChild);
+    yield* TestClock.adjust('1 second');
+    const model = yield* Fiber.join(loading);
+    expect(model).toMatchObject({ gatewayAudiences: ['future-generated'], state: 'authenticated' });
+    expect(model).not.toHaveProperty('gatewayAssertions');
   }),
 );

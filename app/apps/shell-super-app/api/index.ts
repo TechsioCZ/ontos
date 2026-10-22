@@ -1878,6 +1878,49 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
     ),
 );
 
+/** Signing is local CPU work; a few in flight keep one batch from monopolising the isolate. */
+const DOCUMENT_GATEWAY_SIGNING_CONCURRENCY = 8;
+// One session issuance for every module audience of a Shell document: one release check and one session read, then
+// the same issuer per audience as `issueGatewayContext` (same audience binding and lifetime). An audience the release
+// does not admit is left out instead of failing the others; the browser asks for it alone and gets the single 400.
+const documentGatewayGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentGateway', (handlers) =>
+  handlers.handle('issueDocumentGatewayContexts', ({ payload, request }) =>
+    Effect.gen(function* issueDocumentGatewayContextsHandler() {
+      yield* noStore;
+      yield* requireGatewayRelease(payload.compositionRevision);
+      const authentication = yield* AuthenticationService;
+      const sessionResult = yield* authentication
+        .resolveShellContext(requestHeaders(request.headers))
+        .pipe(Effect.catch((error) => pipe(error, gatewayAuthenticationProblem, failGatewayProblem)));
+      yield* forwardSetCookieHeaders(sessionResult.setCookieHeaders);
+      if (sessionResult.state !== 'authenticated') {
+        return yield* failGatewayProblem(gatewayAuthenticationRequiredProblem());
+      }
+      const { principal } = sessionResult;
+      const issued = yield* Effect.forEach(
+        payload.audiences,
+        (audience) =>
+          issueGatewayContextAssertion({ audience, compositionRevision: payload.compositionRevision, principal }).pipe(
+            Effect.map((assertion) => Option.some({ ...assertion, audience })),
+            Effect.catchIf(
+              (error) => error.code === 'gateway_audience_invalid',
+              () => Effect.succeedNone,
+            ),
+          ),
+        { concurrency: DOCUMENT_GATEWAY_SIGNING_CONCURRENCY },
+      ).pipe(
+        Effect.tapError((error) => logGatewayIssuerFailure('session', request, error)),
+        Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)),
+      );
+      return { assertions: issued.flatMap((assertion) => (Option.isSome(assertion) ? [assertion.value] : [])) };
+    }).pipe(
+      recoverUnexpectedDefect(request, 'Unexpected Shell document gateway assertions defect', () =>
+        failGatewayProblem(gatewayInternalProblem()),
+      ),
+    ),
+  ),
+);
+
 // Platform approval layer for AI agents (lane approvals-platform). Agents use their API key; people their session.
 const agentPlatformFailure = (error: AgentPlatformForbidden | AgentPlatformInvalid | AgentStoreUnavailable) => {
   switch (error._tag) {
@@ -2476,6 +2519,7 @@ export const makeShellAuthenticationApiRuntime = (
     compositionGroupLive,
     resourcesGroupLive,
     gatewayContextGroupLive,
+    documentGatewayGroupLive,
     oauthConnectGroupLive,
     // @ontos-codesmith-core-read-server-layers:start
 

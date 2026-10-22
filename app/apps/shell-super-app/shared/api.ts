@@ -26,6 +26,7 @@ import {
   ManageAgentEntityRequestSchema,
   ManageAgentEntityResponseSchema,
 } from '@app/shared-contracts/agent-access';
+import { DocumentGatewayApiGroup } from './document-gateway-api.ts';
 import { OAuthConnectApiGroup } from './oauth-connect-api.ts';
 // @ontos-codesmith-core-read-contract-imports:start
 
@@ -502,6 +503,11 @@ export const ShellCompositionSchema = Schema.Union([
      * only (the gateway skips optional reads of them); every module still authorizes each request itself.
      */
     deniedAppIds: Schema.Array(AppIdSchema),
+    /**
+     * Module deployments a document of this person may call: every available deployment of the release except the
+     * denied ones. The Shell obtains their gateway assertions for the document in one batch.
+     */
+    gatewayAudiences: Schema.Array(AppIdSchema),
     /** Home summary components of modules the person may open, lowest order first. */
     homeComponents: Schema.Array(ShellHomeComponentSchema),
     navigation: Schema.Array(ShellNavigationItemSchema),
@@ -1134,6 +1140,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
       ),
   )
   .add(GatewayContextApiGroup)
+  .add(DocumentGatewayApiGroup)
   .add(ExternalIdentityApiGroup)
   .add(OAuthConnectApiGroup);
 

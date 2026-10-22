@@ -13,6 +13,7 @@ import { signOut, switchLegalEntity, switchTenant } from '../api/auth-client.ts'
 import type { SwitchLegalEntityClientError, SwitchTenantClientError } from '../api/auth-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { forgetRecordedPageReads } from './browser-request-cache.ts';
+import { seedDocumentGatewayAssertions, warmDocumentGatewayAssertions } from './document-gateway-assertions.ts';
 import type { AuthenticatedHomePageModel } from './[lang]/home-page-model.ts';
 
 const SwitchFailureStateSchema = Schema.Literals(['authentication-required', 'failed']);
@@ -61,6 +62,16 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
     // Remotes narrow optional cross-module reads with it instead of reading the composition again.
     if (compositionRevision !== undefined) {
       pinDocumentNavigationModules(model.navigation.moduleIds, browserDocument);
+    }
+  }
+  // Kept during render too: the assertions server rendering embedded must be in place before module pages ask, and
+  // any audience still without one gets it in one batch the module pages join (a no-op while all are fresh).
+  if (browserDocument !== undefined && compositionRevision !== undefined) {
+    if (model?.gatewayAssertions !== undefined) {
+      browserRuntime.runSync(seedDocumentGatewayAssertions(compositionRevision, model.gatewayAssertions));
+    }
+    if (model?.gatewayAudiences !== undefined) {
+      browserRuntime.runSync(warmDocumentGatewayAssertions(compositionRevision, model.gatewayAudiences));
     }
   }
   const [logoutPending, setLogoutPending] = useState(false);

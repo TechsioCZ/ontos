@@ -897,6 +897,7 @@ it.live(
     expect(yield* Effect.tryPromise(() => activeModulesResponse.json())).toEqual({
       compositionRevision: testRevision,
       deniedAppIds: [],
+      gatewayAudiences: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -1114,6 +1115,45 @@ it.live(
     expect(verifiedPrincipal.legalEntityId).toBe(fixtureLegalEntityId);
     expect(verifiedPrincipal.principalId).toBe(principalId);
     expect(verifiedPrincipal.tenantId).toBe(tenantId);
+    // The document batch issues the same session assertion per admitted audience and leaves out the rest.
+    const documentBatchResponse = yield* Effect.tryPromise(() =>
+      issuingHandler.handler(
+        new Request(`${configuration.baseUrl}/auth/gateway-contexts`, {
+          body: JSON.stringify({ audiences: ['inventory-stock', 'not-admitted'], compositionRevision: testRevision }),
+          headers: new Headers({
+            'content-type': 'application/json',
+            cookie: cookieHeader(signedInCookies),
+            origin: configuration.baseUrl,
+          }),
+          method: 'POST',
+        }),
+      ),
+    );
+    expect(documentBatchResponse.status).toBe(200);
+    expect(headerValue(documentBatchResponse.headers, 'cache-control')).toBe('no-store');
+    const documentBatch = Schema.decodeUnknownSync(
+      Schema.Struct({ assertions: Schema.Array(Schema.Struct({ audience: Schema.String })) }),
+    )(yield* Effect.tryPromise(() => documentBatchResponse.clone().json()));
+    expect(documentBatch.assertions.map(({ audience }) => audience)).toEqual(['inventory-stock']);
+    const [batchAssertion] = Schema.decodeUnknownSync(Schema.Struct({ assertions: Schema.Array(Schema.Unknown) }))(
+      yield* Effect.tryPromise(() => documentBatchResponse.json()),
+    ).assertions;
+    const { principal: batchPrincipal } = yield* verifiedGatewayAssertion(
+      Response.json(batchAssertion),
+      pair.publicKey,
+      testRevision,
+    );
+    expect(batchPrincipal).toEqual(verifiedPrincipal);
+    const anonymousBatchResponse = yield* Effect.tryPromise(() =>
+      issuingHandler.handler(
+        new Request(`${configuration.baseUrl}/auth/gateway-contexts`, {
+          body: JSON.stringify({ audiences: ['inventory-stock'], compositionRevision: testRevision }),
+          headers: new Headers({ 'content-type': 'application/json', origin: configuration.baseUrl }),
+          method: 'POST',
+        }),
+      ),
+    );
+    expect(anonymousBatchResponse.status).toBe(401);
     yield* Effect.tryPromise(() =>
       mkdir(path.join(generatedFixtureRoot, 'node_modules', '@app'), {
         recursive: true,
@@ -1590,6 +1630,7 @@ it.live(
     expect(yield* Effect.tryPromise(() => firstModules.json())).toEqual({
       compositionRevision: testRevision,
       deniedAppIds: [],
+      gatewayAudiences: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],
@@ -1731,6 +1772,7 @@ it.live(
     expect(yield* Effect.tryPromise(() => secondModules.json())).toEqual({
       compositionRevision: testRevision,
       deniedAppIds: [],
+      gatewayAudiences: [],
       navigation: [],
       state: 'available',
       unavailableDeployments: [],

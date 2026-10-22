@@ -285,6 +285,7 @@ it.effect('composes one deterministic state and permission batch with lifecycle 
     expect(result).toEqual({
       compositionRevision: approvedCatalog.composition.revision,
       deniedAppIds: [],
+      gatewayAudiences: ['documents-center', 'property-registry'],
       homeComponents: [],
       navigation: [
         {
@@ -389,6 +390,7 @@ it.effect.each(['inactive', 'suspended', 'quarantined', 'archived'] as const)(
       expect(result).toEqual({
         compositionRevision: approvedCatalog.composition.revision,
         deniedAppIds: [],
+        gatewayAudiences: ['documents-center', 'property-registry'],
         homeComponents: [],
         navigation: [],
         state: 'available',
@@ -414,6 +416,8 @@ it.effect('omits definite denial while preserving unavailable authorization as d
     expect(result.state).toBe('available');
     // Only the definite denial is a browser hint; unavailable authorization is never treated as denied.
     expect(result).toHaveProperty('deniedAppIds', ['documents-center']);
+    // The document obtains assertions for every deployment it may call, never for a definitely denied one.
+    expect(result).toHaveProperty('gatewayAudiences', ['property-registry']);
     expect(result.navigation).toEqual([
       {
         appId: 'property-registry',

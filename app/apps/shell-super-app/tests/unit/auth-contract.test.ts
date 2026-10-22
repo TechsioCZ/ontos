@@ -63,6 +63,9 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
   ]);
   expect(authenticationEndpoints).toEqual(['currentSession', 'signIn', 'signOut']);
   expect(gatewayEndpoints).toEqual(['issueGatewayContext', 'issueApiKeyGatewayContext']);
+  expect(Object.keys(ShellAuthenticationApi.groups.documentGateway.endpoints)).toEqual([
+    'issueDocumentGatewayContexts',
+  ]);
   expect(identityEndpoints).toEqual([
     'changePrincipalStatus',
     'configureDemoCompanies',
@@ -120,6 +123,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     demoAccountCapability: '/auth/identity/demo-accounts/capability',
     executeLegalEntityDetail: '/core/reads/legal-entity-detail',
     issueApiKeyGatewayContext: '/auth/api-key/gateway-context',
+    issueDocumentGatewayContexts: '/auth/gateway-contexts',
     issueExternalGatewayContext: '/auth/identity/external/gateway-context',
     issueGatewayContext: '/auth/gateway-context',
     issueManagedApiKey: '/auth/identity/api-keys/managed',

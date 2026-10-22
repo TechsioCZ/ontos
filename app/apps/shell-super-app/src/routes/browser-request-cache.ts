@@ -1,8 +1,13 @@
 // @effect-diagnostics asyncFunction:off -- Browser fetch transport boundary: the wrapper implements `typeof fetch`, whose contract is a Promise; cache logic stays in Effect. expires: 2027-03-31.
-import { getDocumentCompositionRevision, makeOperationGateway } from '@app/shared-contracts';
+import {
+  GatewayContextResponseSchema,
+  getDocumentCompositionRevision,
+  makeOperationGateway,
+} from '@app/shared-contracts';
 import { Clock, Effect, Exit, Fiber, Match, MutableRef, Option, Predicate, Schedule, Schema } from 'effect';
 
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { documentGatewayAssertion, noteDocumentGatewayAudience } from './document-gateway-assertions.ts';
 
 /**
  * One in-memory cache per document for the browser's module traffic, installed by the Shell around `fetch`.
@@ -64,6 +69,15 @@ const RecordedReadSchema = Schema.Struct({
 type RecordedRead = typeof RecordedReadSchema.Type;
 const RecordedReadsJson = Schema.fromJsonString(Schema.Array(RecordedReadSchema));
 const GatewayRequestJson = Schema.fromJsonString(Schema.Struct({ audience: Schema.String }));
+const DocumentGatewayRequestJson = Schema.fromJsonString(
+  Schema.Struct({
+    audience: Schema.String,
+    compositionRevision: Schema.String,
+    legalEntityId: Schema.optionalKey(Schema.Unknown),
+  }),
+);
+const GatewayAssertionJson = Schema.fromJsonString(GatewayContextResponseSchema);
+const textEncoder = new TextEncoder();
 const GatewayResponseJson = Schema.fromJsonString(Schema.Struct({ expiresAt: Schema.Finite, token: Schema.String }));
 
 interface Visit {
@@ -292,10 +306,56 @@ const rememberAudience = (state: CacheState, requestBody: string, response: Buff
     Effect.ignore,
   );
 
+/**
+ * A request for the document session's assertion (no other legal entity named) is answered from the document's
+ * assertions when it holds one for that audience and revision (see document-gateway-assertions.ts).
+ */
+const documentGatewayAnswer = (state: CacheState, requestBody: string) =>
+  Schema.decodeEffect(DocumentGatewayRequestJson)(requestBody).pipe(
+    Effect.flatMap(({ audience, compositionRevision, legalEntityId }) =>
+      legalEntityId === undefined
+        ? documentGatewayAssertion(audience, compositionRevision).pipe(
+            Effect.flatMap(
+              Option.match({
+                onNone: () => Effect.succeedNone,
+                onSome: (assertion) =>
+                  Schema.encodeEffect(GatewayAssertionJson)(assertion).pipe(
+                    Effect.map((json) => {
+                      state.audiences.set(assertion.token, audience);
+                      const body = textEncoder.encode(json);
+                      return Option.some<BufferedResponse>({
+                        body: body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+                        headers: { 'cache-control': 'no-store', 'content-type': 'application/json' },
+                        status: 200,
+                        statusText: 'OK',
+                      });
+                    }),
+                  ),
+              }),
+            ),
+          )
+        : Effect.succeedNone,
+    ),
+    Effect.orElseSucceed(() => Option.none<BufferedResponse>()),
+  );
+
+/** An audience answered by the single issuer joins the document's set, so the next renewal batches it too. */
+const noteSingleAudience = (requestBody: string) =>
+  Schema.decodeEffect(DocumentGatewayRequestJson)(requestBody).pipe(
+    Effect.flatMap(({ audience, compositionRevision, legalEntityId }) =>
+      legalEntityId === undefined ? noteDocumentGatewayAudience(audience, compositionRevision) : Effect.void,
+    ),
+    Effect.ignore,
+  );
+
 const serveGateway = Effect.fn('BrowserRequestCache.serveGateway')(function* serveGatewayEffect(
   state: CacheState,
   request: Extract<ClassifiedRequest, { kind: 'gateway' }>,
 ) {
+  const documentAnswer = yield* documentGatewayAnswer(state, request.body);
+  if (Option.isSome(documentAnswer)) {
+    return documentAnswer.value;
+  }
   const now = yield* Clock.currentTimeMillis;
   const shared = state.assertions.get(request.body);
   if (shared !== undefined) {
@@ -309,6 +369,7 @@ const serveGateway = Effect.fn('BrowserRequestCache.serveGateway')(function* ser
   const exit = yield* Fiber.await(fiber);
   if (Exit.isSuccess(exit) && isOk(exit.value)) {
     yield* rememberAudience(state, request.body, exit.value);
+    yield* noteSingleAudience(request.body);
   } else if (state.assertions.get(request.body) === fiber) {
     state.assertions.delete(request.body);
   }
