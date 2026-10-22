@@ -4,7 +4,6 @@
 #   scripts/demo/rebuild-one.sh merchandise            # build + restart one vertical
 #   scripts/demo/rebuild-one.sh crm facility-operations        # new verticals are added to the served set
 #   scripts/demo/rebuild-one.sh shell-super-app
-#   scripts/demo/rebuild-one.sh ontos-agent-mcp        # restart the MCP resource server (:3090) from committed code
 #
 # Builds are serialised through two lock slots so parallel agents do not saturate the machine. Each app has
 # its own lock: a second caller for the SAME app waits until the first build and restart finish. The
@@ -80,7 +79,7 @@ die() {
   printf '\033[31m[rebuild] %s\033[0m\n' "$*" >&2
   exit 1
 }
-[ $# -gt 0 ] || die "usage: rebuild-one.sh <vertical-id|shell-super-app>... | ontos-agent-mcp | --composition-only"
+[ $# -gt 0 ] || die "usage: rebuild-one.sh <vertical-id|shell-super-app>... | --composition-only"
 COMPOSITION_ONLY=0
 if [ "$1" = --composition-only ]; then
   COMPOSITION_ONLY=1
@@ -158,25 +157,6 @@ acquire_app_lock() { # acquire_app_lock <app-id>
   take_lock "$LOCK_ROOT/app-$1" "rebuild of $1"
   HELD_LOCKS+=("$LOCK_ROOT/app-$1")
 }
-
-# The MCP resource server is plain Node (no build step): restart it from this committed runtime tree.
-if [ "$#" -eq 1 ] && [ "$1" = ontos-agent-mcp ]; then
-  acquire_app_lock ontos-agent-mcp
-  stop_pid ontos-agent-mcp
-  if lsof -nP -iTCP:3090 -sTCP:LISTEN >/dev/null 2>&1; then
-    die "port 3090 is still held by a process up.sh did not start: $(lsof -nP -iTCP:3090 -sTCP:LISTEN | tail -1); stop it once by hand"
-  fi
-  set -m
-  # Same environment as up.sh's start(): the served vertical set decides which modules the RS offers.
-  SERVED_CSV="$(tr ' ' ',' <"$VERTICALS_FILE" 2>/dev/null || sed -n 's/^DEFAULT_VERTICALS="\(.*\)"$/\1/p' "$APP/scripts/demo/up.sh" | tr ' ' ',')"
-  ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="http://127.0.0.1:$COMPOSITION_PORT/active" \
-    ONTOS_DEMO_VERTICALS="$SERVED_CSV" \
-    nohup "${WITH_ENV[@]}" pnpm --dir tools/ontos-agent-mcp start:http >"$LOG_DIR/ontos-agent-mcp.log" 2>&1 </dev/null &
-  echo $! >"$PID_DIR/ontos-agent-mcp.pid"
-  wait_http "http://127.0.0.1:3090/healthz" 60 ontos-agent-mcp
-  say "restarted ontos-agent-mcp"
-  exit 0
-fi
 
 # Served vertical set: persisted by previous rebuilds, else up.sh's default list.
 if [ -f "$VERTICALS_FILE" ]; then

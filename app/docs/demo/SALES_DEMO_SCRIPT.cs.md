@@ -8,7 +8,7 @@ Lokální demo. Nic se nenasazuje. Všechny cesty jsou na `localhost:3020`.
 - Otevřete http://localhost:3020/cs/login.
 - Účty (heslo `password1234`): `obchod@demo.ontos` (vedoucí obchodu, vše), `obchodnik@demo.ontos` (obchodník), `ucetni@demo.ontos` (účetní), `sklad@demo.ontos` (skladník).
 - Reset dat: `up.sh` data při každém spuštění znovu naseeduje. Data ponechá `DEMO_RESET=0 ./scripts/demo/up.sh`. Zastavení: `./scripts/demo/down.sh`.
-- MCP pro Claude: postup a příkaz `claude mcp add ontos-sales` jsou v `app/tools/ontos-agent-mcp/README.md`. Ověření: nástroj `whoami` vrátí `assertionObtained: true`.
+- MCP pro Claude: `claude mcp add --transport http ontos http://localhost:3020/mcp`, pak `/mcp` › Authenticate (OAuth přes OntOS).
 
 ## 2. Scénář
 

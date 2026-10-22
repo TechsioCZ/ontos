@@ -3,7 +3,7 @@ import { expect, test } from 'effect-rstest';
 import { parseVerifiedOAuthQuery } from '../../../api/auth/oauth-server/oauth-flow-live.ts';
 
 const FULL_QUERY =
-  'response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Foauth%2Fclaude-code-client-metadata&redirect_uri=http%3A%2F%2Flocalhost%3A5000%2Fcallback&scope=openid+ontos&state=s1&resource=http%3A%2F%2Flocalhost%3A3090%2Fmcp&company=71000000-0000-4000-8000-000000000021&agent=a1&exp=1&sig=x';
+  'response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Foauth%2Fclaude-code-client-metadata&redirect_uri=http%3A%2F%2Flocalhost%3A5000%2Fcallback&scope=openid+ontos&state=s1&resource=http%3A%2F%2Flocalhost%3A3020%2Fmcp&company=71000000-0000-4000-8000-000000000021&agent=a1&exp=1&sig=x';
 
 test('parseVerifiedOAuthQuery reads every connect-flow field', () => {
   expect(parseVerifiedOAuthQuery(FULL_QUERY)).toEqual({
@@ -11,7 +11,7 @@ test('parseVerifiedOAuthQuery reads every connect-flow field', () => {
     clientId: 'https://claude.ai/oauth/claude-code-client-metadata',
     company: '71000000-0000-4000-8000-000000000021',
     redirectUri: 'http://localhost:5000/callback',
-    resource: 'http://localhost:3090/mcp',
+    resource: 'http://localhost:3020/mcp',
     scope: 'openid ontos',
     state: 's1',
   });

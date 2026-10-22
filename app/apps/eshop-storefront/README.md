@@ -28,7 +28,7 @@ PLAYWRIGHT_BROWSERS_PATH=…/ms-playwright PLAYWRIGHT_MODULE=…/playwright/inde
 - Rsbuild + React SPA (`src/`) a malý Node BFF (`server/`) na jednom portu. Prohlížeč volá jen `/api/*`.
 - BFF drží `ONTOS_STOREFRONT_API_KEY` (z `app/.env.demo.local`, principal `kavarna-storefront`, kind service).
   Klíč se nikdy neposílá do prohlížeče: JS bundle, HTML ani odpovědi `/api/*` ho neobsahují.
-- Volání OntOS stejnou cestou jako `tools/ontos-agent-mcp`: `POST /shell-super-app-api/auth/api-key/gateway-context`
+- Volání OntOS: `POST /shell-super-app-api/auth/api-key/gateway-context`
   (audience `merchandise`, legalEntityId 0023) → jednorázová assertion → governed Read/Action přes shell.
   Core vyhodnocuje oprávnění a rozsah právnické osoby; URL ani host nejsou autorizace.
 

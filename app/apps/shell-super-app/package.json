@@ -66,6 +66,7 @@
     "@better-auth/oauth-provider": "1.7.12",
     "@effect/opentelemetry": "4.0.0-rc.117",
     "@effect/sql-pg": "4.0.0-rc.117",
+    "@modelcontextprotocol/server": "2.3.1",
     "@modern-js/bff-effect": "catalog:ultramodern",
     "@modern-js/boundary-debugger": "catalog:ultramodern",
     "@modern-js/federation-runtime": "catalog:ultramodern",
@@ -91,6 +92,7 @@
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260923.1",
     "@effect/platform-node": "4.0.0-rc.117",
+    "@modelcontextprotocol/client": "2.3.1",
     "@modern-js/adapter-rstest": "catalog:ultramodern",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",

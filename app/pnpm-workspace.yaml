@@ -23,7 +23,6 @@ packages:
   - apps/*
   - verticals/*
   - packages/*
-  - tools/ontos-agent-mcp
 enableGlobalVirtualStore: false
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:

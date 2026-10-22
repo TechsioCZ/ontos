@@ -64,7 +64,7 @@ test('declares every Better Auth OAuth provider and JWKS field', () => {
   const tables = getAuthTables({
     plugins: [
       jwt(),
-      mcp({ consentPage: '/cs/pripojit/souhlas', loginPage: '/cs/login', resource: 'http://localhost:3090/mcp' }),
+      mcp({ consentPage: '/cs/pripojit/souhlas', loginPage: '/cs/login', resource: 'http://localhost:3020/mcp' }),
     ],
   });
   const cases = [

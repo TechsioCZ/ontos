@@ -1,4 +1,4 @@
-// OntOS client for the storefront BFF: the same nonhuman-principal path as tools/ontos-agent-mcp.
+// OntOS client for the storefront BFF: the nonhuman-principal path (API key -> gateway assertion -> module API).
 //   1. POST {shell}/shell-super-app-api/auth/api-key/gateway-context  (x-api-key, audience, legalEntityId)
 //      -> short-lived bearer assertion + apiBaseUrl of the vertical on the shell origin.
 //   2. Reads:   POST {shell}{apiBaseUrl}/reads/{readName}

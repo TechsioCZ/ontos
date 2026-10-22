@@ -3,7 +3,7 @@ import { expect, test } from 'effect-rstest';
 import { clientNameFrom, readOAuthLoginError, readOAuthLoginRequest } from '../../../../src/routes/[lang]/login/oauth-handoff.ts';
 
 const claudeHref =
-  'http://localhost:3020/cs/login?response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Foauth%2Fclaude-code-client-metadata&redirect_uri=http%3A%2F%2Flocalhost%3A53682%2Fcallback&scope=openid+offline_access+ontos&state=xyz&code_challenge=abc&code_challenge_method=S256&resource=http%3A%2F%2Flocalhost%3A3090%2Fmcp&prompt=login+consent&exp=999&ba_iat=1&ba_param=client_id&sig=SIG';
+  'http://localhost:3020/cs/login?response_type=code&client_id=https%3A%2F%2Fclaude.ai%2Foauth%2Fclaude-code-client-metadata&redirect_uri=http%3A%2F%2Flocalhost%3A53682%2Fcallback&scope=openid+offline_access+ontos&state=xyz&code_challenge=abc&code_challenge_method=S256&resource=http%3A%2F%2Flocalhost%3A3020%2Fmcp&prompt=login+consent&exp=999&ba_iat=1&ba_param=client_id&sig=SIG';
 
 test('builds a same-origin authorize URL without signature parameters', () => {
   const result = readOAuthLoginRequest(claudeHref);
@@ -21,7 +21,7 @@ test('builds a same-origin authorize URL without signature parameters', () => {
   expect(authorize.searchParams.get('prompt')).toBe('consent');
   expect(authorize.searchParams.get('state')).toBe('xyz');
   expect(authorize.searchParams.get('client_id')).toBe('https://claude.ai/oauth/claude-code-client-metadata');
-  expect(authorize.searchParams.get('resource')).toBe('http://localhost:3090/mcp');
+  expect(authorize.searchParams.get('resource')).toBe('http://localhost:3020/mcp');
   expect(result.clientHost).toBe('claude.ai');
   expect(result.knownClient).toBe(true);
   expect(result.signedQuery).toBe(claudeHref.split('?')[1]);

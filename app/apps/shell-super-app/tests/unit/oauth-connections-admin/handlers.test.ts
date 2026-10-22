@@ -191,7 +191,7 @@ const makeDeps = (state: Fixture) => {
   const deps: ConnectionsAdminDeps<never> = {
     directory,
     grants,
-    mcpUrl: 'http://localhost:3090/mcp',
+    mcpUrl: 'http://localhost:3020/mcp',
   };
   return { calls, deps };
 };
@@ -209,7 +209,7 @@ it.effect('lists only the caller active connections with the MCP URL', () =>
     const { deps } = makeDeps(fixture());
     const response = yield* listMine(caller({}), deps);
     expect(response.connections.map((connection) => connection.grantId)).toEqual(['g1']);
-    expect(response.mcpUrl).toBe('http://localhost:3090/mcp');
+    expect(response.mcpUrl).toBe('http://localhost:3020/mcp');
   }),
 );
 

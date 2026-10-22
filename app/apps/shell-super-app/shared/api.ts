@@ -27,7 +27,6 @@ import {
   ManageAgentEntityResponseSchema,
 } from '@app/shared-contracts/agent-access';
 import { OAuthConnectApiGroup } from './oauth-connect-api.ts';
-import { OAuthConnectorApiGroup } from './oauth-connector-api.ts';
 // @ontos-codesmith-core-read-contract-imports:start
 
 // @ontos-core-read legal-entity-detail
@@ -688,9 +687,7 @@ const identityErrors = [
 
 /** Agent endpoints authenticate with the agent's API key (Better Auth), like /auth/api-key/gateway-context. */
 const AgentApiKeyHeadersSchema = Schema.Struct({
-  authorization: Schema.optionalKey(Schema.String),
   'x-api-key': Schema.optionalKey(Schema.String),
-  'x-ontos-connector-key': Schema.optionalKey(Schema.String),
 });
 export const AgentOwnProposalsRequestSchema = Schema.Struct({ legalEntityId: Schema.String.check(Schema.isUUID()) });
 const AgentQueueRequestSchema = Schema.Struct({});
@@ -1113,8 +1110,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   )
   .add(GatewayContextApiGroup)
   .add(ExternalIdentityApiGroup)
-  .add(OAuthConnectApiGroup)
-  .add(OAuthConnectorApiGroup);
+  .add(OAuthConnectApiGroup);
 
 const authenticationEndpointPath = (endpoint: { readonly path: string }) =>
   `/shell-super-app-api${endpoint.path}` as const;

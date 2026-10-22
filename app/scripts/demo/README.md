@@ -272,7 +272,7 @@ price changes and bulk product edits, employee create/update/bulk edits, and eve
 
 The bot's managed API key is issued through `/auth/identity/api-keys/managed` as `obchod@demo.ontos`. It is
 written with `ONTOS_SHELL_URL`, `ONTOS_COMPOSITION_REVISION` and `ONTOS_LEGAL_ENTITY_ID` to the gitignored
-`app/.env.demo.local` for `tools/ontos-agent-mcp`. A re-run keeps a key that still works.
+`app/.env.demo.local` for the demo bot scripts. A re-run keeps a key that still works.
 
 The Better Auth apiKey plugin stores a limit of 10 verifications per 24 h on every key it creates. Every agent call
 redeems the key for a new single-use gateway assertion, so `reset-permissions.mts` turns that limit off for the
@@ -315,7 +315,7 @@ grants without a full permission reset. In Siampark the sidebar shows only Klien
 `node scripts/demo/prove-sales-demo.mts` checks requirements 5, 7d and 10 over HTTP against the running stack:
 sign-in as the demo users, the bot through its API key, PASS/FAIL per check, exit code 1 on any failure. It writes
 demo data on every run: one open opportunity goes to WON (and gets a draft invoice), its product gets a +10 % price,
-and the bot creates one task. The MCP session `tools/ontos-agent-mcp/scripts/demo-session.mts` (requirements 8, 9, 11) writes its transcript to `docs/demo/agent-session.md`.
+and the bot creates one task. Agents use the Shell MCP endpoint `http://localhost:3020/mcp` (OAuth); its end-to-end proof is `node scripts/demo/prove-mcp-oauth.mts`.
 
 Pages: `/cs/ukoly` (Úkoly) and `/cs/finance` (Faktury a finance). The business
 date is 2026-10-05.

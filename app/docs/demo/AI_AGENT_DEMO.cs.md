@@ -51,8 +51,8 @@ VŠE PROŠLO / ALL PASS (19 kroků)
 
 Do aplikace se vkládá jen adresa MCP serveru OntOS. Nikdo nekopíruje klíč ani token: uživatel se přihlásí svým účtem OntOS a na české obrazovce **Připojit** zvolí firmu, za koho aplikace jedná (**Za mě** nebo **Za agenta**), k jakým modulům má přístup a jak bude zapisovat (**Jen čtení**, **Navrhovat změny ke schválení**, **Provádět změny přímo**). Potom klikne **Povolit přístup**.
 
-- Adresa MCP serveru (lokální demo): `http://localhost:3090/mcp`. Najdete ji také v **Můj profil › Připojené aplikace › Jak připojit**.
-- **Claude Code:** `claude mcp add --transport http ontos http://localhost:3090/mcp`, potom `/mcp` › Authenticate.
+- Adresa MCP serveru (lokální demo): `http://localhost:3020/mcp` (cesta `/mcp` shellu, na stage `https://ontos-stage.bleeding.dev/mcp`). Najdete ji také v **Můj profil › Připojené aplikace › Jak připojit**.
+- **Claude Code:** `claude mcp add --transport http ontos http://localhost:3020/mcp`, potom `/mcp` › Authenticate.
 - **VS Code, Cursor:** přidejte MCP server podle URL; přihlášení se otevře v prohlížeči.
 - **ChatGPT:** Nastavení › Aplikace a konektory › Přidat vlastní MCP server › URL › OAuth.
 - **Claude (web, desktop):** Nastavení › Konektory › Přidat vlastní konektor › URL.
@@ -118,7 +118,7 @@ data. Druhé volání vrátí `deduplicated: true` a existující úkol. Důkaz:
 
 ## Řešení potíží
 
-- Aplikace se nepřipojí → ověřte, že běží MCP server (http://localhost:3090/healthz) a shell (http://localhost:3020/cs).
+- Aplikace se nepřipojí → ověřte, že běží shell (http://localhost:3020/cs) a že http://localhost:3020/.well-known/oauth-protected-resource/mcp vrací JSON.
 - Po odpojení v **Připojené aplikace** chce aplikace nové přihlášení: připojení bylo zrušeno, připojte ji znovu.
 - Na obrazovce Připojit chybí volba **Za agenta**: správce vás ještě nepřidal do **Kdo smí agenta připojit**.
 
