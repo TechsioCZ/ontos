@@ -14,7 +14,7 @@ import {
 } from "@techsio/ui-kit/templates/search-suggestions";
 
 import { cs } from "@/i18n/cs";
-import { formatPrice } from "@/lib/format";
+import { getCatalogPriceLabel } from "@/lib/product-price";
 import { normalizeCatalogSearchTerm } from "@/lib/product-variant-search";
 import { getCategories, getCategoryTrail, searchCatalog } from "@/mock-storefront/catalog";
 
@@ -80,7 +80,12 @@ export function HeaderSearch() {
         id: "products",
         label: cs.search.suggestions,
         items: results.slice(0, 6).map(({ product, matchingVariants }) => {
-          const variant = matchingVariants.length === 1 ? matchingVariants[0] : undefined;
+          const variant =
+            matchingVariants.length === 1
+              ? matchingVariants[0]
+              : product.detail.variants.length === 1
+                ? product.detail.variants[0]
+                : undefined;
           const params = new URLSearchParams({ variant: variant?.sku ?? trimmedQuery });
 
           return {
@@ -92,7 +97,7 @@ export function HeaderSearch() {
               imageSrc: variant?.imageSrc ?? product.imageSrc,
               variantSku: variant?.sku,
               priceMinor: variant?.priceMinor ?? product.priceMinor,
-              priceIsFrom: !variant && product.detail.variants.length > 0,
+              priceIsFrom: !variant && product.detail.variants.length > 1,
               currency: product.currency,
             },
           };
@@ -200,8 +205,7 @@ export function HeaderSearch() {
                   </span>
                   {item.data.kind === "product" ? (
                     <strong className="shrink-0 whitespace-nowrap text-sm">
-                      {item.data.priceIsFrom && `${cs.product.from} `}
-                      {formatPrice(item.data.priceMinor, item.data.currency)}
+                      {getCatalogPriceLabel(item.data)}
                     </strong>
                   ) : (
                     <Icon className="shrink-0" icon="token-icon-chevron-right" size="sm" />

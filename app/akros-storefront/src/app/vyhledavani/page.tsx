@@ -28,6 +28,7 @@ const toSearchGridItem = (
     ...(matchedVariant && {
       imageSrc: matchedVariant.imageSrc ?? summary.imageSrc,
       priceMinor: matchedVariant.priceMinor,
+      originalPriceMinor: matchedVariant.originalPriceMinor,
       priceIsFrom: false,
       stock: {
         kind: "quantity" as const,

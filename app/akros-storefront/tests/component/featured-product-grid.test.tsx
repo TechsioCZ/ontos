@@ -27,7 +27,10 @@ describe("FeaturedProductGrid", () => {
     expect(screen.getAllByRole("button", { name: /^Vybrat oblíbené varianty:/ })).toHaveLength(
       products.length,
     );
-    expect(screen.getByText(/^od 0,08 Kč$/)).toBeDefined();
+    expect(screen.queryByText(/^od \d/)).toBeNull();
+    expect(screen.getAllByText("Cena dle varianty")).toHaveLength(
+      products.filter((product) => product.priceIsFrom).length,
+    );
     expect(screen.getByText("Kód produktu: 3tykv021")).toBeDefined();
     expect(screen.getAllByText("Více variant")).toHaveLength(products.length);
   });

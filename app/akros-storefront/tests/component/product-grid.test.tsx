@@ -2,6 +2,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ProductGrid } from "@/components/product-grid";
+import { formatPrice } from "@/lib/format";
 import {
   getActionProducts,
   getProductBySlug,
@@ -49,7 +50,9 @@ describe("ProductGrid", () => {
     const { container } = render(<ProductGrid products={[toProductSummary(product!)]} />);
     expect(container.firstElementChild?.className).toBe("akros-product-grid");
 
-    expect(screen.getByText(/^od 10,36 Kč$/)).toBeDefined();
+    expect(screen.getByText("Cena dle varianty")).toBeDefined();
+    expect(screen.queryByText(/^od /)).toBeNull();
+    expect(screen.queryByText("10,36 Kč")).toBeNull();
     expect(screen.getByText("Skladem")).toBeDefined();
     expect(screen.getByText("Více variant")).toBeDefined();
     expect(screen.getByRole("link", { name: "Vybrat variantu" }).getAttribute("href")).toBe(
@@ -166,8 +169,33 @@ describe("ProductGrid", () => {
     };
     const { container } = render(<ProductGrid action="detail" products={[product]} />);
 
-    expect(screen.getByText("od 2,54 Kč")).toBeDefined();
+    expect(screen.getByText("Cena dle varianty")).toBeDefined();
+    expect(screen.queryByText(/2,54 Kč/)).toBeNull();
     expect(container.querySelector("del")).toBeNull();
     expect(screen.queryByText("-23%")).toBeNull();
+  });
+
+  it("shows the exact price when the group has only one source variant", () => {
+    const product = getProducts().find(
+      (item) => item.detail.variants.length === 1 && item.detail.variants[0].priceMinor > 0,
+    )!;
+    render(<ProductGrid products={[toProductSummary(product)]} />);
+    expect(
+      screen.getByText(formatPrice(product.detail.variants[0].priceMinor).replace(/\s/g, " ")),
+    ).toBeDefined();
+    expect(screen.queryByText("Cena dle varianty")).toBeNull();
+    expect(screen.queryByText(/^od /)).toBeNull();
+  });
+
+  it("shows a request-price label for an unpriced concrete item", () => {
+    const product = {
+      ...toProductSummary(getProducts()[0]),
+      priceIsFrom: false,
+      hasVariants: false,
+      priceMinor: 0,
+    };
+    render(<ProductGrid products={[product]} />);
+    expect(screen.getByText("Cena na dotaz")).toBeDefined();
+    expect(screen.queryByText("0,00 Kč")).toBeNull();
   });
 });

@@ -13,7 +13,7 @@ todos:
     status: completed
   - id: task-06-concrete-prices
     content: TASK 06 – odstranit zobrazení cen Od na všech plochách a cenu vázat na konkrétní prodejnou položku.
-    status: pending
+    status: completed
 isProject: false
 ---
 
@@ -74,6 +74,8 @@ podle následně potvrzeného pořadí uživatele; nevyžadovala změnu identity
 ze společného základu ani implementaci TASK 04/05.
 
 ### TASK 06 – cena konkrétní položky · #1304
+
+Rozbor a výsledky vlastní [TASK 06](akros-task-06-review.md).
 
 - Odstranit „Od“ ze všech cenových ploch: homepage, kategorií, výsledků vyhledávání,
   našeptávače, novinek, doporučení, detailu i oblíbených.

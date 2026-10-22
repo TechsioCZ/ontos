@@ -125,7 +125,7 @@ export const toProductSummary = (product: CatalogProduct): CatalogProductSummary
   isSale: product.isSale,
   isNew: product.isNew,
   hasVariants: product.detail.variants.length > 0,
-  priceIsFrom: product.detail.variants.length > 0,
+  priceIsFrom: product.detail.variants.length > 1,
   stock: summarizeProductStock(product),
 });
 

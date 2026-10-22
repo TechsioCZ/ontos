@@ -50,6 +50,11 @@ from empty results on 386 variants. Screenshots and timings are in
 `test-results/variant-filters/`. Unknown or conflicting dimensions are omitted;
 price and material filters are removed.
 
+`npm run test:prices` checks eight catalog/account price surfaces at 1920/1024/390/320 px
+against source items, plus group/exact autocomplete, a concrete variant purchase and
+its cart total. Unselected groups show `Cena dle varianty`; concrete items keep their
+actual price. Screenshots and the card-count report are in `test-results/product-prices/`.
+
 `npm run test:catalog` checks catalog/variant token consumption and purchase/filter/pagination
 flows at 1920, 1024 and 390px. It covers minimum quantities, whole packages, empty filter results,
 keyboard slider changes and preservation of the search query when paging through results.

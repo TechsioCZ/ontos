@@ -6,6 +6,7 @@ import { SiteHeader } from "@/components/site-header";
 import { CartProvider } from "@/features/cart/cart-provider";
 import { getCategories, getProducts, searchCatalog } from "@/mock-storefront/catalog";
 import { normalizeCatalogSearchTerm } from "@/lib/product-variant-search";
+import { formatPrice } from "@/lib/format";
 
 const { push, route } = vi.hoisted(() => ({
   push: vi.fn<(href: string) => void>(),
@@ -161,6 +162,10 @@ describe("SiteHeader search", () => {
     );
     await user.type(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }), variant.sku);
     const option = screen.getByRole("option", { name: `${product.name} – ${variant.label}` });
+    expect(
+      within(option).getByText(formatPrice(variant.priceMinor).replace(/\s/g, " ")),
+    ).toBeTruthy();
+    expect(within(option).queryByText("Cena dle varianty")).toBeNull();
     expect(option.getAttribute("href")).toBe(
       `/produkt/${product.slug}?${new URLSearchParams({ variant: variant.sku })}#product-variants`,
     );
@@ -186,6 +191,18 @@ describe("SiteHeader search", () => {
 
     expect(push).toHaveBeenCalledOnce();
     expect(push).toHaveBeenCalledWith("/vyhledavani?q=M8%20A4");
+  });
+
+  it("shows a variant-price prompt instead of a lower-bound price in group suggestions", async () => {
+    const user = userEvent.setup();
+    render(
+      <CartProvider storage={null}>
+        <SiteHeader />
+      </CartProvider>,
+    );
+    await user.type(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }), "DIN7997");
+    expect(screen.getAllByText("Cena dle varianty").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/^od \d/)).toBeNull();
   });
 
   it("marks the current page in both desktop and mobile navigation", async () => {

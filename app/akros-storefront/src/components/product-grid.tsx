@@ -10,6 +10,7 @@ import { AddToCartButton } from "@/features/cart/add-to-cart-button";
 import { FavoriteButton } from "@/features/favorites/favorite-button";
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
+import { getCatalogPriceLabel } from "@/lib/product-price";
 import type { CatalogProductSummary } from "@/mock-storefront/types";
 
 export interface ProductGridItem extends CatalogProductSummary {
@@ -57,10 +58,7 @@ export function ProductGrid({
           product.priceMinor > 0 &&
           product.stock.kind === "quantity" &&
           product.stock.status === "in-stock";
-        const priceLabel =
-          product.priceMinor > 0
-            ? `${product.priceIsFrom ? `${cs.product.from} ` : ""}${formatPrice(product.priceMinor, product.currency)}`
-            : "Cena na dotaz";
+        const priceLabel = getCatalogPriceLabel(product);
         const supportingText = product.description.trim() || `Kód produktu: ${product.sku}`;
         const comparisonPrice = product.originalPriceMinor;
         const hasDiscount =
@@ -167,6 +165,7 @@ export function ProductGrid({
               )}
 
               <ProductCard.Price
+                data-akros-product-price
                 className={`mt-auto mb-0 text-center ${columns === "checkout" ? "leading-(--akros-checkout-heading-leading)" : ""}`}
               >
                 {hasDiscount ? (
