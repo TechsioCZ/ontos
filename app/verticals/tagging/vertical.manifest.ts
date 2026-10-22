@@ -15,6 +15,7 @@ import { taggingReadAllPermission } from './shared/permissions/tagging-read-all.
 import { taggingWriteAllPermission } from './shared/permissions/tagging-write-all.ts';
 import { tagResourceDescriptor } from './shared/resources/tag.ts';
 // </generated-module-manifest-imports>
+import { taggingMcpContribution } from './shared/mcp/contribution.ts';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -64,6 +65,7 @@ export const taggingManifest = defineOntosModuleManifest({
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: taggingMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>

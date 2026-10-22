@@ -18,6 +18,7 @@ import { RecordsPage } from './src/routes/[lang]/prehledy/statistiky/page.tsx';
 import { salesInsightsReadAllPermission } from './shared/permissions/sales-insights-read-all.ts';
 import { salesInsightsWriteAllPermission } from './shared/permissions/sales-insights-write-all.ts';
 // </generated-module-manifest-imports>
+import { salesInsightsMcpContribution } from './shared/mcp/contribution.ts';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -71,6 +72,7 @@ export const salesInsightsManifest = defineOntosModuleManifest({
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: salesInsightsMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>

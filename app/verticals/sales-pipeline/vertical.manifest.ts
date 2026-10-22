@@ -17,6 +17,7 @@ import { salesPipelineWriteAllPermission } from './shared/permissions/sales-pipe
 import { opportunityCollectionResourceDescriptor } from './shared/resources/opportunity-collection.ts';
 import { opportunityResourceDescriptor } from './shared/resources/opportunity.ts';
 // </generated-module-manifest-imports>
+import { salesPipelineMcpContribution } from './shared/mcp/contribution.ts';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -77,6 +78,7 @@ export const salesPipelineManifest = defineOntosModuleManifest({
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: salesPipelineMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>
