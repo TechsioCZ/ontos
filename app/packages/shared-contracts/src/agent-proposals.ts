@@ -14,8 +14,20 @@ const ShortText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(
 const LongText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4000));
 const OptionalNote = Schema.String.check(Schema.isMaxLength(1000));
 
+/** One JSON value of a stored module command; the module's own command schema validates it when the command runs. */
+const AgentCommandValueSchema: Schema.Codec<Schema.Json> = Schema.suspend(() =>
+  Schema.Union([
+    Schema.Null,
+    Schema.Finite,
+    Schema.Boolean,
+    Schema.String,
+    Schema.Array(AgentCommandValueSchema),
+    Schema.Record(Schema.String, AgentCommandValueSchema),
+  ]),
+);
+
 /** A module command as JSON (`_tag` names the command), e.g. `{ _tag: 'ChangePrice', id, priceMinor }`. */
-export const AgentCommandSchema = Schema.Record(Schema.String, Schema.Unknown);
+export const AgentCommandSchema = Schema.Record(Schema.String, AgentCommandValueSchema);
 export type AgentCommand = typeof AgentCommandSchema.Type;
 
 export const AgentRiskSchema = Schema.Literals(['low', 'medium', 'high']);
