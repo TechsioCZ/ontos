@@ -7,13 +7,12 @@ import { executeRecords as executeAgreements } from '@app/legal-agreements/clien
 import { executeRecords as executeOccupancy } from '@app/property-leasing/clients/records';
 import { executeRecords as executeProperty } from '@app/property-portfolio/clients/records';
 import { executeRecords as executeWork } from '@app/work-tasks/clients/records';
-import { Effect } from 'effect';
+import { Effect, Schedule } from 'effect';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { RecordsResponse as OpsRecords } from '../../../shared/apis/records.ts';
-import { agendaIds } from '../../../shared/agendas.ts';
+import type { OverviewResponse } from '../../../shared/apis/overview.ts';
 import { readFinance } from '../../api/finance-reads.ts';
+import { executeOverview } from '../../api/overview-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
-import { loadRecords } from '../use-agenda.ts';
 import { loadSalesCases } from './sales-source.ts';
 
 export type SourceStatus = 'loading' | 'ready' | 'forbidden' | 'unavailable';
@@ -25,10 +24,20 @@ export interface SourceState<Data> {
   readonly loadedAt?: string;
 }
 
-const loadEffect = () => ({
+/** Gateway / assertion hiccups (e.g. while the composition is republished) are retried before reporting „forbidden“. */
+const transientOverviewFailure = (error: { readonly _tag: string }) =>
+  /^(OverviewAuthentication|GatewayAuthenticationRequired|GatewayReloadRequired|GatewayUnavailable|OverviewUnavailable)/u.test(
+    error._tag,
+  );
+
+/** `search`: Přehled also needs the search rows of the provoz records; Moje agenda does not. */
+const loadEffect = (search: boolean) => ({
   agreements: executeAgreements({}, 'ops-agenda.agreements'),
   finance: readFinance('ops-agenda.finance'),
   occupancy: executeOccupancy({}, 'ops-agenda.occupancy'),
+  ops: executeOverview(search ? { includeSearch: true } : {}, 'ops-agenda.overview').pipe(
+    Effect.retry({ schedule: Schedule.spaced('700 millis'), times: 2, while: transientOverviewFailure }),
+  ),
   parties: listCustomers({ includeArchived: false }),
   property: executeProperty({}, 'ops-agenda.property'),
   sales: loadSalesCases('ops-agenda.sales'),
@@ -46,7 +55,8 @@ export type PartiesData = Success<'parties'>;
 export type SalesData = Success<'sales'>;
 
 export interface RentalOverviewSources {
-  readonly ops: SourceState<OpsRecords>;
+  /** Provoz agendas, already reduced on the server to what these pages show (overview read). */
+  readonly ops: SourceState<OverviewResponse>;
   readonly property: SourceState<PropertyData>;
   readonly agreements: SourceState<AgreementsData>;
   readonly occupancy: SourceState<OccupancyData>;
@@ -89,7 +99,7 @@ const settle = <A, E>(effect: Effect.Effect<A, E>): Promise<SourceState<A>> =>
   );
 
 /** Loads all sources in parallel; each settles independently so a slow or forbidden one never blocks the rest. */
-export const useRentalOverviewSources = () => {
+export const useRentalOverviewSources = ({ search }: { readonly search: boolean }) => {
   const [sources, setSources] = useState<RentalOverviewSources>(initial);
   const ticket = useRef(0);
 
@@ -101,16 +111,9 @@ export const useRentalOverviewSources = () => {
         setSources((current) => ({ ...current, [key]: value }));
       }
     };
-    const loaders = loadEffect();
+    const loaders = loadEffect(search);
     await Promise.all([
-      loadRecords({ agendas: agendaIds }).then((outcome) =>
-        update(
-          'ops',
-          outcome.ok
-            ? { data: outcome.data, loadedAt: new Date().toISOString(), status: 'ready' }
-            : { status: outcome.reason === 'forbidden' ? 'forbidden' : 'unavailable' },
-        ),
-      ),
+      settle(loaders.ops).then((value) => update('ops', value)),
       settle(loaders.property).then((value) => update('property', value)),
       settle(loaders.agreements).then((value) => update('agreements', value)),
       settle(loaders.occupancy).then((value) => update('occupancy', value)),
@@ -119,7 +122,7 @@ export const useRentalOverviewSources = () => {
       settle(loaders.parties).then((value) => update('parties', value)),
       settle(loaders.sales).then((value) => update('sales', value)),
     ]);
-  }, []);
+  }, [search]);
 
   useEffect(() => {
     void reload();

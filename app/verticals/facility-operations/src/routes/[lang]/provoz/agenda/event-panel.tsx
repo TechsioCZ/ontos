@@ -16,7 +16,7 @@ import type { AgendaState, CalendarEvent, CalendarEventKind } from '../../../../
 import type { PropertyRef } from '../../../../../shared/domain/common.ts';
 import { CommentThread } from '../../../../ui/comment-thread.tsx';
 import { urgencyOf } from '../../../../ui/ops-agenda/deadlines.ts';
-import type { Deadline } from '../../../../ui/ops-agenda/deadlines.ts';
+import type { Deadline } from '../../../../../shared/domain/ops-overview.ts';
 import { DEMO_TENANT_ID, personaOf, personas } from '../../../../ui/ops-agenda/personas.ts';
 import { Pill, categoryTone, fmt, langOf, urgencyTone } from '../../../../ui/ops-agenda/ui-bits.tsx';
 import { usePropertyOptions } from '../../../../ui/property-options.ts';

@@ -9,8 +9,8 @@ import type { CommandOutcome } from '../use-agenda.ts';
 import type { RentalOverviewSources } from './sources.ts';
 
 export const useAgendaCommands = (sources: RentalOverviewSources, reload: () => Promise<void>) => {
-  const revision = sources.ops.data?.agendas.agenda?.revision ?? 0;
-  const loadedAt = sources.ops.data?.agendas.agenda?.updatedAt;
+  const revision = sources.ops.data?.agenda?.revision ?? 0;
+  const loadedAt = sources.ops.data?.agenda?.updatedAt;
   const base = loadedAt === undefined ? undefined : DateTime.formatIso(loadedAt);
   const run = useCallback(
     async (command: OpsCommand, options: { readonly reload?: boolean } = {}): Promise<CommandOutcome> => {
@@ -28,5 +28,5 @@ export const useAgendaCommands = (sources: RentalOverviewSources, reload: () => 
     },
     [base, revision, reload],
   );
-  return { canWrite: sources.ops.data?.agendas.agenda?.canWrite === true, revision, run };
+  return { canWrite: sources.ops.data?.agenda?.canWrite === true, revision, run };
 };

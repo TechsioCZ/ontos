@@ -33,6 +33,13 @@ const envelope = <S extends Schema.Top>(state: S) =>
     updatedAt: Schema.DateTimeUtcFromString,
   });
 
+/** Envelope of the calendar agenda: personal inbox/preferences only, assigned events only for external partners. */
+export const AgendaEnvelopeSchema = Schema.Struct({
+  ...envelope(AgendaStateSchema).fields,
+  /** Present (true) when only the events assigned to the principal are returned (external partners). */
+  assignedOnly: Schema.optionalKey(Schema.Literal(true)),
+});
+
 export const AgendaAccessSchema = Schema.Struct({
   agenda: AgendaIdSchema,
   canRead: Schema.Boolean,
@@ -59,13 +66,7 @@ export const RecordsResponseSchema = Schema.Struct({
   access: Schema.Array(AgendaAccessSchema),
   actorPrincipalRef: PrincipalRefSchema,
   agendas: Schema.Struct({
-    agenda: Schema.optionalKey(
-      Schema.Struct({
-        ...envelope(AgendaStateSchema).fields,
-        /** Present (true) when only the events assigned to the principal are returned (external partners). */
-        assignedOnly: Schema.optionalKey(Schema.Literal(true)),
-      }),
-    ),
+    agenda: Schema.optionalKey(AgendaEnvelopeSchema),
     assets: Schema.optionalKey(envelope(AssetsStateSchema)),
     documents: Schema.optionalKey(envelope(DocumentsStateSchema)),
     meters: Schema.optionalKey(

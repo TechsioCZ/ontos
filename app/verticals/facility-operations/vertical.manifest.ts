@@ -8,19 +8,20 @@ import {
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
+import { AgendaPage } from './src/routes/[lang]/provoz/agenda/page.tsx';
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
+import { AssetsPage } from './src/routes/[lang]/provoz/majetek/page.tsx';
+import { DocumentsPage } from './src/routes/[lang]/provoz/dokumenty/page.tsx';
 import { facilityOperationsReadAllPermission } from './shared/permissions/facility-operations-read-all.ts';
 import { facilityOperationsReadOperationalPermission } from './shared/permissions/facility-operations-read-operational.ts';
 import { facilityOperationsWriteAllPermission } from './shared/permissions/facility-operations-write-all.ts';
 import { facilityOperationsWriteOperationalPermission } from './shared/permissions/facility-operations-write-operational.ts';
-import { RecordsApi } from './shared/apis/records.ts';
-import { OverviewPage } from './src/routes/[lang]/provoz/prehled/page.tsx';
-import { AgendaPage } from './src/routes/[lang]/provoz/agenda/page.tsx';
-import { AssetsPage } from './src/routes/[lang]/provoz/majetek/page.tsx';
 import { MetersPage } from './src/routes/[lang]/provoz/meridla/page.tsx';
+import { OverviewApi } from './shared/apis/overview.ts';
+import { OverviewPage } from './src/routes/[lang]/provoz/prehled/page.tsx';
 import { PurchasingPage } from './src/routes/[lang]/provoz/nakupy/page.tsx';
+import { RecordsApi } from './shared/apis/records.ts';
 import { SecurityPage } from './src/routes/[lang]/provoz/bezpecnost/page.tsx';
-import { DocumentsPage } from './src/routes/[lang]/provoz/dokumenty/page.tsx';
 // </generated-module-manifest-imports>
 import { facilityOperationsMcpContribution } from './shared/mcp/contribution.ts';
 
@@ -60,6 +61,7 @@ export const facilityOperationsManifest = defineOntosModuleManifest({
     ],
     api: {
       // <generated-module-manifest-apis>
+      overview: OverviewApi,
       records: RecordsApi,
       // </generated-module-manifest-apis>
     },

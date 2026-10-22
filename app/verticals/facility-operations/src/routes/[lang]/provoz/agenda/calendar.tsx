@@ -5,7 +5,7 @@ import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { useMemo, useState } from 'react';
 import { addDays, daysUntil, urgencyOf } from '../../../../ui/ops-agenda/deadlines.ts';
-import type { Deadline, SourceId } from '../../../../ui/ops-agenda/deadlines.ts';
+import type { Deadline, SourceId } from '../../../../../shared/domain/ops-overview.ts';
 import { sourceKeys } from '../../../../ui/ops-agenda/sources.ts';
 import type { RentalOverviewSources } from '../../../../ui/ops-agenda/sources.ts';
 import { Dot, Icon, Pill, categoryTone, exportCsv, fmt, langOf, toneColors, urgencyTone } from '../../../../ui/ops-agenda/ui-bits.tsx';

@@ -16,6 +16,7 @@ export const facilityOperationsRegistration = defineVerticalRuntimeRegistration(
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      overview: () => import('./src/api/overview-client.ts'),
       records: () => import('./src/api/records-client.ts'),
       // </generated-module-registration-apis>
     },

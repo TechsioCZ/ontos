@@ -6,6 +6,7 @@ rstest.mock('../../src/ui/ops-agenda/sources.ts', () => ({
 }));
 rstest.mock('@app/admin-ui', () => ({ foldSearchText: (value: string) => value.toLowerCase() }));
 
+import { opsSearchRows } from '../../shared/domain/ops-overview.ts';
 import { buildKpis, buildSearchIndex, currentAgendaState } from '../../src/ui/ops-agenda/model.ts';
 
 const absent = { status: 'unavailable' } as const;
@@ -39,10 +40,11 @@ it('missing sources never produce a numeric zero and forbidden sources contribut
 });
 
 it('operations search preserves the camera and document selection in source links', () => {
-  const source = sources({ ops: { status: 'ready', data: { agendas: {
-    security: { state: { devices: [{ id: 'cam-12', name: 'Kamera K-12' }] } },
-    documents: { state: { documents: [{ id: 'doc-1', title: 'Úklid Parková' }] } },
-  } } as unknown as NonNullable<RentalOverviewSources['ops']['data']> } });
+  const searchRows = [
+    ...opsSearchRows('security', { devices: [{ id: 'cam-12', name: 'Kamera K-12' }] }),
+    ...opsSearchRows('documents', { documents: [{ id: 'doc-1', title: 'Úklid Parková' }] }),
+  ];
+  const source = sources({ ops: { status: 'ready', data: { searchRows } as unknown as NonNullable<RentalOverviewSources['ops']['data']> } });
   const index = buildSearchIndex(source, new Map());
   expect(index.find((row) => row.id === 'cam-12')?.href).toBe('/provoz/bezpecnost?device=cam-12');
   expect(index.find((row) => row.id === 'doc-1')?.href).toBe('/provoz/dokumenty?doc=doc-1');
@@ -64,7 +66,7 @@ it('cancelled or reassigned task alerts leave the live inbox, while stored histo
   const notifications = [{ category: 'ASSIGNED', eventKey: 'task-assigned:t1:me', source: 'work' }];
   const source = sources({
     work: { status: 'ready', data: { items: [{ ref: { resourceId: 't1' }, state: 'CANCELLED', ownerPrincipalRef: { principalId: 'me' } }] } as unknown as NonNullable<RentalOverviewSources['work']['data']> },
-    ops: { status: 'ready', data: { agendas: { agenda: { state: { events: [], notifications } } } } as unknown as NonNullable<RentalOverviewSources['ops']['data']> },
+    ops: { status: 'ready', data: { agenda: { state: { events: [], notifications } } } as unknown as NonNullable<RentalOverviewSources['ops']['data']> },
   });
   expect(currentAgendaState(source, [], '2026-10-20')?.notifications).toEqual([]);
   expect(notifications).toHaveLength(1);
@@ -76,7 +78,7 @@ it('stale source deadlines are hidden without deleting stored notification histo
     { category: 'ASSIGNED', eventKey: 'assignment', source: 'ops' },
   ];
   const state = { events: [], notifications };
-  const source = sources({ finance: { status: 'ready' }, ops: { status: 'ready', data: { agendas: { agenda: { state } } } as unknown as NonNullable<RentalOverviewSources['ops']['data']> } });
+  const source = sources({ finance: { status: 'ready' }, ops: { status: 'ready', data: { agenda: { state } } as unknown as NonNullable<RentalOverviewSources['ops']['data']> } });
   expect(currentAgendaState(source, [], '2026-10-20')?.notifications?.map((entry) => entry.eventKey)).toEqual(['assignment']);
   expect(notifications).toHaveLength(2);
 });

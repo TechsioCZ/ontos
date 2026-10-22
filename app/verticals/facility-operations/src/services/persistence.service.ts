@@ -15,6 +15,7 @@ import {
 import type { ApplyCommandResult, OpsCommand } from '../../shared/actions/apply-command.ts';
 import { MAX_FILE_BYTES, agendaDefinitions, agendaIds, agendaOfCommand } from '../../shared/agendas.ts';
 import type { FileUploadCommand } from '../../shared/agendas.ts';
+import type { OverviewRequest, OverviewResponse } from '../../shared/apis/overview.ts';
 import type { RecordsRequest, RecordsResponse, StoredFile } from '../../shared/apis/records.ts';
 import {
   PERSONAL_AGENDA_COMMANDS,
@@ -34,6 +35,7 @@ import {
 } from '../../shared/domain/change-log.ts';
 import type { ChangeEntry } from '../../shared/domain/change-log.ts';
 import type { AgendaId, AgendaSensitivity } from '../../shared/domain/common.ts';
+import { opsOverviewOf } from '../../shared/domain/ops-overview.ts';
 import { agendaStates, files } from '../database/schema.ts';
 
 export const FACILITY_OPERATIONS_MODULE_ID = 'facility.operations';
@@ -153,36 +155,39 @@ export interface LoadedFacilityRecords {
   readonly rows: ReadonlyMap<string, { readonly revision: number; readonly state: unknown; readonly updatedAt: Date }>;
 }
 
+const decodeAgendaRow = Effect.fn('FacilityOperations.decodeAgenda')(function* decodeAgendaRow(
+  loaded: LoadedFacilityRecords,
+  agenda: AgendaId,
+) {
+  const definition = agendaDefinitions[agenda];
+  const row = loaded.rows.get(agenda);
+  const state: unknown = yield* Schema.decodeUnknownEffect(definition.stateSchema)(row?.state ?? definition.empty);
+  const updatedAt = row === undefined ? yield* DateTime.now : DateTime.fromDateUnsafe(row.updatedAt);
+  return { revision: row?.revision ?? 0, state, updatedAt };
+}, Effect.mapError(unavailable));
+
 /**
- * After commit: decodes the loaded agenda rows, narrows them to what the person may see, and shapes the
- * records response. No database access.
+ * Decodes the loaded rows of the requested agendas the person may read and narrows each to what they may see:
+ * own inbox/preferences in the calendar agenda (only assigned events for external partners), meters without
+ * financial values without that permission. Records and overview reads both show exactly these states.
  */
-export const finishFacilityRecords = Effect.fn('FacilityOperations.finishRecords')(function* finishFacilityRecords(
-  request: RecordsRequest,
+const visibleAgendas = Effect.fn('FacilityOperations.visibleAgendas')(function* visibleAgendas(
+  requested: readonly AgendaId[],
   loaded: LoadedFacilityRecords,
   granted: Grants,
   scope: OperationalScope,
 ) {
-  const requested = request.agendas ?? agendaIds;
   const meters = meterAccess(granted);
   const assignedOnly = isAssignedOnly(granted);
-  const accessList = recordsAccessList(granted);
   const actorRef = { principalId: scope.principalId, tenantId: scope.tenantId } as RecordsResponse['actorPrincipalRef'];
-  const decodeAgenda = Effect.fn('FacilityOperations.decodeAgenda')(function* decodeAgenda(agenda: AgendaId) {
-    const definition = agendaDefinitions[agenda];
-    const row = loaded.rows.get(agenda);
-    const state: unknown = yield* Schema.decodeUnknownEffect(definition.stateSchema)(row?.state ?? definition.empty);
-    const updatedAt = row === undefined ? yield* DateTime.now : DateTime.fromDateUnsafe(row.updatedAt);
-    return { revision: row?.revision ?? 0, state, updatedAt };
-  }, Effect.mapError(unavailable));
   let ownEventIds: ReadonlySet<string> | undefined;
-  const agendas: Record<string, unknown> = {};
-  for (const entry of accessList) {
+  const envelopes = new Map<AgendaId, Readonly<Record<string, unknown>> & { readonly revision: number; readonly state: unknown }>();
+  for (const entry of recordsAccessList(granted)) {
     if (!entry.canRead || !requested.includes(entry.agenda)) {
       continue;
     }
-    const snapshot = yield* decodeAgenda(entry.agenda);
-    agendas[entry.agenda] = {
+    const snapshot = yield* decodeAgendaRow(loaded, entry.agenda);
+    envelopes.set(entry.agenda, {
       canWrite: entry.canWrite,
       ...(entry.agenda === 'agenda' && assignedOnly ? { assignedOnly: true as const } : {}),
       ...(entry.agenda === 'meters' ? { canReadFinancial: meters.canReadFinancial, canManage: meters.canManage } : {}),
@@ -202,13 +207,32 @@ export const finishFacilityRecords = Effect.fn('FacilityOperations.finishRecords
             ? operationalMetersState(snapshot.state as MetersState)
             : snapshot.state,
       updatedAt: snapshot.updatedAt,
-    };
+    });
   }
+  return { actorRef, envelopes, ownEventIds };
+});
+
+/**
+ * After commit: decodes the loaded agenda rows, narrows them to what the person may see, and shapes the
+ * records response. No database access.
+ */
+export const finishFacilityRecords = Effect.fn('FacilityOperations.finishRecords')(function* finishFacilityRecords(
+  request: RecordsRequest,
+  loaded: LoadedFacilityRecords,
+  granted: Grants,
+  scope: OperationalScope,
+) {
+  const assignedOnly = isAssignedOnly(granted);
+  const accessList = recordsAccessList(granted);
+  const visible = yield* visibleAgendas(request.agendas ?? agendaIds, loaded, granted, scope);
+  const { actorRef } = visible;
+  let { ownEventIds } = visible;
+  const agendas = Object.fromEntries(visible.envelopes);
   const readable = new Set(accessList.filter((entry) => entry.canRead).map((entry) => entry.agenda as string));
   // An operational-only principal sees the history of their own events only, never of other people's.
   if (assignedOnly && request.historyFor !== undefined) {
     if (ownEventIds === undefined) {
-      const snapshot = yield* decodeAgenda('agenda');
+      const snapshot = yield* decodeAgendaRow(loaded, 'agenda');
       ownEventIds = new Set(
         agendaStateForAssignee(snapshot.state as AgendaState, actorRef).events.map((event) => event.id),
       );
@@ -237,6 +261,29 @@ export const finishFacilityRecords = Effect.fn('FacilityOperations.finishRecords
     agendas: agendas as RecordsResponse['agendas'],
     ...(loaded.file === undefined ? {} : { file: loaded.file }),
     ...(history === undefined ? {} : { history }),
+  };
+  return response;
+});
+
+/**
+ * After commit: the overview read. Same visible agenda states as the records read, but only the calendar agenda
+ * leaves the server as a document; every other agenda is reduced to its deadlines, open incidents, record count
+ * and (on request) search rows. No database access.
+ */
+export const finishFacilityOverview = Effect.fn('FacilityOperations.finishOverview')(function* finishFacilityOverview(
+  request: OverviewRequest,
+  loaded: LoadedFacilityRecords,
+  granted: Grants,
+  scope: OperationalScope,
+) {
+  const { actorRef, envelopes } = yield* visibleAgendas(agendaIds, loaded, granted, scope);
+  const agenda = envelopes.get('agenda');
+  // The read definition validates the result against OverviewResponseSchema.
+  const response: OverviewResponse = {
+    access: recordsAccessList(granted),
+    actorPrincipalRef: actorRef,
+    ...(agenda === undefined ? {} : { agenda: agenda as NonNullable<OverviewResponse['agenda']> }),
+    ...opsOverviewOf(envelopes, request.includeSearch === true),
   };
   return response;
 });

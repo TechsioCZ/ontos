@@ -12,7 +12,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_LEAD_DAYS } from '../../../../../shared/domain/agenda.ts';
 import { AgendaFrame } from '../../../../ui/agenda-frame.tsx';
 import { notificationCandidates, taskAssignmentCandidates, pragueToday } from '../../../../ui/ops-agenda/deadlines.ts';
-import type { Deadline } from '../../../../ui/ops-agenda/deadlines.ts';
+import type { Deadline } from '../../../../../shared/domain/ops-overview.ts';
 import { currentAgendaState, buildDeadlines } from '../../../../ui/ops-agenda/model.ts';
 import { allSettled, useRentalOverviewSources } from '../../../../ui/ops-agenda/sources.ts';
 import { SourceHealth } from '../prehled/dashboard-parts.tsx';
@@ -32,7 +32,7 @@ const params = () => (typeof window === 'undefined' ? new URLSearchParams() : ne
 const AgendaView = () => {
   const { t } = useModernI18n();
   const toast = useToast();
-  const { names, reload, sources } = useRentalOverviewSources();
+  const { names, reload, sources } = useRentalOverviewSources({ search: false });
   const commands = useAgendaCommands(sources, reload);
   const [today] = useState(() => pragueToday());
   const [tab, setTab] = useState<Tab>('kalendar');
@@ -153,7 +153,7 @@ const AgendaView = () => {
   const opened: Deadline | undefined = deadlines.find((row) =>
     openKey?.startsWith('event:') === true ? `event:${row.eventId ?? ''}` === openKey : row.key === openKey,
   );
-  const agendaReadable = sources.ops.status === 'ready' && sources.ops.data?.agendas.agenda !== undefined;
+  const agendaReadable = sources.ops.status === 'ready' && sources.ops.data?.agenda !== undefined;
 
   return (
     <>
@@ -176,7 +176,7 @@ const AgendaView = () => {
         title={t(`${k}.title`)}
       />
       <SourceHealth sources={sources} />
-      {sources.ops.data?.agendas.agenda?.assignedOnly === true && (
+      {sources.ops.data?.agenda?.assignedOnly === true && (
         <p className="facilityoperations:m-0 facilityoperations:text-sm" style={{ color: 'var(--color-fg-secondary, #6b7280)' }}>
           {t(`${k}.state.readOnly`)}
         </p>

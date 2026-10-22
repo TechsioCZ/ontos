@@ -5,7 +5,8 @@ import type { CSSProperties, ReactNode } from 'react';
 import type { Tone } from './model.ts';
 import { runCommand } from '../use-agenda.ts';
 import { toCsv } from './deadlines.ts';
-import type { DeadlineCategory, Urgency } from './deadlines.ts';
+import type { Urgency } from './deadlines.ts';
+import type { DeadlineCategory } from '../../../shared/domain/ops-overview.ts';
 import type { SourceStatus } from './sources.ts';
 
 const palette: Record<Tone, { readonly bg: string; readonly fg: string; readonly accent: string; readonly ring: string }> = {

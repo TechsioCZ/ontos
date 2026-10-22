@@ -16,7 +16,7 @@ import {
   OPTIONAL_EMAIL_CATEGORIES,
 } from '../../../../../shared/domain/agenda.ts';
 import { daysUntil, urgencyOf } from '../../../../ui/ops-agenda/deadlines.ts';
-import type { Deadline } from '../../../../ui/ops-agenda/deadlines.ts';
+import type { Deadline } from '../../../../../shared/domain/ops-overview.ts';
 import { personaOf } from '../../../../ui/ops-agenda/personas.ts';
 import {
   Icon,

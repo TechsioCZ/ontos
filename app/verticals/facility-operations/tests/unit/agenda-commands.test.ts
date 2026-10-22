@@ -9,12 +9,11 @@ import {
   contractDeadlines,
   notificationCandidates,
   taskAssignmentCandidates,
-  openOpsIncidents,
-  opsAgendaDeadlines,
   projectDeadlines,
   toCsv,
   urgencyOf,
 } from '../../src/ui/ops-agenda/deadlines.ts';
+import { openOpsIncidents, opsAgendaDeadlines } from '../../shared/domain/ops-overview.ts';
 
 const tenantId = '70000000-0000-4000-8000-000000000020';
 const management = { principalId: '72000000-0000-4000-8000-000000000021', tenantId };

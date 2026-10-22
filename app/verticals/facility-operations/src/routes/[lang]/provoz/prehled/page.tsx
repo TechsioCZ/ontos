@@ -41,7 +41,7 @@ const readKpiParam = (): KpiId | undefined => {
 const OverviewView = () => {
   const { language, t } = useModernI18n();
   const lang = langOf(language);
-  const { names, reload, sources } = useRentalOverviewSources();
+  const { names, reload, sources } = useRentalOverviewSources({ search: true });
   const [today] = useState(() => pragueToday());
   const [selected, setSelected] = useState<KpiId | undefined>(undefined);
   const [query, setQuery] = useState('');
@@ -91,7 +91,7 @@ const OverviewView = () => {
   };
 
   const selectedKpi = kpis.find((kpi) => kpi.id === selected);
-  const agendaEnvelope = sources.ops.data?.agendas.agenda;
+  const agendaEnvelope = sources.ops.data?.agenda;
 
   return (
     <>

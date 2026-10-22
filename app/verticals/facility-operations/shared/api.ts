@@ -8,8 +8,8 @@ import type { MicroVerticalReadiness, MicroVerticalOperationContext } from '@mod
 import { identity } from 'effect';
 
 // <generated-governed-http-api-imports>
-
 import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
+import { OverviewApi } from './apis/overview.ts';
 import { RecordsApi } from './apis/records.ts';
 // </generated-governed-http-api-imports>
 
@@ -32,6 +32,7 @@ export const facilityOperationsApi = HttpApi.make('FacilityOperationsApi')
   .addHttpApi(facilityOperationsFoundationApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(ApplyCommandActionApi)
+  .addHttpApi(OverviewApi)
   .addHttpApi(RecordsApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })

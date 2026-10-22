@@ -6,8 +6,9 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { agendaIds } from '../../../../../shared/agendas.ts';
-import { daysUntil, opsSegments, urgencyOf } from '../../../../ui/ops-agenda/deadlines.ts';
-import type { Deadline } from '../../../../ui/ops-agenda/deadlines.ts';
+import { daysUntil, urgencyOf } from '../../../../ui/ops-agenda/deadlines.ts';
+import { opsSegments } from '../../../../../shared/domain/ops-overview.ts';
+import type { Deadline } from '../../../../../shared/domain/ops-overview.ts';
 import { searchRows, unitAvailability } from '../../../../ui/ops-agenda/model.ts';
 import type { DrillRow, Kpi, KpiId, SearchKind, SearchRow, Tone } from '../../../../ui/ops-agenda/model.ts';
 import { personaOf } from '../../../../ui/ops-agenda/personas.ts';
@@ -722,14 +723,6 @@ const agendaIcon: Record<string, IconName> = {
   security: 'shield',
 };
 
-const recordCount = (state: unknown): number => {
-  if (typeof state !== 'object' || state === null) {
-    return 0;
-  }
-  const first = Object.values(state).find(Array.isArray);
-  return Array.isArray(first) ? first.length : 0;
-};
-
 export const OpsAgendas = ({ sources }: { readonly sources: RentalOverviewSources }) => {
   const { lang, t } = useLang();
   const ops = sources.ops;
@@ -737,7 +730,7 @@ export const OpsAgendas = ({ sources }: { readonly sources: RentalOverviewSource
     <SectionCard title={t(`${k}.overview.opsTitle`)}>
       <div className="facilityoperations:grid facilityoperations:grid-cols-2 facilityoperations:gap-3 facilityoperations:md:grid-cols-3 facilityoperations:xl:grid-cols-6">
         {agendaIds.map((agenda) => {
-          const envelope = ops.data?.agendas[agenda];
+          const envelope = ops.data?.agendas.find((entry) => entry.agenda === agenda);
           const locked = ops.status === 'ready' && envelope === undefined;
           return (
             <a
@@ -756,9 +749,9 @@ export const OpsAgendas = ({ sources }: { readonly sources: RentalOverviewSource
                     ? t(`${k}.state.forbidden`)
                     : envelope === undefined
                       ? t(`${k}.state.unavailable`)
-                      : envelope.revision === 0 && recordCount(envelope.state) === 0
+                      : envelope.revision === 0 && envelope.records === 0
                         ? t(`${k}.state.noData`)
-                        : t(`${k}.overview.records`, { count: recordCount(envelope.state) })}
+                        : t(`${k}.overview.records`, { count: envelope.records })}
               </span>
             </a>
           );

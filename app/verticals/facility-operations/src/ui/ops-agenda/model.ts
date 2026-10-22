@@ -7,26 +7,21 @@ import {
   assetDeadlines,
   contractDeadlines,
   daysUntil,
-  eventDeadlines,
   invoiceDeadlines,
   isOpenInvoice,
   occupancyDeadlines,
-  openOpsIncidents,
-  opsAgendaDeadlines,
-  opsRecordHref,
-  opsSegments,
   outstandingMinor,
   projectDeadlines,
   sortDeadlines,
   taskDeadlines,
 } from './deadlines.ts';
-import type { Deadline } from './deadlines.ts';
+import { opsSegments } from '../../../shared/domain/ops-overview.ts';
+import type { Deadline } from '../../../shared/domain/ops-overview.ts';
 import { isOpenSalesCase } from './sales-source.ts';
 import { sourceKeys } from './sources.ts';
 import type { RentalOverviewSources, SourceKey, SourceStatus } from './sources.ts';
 
-export const agendaStateOf = (sources: RentalOverviewSources): AgendaState | undefined =>
-  sources.ops.data?.agendas.agenda?.state as AgendaState | undefined;
+export const agendaStateOf = (sources: RentalOverviewSources): AgendaState | undefined => sources.ops.data?.agenda?.state;
 
 /** Retain the audit history in storage, but do not present removed, completed or superseded dates as live alerts. */
 export const currentAgendaState = (sources: RentalOverviewSources, deadlines: readonly Deadline[], today: string): AgendaState | undefined => {
@@ -69,19 +64,8 @@ export const buildDeadlines = (sources: RentalOverviewSources, names: ReadonlyMa
   if (sources.property.data !== undefined) {
     rows.push(...assetDeadlines(sources.property.data.assets, names));
   }
-  const ops = sources.ops.data;
-  if (ops !== undefined) {
-    for (const [agenda, envelope] of Object.entries(ops.agendas)) {
-      if (envelope === undefined) {
-        continue;
-      }
-      if (agenda === 'agenda') {
-        rows.push(...eventDeadlines((envelope.state as AgendaState).events));
-      } else {
-        rows.push(...opsAgendaDeadlines(agenda, envelope.state));
-      }
-    }
-  }
+  // Calendar events and provoz agenda dates: computed by the overview read on the server.
+  rows.push(...(sources.ops.data?.deadlines ?? []));
   return sortDeadlines(rows);
 };
 
@@ -322,10 +306,8 @@ export const buildKpis = (
   }
 
   // Open incidents: unresolved incidents/faults of the provoz agendas (security needs read_all).
-  if (ops !== undefined && ops.agendas.security !== undefined) {
-    const incidents = Object.entries(ops.agendas).flatMap(([agenda, envelope]) =>
-      envelope === undefined ? [] : openOpsIncidents(agenda, envelope.state),
-    );
+  if (ops?.incidents !== undefined) {
+    const { incidents } = ops;
     kpis.push({
       ...kpiBase(sources, 'incidents', ['ops']),
       kind: 'count',
@@ -532,9 +514,6 @@ const row = (entry: Omit<SearchRow, 'text'>, ...extra: readonly (string | null |
 
 const opt = (key: 'subtitle', value: string | null | undefined) => (value === null || value === undefined || value === '' ? {} : { [key]: value });
 
-const loose = (value: unknown): Readonly<Record<string, unknown>> | undefined =>
-  typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Readonly<Record<string, unknown>>) : undefined;
-
 /** Index of every record the person can read. Unreadable sources contribute nothing (and are reported). */
 export const buildSearchIndex = (sources: RentalOverviewSources, names: ReadonlyMap<string, string>): SearchRow[] => {
   const rows: SearchRow[] = [];
@@ -638,57 +617,10 @@ export const buildSearchIndex = (sources: RentalOverviewSources, names: Readonly
       ),
     );
   }
-  const ops = sources.ops.data;
-  if (ops !== undefined) {
-    for (const [agenda, envelope] of Object.entries(ops.agendas)) {
-      if (envelope === undefined) {
-        continue;
-      }
-      if (agenda === 'agenda') {
-        for (const event of (envelope.state as AgendaState).events) {
-          rows.push(
-            row(
-              { href: `/provoz/agenda?event=${event.id}`, id: event.id, kind: 'event', source: 'ops', title: event.title, ...opt('subtitle', event.date) },
-              event.note,
-              event.related?.label,
-            ),
-          );
-        }
-        continue;
-      }
-      const state = loose(envelope.state);
-      for (const [field, list] of Object.entries(state ?? {})) {
-        if (!Array.isArray(list) || /history|events|versions|readings|log|comments|threads|messages|preferences|exports|templates|signatures/iu.test(field)) {
-          continue;
-        }
-        for (const entry of list) {
-          const record = loose(entry);
-          if (record === undefined || typeof record['id'] !== 'string') {
-            continue;
-          }
-          const title = ['name', 'title', 'label', 'inventoryNumber', 'serialNumber', 'code', 'documentNumber', 'number', 'description', 'summary']
-            .map((key) => record[key])
-            .find((value): value is string => typeof value === 'string' && value !== '');
-          if (title === undefined) continue;
-          const extra = Object.values(record).filter((value): value is string => typeof value === 'string' && value.length < 200);
-          const location = loose(record['location']) ?? loose(record['related']);
-          rows.push(
-            row(
-              {
-                href: opsRecordHref(agenda, field, record['id']),
-                id: record['id'],
-                kind: 'ops',
-                source: 'ops',
-                title,
-                ...opt('subtitle', typeof location?.['label'] === 'string' ? location['label'] : undefined),
-              },
-              agenda,
-              ...extra,
-            ),
-          );
-        }
-      }
-    }
+  // Calendar events and provoz records: rows built by the overview read on the server, folded here.
+  for (const entry of sources.ops.data?.searchRows ?? []) {
+    const { terms, ...rest } = entry;
+    rows.push(row({ ...rest, source: 'ops' }, terms));
   }
   return rows;
 };
