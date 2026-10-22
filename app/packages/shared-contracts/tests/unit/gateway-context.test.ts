@@ -14,6 +14,8 @@ import {
   GatewayTrustedPrincipalContextSchema,
   GatewayUnavailableProblemSchema,
   decodeGatewayContextClaims,
+  gatewayContextAuthorizationEntrypoints,
+  shellGatewayContextContract,
 } from '../../src/gateway-context.ts';
 import { issueApiKeyGatewayContext } from '../../src/gateway-context-api-key.ts';
 
@@ -258,6 +260,38 @@ it('schemas publish only the required public field names', () => {
     'ver',
   ]);
   expect(Object.keys(GatewayContextProtectedHeaderSchema.fields).toSorted()).toEqual(['alg', 'kid', 'typ']);
+});
+
+it('classifies every Shell token-issuing endpoint as a capability issuer with its credential', () => {
+  expect(
+    gatewayContextAuthorizationEntrypoints.map(({ authorization, entrypointKey, path }) => ({
+      credential: authorization.credential,
+      entrypointKey,
+      path,
+    })),
+  ).toEqual([
+    {
+      credential: 'session',
+      entrypointKey: 'shell.gateway-context.issue.session',
+      path: '/shell-super-app-api/auth/gateway-context',
+    },
+    {
+      credential: 'api_key',
+      entrypointKey: 'shell.gateway-context.issue.api-key',
+      path: '/shell-super-app-api/auth/api-key/gateway-context',
+    },
+    {
+      credential: 'session',
+      entrypointKey: 'shell.gateway-contexts.issue.session',
+      path: '/shell-super-app-api/auth/gateway-contexts',
+    },
+  ]);
+  for (const entrypoint of gatewayContextAuthorizationEntrypoints) {
+    expect(entrypoint.authorization.kind).toBe('capability_issuance');
+    expect(entrypoint.surface).toBe('capability_issuance');
+    expect(entrypoint.owner).toBe(shellGatewayContextContract.ownerId);
+    expect(entrypoint.deployment).toBe(shellGatewayContextContract.ownerId);
+  }
 });
 
 it('publishes the exact API-key credential boundary and failure statuses', () => {

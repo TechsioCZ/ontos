@@ -107,6 +107,16 @@ const STOCK_LIST_STEM = 'stock-list';
 
 const GATEWAY_CONTRACT_FILE = 'packages/shared-contracts/src/gateway-context.ts';
 
+const SHELL_API_CONTRACT_FILE = 'apps/shell-super-app/shared/api.ts';
+
+const INVENTORY_REPORT_FILE = '.codex/reports/authorization/protected-entrypoints.json';
+
+const DOCUMENT_GATEWAY_CONTRACT_FILE = 'apps/shell-super-app/shared/document-gateway-api.ts';
+
+const DOCUMENT_GATEWAY_FIXTURE = `export const DocumentGatewayApiGroup = HttpApiGroup.make('documentGateway').add(
+  HttpApiEndpoint.post('issueDocumentGatewayContexts', '/auth/gateway-contexts', {}),
+);`;
+
 const STOCK_LIST_READ_BINDING = 'registration: stockListRead';
 
 const STOCK_LIST_READ_FILE = 'verticals/inventory-stock/src/api/stock-list.read.ts';
@@ -680,16 +690,19 @@ import { routeMeta as route1 } from './[lang]/$/route.meta';`,
   yield* write(root, CANONICAL_MODULE_CLIENT_LOADER, CANONICAL_LOADER_FIXTURE);
   yield* write(
     root,
-    'apps/shell-super-app/shared/api.ts',
+    SHELL_API_CONTRACT_FILE,
     `import { GatewayContextApiGroup } from '@app/shared-contracts';
-export const ShellAuthenticationApi = HttpApi.make('shell').add(GatewayContextApiGroup);
+import { DocumentGatewayApiGroup } from './document-gateway-api.ts';
+export const ShellAuthenticationApi = HttpApi.make('shell').add(GatewayContextApiGroup).add(DocumentGatewayApiGroup);
 export const paths = ['/shell-super-app-api/auth/gateway-context', '/shell-super-app-api/auth/api-key/gateway-context'];`,
   );
+  yield* write(root, DOCUMENT_GATEWAY_CONTRACT_FILE, DOCUMENT_GATEWAY_FIXTURE);
   yield* write(
     root,
     'apps/shell-super-app/api/index.ts',
     `export const issueGatewayContext = true;
-export const issueApiKeyGatewayContext = true;`,
+export const issueApiKeyGatewayContext = true;
+export const issueDocumentGatewayContexts = true;`,
   );
   yield* write(
     root,
@@ -712,7 +725,7 @@ export const routeMeta = { moduleId: 'inventory.stock', ownerAppId: 'inventory-s
     `export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
   .add(HttpApiEndpoint.post('issueGatewayContext', '/auth/gateway-context', {}))
   .add(HttpApiEndpoint.post('issueApiKeyGatewayContext', '/auth/api-key/gateway-context', {}));
-export const shellGatewayContextContract = { issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context', issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context' };`,
+export const shellGatewayContextContract = { issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context', issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context', issueDocumentGatewayContextsPath: '/shell-super-app-api/auth/gateway-contexts' };`,
   );
   yield* write(root, 'packages/core-runtime/src/index.ts', `export const core = true;`);
   return root;
@@ -866,9 +879,7 @@ it.live(
     yield* writeEngagementLifecycleFixture(root);
     yield* checkModuleEntrypointBoundaries(root);
     const inventory = Schema.decodeUnknownSync(EngagementInventorySchema)(
-      yield* Effect.promise(() =>
-        readFile(path.join(root, '.codex/reports/authorization/protected-entrypoints.json'), 'utf-8'),
-      ),
+      yield* Effect.promise(() => readFile(path.join(root, INVENTORY_REPORT_FILE), 'utf-8')),
     );
     expect(inventory.entries.filter((entry) => entry.owner === PARTY_MODULE_ID)).toEqual(
       ENGAGEMENT_ACTIONS.map((action) => ({
@@ -3010,7 +3021,7 @@ it.live(
   'shared issuer paths require the mounted gateway group and exact endpoint bindings',
   Effect.fn(function* mergedScenario1() {
     const root = yield* makeFixture();
-    const contractFile = 'apps/shell-super-app/shared/api.ts';
+    const contractFile = SHELL_API_CONTRACT_FILE;
     const gatewayFile = GATEWAY_CONTRACT_FILE;
     const source = yield* Effect.promise(() => readFile(new URL(`../../${contractFile}`, import.meta.url), 'utf-8'));
     const gatewaySource = yield* Effect.promise(() =>
@@ -3030,11 +3041,15 @@ it.live(
   }),
 );
 
+const TAMPERED_ENDPOINT = "post('unusedNeighbor'";
+
+const TAMPERED_PATH = "'/auth/tampered'";
+
 for (const [before, after] of [
-  [/post\(\s*'issueGatewayContext'/u, "post('unusedNeighbor'"],
-  [/post\(\s*'issueApiKeyGatewayContext'/u, "post('unusedNeighbor'"],
-  ["'/auth/gateway-context'", "'/auth/tampered'"],
-  ["'/auth/api-key/gateway-context'", "'/auth/tampered'"],
+  [/post\(\s*'issueGatewayContext'/u, TAMPERED_ENDPOINT],
+  [/post\(\s*'issueApiKeyGatewayContext'/u, TAMPERED_ENDPOINT],
+  ["'/auth/gateway-context'", TAMPERED_PATH],
+  ["'/auth/api-key/gateway-context'", TAMPERED_PATH],
   ["make('gatewayContext')", "make('unrelated')"],
   ['export const GatewayContextApiGroup =', 'export const UnmountedApiGroup ='],
 ] as const) {
@@ -3057,6 +3072,73 @@ for (const [before, after] of [
     }),
   );
 }
+
+for (const [before, after] of [
+  [/post\(\s*'issueDocumentGatewayContexts'/u, TAMPERED_ENDPOINT],
+  ["'/auth/gateway-contexts'", TAMPERED_PATH],
+  ["make('documentGateway')", "make('unrelated')"],
+  ['export const DocumentGatewayApiGroup =', 'export const UnmountedApiGroup ='],
+] as const) {
+  it.live(
+    `rejects document batch issuer binding tampering: ${before}`,
+    Effect.fn(function* documentBatchIssuerTampering() {
+      const root = yield* makeFixture();
+      const source = yield* Effect.promise(() =>
+        readFile(new URL(`../../${DOCUMENT_GATEWAY_CONTRACT_FILE}`, import.meta.url), 'utf-8'),
+      );
+      yield* write(root, DOCUMENT_GATEWAY_CONTRACT_FILE, source);
+      yield* checkModuleEntrypointBoundaries(root);
+      expect(source.replace(before, after)).not.toBe(source);
+      yield* write(root, DOCUMENT_GATEWAY_CONTRACT_FILE, source.replace(before, after));
+      yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
+        onFailure: (cause) =>
+          expect(String(Cause.squash(cause))).toMatch(/gateway-contexts is missing from the mounted/u),
+        onSuccess: () => {
+          throw new Error(EXPECTED_EFFECT_FAILURE);
+        },
+      });
+    }),
+  );
+}
+
+it.live(
+  'classifies the document batch issuer as a session capability issuer that the Shell must mount',
+  Effect.fn(function* documentBatchIssuerMounted() {
+    const root = yield* makeFixture();
+    const contractFile = SHELL_API_CONTRACT_FILE;
+    const source = yield* Effect.promise(() => readFile(new URL(`../../${contractFile}`, import.meta.url), 'utf-8'));
+    yield* write(root, contractFile, source);
+    yield* checkModuleEntrypointBoundaries(root);
+    const inventory = yield* Effect.promise(() => readFile(path.join(root, INVENTORY_REPORT_FILE), 'utf-8'));
+    expect(inventory).toContain('"entrypointKey": "shell.gateway-contexts.issue.session"');
+    for (const tampered of [
+      source.replace('.add(DocumentGatewayApiGroup)', ''),
+      source.replace("from './document-gateway-api.ts'", "from './other-gateway-api.ts'"),
+    ]) {
+      expect(tampered).not.toBe(source);
+      yield* write(root, contractFile, tampered);
+      yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
+        onFailure: (cause) =>
+          expect(String(Cause.squash(cause))).toMatch(/gateway-contexts is missing from the mounted/u),
+        onSuccess: () => {
+          throw new Error(EXPECTED_EFFECT_FAILURE);
+        },
+      });
+    }
+    yield* write(root, contractFile, source);
+    yield* write(
+      root,
+      'apps/shell-super-app/api/index.ts',
+      'export const issueGatewayContext = true;\nexport const issueApiKeyGatewayContext = true;',
+    );
+    yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
+      onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/must be mounted by the Shell API runtime/u),
+      onSuccess: () => {
+        throw new Error(EXPECTED_EFFECT_FAILURE);
+      },
+    });
+  }),
+);
 
 const EARLY_FAILURE = 'early failure';
 
@@ -3238,9 +3320,7 @@ it.live(
     for (const permission of ['module.access', 'module.other']) {
       yield* write(root, STOCK_LIST_READ_FILE, source.replace("'module.access' as const", `'${permission}' as const`));
       yield* checkModuleEntrypointBoundaries(root);
-      const report = yield* Effect.promise(() =>
-        readFile(path.join(root, '.codex/reports/authorization/protected-entrypoints.json'), 'utf-8'),
-      );
+      const report = yield* Effect.promise(() => readFile(path.join(root, INVENTORY_REPORT_FILE), 'utf-8'));
       const inventory = yield* Schema.decodeUnknownEffect(inventorySchema)(report);
       expect(
         inventory.entries.find((entry) => entry.entrypointKey === 'inventory.stock.api.stock-list')?.authorization,

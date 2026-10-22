@@ -1789,6 +1789,7 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
   handlers
     .handle('issueGatewayContext', ({ payload, request }) =>
       Effect.gen(function* issueGatewayContextHandler() {
+        yield* noStore;
         yield* requireGatewayRelease(payload.compositionRevision);
         const authentication = yield* AuthenticationService;
         const sessionResult = yield* authentication
@@ -1818,6 +1819,7 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
     )
     .handle('issueApiKeyGatewayContext', ({ headers, payload, request }) =>
       Effect.gen(function* issueApiKeyGatewayContextHandler() {
+        yield* noStore;
         yield* requireGatewayRelease(payload.compositionRevision);
         const keys = yield* ApiKeyService;
         const resolver = yield* PrincipalResolver;

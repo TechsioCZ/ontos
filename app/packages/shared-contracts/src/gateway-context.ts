@@ -240,6 +240,7 @@ export const GatewayContextApi = HttpApi.make('shellGatewayContextApi').add(Gate
 export const shellGatewayContextContract = {
   apiPrefix: '/shell-super-app-api',
   issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context',
+  issueDocumentGatewayContextsPath: '/shell-super-app-api/auth/gateway-contexts',
   issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
   ownerId: 'shell-super-app',
 } as const;
@@ -259,6 +260,14 @@ export const gatewayContextAuthorizationEntrypoints = [
     entrypointKey: 'shell.gateway-context.issue.api-key',
     owner: shellGatewayContextContract.ownerId,
     path: shellGatewayContextContract.issueApiKeyGatewayContextPath,
+    surface: 'capability_issuance',
+  },
+  {
+    authorization: { credential: 'session', kind: 'capability_issuance' },
+    deployment: shellGatewayContextContract.ownerId,
+    entrypointKey: 'shell.gateway-contexts.issue.session',
+    owner: shellGatewayContextContract.ownerId,
+    path: shellGatewayContextContract.issueDocumentGatewayContextsPath,
     surface: 'capability_issuance',
   },
 ] as const;

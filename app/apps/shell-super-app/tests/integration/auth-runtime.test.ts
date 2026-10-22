@@ -1104,6 +1104,7 @@ it.live(
       ),
     );
     expect(assertionResponse.status, yield* Effect.tryPromise(() => assertionResponse.clone().text())).toBe(200);
+    expect(headerValue(assertionResponse.headers, 'cache-control')).toBe('no-store');
     const { principal: verifiedPrincipal, token: assertionToken } = yield* verifiedGatewayAssertion(
       assertionResponse,
       pair.publicKey,
@@ -1154,6 +1155,7 @@ it.live(
       ),
     );
     expect(anonymousBatchResponse.status).toBe(401);
+    expect(headerValue(anonymousBatchResponse.headers, 'cache-control')).toBe('no-store');
     yield* Effect.tryPromise(() =>
       mkdir(path.join(generatedFixtureRoot, 'node_modules', '@app'), {
         recursive: true,
