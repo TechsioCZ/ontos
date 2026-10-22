@@ -935,7 +935,8 @@ const refusesExistingProviderRelease = (existingBackend: boolean) =>
             ),
           );
         }
-        const status = existingBackend || requests.length > 1 ? 200 : 404;
+        const existing = existingBackend ? plan.backendScriptName : plan.assetsScriptName;
+        const status = destination.pathname.endsWith(`/workers/scripts/${existing}`) ? 200 : 404;
         requests.push({ method: request.method, url: destination.href });
         return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status })));
       });
@@ -970,18 +971,17 @@ const refusesExistingProviderRelease = (existingBackend: boolean) =>
       expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
       expect(failure.message).toBe('an immutable release identity already exists; publication must never overwrite it');
       expect(commands).toEqual([]);
-      expect(requests.map(({ method }) => method)).toEqual(existingBackend ? ['GET', 'GET'] : ['GET', 'GET', 'GET']);
+      // Both identities' absence checks run side by side and only read; either existing one refuses.
+      expect(requests.map(({ method }) => method)).toEqual(['GET', 'GET', 'GET']);
       expect(requests[0]?.url).toBe(
         `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/subdomain`,
       );
-      expect(requests[1]?.url).toBe(
-        `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.backendScriptName}`,
-      );
-      if (!existingBackend) {
-        expect(requests[2]?.url).toBe(
+      expect(requests.slice(1).map(({ url }) => url).sort()).toEqual(
+        [
+          `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.backendScriptName}`,
           `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.assetsScriptName}`,
-        );
-      }
+        ].sort(),
+      );
       expect(yield* fileSystem.exists(nodePath.join(output, '.wrangler-immutable-backend.json'))).toBe(false);
       expect(yield* fileSystem.exists(nodePath.join(output, '.wrangler-immutable-assets.json'))).toBe(false);
       expect(yield* fileSystem.readFileString(nodePath.join(publicDirectory, '_headers'))).toBe(compiledHeaders);
