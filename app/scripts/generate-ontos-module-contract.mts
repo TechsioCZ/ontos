@@ -144,7 +144,7 @@ const sourceOnlyReactPackages = [
     entry: 'verticals/facility-operations/src/ui/record-discussion.tsx',
     name: '@app/facility-operations/ui/record-discussion',
   },
-  { entry: 'verticals/tagging/src/components/tag-controls.tsx', name: '@app/tagging/components/tag-controls' },
+  { entry: 'verticals/tagging/src/tags/tag-controls.tsx', name: '@app/tagging/components/tag-controls' },
 ] as const;
 
 const assertPlainTarget = (value: string, label: string, pattern: RegExp) =>
