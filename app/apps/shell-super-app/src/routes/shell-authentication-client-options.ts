@@ -1,5 +1,7 @@
 import { Config, Effect } from 'effect';
 
+import { ssrBffFetch } from '#ssr-bff-fetch';
+
 import { shellAuthenticationApiContract } from '../../shared/api.ts';
 import type { ShellAuthenticationClientOptions } from '../api/auth-client.ts';
 
@@ -9,7 +11,9 @@ export const shellAuthenticationClientOptionsFromRequest = (request: Request) =>
     Effect.map((configuredOrigin) => {
       const baseUrl = new URL(shellAuthenticationApiContract.apiPrefix, configuredOrigin);
       const cookie = request.headers.get('cookie');
-      return cookie === null ? { baseUrl } : { baseUrl, cookie };
+      const fetch = ssrBffFetch();
+      const withCookie = cookie === null ? { baseUrl } : { baseUrl, cookie };
+      return fetch === undefined ? withCookie : { ...withCookie, fetch };
     }),
   );
 

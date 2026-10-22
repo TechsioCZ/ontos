@@ -6,6 +6,10 @@
     "#auth-configuration-provider": {
       "workerd": "./api/auth/configuration-provider.workerd.ts",
       "default": "./api/auth/configuration-provider.node.ts"
+    },
+    "#ssr-bff-fetch": {
+      "workerd": "./src/routes/ssr-bff-fetch.workerd.ts",
+      "default": "./src/routes/ssr-bff-fetch.ts"
     }
   },
   "exports": {

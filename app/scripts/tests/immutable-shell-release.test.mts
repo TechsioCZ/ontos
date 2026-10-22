@@ -615,8 +615,8 @@ const deploymentLayer = (
                 const resolvedEntrypoint = nodePath.resolve(nodePath.dirname(configPath), config.main ?? '');
                 expect(config.main).toBe(expectedEntrypoint);
                 expect(resolvedEntrypoint).toBe(expectedEntrypoint);
-                // The fixture's published composition approves no module release, so nothing is bound.
-                expect(config.services).toEqual([]);
+                // The fixture's published composition approves no module release: only the Shell's self binding.
+                expect(config.services).toEqual([{ binding: 'ONTOS_SHELL_SELF', service: config.name }]);
                 expect(yield* fileSystem.readFileString(resolvedEntrypoint)).toBe(
                   'export default { fetch() { return new Response("Shell"); } };',
                 );

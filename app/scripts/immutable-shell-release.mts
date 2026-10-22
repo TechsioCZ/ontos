@@ -47,6 +47,7 @@ import { OpsShellLive, runCommand } from './ops/ops-shell.mts';
 import { assertPublishedShellIngressSnapshot } from './publish-active-application-composition.mts';
 
 const SHELL_ID = 'shell-super-app';
+const SHELL_SELF_SERVICE_BINDING = 'ONTOS_SHELL_SELF';
 const RUNTIME_PATH = '.well-known/ontos-shell-runtime.json';
 const FEDERATION_PATH = 'mf-manifest.json';
 const SOURCE_MISMATCH = 'the Shell artifact plan does not identify the current clean Git source revision';
@@ -318,7 +319,12 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
         ...nativeConfig,
         assets: { ...nativeConfig.assets, directory: ingressAssets },
         main: path.resolve(output, config.main),
-        services: [...nativeServices, ...shellReleaseServiceBindings(approved.composition.modules)],
+        services: [
+          ...nativeServices,
+          ...shellReleaseServiceBindings(approved.composition.modules),
+          // Server rendering reaches this Shell's own BFF on this machine instead of through its public domain.
+          { binding: SHELL_SELF_SERVICE_BINDING, service: config.name },
+        ],
       }),
     );
     yield* readVerifiedReleaseFiles(output, receipt.plan, [ingressAssets, ingressConfig], SHELL_RELEASE_ENVELOPE_KIND);
