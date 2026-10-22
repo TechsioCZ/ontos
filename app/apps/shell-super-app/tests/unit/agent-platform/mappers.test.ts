@@ -5,6 +5,7 @@ import {
   auditRowToEntry,
   buildActivityResponse,
   type AgentProposalRow,
+  type ModuleTexts,
   proposalRowToEntries,
   rowsToQueueBatches,
 } from '../../../api/agent-platform/mappers.ts';
@@ -15,6 +16,12 @@ const AGENT = '33333333-3333-4333-8333-333333333333';
 const JANA = '44444444-4444-4444-8444-444444444444';
 const BATCH = '55555555-5555-4555-8555-555555555555';
 const names = new Map<string, string>([[JANA, 'Jana Nováková']]);
+/** Composed modules as their contributions describe them (CRM keeps its own AI change engine). */
+const LABELS: Readonly<Record<string, string>> = { 'demo.crm': 'CRM', 'demo.sales-pipeline': 'Obchodní případy' };
+const modules: ModuleTexts = {
+  hasOwnProposalEngine: (moduleKey) => moduleKey in LABELS,
+  labelOf: (moduleKey) => (moduleKey === null || moduleKey === undefined ? 'Platforma' : (LABELS[moduleKey] ?? moduleKey)),
+};
 
 const baseRow: AgentProposalRow = {
   actionSlug: 'apply-command',
@@ -57,7 +64,7 @@ const canDecideAll = () => ({ allowed: true }) as const;
 it('groups rows of one batch and orders items by position', () => {
   const first: AgentProposalRow = { ...baseRow, position: 1, proposalId: '66666666-6666-4666-8666-666666666661' };
   const second: AgentProposalRow = { ...baseRow, position: 0, proposalId: '66666666-6666-4666-8666-666666666662' };
-  const batches = rowsToQueueBatches([first, second], { canDecide: canDecideAll, names });
+  const batches = rowsToQueueBatches([first, second], { canDecide: canDecideAll, modules, names });
   expect(batches).toHaveLength(1);
   const [batch] = batches;
   expect(batch?.key).toBe(`core:${BATCH}`);
@@ -72,6 +79,7 @@ it('groups rows of one batch and orders items by position', () => {
 it('marks items without a revert plan as unavailable to revert', () => {
   const [batch] = rowsToQueueBatches([{ ...baseRow, revert: null, status: 'applied' }], {
     canDecide: canDecideAll,
+    modules,
     names,
   });
   expect(batch?.items[0]?.revertUnavailableReason).toBe('Tuto změnu nelze automaticky vrátit.');
@@ -79,7 +87,7 @@ it('marks items without a revert plan as unavailable to revert', () => {
 });
 
 it('allows revert-all for an applied, revertible, decidable batch', () => {
-  const [batch] = rowsToQueueBatches([{ ...baseRow, status: 'applied' }], { canDecide: canDecideAll, names });
+  const [batch] = rowsToQueueBatches([{ ...baseRow, status: 'applied' }], { canDecide: canDecideAll, modules, names });
   expect(batch?.canRevertAll).toBe(true);
   expect(batch?.items[0]?.revertUnavailableReason).toBeUndefined();
 });
@@ -95,7 +103,7 @@ it('reports a reverted batch with the reverting person and disables revert-all',
         status: 'applied',
       },
     ],
-    { canDecide: canDecideAll, names },
+    { canDecide: canDecideAll, modules, names },
   );
   expect(batch?.canRevertAll).toBe(false);
   expect(batch?.revertedByName).toBe('Jana Nováková');
@@ -103,15 +111,18 @@ it('reports a reverted batch with the reverting person and disables revert-all',
 });
 
 it('maps a denied audit event to a denied CRM activity entry', () => {
-  const entry = auditRowToEntry({
-    actionKey: 'demo.crm.apply-command',
-    auditEventId: 'a1',
-    displayName: 'Obchodní agent',
-    occurredAt: new Date('2026-10-20T09:00:00.000Z'),
-    outcome: 'denied',
-    outcomeCode: 'forbidden',
-    principalId: AGENT,
-  });
+  const entry = auditRowToEntry(
+    {
+      actionKey: 'demo.crm.apply-command',
+      auditEventId: 'a1',
+      displayName: 'Obchodní agent',
+      occurredAt: new Date('2026-10-20T09:00:00.000Z'),
+      outcome: 'denied',
+      outcomeCode: 'forbidden',
+      principalId: AGENT,
+    },
+    { modules, proposalOnly: false },
+  );
   expect(entry.kind).toBe('denied');
   expect(entry.moduleKey).toBe('demo.crm');
   expect(entry.moduleLabel).toBe('CRM');
@@ -119,17 +130,20 @@ it('maps a denied audit event to a denied CRM activity entry', () => {
 });
 
 it('maps an allowed list read to the Czech list label', () => {
-  const entry = accessRowToEntry({
-    accessKind: 'list',
-    dataAccessEventId: 'r1',
-    displayName: 'Obchodní agent',
-    occurredAt: new Date('2026-10-20T09:00:00.000Z'),
-    outcome: 'allowed',
-    outcomeCode: 'ok',
-    principalId: AGENT,
-    servingModuleKey: 'demo.crm',
-    targetResourceType: 'contact',
-  });
+  const entry = accessRowToEntry(
+    {
+      accessKind: 'list',
+      dataAccessEventId: 'r1',
+      displayName: 'Obchodní agent',
+      occurredAt: new Date('2026-10-20T09:00:00.000Z'),
+      outcome: 'allowed',
+      outcomeCode: 'ok',
+      principalId: AGENT,
+      servingModuleKey: 'demo.crm',
+      targetResourceType: 'contact',
+    },
+    modules,
+  );
   expect(entry.kind).toBe('read');
   expect(entry.actionLabel).toBe('Čtení seznamu');
   expect(entry.detail).toBe('contact');
@@ -144,6 +158,7 @@ it('emits proposal and decision entries for an applied proposal', () => {
       status: 'applied',
     },
     names,
+    modules,
   );
   expect(entries).toHaveLength(2);
   expect(entries.map((entry) => entry.kind)).toEqual(['proposal', 'decision']);
@@ -152,37 +167,46 @@ it('emits proposal and decision entries for an applied proposal', () => {
 
 it('keeps the agent list unfiltered when filtering by kind and applies the limit', () => {
   const entries = [
-    auditRowToEntry({
-      actionKey: 'demo.crm.apply-command',
-      auditEventId: 'a1',
-      displayName: 'Obchodní agent',
-      occurredAt: new Date('2026-10-20T09:00:00.000Z'),
-      outcome: 'denied',
-      outcomeCode: 'forbidden',
-      principalId: AGENT,
-    }),
-    accessRowToEntry({
-      accessKind: 'list',
-      dataAccessEventId: 'r1',
-      displayName: 'Hanák agent',
-      occurredAt: new Date('2026-10-20T08:00:00.000Z'),
-      outcome: 'allowed',
-      outcomeCode: 'ok',
-      principalId: '77777777-7777-4777-8777-777777777777',
-      servingModuleKey: 'demo.sales-pipeline',
-      targetResourceType: null,
-    }),
-    accessRowToEntry({
-      accessKind: 'read',
-      dataAccessEventId: 'r2',
-      displayName: 'Obchodní agent',
-      occurredAt: new Date('2026-10-20T07:00:00.000Z'),
-      outcome: 'allowed',
-      outcomeCode: 'ok',
-      principalId: AGENT,
-      servingModuleKey: 'demo.crm',
-      targetResourceType: null,
-    }),
+    auditRowToEntry(
+      {
+        actionKey: 'demo.crm.apply-command',
+        auditEventId: 'a1',
+        displayName: 'Obchodní agent',
+        occurredAt: new Date('2026-10-20T09:00:00.000Z'),
+        outcome: 'denied',
+        outcomeCode: 'forbidden',
+        principalId: AGENT,
+      },
+      { modules, proposalOnly: false },
+    ),
+    accessRowToEntry(
+      {
+        accessKind: 'list',
+        dataAccessEventId: 'r1',
+        displayName: 'Hanák agent',
+        occurredAt: new Date('2026-10-20T08:00:00.000Z'),
+        outcome: 'allowed',
+        outcomeCode: 'ok',
+        principalId: '77777777-7777-4777-8777-777777777777',
+        servingModuleKey: 'demo.sales-pipeline',
+        targetResourceType: null,
+      },
+      modules,
+    ),
+    accessRowToEntry(
+      {
+        accessKind: 'read',
+        dataAccessEventId: 'r2',
+        displayName: 'Obchodní agent',
+        occurredAt: new Date('2026-10-20T07:00:00.000Z'),
+        outcome: 'allowed',
+        outcomeCode: 'ok',
+        principalId: AGENT,
+        servingModuleKey: 'demo.crm',
+        targetResourceType: null,
+      },
+      modules,
+    ),
   ];
   const denied = buildActivityResponse(entries, { kind: 'denied' });
   expect(denied.entries.map((entry) => entry.id)).toEqual(['audit:a1']);
@@ -204,6 +228,7 @@ it('builds the price diff from the command and the live product, not from the ag
   const [batch] = rowsToQueueBatches([row], {
     canDecide: canDecideAll,
     liveBefore: new Map([[row.proposalId, { currentPriceMinor: 349_000, id: 'p1' }]]),
+    modules,
     names,
   });
   const item = batch?.items[0];
@@ -215,16 +240,16 @@ it('builds the price diff from the command and the live product, not from the ag
 });
 
 it('marks commands the platform does not understand as agent-described', () => {
-  const [batch] = rowsToQueueBatches([baseRow], { canDecide: canDecideAll, names });
+  const [batch] = rowsToQueueBatches([baseRow], { canDecide: canDecideAll, modules, names });
   expect(batch?.items[0]?.diffSource).toBe('agent');
   expect(batch?.items[0]?.diff).toEqual(baseRow.diff);
 });
 
 it('does not report a pending claim as a decision', () => {
   const claimed: AgentProposalRow = { ...baseRow, decidedAt: new Date(), decidedByPrincipalId: JANA };
-  const [batch] = rowsToQueueBatches([claimed], { canDecide: canDecideAll, names });
+  const [batch] = rowsToQueueBatches([claimed], { canDecide: canDecideAll, modules, names });
   expect(batch?.items[0]?.decidedAt).toBeUndefined();
-  expect(proposalRowToEntries(claimed, names)).toHaveLength(1);
+  expect(proposalRowToEntries(claimed, names, modules)).toHaveLength(1);
 });
 
 it('labels a successful legacy write of an approval-only agent as a proposal', () => {
@@ -238,7 +263,7 @@ it('labels a successful legacy write of an approval-only agent as a proposal', (
       outcomeCode: 'action_executed',
       principalId: AGENT,
     },
-    { proposalOnly: true },
+    { modules, proposalOnly: true },
   );
   expect(entry.kind).toBe('proposal');
   expect(entry.actionLabel).toBe('Návrh ke schválení');
@@ -254,7 +279,7 @@ it('lists the stored command for modules without their own diff, never the agent
     moduleKey: 'facility.operations',
     revert: null,
   };
-  const [batch] = rowsToQueueBatches([row], { canDecide: canDecideAll, names });
+  const [batch] = rowsToQueueBatches([row], { canDecide: canDecideAll, modules, names });
   expect(batch?.items[0]?.diffSource).toBe('command');
   expect(batch?.items[0]?.diff).toEqual([{ after: 'Elektroměr hala A', field: 'name', label: 'Název' }]);
   expect(batch?.items[0]?.revertUnavailableReason).toBe('Tuto změnu nelze automaticky vrátit.');

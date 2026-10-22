@@ -10,7 +10,7 @@ import { Data, Effect, Schema } from 'effect';
 import { issueGatewayContextAssertion } from '../auth/gateway-issuer.ts';
 import { dispatchModuleApiRequest } from '../../src/module-api/transport.ts';
 import { czechModuleFailure, isGenericProblemText } from './approval-logic.ts';
-import { commandRevisionFrom } from './command-revision.ts';
+import { commandRevisionFrom, loadComposedModules, revisionQueryOf } from './composed-modules.ts';
 
 /** A module call could not even be attempted (composition, assertion or dispatch failed before the module ran). */
 export class AgentModuleCallError extends Data.TaggedError('AgentModuleCallError')<{
@@ -35,13 +35,22 @@ export type ModuleCommandOutcome =
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-/** Modules read their current revision from the merchandise `view` projection; the others need no query. */
-export const recordsQueryFor = (appId: string): Readonly<Record<string, unknown>> =>
-  appId === 'merchandise' ? { view: {} } : {};
+/** The module's records read (path and body) as its contribution declares it; `/reads/records` with `{}` otherwise. */
+export const recordsReadOf = (appId: string) =>
+  loadComposedModules.pipe(
+    Effect.map((modules) => {
+      const module = modules.byAppId(appId);
+      return { module, path: module?.revision?.path ?? '/reads/records', query: revisionQueryOf(module) };
+    }),
+    Effect.mapError(
+      () => new AgentModuleCallError({ reason: 'Složení aplikace teď není dostupné.', stage: 'composition' }),
+    ),
+  );
 
 /** The person's records read of a module (undefined when the module did not answer 200). */
 export const readModuleRecords = (principal: TrustedPrincipalContext, appId: string) =>
-  callModuleAs(principal, appId, '/reads/records', recordsQueryFor(appId)).pipe(
+  recordsReadOf(appId).pipe(
+    Effect.flatMap((read) => callModuleAs(principal, appId, read.path, read.query)),
     Effect.result,
     Effect.map((result): unknown =>
       result._tag === 'Success' && result.success.status === 200 ? result.success.body : undefined,
@@ -140,11 +149,12 @@ const attemptCommand = (
     // apply-command modules get `{ command, expectedRevision }` with the revision read just now.
     let body: unknown = command;
     if (slug === 'apply-command') {
-      const read = yield* callModuleAs(principal, appId, '/reads/records', recordsQueryFor(appId));
+      const records = yield* recordsReadOf(appId);
+      const read = yield* callModuleAs(principal, appId, records.path, records.query);
       if (read.status !== 200) {
         return failed(problemMessage(read.body, read.status), read.status);
       }
-      const revision = commandRevisionFrom(read.body, command);
+      const revision = commandRevisionFrom(records.module, read.body, command);
       if (revision === undefined) {
         return failed('Modul neuvedl aktuální revizi záznamů, změnu proto nelze bezpečně provést.', 503);
       }

@@ -68,6 +68,8 @@ export const OntosMcpContributionSchema = Schema.Struct({
   /** Search words (Czech and English) for capability search. */
   keywords: Schema.String.check(Schema.isMaxLength(2000)),
   label: OntosMcpTextSchema,
+  /** The module keeps its own AI change engine (`aiChanges`, AiDecideChanges, AiRevertBatch) the queue also shows. */
+  ownProposalEngine: Schema.optionalKey(Schema.Boolean),
   /** Shell page of the module below `/<lang>`, e.g. `/ukoly`. */
   page: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^\/[a-z0-9/-]*$/u))),
   revision: Schema.optionalKey(OntosMcpRevisionSchema),
@@ -105,6 +107,7 @@ export interface OntosMcpContributionInput {
   readonly description: OntosMcpText;
   readonly keywords: string;
   readonly label: OntosMcpText;
+  readonly ownProposalEngine?: boolean;
   readonly page?: string;
   readonly reads: Readonly<Record<string, OntosMcpToolTextInput | OntosMcpHidden>>;
   readonly revision?: {

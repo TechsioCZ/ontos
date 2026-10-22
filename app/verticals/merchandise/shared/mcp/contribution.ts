@@ -3,6 +3,7 @@ import { defineOntosMcpContribution } from '@app/core-runtime';
 
 export const merchandiseMcpContribution = defineOntosMcpContribution({
   approvals: true,
+  ownProposalEngine: true,
   commands: {
     AiDecideChanges: 'hidden',
     AiProposeChanges: 'hidden',

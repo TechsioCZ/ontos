@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
 import type { TrustedPrincipalContext } from '@app/core-runtime';
-import type { AgentApprovalModule, AgentQueueBatch } from '@app/shared-contracts/agent-proposals';
+import type { AgentQueueBatch } from '@app/shared-contracts/agent-proposals';
 import { Effect } from 'effect';
 
-import { applyModuleCommand, callModuleAs, recordsQueryFor } from './module-call.ts';
+import { applyModuleCommand, callModuleAs, recordsReadOf } from './module-call.ts';
 import { normalizeLegacySlice, sliceFromRecords } from './legacy-normalize.ts';
+import type { LegacyEngineModule } from './legacy-normalize.ts';
 
 export type LegacyBatchesResult =
   | { readonly state: 'absent' }
@@ -20,11 +21,12 @@ const UNAVAILABLE: LegacyBatchesResult = { state: 'unavailable' };
 
 const readLegacyOnce = (
   principal: TrustedPrincipalContext,
-  module: AgentApprovalModule,
+  module: LegacyEngineModule,
   options: { readonly canDecide: boolean; readonly names: ReadonlyMap<string, string> },
 ) =>
   Effect.gen(function* readLegacyOnce() {
-    const result = yield* callModuleAs(principal, module.appId, '/reads/records', recordsQueryFor(module.appId)).pipe(
+    const result = yield* recordsReadOf(module.appId).pipe(
+      Effect.flatMap((read) => callModuleAs(principal, module.appId, read.path, read.query)),
       Effect.result,
     );
     if (result._tag === 'Failure') {
@@ -50,7 +52,7 @@ const readLegacyOnce = (
  */
 export const readLegacyBatches = Effect.fn('AgentPlatform.readLegacyBatches')(function* readLegacyBatches(
   principal: TrustedPrincipalContext,
-  module: AgentApprovalModule,
+  module: LegacyEngineModule,
   options: { readonly canDecide: boolean; readonly names: ReadonlyMap<string, string> },
 ) {
   const first = yield* readLegacyOnce(principal, module, options);
@@ -100,7 +102,10 @@ export const seesWholeModule = Effect.fn('AgentPlatform.seesWholeModule')(functi
   principal: TrustedPrincipalContext,
   appId: string,
 ) {
-  const result = yield* callModuleAs(principal, appId, '/reads/records', recordsQueryFor(appId)).pipe(Effect.result);
+  const result = yield* recordsReadOf(appId).pipe(
+    Effect.flatMap((read) => callModuleAs(principal, appId, read.path, read.query)),
+    Effect.result,
+  );
   if (result._tag === 'Failure' || result.success.status !== 200) {
     return false;
   }

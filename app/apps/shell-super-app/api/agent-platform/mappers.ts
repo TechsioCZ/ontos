@@ -4,7 +4,6 @@
  */
 import {
   AGENT_REVERT_UNAVAILABLE,
-  agentModuleLabel,
   type AgentActivityEntry,
   type AgentActivityKind,
   type AgentActivityRequest,
@@ -86,8 +85,16 @@ export const nameOf = (names: ReadonlyMap<string, string>, principalId: string |
 /** Whether the person may decide one pending proposal, with the Czech reason when not. */
 export type QueueItemDecision = { readonly allowed: true } | { readonly allowed: false; readonly reason?: string };
 
+/** What the mappers need to know about composed modules (from their contributions). */
+export interface ModuleTexts {
+  /** The module keeps its own AI change engine: its apply-command writes by proposal-only agents are proposals. */
+  readonly hasOwnProposalEngine: (moduleKey: string) => boolean;
+  readonly labelOf: (moduleKey: string | null | undefined) => string;
+}
+
 export interface QueueItemOptions {
   readonly canDecide: (row: AgentProposalRow) => QueueItemDecision;
+  readonly modules: ModuleTexts;
   /** Live wire JSON of the target entity of pending proposals (by proposal id), read as the person. */
   readonly liveBefore?: ReadonlyMap<string, Readonly<Record<string, unknown>>>;
   readonly names: ReadonlyMap<string, string>;
@@ -157,7 +164,7 @@ const toItem = (row: AgentProposalRow, options: QueueItemOptions): AgentQueueIte
     diffSource,
     key: `core:${row.proposalId}`,
     moduleKey: row.moduleKey,
-    moduleLabel: agentModuleLabel(row.moduleKey),
+    moduleLabel: options.modules.labelOf(row.moduleKey),
     proposedAt: row.createdAt.toISOString(),
     reason: row.reason,
     risk: row.risk,
@@ -215,16 +222,17 @@ export const rowsToQueueBatches = (rows: readonly AgentProposalRow[], options: Q
 export const moduleKeyOfAction = (actionKey: string | null): string | null =>
   actionKey === null || !actionKey.includes('.') ? null : actionKey.slice(0, actionKey.lastIndexOf('.'));
 
-/** Legacy module engines (CRM, sales, merchandise) take agent proposals as a write of their own apply-command. */
-const LEGACY_PROPOSAL_MODULES: ReadonlySet<string> = new Set(['demo.crm', 'demo.merchandise', 'demo.sales-pipeline']);
-
+/** Modules with their own AI change engine take agent proposals as a write of their own apply-command. */
 export const auditRowToEntry = (
   row: AuditActivityRow,
-  options: { readonly proposalOnly: boolean } = { proposalOnly: false },
+  options: { readonly modules: ModuleTexts; readonly proposalOnly: boolean },
 ): AgentActivityEntry => {
   const moduleKey = moduleKeyOfAction(row.actionKey);
   const proposal =
-    row.outcome === 'succeeded' && options.proposalOnly && moduleKey !== null && LEGACY_PROPOSAL_MODULES.has(moduleKey);
+    row.outcome === 'succeeded' &&
+    options.proposalOnly &&
+    moduleKey !== null &&
+    options.modules.hasOwnProposalEngine(moduleKey);
   const kind: AgentActivityKind = proposal
     ? 'proposal'
     : row.outcome === 'succeeded'
@@ -243,7 +251,7 @@ export const auditRowToEntry = (
   const detail =
     row.actionKey === null || row.actionKey.endsWith('.apply-command')
       ? proposal
-        ? `Návrh do schvalovací fronty modulu ${agentModuleLabel(moduleKey)}`
+        ? `Návrh do schvalovací fronty modulu ${options.modules.labelOf(moduleKey)}`
         : undefined
       : row.actionKey;
   return {
@@ -253,7 +261,7 @@ export const auditRowToEntry = (
     id: `audit:${row.auditEventId}`,
     kind,
     moduleKey,
-    moduleLabel: agentModuleLabel(moduleKey),
+    moduleLabel: options.modules.labelOf(moduleKey),
     occurredAt: row.occurredAt.toISOString(),
     outcomeCode: proposal ? 'proposed' : row.outcomeCode,
     ...(detail === undefined ? {} : { detail }),
@@ -268,7 +276,7 @@ const READ_LABELS: Readonly<Record<string, string>> = {
   search: 'Vyhledávání',
 };
 
-export const accessRowToEntry = (row: AccessActivityRow): AgentActivityEntry => {
+export const accessRowToEntry = (row: AccessActivityRow, modules: ModuleTexts): AgentActivityEntry => {
   const allowed = row.outcome === 'allowed';
   const kind: AgentActivityKind = allowed ? 'read' : 'denied';
   const actionLabel = allowed ? (READ_LABELS[row.accessKind] ?? 'Čtení') : 'Čtení odmítnuto oprávněním';
@@ -279,7 +287,7 @@ export const accessRowToEntry = (row: AccessActivityRow): AgentActivityEntry => 
     id: `read:${row.dataAccessEventId}`,
     kind,
     moduleKey: row.servingModuleKey,
-    moduleLabel: agentModuleLabel(row.servingModuleKey),
+    moduleLabel: modules.labelOf(row.servingModuleKey),
     occurredAt: row.occurredAt.toISOString(),
     outcomeCode: row.outcomeCode,
     ...(row.targetResourceType === null ? {} : { detail: row.targetResourceType }),
@@ -289,12 +297,13 @@ export const accessRowToEntry = (row: AccessActivityRow): AgentActivityEntry => 
 export const proposalRowToEntries = (
   row: AgentProposalRow,
   names: ReadonlyMap<string, string>,
+  modules: ModuleTexts,
 ): AgentActivityEntry[] => {
   const base = {
     agentName: row.agentLabel,
     agentPrincipalId: row.agentPrincipalId,
     moduleKey: row.moduleKey,
-    moduleLabel: agentModuleLabel(row.moduleKey),
+    moduleLabel: modules.labelOf(row.moduleKey),
   };
   const entries: AgentActivityEntry[] = [
     {

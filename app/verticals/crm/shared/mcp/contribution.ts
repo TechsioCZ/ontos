@@ -3,6 +3,7 @@ import { defineOntosMcpContribution } from '@app/core-runtime';
 
 export const crmMcpContribution = defineOntosMcpContribution({
   approvals: true,
+  ownProposalEngine: true,
   commands: {
     AddContactPerson: { title: { cs: 'Přidat kontaktní osobu', en: 'Add a contact person' } },
     AiDecideChanges: 'hidden',

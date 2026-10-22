@@ -4,12 +4,7 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import {
-  AGENT_APPROVALS_PATH,
-  agentApprovalModuleByAppId,
-  agentApprovalModules,
-  agentModuleLabel,
-} from '@app/shared-contracts/agent-proposals';
+import { AGENT_APPROVALS_PATH } from '@app/shared-contracts/agent-proposals';
 import type {
   AgentActivityRequest,
   AgentProposalSubmitRequest,
@@ -24,6 +19,8 @@ import { loadAgentProfiles } from '../auth/agent-store.ts';
 
 import { approverCheck, crmClientIdOf, crmClientsOf } from './approval-logic.ts';
 import { AgentPlatformForbidden, AgentPlatformInvalid, callerModuleAccess } from './caller.ts';
+import { loadComposedModules } from './composed-modules.ts';
+import type { ComposedModules } from './composed-modules.ts';
 import { readTargetEntity } from './service-decide.ts';
 import type { AgentPlatformCaller } from './caller.ts';
 import { readLegacyBatches, seesWholeModule } from './legacy-queue.ts';
@@ -49,6 +46,11 @@ const QUEUE_LIMIT = 300;
 const PRIVATE_SCOPE_APPS: ReadonlySet<string> = new Set(['crm']);
 const REVIEW_PATH = `/cs${AGENT_APPROVALS_PATH}`;
 const NO_DECIDER = 'Návrhy agentů schvalují jen lidé s oprávněním k zápisu v některém modulu firmy.';
+
+const moduleTextsOf = (composed: ComposedModules) => ({
+  hasOwnProposalEngine: (moduleKey: string) => composed.byModuleId(moduleKey)?.ownProposalEngine === true,
+  labelOf: composed.labelOf,
+});
 
 const countPending = (batches: readonly AgentQueueBatch[], onlyDecidable: boolean): number =>
   batches.reduce(
@@ -121,14 +123,16 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
     } satisfies AgentProposalSubmitResponse;
   }
   const modules = yield* callerModuleAccess(agent);
+  const composed = yield* loadComposedModules;
   const names = yield* principalNames(tenantId);
   const batchId = randomUUID();
   const rows: NewAgentProposal[] = [];
   for (const [index, proposal] of request.proposals.entries()) {
-    const module = agentApprovalModuleByAppId(proposal.appId);
-    if (module === undefined) {
+    const composedModule = composed.byAppId(proposal.appId);
+    if (composedModule === undefined || !composedModule.approvals) {
       return yield* new AgentPlatformInvalid({ reason: `Modul ${proposal.appId} nepřijímá návrhy agentů.` });
     }
+    const module = { appId: composedModule.appId, label: composedModule.label.cs, moduleKey: composedModule.moduleId };
     if (!modules.access.has(module.moduleKey)) {
       return yield* new AgentPlatformForbidden({ reason: `Agent nemá přístup k modulu ${module.label}.` });
     }
@@ -196,7 +200,12 @@ export const listOwnAgentBatches = Effect.fn('AgentPlatform.listOwnAgentBatches'
     limit: QUEUE_LIMIT,
   });
   const names = yield* principalNames(tenantId);
-  const batches = rowsToQueueBatches(rows, { canDecide: () => ({ allowed: false }), names });
+  const composed = yield* loadComposedModules;
+  const batches = rowsToQueueBatches(rows, {
+    canDecide: () => ({ allowed: false }),
+    modules: moduleTextsOf(composed),
+    names,
+  });
   return {
     batches,
     company: { legalEntityId, legalName: agent.legalName },
@@ -215,6 +224,7 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
     return yield* new AgentPlatformForbidden({ reason: NO_DECIDER });
   }
   const names = yield* principalNames(tenantId);
+  const composed = yield* loadComposedModules;
   const moduleRows = (yield* listCompanyProposals(tenantId, legalEntityId, { limit: QUEUE_LIMIT })).filter(
     (row) => modules.access.has(row.moduleKey) || modules.write.has(row.moduleKey),
   );
@@ -273,18 +283,19 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
       if (!modules.write.has(row.moduleKey)) {
         return {
           allowed: false,
-          reason: `Tuto změnu může schválit jen člověk s oprávněním k zápisu v modulu ${agentModuleLabel(row.moduleKey)}.`,
+          reason: `Tuto změnu může schválit jen člověk s oprávněním k zápisu v modulu ${composed.labelOf(row.moduleKey)}.`,
         };
       }
       const check = checks.get(row.proposalId);
       return check === undefined || check.ok ? { allowed: true } : { allowed: false, reason: check.reason };
     },
     liveBefore,
+    modules: moduleTextsOf(composed),
     names,
   });
-  const legacyModules = agentApprovalModules.filter(
-    (module) => module.legacyEngine && modules.access.has(module.moduleKey),
-  );
+  const legacyModules = composed.all
+    .filter((module) => module.ownProposalEngine && modules.access.has(module.moduleId))
+    .map((module) => ({ appId: module.appId, label: module.label.cs, moduleKey: module.moduleId }));
   const legacy = yield* Effect.forEach(
     legacyModules,
     (module) =>
@@ -327,16 +338,16 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
   );
   // People see agent activity only in modules where they approve agent changes, and only company-wide when the
   // module shows them the whole company (CRM salespeople see their own clients only).
+  const composed = yield* loadComposedModules;
   const scoped = yield* Effect.forEach(
-    agentApprovalModules.filter(
-      (module) => PRIVATE_SCOPE_APPS.has(module.appId) && modules.write.has(module.moduleKey),
-    ),
+    composed.all.filter((module) => PRIVATE_SCOPE_APPS.has(module.appId) && modules.write.has(module.moduleId)),
     (module) =>
-      seesWholeModule(caller.principal, module.appId).pipe(Effect.map((whole) => (whole ? [] : [module.moduleKey]))),
+      seesWholeModule(caller.principal, module.appId).pipe(Effect.map((whole) => (whole ? [] : [module.moduleId]))),
     { concurrency: 2 },
   );
   const hidden = new Set(scoped.flat());
   return yield* listAgentActivity(tenantId, legalEntityId, request, {
+    modules: moduleTextsOf(composed),
     proposalOnlyAgents,
     visibleModules: new Set([...modules.write].filter((moduleKey) => !hidden.has(moduleKey))),
   });
