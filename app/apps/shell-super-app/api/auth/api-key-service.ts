@@ -2,7 +2,7 @@ import { apiKey } from '@better-auth/api-key';
 import { betterAuth } from 'better-auth';
 import { isAPIError } from 'better-auth/api';
 import { and, asc, eq, lte, sql } from 'drizzle-orm';
-import { Brand, Clock, Context, DateTime, Duration, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { Brand, Clock, Context, DateTime, Duration, Effect, Encoding, Layer, Option, Redacted, Schema } from 'effect';
 
 import { AuthConfig } from './config.ts';
 import { AuthDatabase } from './db/client.ts';
@@ -146,6 +146,12 @@ const mapProviderError = <Failure>(error: Failure): ApiKeyProviderError => {
   return unavailable(error);
 };
 const API_KEY_EXTERNAL_IO_TIMEOUT = Duration.seconds(10);
+
+/** Better Auth's stored form of an API key: SHA-256 of the key, base64url without padding. */
+const apiKeyLookupHash = (rawKey: string) =>
+  Effect.promise(() => crypto.subtle.digest('SHA-256', new TextEncoder().encode(rawKey))).pipe(
+    Effect.map((digest) => Encoding.encodeBase64Url(new Uint8Array(digest))),
+  );
 const PENDING_BINDING_LEASE = Duration.minutes(5);
 const PENDING_CLEANUP_BATCH_SIZE = 100;
 const IssuerPrincipalIdSchema = Schema.String.pipe(Schema.brand('ApiKeyIssuerPrincipalId'));
@@ -245,6 +251,8 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
       apiKey({
         enableMetadata: true,
         enableSessionForAPIKeys: false,
+        // Shell keys carry no per-key quota or rate limit; verify() is a read-only lookup.
+        rateLimit: { enabled: false },
         references: 'user',
       }),
     ],
@@ -376,28 +384,27 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
             : Effect.succeed(toSafe(updated)),
         ),
       ),
+    // Verification is one indexed read: the key is random, so Better Auth's SHA-256 lookup hash is the whole check.
+    // Better Auth's own verifyApiKey also writes the row twice per call (last request, updated at) for quota and
+    // rate-limit bookkeeping that Shell keys never carry, which serialized every caller of one key on its row.
     verify: (rawKey) =>
-      Effect.tryPromise({
-        catch: mapProviderError,
-        try: auth.api.verifyApiKey.bind(auth.api, { body: { key: rawKey } }),
-      }).pipe(
-        apiKeyExternalTimeout,
-        Effect.flatMap((result): Effect.Effect<VerifiedApiKey, ApiKeyProviderError> => {
-          if (result.valid && result.key !== null) {
-            return Effect.succeed({ providerKeyId: result.key.id });
-          }
-          if (result.error?.code.includes('RATE') === true) {
-            return Effect.fail(
-              new ApiKeyRateLimitedError({
-                code: 'api_key_rate_limited',
-                reason: 'The API key rate limit was exceeded',
-                retryAfterSeconds: 60,
-              }),
-            );
-          }
-          return Effect.fail(invalid());
-        }),
-      ),
+      Effect.gen(function* verifyApiKey() {
+        const keyHash = yield* apiKeyLookupHash(rawKey);
+        const [record] = yield* database
+          .select({ enabled: apikey.enabled, expiresAt: apikey.expiresAt, id: apikey.id })
+          .from(apikey)
+          .where(eq(apikey.key, keyHash))
+          .limit(1)
+          .pipe(Effect.mapError(unavailable), apiKeyExternalTimeout);
+        if (record === undefined || record.enabled === false) {
+          return yield* invalid();
+        }
+        const now = yield* Clock.currentTimeMillis;
+        if (record.expiresAt !== null && record.expiresAt.getTime() <= now) {
+          return yield* invalid();
+        }
+        return { providerKeyId: record.id };
+      }),
   };
   return Object.freeze(service);
 });
