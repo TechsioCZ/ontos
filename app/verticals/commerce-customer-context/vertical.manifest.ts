@@ -171,6 +171,7 @@ import { updateSavedAddressAction } from './src/actions/update-saved-address.act
 import { VerifyEffectiveCustomerGroupMembershipSetV1Api } from './shared/apis/verify-effective-customer-group-membership-set-v1.ts';
 import { VerifyRetailPurchasingSubjectCurrentV1Api } from './shared/apis/verify-retail-purchasing-subject-current-v1.ts';
 // </generated-module-manifest-imports>
+import { commerceCustomerContextMcpContribution } from './shared/mcp/contribution.ts';
 
 export const commerceCustomerContextManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
@@ -347,6 +348,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: commerceCustomerContextMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>
