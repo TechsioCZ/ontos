@@ -6,8 +6,6 @@ import type {
   ConnectionWritePolicy,
 } from '@app/shared-contracts/oauth-connections';
 
-import { moduleLabel } from '../auth/agent-store-model.ts';
-
 export const WRITE_POLICY_RANK: Readonly<Record<ConnectionWritePolicy, number>> = {
   approval: 1,
   direct: 2,
@@ -38,7 +36,11 @@ export interface EffectiveAuthority {
   readonly writePolicy: ConnectionWritePolicy;
 }
 
+/** Czech label of a module key, from the composed modules' own contributions. */
+export type ModuleLabelOf = (moduleId: string) => string;
+
 export const effectiveAuthority = (input: {
+  readonly labelOf: ModuleLabelOf;
   readonly live: LiveRights;
   readonly policyCap: ConnectionWritePolicy;
   readonly requested: ConnectionModulesRequest;
@@ -65,13 +67,17 @@ export const effectiveAuthority = (input: {
       seen.add(entry.moduleId);
       return true;
     })
-    .map((entry) => ({ label: moduleLabel(entry.moduleId), moduleId: entry.moduleId, read: true, write: entry.write }))
+    .map((entry) => ({ label: input.labelOf(entry.moduleId), moduleId: entry.moduleId, read: true, write: entry.write }))
     .sort((a, b) => a.label.localeCompare(b.label, 'cs'));
   return { modules, writePolicy };
 };
 
-export const offeredModules = (live: LiveRights, policyCap: ConnectionWritePolicy): readonly ConnectionModule[] =>
-  effectiveAuthority({ live, policyCap, requested: 'all', requestedPolicy: policyCap }).modules;
+export const offeredModules = (
+  live: LiveRights,
+  policyCap: ConnectionWritePolicy,
+  labelOf: ModuleLabelOf,
+): readonly ConnectionModule[] =>
+  effectiveAuthority({ labelOf, live, policyCap, requested: 'all', requestedPolicy: policyCap }).modules;
 
 export const isModulesRequestWithin = (
   requested: ConnectionModulesRequest,

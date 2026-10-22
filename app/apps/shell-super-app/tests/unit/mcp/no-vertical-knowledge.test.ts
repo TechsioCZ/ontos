@@ -24,6 +24,8 @@ const GUARDED = [
   'apps/shell-super-app/api/agent-platform/mappers.ts',
   'apps/shell-super-app/api/agent-platform/module-call.ts',
   'apps/shell-super-app/api/agent-platform/proposal-store.ts',
+  'apps/shell-super-app/api/auth/agent-entities.ts',
+  'apps/shell-super-app/api/auth/agent-entities-model.ts',
   'packages/shared-contracts/src/agent-access.ts',
   'packages/shared-contracts/src/agent-proposals.ts',
   'apps/shell-super-app/shared/mcp-resource.ts',

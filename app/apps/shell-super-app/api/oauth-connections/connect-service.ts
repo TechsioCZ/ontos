@@ -335,6 +335,7 @@ export const draftSummary = Effect.fn('OAuthConnectService.draftSummary')(functi
       grant.modules === 'all'
         ? 'all'
         : effectiveAuthority({
+            labelOf: authority.labelOf,
             live: authority.live,
             policyCap: authority.policyCap,
             requested: grant.modules,

@@ -3,7 +3,6 @@ import { expect, test } from 'effect-rstest';
 import {
   DEFAULT_AGENT_PROFILE,
   foldAgentProfiles,
-  moduleLabel,
   seededAgentProfiles,
 } from '../../api/auth/agent-store-model.ts';
 
@@ -113,7 +112,3 @@ test('a later configure-agent without description clears it', () => {
   expect(foldAgentProfiles([agent], [created, configured]).get(agent)?.description).toBeNull();
 });
 
-test('moduleLabel returns the Czech label or the module id', () => {
-  expect(moduleLabel('demo.crm')).toBe('CRM – klienti a návštěvy');
-  expect(moduleLabel('x.y')).toBe('x.y');
-});
