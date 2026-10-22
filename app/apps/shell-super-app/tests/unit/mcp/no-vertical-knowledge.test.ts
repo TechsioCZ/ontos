@@ -3,12 +3,20 @@
  * Core and the Shell platform must not know any MicroVertical: every vertical id, module id, tool name, label,
  * navigation entry, review rule or follow-up comes from the composed module contracts. This test fails when a
  * vertical id appears in that source as a quoted literal or a path segment, or a module id appears anywhere.
+ * Companies are tenant data too: the Shell UI must not name a demo company or key behaviour by its legal entity id.
  * Allowed exceptions: demo guide content and seed data (tenant data, not platform behaviour).
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import {
+  akrosDemoCompany,
+  commercialDemoCompany,
+  crmDemoCompany,
+  eshopDemoCompany,
+  rentalDemoCompany,
+} from '@app/core-runtime/demo-company-profiles';
 import { expect, it } from '@rstest/core';
 
 const appRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
@@ -71,6 +79,21 @@ const filesOf = (relative: string): string[] => {
     .filter((file) => !isException(file));
 };
 
+/** The Shell UI, where company knowledge crept in as id-suffix maps and company texts. */
+const COMPANY_GUARDED = ['apps/shell-super-app/src'];
+const companies = [akrosDemoCompany, commercialDemoCompany, crmDemoCompany, eshopDemoCompany, rentalDemoCompany];
+/** The name without its legal form, e.g. `Velkoobchod Hanák` for `Velkoobchod Hanák s.r.o.`. */
+const baseName = (legalName: string): string => legalName.replace(/\s+(?:s\.r\.o\.|a\.s\.|\(demo\))$/u, '');
+const companyPatterns = companies.flatMap(({ legalEntityId, legalName }) => {
+  const significant = (legalEntityId.split('-').at(-1) ?? '').replace(/^0+/u, '');
+  return [
+    { id: legalEntityId, pattern: new RegExp(escape(legalEntityId), 'u') },
+    // A quoted suffix of the id, e.g. `'020'`, used to key company behaviour without naming the full id.
+    { id: `${legalEntityId} suffix`, pattern: new RegExp(`['"\`]0+${escape(significant)}['"\`]`, 'u') },
+    { id: legalName, pattern: new RegExp(`(?<![\\p{L}\\p{N}])${escape(baseName(legalName))}(?![\\p{L}\\p{N}])`, 'u') },
+  ];
+});
+
 it('finds the verticals of this workspace', () => {
   expect(verticals.length).toBeGreaterThan(5);
 });
@@ -80,6 +103,19 @@ it('keeps Core and the whole Shell platform free of vertical ids', () => {
     const lines = readFileSync(file, 'utf-8').split('\n');
     return lines.flatMap((line, index) =>
       patterns
+        .filter(({ pattern }) => pattern.test(line))
+        .map(({ id }) => `${path.relative(appRoot, file)}:${index + 1} names ${id}`),
+    );
+  });
+  expect(hits).toEqual([]);
+});
+
+it('keeps the Shell UI free of demo company ids and names', () => {
+  expect(companyPatterns.length).toBe(companies.length * 3);
+  const hits = COMPANY_GUARDED.flatMap(filesOf).flatMap((file) => {
+    const lines = readFileSync(file, 'utf-8').split('\n');
+    return lines.flatMap((line, index) =>
+      companyPatterns
         .filter(({ pattern }) => pattern.test(line))
         .map(({ id }) => `${path.relative(appRoot, file)}:${index + 1} names ${id}`),
     );

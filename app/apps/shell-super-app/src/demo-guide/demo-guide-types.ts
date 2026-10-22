@@ -23,9 +23,9 @@ export type DemoGuideTarget =
     }
   | {
       readonly kind: 'external';
-      /** Absolute URL opened in a new tab, e.g. the AKROS storefront `http://localhost:3070/kosik`. */
+      /** Absolute URL opened in a new tab, e.g. a connected storefront `http://localhost:3070/kosik`. */
       readonly url: string;
-      /** Czech name of the destination used in the button text, e.g. `e-shop AKROS`. */
+      /** Czech name of the destination used in the button text, e.g. `e-shop firmy`. */
       readonly label: string;
     };
 

@@ -12,6 +12,7 @@ const {
   browserConfigValuesMock,
   canManageDemoAccountsMock,
   currentSessionMock,
+  executeLegalEntityDetailMock,
   resolveModuleTargetMock,
   shellCompositionMock,
 } = rstest.hoisted(() => ({
@@ -20,6 +21,7 @@ const {
   browserConfigValuesMock: rstest.fn<() => { readonly BETTER_AUTH_URL?: string }>(),
   canManageDemoAccountsMock: rstest.fn(),
   currentSessionMock: rstest.fn(),
+  executeLegalEntityDetailMock: rstest.fn(),
   resolveModuleTargetMock: rstest.fn(),
   shellCompositionMock: rstest.fn(),
 }));
@@ -30,6 +32,7 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
   availableTenants: availableTenantsMock,
   canManageDemoAccounts: canManageDemoAccountsMock,
   currentSession: currentSessionMock,
+  executeLegalEntityDetail: executeLegalEntityDetailMock,
   resolveModuleTarget: resolveModuleTargetMock,
   shellComposition: shellCompositionMock,
 }));
@@ -82,6 +85,7 @@ beforeEach(() => {
   browserConfigValuesMock.mockReturnValue({});
   canManageDemoAccountsMock.mockReturnValue(Effect.succeed(false));
   resolveModuleTargetMock.mockReturnValue(Effect.fail({ _tag: 'ShellTargetForbiddenProblem' }));
+  executeLegalEntityDetailMock.mockReturnValue(Effect.fail({ _tag: 'ShellTargetNotFoundProblem' }));
   currentSessionMock.mockReturnValue(Effect.succeed({ identity, state: 'authenticated' as const }));
   availableLegalEntitiesMock.mockReturnValue(
     Effect.succeed({
@@ -416,4 +420,24 @@ it.effect.each([false, true])(
       });
       expect(canManageDemoAccountsMock).toHaveBeenCalledTimes(1);
     }),
+);
+
+it.effect('shows the welcome text the selected company provides on the Shell welcome page', () =>
+  Effect.gen(function* companyWelcome() {
+    executeLegalEntityDetailMock.mockReturnValueOnce(
+      Effect.succeed({ legalName: 'Alpha company', status: 'active', welcome: 'Bread and pastry for the whole town.' }),
+    );
+    expect(yield* loadModel({ request: request() })).toMatchObject({
+      companyWelcome: 'Bread and pastry for the whole town.',
+      homeContribution: { state: 'forbidden' },
+    });
+    expect(executeLegalEntityDetailMock.mock.calls.at(-1)?.[0]).toEqual({
+      legalEntityRef: {
+        moduleId: 'core.identity',
+        resourceId: 'legal-1',
+        resourceType: 'core.identity.legal-entity',
+        tenantId: 'tenant-1',
+      },
+    });
+  }),
 );

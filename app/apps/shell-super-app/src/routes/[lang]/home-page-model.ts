@@ -15,6 +15,7 @@ import {
   availableTenants,
   canManageDemoAccounts,
   currentSession,
+  executeLegalEntityDetail,
   shellComposition,
 } from '../../api/auth-client.ts';
 import {
@@ -53,6 +54,8 @@ export interface ReloadRequiredHomePageModel {
 }
 
 export interface AuthenticatedHomePageModel {
+  /** The company's own Home text (Core tenant data); read only for the Shell's welcome page. */
+  readonly companyWelcome?: string;
   readonly compositionRevision?: string;
   readonly contextState: 'access_blocked' | 'authenticated' | 'selection_required';
   readonly homeContribution?: HomeContribution;
@@ -222,6 +225,23 @@ const tenantsFor = (identity: SafeTenantIdentity, options: ShellAuthenticationCl
     : browserTenantsCache.get(browserReadKey(cacheBaseUrl, identity));
 };
 
+/** What the selected company says about itself on Home; nothing when it provides no text or the read fails. */
+const companyWelcomeFor = (identity: SafeAuthenticatedIdentity, options: ShellAuthenticationClientOptions) =>
+  executeLegalEntityDetail(
+    {
+      legalEntityRef: {
+        moduleId: 'core.identity',
+        resourceId: identity.legalEntityId,
+        resourceType: 'core.identity.legal-entity',
+        tenantId: identity.tenantId,
+      },
+    },
+    options,
+  ).pipe(
+    Effect.map(({ welcome }) => welcome),
+    Effect.orElseSucceed(() => undefined),
+  );
+
 export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
   function* loadHomePageModelEffect(request: Request) {
     const options = yield* shellAuthenticationClientOptionsFromRequest(request);
@@ -297,8 +317,17 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
                 options,
                 homeComponents,
                 new Set(navigation.items.map(({ moduleId }) => String(moduleId))),
+              ).pipe(
+                // The Shell's welcome page shows the company's own text, so only that case reads it.
+                Effect.flatMap((contribution) =>
+                  Option.exists(contribution, ({ state }) => state === 'forbidden')
+                    ? companyWelcomeFor(session.identity, options).pipe(
+                        Effect.map((welcome) => ({ contribution, welcome })),
+                      )
+                    : Effect.succeed({ contribution, welcome: undefined }),
+                ),
               )
-            : Effect.succeedNone,
+            : Effect.succeed({ contribution: Option.none<HomeContribution>(), welcome: undefined }),
         legalEntities,
         navigation: Effect.succeed(navigation),
         tenants: tenantsFor(session.identity, options).pipe(
@@ -316,7 +345,7 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
     ).pipe(
       Effect.map(
         ({
-          homeContribution: contributionOption,
+          homeContribution: { contribution: contributionOption, welcome },
           legalEntities: choices,
           navigation: items,
           tenants,
@@ -334,7 +363,13 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
             tenants,
           };
           const withContribution =
-            contribution === undefined ? baseModel : { ...baseModel, homeContribution: contribution };
+            contribution === undefined
+              ? baseModel
+              : {
+                  ...baseModel,
+                  homeContribution: contribution,
+                  ...(welcome === undefined ? {} : { companyWelcome: welcome }),
+                };
           const model =
             compositionRevision === undefined ? withContribution : { ...withContribution, compositionRevision };
           return session.state === 'authenticated'

@@ -16,5 +16,6 @@ export const LegalEntityDetailResponseSchema = Schema.Struct({
   legalEntityRef: LegalEntityDetailRefSchema,
   legalName: Schema.String,
   status: Schema.Literals(['active', 'suspended', 'archived']),
+  welcome: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(400))),
 });
 export type LegalEntityDetailResponse = typeof LegalEntityDetailResponseSchema.Type;

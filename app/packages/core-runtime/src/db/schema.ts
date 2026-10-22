@@ -186,6 +186,8 @@ export const legalEntities = coreSchema.table(
     registrationNumber: text('registration_number').notNull(),
     vatId: text('vat_id'),
     status: text('status').notNull(),
+    /** What the company does, in one or two sentences, shown on Home; tenant data the company provides. */
+    welcome: text('welcome'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -198,6 +200,7 @@ export const legalEntities = coreSchema.table(
     ),
     index('core_legal_entities_tenant_idx').on(table.tenantId),
     check('core_legal_entities_status_ck', sql`${table.status} in ('active', 'suspended', 'archived')`),
+    check('core_legal_entities_welcome_ck', sql`length(${table.welcome}) between 1 and 400`),
   ],
 );
 

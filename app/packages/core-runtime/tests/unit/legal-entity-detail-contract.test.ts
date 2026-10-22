@@ -45,16 +45,21 @@ it.effect(
     expect(Schema.is(ReadHandlerNotFound)(absent)).toBe(true);
     const crossTenant = yield* Effect.flip(
       classifyLegalEntityDetail(request, '00000000-0000-4000-8000-000000000099', [
-        { legalName: 'Other', status: 'active' },
+        { legalName: 'Other', status: 'active', welcome: null },
       ]),
     );
     expect(Schema.is(ReadHandlerNotFound)(crossTenant)).toBe(true);
     const retired = yield* classifyLegalEntityDetail(request, legalEntityRef.tenantId, [
-      { legalName: 'Former Manufacturer', status: 'archived' },
+      { legalName: 'Former Manufacturer', status: 'archived', welcome: null },
     ]);
     expect(retired.status).toBe('archived');
+    expect(retired.welcome).toBeUndefined();
+    const described = yield* classifyLegalEntityDetail(request, legalEntityRef.tenantId, [
+      { legalName: 'Bakery', status: 'active', welcome: 'Bread and pastry for the whole town.' },
+    ]);
+    expect(described.welcome).toBe('Bread and pastry for the whole town.');
     const corrupt = yield* Effect.flip(
-      classifyLegalEntityDetail(request, legalEntityRef.tenantId, [{ legalName: 'Bad', status: 'unknown' }]),
+      classifyLegalEntityDetail(request, legalEntityRef.tenantId, [{ legalName: 'Bad', status: 'unknown', welcome: null }]),
     );
     expect(Schema.is(ReadHandlerUnavailable)(corrupt)).toBe(true);
   }),

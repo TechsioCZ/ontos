@@ -1,20 +1,11 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
-import type { IconType } from '@techsio/ui-kit/atoms/icon';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 
 import type { ShellUnavailableDeployment } from '../../../shared/api.ts';
 import { buildShellNavigation, navigationSections, ShellRouteLink } from '../shell-frame';
 import type { AuthenticatedDashboardLayoutProps, ShellNavigationLink } from '../shell-frame';
-
-/** Company profile shown on Home, keyed by the last three digits of the demo legal entity id. */
-const companyProfiles: Readonly<Record<string, { readonly icon: IconType; readonly key: string }>> = {
-  '020': { icon: 'icon-[mdi--storefront-outline]', key: 'trading' },
-  '021': { icon: 'icon-[mdi--home-city-outline]', key: 'estate' },
-  '022': { icon: 'icon-[mdi--account-group-outline]', key: 'wholesale' },
-  '023': { icon: 'icon-[mdi--coffee-outline]', key: 'eshop' },
-};
 
 /** Sections with a one-line hint on Home: every Shell navigation section. */
 const groupDescriptionKeys = new Set(navigationSections.map(({ key }) => key));
@@ -27,8 +18,9 @@ const startLink = (links: readonly ShellNavigationLink[]): ShellNavigationLink |
 
 export interface HomeWelcomeProps {
   readonly companyName: string | undefined;
+  /** The company's own text about what it does (Core tenant data); the generic hint when it provides none. */
+  readonly companyWelcome: string | undefined;
   readonly displayName: string;
-  readonly legalEntityId: string | undefined;
   readonly navigation: AuthenticatedDashboardLayoutProps['navigation'];
   readonly unavailableDeployments: readonly ShellUnavailableDeployment[];
 }
@@ -55,8 +47,8 @@ const DestinationRow = ({ link }: { readonly link: ShellNavigationLink }) =>
 /** Home for personas without a module Home component: who and where I am, where to start, and every area I can open. */
 export const HomeWelcome = ({
   companyName,
+  companyWelcome,
   displayName,
-  legalEntityId,
   navigation,
   unavailableDeployments,
 }: HomeWelcomeProps) => {
@@ -70,13 +62,12 @@ export const HomeWelcome = ({
     .filter((group) => group.links.length > 0);
   const links = groups.flatMap((group) => group.links);
   const start = startLink(links);
-  const profile = companyProfiles[legalEntityId?.slice(-3) ?? ''];
 
   return (
     <div className="grid w-full max-w-5xl gap-300">
       <section className="ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base flex flex-col gap-250 p-300 md:flex-row md:items-center">
         <span className="flex size-icon-control-lg shrink-0 items-center justify-center rounded-md bg-primary text-fg-primary">
-          <Icon icon={profile?.icon ?? 'icon-[mdi--hexagon-multiple-outline]'} size="md" />
+          <Icon icon="icon-[mdi--hexagon-multiple-outline]" size="md" />
         </span>
         <div className="flex min-w-0 flex-1 flex-col gap-100">
           <div className="flex flex-wrap items-center gap-100">
@@ -91,11 +82,7 @@ export const HomeWelcome = ({
           </div>
           <h2 className="font-semibold text-fg-primary text-xl">{t('shell.dashboard.home.welcomeTitle')}</h2>
           <p className="text-fg-secondary text-sm">{displayName}</p>
-          <p className="text-fg-secondary text-sm">
-            {profile === undefined
-              ? t('shell.dashboard.home.welcomeHint')
-              : t(`shell.dashboard.home.company.${profile.key}`)}
-          </p>
+          <p className="text-fg-secondary text-sm">{companyWelcome ?? t('shell.dashboard.home.welcomeHint')}</p>
         </div>
         {start?.href === undefined || start.href === null ? null : (
           <LinkButton

@@ -1,0 +1,2 @@
+ALTER TABLE "core"."legal_entities" ADD COLUMN "welcome" text;--> statement-breakpoint
+ALTER TABLE "core"."legal_entities" ADD CONSTRAINT "core_legal_entities_welcome_ck" CHECK (length("welcome") between 1 and 400);

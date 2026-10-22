@@ -15,6 +15,8 @@ export const LegalEntityDetailResponseSchema = Schema.Struct({
   legalEntityRef: LegalEntityRefSchema,
   legalName: Schema.String,
   status: LegalEntityStatusSchema,
+  /** What the company does, shown on Home; absent when the company provides no text. */
+  welcome: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(400))),
 });
 export type LegalEntityDetailResponse = typeof LegalEntityDetailResponseSchema.Type;
 
@@ -32,7 +34,7 @@ const unavailable = (cause?: unknown): ReadHandlerUnavailable => {
 const services = (transaction: ScopedTransactionExecutor, tenantId: string) => ({
   find: (legalEntityId: string) =>
     transaction
-      .select({ legalName: legalEntities.legalName, status: legalEntities.status })
+      .select({ legalName: legalEntities.legalName, status: legalEntities.status, welcome: legalEntities.welcome })
       .from(legalEntities)
       .where(and(eq(legalEntities.tenantId, tenantId), eq(legalEntities.legalEntityId, legalEntityId)))
       .limit(2)
@@ -47,7 +49,7 @@ export const classifyLegalEntityDetail = Effect.fn('LegalEntityDetail.classify')
   function* classifyLegalEntityDetailEffect(
     input: LegalEntityDetailRequest,
     tenantId: string,
-    rows: readonly { readonly legalName: string; readonly status: string }[],
+    rows: readonly { readonly legalName: string; readonly status: string; readonly welcome: string | null }[],
   ): Effect.fn.Return<LegalEntityDetailResponse, ReadHandlerNotFound | ReadHandlerUnavailable> {
     if (input.legalEntityRef.tenantId !== tenantId || rows.length === 0) {
       return yield* new ReadHandlerNotFound({ code: 'read_handler_not_found', reason: 'Legal Entity not found' });
@@ -59,7 +61,12 @@ export const classifyLegalEntityDetail = Effect.fn('LegalEntityDetail.classify')
     const status = yield* Schema.decodeUnknownEffect(LegalEntityStatusSchema)(row.status).pipe(
       Effect.mapError(unavailable),
     );
-    return { legalEntityRef: input.legalEntityRef, legalName: row.legalName, status };
+    return {
+      legalEntityRef: input.legalEntityRef,
+      legalName: row.legalName,
+      status,
+      ...(row.welcome === null ? {} : { welcome: row.welcome }),
+    };
   },
 );
 

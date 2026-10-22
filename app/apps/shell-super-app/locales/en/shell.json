@@ -36,12 +36,6 @@
         "start": "Start: {{destination}}",
         "areas": "Your areas",
         "noAreas": "This account has no area assigned yet. Ask an administrator for a role.",
-        "company": {
-          "trading": "Wholesale with an online shop: customers, opportunities, orders, stock and invoices in one place.",
-          "estate": "Estate management: properties, leases, contracts, operations, energy and finance under one roof.",
-          "wholesale": "Wholesale sales team: clients, contact plan, visits, order imports and sales overview.",
-          "eshop": "Coffee and tea online shop: products, variants, orders and dispatch."
-        },
         "groupHints": {
           "realEstate": "Properties, leases and stays",
           "facility": "Operations, assets and energy",

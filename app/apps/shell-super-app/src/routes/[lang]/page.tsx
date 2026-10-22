@@ -90,8 +90,8 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
             Match.when({ state: 'forbidden' }, () => (
               <HomeWelcome
                 companyName={companyName}
+                companyWelcome={model.companyWelcome}
                 displayName={model.identity.displayName}
-                legalEntityId={model.selectedLegalEntityId}
                 navigation={model.navigation.items}
                 unavailableDeployments={model.navigation.unavailableDeployments}
               />
