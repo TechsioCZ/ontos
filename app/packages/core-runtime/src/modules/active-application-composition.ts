@@ -57,57 +57,63 @@ const decodeSnapshot = Schema.decodeEffect(Schema.toType(ActiveApplicationCompos
   onExcessProperty: 'error',
 });
 
+const checkLease = (snapshot: ActiveApplicationCompositionSnapshot) =>
+  Effect.flatMap(Clock.currentTimeMillis, (now) =>
+    DateTime.toEpochMillis(snapshot.observedAt) > now || DateTime.toEpochMillis(snapshot.validUntil) <= now
+      ? Effect.fail(unavailableActiveApplicationComposition('Application Composition authority is expired or not yet valid'))
+      : Effect.succeed(snapshot),
+  );
+
+/**
+ * Admits one decoded snapshot: lease, then the complete catalog of the frozen composition. Building the catalog
+ * from the frozen value retains it, so every consumer of this revision reuses the same verified catalog.
+ */
+const approveDecodedSnapshot = Effect.fn('ActiveApplicationComposition.approveDecodedSnapshot')(function* approve(
+  decoded: ActiveApplicationCompositionSnapshot,
+) {
+  const observedAt = DateTime.make(DateTime.toEpochMillis(decoded.observedAt));
+  const validUntil = DateTime.make(DateTime.toEpochMillis(decoded.validUntil));
+  if (Option.isNone(observedAt) || Option.isNone(validUntil)) {
+    return yield* unavailableActiveApplicationComposition('Application Composition authority dates are invalid');
+  }
+  // Utc values have one lazy parts cache. Hydrate it before freezing a private copy so native
+  // DateTime operations remain usable and caller-owned values cannot extend a validated lease.
+  Object.freeze(DateTime.toPartsUtc(observedAt.value));
+  Object.freeze(DateTime.toPartsUtc(validUntil.value));
+  const observed = Object.freeze(observedAt.value);
+  const expires = Object.freeze(validUntil.value);
+  const now = yield* Clock.currentTimeMillis;
+  if (DateTime.toEpochMillis(observed) > now || DateTime.toEpochMillis(expires) <= now) {
+    return yield* unavailableActiveApplicationComposition(
+      'Application Composition authority is expired or not yet valid',
+    );
+  }
+  const composition = freezeApplicationCompositionArtifact(decoded.composition);
+  yield* buildApplicationCompositionCatalog(composition).pipe(Effect.mapError(unavailableActiveApplicationComposition));
+  if (DateTime.toEpochMillis(expires) <= (yield* Clock.currentTimeMillis)) {
+    return yield* unavailableActiveApplicationComposition(
+      'Application Composition authority expired during validation',
+    );
+  }
+  const validated = Object.freeze({ ...decoded, composition, observedAt: observed, validUntil: expires });
+  yield* Ref.update(validatedSnapshots, (snapshots) => snapshots.add(validated));
+  return validated;
+});
+
 /** Every injected/runtime source is checked at the operation edge; expiry never selects an old revision. */
 export const validateActiveApplicationCompositionSnapshot = Effect.fn('ActiveApplicationComposition.validateSnapshot')(
   function* validateSnapshot(snapshot: ActiveApplicationCompositionSnapshot) {
     if ((yield* Ref.get(validatedSnapshots)).has(snapshot)) {
-      const now = yield* Clock.currentTimeMillis;
-      if (DateTime.toEpochMillis(snapshot.observedAt) > now || DateTime.toEpochMillis(snapshot.validUntil) <= now) {
-        return yield* unavailableActiveApplicationComposition(
-          'Application Composition authority is expired or not yet valid',
-        );
-      }
-      return snapshot;
+      return yield* checkLease(snapshot);
     }
     const decoded = yield* decodeSnapshot(snapshot).pipe(Effect.mapError(unavailableActiveApplicationComposition));
-    const observedAt = DateTime.make(DateTime.toEpochMillis(decoded.observedAt));
-    const validUntil = DateTime.make(DateTime.toEpochMillis(decoded.validUntil));
-    if (Option.isNone(observedAt) || Option.isNone(validUntil)) {
-      return yield* unavailableActiveApplicationComposition('Application Composition authority dates are invalid');
-    }
-    // Utc values have one lazy parts cache. Hydrate it before freezing a private copy so native
-    // DateTime operations remain usable and caller-owned values cannot extend a validated lease.
-    Object.freeze(DateTime.toPartsUtc(observedAt.value));
-    Object.freeze(DateTime.toPartsUtc(validUntil.value));
-    const observed = Object.freeze(observedAt.value);
-    const expires = Object.freeze(validUntil.value);
-    const now = yield* Clock.currentTimeMillis;
-    if (DateTime.toEpochMillis(observed) > now || DateTime.toEpochMillis(expires) <= now) {
-      return yield* unavailableActiveApplicationComposition(
-        'Application Composition authority is expired or not yet valid',
-      );
-    }
-    yield* buildApplicationCompositionCatalog(decoded.composition).pipe(
-      Effect.mapError(unavailableActiveApplicationComposition),
-    );
-    if (DateTime.toEpochMillis(expires) <= (yield* Clock.currentTimeMillis)) {
-      return yield* unavailableActiveApplicationComposition(
-        'Application Composition authority expired during validation',
-      );
-    }
-    const validated = Object.freeze({
-      ...decoded,
-      composition: freezeApplicationCompositionArtifact(decoded.composition),
-      observedAt: observed,
-      validUntil: expires,
-    });
-    yield* Ref.update(validatedSnapshots, (snapshots) => snapshots.add(validated));
-    return validated;
+    return yield* approveDecodedSnapshot(decoded);
   },
 );
 
-// Bounded to one successful wire value across request-scoped Layers. Exact bytes, not a claimed
-// revision, identify the cache entry; each source read and each lease check still runs.
+// Bounded to one successful wire value across request-scoped Layers. Exact text, not a claimed
+// revision, identifies the cache entry: the wire value is decoded and verified once per isolate,
+// while each source read and each lease check still runs per request.
 const configuredSnapshot = Ref.makeUnsafe<{
   readonly encoded: string;
   readonly snapshot: ActiveApplicationCompositionSnapshot;
@@ -118,7 +124,7 @@ const configuredActiveApplicationCompositionSnapshot = Effect.fn(
 )(function* loadConfiguredSnapshot(encoded: string) {
   const cached = yield* Ref.get(configuredSnapshot);
   if (cached?.encoded === encoded) {
-    return yield* validateActiveApplicationCompositionSnapshot(cached.snapshot);
+    return yield* checkLease(cached.snapshot);
   }
   if (
     encoded.length > ONTOS_APPLICATION_COMPOSITION_MAX_BYTES ||
@@ -126,13 +132,12 @@ const configuredActiveApplicationCompositionSnapshot = Effect.fn(
   ) {
     return yield* unavailableActiveApplicationComposition('Application Composition snapshot exceeds its byte budget');
   }
-  return yield* Schema.decodeEffect(activeApplicationCompositionSnapshotJsonSchema, {
+  const decoded = yield* Schema.decodeEffect(activeApplicationCompositionSnapshotJsonSchema, {
     onExcessProperty: 'error',
-  })(encoded).pipe(
-    Effect.mapError(unavailableActiveApplicationComposition),
-    Effect.flatMap(validateActiveApplicationCompositionSnapshot),
-    Effect.tap((snapshot) => Ref.set(configuredSnapshot, { encoded, snapshot })),
-  );
+  })(encoded).pipe(Effect.mapError(unavailableActiveApplicationComposition));
+  const snapshot = yield* approveDecodedSnapshot(decoded);
+  yield* Ref.set(configuredSnapshot, { encoded, snapshot });
+  return snapshot;
 });
 
 /**
