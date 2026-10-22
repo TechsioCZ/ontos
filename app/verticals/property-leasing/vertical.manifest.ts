@@ -16,6 +16,7 @@ import { RecordsPage } from './src/routes/[lang]/najmy/page.tsx';
 const OWNER_MODULE_KEY = 'property.leasing';
 const RECORDS_PAGE_KEY = 'property.leasing.page.records';
 // </generated-module-manifest-imports>
+import { propertyLeasingMcpContribution } from './shared/mcp/contribution.ts';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -60,6 +61,7 @@ export const propertyLeasingManifest = defineOntosModuleManifest({
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: propertyLeasingMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>

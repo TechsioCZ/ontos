@@ -77,6 +77,7 @@ import { updatePartyAction } from './src/actions/update-party.action.ts';
 import { updatePartyOfficialIdentifierAction } from './src/actions/update-party-official-identifier.action.ts';
 import { updatePartyRelationshipAction } from './src/actions/update-party-relationship.action.ts';
 // </generated-module-manifest-imports>
+import { partyRegistryMcpContribution } from './shared/mcp/contribution.ts';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -170,6 +171,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: partyRegistryMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>

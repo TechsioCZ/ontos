@@ -63,6 +63,7 @@ import { upsertRetentionRuleAction } from './src/actions/upsert-retention-rule.a
 import { upsertTemporaryDsrExportAction } from './src/actions/upsert-temporary-dsr-export.action.ts';
 import { Widget } from './src/components/widget.tsx';
 // </generated-module-manifest-imports>
+import { privacyMcpContribution } from './shared/mcp/contribution.ts';
 
 type PublicComponentContributionInput = typeof ShellPublicComponentContributionSchema.Encoded;
 type PublicComponentContribution = typeof ShellPublicComponentContributionSchema.Type;
@@ -151,6 +152,7 @@ export const privacyManifest: OntosModuleManifestInput = defineOntosModuleManife
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: privacyMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>
