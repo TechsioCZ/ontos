@@ -474,17 +474,6 @@ export const prefetchRecordedReads = Effect.fn('BrowserRequestCache.prefetchReco
   },
 );
 
-/** Audiences of every recorded page read, so their assertions can be issued before the first click. */
-export const recordedReadAudiences = Effect.try(() =>
-  Object.keys(globalThis.localStorage).filter((key) => key.startsWith(MANIFEST_PREFIX)),
-).pipe(
-  Effect.flatMap((keys) =>
-    Effect.forEach(keys, (key) => readManifest(key.slice(MANIFEST_PREFIX.length)), { concurrency: 1 }),
-  ),
-  Effect.map((manifests) => [...new Set(manifests.flat().map((read) => read.audience))]),
-  Effect.orElseSucceed((): readonly string[] => []),
-);
-
 /**
  * Drops every recorded page read. Recordings belong to the account that made them, so signing in or out must not
  * let the next account replay reads (and warm assertions) it may not be allowed to make.
@@ -496,17 +485,3 @@ export const forgetRecordedPageReads = Effect.try(() => {
     }
   }
 }).pipe(Effect.ignore);
-
-/** Issues one assertion per audience in parallel; the request cache then serves them to every remote. */
-export const warmGatewayAssertions = (audiences: readonly string[]) =>
-  Effect.forEach(
-    audiences,
-    (audience) =>
-      makeOperationGateway(audience)
-        .invoke(() => Effect.void)
-        .pipe(Effect.ignore),
-    {
-      concurrency: PREFETCH_CONCURRENCY,
-      discard: true,
-    },
-  );
