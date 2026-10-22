@@ -159,7 +159,7 @@ const fixtureReadConnectionFailure = (cause: EffectDrizzleQueryError) =>
     { value: cause },
   );
 
-it.live('holds native Read authority through policies and commits denial evidence under active authority', () =>
+it.live('holds native Read authority through owner work and commits denial evidence under active authority', () =>
   Effect.gen(function* readCompositionFence() {
     const { admin, runtime: runtimeClient } = yield* readDatabaseClients;
     const database = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
@@ -234,33 +234,25 @@ it.live('holds native Read authority through policies and commits denial evidenc
       principalId,
       tenantId,
     });
-    const policyStarted = yield* Deferred.make<null>();
-    const policyRelease = yield* Deferred.make<null>();
+    const ownerStarted = yield* Deferred.make<null>();
+    const ownerRelease = yield* Deferred.make<null>();
     const ownerBackend = yield* Deferred.make<number>();
     const drainStarted = yield* Deferred.make<null>();
     let factoryCalls = 0;
     let handlerCalls = 0;
     let policyCalls = 0;
-    let currentOwnerBackend: number | undefined;
     let policyDenial = false;
     let ownerAuthorizationDecision: 'allowed' | 'denied' = 'allowed';
     const policy = defineGlobalPolicy<Readonly<Record<string, never>>>({
       evaluate: () =>
-        Effect.gen(function* heldReadPolicy() {
+        Effect.gen(function* readPolicy() {
           policyCalls += 1;
-          const [backend] = yield* database
-            .execute<{ readonly pid: number }>(sql`select pg_backend_pid() as pid`, 'objects')
-            .pipe(Effect.orDie);
-          currentOwnerBackend = Option.getOrThrow(Option.fromNullishOr(backend)).pid;
-          yield* Deferred.succeed(ownerBackend, currentOwnerBackend);
-          yield* Deferred.succeed(policyStarted, null);
-          yield* Deferred.await(policyRelease);
           if (policyDenial) {
             return yield* denyPolicy('native-policy-denied', 'The owner Policy denies this admitted Read');
           }
           return yield* Effect.void;
         }),
-      policyKey: `${readKey}.authority-held-policy.v1`,
+      policyKey: `${readKey}.policy.v1`,
     });
     const registration = defineRead(
       {
@@ -294,7 +286,12 @@ it.live('holds native Read authority through policies and commits denial evidenc
             .select({ pid: sql<number>`pg_backend_pid()` })
             .from(applicationCompositionAuthority)
             .pipe(Effect.mapError(fixtureReadConnectionFailure));
-          expect(Option.getOrThrow(Option.fromNullishOr(backend)).pid).toBe(currentOwnerBackend);
+          // The first owner transaction stays open so the test can observe it fencing a drain.
+          if (factoryCalls === 1) {
+            yield* Deferred.succeed(ownerBackend, Option.getOrThrow(Option.fromNullishOr(backend)).pid);
+            yield* Deferred.succeed(ownerStarted, null);
+            yield* Deferred.await(ownerRelease);
+          }
           return {};
         }),
       () => ({ kind: 'module', moduleId: 'core.shell' }),
@@ -328,7 +325,7 @@ it.live('holds native Read authority through policies and commits denial evidenc
     yield* Effect.scoped(
       Effect.gen(function* verifyReadCompositionFence() {
         const read = yield* run(revision).pipe(Effect.forkScoped);
-        yield* Deferred.await(policyStarted);
+        yield* Deferred.await(ownerStarted);
         const ownerPid = yield* Deferred.await(ownerBackend);
         const drain = yield* publisher
           .transaction(
@@ -352,12 +349,14 @@ it.live('holds native Read authority through policies and commits denial evidenc
         }
         expect(blocked).toBe(true);
         expect(drain.pollUnsafe()).toBeUndefined();
-        expect(factoryCalls).toBe(0);
+        // Authorization and Policies ran before the owner transaction opened; only owner work holds the fence.
+        expect(policyCalls).toBe(1);
+        expect(factoryCalls).toBe(1);
         expect(handlerCalls).toBe(0);
-        yield* Deferred.succeed(policyRelease, null);
+        yield* Deferred.succeed(ownerRelease, null);
         expect(yield* Fiber.join(read)).toEqual(['visible']);
         yield* Fiber.join(drain);
-      }).pipe(Effect.ensuring(Deferred.succeed(policyRelease, null))),
+      }).pipe(Effect.ensuring(Deferred.succeed(ownerRelease, null))),
     );
     expect(Schema.is(ReadHandlerUnavailable)(yield* Effect.flip(run(revision)))).toBe(true);
     const authorityCases = [

@@ -39,6 +39,46 @@ const requireReadCommitted = Effect.fn('ApplicationCompositionAuthority.requireR
   },
 );
 
+/** Reads the active authority row and applies the admission rules of one operation. */
+const admitAuthority = Effect.fn('ApplicationCompositionAuthority.admit')(function* admitAuthorityEffect(
+  executor: Pick<CoreTransaction, 'select'>,
+  expectedRevision: string,
+  operation: 'match' | 'read' | 'worker' | 'write',
+) {
+  // Only matching consumes the approved subscriptions. Every other admission reads the fence columns alone,
+  // so no request decodes and validates the subscription set while its transaction holds a pooled connection.
+  const [authority] = yield* executor
+    .select({
+      phase: applicationCompositionAuthority.phase,
+      revision: applicationCompositionAuthority.revision,
+      subscriptionsJson: operation === 'match' ? applicationCompositionAuthority.subscriptionsJson : sql<unknown>`null`,
+      unexpired: sql<boolean>`${applicationCompositionAuthority.validUntil} > clock_timestamp()`,
+    })
+    .from(applicationCompositionAuthority)
+    .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+  if (authority === undefined || !authority.unexpired || authority.revision !== expectedRevision) {
+    return yield* unavailable('The requested Application Composition is missing, expired, or no longer active');
+  }
+  if (authority.phase === 'sealed' || authority.phase === 'migrated') {
+    return yield* unavailable('Application Composition is sealed for schema migration and replacement');
+  }
+  if ((operation === 'write' || operation === 'read') && authority.phase !== 'active') {
+    return yield* unavailable('Application Composition promotion is draining outstanding work');
+  }
+  return authority.subscriptionsJson;
+});
+
+/**
+ * Rejects a stale, draining, or sealed revision with one statement and no transaction, before a
+ * Read spends network round trips on authorization or runs owner callbacks. It is not the fence:
+ * owner work still runs under {@link lockApplicationCompositionAuthority} in its own transaction.
+ */
+export const precheckApplicationCompositionAdmission = (
+  executor: Pick<CoreTransaction, 'select'>,
+  expectedRevision: string,
+  operation: 'read' | 'write',
+) => admitAuthority(executor, expectedRevision, operation).pipe(Effect.asVoid);
+
 /**
  * The same transaction-scoped PostgreSQL lock fences publication, matching, and owner writes.
  * Runtimes cannot modify the authority row: its RLS policy permits reads only.
@@ -54,28 +94,14 @@ export const lockApplicationCompositionAuthority = Effect.fn('ApplicationComposi
       sql`select pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0))`,
       'objects',
     );
-    const [authority] = yield* transaction
-      .select({
-        phase: applicationCompositionAuthority.phase,
-        revision: applicationCompositionAuthority.revision,
-        subscriptionsJson: applicationCompositionAuthority.subscriptionsJson,
-        unexpired: sql<boolean>`${applicationCompositionAuthority.validUntil} > clock_timestamp()`,
-      })
-      .from(applicationCompositionAuthority)
-      .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
-    if (authority === undefined || !authority.unexpired || authority.revision !== expectedRevision) {
-      return yield* unavailable('The requested Application Composition is missing, expired, or no longer active');
-    }
-    if (authority.phase === 'sealed' || authority.phase === 'migrated') {
-      return yield* unavailable('Application Composition is sealed for schema migration and replacement');
-    }
-    if ((operation === 'write' || operation === 'read') && authority.phase !== 'active') {
-      return yield* unavailable('Application Composition promotion is draining outstanding work');
+    const subscriptionsJson = yield* admitAuthority(transaction, expectedRevision, operation);
+    if (operation !== 'match') {
+      return Object.freeze([]);
     }
     const decodedSubscriptions = yield* Schema.decodeUnknownEffect(
       Schema.Array(OntosOutboxSubscriptionContractSchema),
       { onExcessProperty: 'error' },
-    )(authority.subscriptionsJson).pipe(
+    )(subscriptionsJson).pipe(
       Effect.mapError((cause) => unavailable('The approved Outbox subscription authority is invalid', cause)),
     );
     return yield* Effect.try({

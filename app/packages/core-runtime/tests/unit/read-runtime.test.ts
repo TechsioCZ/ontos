@@ -1052,7 +1052,7 @@ it.effect('rejects stale, draining, sealed, migrated, expired, or missing Read a
         overlayCalls: 0,
       });
       expect(policyCalls).toBe(0);
-      expect(harness.authorityCounts()).toEqual({ authorityLocks: 1, authorityReads: 1, scopeInstalls: 0 });
+      expect(harness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 1, scopeInstalls: 0 });
       expect(harness.transactionTimestampReads()).toBe(0);
       expect(harness.evidence()).toBe(0);
       expect(harness.stages).toEqual(['input_decoded']);
@@ -1092,7 +1092,8 @@ it.effect('admits the new active Read revision before scope, service factory, an
       }),
     ).toEqual(['current']);
     expect(events).toEqual(['authority_locked', 'scope_installed', 'factory', 'handler', 'transaction_settled']);
-    expect(harness.authorityCounts()).toEqual({ authorityLocks: 1, authorityReads: 1, scopeInstalls: 1 });
+    // One unlocked admission precheck before authorization, then the locked fence around owner work.
+    expect(harness.authorityCounts()).toEqual({ authorityLocks: 1, authorityReads: 2, scopeInstalls: 1 });
     expect(harness.evidence()).toBe(1);
   }),
 );
@@ -1115,7 +1116,7 @@ it.effect('persists no denied evidence for a stale admitted Read', () =>
     expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
     expect(harness.evidence()).toBe(0);
     expect(harness.stages).toEqual(['input_decoded']);
-    expect(harness.authorityCounts()).toEqual({ authorityLocks: 1, authorityReads: 1, scopeInstalls: 0 });
+    expect(harness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 1, scopeInstalls: 0 });
   }),
 );
 
@@ -1134,22 +1135,24 @@ it.effect('leaves owner-local Reads independent from composition authority queri
   }),
 );
 
-it.effect('rejects unsafe Read transaction isolation before acquiring authority or executing owner code', () =>
-  Effect.gen(function* rejectSnapshotReadAuthority() {
-    const harness = yield* makeHarness({ compositionIsolation: 'repeatable read' });
-    const failure = yield* Effect.flip(
-      harness.runtime.runRead({
-        input: {},
-        principal: trustVerifiedGatewayPrincipalContext(scope, approvedCompositionRevision),
-        registration: registration(),
-        transport: { correlationId: scope.correlationId },
-      }),
-    );
-    expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
-    expect(harness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 0, scopeInstalls: 0 });
-    expect(harness.stages).toEqual(['input_decoded']);
-    expect(harness.evidence()).toBe(0);
-  }),
+it.effect(
+  'rejects unsafe Read transaction isolation at the fence before acquiring authority or running owner work',
+  () =>
+    Effect.gen(function* rejectSnapshotReadAuthority() {
+      const harness = yield* makeHarness({ compositionIsolation: 'repeatable read' });
+      const failure = yield* Effect.flip(
+        harness.runtime.runRead({
+          input: {},
+          principal: trustVerifiedGatewayPrincipalContext(scope, approvedCompositionRevision),
+          registration: registration(),
+          transport: { correlationId: scope.correlationId },
+        }),
+      );
+      expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
+      expect(harness.authorityCounts()).toEqual({ authorityLocks: 0, authorityReads: 1, scopeInstalls: 0 });
+      expect(harness.stages).not.toContain('scope_installed');
+      expect(harness.evidence()).toBe(0);
+    }),
 );
 
 it.effect('does not mint a revision for a local Read that requires cross-owner credentials', () =>
@@ -1201,6 +1204,29 @@ const counterpartyReadRegistration = (legalEntityScope: 'required' | 'optional',
     () => Effect.succeed({}),
     () => ({ kind: 'legal_entity', permission: 'read_counterparty' }),
   );
+
+it.effect('keeps authorization round trips and evidence outside the owner transaction', () =>
+  Effect.gen(function* authorizationOutsideTransaction() {
+    const events: string[] = [];
+    const harness = yield* makeHarness({
+      onLegalEntityTarget: () => events.push('spicedb'),
+      permissionDecision: 'allowed',
+      resolvedScope: { ...scope, legalEntityId: '00000000-0000-4000-8000-000000000004' },
+      sqlEvents: events,
+    });
+    yield* harness.runtime.runRead({
+      input: {},
+      principal: trustVerifiedGatewayPrincipalContext(scope, approvedCompositionRevision),
+      registration: counterpartyReadRegistration('required', () => events.push('handler')),
+      transport: { correlationId: scope.correlationId },
+    });
+    // Every SpiceDB check finishes before the only transaction opens; it commits right after the handler.
+    expect(events).toContain('spicedb');
+    expect(events.lastIndexOf('spicedb')).toBeLessThan(events.indexOf('BEGIN'));
+    expect(events.slice(events.indexOf('BEGIN'))).toEqual(['BEGIN', 'handler', 'COMMIT']);
+    expect(harness.evidence()).toBe(1);
+  }),
+);
 
 it.effect(
   'authorizes an explicit Legal Entity target before handler resolution without substituting the selected context',
@@ -2383,7 +2409,7 @@ for (const mode of ['local', 'governed'] as const) {
       expect(sqlEvents).not.toContain('COMMIT');
       expect(harness.authorityCounts()).toEqual({
         authorityLocks: mode === 'governed' ? 1 : 0,
-        authorityReads: mode === 'governed' ? 1 : 0,
+        authorityReads: mode === 'governed' ? 2 : 0,
         scopeInstalls: 1,
       });
       expect(harness.evidence()).toBe(0);
@@ -2426,7 +2452,7 @@ for (const mode of ['local', 'governed'] as const) {
       expect(sqlEvents).not.toContain('COMMIT');
       expect(harness.authorityCounts()).toEqual({
         authorityLocks: mode === 'governed' ? 1 : 0,
-        authorityReads: mode === 'governed' ? 1 : 0,
+        authorityReads: mode === 'governed' ? 2 : 0,
         scopeInstalls: 1,
       });
     }),

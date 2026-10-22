@@ -115,7 +115,10 @@ it.effect('runs the original factory and handler with installed scope and commit
     expect(harness.snapshot().ownerQueries[0]?.sql).toContain('transaction_timestamp()');
     expect(harness.snapshot().evidenceWrites).toBe(1);
     expect(harness.snapshot().stages.slice(-3)).toEqual(['handler_executed', 'result_decoded', 'evidence_persisted']);
-    expect(harness.snapshot().statements.at(-1)).toBe('COMMIT');
+    // Allowed evidence follows the committed owner transaction, so no connection idles in it meanwhile.
+    const { statements } = harness.snapshot();
+    expect(statements.at(-1)).toContain('data_access_events');
+    expect(statements.at(-2)).toBe('COMMIT');
   }),
 );
 
