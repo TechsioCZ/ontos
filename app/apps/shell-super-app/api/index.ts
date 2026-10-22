@@ -1182,6 +1182,8 @@ const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'compo
         const response = yield* governedReads
           .moduleTarget({
             ...payload,
+            // The captured release: the pinned one when the caller sent it, otherwise the current one.
+            compositionRevision: catalog.composition.revision,
             correlationId,
             principal: session.principal,
           })

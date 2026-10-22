@@ -32,6 +32,7 @@ import type { AvailableTenantsClientError, ShellAuthenticationClientOptions } fr
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { browserBaseUrl, browserReadKey, browserStaleWhileRevalidateCache, keyPart } from '../browser-swr-cache.ts';
 import {
+  isServerRender,
   isServerRenderWithoutSession,
   shellAuthenticationClientOptionsFromRequest,
 } from '../shell-authentication-client-options.ts';
@@ -295,9 +296,6 @@ const homeFields = (
   }
   return deferredCandidates === undefined ? {} : { homeCandidates: deferredCandidates };
 };
-
-/** Server rendering has no browser document; the document's reads there carry the visitor's cookie. */
-const isServerRender = () => !('document' in globalThis);
 
 const requestedCompositionRevision = (request: Request) =>
   getDocumentCompositionRevision().pipe(

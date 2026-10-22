@@ -257,3 +257,45 @@ it.effect('admits an independent approved remote within the same document compos
     );
   }),
 );
+
+/** Server rendering: no browser document, like the SSR loader on Node and Workers. */
+const asServerRender = <Value, Failure>(operation: Effect.Effect<Value, Failure>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+      Reflect.deleteProperty(globalThis, 'document');
+      return descriptor;
+    }),
+    () => operation,
+    (descriptor) =>
+      Effect.sync(() => {
+        if (descriptor !== undefined) {
+          Object.defineProperty(globalThis, 'document', descriptor);
+        }
+      }),
+  );
+
+it.effect('server rendering resolves the target beside the Shell reads and keeps it only for that revision', () =>
+  Effect.gen(function* serverTargetBesideShell() {
+    const startedBeforeShell: boolean[] = [];
+    loadHomePageModelMock.mockImplementation(() =>
+      Effect.sync(() => {
+        startedBeforeShell.push(resolveModuleTargetMock.mock.calls.length > 0);
+        return authenticatedShell;
+      }),
+    );
+    expect(yield* asServerRender(moduleModel({ canonicalPath: '/contacts', request: request() }))).toMatchObject({
+      state: 'resolved',
+      target: { moduleId: 'party.registry' },
+    });
+    expect(startedBeforeShell).toEqual([true]);
+    expect(resolveModuleTargetMock).toHaveBeenCalledWith({ canonicalPath: '/contacts' }, expect.any(Object));
+
+    resolveModuleTargetMock.mockReturnValueOnce(
+      Effect.succeed({ ...approvedTarget, compositionRevision: 'd'.repeat(64) }),
+    );
+    expect(yield* asServerRender(moduleModel({ canonicalPath: '/contacts', request: request() }))).toMatchObject({
+      state: 'reload_required',
+    });
+  }),
+);

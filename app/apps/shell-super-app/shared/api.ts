@@ -516,7 +516,8 @@ export const ShellCompositionRequestSchema = Schema.Struct({
 
 export const ResolveModuleTargetPayloadSchema = Schema.Struct({
   canonicalPath: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(40_000))),
-  compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
+  /** The document's pinned release; without it the current release answers and the caller compares its revision. */
+  compositionRevision: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u))),
   entrypointKey: Schema.optionalKey(EntrypointKeySchema),
   moduleId: Schema.optionalKey(ModuleIdSchema),
 }).check(

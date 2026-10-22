@@ -17,6 +17,9 @@ export const shellAuthenticationClientOptionsFromRequest = (request: Request) =>
     }),
   );
 
+/** Server rendering has no browser document; its BFF reads carry the visitor's cookie and share no browser cache. */
+export const isServerRender = (): boolean => !('document' in globalThis);
+
 /** Better Auth's session cookie, with or without the `__Secure-` prefix the Shell uses over HTTPS. */
 const SESSION_COOKIE = /(?:^|;)\s*(?:__Secure-)?better-auth\.session_token=/u;
 
@@ -26,4 +29,4 @@ const SESSION_COOKIE = /(?:^|;)\s*(?:__Secure-)?better-auth\.session_token=/u;
  * visible here, so this never applies there.
  */
 export const isServerRenderWithoutSession = (options: ShellAuthenticationClientOptions): boolean =>
-  !('document' in globalThis) && (options.cookie === undefined || !SESSION_COOKIE.test(options.cookie));
+  isServerRender() && (options.cookie === undefined || !SESSION_COOKIE.test(options.cookie));
