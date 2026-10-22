@@ -2,50 +2,14 @@
 // Delivery ledger for the demo e-mail dispatcher: one row per e-mail (primary key = dedupe_key).
 import { PgClient } from '@effect/sql-pg';
 import { Effect } from 'effect';
+import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID } from './contract.ts';
 import type { DeliveryOutcome, EmailDeliverySource, EmailDeliveryView, PlannedEmail } from './contract.ts';
-
-const ISO = (column: string) => `to_char(${column} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
-
-const DDL: readonly string[] = [
-  `create schema if not exists demo_email`,
-  `create table if not exists demo_email.deliveries (
-      dedupe_key text primary key,
-      source text not null,
-      event text not null,
-      tenant_id uuid not null,
-      legal_entity_id uuid not null,
-      subject_id text not null,
-      subject_number text not null default '',
-      recipient text not null,
-      email_subject text not null,
-      status text not null check (status in ('SENDING', 'SENT', 'RETRY', 'FAILED', 'UNKNOWN')),
-      attempts integer not null default 1,
-      message_id text,
-      error_tag text,
-      event_at timestamptz not null,
-      created_at timestamptz not null default now(),
-      updated_at timestamptz not null default now(),
-      sent_at timestamptz
-    )`,
-  `alter table demo_email.deliveries add column if not exists event_label text`,
-  `alter table demo_email.deliveries drop constraint if exists deliveries_source_check`,
-  `alter table demo_email.deliveries add constraint deliveries_source_check check (source in ('akros-order', 'facility-agenda', 'rent-reminder'))`,
-  `create index if not exists deliveries_subject_idx on demo_email.deliveries (source, subject_id)`,
-  `create index if not exists deliveries_number_idx on demo_email.deliveries (source, subject_number)`,
-  `create table if not exists demo_email.settings (key text primary key, value text not null)`,
-  `insert into demo_email.settings (key, value) values ('enabled_since', ${ISO('now()')}) on conflict (key) do nothing`,
-];
-
-export const ensureLedger = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient;
-  for (const statement of DDL) {
-    yield* sql.unsafe(statement);
-  }
-});
 
 export const readEnabledSince = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient;
-  const rows = yield* sql<{ readonly value: string }>`select value from demo_email.settings where key = 'enabled_since'`;
+  const rows = yield* sql<{
+    readonly value: string;
+  }>`select value from demo_email.settings where key = 'enabled_since'`;
   const value = rows[0]?.value;
   if (value === undefined) {
     return yield* Effect.die(new Error('demo_email.settings enabled_since is missing'));
@@ -58,15 +22,8 @@ export const recoverInterrupted = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient;
   const rows = yield* sql<{ readonly dedupe_key: string }>`
     update demo_email.deliveries set status = 'UNKNOWN', error_tag = 'interrupted', updated_at = now()
-    where status = 'SENDING' returning dedupe_key`;
+    where status = 'SENDING' and updated_at < now() - interval '5 minutes' returning dedupe_key`;
   return rows.length;
-});
-
-export const listSettledKeys = Effect.gen(function* () {
-  const sql = yield* PgClient.PgClient;
-  const rows = yield* sql<{ readonly dedupe_key: string }>`
-    select dedupe_key from demo_email.deliveries where status in ('SENT', 'FAILED', 'UNKNOWN')`;
-  return rows.map((row) => row.dedupe_key);
 });
 
 /** A RETRY row older than this is given up: FAILED („Odeslání selhalo“), never left waiting forever. */
@@ -116,7 +73,12 @@ export const finish = (dedupeKey: string, outcome: DeliveryOutcome) =>
  * buyer of one order (order number + the e-mail address the order was placed with).
  */
 export type DeliveryReadScope =
-  | { readonly kind: 'company'; readonly legalEntityId: string; readonly principalId: string; readonly tenantId: string }
+  | {
+      readonly kind: 'company';
+      readonly legalEntityId: string;
+      readonly principalId: string;
+      readonly tenantId: string;
+    }
   | { readonly kind: 'buyer'; readonly recipient: string };
 
 /** Public receipts only: never selects the e-mail address or the message body. */
@@ -131,8 +93,8 @@ export const listDeliveries = (query: {
       return [] as readonly EmailDeliveryView[];
     }
     const sql = yield* PgClient.PgClient;
-    const tenantId = query.scope.kind === 'company' ? query.scope.tenantId : null;
-    const legalEntityId = query.scope.kind === 'company' ? query.scope.legalEntityId : null;
+    const tenantId = query.scope.kind === 'company' ? query.scope.tenantId : DEMO_TENANT_ID;
+    const legalEntityId = query.scope.kind === 'company' ? query.scope.legalEntityId : AKROS_LEGAL_ENTITY_ID;
     const recipient = query.scope.kind === 'buyer' ? query.scope.recipient.trim().toLowerCase() : null;
     // Unused lists become a value no subject id/number can have, so each query keeps one static shape.
     const ids = query.subjectIds.length > 0 ? query.subjectIds : [''];
@@ -153,5 +115,7 @@ export const listDeliveries = (query: {
     for (const row of rows) {
       merged.set(`${row.subjectId}:${row.event}`, row);
     }
-    return [...merged.values()].sort((a, b) => Date.parse(a.eventAt) - Date.parse(b.eventAt)) as readonly EmailDeliveryView[];
+    return [...merged.values()].sort(
+      (a, b) => Date.parse(a.eventAt) - Date.parse(b.eventAt),
+    ) as readonly EmailDeliveryView[];
   });

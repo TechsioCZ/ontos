@@ -1,5 +1,11 @@
 // @effect-diagnostics *:off
-import type { AgendaRecipientInput, AkrosOrderInput, DeliveryOutcome, PlannedEmail, RentReminderInput } from './contract.ts';
+import type {
+  AgendaRecipientInput,
+  AkrosOrderInput,
+  DeliveryOutcome,
+  PlannedEmail,
+  RentReminderInput,
+} from './contract.ts';
 import { AGENDA_MANDATORY_EMAIL_CATEGORIES, AGENDA_OPTIONAL_EMAIL_CATEGORIES } from './contract.ts';
 import type { AkrosOrderEmailEvent } from './templates.ts';
 import { agendaNotificationEmail, akrosOrderEmail, orderEventLabel, rentReminderEmail } from './templates.ts';
@@ -76,7 +82,9 @@ export const planAkrosOrderEmails = (
     const rendered = akrosOrderEmail(
       order,
       e.event,
-      e.reason === undefined ? { storefrontUrl: options.storefrontUrl } : { reason: e.reason, storefrontUrl: options.storefrontUrl },
+      e.reason === undefined
+        ? { storefrontUrl: options.storefrontUrl }
+        : { reason: e.reason, storefrontUrl: options.storefrontUrl },
     );
     return {
       dedupeKey: `akros-order:${order.id}:${e.event}`,

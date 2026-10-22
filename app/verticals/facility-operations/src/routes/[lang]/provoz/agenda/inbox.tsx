@@ -10,11 +10,24 @@ import { DateTime } from 'effect';
 import { useState } from 'react';
 import type { Notification, NotificationPreference } from '../../../../../shared/domain/agenda.ts';
 import type { AgendaState } from '../../../../../shared/domain/agenda.ts';
-import { DEFAULT_LEAD_DAYS, MANDATORY_EMAIL_CATEGORIES, OPTIONAL_EMAIL_CATEGORIES } from '../../../../../shared/domain/agenda.ts';
+import {
+  DEFAULT_LEAD_DAYS,
+  MANDATORY_EMAIL_CATEGORIES,
+  OPTIONAL_EMAIL_CATEGORIES,
+} from '../../../../../shared/domain/agenda.ts';
 import { daysUntil, urgencyOf } from '../../../../ui/ops-agenda/deadlines.ts';
 import type { Deadline } from '../../../../ui/ops-agenda/deadlines.ts';
 import { personaOf } from '../../../../ui/ops-agenda/personas.ts';
-import { Icon, IconBadge, Pill, categoryTone, fmt, langOf, toneColors, urgencyTone } from '../../../../ui/ops-agenda/ui-bits.tsx';
+import {
+  Icon,
+  IconBadge,
+  Pill,
+  categoryTone,
+  fmt,
+  langOf,
+  toneColors,
+  urgencyTone,
+} from '../../../../ui/ops-agenda/ui-bits.tsx';
 import type { Tone } from '../../../../ui/ops-agenda/model.ts';
 import { agendaEmailKey, useAgendaEmailReceipts, useEmailProvider } from './agenda-email.tsx';
 
@@ -34,8 +47,10 @@ export const myNotifications = (state: AgendaState | undefined, me: string | und
     .filter((entry) => entry.recipient.principalId === me)
     .toSorted((left, right) => DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt));
 
-export const myPreference = (state: AgendaState | undefined, me: string | undefined): NotificationPreference | undefined =>
-  state?.preferences?.find((entry) => entry.principal.principalId === me);
+export const myPreference = (
+  state: AgendaState | undefined,
+  me: string | undefined,
+): NotificationPreference | undefined => state?.preferences?.find((entry) => entry.principal.principalId === me);
 
 // ---- Notification centre -----------------------------------------------------------------------------------------
 
@@ -63,13 +78,17 @@ export const NotificationCenter = ({
   const unread = all.filter((entry) => entry.readAt === undefined);
   const rows = filter === 'unread' ? unread : all;
   const emailOn = myPreference(state, me)?.emailOptIn === true;
-  const emailKeyOf = (entry: Notification) => agendaEmailKey(entry.recipient.principalId, DateTime.formatIso(entry.createdAt));
+  const emailKeyOf = (entry: Notification) =>
+    agendaEmailKey(entry.recipient.principalId, DateTime.formatIso(entry.createdAt));
   const receipts = useAgendaEmailReceipts(emailOn ? rows.slice(0, 100).map(emailKeyOf) : []);
   return (
     <SectionCard
       actions={
         <>
-          <div className="facilityoperations:inline-flex facilityoperations:rounded-lg facilityoperations:p-0.5" style={{ background: 'var(--color-surface-subtle, #f1f5f9)' }}>
+          <div
+            className="facilityoperations:inline-flex facilityoperations:rounded-lg facilityoperations:p-0.5"
+            style={{ background: 'var(--color-surface-subtle, #f1f5f9)' }}
+          >
             {(['all', 'unread'] as const).map((value) => (
               <button
                 aria-pressed={filter === value}
@@ -124,7 +143,10 @@ export const NotificationCenter = ({
           title={filter === 'unread' ? t(`${k}.notifications.emptyUnread`) : t(`${k}.notifications.empty`)}
         />
       ) : (
-        <ul className="facilityoperations:m-0 facilityoperations:flex facilityoperations:list-none facilityoperations:flex-col facilityoperations:gap-2 facilityoperations:p-0" data-testid="notification-list">
+        <ul
+          className="facilityoperations:m-0 facilityoperations:flex facilityoperations:list-none facilityoperations:flex-col facilityoperations:gap-2 facilityoperations:p-0"
+          data-testid="notification-list"
+        >
           {rows.map((entry) => {
             const tone = notificationTone[entry.category];
             const isUnread = entry.readAt === undefined;
@@ -146,14 +168,22 @@ export const NotificationCenter = ({
                     <Pill solid={isUnread} tone={tone}>
                       {t(`${k}.notifications.category.${entry.category}`)}
                     </Pill>
-                    <span className="ops-inbox-title facilityoperations:w-full facilityoperations:font-medium">{entry.title}</span>
+                    <span className="ops-inbox-title facilityoperations:w-full facilityoperations:font-medium">
+                      {entry.title}
+                    </span>
                   </div>
                   <span className="ops-inbox-meta facilityoperations:text-xs" style={muted}>
                     {[
                       t(`${k}.sources.${entry.source}`),
-                      entry.dueDate === undefined ? undefined : t(`${k}.notifications.due`, { date: fmt.short(lang, entry.dueDate) }),
-                      entry.detail === undefined ? undefined : t(`${k}.category.${entry.detail}`, { defaultValue: entry.detail }),
-                      from === undefined || entry.category !== 'ASSIGNED' || entry.source === 'work' ? undefined : t(`${k}.notifications.from`, { who: from.email }),
+                      entry.dueDate === undefined
+                        ? undefined
+                        : t(`${k}.notifications.due`, { date: fmt.short(lang, entry.dueDate) }),
+                      entry.detail === undefined
+                        ? undefined
+                        : t(`${k}.category.${entry.detail}`, { defaultValue: entry.detail }),
+                      from === undefined || entry.category !== 'ASSIGNED' || entry.source === 'work'
+                        ? undefined
+                        : t(`${k}.notifications.from`, { who: from.email }),
                       fmt.stamp(lang, DateTime.formatIso(entry.createdAt)),
                     ]
                       .filter((part) => part !== undefined)
@@ -162,7 +192,10 @@ export const NotificationCenter = ({
                 </div>
                 <div className="ops-inbox-actions">
                   {entry.href !== undefined && (
-                    <a className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-sm facilityoperations:font-medium" href={`/${lang}${entry.href}`}>
+                    <a
+                      className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-sm facilityoperations:font-medium"
+                      href={`/${lang}${entry.href}`}
+                    >
                       {t(`${k}.open`)}
                       <Icon name="arrowRight" size={14} />
                     </a>
@@ -178,18 +211,27 @@ export const NotificationCenter = ({
                     const label =
                       receipt.status === 'SENT' && receipt.sentAt !== null
                         ? t(`${k}.notifications.emailSent`, { time: fmt.stamp(lang, receipt.sentAt) })
-                        : receipt.status === 'FAILED' || receipt.status === 'UNKNOWN'
-                          ? t(`${k}.notifications.emailFailed`)
-                          : t(`${k}.notifications.emailPending`);
+                        : receipt.status === 'SKIPPED'
+                          ? t(`${k}.notifications.emailSkipped`)
+                          : receipt.status === 'FAILED' || receipt.status === 'UNKNOWN'
+                            ? t(`${k}.notifications.emailFailed`)
+                            : t(`${k}.notifications.emailPending`);
                     return (
-                      <span className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-xs" data-testid="notification-email" style={muted}>
+                      <span
+                        className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-xs"
+                        data-testid="notification-email"
+                        style={muted}
+                      >
                         <Icon name="mail" size={14} />
                         {label}
                       </span>
                     );
                   })()}
                   {!isUnread && entry.readAt !== undefined && (
-                    <span className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-xs" style={muted}>
+                    <span
+                      className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-xs"
+                      style={muted}
+                    >
                       <Icon name="check" size={14} />
                       {t(`${k}.notifications.readAt`, { time: fmt.stamp(lang, DateTime.formatIso(entry.readAt)) })}
                     </span>
@@ -246,15 +288,27 @@ export const MyAgenda = ({
                 className="facilityoperations:flex facilityoperations:w-full facilityoperations:cursor-pointer facilityoperations:items-center facilityoperations:gap-3 facilityoperations:rounded-lg facilityoperations:px-2 facilityoperations:py-2 facilityoperations:text-left facilityoperations:hover:shadow-sm"
                 data-key={row.key}
                 onClick={() => onOpen(row)}
-                style={{ background: 'var(--color-surface-subtle, #f8fafc)', border: 0, color: 'inherit', font: 'inherit' }}
+                style={{
+                  background: 'var(--color-surface-subtle, #f8fafc)',
+                  border: 0,
+                  color: 'inherit',
+                  font: 'inherit',
+                }}
                 type="button"
               >
                 <span
                   className="facilityoperations:flex facilityoperations:h-10 facilityoperations:w-10 facilityoperations:shrink-0 facilityoperations:flex-col facilityoperations:items-center facilityoperations:justify-center facilityoperations:rounded-lg facilityoperations:text-xs facilityoperations:font-semibold"
-                  style={{ background: toneColors(urgencyTone[urgency]).bg, color: toneColors(urgencyTone[urgency]).fg }}
+                  style={{
+                    background: toneColors(urgencyTone[urgency]).bg,
+                    color: toneColors(urgencyTone[urgency]).fg,
+                  }}
                 >
-                  <span className="facilityoperations:text-base facilityoperations:leading-none">{Number(row.date.slice(8, 10))}</span>
-                  <span className="facilityoperations:text-[10px] facilityoperations:uppercase">{fmt.weekday(lang, row.date)}</span>
+                  <span className="facilityoperations:text-base facilityoperations:leading-none">
+                    {Number(row.date.slice(8, 10))}
+                  </span>
+                  <span className="facilityoperations:text-[10px] facilityoperations:uppercase">
+                    {fmt.weekday(lang, row.date)}
+                  </span>
                 </span>
                 <span className="facilityoperations:flex facilityoperations:min-w-0 facilityoperations:flex-1 facilityoperations:flex-col">
                   <span className="facilityoperations:truncate facilityoperations:font-medium">{row.title}</span>
@@ -289,9 +343,17 @@ export const MyAgenda = ({
           }
           title={t(`${k}.mine.tasks`, { count: tasks.length })}
         >
-          {workStatus === 'ready' ? list(tasks, t(`${k}.mine.noTasks`)) : <p className="facilityoperations:m-0 facilityoperations:text-sm" style={muted}>{t(`${k}.state.${workStatus}`)}</p>}
+          {workStatus === 'ready' ? (
+            list(tasks, t(`${k}.mine.noTasks`))
+          ) : (
+            <p className="facilityoperations:m-0 facilityoperations:text-sm" style={muted}>
+              {t(`${k}.state.${workStatus}`)}
+            </p>
+          )}
         </SectionCard>
-        <SectionCard title={t(`${k}.mine.events`, { count: events.length })}>{list(events, t(`${k}.mine.noEvents`))}</SectionCard>
+        <SectionCard title={t(`${k}.mine.events`, { count: events.length })}>
+          {list(events, t(`${k}.mine.noEvents`))}
+        </SectionCard>
       </div>
       <SectionCard title={t(`${k}.mine.byCategory`)}>
         <div className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:gap-2">
@@ -356,7 +418,9 @@ export const SettingsPanel = ({
         : provider.provider.configured
           ? t(`${k}.settings.emailReal`, { address, provider: provider.provider.label ?? 'SMTP' })
           : t(`${k}.settings.emailNotConfigured`);
-  const exports = (state?.exports ?? []).toSorted((left, right) => DateTime.toEpochMillis(right.exportedAt) - DateTime.toEpochMillis(left.exportedAt)).slice(0, 25);
+  const exports = (state?.exports ?? [])
+    .toSorted((left, right) => DateTime.toEpochMillis(right.exportedAt) - DateTime.toEpochMillis(left.exportedAt))
+    .slice(0, 25);
   return (
     <div className="facilityoperations:grid facilityoperations:grid-cols-1 facilityoperations:gap-4 facilityoperations:xl:grid-cols-5">
       <div className="facilityoperations:xl:col-span-2">
@@ -364,7 +428,11 @@ export const SettingsPanel = ({
           <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-4">
             <Select
               disabled={!canWrite}
-              items={['3', '7', '14', '30', '60'].map((value) => ({ displayValue: t(`${k}.settings.days`, { count: Number(value) }), label: t(`${k}.settings.days`, { count: Number(value) }), value }))}
+              items={['3', '7', '14', '30', '60'].map((value) => ({
+                displayValue: t(`${k}.settings.days`, { count: Number(value) }),
+                label: t(`${k}.settings.days`, { count: Number(value) }),
+                value,
+              }))}
               label={t(`${k}.settings.leadDays`)}
               name="leadDays"
               onValueChange={({ value }) => setLeadDays(value[0] ?? String(DEFAULT_LEAD_DAYS))}
@@ -375,14 +443,23 @@ export const SettingsPanel = ({
               <Switch checked={email} disabled={!canWrite} onCheckedChange={setEmail}>
                 {t(`${k}.settings.email`)}
               </Switch>
-              <span className="facilityoperations:flex facilityoperations:flex-col facilityoperations:items-start facilityoperations:gap-1 facilityoperations:text-xs" data-testid="email-provider" style={muted}>
+              <span
+                className="facilityoperations:flex facilityoperations:flex-col facilityoperations:items-start facilityoperations:gap-1 facilityoperations:text-xs"
+                data-testid="email-provider"
+                style={muted}
+              >
                 {providerPill}
                 <span>{providerText}</span>
               </span>
             </div>
             {email && (
-              <fieldset className="facilityoperations:m-0 facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-2 facilityoperations:border-0 facilityoperations:p-0" data-testid="email-events">
-                <legend className="facilityoperations:mb-1 facilityoperations:p-0 facilityoperations:text-sm facilityoperations:font-medium">{t(`${k}.settings.emailEvents`)}</legend>
+              <fieldset
+                className="facilityoperations:m-0 facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-2 facilityoperations:border-0 facilityoperations:p-0"
+                data-testid="email-events"
+              >
+                <legend className="facilityoperations:mb-1 facilityoperations:p-0 facilityoperations:text-sm facilityoperations:font-medium">
+                  {t(`${k}.settings.emailEvents`)}
+                </legend>
                 {MANDATORY_EMAIL_CATEGORIES.map((category) => (
                   <FormCheckbox
                     checked
@@ -423,7 +500,18 @@ export const SettingsPanel = ({
                 : t(`${k}.settings.savedAt`, { time: fmt.stamp(lang, DateTime.formatIso(current.updatedAt)) })}
             </p>
             {canWrite && (
-              <Button isLoading={saving} onClick={() => onSave(Number(leadDays), email, OPTIONAL_EMAIL_CATEGORIES.filter((category) => optional.has(category)))} size="sm" variant="primary">
+              <Button
+                isLoading={saving}
+                onClick={() =>
+                  onSave(
+                    Number(leadDays),
+                    email,
+                    OPTIONAL_EMAIL_CATEGORIES.filter((category) => optional.has(category)),
+                  )
+                }
+                size="sm"
+                variant="primary"
+              >
                 {t('facility-operations.common.save')}
               </Button>
             )}
@@ -435,32 +523,54 @@ export const SettingsPanel = ({
           {exports.length === 0 ? (
             <EmptyState description={t(`${k}.exportsLog.emptyDescription`)} title={t(`${k}.exportsLog.empty`)} />
           ) : (
-            <table className="facilityoperations:w-full facilityoperations:border-collapse facilityoperations:text-sm" data-testid="export-log">
+            <table
+              className="facilityoperations:w-full facilityoperations:border-collapse facilityoperations:text-sm"
+              data-testid="export-log"
+            >
               <thead>
                 <tr className="facilityoperations:text-left" style={muted}>
-                  <th className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:font-medium">{t(`${k}.exportsLog.when`)}</th>
-                  <th className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:font-medium">{t(`${k}.exportsLog.who`)}</th>
-                  <th className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:font-medium">{t(`${k}.exportsLog.list`)}</th>
-                  <th className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:text-right facilityoperations:font-medium">{t(`${k}.exportsLog.rows`)}</th>
+                  <th className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:font-medium">
+                    {t(`${k}.exportsLog.when`)}
+                  </th>
+                  <th className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:font-medium">
+                    {t(`${k}.exportsLog.who`)}
+                  </th>
+                  <th className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:font-medium">
+                    {t(`${k}.exportsLog.list`)}
+                  </th>
+                  <th className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:text-right facilityoperations:font-medium">
+                    {t(`${k}.exportsLog.rows`)}
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {exports.map((entry) => (
                   <tr key={entry.id} style={{ borderTop: '1px solid var(--color-border-muted, #f1f5f9)' }}>
-                    <td className="facilityoperations:whitespace-nowrap facilityoperations:px-2 facilityoperations:py-1.5">{fmt.stamp(lang, DateTime.formatIso(entry.exportedAt))}</td>
-                    <td className="facilityoperations:px-2 facilityoperations:py-1.5">{personaOf(entry.exportedBy.principalId)?.email ?? entry.exportedBy.principalId}</td>
+                    <td className="facilityoperations:whitespace-nowrap facilityoperations:px-2 facilityoperations:py-1.5">
+                      {fmt.stamp(lang, DateTime.formatIso(entry.exportedAt))}
+                    </td>
                     <td className="facilityoperations:px-2 facilityoperations:py-1.5">
-                      <div>{entry.list.startsWith('overview:')
-                        ? t(`${k}.kpi.${entry.list.slice('overview:'.length)}.label`)
-                        : entry.list === 'search' ? t(`${k}.search.label`)
-                          : entry.list === 'calendar' ? t(`${k}.tabs.kalendar`) : t(`${k}.exportsLog.other`)}</div>
+                      {personaOf(entry.exportedBy.principalId)?.email ?? entry.exportedBy.principalId}
+                    </td>
+                    <td className="facilityoperations:px-2 facilityoperations:py-1.5">
+                      <div>
+                        {entry.list.startsWith('overview:')
+                          ? t(`${k}.kpi.${entry.list.slice('overview:'.length)}.label`)
+                          : entry.list === 'search'
+                            ? t(`${k}.search.label`)
+                            : entry.list === 'calendar'
+                              ? t(`${k}.tabs.kalendar`)
+                              : t(`${k}.exportsLog.other`)}
+                      </div>
                       {entry.filter !== undefined && !entry.filter.startsWith('kpi=') && (
                         <div className="facilityoperations:text-xs" style={muted}>
                           {entry.filter}
                         </div>
                       )}
                     </td>
-                    <td className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:text-right facilityoperations:tabular-nums">{entry.rowCount}</td>
+                    <td className="facilityoperations:px-2 facilityoperations:py-1.5 facilityoperations:text-right facilityoperations:tabular-nums">
+                      {entry.rowCount}
+                    </td>
                   </tr>
                 ))}
               </tbody>

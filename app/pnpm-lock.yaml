@@ -468,6 +468,9 @@ importers:
       '@app/crm-activities':
         specifier: workspace:*
         version: link:../../verticals/crm-activities
+      '@app/email-delivery':
+        specifier: workspace:*
+        version: link:../../packages/email-delivery
       '@app/facility-operations':
         specifier: workspace:*
         version: link:../../verticals/facility-operations
@@ -801,6 +804,9 @@ importers:
 
   packages/email-delivery:
     dependencies:
+      '@effect/sql-pg':
+        specifier: 4.0.0-rc.117
+        version: 4.0.0-rc.117(effect@4.0.0-rc.117)
       effect:
         specifier: 4.0.0-rc.117
         version: 4.0.0-rc.117

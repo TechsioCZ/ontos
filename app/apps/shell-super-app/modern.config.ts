@@ -37,6 +37,7 @@ import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
 import {
   CLOUDFLARE_WORKER_CPU_MS,
+  createCloudflareEmailBindings,
   createCloudflareWorkerConfig,
   createCloudflareWorkerSecurity,
   createWorkerSsrPlugins,
@@ -187,6 +188,7 @@ export default defineConfig(
         releaseEnvelopeRole: 'shell',
         worker: {
           ...cloudflareWorkerConfig,
+          wrangler: { ...cloudflareWorkerConfig?.wrangler, ...createCloudflareEmailBindings(envValue) },
           compatibilityDate: '2026-06-02',
           name: cloudflareWorkerName,
           security: createCloudflareWorkerSecurity(),
@@ -275,6 +277,9 @@ export default defineConfig(
             '@modern-js/plugin-i18n/runtime$': '@modern-js/plugin-i18n/runtime/no-react-i18next',
           },
           globalVars: {
+            'globalThis.ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT':
+              getBuildConfigEnvironment('ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT') ??
+              (cloudflareDeployEnabled ? '' : 'http://localhost:3070'),
             ULTRAMODERN_SITE_URL: siteUrl,
           },
           mainEntryName: 'index',

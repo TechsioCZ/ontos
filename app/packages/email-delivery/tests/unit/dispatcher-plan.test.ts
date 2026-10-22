@@ -1,10 +1,16 @@
 // @effect-diagnostics *:off
 import { describe, expect, test } from '@rstest/core';
-import type { AgendaRecipientInput, AkrosOrderInput, RentReminderInput } from './contract.ts';
-import { deliveryOutcomeOf, orderEmailEvents, planAgendaEmails, planAkrosOrderEmails, planRentReminderEmail } from './plan.ts';
-import { isTestRecipient, testCaptureFromEnvironment } from './recipients.ts';
-import { addressOf, agendaSenderFor, senderFor } from './senders.ts';
-import { akrosOrderEmail, formatCzk } from './templates.ts';
+import type { AgendaRecipientInput, AkrosOrderInput, RentReminderInput } from '../../src/dispatcher/contract.ts';
+import {
+  deliveryOutcomeOf,
+  orderEmailEvents,
+  planAgendaEmails,
+  planAkrosOrderEmails,
+  planRentReminderEmail,
+} from '../../src/dispatcher/plan.ts';
+import { isTestRecipient, testCaptureFromEnvironment } from '../../src/dispatcher/recipients.ts';
+import { addressOf, agendaSenderFor, senderFor } from '../../src/dispatcher/senders.ts';
+import { akrosOrderEmail, formatCzk } from '../../src/dispatcher/templates.ts';
 
 const orderId = 'e8747ac9-8730-4fc5-b7ba-8ae9f9daade1';
 const enabledSince = '2026-10-21T07:00:00.000Z';
@@ -245,7 +251,9 @@ describe('delivery outcome classification', () => {
 
 describe('AKROS status label in e-mails', () => {
   test('CONFIRMED reads „Zpracovává se“ like the staff app and the storefront', () => {
-    const email = akrosOrderEmail({ ...baseOrder, status: 'CONFIRMED' }, 'CONFIRMED', { storefrontUrl: 'http://localhost:3070' });
+    const email = akrosOrderEmail({ ...baseOrder, status: 'CONFIRMED' }, 'CONFIRMED', {
+      storefrontUrl: 'http://localhost:3070',
+    });
     expect(email.text).toContain('Aktuální stav: Zpracovává se');
     expect(email.text).not.toContain('Potvrzená');
     expect(email.subject).toBe('AKROS – objednávka OBJ-2026-0030 se zpracovává');
@@ -259,12 +267,43 @@ describe('agenda notification e-mails', () => {
     legalName: 'Siampark',
     principalId: '72000000-0000-4000-8000-000000000022',
     tenantId: '70000000-0000-4000-8000-000000000020',
-    preference: { emailCategories: [], emailOptIn: true, emailSince: '2026-10-21T08:00:00.000Z', updatedAt: '2026-10-21T08:00:00.000Z' },
+    preference: {
+      emailCategories: [],
+      emailOptIn: true,
+      emailSince: '2026-10-21T08:00:00.000Z',
+      updatedAt: '2026-10-21T08:00:00.000Z',
+    },
     notifications: [
-      { category: 'ASSIGNED', createdAt: '2026-10-21T09:00:00.000Z', href: '/ukoly?resourceId=w1', id: 'n1', source: 'work', title: 'Zkontrolovat osvětlení' },
-      { category: 'DEADLINE', createdAt: '2026-10-21T09:00:00.000Z', dueDate: '2026-10-31', id: 'n2', source: 'agreements', title: 'Konec smlouvy' },
-      { category: 'OVERDUE', createdAt: '2026-10-21T09:00:00.000Z', id: 'n3', source: 'work', title: 'Revize hasicích přístrojů' },
-      { category: 'ASSIGNED', createdAt: '2026-10-21T07:00:00.000Z', id: 'n0', source: 'work', title: 'Před zapnutím e-mailu' },
+      {
+        category: 'ASSIGNED',
+        createdAt: '2026-10-21T09:00:00.000Z',
+        href: '/ukoly?resourceId=w1',
+        id: 'n1',
+        source: 'work',
+        title: 'Zkontrolovat osvětlení',
+      },
+      {
+        category: 'DEADLINE',
+        createdAt: '2026-10-21T09:00:00.000Z',
+        dueDate: '2026-10-31',
+        id: 'n2',
+        source: 'agreements',
+        title: 'Konec smlouvy',
+      },
+      {
+        category: 'OVERDUE',
+        createdAt: '2026-10-21T09:00:00.000Z',
+        id: 'n3',
+        source: 'work',
+        title: 'Revize hasicích přístrojů',
+      },
+      {
+        category: 'ASSIGNED',
+        createdAt: '2026-10-21T07:00:00.000Z',
+        id: 'n0',
+        source: 'work',
+        title: 'Před zapnutím e-mailu',
+      },
     ],
   };
   const options = { appUrl: 'http://localhost:3020', enabledSince: '2026-10-21T06:00:00.000Z' };
@@ -283,15 +322,23 @@ describe('agenda notification e-mails', () => {
   });
 
   test('optional category chosen, old preference rows get every optional category', () => {
-    const chosen = planAgendaEmails({ ...person, preference: { ...person.preference, emailCategories: ['DEADLINE'] } }, options);
+    const chosen = planAgendaEmails(
+      { ...person, preference: { ...person.preference, emailCategories: ['DEADLINE'] } },
+      options,
+    );
     expect(chosen[0]!.text).toContain('Blíží se termín: Konec smlouvy');
     expect(chosen[0]!.text).toContain('Termín: 31. 10. 2026');
-    const legacy = planAgendaEmails({ ...person, preference: { emailOptIn: true, updatedAt: '2026-10-21T08:00:00.000Z' } }, options);
+    const legacy = planAgendaEmails(
+      { ...person, preference: { emailOptIn: true, updatedAt: '2026-10-21T08:00:00.000Z' } },
+      options,
+    );
     expect(legacy[0]!.text).toContain('Konec smlouvy');
   });
 
   test('nothing without opt-in or without an address; sender names the company', () => {
-    expect(planAgendaEmails({ ...person, preference: { ...person.preference, emailOptIn: false } }, options)).toEqual([]);
+    expect(planAgendaEmails({ ...person, preference: { ...person.preference, emailOptIn: false } }, options)).toEqual(
+      [],
+    );
     expect(planAgendaEmails({ ...person, email: null }, options)).toEqual([]);
     expect(agendaSenderFor(person, {})).toBe('Siampark – upozornění <provoz@siampark.demo>');
   });
@@ -299,18 +346,36 @@ describe('agenda notification e-mails', () => {
 
 describe('test recipients go to the separate test capture, never the demo inbox', () => {
   test('reserved test domains and QA markers are test recipients', () => {
-    for (const address of ['jan.novak@example.invalid', 'Marek.Hruska@EXAMPLE.INVALID', 'x@shop.test', 'fakturace.audit@firma.cz', 'critic1@siampark.demo', 'fixer@hanak.demo', 'qa-test@akros.demo', 'a@audit.example']) {
+    for (const address of [
+      'jan.novak@example.invalid',
+      'Marek.Hruska@EXAMPLE.INVALID',
+      'x@shop.test',
+      'fakturace.audit@firma.cz',
+      'critic1@siampark.demo',
+      'fixer@hanak.demo',
+      'qa-test@akros.demo',
+      'a@audit.example',
+    ]) {
       expect(isTestRecipient(address)).toBe(true);
     }
   });
   test('demo-story recipients stay in the demo inbox', () => {
-    for (const address of ['operations@siampark.demo', 'pavel.dvorak@dvorak-stavby.demo', 'fakturace@kavarnauparku.cz', 'fakturace@odberatel.example', 'obchodnik.a@hanak.demo']) {
+    for (const address of [
+      'operations@siampark.demo',
+      'pavel.dvorak@dvorak-stavby.demo',
+      'fakturace@kavarnauparku.cz',
+      'fakturace@odberatel.example',
+      'obchodnik.a@hanak.demo',
+    ]) {
       expect(isTestRecipient(address)).toBe(false);
     }
   });
   test('test capture defaults to the second Mailpit and can be switched off', () => {
     expect(testCaptureFromEnvironment({})).toEqual({ host: '127.0.0.1', port: 1026 });
-    expect(testCaptureFromEnvironment({ EMAIL_TEST_SMTP_HOST: 'mail-test', EMAIL_TEST_SMTP_PORT: '2525' })).toEqual({ host: 'mail-test', port: 2525 });
+    expect(testCaptureFromEnvironment({ EMAIL_TEST_SMTP_HOST: 'mail-test', EMAIL_TEST_SMTP_PORT: '2525' })).toEqual({
+      host: 'mail-test',
+      port: 2525,
+    });
     expect(testCaptureFromEnvironment({ EMAIL_TEST_SMTP_HOST: 'none' })).toBeNull();
   });
 });

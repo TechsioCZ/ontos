@@ -76,6 +76,7 @@ const bootstrapRuntimeRole = (
         'demo_crm',
         'demo_sales_pipeline',
         'demo_merchandise',
+        'demo_email',
         'facility_operations',
         'demo_sales_insights',
         'finance_billing',

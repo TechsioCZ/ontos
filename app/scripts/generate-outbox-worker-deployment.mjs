@@ -89,10 +89,13 @@ export const renderOutboxWorkerHostEntry = (host) => {
   const bindings = host.owners.map((owner) => `${camelCase(owner.ownerId)}OutboxWorkerEntry`);
   return [
     HOST_ENTRY_HEADER,
+    "import { startEmailDispatchTrigger } from './email-dispatch-trigger.mts';",
     "import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';",
     ...host.owners.map(
       (owner, index) => `import { outboxWorkerEntry as ${bindings[index] ?? ''} } from '${owner.hostExport}';`,
     ),
+    '',
+    'startEmailDispatchTrigger();',
     '',
     'startOutboxWorkerHost({',
     '  entries: [',

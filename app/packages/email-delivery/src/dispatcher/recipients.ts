@@ -25,8 +25,28 @@ export interface TestCaptureRoute {
  * Test capture SMTP server. Defaults to the second demo Mailpit (127.0.0.1:1026). `EMAIL_TEST_SMTP_HOST=none` turns the
  * separation off (test recipients then go to the main SMTP server like everyone else).
  */
-export const testCaptureFromEnvironment = (env: Readonly<Record<string, string | undefined>>): TestCaptureRoute | null => {
+export const testCaptureFromEnvironment = (
+  env: Readonly<Record<string, string | undefined>>,
+): TestCaptureRoute | null => {
   const host = (env['EMAIL_TEST_SMTP_HOST'] ?? '127.0.0.1').trim();
   if (host === '' || host.toLowerCase() === 'none') return null;
   return { host, port: Number(env['EMAIL_TEST_SMTP_PORT'] ?? 1026) };
+};
+
+/** Suffix rules include the domain itself and its subdomains; no local-part heuristics on real mail. */
+export const DEFAULT_UNDELIVERABLE_DOMAINS =
+  'demo,test,invalid,example,local,demo.ontos,example.com,example.net,example.org,localhost';
+
+export const isUndeliverableRecipient = (address: string, domains = DEFAULT_UNDELIVERABLE_DOMAINS): boolean => {
+  const value = address.trim().toLowerCase();
+  if (!/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/u.test(value)) return true;
+  const domain = value.slice(value.lastIndexOf('@') + 1).replace(/\.+$/u, '');
+  return domains.split(',').some((entry) => {
+    const rule = entry
+      .trim()
+      .toLowerCase()
+      .replace(/^\*?\./u, '')
+      .replace(/\.+$/u, '');
+    return rule !== '' && (domain === rule || domain.endsWith(`.${rule}`));
+  });
 };

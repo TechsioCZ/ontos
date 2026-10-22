@@ -108,6 +108,14 @@ const makeFixture = () =>
       }),
     );
     yield* Effect.tryPromise(() => mkdir(path.join(root, 'topology'), { recursive: true }));
+    yield* Effect.tryPromise(() => mkdir(path.join(root, 'scripts'), { recursive: true }));
+    // Artifact tests never contact a configured stage dispatcher. The real trigger has its own unit tests.
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        path.join(root, 'scripts/email-dispatch-trigger.mts'),
+        'export const startEmailDispatchTrigger = () => {};\n',
+      ),
+    );
     // Runtime installs pin transitive versions to the workspace lockfile, so the fixture workspace has one.
     yield* Effect.tryPromise(() =>
       writeFile(path.join(root, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n"),

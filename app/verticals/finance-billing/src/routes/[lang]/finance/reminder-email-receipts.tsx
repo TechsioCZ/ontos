@@ -1,5 +1,5 @@
 // @effect-diagnostics *:off
-// Delivery receipts of payment-reminder e-mails from the demo e-mail dispatcher (127.0.0.1:3096, CORS for the shell).
+// Delivery receipts of payment-reminder e-mails from the demo e-mail dispatcher (same-origin Shell API).
 import { formatDateTime } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { useEffect, useState } from 'react';
@@ -11,9 +11,9 @@ export type ReminderEmailReceipts =
   | { readonly kind: 'unavailable' }
   | { readonly byReminderId: ReadonlyMap<string, EmailDeliveryView>; readonly kind: 'ready' };
 
-const dispatcherBaseUrl = () => `${window.location.protocol}//${window.location.hostname}:3096`;
+const emailApi = '/shell-super-app-api/email';
 
-/** GET /v1/provider of the dispatcher (copied from app/scripts/demo/email-dispatcher/contract.ts EmailProviderView). */
+/** GET /shell-super-app-api/email/provider of the dispatcher (copied from @app/email-delivery/contract EmailProviderView). */
 export interface EmailProviderView {
   readonly configured: boolean;
   readonly label: string | null;
@@ -30,7 +30,7 @@ export const useEmailProvider = (): EmailProviderState => {
     let cancelled = false;
     const load = async () => {
       try {
-        const response = await fetch(`${dispatcherBaseUrl()}/v1/provider`, { cache: 'no-store' });
+        const response = await fetch(`${emailApi}/provider`, { cache: 'no-store' });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const provider = (await response.json()) as EmailProviderView;
         if (!cancelled) setState({ kind: 'ready', provider });
@@ -62,7 +62,7 @@ export const useReminderEmailReceipts = (reminderIds: readonly string[]): Remind
         const params = new URLSearchParams({ source: 'rent-reminder' });
         for (const id of key.split(',')) params.append('subjectId', id);
         // The dispatcher verifies the OntOS session cookie and returns only this company's receipts.
-        const response = await fetch(`${dispatcherBaseUrl()}/v1/deliveries?${params.toString()}`, {
+        const response = await fetch(`${emailApi}/deliveries?${params.toString()}`, {
           cache: 'no-store',
           credentials: 'include',
         });

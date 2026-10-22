@@ -1,6 +1,6 @@
 // @effect-diagnostics *:off
-// S13 e-mail notifications: provider state and delivery receipts from the demo e-mail dispatcher (127.0.0.1:3096).
-// Types copied from app/scripts/demo/email-dispatcher/contract.ts (no cross-package import).
+// S13 e-mail notifications: provider state and delivery receipts from the demo e-mail dispatcher (Shell API).
+// Types copied from @app/email-delivery/contract (no cross-package import).
 import { useEffect, useState } from 'react';
 
 export interface EmailProviderView {
@@ -14,21 +14,21 @@ export type EmailProviderState =
 
 interface AgendaEmailDelivery {
   readonly sentAt: string | null;
-  readonly status: 'SENDING' | 'SENT' | 'RETRY' | 'FAILED' | 'UNKNOWN';
+  readonly status: 'SENDING' | 'SENT' | 'RETRY' | 'FAILED' | 'UNKNOWN' | 'SKIPPED';
   readonly subjectId: string;
 }
 export type AgendaEmailReceipts = ReadonlyMap<string, AgendaEmailDelivery>;
 
-const dispatcherBaseUrl = () => `${window.location.protocol}//${window.location.hostname}:3096`;
+const emailApi = '/shell-super-app-api/email';
 
-/** Is an e-mail provider configured (dispatcher GET /v1/provider)? Unreachable dispatcher = cannot be confirmed. */
+/** Is an e-mail provider configured (dispatcher GET /shell-super-app-api/email/provider)? Unreachable dispatcher = cannot be confirmed. */
 export const useEmailProvider = (): EmailProviderState => {
   const [state, setState] = useState<EmailProviderState>({ kind: 'loading' });
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
-        const response = await fetch(`${dispatcherBaseUrl()}/v1/provider`, { cache: 'no-store' });
+        const response = await fetch(`${emailApi}/provider`, { cache: 'no-store' });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const provider = (await response.json()) as EmailProviderView;
         if (!cancelled) setState({ kind: 'ready', provider });
@@ -63,13 +63,14 @@ export const useAgendaEmailReceipts = (keys: readonly string[]): AgendaEmailRece
       try {
         const params = new URLSearchParams({ source: 'facility-agenda' });
         for (const id of key.split(',')) params.append('subjectId', id);
-        const response = await fetch(`${dispatcherBaseUrl()}/v1/deliveries?${params.toString()}`, {
+        const response = await fetch(`${emailApi}/deliveries?${params.toString()}`, {
           cache: 'no-store',
           credentials: 'include',
         });
         if (!response.ok) return;
         const body = (await response.json()) as { readonly deliveries: readonly AgendaEmailDelivery[] };
-        if (!cancelled) setReceipts(new Map(body.deliveries.map((delivery) => [delivery.subjectId, delivery] as const)));
+        if (!cancelled)
+          setReceipts(new Map(body.deliveries.map((delivery) => [delivery.subjectId, delivery] as const)));
       } catch {
         // No receipts shown while the dispatcher is unreachable; the in-app notification itself is unaffected.
       }

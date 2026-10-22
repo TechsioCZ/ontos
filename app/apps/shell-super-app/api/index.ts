@@ -55,6 +55,7 @@ import {
 import { FetchHttpClient } from 'effect/unstable/http';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { ModuleApiTransportLive } from '../src/module-api/transport.ts';
+import { EmailTransportLive } from './email/transport.ts';
 
 import {
   ApiKeyIssueResponseSchema,
@@ -157,6 +158,8 @@ import type { LegalEntitySelectionForbiddenError } from './auth/legal-entity-sel
 import { validateAuthorizedLegalEntity } from './auth/legal-entity-selection.ts';
 import { AuthPersistenceLive } from './auth/runtime-infrastructure.ts';
 import { AuthenticationService, AuthenticationServiceLive } from './auth/service.ts';
+import { forwardOAuthRequest } from './auth/oauth-server/forward.ts';
+import { oauthNotFoundResponse } from './auth/oauth-server/policy.ts';
 import type { ShellContextResult } from './auth/service.ts';
 import type { AgentPlatformCaller, AgentPlatformForbidden, AgentPlatformInvalid } from './agent-platform/caller.ts';
 import { assertKeyAgentMayPropose } from './agent-platform/caller.ts';
@@ -2509,6 +2512,9 @@ export const makeShellAuthenticationApiRuntime = (
     handlers: apiHandlersLive,
     transport: Layer.mergeAll(
       ModuleApiTransportLive.pipe(Layer.provide(activeApplicationCompositionLive)),
+      EmailTransportLive.pipe(
+        Layer.provide(Layer.mergeAll(authenticationLayer, contextAccessLayer, legalEntityContextLive)),
+      ),
       // The same authentication layer as the handlers, so one Better Auth instance serves both.
       OAuthServerTransportLive.pipe(Layer.provide(authenticationLayer), Layer.orDie),
     ),
@@ -2528,3 +2534,21 @@ const apiRuntime = makeShellAuthenticationApiRuntime(
 );
 
 export default apiRuntime;
+
+// The Cloudflare entry calls this optional BFF hook before its normal prefix dispatch.
+export { oauthMetadataTarget } from '../shared/oauth-metadata-routes.ts';
+
+/** The Node root aliases use the same scoped Better Auth service as the canonical BFF route. */
+export const handleOAuthMetadata = (request: Request): Promise<Response> =>
+  Effect.runPromise(
+    Effect.scoped(
+      AuthenticationService.pipe(
+        Effect.flatMap((service) =>
+          service.oauth === undefined
+            ? Effect.succeed(oauthNotFoundResponse())
+            : forwardOAuthRequest(service.oauth)(request),
+        ),
+        Effect.provide(authenticationServiceLive),
+      ),
+    ),
+  );

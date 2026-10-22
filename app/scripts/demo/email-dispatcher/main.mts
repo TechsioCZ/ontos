@@ -1,204 +1,57 @@
 // @effect-diagnostics *:off
-// Demo e-mail dispatcher: after-commit worker that sends AKROS order e-mails, payment reminders (Siampark,
-// Obchodní firma, …; always in the name of the issuing company) and Siampark agenda notifications (people who opted in)
-// over real SMTP exactly once (ledger demo_email.deliveries), plus a read-only receipts API on 127.0.0.1 that checks
-// who is asking and GET /v1/provider (is an e-mail provider configured at all).
-// EMAIL_PROVIDER=none = no provider configured: nothing is sent and the UI offers only copy/download.
-// Test/QA recipients (*.invalid, *.test, audit/critic/fixer/test addresses) are sent to a separate test capture
-// (EMAIL_TEST_SMTP_HOST/PORT, default the second Mailpit 127.0.0.1:1026), so the presented demo inbox stays clean.
+// Local after-commit host. Receipts/provider reads use the Shell API in every runtime;
+// this loop keeps Mailpit SMTP and a loopback-only health endpoint for demo/up.sh.
 import { createServer } from 'node:http';
-import type { ServerResponse } from 'node:http';
 import { PgClient } from '@effect/sql-pg';
-import { Config, Effect, Layer, ManagedRuntime, Redacted } from 'effect';
+import { Config, Effect, Layer, ManagedRuntime } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
-import { makeSmtpEmailDelivery, smtpConfigurationFromEnvironment } from '../../../packages/email-delivery/src/smtp.ts';
-import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID, EMAIL_DISPATCHER_DEFAULT_PORT, emailDeliverySources } from './contract.ts';
-import type { DeliveryOutcome, EmailDeliverySource, EmailProviderView, PlannedEmail } from './contract.ts';
-import type { DeliveryReadScope } from './ledger.ts';
-import { claim, ensureLedger, finish, listDeliveries, listSettledKeys, readEnabledSince, recoverInterrupted } from './ledger.ts';
-import { isTestRecipient, testCaptureFromEnvironment } from './recipients.ts';
-import { agendaSenderFor, senderFor } from './senders.ts';
-import { deliveryOutcomeOf, planAgendaEmails, planAkrosOrderEmails, planRentReminderEmail } from './plan.ts';
-import { readAgendaRecipients, readAkrosOrders, readRentReminders } from './sources.ts';
+import { dispatchEmailBatch } from '../../../packages/email-delivery/src/dispatcher/dispatch.ts';
+import { emailTransport } from '../../../packages/email-delivery/src/transport.ts';
 
-const env = process.env;
-const port = Number(env['EMAIL_DISPATCHER_PORT'] ?? EMAIL_DISPATCHER_DEFAULT_PORT);
-const intervalMs = Number(env['EMAIL_DISPATCHER_INTERVAL_MS'] ?? 2000);
-const storefrontUrl = env['AKROS_STOREFRONT_PUBLIC_URL'] ?? 'http://localhost:3070';
-const allowedOrigins = new Set((env['EMAIL_DISPATCHER_ALLOWED_ORIGINS'] ?? 'http://localhost:3020,http://127.0.0.1:3020').split(',').map((value) => value.trim()).filter((value) => value.length > 0));
-const sessionUrl = env['EMAIL_DISPATCHER_SESSION_URL'] ?? 'http://127.0.0.1:3020/shell-super-app-api/auth/session';
-const appUrl = (env['ONTOS_PUBLIC_URL'] ?? 'http://localhost:3020').replace(/\/+$/u, '');
-const smtp = smtpConfigurationFromEnvironment(env);
-/** No provider = EMAIL_PROVIDER=none (or an explicitly empty SMTP_HOST). The demo default is SMTP → Mailpit. */
-const providerConfigured = (env['EMAIL_PROVIDER'] ?? 'smtp').trim().toLowerCase() !== 'none' && smtp.host.trim() !== '';
-const provider: EmailProviderView = providerConfigured
-  ? { configured: true, label: `SMTP server ${smtp.host}:${smtp.port}${smtp.port === 1025 ? ' (Mailpit)' : ''}` }
-  : { configured: false, label: null };
-const testCapture = testCaptureFromEnvironment(env);
-/** One SMTP transport per sender (From) and route (main server / test capture), created on first use. */
-const transports = new Map<string, ReturnType<typeof makeSmtpEmailDelivery>>();
-const transportFor = (from: string, recipient: string) => {
-  const test = testCapture !== null && isTestRecipient(recipient);
-  const key = `${test ? 'test' : 'main'}\u0000${from}`;
-  let transport = transports.get(key);
-  if (transport === undefined) {
-    transport = makeSmtpEmailDelivery(
-      test
-        ? { from, host: testCapture.host, port: testCapture.port, secure: false, ...(smtp.timeoutMs === undefined ? {} : { timeoutMs: smtp.timeoutMs }) }
-        : { ...smtp, from },
-    );
-    transports.set(key, transport);
-  }
-  return transport;
-};
-type OutgoingEmail = PlannedEmail & { readonly from: string };
-const AdminDatabaseLive = Layer.effect(PgClient.PgClient, Effect.gen(function* adminClient() {
-  return yield* PgClient.makeClient({ url: yield* Config.Redacted('DATABASE_ADMIN_URL') });
-})).pipe(Layer.provide(Reactivity.layer));
-const runtime = ManagedRuntime.make(AdminDatabaseLive);
-const settled = new Set<string>();
-
-const deliver = async (planned: OutgoingEmail): Promise<void> => {
-  if (settled.has(planned.dedupeKey)) return;
-  if (!(await runtime.runPromise(claim(planned)))) return;
-  const outcome: DeliveryOutcome = await Effect.runPromise(
-    transportFor(planned.from, planned.recipient)
-      .send({ html: Redacted.make(planned.html), idempotencyKey: planned.dedupeKey, subject: planned.subject, text: Redacted.make(planned.text), to: planned.recipient })
-      .pipe(
-        Effect.map((receipt): DeliveryOutcome => ({ messageId: receipt.id, status: 'SENT' })),
-        Effect.catch((error) => Effect.succeed(deliveryOutcomeOf(error))),
-      ),
-  );
-  await runtime.runPromise(finish(planned.dedupeKey, outcome));
-  if (outcome.status !== 'RETRY') settled.add(planned.dedupeKey);
-  const route = testCapture !== null && isTestRecipient(planned.recipient) ? ' [test capture]' : '';
-  console.log(`[email] ${planned.dedupeKey} -> ${outcome.status}${outcome.status === 'SENT' ? '' : ` (${outcome.errorTag})`}${route}`);
-};
-
-const cycle = async (enabledSince: string): Promise<void> => {
-  const planned: OutgoingEmail[] = [];
-  const akrosFrom = senderFor({ legalEntityId: AKROS_LEGAL_ENTITY_ID }, 'AKROS', env);
-  for (const order of await runtime.runPromise(readAkrosOrders(enabledSince))) {
-    for (const email of planAkrosOrderEmails(order, { enabledSince, legalEntityId: AKROS_LEGAL_ENTITY_ID, storefrontUrl, tenantId: DEMO_TENANT_ID })) {
-      planned.push({ ...email, from: akrosFrom });
-    }
-  }
-  for (const reminder of await runtime.runPromise(readRentReminders(enabledSince))) {
-    const email = planRentReminderEmail(reminder, enabledSince);
-    if (email !== null) planned.push({ ...email, from: senderFor(email, reminder.legalName, env) });
-  }
-  for (const person of await runtime.runPromise(readAgendaRecipients(enabledSince))) {
-    const from = agendaSenderFor(person, env);
-    for (const email of planAgendaEmails(person, { appUrl, enabledSince })) planned.push({ ...email, from });
-  }
-  for (const email of planned) {
-    try { await deliver(email); } catch (error) { console.error(`[email] ${email.dedupeKey} failed`, error); }
-  }
-};
-
-const reply = (response: ServerResponse, status: number, body: unknown, origin: string | undefined): void => {
-  const headers: Record<string, string> = { 'cache-control': 'no-store', 'content-type': 'application/json; charset=utf-8' };
-  if (origin !== undefined && allowedOrigins.has(origin)) {
-    headers['access-control-allow-origin'] = origin;
-    headers['access-control-allow-credentials'] = 'true';
-    headers['vary'] = 'Origin';
-  }
-  response.writeHead(status, headers);
-  response.end(body === null ? undefined : JSON.stringify(body));
-};
-
-type SessionCheck = { readonly at: number; readonly scope: DeliveryReadScope | null };
-const sessionCache = new Map<string, SessionCheck>();
-const SESSION_TTL_MS = 15_000;
-
-/** Verifies the OntOS session cookie with the shell; returns the caller's company scope or null (not signed in). */
-const companyScopeOf = async (cookie: string): Promise<DeliveryReadScope | null> => {
-  const cached = sessionCache.get(cookie);
-  if (cached !== undefined && Date.now() - cached.at < SESSION_TTL_MS) return cached.scope;
-  const upstream = await fetch(sessionUrl, { headers: { accept: 'application/json', cookie }, signal: AbortSignal.timeout(5000) });
-  if (!upstream.ok) throw new Error(`session HTTP ${upstream.status}`);
-  const body = (await upstream.json()) as { readonly identity?: { readonly legalEntityId?: unknown; readonly principalId?: unknown; readonly tenantId?: unknown }; readonly state?: unknown };
-  const identity = body.identity;
-  const scope: DeliveryReadScope | null =
-    body.state === 'authenticated' && typeof identity?.tenantId === 'string' && typeof identity.legalEntityId === 'string' &&
-    typeof identity.principalId === 'string'
-      ? { kind: 'company', legalEntityId: identity.legalEntityId, principalId: identity.principalId, tenantId: identity.tenantId }
-      : null;
-  if (sessionCache.size > 500) sessionCache.clear();
-  sessionCache.set(cookie, { at: Date.now(), scope });
-  return scope;
-};
-
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
-
+const port = Number(process.env['EMAIL_DISPATCHER_PORT'] ?? 3096);
+const intervalMs = Number(process.env['EMAIL_DISPATCHER_INTERVAL_MS'] ?? 2000);
+const DatabaseLive = Layer.effect(
+  PgClient.PgClient,
+  Effect.gen(function* () {
+    return yield* PgClient.makeClient({ url: yield* Config.Redacted('DATABASE_URL') });
+  }),
+).pipe(Layer.provide(Reactivity.layer));
+const runtime = ManagedRuntime.make(DatabaseLive);
 const server = createServer((request, response) => {
-  const origin = typeof request.headers.origin === 'string' ? request.headers.origin : undefined;
-  const url = new URL(request.url ?? '/', 'http://127.0.0.1');
-  if (request.method === 'OPTIONS') {
-    if (origin !== undefined && allowedOrigins.has(origin)) { response.setHeader('access-control-allow-methods', 'GET'); response.setHeader('access-control-max-age', '600'); }
-    reply(response, 204, null, origin);
-    return;
-  }
-  if (request.method !== 'GET') { reply(response, 405, { error: 'method_not_allowed' }, origin); return; }
-  if (url.pathname === '/healthz') { reply(response, 200, { ok: true, provider, smtp: providerConfigured ? { host: smtp.host, port: smtp.port } : null }, origin); return; }
-  if (url.pathname === '/v1/provider') { reply(response, 200, provider, origin); return; }
-  if (url.pathname !== '/v1/deliveries') { reply(response, 404, { error: 'not_found' }, origin); return; }
-  const source = url.searchParams.get('source') ?? '';
-  const subjectIds = url.searchParams.getAll('subjectId');
-  const subjectNumbers = url.searchParams.getAll('subjectNumber');
-  const all = [...subjectIds, ...subjectNumbers];
-  if (!emailDeliverySources.includes(source as EmailDeliverySource) || all.length === 0 || all.length > 200 || all.some((value) => value.length === 0 || value.length > 120)) {
-    reply(response, 400, { error: 'invalid_query' }, origin);
-    return;
-  }
-  const recipient = url.searchParams.get('recipient');
-  const cookie = typeof request.headers.cookie === 'string' ? request.headers.cookie : '';
-  const resolveScope = async (): Promise<DeliveryReadScope | 'forbidden'> => {
-    // Buyer: exactly one order number plus the e-mail address the order was placed with (AKROS storefront BFF).
-    if (recipient !== null) {
-      return source === 'akros-order' && subjectIds.length === 0 && subjectNumbers.length === 1 && recipient.length <= 254 && EMAIL_PATTERN.test(recipient.trim())
-        ? { kind: 'buyer', recipient }
-        : 'forbidden';
-    }
-    // Staff: signed-in OntOS session; only rows of the session's tenant and selected company.
-    if (cookie === '') return 'forbidden';
-    return (await companyScopeOf(cookie)) ?? 'forbidden';
-  };
-  resolveScope().then(
-    async (scope) => {
-      if (scope === 'forbidden') { reply(response, 401, { error: 'authentication_required' }, origin); return; }
-      // Agenda e-mails are personal: a person reads only receipts of their own batches (`<principalId>:<createdAt>`).
-      if (source === 'facility-agenda' && (scope.kind !== 'company' || subjectNumbers.length > 0 || subjectIds.some((id) => !id.startsWith(`${scope.principalId}:`)))) {
-        reply(response, 403, { error: 'forbidden' }, origin);
-        return;
-      }
-      const deliveries = await runtime.runPromise(listDeliveries({ scope, source: source as EmailDeliverySource, subjectIds, subjectNumbers }));
-      reply(response, 200, { deliveries }, origin);
-    },
-  ).catch((error: unknown) => { console.error('[email] receipts read failed', error); reply(response, 503, { error: 'receipts_unavailable' }, origin); });
+  const ok = request.method === 'GET' && request.url === '/healthz';
+  response.writeHead(ok ? 200 : 404, { 'cache-control': 'no-store', 'content-type': 'application/json' });
+  response.end(JSON.stringify(ok ? { ok: true, provider: emailTransport.provider } : { error: 'not_found' }));
 });
 
 const main = async (): Promise<void> => {
-  await runtime.runPromise(ensureLedger);
-  const recovered = await runtime.runPromise(recoverInterrupted);
-  if (recovered > 0) console.warn(`[email] ${recovered} interrupted deliveries marked UNKNOWN (never resent)`);
-  const enabledSince = await runtime.runPromise(readEnabledSince);
-  for (const key of await runtime.runPromise(listSettledKeys)) settled.add(key);
-  await new Promise<void>((resolve) => { server.listen(port, '127.0.0.1', () => resolve()); });
-  console.log(`[email] dispatcher on http://127.0.0.1:${port}; ${providerConfigured ? `SMTP ${smtp.host}:${smtp.port}` : 'NO e-mail provider (EMAIL_PROVIDER=none): nothing is sent'}; test recipients -> ${testCapture === null ? 'main SMTP' : `test capture ${testCapture.host}:${testCapture.port}`}; e-mails for events since ${enabledSince}`);
+  await new Promise<void>((resolve) => {
+    server.listen(port, '127.0.0.1', resolve);
+  });
+  console.log(
+    `[email] local dispatcher; ${emailTransport.provider.label ?? 'NO provider'}; receipts at /shell-super-app-api/email/deliveries`,
+  );
   let stopping = false;
-  const stop = (): void => { stopping = true; server.close(); setTimeout(() => process.exit(0), 8000).unref(); };
+  const stop = (): void => {
+    stopping = true;
+    server.close();
+  };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);
   while (!stopping) {
-    try { if (providerConfigured) await cycle(enabledSince); } catch (error) { console.error('[email] cycle failed', error); }
-    await new Promise((resolve) => { setTimeout(resolve, intervalMs); });
+    try {
+      await runtime.runPromise(dispatchEmailBatch);
+    } catch {
+      console.error('[email] cycle failed');
+    }
+    await new Promise((resolve) => {
+      setTimeout(resolve, intervalMs);
+    });
   }
   await runtime.dispose();
-  process.exit(0);
 };
 
-main().catch((error: unknown) => {
-  console.error('[email] dispatcher failed to start', error);
-  process.exit(1);
+main().catch(() => {
+  console.error('[email] dispatcher failed to start');
+  process.exitCode = 1;
+  server.close();
 });

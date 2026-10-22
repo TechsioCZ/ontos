@@ -18,6 +18,8 @@ import {
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import type { OutboxWorkerSubscription } from '../outbox/definition.ts';
 
+export { emailDeliveries, emailSchema, emailSettings } from './email-schema.ts';
+
 export const CORE_SCHEMA_NAME = 'core';
 
 export const CORE_TABLE_INVENTORY = [

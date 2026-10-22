@@ -1,10 +1,8 @@
 import "server-only";
-import { isOntos } from "@/ontos/config";
+import { getConfig, isOntos } from "@/ontos/config";
 
 const events = ["ORDER_CREATED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"];
-const statuses = ["SENDING", "SENT", "RETRY", "FAILED", "UNKNOWN"];
-const dispatcherUrl = () =>
-  (process.env.EMAIL_DISPATCHER_URL ?? "http://127.0.0.1:3096").replace(/\/+$/, "");
+const statuses = ["SENDING", "SENT", "RETRY", "FAILED", "UNKNOWN", "SKIPPED"];
 type Receipt = { event: string; eventLabel: string | null; status: string; sentAt: string | null };
 function toReceipt(value: unknown): Receipt | null {
   if (!value || typeof value !== "object") return null;
@@ -38,7 +36,7 @@ export async function GET(request: Request) {
       subjectNumber: orderNumber,
       recipient: email,
     });
-    const upstream = await fetch(`${dispatcherUrl()}/v1/deliveries?${params.toString()}`, {
+    const upstream = await fetch(`${getConfig().shellUrl}/shell-super-app-api/email/deliveries?${params.toString()}`, {
       cache: "no-store",
       signal: AbortSignal.timeout(3000),
     });

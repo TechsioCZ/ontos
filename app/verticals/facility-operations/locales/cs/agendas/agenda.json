@@ -184,6 +184,7 @@
     "emptyDescription": "Nová upozornění se objeví při přiřazení úkolu či události nebo před termínem.",
     "emailSent": "odesláno e-mailem {{time}}",
     "emailPending": "čeká na odeslání e-mailem",
+    "emailSkipped": "přeskočeno – nedoručitelná adresa příjemce",
     "emailFailed": "e-mail se nepodařilo odeslat"
   },
   "mine": {

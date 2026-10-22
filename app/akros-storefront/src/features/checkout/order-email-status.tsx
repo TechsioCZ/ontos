@@ -18,6 +18,7 @@ const statusLabels: Record<string, string> = {
   SENDING: "Odesílá se…",
   RETRY: "Čeká na odeslání – e-mailový server je dočasně nedostupný",
   FAILED: "Odeslání selhalo",
+  SKIPPED: "Přeskočeno – nedoručitelná adresa příjemce",
   UNKNOWN: "Odeslání nelze potvrdit",
 };
 /** The dispatcher labels pickup orders „Připraveno k vyzvednutí“ instead of „Předáno dopravci“. */

@@ -224,8 +224,7 @@ export const agendaNotificationEmail = (input: {
     count === 1 && first !== undefined
       ? `${company} – ${agendaCategoryLabels[first.category].toLowerCase()}: ${first.title}`
       : `${company} – ${count} ${plural} v agendě`;
-  const linkOf = (item: AgendaNotificationInput) =>
-    `${input.appUrl}/cs${item.href ?? '/provoz/agenda?tab=notifikace'}`;
+  const linkOf = (item: AgendaNotificationInput) => `${input.appUrl}/cs${item.href ?? '/provoz/agenda?tab=notifikace'}`;
   const lineOf = (item: AgendaNotificationInput) =>
     [
       `${agendaCategoryLabels[item.category]}: ${item.title}`,

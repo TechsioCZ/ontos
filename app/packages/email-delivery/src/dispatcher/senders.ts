@@ -12,7 +12,11 @@ interface KnownSender {
 
 /** Demo companies with their own sender. Any other company sends as „<legal name> – finanční oddělení“. */
 const knownSenders: Readonly<Record<string, KnownSender>> = {
-  [AKROS_LEGAL_ENTITY_ID]: { defaultAddress: 'eshop@akros.demo', displayName: 'AKROS e-shop', envKey: 'AKROS_EMAIL_FROM' },
+  [AKROS_LEGAL_ENTITY_ID]: {
+    defaultAddress: 'eshop@akros.demo',
+    displayName: 'AKROS e-shop',
+    envKey: 'AKROS_EMAIL_FROM',
+  },
   [OBCHODNI_FIRMA_LEGAL_ENTITY_ID]: {
     defaultAddress: 'ucetni@demo.ontos',
     displayName: 'Obchodní firma – účtárna',
@@ -41,8 +45,13 @@ export const senderFor = (
   planned: Pick<PlannedEmail, 'legalEntityId'>,
   legalName: string | null,
   env: Readonly<Record<string, string | undefined>>,
+  transport: 'cloudflare' | 'smtp' = 'smtp',
 ): string => {
   const known = knownSenders[planned.legalEntityId];
+  if (transport === 'cloudflare') {
+    const name = known?.displayName ?? `${companyDisplayName(legalName)} – finanční oddělení`;
+    return `${name} <${env['ONTOS_EMAIL_FROM'] ?? ''}>`;
+  }
   const explicit = known === undefined ? undefined : env[known.envKey]?.trim();
   if (explicit !== undefined && explicit !== '') return explicit;
   const displayName = known?.displayName ?? `${companyDisplayName(legalName)} – finanční oddělení`;
@@ -54,10 +63,15 @@ export const senderFor = (
 export const agendaSenderFor = (
   person: Pick<AgendaRecipientInput, 'legalEntityId' | 'legalName'>,
   env: Readonly<Record<string, string | undefined>>,
+  transport: 'cloudflare' | 'smtp' = 'smtp',
 ): string => {
-  const explicit = person.legalEntityId === SIAMPARK_LEGAL_ENTITY_ID ? env['SIAMPARK_AGENDA_EMAIL_FROM']?.trim() : undefined;
+  if (transport === 'cloudflare')
+    return `${companyDisplayName(person.legalName)} – upozornění <${env['ONTOS_EMAIL_FROM'] ?? ''}>`;
+  const explicit =
+    person.legalEntityId === SIAMPARK_LEGAL_ENTITY_ID ? env['SIAMPARK_AGENDA_EMAIL_FROM']?.trim() : undefined;
   if (explicit !== undefined && explicit !== '') return explicit;
   const fallback = env['SMTP_FROM'] === undefined ? null : addressOf(env['SMTP_FROM']);
-  const defaultAddress = person.legalEntityId === SIAMPARK_LEGAL_ENTITY_ID ? 'provoz@siampark.demo' : DEFAULT_FALLBACK_ADDRESS;
+  const defaultAddress =
+    person.legalEntityId === SIAMPARK_LEGAL_ENTITY_ID ? 'provoz@siampark.demo' : DEFAULT_FALLBACK_ADDRESS;
   return `${companyDisplayName(person.legalName)} – upozornění <${fallback ?? defaultAddress}>`;
 };

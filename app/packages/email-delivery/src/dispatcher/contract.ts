@@ -1,20 +1,7 @@
 // @effect-diagnostics *:off
-// Shared contract of the demo e-mail dispatcher (app/scripts/demo/email-dispatcher).
-//
-// The dispatcher is an after-commit worker: it reads COMMITTED domain state (AKROS storefront orders in
-// demo_merchandise.merchandise_states, payment reminders in finance_billing.finance_states, Siampark agenda
-// notifications in facility_operations.agenda_states for people who opted in to e-mail),
-// claims each e-mail once in its own ledger table demo_email.deliveries (primary key = dedupeKey, so an
-// e-mail is never sent twice) and submits it over real SMTP (Mailpit in the demo, any SMTP server via env).
-// It serves read-only receipts (no recipient, no content) on http://127.0.0.1:3096/v1/deliveries:
-//   - staff (browser, credentials: 'include'): the OntOS session cookie is verified against the shell and only
-//     rows of the session's tenant + selected legal entity are returned;
-//   - buyer (AKROS storefront BFF): `subjectNumber` + `recipient` (the buyer's e-mail) must both match.
-//
-// UI consumers in other packages (merchandise, finance-billing, akros-storefront) must COPY the
-// view types and labels below verbatim; they must not import this file across package boundaries.
+// Platform after-commit e-mail receipts. Shell staff reads are scoped to the authenticated company;
+// storefront buyer reads require both the order number and its recipient. No content or address is exposed.
 
-export const EMAIL_DISPATCHER_DEFAULT_PORT = 3096;
 export const DEMO_TENANT_ID = '70000000-0000-4000-8000-000000000020';
 export const AKROS_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000024';
 
@@ -32,12 +19,12 @@ export type EmailDeliveryEvent =
  * RETRY: SMTP server unreachable BEFORE any data was sent; safe to retry. FAILED: rejected permanently.
  * UNKNOWN: connection broke after DATA or the process died mid-send; never retried (never twice).
  */
-export type EmailDeliveryStatus = 'SENDING' | 'SENT' | 'RETRY' | 'FAILED' | 'UNKNOWN';
+export type EmailDeliveryStatus = 'SENDING' | 'SENT' | 'RETRY' | 'FAILED' | 'UNKNOWN' | 'SKIPPED';
 
 export const emailDeliverySources: readonly EmailDeliverySource[] = ['akros-order', 'facility-agenda', 'rent-reminder'];
 
 /**
- * E-mail provider state served on GET /v1/provider (no credentials, no cookies needed). `configured: false` when the
+ * E-mail provider state served on GET /shell-super-app-api/email/provider (no credentials, no cookies needed). `configured: false` when the
  * deployment sets EMAIL_PROVIDER=none: the dispatcher then sends nothing and the UI must not offer „Odeslat e-mailem“.
  */
 export interface EmailProviderView {
@@ -49,7 +36,7 @@ export interface EmailProviderView {
 /** Result of one SMTP attempt as recorded in the ledger (status leaves SENDING exactly once per attempt). */
 export type DeliveryOutcome =
   | { readonly messageId: string; readonly status: 'SENT' }
-  | { readonly errorTag: string; readonly status: 'RETRY' | 'FAILED' | 'UNKNOWN' };
+  | { readonly errorTag: string; readonly status: 'RETRY' | 'FAILED' | 'UNKNOWN' | 'SKIPPED' };
 
 /** One e-mail derived from persisted domain state. `dedupeKey` is the never-twice identity. */
 export interface PlannedEmail {
@@ -72,7 +59,7 @@ export interface PlannedEmail {
   readonly text: string;
 }
 
-/** Public receipt served by GET /v1/deliveries (no recipient, no content). */
+/** Public receipt served by GET /shell-super-app-api/email/deliveries (no recipient, no content). */
 export interface EmailDeliveryView {
   readonly createdAt: string;
   readonly event: EmailDeliveryEvent;
@@ -103,7 +90,8 @@ export const emailEventLabels: Readonly<Record<EmailDeliveryEvent, string>> = {
 
 export const emailStatusLabels: Readonly<Record<EmailDeliveryStatus, string>> = {
   FAILED: 'Odeslání selhalo',
-  RETRY: 'Čeká na opakování – SMTP server nedostupný',
+  SKIPPED: 'Přeskočeno – nedoručitelná adresa příjemce',
+  RETRY: 'Čeká na opakování – e-mailová služba nedostupná',
   SENDING: 'Odesílá se…',
   SENT: 'Odesláno e-mailem',
   UNKNOWN: 'Výsledek odeslání nejistý – neopakuje se',

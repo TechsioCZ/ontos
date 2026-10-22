@@ -1,5 +1,5 @@
 // @effect-diagnostics *:off
-// E-mails sent to the storefront customer for one order (demo e-mail dispatcher, 127.0.0.1:3096).
+// E-mails sent to the storefront customer for one order (demo e-mail dispatcher, Shell API).
 import { formatDateTime, SectionCard } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { useEffect, useState } from 'react';
@@ -11,7 +11,7 @@ type OrderEmailState =
   | { readonly kind: 'unavailable' }
   | { readonly deliveries: readonly EmailDeliveryView[]; readonly kind: 'ready' };
 
-const dispatcherBaseUrl = () => `${window.location.protocol}//${window.location.hostname}:3096`;
+const emailApi = '/shell-super-app-api/email';
 
 const useOrderEmailDeliveries = (orderId: string): OrderEmailState => {
   const [state, setState] = useState<OrderEmailState>({ kind: 'loading' });
@@ -21,7 +21,7 @@ const useOrderEmailDeliveries = (orderId: string): OrderEmailState => {
       try {
         const params = new URLSearchParams({ source: 'akros-order', subjectId: orderId });
         // The dispatcher verifies the OntOS session cookie and returns only this company's receipts.
-        const response = await fetch(`${dispatcherBaseUrl()}/v1/deliveries?${params.toString()}`, {
+        const response = await fetch(`${emailApi}/deliveries?${params.toString()}`, {
           cache: 'no-store',
           credentials: 'include',
         });
