@@ -10,6 +10,7 @@ import { reviseStorefrontApplicationAction } from './src/actions/revise-storefro
 import { storefrontApplicationResourceDescriptor } from './shared/resources/storefront-application.ts';
 import { VerifyCurrentStorefrontApplicationV1Api } from './shared/apis/verify-current-storefront-application-v1.ts';
 // </generated-module-manifest-imports>
+import { storefrontRegistryMcpContribution } from './shared/mcp/contribution.ts';
 
 export const storefrontRegistryManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
@@ -47,6 +48,7 @@ export const storefrontRegistryManifest: OntosModuleManifestInput = defineOntosM
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: storefrontRegistryMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>
