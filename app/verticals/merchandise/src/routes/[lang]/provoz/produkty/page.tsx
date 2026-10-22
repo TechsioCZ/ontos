@@ -346,7 +346,8 @@ const RecordsPageContent = () => {
             value={search}
           />
           {byTree && (
-            <div className="w-64">
+            // The label stays for assistive tech only, so the field lines up with the other filter controls.
+            <div className="w-64 [&_label]:sr-only">
               <CategorySearchCombobox
                 allLabel={k('filters.allCategories')}
                 errorMessage={k('filters.categoryError')}
@@ -362,6 +363,7 @@ const RecordsPageContent = () => {
                 placeholder={k('filters.categorySearch')}
                 retryLabel={k('filters.categoryRetry')}
                 selected={treeCategory}
+                size="sm"
               />
             </div>
           )}

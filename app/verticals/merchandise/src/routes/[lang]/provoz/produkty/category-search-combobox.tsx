@@ -35,6 +35,7 @@ export interface CategorySearchComboboxProps {
   readonly retryLabel: string;
   /** The picked category, so the closed field keeps showing its path. */
   readonly selected: CategoryTrail | null;
+  readonly size?: 'sm';
 }
 
 /**
@@ -54,6 +55,7 @@ export const CategorySearchCombobox = ({
   placeholder,
   retryLabel,
   selected,
+  size,
 }: CategorySearchComboboxProps) => {
   const [open, setOpen] = useState(false);
   const [typed, setTyped] = useState('');
@@ -126,6 +128,7 @@ export const CategorySearchCombobox = ({
       openOnClick
       placeholder={placeholder}
       retryLabel={retryLabel}
+      {...(size === undefined ? {} : { size })}
       translations={comboboxTranslations}
       value={selected === null ? (allLabel === undefined ? [] : [ALL]) : [selected.id]}
     />
