@@ -299,6 +299,14 @@ export const createCloudflareDataPlaneBindings = (envValue: ModernBuildContext['
   },
 });
 
+/** Shell-only opt-in: no Email Service binding is emitted without the onboarded sender build input. */
+export const createCloudflareEmailBindings = (envValue: ModernBuildContext['envValue']) => {
+  const sender = envValue('ULTRAMODERN_EMAIL_SENDER')?.trim();
+  if (sender === undefined || sender === '') return {};
+  if (!/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/u.test(sender)) throw new Error('ULTRAMODERN_EMAIL_SENDER must be a bare email address');
+  return { send_email: [{ name: 'EMAIL', allowed_sender_addresses: [sender] }] };
+};
+
 /**
  * CPU budgets per invocation. Workers Paid includes 30M CPU ms a month, so a runaway request is cut
  * off here instead of billed. An API vertical does a few database and SpiceDB round trips (waiting on
@@ -629,4 +637,11 @@ export const createWorkerSsrPlugins = <DefinitionPlugin, ReplacementPlugin>(
   new rspack.NormalModuleReplacementPlugin(/^\.\.?[/\\]/u, (resource) => {
     markWorkerApiSource(resource, sourceDirectory);
   }),
+  // Browser-only libraries load from effects that never run during SSR. PDF.js imports its own
+  // modules by computed URL, which a Worker bundle must not contain, so SSR gets an empty module.
+  new rspack.NormalModuleReplacementPlugin(/^pdfjs-dist(?:\/.*)?$/u, (resource) => {
+    resource.request = BROWSER_ONLY_SSR_MODULE;
+  }),
 ];
+
+const BROWSER_ONLY_SSR_MODULE = fileURLToPath(new URL('browser-only-ssr-module.mjs', import.meta.url));
