@@ -27,7 +27,9 @@ const validateUrl = (url: URL): void => {
  * VPC, or a resolveOverride. Literal IPs and localhost are rejected before any network request.
  */
 export const fetchClientMetadataResource: ClientMetadataResourceFetch = async (input, init) => {
-  const request = new Request(input, init);
+  // workerd rejects `redirect: 'error'` (it supports only 'follow' and 'manual'); redirects are refused below.
+  const { redirect: _redirect, ...requestInit } = init ?? {};
+  const request = new Request(input, requestInit);
   validateUrl(new URL(request.url));
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     throw new TypeError('CIMD supports only GET and HEAD');
