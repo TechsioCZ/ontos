@@ -7,7 +7,10 @@ import type { ComponentType } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
-import { recordedReadAudiences, warmGatewayAssertions } from './browser-request-cache.ts';
+import { canonicalPathFromRequest } from './[lang]/canonical-page-model.ts';
+import { loadModulePageModel } from './[lang]/modules/[moduleId]/module-page-model.ts';
+import { awaitModuleTrafficQuiet, recordedReadAudiences, warmGatewayAssertions } from './browser-request-cache.ts';
+import { loadRemotePage } from './remote-page-loader.ts';
 
 interface PreloadableNavigationItem {
   readonly appId?: string;
@@ -17,7 +20,9 @@ interface PreloadableNavigationItem {
 
 /** Finish the foreground page's owner reads before speculative menu traffic starts. */
 const SETTLE_DELAY = '5 seconds';
-const ROUTE_PRELOAD_CONCURRENCY = 1;
+const DESTINATION_WARM_CONCURRENCY = 1;
+/** Shell pages of the platform layer: not module targets, so idle warming has nothing to resolve for them. */
+const SHELL_APP_ID = 'shell-super-app';
 /** Long enough for a preloaded route chunk to resolve its lazy component. */
 const LAZY_WARM_WINDOW = '2 seconds';
 const ignoreRenderError = () => {
@@ -64,43 +69,62 @@ const pageRouteComponents = (router: ReturnType<typeof useRouter>, language: str
 };
 
 /**
- * Shortly after each navigation settles, issues gateway assertions for every module in the menu (and every module a
- * remembered page read), preloads every enabled menu destination through the router and resolves the lazy route
- * components, all in parallel. A route
- * preload runs its loader, which loads the remote page module and repeats the page's remembered reads, so a click
- * renders the page at once. The router skips destinations preloaded within its preload stale time (30 s), so
- * repeated navigations only refresh what has aged.
+ * Warms one module destination of the menu: resolves its target (kept by the browser target cache) and loads its
+ * remote page module. Unlike a route preload it does not repeat the page's remembered reads: those are owner reads
+ * (gateway, SpiceDB, database) for pages the person may never open, about twenty per document across the menu. A
+ * click then only waits for the page's own reads; a hover (intent preload) still prefetches them.
+ */
+const warmModuleDestination = (language: string, href: string) => {
+  const request = new Request(new URL(`/${encodeURIComponent(language)}${href}`, globalThis.location.href));
+  const canonicalPath = canonicalPathFromRequest(request, language);
+  return canonicalPath === undefined
+    ? Effect.void
+    : loadModulePageModel({ canonicalPath, request }).pipe(
+        Effect.flatMap((model) => (model.state === 'resolved' ? loadRemotePage(model.target) : Effect.void)),
+        Effect.timeout('30 seconds'),
+        Effect.ignore,
+      );
+};
+
+/**
+ * Once a navigation has settled and the page's own module traffic is quiet, issues gateway assertions for every
+ * module in the menu (and every module a remembered page read), warms every enabled module destination (target and
+ * remote page module) and resolves the lazy route components, all in parallel. Targets and remote page modules are
+ * cached for the document, so repeated navigations warm from memory.
  */
 export const useIdleRoutePreload = (navigation: readonly PreloadableNavigationItem[]) => {
   const router = useRouter();
   const { language } = useModernI18n();
   const settledPath = useRouterState({ select: ({ resolvedLocation }) => resolvedLocation?.pathname });
   const hrefs = navigation.flatMap((item) => (item.enabled && item.href !== undefined ? [item.href] : [])).join('\n');
+  const moduleHrefs = navigation
+    .flatMap((item) =>
+      item.enabled && item.href !== undefined && item.appId !== undefined && item.appId !== SHELL_APP_ID
+        ? [item.href]
+        : [],
+    )
+    .join('\n');
   const modules = [...new Set(navigation.flatMap((item) => (item.appId === undefined ? [] : [item.appId])))].join('\n');
 
   useEffect(() => {
-    const preloadRoute = (href: string) =>
-      Effect.tryPromise(() => router.preloadRoute({ to: `/${language}${href}` })).pipe(
-        Effect.timeout('30 seconds'),
-        Effect.ignore,
-      );
     const warmAssertions = recordedReadAudiences.pipe(
       Effect.flatMap((recorded) =>
         warmGatewayAssertions([...new Set([...modules.split('\n'), ...recorded])].filter((id) => id.length > 0)),
       ),
     );
-    const preloadRoutes = Effect.forEach(
-      hrefs.split('\n').filter((href) => href.length > 0),
-      preloadRoute,
-      { concurrency: ROUTE_PRELOAD_CONCURRENCY, discard: true },
+    const warmDestinations = Effect.forEach(
+      moduleHrefs.split('\n').filter((href) => href.length > 0),
+      (href) => warmModuleDestination(language ?? '', href),
+      { concurrency: DESTINATION_WARM_CONCURRENCY, discard: true },
     );
     const warmRoutes = Effect.suspend(() => warmLazyRouteComponents(pageRouteComponents(router, language, hrefs)));
     const fiber =
       __ONTOS_BROWSER_BUILD__ && settledPath !== undefined && language !== undefined
         ? browserRuntime.runFork(
             Effect.sleep(SETTLE_DELAY).pipe(
+              Effect.andThen(awaitModuleTrafficQuiet),
               Effect.andThen(
-                Effect.all([warmAssertions, preloadRoutes, warmRoutes], {
+                Effect.all([warmAssertions, warmDestinations, warmRoutes], {
                   concurrency: 3,
                   discard: true,
                 }),
@@ -113,5 +137,5 @@ export const useIdleRoutePreload = (navigation: readonly PreloadableNavigationIt
         browserRuntime.runFork(Fiber.interrupt(fiber));
       }
     };
-  }, [hrefs, language, modules, router, settledPath]);
+  }, [hrefs, language, moduleHrefs, modules, router, settledPath]);
 };

@@ -1,6 +1,6 @@
 // @effect-diagnostics asyncFunction:off -- Browser fetch transport boundary: the wrapper implements `typeof fetch`, whose contract is a Promise; cache logic stays in Effect. expires: 2027-03-31.
 import { getDocumentCompositionRevision, makeOperationGateway } from '@app/shared-contracts';
-import { Clock, Effect, Exit, Fiber, Match, MutableRef, Option, Predicate, Schema } from 'effect';
+import { Clock, Effect, Exit, Fiber, Match, MutableRef, Option, Predicate, Schedule, Schema } from 'effect';
 
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 
@@ -31,6 +31,10 @@ const RECORDED_READS_LIMIT = 24;
 const READ_ENTRY_LIMIT = 256;
 const PREFETCH_CONCURRENCY = 8;
 const MANIFEST_PREFIX = 'ontos.page-reads.v1:';
+/** Module traffic counts as quiet once nothing has been in flight for this long. */
+const TRAFFIC_QUIET_MILLIS = 1000;
+/** Speculative work waits at most this long for a busy page to go quiet. */
+const TRAFFIC_QUIET_WAIT_LIMIT = '30 seconds';
 
 interface BufferedResponse {
   readonly body: ArrayBuffer;
@@ -337,6 +341,40 @@ const serveWrite = (state: CacheState, input: RequestInfo | URL, init: RequestIn
 /** The Shell installs the cache once per document; prefetches read the same state. */
 const installed = MutableRef.make(Option.none<CacheState>());
 
+/** Module requests (reads, writes, gateway assertions) in flight in this document, and when the last one settled. */
+const traffic = MutableRef.make({ inFlight: 0, settledAt: 0 });
+
+const tracked = <A, E>(request: Effect.Effect<A, E>) =>
+  Effect.sync(() =>
+    MutableRef.update(traffic, ({ inFlight, settledAt }) => ({ inFlight: inFlight + 1, settledAt })),
+  ).pipe(
+    Effect.andThen(request),
+    Effect.ensuring(
+      Clock.currentTimeMillis.pipe(
+        Effect.tap((now) =>
+          Effect.sync(() => MutableRef.update(traffic, ({ inFlight }) => ({ inFlight: inFlight - 1, settledAt: now }))),
+        ),
+      ),
+    ),
+  );
+
+const trafficQuiet = Clock.currentTimeMillis.pipe(
+  Effect.map((now) => {
+    const { inFlight, settledAt } = MutableRef.get(traffic);
+    return inFlight === 0 && now - settledAt >= TRAFFIC_QUIET_MILLIS;
+  }),
+);
+
+/**
+ * Waits until the document's module traffic has been quiet for a second (at most 30 s), so speculative warming never
+ * competes with the reads of the page the person is looking at. On a slow backend those reads can take seconds.
+ */
+export const awaitModuleTrafficQuiet = trafficQuiet.pipe(
+  Effect.repeat({ schedule: Schedule.spaced('250 millis'), until: (quiet) => quiet }),
+  Effect.timeout(TRAFFIC_QUIET_WAIT_LIMIT),
+  Effect.ignore,
+);
+
 /**
  * Wraps the document's `fetch` once, before any remote loads. Requests other than module reads, module writes and
  * gateway assertions go straight to the original `fetch`. A caller's abort signal cancels only its own wait, never
@@ -359,10 +397,10 @@ export const installBrowserRequestCache = (): void => {
   const wrapped: typeof globalThis.fetch = async (input, init) => {
     const handled = Match.value(classify(state, input, init)).pipe(
       Match.discriminatorsExhaustive('kind')({
-        gateway: (request) => Option.some(serveGateway(state, request).pipe(Effect.map(toResponse))),
+        gateway: (request) => Option.some(tracked(serveGateway(state, request)).pipe(Effect.map(toResponse))),
         pass: () => Option.none(),
-        read: ({ read }) => Option.some(serveRead(state, read, true).pipe(Effect.map(toResponse))),
-        write: () => Option.some(serveWrite(state, input, init)),
+        read: ({ read }) => Option.some(tracked(serveRead(state, read, true)).pipe(Effect.map(toResponse))),
+        write: () => Option.some(tracked(serveWrite(state, input, init))),
       }),
     );
     return Option.isSome(handled)
@@ -383,26 +421,28 @@ const readManifest = (pathname: string) =>
 const prefetchRead = (state: CacheState, read: RecordedRead) =>
   makeOperationGateway(read.audience)
     .invoke((authorization, { compositionRevision }) =>
-      serveRead(
-        state,
-        {
-          audience: read.audience,
-          body: read.body,
-          compositionRevision,
-          contentType: read.contentType,
-          init: {
+      tracked(
+        serveRead(
+          state,
+          {
+            audience: read.audience,
             body: read.body,
-            headers: {
-              authorization,
-              'content-type': read.contentType,
-              'x-correlation-id': `prefetch:${read.audience}`,
-              'x-ontos-composition-revision': compositionRevision,
+            compositionRevision,
+            contentType: read.contentType,
+            init: {
+              body: read.body,
+              headers: {
+                authorization,
+                'content-type': read.contentType,
+                'x-correlation-id': `prefetch:${read.audience}`,
+                'x-ontos-composition-revision': compositionRevision,
+              },
+              method: 'POST',
             },
-            method: 'POST',
+            url: read.url,
           },
-          url: read.url,
-        },
-        false,
+          false,
+        ),
       ),
     )
     .pipe(Effect.ignore);

@@ -17,11 +17,12 @@ interface Stamped<A> {
 /**
  * A browser read cache that answers from memory and refreshes stale entries in the background, so a route loader
  * never waits on a read it already has. Concurrent reads of one key share one request. A refresh that fails or is
- * not worth keeping drops the entry, so the next read goes to the server.
+ * not worth keeping drops the entry, so the next read goes to the server. `immutable` reads (the answer is fixed by
+ * its key) are never refreshed in the background; they are read again only once they expire.
  */
 export const browserStaleWhileRevalidateCache = <Key, A, E>(
   lookup: (key: Key) => Effect.Effect<A, E>,
-  options: { readonly capacity: number; readonly keep: (value: A) => boolean },
+  options: { readonly capacity: number; readonly immutable?: true; readonly keep: (value: A) => boolean },
 ) => {
   const cache = browserRuntime.runSync(
     Cache.makeWith(
@@ -48,7 +49,9 @@ export const browserStaleWhileRevalidateCache = <Key, A, E>(
   const get = (key: Key): Effect.Effect<A, E> =>
     Effect.all([Cache.get(cache, key), Clock.currentTimeMillis], { concurrency: 1 }).pipe(
       Effect.tap(([{ fetchedAt }, now]) =>
-        now - fetchedAt < REVALIDATE_AFTER_MILLIS || refreshing.has(key) ? Effect.void : revalidate(key),
+        options.immutable === true || now - fetchedAt < REVALIDATE_AFTER_MILLIS || refreshing.has(key)
+          ? Effect.void
+          : revalidate(key),
       ),
       Effect.map(([{ value }]) => value),
     );

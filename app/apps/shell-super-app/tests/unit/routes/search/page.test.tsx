@@ -106,6 +106,7 @@ rstest.mock('../../../../src/runtime/browser-effect-runtime.ts', () => ({
   browserRuntime: {
     runFork: browserRuntime.runFork,
     runPromise: browserRunPromiseMock,
+    runSync: browserRuntime.runSync,
     runSyncExit: browserRuntime.runSyncExit,
   },
 }));

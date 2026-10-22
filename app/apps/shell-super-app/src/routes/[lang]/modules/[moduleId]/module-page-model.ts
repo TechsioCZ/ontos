@@ -81,8 +81,9 @@ const safeState = (error: Config.ConfigError | ShellTargetClientError, shell: Ho
 const ResolveModuleTargetPayloadJson = Schema.fromJsonString(ResolveModuleTargetPayloadSchema);
 
 /**
- * A target resolution is fixed for one pinned release, tenant and legal entity, so the browser reuses it like the
- * other Shell reads: a navigation or preload of a visited path resolves without a round trip.
+ * A target resolution is fixed for one pinned release, tenant and legal entity, so the browser reuses it for the
+ * cache's lifetime without background refreshes: a navigation or preload of a visited path resolves without a round
+ * trip, and idle warming of the menu does not re-resolve every destination each time a page settles.
  */
 const browserTargetCache = browserStaleWhileRevalidateCache(
   (key: string) => {
@@ -91,7 +92,7 @@ const browserTargetCache = browserStaleWhileRevalidateCache(
       Effect.flatMap((decoded) => resolveModuleTarget(decoded, { baseUrl: new URL(parts[0] ?? '') })),
     );
   },
-  { capacity: 64, keep: () => true },
+  { capacity: 64, immutable: true, keep: () => true },
 );
 
 const targetFor = (
@@ -161,9 +162,11 @@ export const loadModulePageModel = ({
   );
 
 export const loader = (input: ModuleTargetLoaderArguments): Promise<ModuleTargetPageModel> =>
-  browserRuntime.runPromise(
-    loadModulePageModel(input).pipe(
-      Effect.tap((model) => preloadModuleTarget(model, new URL(input.request.url).pathname)),
-    ),
-    { signal: input.request.signal },
-  ).then((model) => requireSignedIn(input.request, model));
+  browserRuntime
+    .runPromise(
+      loadModulePageModel(input).pipe(
+        Effect.tap((model) => preloadModuleTarget(model, new URL(input.request.url).pathname)),
+      ),
+      { signal: input.request.signal },
+    )
+    .then((model) => requireSignedIn(input.request, model));
