@@ -48,28 +48,29 @@ export const GatewayAssertionRedemptionLive = Layer.effect(
           return yield* replay();
         }
         const inserted = yield* executor
-          .transaction(
-            Effect.fn('sales-insights.redemptionTransaction')(function* redeem(transaction) {
-              yield* transaction
+          // One autocommit statement (one round trip): the expired-evidence purge rides along as a CTE.
+          .with(
+            executor.$with('expired_redemptions').as(
+              executor
                 .delete(gatewayAssertionRedemptions)
                 .where(
                   lt(
                     gatewayAssertionRedemptions.expiresAt,
                     DateTime.toDateUtc(DateTime.makeUnsafe(now - GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS * 1000)),
                   ),
-                );
-              return yield* transaction
-                .insert(gatewayAssertionRedemptions)
-                .values({
-                  audience: input.audience,
-                  expiresAt: DateTime.toDateUtc(DateTime.makeUnsafe(input.expiresAtEpochSeconds * 1000)),
-                  issuer: input.issuer,
-                  jti: input.jti,
-                })
-                .onConflictDoNothing()
-                .returning({ jti: gatewayAssertionRedemptions.jti });
-            }),
+                )
+                .returning({ jti: gatewayAssertionRedemptions.jti }),
+            ),
           )
+          .insert(gatewayAssertionRedemptions)
+          .values({
+            audience: input.audience,
+            expiresAt: DateTime.toDateUtc(DateTime.makeUnsafe(input.expiresAtEpochSeconds * 1000)),
+            issuer: input.issuer,
+            jti: input.jti,
+          })
+          .onConflictDoNothing()
+          .returning({ jti: gatewayAssertionRedemptions.jti })
           .pipe(
             Effect.mapError(unavailable),
             Effect.timeoutOrElse({ duration: '5 seconds', orElse: () => Effect.fail(unavailable()) }),

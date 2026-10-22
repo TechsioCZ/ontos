@@ -60,23 +60,27 @@ const redeemAssertion = (
   expiredBefore: Date,
   expiresAt: Date,
 ) =>
-  executor.transaction(
-    Effect.fn('PricingGatewayAssertionRedemptionRuntime.redeemAssertion')(function* redeemAssertionEffect(transaction) {
-      yield* transaction
-        .delete(gatewayAssertionRedemptions)
-        .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore));
-      return yield* transaction
-        .insert(gatewayAssertionRedemptions)
-        .values({
-          audience: input.audience,
-          expiresAt,
-          issuer: input.issuer,
-          jti: input.jti,
-        })
-        .onConflictDoNothing()
-        .returning({ jti: gatewayAssertionRedemptions.jti });
-    }),
-  );
+  executor
+    // One autocommit statement (one round trip): the expired-evidence purge rides along as a CTE.
+    .with(
+      executor
+        .$with('expired_redemptions')
+        .as(
+          executor
+            .delete(gatewayAssertionRedemptions)
+            .where(lt(gatewayAssertionRedemptions.expiresAt, expiredBefore))
+            .returning({ jti: gatewayAssertionRedemptions.jti }),
+        ),
+    )
+    .insert(gatewayAssertionRedemptions)
+    .values({
+      audience: input.audience,
+      expiresAt,
+      issuer: input.issuer,
+      jti: input.jti,
+    })
+    .onConflictDoNothing()
+    .returning({ jti: gatewayAssertionRedemptions.jti });
 
 export const makeGatewayAssertionRedemption = (
   executor: PricingGatewayAssertionRedemptionDatabaseExecutor,

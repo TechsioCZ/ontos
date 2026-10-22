@@ -42,34 +42,37 @@ export const GatewayAssertionRedemptionLive = Layer.effect(
   Effect.gen(function* makeRedemption() {
     const executor = yield* makeWithDefaults({ relations: facilityOperationsRelations });
     return {
-      consume: Effect.fn('facility-operations.redeemAssertion')(function* consume(input: GatewayAssertionRedemptionInput) {
+      consume: Effect.fn('facility-operations.redeemAssertion')(function* consume(
+        input: GatewayAssertionRedemptionInput,
+      ) {
         const now = yield* Clock.currentTimeMillis;
         if (input.expiresAtEpochSeconds + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS <= Math.floor(now / 1000)) {
           return yield* replay();
         }
         const inserted = yield* executor
-          .transaction(
-            Effect.fn('facility-operations.redemptionTransaction')(function* redeem(transaction) {
-              yield* transaction
+          // One autocommit statement (one round trip): the expired-evidence purge rides along as a CTE.
+          .with(
+            executor.$with('expired_redemptions').as(
+              executor
                 .delete(gatewayAssertionRedemptions)
                 .where(
                   lt(
                     gatewayAssertionRedemptions.expiresAt,
                     DateTime.toDateUtc(DateTime.makeUnsafe(now - GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS * 1000)),
                   ),
-                );
-              return yield* transaction
-                .insert(gatewayAssertionRedemptions)
-                .values({
-                  audience: input.audience,
-                  expiresAt: DateTime.toDateUtc(DateTime.makeUnsafe(input.expiresAtEpochSeconds * 1000)),
-                  issuer: input.issuer,
-                  jti: input.jti,
-                })
-                .onConflictDoNothing()
-                .returning({ jti: gatewayAssertionRedemptions.jti });
-            }),
+                )
+                .returning({ jti: gatewayAssertionRedemptions.jti }),
+            ),
           )
+          .insert(gatewayAssertionRedemptions)
+          .values({
+            audience: input.audience,
+            expiresAt: DateTime.toDateUtc(DateTime.makeUnsafe(input.expiresAtEpochSeconds * 1000)),
+            issuer: input.issuer,
+            jti: input.jti,
+          })
+          .onConflictDoNothing()
+          .returning({ jti: gatewayAssertionRedemptions.jti })
           .pipe(
             Effect.mapError(unavailable),
             Effect.timeoutOrElse({ duration: '5 seconds', orElse: () => Effect.fail(unavailable()) }),
