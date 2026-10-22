@@ -127,6 +127,8 @@ export const createMcpFetch = (deps: McpEndpointDeps) => {
       return buildMcpServer((tools as () => readonly ToolSpec[])());
     },
     {
+      // Current MCP revision only: 2025-era requests get the unsupported-version error naming 2026-07-28.
+      legacy: 'reject',
       onerror: (error) => {
         console.error(`mcp handler error: ${error.message}`);
       },

@@ -1,13 +1,13 @@
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 
-export type Era = 'legacy' | 'modern';
-
 export const MODERN_PROTOCOL_VERSION = '2026-07-28';
+export const LEGACY_PROTOCOL_VERSION = '2025-11-25';
 
-export async function connectMcp(serverUrl: string, accessToken: string, era: Era) {
+/** The server speaks the current MCP revision only, so every client pins it. */
+export async function connectMcp(serverUrl: string, accessToken: string) {
   const client = new Client(
     { name: 'ontos-oauth-e2e', version: '1.0.0' },
-    { versionNegotiation: { mode: era === 'legacy' ? 'legacy' : { pin: MODERN_PROTOCOL_VERSION } } },
+    { versionNegotiation: { mode: { pin: MODERN_PROTOCOL_VERSION } } },
   );
   await client.connect(
     new StreamableHTTPClientTransport(new URL(serverUrl), {
@@ -64,4 +64,30 @@ export async function rawMcpStatus(
   });
   await response.body?.cancel();
   return { status: response.status, wwwAuthenticate: response.headers.get('www-authenticate') };
+}
+
+/** A 2025-era `initialize`; a current-only server answers with an error naming the revision it supports. */
+export async function rawLegacyInitialize(
+  serverUrl: string,
+  accessToken: string,
+): Promise<{ status: number; body: string }> {
+  const response = await fetch(serverUrl, {
+    method: 'POST',
+    headers: {
+      accept: 'application/json, text/event-stream',
+      authorization: `Bearer ${accessToken}`,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: LEGACY_PROTOCOL_VERSION,
+        capabilities: {},
+        clientInfo: { name: 'ontos-oauth-e2e-legacy', version: '1.0.0' },
+      },
+    }),
+  });
+  return { status: response.status, body: await response.text() };
 }

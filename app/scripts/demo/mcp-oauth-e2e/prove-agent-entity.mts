@@ -222,7 +222,7 @@ async function run(): Promise<void> {
     const access = flow.accessToken;
     grantId = String(decodeJwt(access)[GRANT_CLAIM]);
 
-    const { client } = await connectMcp(E2E.mcpUrl, access, 'legacy');
+    const { client } = await connectMcp(E2E.mcpUrl, access);
     open.push(client);
 
     await rec.step('agent', 'tools/list', async () => {

@@ -88,7 +88,7 @@ if (command === 'connect') {
   }
 } else if (command === 'tools' || command === 'call') {
   // DEV_MCP_URL points at a second RS instance (same resource/audience) for checks before the live restart.
-  const { client } = await connectMcp(process.env['DEV_MCP_URL'] ?? E2E.mcpUrl, await freshAccess(), 'modern');
+  const { client } = await connectMcp(process.env['DEV_MCP_URL'] ?? E2E.mcpUrl, await freshAccess());
   try {
     if (command === 'tools') {
       const listed = await client.listTools();

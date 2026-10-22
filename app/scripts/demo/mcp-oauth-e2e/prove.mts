@@ -10,7 +10,7 @@ import { startLoopbackCallback } from './loopback.mts';
 import type { LoopbackCallback } from './loopback.mts';
 import { E2eOAuthProvider } from './provider.mts';
 import { runOAuthFlow, rotateRefreshToken, refreshIsRejected } from './flow.mts';
-import { connectMcp, callJson, rawMcpStatus, MODERN_PROTOCOL_VERSION } from './mcp.mts';
+import { connectMcp, callJson, rawLegacyInitialize, rawMcpStatus, MODERN_PROTOCOL_VERSION } from './mcp.mts';
 import { openSharedTab, approveConnection, sessionPost } from './browser.mts';
 import type { ActAs, E2eTab } from './browser.mts';
 
@@ -24,7 +24,7 @@ const OUT_OF_GRANT_CANDIDATES = [
   'demo.sales-pipeline/command/CreateOpportunity',
   'finance.billing/command/IssueInvoice',
 ];
-const REQUIRED_LEGACY_TOOLS = [
+const REQUIRED_TOOLS = [
   'ontos_whoami',
   'ontos_capabilities',
   'ontos_read',
@@ -243,21 +243,21 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
     summary.grantId = grantId;
     let access = flow.accessToken;
 
-    // Legacy era (2025-11-25 negotiated via initialize).
-    const legacy = await rec.step(k, 'tools/list (2025-11-25, initialize)', async () => {
-      const { client, protocolVersion } = await connectMcp(E2E.mcpUrl, access, 'legacy');
+    // Current MCP revision only (2026-07-28, server/discover).
+    const connected = await rec.step(k, 'tools/list (2026-07-28)', async () => {
+      const { client, protocolVersion } = await connectMcp(E2E.mcpUrl, access);
       open.push(client);
       const names = await listToolNames(client);
       return {
-        pass: REQUIRED_LEGACY_TOOLS.every((name) => names.includes(name)),
+        pass: protocolVersion === MODERN_PROTOCOL_VERSION && REQUIRED_TOOLS.every((name) => names.includes(name)),
         detail: `${names.length} nástrojů, verze ${String(protocolVersion)}`,
         value: client,
       };
     });
-    if (legacy === undefined) {
+    if (connected === undefined) {
       return;
     }
-    const client = legacy;
+    const client = connected;
 
     const whoami = await rec.step(k, 'ontos_whoami', async () => {
       const outcome = await callJson(client, 'ontos_whoami');
@@ -425,20 +425,13 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
     });
     await client.close();
 
-    // Modern era (2026-07-28, pinned).
-    await rec.step(k, 'tools/list + whoami (2026-07-28)', async () => {
-      const { client: modern, protocolVersion } = await connectMcp(E2E.mcpUrl, access, 'modern');
-      open.push(modern);
-      try {
-        const names = await listToolNames(modern);
-        const who = await callJson(modern, 'ontos_whoami');
-        return {
-          pass: protocolVersion === MODERN_PROTOCOL_VERSION && names.includes('ontos_whoami') && !who.isError,
-          detail: `${names.length} nástrojů, verze ${String(protocolVersion)}`,
-        };
-      } finally {
-        await modern.close();
-      }
+    // A 2025-era client is told which revision the server speaks instead of being served.
+    await rec.step(k, 'initialize 2025-11-25 odmítnut (jen 2026-07-28)', async () => {
+      const { status, body } = await rawLegacyInitialize(E2E.mcpUrl, access);
+      return {
+        pass: body.includes('"error"') && body.includes(MODERN_PROTOCOL_VERSION) && !body.includes('"result"'),
+        detail: `HTTP ${status} ${body.slice(0, 160)}`,
+      };
     });
 
     // Refresh rotation: the rotated pair works at once.
@@ -446,7 +439,7 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
     const rotated = await rec.step(k, 'rotace refresh tokenu + nový access token funguje', async () => {
       const result = await rotateRefreshToken({ issuer: E2E.issuer, provider, resource: E2E.mcpUrl });
       rotatedAt = Date.now();
-      const { client: fresh } = await connectMcp(E2E.mcpUrl, result.accessToken, 'modern');
+      const { client: fresh } = await connectMcp(E2E.mcpUrl, result.accessToken);
       open.push(fresh);
       try {
         const who = await callJson(fresh, 'ontos_whoami');
