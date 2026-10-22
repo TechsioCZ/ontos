@@ -637,6 +637,7 @@ const makeShellBetterAuth = (configuration: AuthConfigValue, allowFixtureSignUp:
 type ShellBetterAuth = ReturnType<typeof makeShellBetterAuth>;
 
 const readyBetterAuth = new Map<string, ShellBetterAuth>();
+const MAX_SHARED_BETTER_AUTH = 4;
 
 const publishWhenReady = async (key: string, created: ShellBetterAuth): Promise<void> => {
   try {
@@ -645,13 +646,20 @@ const publishWhenReady = async (key: string, created: ShellBetterAuth): Promise<
     // A failed setup stays with the request that built it; the next request builds again.
     return;
   }
-  if (!readyBetterAuth.has(key)) {
-    readyBetterAuth.set(key, created);
+  if (readyBetterAuth.has(key)) {
+    return;
   }
+  // An isolate serves one configuration; the bound only keeps a misconfiguration from growing the map.
+  if (readyBetterAuth.size >= MAX_SHARED_BETTER_AUTH) {
+    readyBetterAuth.clear();
+  }
+  readyBetterAuth.set(key, created);
 };
 
 /**
- * One Better Auth instance per isolate and configuration. A request that finds none ready builds its own; it becomes
+ * One Better Auth instance per isolate and configuration. The database is not part of the key: on Workers every request
+ * gets its own Hyperdrive connection string, and the request lends its database through the bindings anyway.
+ * A request that finds none ready builds its own; it becomes
  * the shared one only after its setup (including the OAuth resource seed) finished inside that request, so no request
  * ever waits on I/O that belongs to another one.
  */
@@ -662,7 +670,6 @@ const isolateBetterAuth = (
 ): ShellBetterAuth => {
   const key = JSON.stringify([
     configuration.baseUrl,
-    configuration.connectionString,
     configuration.secret,
     configuration.secureCookies,
     configuration.supportUserIds,
