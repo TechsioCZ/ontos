@@ -53,35 +53,21 @@ it('serves every Worker only on its custom domain, off workers.dev and preview U
     [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE,
   });
 
-  expect(
-    createCloudflareWorkerConfig(values, { cpuMs: CLOUDFLARE_WORKER_CPU_MS.vertical, publicUrlVariable: PUBLIC_URL }),
-  ).toEqual({
+  expect(createCloudflareWorkerConfig(values, { publicUrlVariable: PUBLIC_URL })).toEqual({
     vpcServices: [{ binding: 'SPICEDB', serviceId: SPICEDB_VPC_SERVICE }],
     wrangler: {
       compatibility_flags: ['global_fetch_strictly_public'],
       hyperdrive: [{ binding: 'HYPERDRIVE', id: HYPERDRIVE_CONFIG }],
       kv_namespaces: [COMPOSITION_BINDING],
-      limits: { cpu_ms: 100 },
+      limits: { cpu_ms: CLOUDFLARE_WORKER_CPU_MS },
       observability: { enabled: false },
       preview_urls: false,
       routes: [{ custom_domain: true, pattern: 'ontos-stage-catalog.stage.example.com' }],
       workers_dev: false,
     },
   });
-  expect(
-    createCloudflareWorkerConfig(values, { cpuMs: CLOUDFLARE_WORKER_CPU_MS.shell, publicUrlVariable: PUBLIC_URL })
-      .wrangler.limits,
-  ).toEqual({
-    cpu_ms: 200,
-  });
-  expect(
-    createCloudflareWorkerConfig(values, {
-      cpuMs: CLOUDFLARE_WORKER_CPU_MS.largeApiVertical,
-      publicUrlVariable: PUBLIC_URL,
-    }).wrangler.limits,
-  ).toEqual({
-    cpu_ms: 3000,
-  });
+  // One budget at the Workers Standard maximum: a cold isolate's first BFF request must never hit 1102.
+  expect(CLOUDFLARE_WORKER_CPU_MS).toBe(30_000);
 });
 
 const workerConfigFor = (deploymentEnvironment: Readonly<Record<string, string>>) =>
@@ -93,7 +79,7 @@ const workerConfigFor = (deploymentEnvironment: Readonly<Record<string, string>>
       [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE,
       ...deploymentEnvironment,
     }),
-    { cpuMs: CLOUDFLARE_WORKER_CPU_MS.shell, publicUrlVariable: PUBLIC_URL },
+    { publicUrlVariable: PUBLIC_URL },
   ).wrangler.observability;
 
 it('keeps every stage Worker invocation in Workers Logs', () => {
@@ -159,9 +145,9 @@ it('refuses a Worker build without its public URL', () => {
     [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE,
   });
 
-  expect(() =>
-    createCloudflareWorkerConfig(values, { cpuMs: CLOUDFLARE_WORKER_CPU_MS.vertical, publicUrlVariable: PUBLIC_URL }),
-  ).toThrow(`${PUBLIC_URL} is required for a Cloudflare Worker build`);
+  expect(() => createCloudflareWorkerConfig(values, { publicUrlVariable: PUBLIC_URL })).toThrow(
+    `${PUBLIC_URL} is required for a Cloudflare Worker build`,
+  );
 });
 
 it.each([

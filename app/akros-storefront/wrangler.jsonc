@@ -8,6 +8,6 @@
   "workers_dev": false,
   "preview_urls": false,
   "routes": [{ "pattern": "ontos-stage-akros.bleeding.dev", "custom_domain": true }],
-  "limits": { "cpu_ms": 300 },
+  "limits": { "cpu_ms": 30000 },
   "vars": {}
 }

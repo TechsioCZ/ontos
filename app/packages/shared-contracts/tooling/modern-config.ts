@@ -308,19 +308,20 @@ export const createCloudflareEmailBindings = (envValue: ModernBuildContext['envV
 };
 
 /**
- * CPU budgets per invocation. Workers Paid includes 30M CPU ms a month, so a runaway request is cut
- * off here instead of billed. An API vertical does a few database and SpiceDB round trips (waiting on
- * I/O is not CPU time), and the Shell also renders SSR, so it gets twice the vertical budget.
+ * CPU budget per invocation, one for every OntOS Worker (Shell and verticals alike). A request that
+ * exceeds it fails with Cloudflare error 1102, which the caller sees as a 503, so the cap guards only
+ * against runaway loops; the stage cost guard (`scripts/ops/cloudflare-stage-cost-guard.mts`) watches
+ * the monthly CPU total.
  *
- * Every BFF request builds and disposes the whole Effect HTTP API runtime, because workerd ties I/O
- * objects to the request that created them, so its CPU cost grows with the API's endpoint count.
- * Catalog (about 200 endpoints) and commerce-customer-context (about 115) spend far more than 100 ms
- * per request, while the next largest vertical has about 20. Workers analytics on stage (72 h, µs
- * rounded to ms): successful requests peaked at 1590 ms (Catalog) and 2015 ms (commerce-customer-context),
- * and the requests Cloudflare cut off had already spent up to 2539 ms. `largeApiVertical` is the
- * smallest round cap above all of them. Raise a cap only with a measured p99 from Workers analytics.
+ * A request's CPU includes the first-request initialization of its isolate: the BFF bundle's module
+ * graph is evaluated on the first BFF request, then the per-request Effect HTTP API runtime is built
+ * (workerd ties I/O objects to the request that created them). At stage traffic most vertical requests
+ * land on a cold isolate. Workers analytics and Workers Logs on stage (2026-10-22, 05:30-08:45 UTC):
+ * vertical readiness requests spent 10-24 ms warm and 200-750 ms cold; reads p99 1-7 s, writes up to
+ * 7.3 s; Shell p99 5 s, max 9.2 s. The former 100/200/3000 ms tiers cut off cold isolates with 1102,
+ * and every deploy reset the higher limits set through the API. 30 s is the Workers Standard maximum.
  */
-export const CLOUDFLARE_WORKER_CPU_MS = { largeApiVertical: 3000, shell: 200, vertical: 100 } as const;
+export const CLOUDFLARE_WORKER_CPU_MS = 30_000;
 
 /**
  * Workers Logs per deployment environment. Every Worker build states its setting, so a deploy never
@@ -355,13 +356,13 @@ const resolveCloudflareWorkerObservability = (envValue: ModernBuildContext['envV
 /**
  * The data plane plus the cost guards every OntOS Worker carries: it answers only on its reviewed
  * custom domain, the hostname of `publicUrlVariable` (no `*.workers.dev` route and no preview URLs,
- * which would bypass the stage zone's WAF kill switch), and stops after `cpuMs` of CPU per request.
+ * which would bypass the stage zone's WAF kill switch), and stops after `CLOUDFLARE_WORKER_CPU_MS` of CPU per request.
  * Wrangler creates the custom domain's DNS record and certificate on deploy. Workers Logs follow
  * the deployment environment (`CLOUDFLARE_WORKER_OBSERVABILITY`).
  */
 export const createCloudflareWorkerConfig = (
   envValue: ModernBuildContext['envValue'],
-  { cpuMs, publicUrlVariable }: { readonly cpuMs: number; readonly publicUrlVariable: string },
+  { publicUrlVariable }: { readonly publicUrlVariable: string },
 ) => {
   const dataPlane = createCloudflareDataPlaneBindings(envValue);
   const customDomain = new URL(requiredCloudflareBuildValue(envValue, publicUrlVariable)).hostname;
@@ -370,7 +371,7 @@ export const createCloudflareWorkerConfig = (
     wrangler: {
       ...dataPlane.wrangler,
       compatibility_flags: ['global_fetch_strictly_public'],
-      limits: { cpu_ms: cpuMs },
+      limits: { cpu_ms: CLOUDFLARE_WORKER_CPU_MS },
       observability: resolveCloudflareWorkerObservability(envValue),
       preview_urls: false,
       routes: [{ custom_domain: true, pattern: customDomain }],
@@ -382,7 +383,6 @@ export const createCloudflareWorkerConfig = (
 const createCloudflareDeployment = (
   build: ModernBuildContext,
   worker: {
-    readonly cpuMs: number;
     readonly name: string;
   },
 ) =>
@@ -391,7 +391,6 @@ const createCloudflareDeployment = (
         deploy: {
           worker: {
             ...createCloudflareWorkerConfig(build.envValue, {
-              cpuMs: worker.cpuMs,
               publicUrlVariable: build.cloudflarePublicUrlEnvironmentVariable,
             }),
             compatibilityDate: '2026-06-02',
@@ -469,7 +468,6 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
   build,
   builderPlugins,
   chunkLoadingGlobal,
-  cloudflareCpuMs = CLOUDFLARE_WORKER_CPU_MS.vertical,
   cloudflareWorkerName,
   moduleUrl,
   plugins,
@@ -482,7 +480,6 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
   build: ModernBuildContext;
   builderPlugins?: BuilderPlugin[];
   chunkLoadingGlobal: string;
-  cloudflareCpuMs?: number;
   cloudflareWorkerName: string;
   moduleUrl: string;
   plugins: Plugin[];
@@ -511,7 +508,6 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
     // oxlint-disable-next-line anti-slop/no-conditional-empty-object-spread -- This generic optional field retains the public factory's inferred return shape and its position in the emitted configuration.
     ...(builderPlugins === undefined ? {} : { builderPlugins }),
     ...createCloudflareDeployment(build, {
-      cpuMs: cloudflareCpuMs,
       name: cloudflareWorkerName,
     }),
     dev: {

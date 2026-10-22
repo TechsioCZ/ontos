@@ -19,10 +19,7 @@ import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensio
 import type { defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import { Cause, Effect, Predicate, Schema } from 'effect';
 import { describe, afterEach, expect, it, rs } from 'effect-rstest';
-import {
-  CLOUDFLARE_WORKER_CPU_MS,
-  createCloudflareWorkerConfig,
-} from '../../packages/shared-contracts/tooling/modern-config.ts';
+import { createCloudflareWorkerConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 import { build as bundleSource, transform } from 'esbuild';
 
 import { MicroVerticalReadinessSchema } from '@modern-js/bff-effect/microvertical-api';
@@ -2601,7 +2598,7 @@ const withOntosWorkerConfig = (configuration: Schema.Json): Schema.Json => {
         ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-service-id',
         ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: 'https://party.example.test',
       })[name],
-    { cpuMs: CLOUDFLARE_WORKER_CPU_MS.vertical, publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY' },
+    { publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY' },
   );
   return Schema.decodeUnknownSync(Schema.Json)({
     ...Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(configuration),

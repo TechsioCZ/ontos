@@ -14,7 +14,6 @@ import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
 import {
-  CLOUDFLARE_WORKER_CPU_MS,
   createCloudflareWorkerConfig,
   createCloudflareWorkerSecurity,
   createModernBuildContext,
@@ -83,7 +82,6 @@ const appDevServerHeaders: NonNullable<NonNullable<NonNullable<AppToolsUserConfi
 // Only a Worker build binds the private data plane and carries the cost guards; its IDs are required there and unused elsewhere.
 const cloudflareWorkerConfig = cloudflareDeployEnabled
   ? createCloudflareWorkerConfig(envValue, {
-      cpuMs: CLOUDFLARE_WORKER_CPU_MS.largeApiVertical,
       publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_CATALOG',
     })
   : undefined;

@@ -466,9 +466,6 @@ first: it needs no secrets, so it also runs for forks. In the same pull request 
    targets to `unitServiceBindings` when it calls other placed units.
 3. Set `buildEnvironment.ULTRAMODERN_PUBLIC_URL_<UNIT>` to its stage origin,
    `https://ontos-stage-<unit>.<STAGE_ZONE>`.
-4. Pick its CPU tier in its `modern.config.ts`: the default is `CLOUDFLARE_WORKER_CPU_MS.vertical`.
-   Pass `cloudflareCpuMs: CLOUDFLARE_WORKER_CPU_MS.largeApiVertical` only when Workers analytics
-   shows its BFF hitting the default cap.
 
 Before the merge, an operator runs `node scripts/ops/cloudflare-stage-cutover.mts worker-secrets`
 from the pull request's checkout, so the new Worker holds its runtime secrets when the stage deploy
@@ -584,11 +581,11 @@ shared with them. So the guards measure account-wide usage but only ever change 
 list of the usage notification emails) and `STAGE_ACCESS_ENFORCE` (default `false`).
 
 - Every Worker config sets `workers_dev: false` and `preview_urls: false`, so the only way in is the
-  zone routes the guards cover, and caps CPU per request at 200 ms for the Shell, 100 ms for a
-  vertical, and 3000 ms for Catalog and commerce-customer-context (`CLOUDFLARE_WORKER_CPU_MS` in
-  `packages/shared-contracts/tooling/modern-config.ts`). Each BFF request builds the whole Effect
-  HTTP API runtime, so CPU grows with the endpoint count, and those two verticals have far more
-  endpoints than the rest. Raise a cap only when Workers analytics shows real requests hitting it.
+  zone routes the guards cover, and caps CPU per request at 30 s, the Workers Standard maximum, for
+  every Worker (`CLOUDFLARE_WORKER_CPU_MS` in `packages/shared-contracts/tooling/modern-config.ts`).
+  A request's CPU includes its isolate's first-request initialization, and on stage most vertical
+  requests land on a cold isolate (200-750 ms CPU before any work), so lower caps returned 1102/503.
+  The cap only stops runaway loops; the cost guards watch the monthly CPU total.
 - A WAF custom rule `ontos_stage_kill_switch` blocks exactly the placed OntOS stage hostnames. It is
   added next to any rules other projects keep in the zone, created disabled, and re-runs keep its
   current state. The WAF answers before a Worker runs, so blocked requests are never billed. There is
