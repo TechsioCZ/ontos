@@ -30,7 +30,9 @@ GitHub issues zůstávají beze změny.
 
 Uživatel odsouhlasil [detailní návrh TASK 03 + 07](plans/akros-task-03-07-review.md)
 a jeho realizaci: modal z názvu varianty, přímé akce, obrázkový náhled a přesná URL.
-Neověřená jednotka hmotnosti zůstává otevřená a neblokuje ostatní části detailu.
+Jednotka kg byla 22. 10. 2026 doložena podle stejných SKU na původním e-shopu.
+TASK 07 nyní zobrazuje vlastní hmotnost varianty; neznámá zůstává neuvedená.
+Přepočet podle kusu/metru/balení pro TASK 16 dále řeší hmotnostní plán.
 
 [TASK 04](plans/akros-task-04-review.md) je implementovaný a ověřený: výpis obsahuje
 všechny odpovídající varianty bez opakování kontejneru a bez stránkování. Ověřeno
@@ -40,8 +42,12 @@ filtraci s resetem, odstraňuje cenu a materiál. Ověřeno včetně 386 variant
 desetinných oddělovačů.
 [TASK 06](plans/akros-task-06-review.md) je dokončený: nevybrané skupiny mají `Cena dle
 varianty`, konkrétní položky skutečnou cenu a cenové prefixy `Od` jsou odstraněné.
-Ověřeny cenové plochy, našeptávač i košík na desktopu a mobilu. Dále zbývá hmotnostní
-část TASK 07 po potvrzení jednotky zdroje a rozložení detailu v TASK 08.
+Ověřeny cenové plochy, našeptávač i košík na desktopu a mobilu.
+[TASK 08](plans/akros-task-08-review.md) je dokončený: celý popis je pod horním
+přehledem před variantami, doprava pod akcemi. Opravené zpracování popisu zachovává
+důležité materiálové informace, stránka/modal/tisk používají stejný postup.
+Ověřeno na desktopu, tabletu, mobilu a hranicích breakpointu, včetně hmotnosti z TASK 07.
+Další v původním pořadí je TASK 09 – odkazy v horní navigační liště.
 
 ## Zadání a porovnání s GitHubem
 
@@ -153,7 +159,7 @@ udržovat jako druhý nezávislý seznam hotových položek.
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------ |
 | D1  | Pro TASK 01 potvrzeno kompaktní černé „Koupit celé balení“ z rámce `8:1377`, tlačítko `8:1717` (desktop 128 × 38 px). Finální rozložení TASK 07–08 se upřesní samostatně.                                                            | 01 vyjasněné; 07–08 později                |
 | D2  | Pro výběr je zavedeno `variantIds` s přesnými ID; `variant` zůstává volným hledáním. Samostatná položka má referenci `variantId: null` a produktový odkaz. Otevření samotného variantního modalu a jeho historii ještě řeší TASK 07. | 02–03 vyřešené odkazy; návaznost 07, 11–13 |
-| D3  | Jednotka `net_weight`, vazba na kus/metr/balení a zdroj váhy konkrétní varianty. V katalogu jsou i nejednoznačné hodnoty měrných jednotek.                                                                                           | 07, 16                                     |
+| D3  | Kg pro zobrazení vlastní hmotnosti varianty doloženo 22. 10. 2026. Pro TASK 16 zbývá ověřit přepočet kus/metr/balení; neúplné či nejednoznačné údaje nenahrazovat odhadem.                                                           | 07 vyřešené zobrazení; 16 přepočet zbývá   |
 | D4  | Zda mají být profil a adresy nadále lokální demo, nebo připojené k zákaznickému účtu; zda „uložené adresy“ znamenají dvě současná pole, nebo více adres.                                                                             | 14, návaznost 17                           |
 | D5  | Cílová autentizační služba a veřejný kontrakt změny hesla včetně ověření uživatele. Bez něj TASK 15 není implementačně připravený.                                                                                                   | 15                                         |
 | D6  | Konečný seznam textových odkazů v horní liště, zejména ponechání „Domů“ a oddělené přihlašovací akce. Katalogové odkazy do tohoto seznamu nepatří.                                                                                   | 09                                         |

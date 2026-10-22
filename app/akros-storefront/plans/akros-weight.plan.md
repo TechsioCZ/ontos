@@ -25,6 +25,28 @@ dalších 5 428 má nulu. Tag `net_weight` nemá atribut jednotky. Implementace
 Toto pole není interpretovanou hmotností a nesmí vstoupit do výpočtu košíku.
 Jednotka a vztah k prodejní jednotce/balení dále čekají na doložení.
 
+### Doplnění 22. 10. 2026
+
+Uživatel požádal význam ověřit podle dostupných dat. Porovnání konkrétních SKU
+s původním e-shopem doložilo **kg pro zobrazení zdrojové hmotnosti varianty**:
+
+| SKU            | Feed `net_weight` | Původní e-shop                                                       | Balení |
+| -------------- | ----------------- | -------------------------------------------------------------------- | ------ |
+| 10799700050025 | 0.0034            | [0,003 Kg](https://www.akros.cz/vrut-5-x-25-zap-hl-kr-dr-din7997-a2) | 200 ks |
+| 10091200040090 | 0.00691           | [0,007 Kg](https://www.akros.cz/sroub-m-4-x-90-imbus-din-912-a2)     | 100 ks |
+
+Web původního obchodu hodnoty zaokrouhluje na tři desetinná místa. Lokální detail
+zachová až šest míst a používá hodnotu konkrétní varianty. Neznámé hodnoty
+zůstávají neuvedené. To umožňuje dokončit zobrazení z TASK 07.
+
+Pro **výpočet košíku z TASK 16** však D3 ještě není uzavřené: ve feedu chybí
+jednotkový atribut, `measure_price_by` je v kontrolovaných položkách prázdné
+a `net_pieces/net_length` nulové. Z 2 202 metrových variant má kladnou váhu
+jen 65. Například několik různých FVE profilů má shodně `0.01061` při různých
+délkách a baleních; to neurčuje spolehlivý přepočet kg/m. U vrutů DIN 7997/A2
+má mnoho odlišných rozměrů shodně `0.0034`. Zdrojové hodnoty neopravovat
+odhadem a nerozdělovat je automaticky počtem kusů v balení.
+
 - Výchozí generátor přenášel `net_weight` pouze na kontejner. Nyní ověřit význam
   variantního zdrojového pole před zavedením normalizované hmotnosti.
 - Dohledat význam hodnoty u konkrétní zdrojové položky: jednotku váhy a vztah

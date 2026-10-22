@@ -53,10 +53,10 @@ try {
   await dialog.waitFor();
   assert.equal(new URL(page.url()).searchParams.get("variantDetail"), a.id);
   assert.equal(await dialog.locator("[data-variant-detail-sku]").innerText(), a.sku);
-  assert.ok(
-    (await dialog.getByRole("region", { name: "Popis varianty" }).innerText()).includes(
-      a.description,
-    ),
+  assert.match(a.description, /^Limity množstevních slev:.*do košíku\.?$/);
+  assert.equal(
+    await dialog.getByRole("region", { name: "Popis varianty" }).locator("p").innerText(),
+    "Popis není k dispozici.",
   );
   assert.equal(
     await dialog.getByRole("button", { name: "Koupit", exact: true }).isDisabled(),

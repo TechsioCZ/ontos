@@ -38,6 +38,12 @@ focus, direct/reloaded links, independent favorites/watch state, purchase identi
 sharing and prefilled questions, invalid IDs and missing images/descriptions.
 Screenshots are saved under `test-results/variant-detail/`.
 
+`npm run test:product-information` checks the description below the overview and
+delivery information below product actions at eight widths from 320 to 1920 px.
+It covers missing, short and mixed material descriptions, modal/print consistency,
+delivery navigation and distinct/missing variant weights without inheriting a parent weight.
+Screenshots and the layout report are in `test-results/product-information/`.
+
 `npm run test:variant-list` checks all 47/386 variants without pagination at eight
 desktop/mobile widths, the last variant and its modal/focus, purchase identity,
 filter recovery and exact shared/SKU links. Screenshots and local interaction timings

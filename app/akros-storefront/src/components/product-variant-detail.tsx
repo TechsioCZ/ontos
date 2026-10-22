@@ -9,7 +9,8 @@ import { Dialog } from "@techsio/ui-kit/molecules/dialog";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
 import { FavoriteButton } from "@/features/favorites/favorite-button";
 import { buildVariantDetailHref } from "@/lib/product-variant-links";
-import { formatPrice } from "@/lib/format";
+import { formatPrice, formatWeight } from "@/lib/format";
+import { getProductDescriptionParagraphs } from "@/lib/product-description";
 import type { CatalogProduct } from "@/mock-storefront/types";
 import { ProductShare } from "./product-share";
 import { ProductVariantActions } from "./product-variant-actions";
@@ -41,7 +42,13 @@ export function ProductVariantDetail({ product }: { product: CatalogProduct }) {
       });
   }
   const common = { productId: product.id, productName: product.name, productSlug: product.slug };
-  const description = variant?.description || product.detail.descriptionParagraphs.join("\n\n");
+  const variantDescription = getProductDescriptionParagraphs(
+    variant?.description ? [variant.description] : [],
+  );
+  const description =
+    variantDescription.length > 0
+      ? variantDescription
+      : getProductDescriptionParagraphs(product.detail.descriptionParagraphs);
   return (
     <Dialog
       open
@@ -112,7 +119,7 @@ export function ProductVariantDetail({ product }: { product: CatalogProduct }) {
               )}
               <div>
                 <dt>Hmotnost</dt>
-                <dd>Neuvedena</dd>
+                <dd>{formatWeight(variant.sourceNetWeight) ?? "Neuvedena"}</dd>
               </div>
               {variant.parameters.map((parameter) => (
                 <div key={`${parameter.label}-${parameter.value}`}>
@@ -152,8 +159,12 @@ export function ProductVariantDetail({ product }: { product: CatalogProduct }) {
             </p>
           </div>
           <section className="akros-variant-detail__description" aria-label="Popis varianty">
-            <h3>{variant.description ? "Popis varianty" : "Společný popis produktu"}</h3>
-            <p>{description || "Popis není k dispozici."}</p>
+            <h3>{variantDescription.length > 0 ? "Popis varianty" : "Společný popis produktu"}</h3>
+            {description.length > 0 ? (
+              description.map((paragraph) => <p key={paragraph}>{paragraph}</p>)
+            ) : (
+              <p>Popis není k dispozici.</p>
+            )}
           </section>
         </div>
       ) : (

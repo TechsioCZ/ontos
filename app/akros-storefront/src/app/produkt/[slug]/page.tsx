@@ -11,7 +11,8 @@ import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
 import { cs } from "@/i18n/cs";
-import { formatPrice } from "@/lib/format";
+import { formatPrice, formatWeight } from "@/lib/format";
+import { getProductDescriptionParagraphs } from "@/lib/product-description";
 import { parseVariantIds, resolveVariantSelection } from "@/lib/product-variant-links";
 import { ContentLink } from "@/components/content-link";
 import {
@@ -30,9 +31,6 @@ interface ProductPageProps {
   params: Promise<{ slug: string }>;
   searchParams: Promise<{ variant?: string | string[]; variantIds?: string | string[] }>;
 }
-
-const isQuantityPricingCopy = (paragraph: string) =>
-  /množstevních slev|snížená cena|snížení ceny/i.test(paragraph);
 
 export async function generateMetadata({ params }: ProductPageProps): Promise<Metadata> {
   const { slug } = await params;
@@ -57,6 +55,9 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
   const invalidSingleSelection =
     sharedIds.length > 0 && !hasMultipleVariants && !sharedVariants.length;
   const purchaseItem = singleVariant ?? product;
+  const productWeight = formatWeight(
+    singleVariant ? singleVariant.sourceNetWeight : product.netWeight,
+  );
   const purchasePriceTiers = singleVariant?.priceTiers.length
     ? singleVariant.priceTiers
     : detail.priceTiers;
@@ -77,10 +78,9 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
     detail.variants.some((variant) => matchesProductVariantSearch(variant, normalizedVariantSearch))
       ? variantSearch?.trim()
       : undefined;
-  const productDescriptionParagraphs = detail.descriptionParagraphs.filter(
-    (paragraph) => !isQuantityPricingCopy(paragraph),
+  const productDescriptionParagraphs = getProductDescriptionParagraphs(
+    detail.descriptionParagraphs,
   );
-  const [summaryDescription, ...remainingDescriptionParagraphs] = productDescriptionParagraphs;
   const materialMarkers = product.name.match(/\bA[1-5]\b|\b1\.\d{4}\b/gi) ?? [];
   const recommendationScore = (candidateName: string) =>
     materialMarkers.filter((marker) =>
@@ -184,10 +184,6 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
               )}
             </header>
 
-            {summaryDescription && (
-              <p className="akros-product-detail__description">{summaryDescription}</p>
-            )}
-
             <dl className="akros-product-detail__facts">
               {packageQuantity > purchaseItem.minimumQuantity && (
                 <div>
@@ -201,14 +197,10 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                 <dt>Kód produktu</dt>
                 <dd>{purchaseItem.sku}</dd>
               </div>
-              {!hasMultipleVariants && product.netWeight && (
+              {!hasMultipleVariants && productWeight && (
                 <div>
-                  <dt>Váha</dt>
-                  <dd>
-                    {product.netWeight.toLocaleString("cs-CZ", {
-                      maximumFractionDigits: 6,
-                    })}
-                  </dd>
+                  <dt>Hmotnost</dt>
+                  <dd>{productWeight}</dd>
                 </div>
               )}
               <div>
@@ -293,27 +285,43 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
               productSlug={product.slug}
               showVariantFavorites={hasMultipleVariants}
             />
+            <section
+              className="akros-product-detail__delivery"
+              aria-labelledby="product-delivery-title"
+            >
+              <h2 id="product-delivery-title">Doprava a platba</h2>
+              <p>Způsob dopravy a platby zvolíte v košíku.</p>
+              <ContentLink
+                href="/doprava-a-platba"
+                theme="borderless"
+                variant="secondary"
+                size="current"
+                className="justify-self-start"
+              >
+                Více o dopravě a platbě
+              </ContentLink>
+            </section>
           </div>
         </section>
 
-        {(remainingDescriptionParagraphs.length > 0 || detail.parameters.length > 0) && (
-          <section className="akros-product-detail__surface" aria-labelledby="description-title">
-            <h2 id="description-title">{cs.product.details}</h2>
-            {remainingDescriptionParagraphs.map((paragraph) => (
-              <p key={paragraph}>{paragraph}</p>
-            ))}
-            {detail.parameters.length > 0 && (
-              <ul className="akros-product-parameters">
-                {detail.parameters.map((parameter) => (
-                  <li key={parameter.label}>
-                    {parameter.label}: {parameter.value}
-                    {parameter.unit && ` ${parameter.unit}`}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        )}
+        <section className="akros-product-detail__surface" aria-labelledby="description-title">
+          <h2 id="description-title">Popis produktu</h2>
+          {productDescriptionParagraphs.length > 0 ? (
+            productDescriptionParagraphs.map((paragraph) => <p key={paragraph}>{paragraph}</p>)
+          ) : (
+            <p>Popis není k dispozici.</p>
+          )}
+          {detail.parameters.length > 0 && (
+            <ul className="akros-product-parameters">
+              {detail.parameters.map((parameter) => (
+                <li key={parameter.label}>
+                  {parameter.label}: {parameter.value}
+                  {parameter.unit && ` ${parameter.unit}`}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
 
         {hasMultipleVariants && (
           <section id="product-variants" aria-label="Varianty produktu" tabIndex={-1}>

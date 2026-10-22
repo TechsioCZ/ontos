@@ -63,6 +63,15 @@ krokem nezakládá automatický commit či push jeho budoucí implementace.
 
 ## Realizace
 
+### Doplnění hmotnosti 22. 10. 2026
+
+Na žádost uživatele byla data porovnána s konkrétními SKU na původním e-shopu.
+[Záznam hmotnosti](akros-weight.plan.md#doplnění-22-10-2026) dokládá jednotku kg.
+Modal zobrazuje `sourceNetWeight` konkrétní varianty s jednotkou a bez dědění
+váhy kontejneru; nulová nebo chybějící hodnota zůstává „Neuvedena“.
+Samostatná položka používá vlastní údaj, nikoli váhu rodiče jednočlenné skupiny.
+Zobrazení z TASK 07 nevyžaduje zavést neověřený přepočet pro košík z TASK 16.
+
 - Generátor přenáší čistý text popisu a kladný `sourceNetWeight`. Katalog byl
   regenerován původním příkazem; jednotka hmotnosti nebyla domyšlená.
 - Název varianty je kit `LinkButton` s `Tooltip` náhledem; fokus vnořeného odkazu

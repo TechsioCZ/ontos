@@ -389,15 +389,24 @@ body {
   line-height: 1.2;
 }
 
-.akros-product-detail__description {
-  margin: 0;
-  line-height: 1.5;
-}
-
 .akros-product-detail__facts {
   display: grid;
   gap: var(--dimension-8);
   margin: 0;
+}
+
+.akros-product-detail__delivery {
+  display: grid;
+  gap: var(--dimension-8);
+  border-top: var(--border-sm) solid var(--akros-product-detail-divider-color);
+  padding-top: var(--dimension-16);
+}
+
+.akros-product-detail__delivery h2,
+.akros-product-detail__delivery p {
+  margin: 0;
+  font-size: var(--text-base);
+  line-height: inherit;
 }
 
 .akros-product-detail__facts > div {

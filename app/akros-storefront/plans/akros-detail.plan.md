@@ -4,10 +4,10 @@ overview: Doplnit modální detail, akce a oblíbené konkrétních variant podl
 todos:
   - id: task-03-07-variant-detail
     content: TASK 03 a 07 – dodat modální detail s popisem, hmotností, náhledem obrázku a hlídáním, dotazem i sdílením konkrétní varianty.
-    status: in_progress
+    status: completed
   - id: task-08-detail-information
     content: TASK 08 – ověřit a upravit rozmístění popisu a informací o dopravě v detailu.
-    status: pending
+    status: completed
   - id: task-02-favorite-state
     content: TASK 02 – výběr oblíbených variant v dialogu, skutečné ukládání a jednotný stav srdíčka.
     status: completed
@@ -21,11 +21,10 @@ isProject: false
 
 ## Execution Notes
 
-Navazuje na `akros-variants`; část hmotnosti čeká na ověření v `akros-weight`,
-ostatní části detailu lze dodat samostatně. Mapování na issues
+Navazuje na `akros-variants`. Jednotka kg pro zobrazení hmotnosti byla doložena 22. 10. 2026; `akros-weight` dále řeší přepočet pro košík z TASK 16. Mapování na issues
 a rozhodnutí jsou v [hlavním plánu](../IMPLEMENTATION-PLAN.md). Modal a jeho akce
 z TASK 03 a 07 se dodávají společně: potřebují tutéž identitu, data a návratový stav.
-Zobrazení hmotnosti má samostatnou bránu ověření zdrojových jednotek.
+Zdroje a zbývající jednotkové otázky vlastní `akros-weight`.
 
 Aktuální [rozbor TASK 02](akros-task-02-review.md) obsahuje uživatelův požadavek na
 tabulku pro výběr variant po kliknutí na srdíčko a ověřený inventář komponent kitu.
@@ -40,15 +39,14 @@ Uživatelské upřesnění po TASK 02 dodává společný výběr pro hlídání
 více variant, přesné odkazy a předvyplněný dotaz. Stav tohoto dílčího kroku je v
 [záznamu akcí](akros-task-03-actions-review.md). Navazující implementace modalu,
 popisu, obrázku a přímých akcí je v níže uvedeném rozboru. Společný úkol 03/07
-zůstává rozpracovaný kvůli neověřené jednotce a významu hmotnosti.
+je lokálně dokončený včetně zobrazení doložené hmotnosti v kg.
 
 Uživatel schválil [konkrétní návrh a realizaci](akros-task-03-07-review.md).
 Tento dokument vlastní otevření z názvu, obsah modalu, přímé akce, obrázkový náhled,
 URL/historii, chybějící data a ověření. Hromadné akce zůstávají zachované;
-neověřená hmotnost neblokuje zbytek realizace a neznamená dokončení celého TASK 07.
+váha se nedědí z kontejneru a přepočet kg pro košík je samostatný TASK 16.
 
-- Doplnit požadovaný modální detail přes kit `Dialog`. Aktuální produktová stránka
-  pouze filtruje varianty přes URL; existenci hotového modalu tato větev nepotvrzuje.
+- Požadovaný modální detail používá kit `Dialog` a vlastní přesnou URL identitu.
 - Modal patří konkrétní variantě: název, SKU, obrázek, dostupné parametry, cena,
   ověřená hmotnost a popis. Váhu neuvádět na vícevariantovém kontejneru.
 - Zpřístupnit i popis společného produktu; při chybějícím variantním popisu použít
@@ -68,6 +66,10 @@ Dokončeno: dvě varianty jednoho produktu mají nezávislé akce; odkaz a dotaz
 správné SKU. Modal projde klávesnicí i dotykem, zobrazuje popis a správně zdrojenou váhu.
 
 ### TASK 08 – informační rozložení · #1306
+
+Uživatel schválil [rozmístění a rozsah opravy](akros-task-08-review.md): celý popis
+pod horním přehledem a dopravu pod akcemi. Součástí je oprava ztracených popisů,
+nikoli přenastavení dopravních cen nebo odhad hmotnosti.
 
 - Posoudit současný popis pod obrázky a před úpravou připravit konkrétní návrh
   rozmístění pro desktop i mobil. Ověřit jej vůči přesnému návrhu z D1.
