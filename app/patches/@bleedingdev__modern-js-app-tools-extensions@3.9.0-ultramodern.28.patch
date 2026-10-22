@@ -3368,13 +3368,63 @@ index 34f6fdcb66638a00a79de029996ce06961259309..5b08d05584791f2599752c48eb2bb214
    expectedTarget?: MicroVerticalReleaseTarget;
 +  expectedKind?: ReleaseEnvelopeKind;
  };
+diff --git a/dist/esm-node/cloudflare/worker-manifest.mjs b/dist/esm-node/cloudflare/worker-manifest.mjs
+--- a/dist/esm-node/cloudflare/worker-manifest.mjs
++++ b/dist/esm-node/cloudflare/worker-manifest.mjs
+@@ -119,6 +119,9 @@
+             routeManifest: ROUTE_MANIFEST_FILE
+         },
+         security: createCloudflareWorkerSecurityPolicy(modernConfig),
++        ...modernConfig.deploy?.worker?.rootRoutes ? {
++            rootRoutes: modernConfig.deploy.worker.rootRoutes
++        } : {},
+         ...void 0 === moduleFederation ? {} : {
+             moduleFederation
+         },
+diff --git a/dist/esm/cloudflare/worker-manifest.mjs b/dist/esm/cloudflare/worker-manifest.mjs
+--- a/dist/esm/cloudflare/worker-manifest.mjs
++++ b/dist/esm/cloudflare/worker-manifest.mjs
+@@ -118,6 +118,9 @@
+             routeManifest: ROUTE_MANIFEST_FILE
+         },
+         security: createCloudflareWorkerSecurityPolicy(modernConfig),
++        ...modernConfig.deploy?.worker?.rootRoutes ? {
++            rootRoutes: modernConfig.deploy.worker.rootRoutes
++        } : {},
+         ...void 0 === moduleFederation ? {} : {
+             moduleFederation
+         },
+diff --git a/dist/cjs/cloudflare/worker-manifest.js b/dist/cjs/cloudflare/worker-manifest.js
+--- a/dist/cjs/cloudflare/worker-manifest.js
++++ b/dist/cjs/cloudflare/worker-manifest.js
+@@ -164,6 +164,9 @@
+             routeManifest: external_constants_js_namespaceObject.ROUTE_MANIFEST_FILE
+         },
+         security: (0, external_security_policies_js_namespaceObject.createCloudflareWorkerSecurityPolicy)(modernConfig),
++        ...modernConfig.deploy?.worker?.rootRoutes ? {
++            rootRoutes: modernConfig.deploy.worker.rootRoutes
++        } : {},
+         ...void 0 === moduleFederation ? {} : {
+             moduleFederation
+         },
+diff --git a/src/cloudflare/worker-manifest.ts b/src/cloudflare/worker-manifest.ts
+--- a/src/cloudflare/worker-manifest.ts
++++ b/src/cloudflare/worker-manifest.ts
+@@ -221,6 +221,7 @@
+       routeManifest: ROUTE_MANIFEST_FILE,
+     },
+     security: createCloudflareWorkerSecurityPolicy(modernConfig),
++    ...(modernConfig.deploy?.worker?.rootRoutes ? { rootRoutes: modernConfig.deploy.worker.rootRoutes } : {}),
+     ...(moduleFederation === undefined ? {} : { moduleFederation }),
+     ...(deliveryUnitStamp ? { deliveryUnit: deliveryUnitStamp } : {}),
+     i18n: createI18nWorkerManifest(routeSpec, appContext),
 diff --git a/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs
 --- a/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs
 +++ b/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs
-@@ -1,5 +1,101 @@
-+// OAuth discovery (RFC 8414 / OIDC) lives at the origin root, outside the BFF prefix. When the BFF
-+// module exports `oauthMetadataTarget(pathname)`, those root paths are answered in-process by the
-+// BFF route it names, with anonymous CORS: discovery is public metadata fetched cross-origin.
+@@ -1,5 +1,88 @@
++// OAuth discovery (RFC 8414 / OIDC) lives at the origin root, outside the BFF prefix. Paths the app
++// declares in `deploy.worker.rootRoutes.metadata` are answered in-process by the named BFF route,
++// with anonymous CORS: discovery is public metadata fetched cross-origin.
 +const OAUTH_METADATA_CORS_HEADERS = {
 +  'access-control-allow-origin': '*',
 +  'access-control-allow-methods': 'GET, HEAD, OPTIONS',
@@ -3404,14 +3454,7 @@ diff --git a/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/cj
 +  if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
 +    return null;
 +  }
-+  const workerModule = await loadWorkerModule(bff.worker);
-+  if (!workerModule) {
-+    return null;
-+  }
-+  const runtime = getRuntimeModule(workerModule);
-+  const resolveTarget = runtime.oauthMetadataTarget;
-+  const target =
-+    typeof resolveTarget === 'function' ? resolveTarget(url.pathname) : undefined;
++  const target = MODERN_WORKER_MANIFEST.rootRoutes?.metadata?.[url.pathname];
 +  if (typeof target !== 'string' || target.length === 0) {
 +    return null;
 +  }
@@ -3428,22 +3471,16 @@ diff --git a/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/cj
 +  return response ? withOAuthMetadataCors(response) : null;
 +}
 +
-+// Root routes the BFF owns outside its prefix (for example `/mcp`): when the BFF module exports
-+// `rootRouteTarget(pathname)`, the named BFF route answers in-process for any method; the request
-+// body streams through and the response is returned as the BFF produced it.
++// Root routes the BFF owns outside its prefix (for example `/mcp`), declared in
++// `deploy.worker.rootRoutes.routes`: the named BFF route answers in-process for any method; the
++// request body streams through and the response is returned as the BFF produced it.
 +async function dispatchRootRouteRequest(request, env, ctx) {
 +  const bff = MODERN_WORKER_MANIFEST.bff;
 +  if (!bff?.worker) {
 +    return null;
 +  }
 +  const url = new URL(request.url);
-+  const workerModule = await loadWorkerModule(bff.worker);
-+  if (!workerModule) {
-+    return null;
-+  }
-+  const resolveTarget = getRuntimeModule(workerModule).rootRouteTarget;
-+  const target =
-+    typeof resolveTarget === 'function' ? resolveTarget(url.pathname) : undefined;
++  const target = MODERN_WORKER_MANIFEST.rootRoutes?.routes?.[url.pathname];
 +  if (typeof target !== 'string' || target.length === 0) {
 +    return null;
 +  }
@@ -3476,10 +3513,10 @@ diff --git a/dist/cjs/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/cj
 diff --git a/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs
 --- a/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs
 +++ b/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs
-@@ -1,5 +1,101 @@
-+// OAuth discovery (RFC 8414 / OIDC) lives at the origin root, outside the BFF prefix. When the BFF
-+// module exports `oauthMetadataTarget(pathname)`, those root paths are answered in-process by the
-+// BFF route it names, with anonymous CORS: discovery is public metadata fetched cross-origin.
+@@ -1,5 +1,88 @@
++// OAuth discovery (RFC 8414 / OIDC) lives at the origin root, outside the BFF prefix. Paths the app
++// declares in `deploy.worker.rootRoutes.metadata` are answered in-process by the named BFF route,
++// with anonymous CORS: discovery is public metadata fetched cross-origin.
 +const OAUTH_METADATA_CORS_HEADERS = {
 +  'access-control-allow-origin': '*',
 +  'access-control-allow-methods': 'GET, HEAD, OPTIONS',
@@ -3509,14 +3546,7 @@ diff --git a/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/es
 +  if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
 +    return null;
 +  }
-+  const workerModule = await loadWorkerModule(bff.worker);
-+  if (!workerModule) {
-+    return null;
-+  }
-+  const runtime = getRuntimeModule(workerModule);
-+  const resolveTarget = runtime.oauthMetadataTarget;
-+  const target =
-+    typeof resolveTarget === 'function' ? resolveTarget(url.pathname) : undefined;
++  const target = MODERN_WORKER_MANIFEST.rootRoutes?.metadata?.[url.pathname];
 +  if (typeof target !== 'string' || target.length === 0) {
 +    return null;
 +  }
@@ -3533,22 +3563,16 @@ diff --git a/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/es
 +  return response ? withOAuthMetadataCors(response) : null;
 +}
 +
-+// Root routes the BFF owns outside its prefix (for example `/mcp`): when the BFF module exports
-+// `rootRouteTarget(pathname)`, the named BFF route answers in-process for any method; the request
-+// body streams through and the response is returned as the BFF produced it.
++// Root routes the BFF owns outside its prefix (for example `/mcp`), declared in
++// `deploy.worker.rootRoutes.routes`: the named BFF route answers in-process for any method; the
++// request body streams through and the response is returned as the BFF produced it.
 +async function dispatchRootRouteRequest(request, env, ctx) {
 +  const bff = MODERN_WORKER_MANIFEST.bff;
 +  if (!bff?.worker) {
 +    return null;
 +  }
 +  const url = new URL(request.url);
-+  const workerModule = await loadWorkerModule(bff.worker);
-+  if (!workerModule) {
-+    return null;
-+  }
-+  const resolveTarget = getRuntimeModule(workerModule).rootRouteTarget;
-+  const target =
-+    typeof resolveTarget === 'function' ? resolveTarget(url.pathname) : undefined;
++  const target = MODERN_WORKER_MANIFEST.rootRoutes?.routes?.[url.pathname];
 +  if (typeof target !== 'string' || target.length === 0) {
 +    return null;
 +  }
@@ -3581,10 +3605,10 @@ diff --git a/dist/esm/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/es
 diff --git a/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs b/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs
 --- a/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs
 +++ b/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs
-@@ -1,5 +1,101 @@
-+// OAuth discovery (RFC 8414 / OIDC) lives at the origin root, outside the BFF prefix. When the BFF
-+// module exports `oauthMetadataTarget(pathname)`, those root paths are answered in-process by the
-+// BFF route it names, with anonymous CORS: discovery is public metadata fetched cross-origin.
+@@ -1,5 +1,88 @@
++// OAuth discovery (RFC 8414 / OIDC) lives at the origin root, outside the BFF prefix. Paths the app
++// declares in `deploy.worker.rootRoutes.metadata` are answered in-process by the named BFF route,
++// with anonymous CORS: discovery is public metadata fetched cross-origin.
 +const OAUTH_METADATA_CORS_HEADERS = {
 +  'access-control-allow-origin': '*',
 +  'access-control-allow-methods': 'GET, HEAD, OPTIONS',
@@ -3614,14 +3638,7 @@ diff --git a/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs b/di
 +  if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
 +    return null;
 +  }
-+  const workerModule = await loadWorkerModule(bff.worker);
-+  if (!workerModule) {
-+    return null;
-+  }
-+  const runtime = getRuntimeModule(workerModule);
-+  const resolveTarget = runtime.oauthMetadataTarget;
-+  const target =
-+    typeof resolveTarget === 'function' ? resolveTarget(url.pathname) : undefined;
++  const target = MODERN_WORKER_MANIFEST.rootRoutes?.metadata?.[url.pathname];
 +  if (typeof target !== 'string' || target.length === 0) {
 +    return null;
 +  }
@@ -3638,22 +3655,16 @@ diff --git a/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs b/di
 +  return response ? withOAuthMetadataCors(response) : null;
 +}
 +
-+// Root routes the BFF owns outside its prefix (for example `/mcp`): when the BFF module exports
-+// `rootRouteTarget(pathname)`, the named BFF route answers in-process for any method; the request
-+// body streams through and the response is returned as the BFF produced it.
++// Root routes the BFF owns outside its prefix (for example `/mcp`), declared in
++// `deploy.worker.rootRoutes.routes`: the named BFF route answers in-process for any method; the
++// request body streams through and the response is returned as the BFF produced it.
 +async function dispatchRootRouteRequest(request, env, ctx) {
 +  const bff = MODERN_WORKER_MANIFEST.bff;
 +  if (!bff?.worker) {
 +    return null;
 +  }
 +  const url = new URL(request.url);
-+  const workerModule = await loadWorkerModule(bff.worker);
-+  if (!workerModule) {
-+    return null;
-+  }
-+  const resolveTarget = getRuntimeModule(workerModule).rootRouteTarget;
-+  const target =
-+    typeof resolveTarget === 'function' ? resolveTarget(url.pathname) : undefined;
++  const target = MODERN_WORKER_MANIFEST.rootRoutes?.routes?.[url.pathname];
 +  if (typeof target !== 'string' || target.length === 0) {
 +    return null;
 +  }
@@ -3686,10 +3697,10 @@ diff --git a/dist/esm-node/templates/cloudflare-entry.006-fetch-handler.mjs b/di
 diff --git a/src/templates/cloudflare-entry.006-fetch-handler.mjs b/src/templates/cloudflare-entry.006-fetch-handler.mjs
 --- a/src/templates/cloudflare-entry.006-fetch-handler.mjs
 +++ b/src/templates/cloudflare-entry.006-fetch-handler.mjs
-@@ -1,5 +1,101 @@
-+// OAuth discovery (RFC 8414 / OIDC) lives at the origin root, outside the BFF prefix. When the BFF
-+// module exports `oauthMetadataTarget(pathname)`, those root paths are answered in-process by the
-+// BFF route it names, with anonymous CORS: discovery is public metadata fetched cross-origin.
+@@ -1,5 +1,88 @@
++// OAuth discovery (RFC 8414 / OIDC) lives at the origin root, outside the BFF prefix. Paths the app
++// declares in `deploy.worker.rootRoutes.metadata` are answered in-process by the named BFF route,
++// with anonymous CORS: discovery is public metadata fetched cross-origin.
 +const OAUTH_METADATA_CORS_HEADERS = {
 +  'access-control-allow-origin': '*',
 +  'access-control-allow-methods': 'GET, HEAD, OPTIONS',
@@ -3719,14 +3730,7 @@ diff --git a/src/templates/cloudflare-entry.006-fetch-handler.mjs b/src/template
 +  if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
 +    return null;
 +  }
-+  const workerModule = await loadWorkerModule(bff.worker);
-+  if (!workerModule) {
-+    return null;
-+  }
-+  const runtime = getRuntimeModule(workerModule);
-+  const resolveTarget = runtime.oauthMetadataTarget;
-+  const target =
-+    typeof resolveTarget === 'function' ? resolveTarget(url.pathname) : undefined;
++  const target = MODERN_WORKER_MANIFEST.rootRoutes?.metadata?.[url.pathname];
 +  if (typeof target !== 'string' || target.length === 0) {
 +    return null;
 +  }
@@ -3743,22 +3747,16 @@ diff --git a/src/templates/cloudflare-entry.006-fetch-handler.mjs b/src/template
 +  return response ? withOAuthMetadataCors(response) : null;
 +}
 +
-+// Root routes the BFF owns outside its prefix (for example `/mcp`): when the BFF module exports
-+// `rootRouteTarget(pathname)`, the named BFF route answers in-process for any method; the request
-+// body streams through and the response is returned as the BFF produced it.
++// Root routes the BFF owns outside its prefix (for example `/mcp`), declared in
++// `deploy.worker.rootRoutes.routes`: the named BFF route answers in-process for any method; the
++// request body streams through and the response is returned as the BFF produced it.
 +async function dispatchRootRouteRequest(request, env, ctx) {
 +  const bff = MODERN_WORKER_MANIFEST.bff;
 +  if (!bff?.worker) {
 +    return null;
 +  }
 +  const url = new URL(request.url);
-+  const workerModule = await loadWorkerModule(bff.worker);
-+  if (!workerModule) {
-+    return null;
-+  }
-+  const resolveTarget = getRuntimeModule(workerModule).rootRouteTarget;
-+  const target =
-+    typeof resolveTarget === 'function' ? resolveTarget(url.pathname) : undefined;
++  const target = MODERN_WORKER_MANIFEST.rootRoutes?.routes?.[url.pathname];
 +  if (typeof target !== 'string' || target.length === 0) {
 +    return null;
 +  }

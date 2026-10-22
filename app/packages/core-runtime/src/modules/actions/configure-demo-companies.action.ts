@@ -30,7 +30,8 @@ const handleConfigureDemoCompanies = Effect.fn('ConfigureDemoCompanies.handle')(
   const environment = yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
     Effect.orElseSucceed(() => 'unknown'),
   );
-  if (environment !== 'development') {
+  // The demo stage environment runs the same synthetic demo administration as local development.
+  if (environment !== 'development' && environment !== 'stage') {
     return yield* new IdentityTargetInvalidError({
       code: 'identity_target_invalid',
       reason: 'Synthetic company configuration is available only in development',

@@ -13,7 +13,8 @@ import {
 } from '@app/core-runtime';
 import { apiKey } from '@better-auth/api-key';
 import { cimd } from '@better-auth/cimd';
-import { fetchClientMetadataResource } from '#cimd-transport';
+import { fetchClientMetadataResource as fetchClientMetadataOnNode } from './cimd-transport.node.ts';
+import { fetchClientMetadataResource as fetchClientMetadataOnWorkerd } from './cimd-transport.workerd.ts';
 import { mcp } from '@better-auth/mcp';
 import { APIError, betterAuth } from 'better-auth';
 import { isAPIError } from 'better-auth/api';
@@ -543,7 +544,12 @@ const assembleAuthenticationService = (
         validateRedirectUri: validateAuthorizeRedirectUri,
       }),
       // CIMD only (NO-COMPAT): no dynamic client registration; runtime-specific transport enforces the metadata fetch boundary.
-      cimd({ fetchClientMetadataResource, metadataProfile: 'mcp-2026-07-28' }),
+      cimd({
+        // The BFF source loader resolves this app's own imports with Node conditions, so the runtime picks.
+        fetchClientMetadataResource:
+          globalThis.navigator?.userAgent === 'Cloudflare-Workers' ? fetchClientMetadataOnWorkerd : fetchClientMetadataOnNode,
+        metadataProfile: 'mcp-2026-07-28',
+      }),
     ],
     secret: configuration.secret,
     session: {
