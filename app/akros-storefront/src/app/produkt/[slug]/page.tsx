@@ -38,10 +38,11 @@ export async function generateMetadata({ params }: ProductPageProps): Promise<Me
 
 export default async function ProductPage({ params, searchParams }: ProductPageProps) {
   const { slug } = await params;
-  // Recommendations come from the homepage selection (cards).
-  const featuredCatalog = await getCatalog();
-  const { getCategoryById, getCategoryTrail, getProductBySlug, toProductSummary } =
-    await getProductDetail(slug);
+  // Recommendations come from the homepage selection (cards), read alongside the product detail.
+  const [
+    featuredCatalog,
+    { getCategoryById, getCategoryTrail, getProductBySlug, toProductSummary },
+  ] = await Promise.all([getCatalog(), getProductDetail(slug)]);
   const { variant: requestedVariantSearch } = await searchParams;
   const product = getProductBySlug(slug);
   if (!product) notFound();

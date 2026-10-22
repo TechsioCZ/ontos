@@ -113,10 +113,12 @@ describe("OntOS catalog server reads", () => {
   it("adds the content of the requested category from its own detail read", async () => {
     const model = await server.getCatalog("srouby");
     expect(vi.mocked(readRecords).mock.calls.map(catalogOf)).toContainEqual({
-      pageSize: 1,
+      categorySlug: "srouby",
+      page: 1,
+      pageSize: 24,
+      sort: "name",
       fields: "card",
       includeCategories: true,
-      categorySlug: "srouby",
     });
     expect(model.getCategoryBySlug("srouby")).toMatchObject({
       heading: "Nadpis srouby",
@@ -129,6 +131,59 @@ describe("OntOS catalog server reads", () => {
       imageSrc: undefined,
     });
     expect(model.getProducts().map((p) => p.id)).toEqual(["p1"]);
+  });
+  it("reads a category's tree and its unfiltered first listing page in one owner read", async () => {
+    // (Within one page render React's request cache also joins the two concurrent calls.)
+    const model = await server.getCatalog("srouby");
+    const listing = await server.getCategoryListing({
+      categorySlug: "srouby",
+      pageSize: 24,
+      sort: "name",
+      page: 1,
+    });
+    const calls = vi.mocked(readRecords).mock.calls.map(catalogOf);
+    expect(calls.filter((call) => call.categorySlug === "srouby")).toHaveLength(1);
+    expect(model.getCategoryBySlug("srouby")?.heading).toBe("Nadpis srouby");
+    expect(listing.products.map((p) => p.id)).toEqual(["p1"]);
+    // Another page or a filter is its own product read, without the tree.
+    await server.getCategoryListing({
+      categorySlug: "srouby",
+      pageSize: 24,
+      sort: "name",
+      page: 2,
+    });
+    await server.getCategoryListing({ categorySlug: "srouby", pageSize: 24, sort: "price-asc" });
+    expect(
+      vi
+        .mocked(readRecords)
+        .mock.calls.map(catalogOf)
+        .filter((call) => call.categorySlug === "srouby")
+        .map(({ page, sort, includeCategories }) => ({ page, sort, includeCategories })),
+    ).toEqual([
+      { page: 1, sort: "name", includeCategories: true },
+      { page: 2, sort: "name", includeCategories: false },
+      { page: undefined, sort: "price-asc", includeCategories: false },
+    ]);
+  });
+  it("warms the tree, the homepage selection and every sidebar category, then skips young values", async () => {
+    expect(await server.warmCatalog(60_000)).toEqual({ fresh: 0, refreshed: 4, failed: 0 });
+    const calls = vi.mocked(readRecords).mock.calls.map(catalogOf);
+    expect(calls).toContainEqual({ pageSize: 1, fields: "card", includeCategories: true });
+    expect(calls).toContainEqual({
+      featured: true,
+      pageSize: 20,
+      fields: "card",
+      includeCategories: false,
+    });
+    expect(calls.map((call) => call.categorySlug).filter(Boolean)).toEqual([
+      "nerezovy-spojovaci-material",
+      "srouby",
+    ]);
+    expect(await server.warmCatalog(60_000)).toEqual({ fresh: 4, refreshed: 0, failed: 0 });
+    expect(readRecords).toHaveBeenCalledTimes(4);
+    // A page view of a warmed category needs no owner read.
+    await server.getCatalog("srouby");
+    expect(readRecords).toHaveBeenCalledTimes(4);
   });
   it("reads product detail in full and listings as cards", async () => {
     await server.getCatalogPage({ slug: "p1", pageSize: 1 }, { fields: "full" });

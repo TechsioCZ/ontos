@@ -1,7 +1,7 @@
 import "server-only";
 import { cache } from "react";
 import type { CatalogCategory, CatalogProduct } from "@/mock-storefront/types";
-import { catalogCache } from "./catalog-cache";
+import { catalogCache, type WarmResult } from "./catalog-cache";
 import { createCatalog } from "./catalog-model";
 import { readRecords } from "./gateway";
 import {
@@ -34,6 +34,10 @@ export interface CatalogQuery {
 /** `card` = listing rows (no variant records, parameters or description); `full` = product detail. */
 export type CatalogFields = "card" | "full";
 export type CatalogModel = ReturnType<typeof createCatalog>;
+interface CategoryPage {
+  categories: CatalogCategory[];
+  page: ProductPage;
+}
 export interface CatalogPage {
   model: CatalogModel;
   products: CatalogProduct[];
@@ -42,26 +46,38 @@ export interface CatalogPage {
   pageSize: number;
 }
 
-/** Admin edits in OntOS are visible on a page view at most this long after they were read. */
+/** A catalog value is served without a background refresh for this long after it was read. */
 export const CATALOG_CACHE_MS = 10_000;
-/** The navigation tree changes rarely; one owner read per minute (and per detailed category). */
+/** The navigation tree changes rarely; at most one owner read per minute. */
 export const CATEGORY_CACHE_MS = 60_000;
-/** How long a page waits for a refresh before it renders the previous catalog values. */
-export const CATALOG_REFRESH_WAIT_MS = 800;
+/** Older cached values still render at once (and refresh in the background) up to this age: longer than
+ * the scheduled warm-up interval (15 min), so warmed pages never wait for OntOS. */
+export const CATALOG_STALE_MS = 20 * 60_000;
+/** An owner failure renders a cached value up to this age instead of the catalog error. */
+export const CATALOG_KEEP_MS = 24 * 60 * 60_000;
+/** Category listing page size (the category page and its warm-up read the same first page). */
+export const CATEGORY_PAGE_SIZE = 24;
 // Kai's model shows 16 cards and skips placeholder groups (e.g. one named "AKCE"): read a few spares.
 const homeQuery: CatalogQuery = { featured: true, pageSize: 20 };
 
 const productPages = catalogCache<ProductPage>("products", {
   freshMs: CATALOG_CACHE_MS,
-  keepMs: 15 * 60_000,
-  refreshWaitMs: CATALOG_REFRESH_WAIT_MS,
+  staleMs: CATALOG_STALE_MS,
+  keepMs: CATALOG_KEEP_MS,
   limit: 100,
 });
 const categoryTrees = catalogCache<CatalogCategory[]>("categories", {
   freshMs: CATEGORY_CACHE_MS,
-  keepMs: 60 * 60_000,
-  refreshWaitMs: CATALOG_REFRESH_WAIT_MS,
-  limit: 20,
+  staleMs: 60 * 60_000,
+  keepMs: CATALOG_KEEP_MS,
+  limit: 4,
+});
+/** One owner read per category: the tree with that category's content and its first listing page. */
+const categoryPages = catalogCache<CategoryPage>("category-pages", {
+  freshMs: CATALOG_CACHE_MS,
+  staleMs: CATALOG_STALE_MS,
+  keepMs: CATALOG_KEEP_MS,
+  limit: 60,
 });
 
 const readCatalog = async (storefrontCatalog: Record<string, unknown>) =>
@@ -77,6 +93,10 @@ const compact = (query: CatalogQuery): CatalogQuery =>
     ),
   ) as CatalogQuery;
 
+const WARM_CONCURRENCY = 4;
+const productKey = (query: CatalogQuery, fields: CatalogFields) =>
+  JSON.stringify({ ...compact(query), fields, includeCategories: false });
+
 const loadProducts = (key: string) => async () =>
   projectProducts(await readCatalog(JSON.parse(key) as Record<string, unknown>));
 // One owner read per render for equal queries, keyed by the serialized owner query.
@@ -90,7 +110,7 @@ export async function readProducts(
   fields: CatalogFields,
   fresh = false,
 ): Promise<ProductPage> {
-  const key = JSON.stringify({ ...compact(query), fields, includeCategories: false });
+  const key = productKey(query, fields);
   return fresh ? await loadProducts(key)() : await cachedProducts(key);
 }
 
@@ -103,23 +123,55 @@ export async function readCartProducts(
   return await readProducts({ productIds, variantIds, pageSize: productIds.length }, "full", true);
 }
 
+const loadRootTree = async () =>
+  projectCategories(await readCatalog({ pageSize: 1, fields: "card", includeCategories: true }));
+/** The first listing page of a category, sorted by name and unfiltered, as the category page reads it. */
+const firstCategoryPage = (categorySlug: string) => ({
+  categorySlug,
+  page: 1,
+  pageSize: CATEGORY_PAGE_SIZE,
+  sort: "name" as const,
+  fields: "card" as const,
+});
+const loadCategoryPage = (categorySlug: string) => async (): Promise<CategoryPage> => {
+  const body = await readCatalog({ ...firstCategoryPage(categorySlug), includeCategories: true });
+  return { categories: projectCategories(body), page: projectProducts(body) };
+};
+const cachedCategoryPage = cache((categorySlug: string): Promise<CategoryPage> =>
+  categoryPages.get(categorySlug, loadCategoryPage(categorySlug)),
+);
+
 /**
  * The navigation tree (navigation fields only, root categories with content). With `categorySlug` the
- * tree also carries the content of that category and its direct children (category page heading/grid).
+ * tree also carries the content of that category and its direct children (category page heading/grid);
+ * that read also returns the category's first listing page.
  */
-export const getCategoryTree = cache(
-  async (categorySlug?: string): Promise<CatalogCategory[]> =>
-    await categoryTrees.get(categorySlug ?? "", async () =>
-      projectCategories(
-        await readCatalog({
-          pageSize: 1,
-          fields: "card",
-          includeCategories: true,
-          ...(categorySlug ? { categorySlug } : {}),
-        }),
-      ),
-    ),
+export const getCategoryTree = cache(async (categorySlug?: string): Promise<CatalogCategory[]> =>
+  categorySlug
+    ? (await cachedCategoryPage(categorySlug)).categories
+    : await categoryTrees.get("", loadRootTree),
 );
+
+const isFirstCategoryPage = (query: CatalogQuery) => {
+  const { categorySlug, page = 1, pageSize, sort = "name", ...filters } = compact(query);
+  return (
+    categorySlug !== undefined &&
+    page === 1 &&
+    pageSize === CATEGORY_PAGE_SIZE &&
+    sort === "name" &&
+    Object.keys(filters).length === 0
+  );
+};
+
+/**
+ * One listing page of a category (cards). The unfiltered first page comes with the category's tree read;
+ * other pages, sorts and filters are their own owner read.
+ */
+export async function getCategoryListing(query: CatalogQuery): Promise<ProductPage> {
+  return query.categorySlug !== undefined && isFirstCategoryPage(query)
+    ? (await cachedCategoryPage(query.categorySlug)).page
+    : await readProducts(query, "card");
+}
 
 const slimCategory = ({
   id,
@@ -216,3 +268,29 @@ export const getCatalog = cache(
   async (categorySlug?: string): Promise<CatalogModel> =>
     (await getCatalogPage(homeQuery, { categorySlug })).model,
 );
+
+/** Warm-up of what the first views need: tree, homepage selection, and every sidebar category. */
+export async function warmCatalog(minAgeMs: number): Promise<Record<WarmResult, number>> {
+  const counts: Record<WarmResult, number> = { fresh: 0, refreshed: 0, failed: 0 };
+  const count = (result: WarmResult) => {
+    counts[result] += 1;
+  };
+  const homeKey = productKey(homeQuery, "card");
+  await Promise.all([
+    categoryTrees.warm("", loadRootTree, minAgeMs).then(count),
+    productPages.warm(homeKey, loadProducts(homeKey), minAgeMs).then(count),
+  ]);
+  const categories = await getCategoryTree();
+  const slugs = createCatalog({ products: [], homepageFeaturedProductIds: [] }, { categories })
+    .getSidebarCategories()
+    .map((category) => category.slug);
+  // A few owner reads at a time: the warm-up must not crowd out shoppers' reads.
+  for (let index = 0; index < slugs.length; index += WARM_CONCURRENCY) {
+    await Promise.all(
+      slugs
+        .slice(index, index + WARM_CONCURRENCY)
+        .map((slug) => categoryPages.warm(slug, loadCategoryPage(slug), minAgeMs).then(count)),
+    );
+  }
+  return counts;
+}

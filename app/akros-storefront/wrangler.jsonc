@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "app-akros-storefront",
-  "main": ".open-next/worker.js",
+  "main": "cloudflare-worker.mjs",
   "assets": { "directory": ".open-next/assets", "binding": "ASSETS" },
   "compatibility_date": "2026-06-02",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
@@ -9,5 +9,6 @@
   "preview_urls": false,
   "routes": [{ "pattern": "ontos-stage-akros.bleeding.dev", "custom_domain": true }],
   "limits": { "cpu_ms": 30000 },
+  "triggers": { "crons": ["*/15 * * * *"] },
   "vars": {}
 }

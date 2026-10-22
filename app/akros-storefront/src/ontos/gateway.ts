@@ -1,7 +1,9 @@
 import "server-only";
 // OntOS client for the storefront BFF: the same nonhuman-principal path as tools/ontos-agent-mcp.
 //   1. POST {shell}/shell-super-app-api/auth/api-key/gateway-context  (x-api-key, audience, legalEntityId)
-//      -> single-use bearer assertion + apiBaseUrl of the vertical on the shell origin.
+//      -> bearer assertion (valid 300 s) + apiBaseUrl of the vertical on the shell origin. The receiving
+//      gateway accepts an assertion again until it expires, so the isolate keeps one per audience and
+//      composition revision in memory and mints the next one shortly before expiry.
 //   2. Reads:   POST {shell}{apiBaseUrl}/reads/{readName}
 //      Actions: POST {shell}{apiBaseUrl}/{vertical}/actions/{slug} with an `idempotency-key`.
 // Core evaluates permissions and legal-entity scope on every call; the key is never sent to the browser.
@@ -31,7 +33,15 @@ interface GatewayContext {
   readonly apiBaseUrl: string;
   readonly compositionRevision: string;
   readonly token: string;
+  /** Epoch ms after which this isolate stops presenting the assertion. */
+  readonly reuseUntil: number;
 }
+
+/** Mint the next assertion this long before the current one expires (clock skew, slow calls). */
+const ASSERTION_RENEW_MARGIN_MS = 60_000;
+const ASSERTION_TTL_MS = 300_000;
+// In-memory only: the isolate's assertion per audience (one storefront principal and legal entity).
+const assertions = new Map<string, GatewayContext>();
 
 let liveRevision: string | undefined;
 
@@ -92,7 +102,9 @@ const parseProblem = (text: string): { code?: string; detail?: string; title?: s
   }
 };
 
-const gatewayContext = async (audience: string): Promise<GatewayContext> => {
+const mintContext = async (audience: string): Promise<GatewayContext> => {
+  // Conservative: the validity window is counted from before the request.
+  const requestedAt = Date.now();
   const config = getConfig();
   if (config.apiKey === undefined) {
     throw new OntosError(
@@ -127,16 +139,39 @@ const gatewayContext = async (audience: string): Promise<GatewayContext> => {
       problem.detail ?? problem.title,
     );
   }
-  const body = JSON.parse(text) as Partial<GatewayContext>;
+  const body = JSON.parse(text) as Partial<GatewayContext> & { expiresAt?: unknown };
   if (typeof body.apiBaseUrl !== "string" || typeof body.token !== "string") {
     throw new OntosError("Gateway context response is malformed", 502, "gateway_context_malformed");
   }
+  const expiresAt =
+    typeof body.expiresAt === "number" ? body.expiresAt * 1000 : requestedAt + ASSERTION_TTL_MS;
   return {
     apiBaseUrl: body.apiBaseUrl,
     compositionRevision:
       typeof body.compositionRevision === "string" ? body.compositionRevision : revision,
     token: body.token,
+    reuseUntil: Math.min(expiresAt, requestedAt + ASSERTION_TTL_MS) - ASSERTION_RENEW_MARGIN_MS,
   };
+};
+
+/** The isolate's current assertion for `audience`, minted when missing, outdated or close to expiry. */
+const gatewayContext = async (audience: string): Promise<GatewayContext> => {
+  const held = assertions.get(audience);
+  if (
+    held !== undefined &&
+    Date.now() < held.reuseUntil &&
+    (liveRevision === undefined || held.compositionRevision === liveRevision)
+  )
+    return held;
+  // Only settled assertions are shared: a request never awaits another request's I/O on Workers.
+  const context = await mintContext(audience);
+  assertions.set(audience, context);
+  return context;
+};
+
+/** Drops a rejected or outdated assertion, so the next call mints a new one. */
+const forgetContext = (audience: string, context: GatewayContext) => {
+  if (assertions.get(audience)?.token === context.token) assertions.delete(audience);
 };
 
 const segment = (value: string): string => {
@@ -188,7 +223,7 @@ const post = async (
   return JSON.parse(text) as unknown;
 };
 
-/** Governed records read of a vertical (fresh assertion per call: assertions are single-use). */
+/** Governed records read of a vertical (the isolate's assertion for that vertical). */
 export const readRecords = async (
   vertical: string,
   readName: string,
@@ -198,15 +233,26 @@ export const readRecords = async (
   for (let attempt = 0; ; attempt += 1) {
     try {
       const context = await gatewayContext(vertical);
-      return await post(context, `/reads/${segment(readName)}`, query);
+      try {
+        return await post(context, `/reads/${segment(readName)}`, query);
+      } catch (error) {
+        if (error instanceof OntosError && [401, 403, 409].includes(error.status))
+          forgetContext(vertical, context);
+        throw error;
+      }
     } catch (error) {
       const retryable =
         error instanceof OntosError &&
-        (error.status === 503 || error.status === 409 || error.status === 502) &&
+        (error.status === 503 ||
+          error.status === 409 ||
+          error.status === 502 ||
+          error.status === 401) &&
         error.code !== "storefront_not_configured";
       if (!retryable || attempt >= 2) throw error;
       if (error.status === 409) liveRevision = undefined;
-      await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
+      // A rejected assertion is replaced at once; an unavailable backend gets a short pause.
+      if (error.status !== 401)
+        await new Promise((resolve) => setTimeout(resolve, 600 * (attempt + 1)));
     }
   }
 };
@@ -219,7 +265,13 @@ export const callAction = async (
   idempotencyKey: string,
 ): Promise<unknown> => {
   const context = await gatewayContext(vertical);
-  return await post(context, `/${segment(vertical)}/actions/${segment(actionSlug)}`, payload, {
-    "idempotency-key": idempotencyKey,
-  });
+  try {
+    return await post(context, `/${segment(vertical)}/actions/${segment(actionSlug)}`, payload, {
+      "idempotency-key": idempotencyKey,
+    });
+  } catch (error) {
+    if (error instanceof OntosError && [401, 403, 409].includes(error.status))
+      forgetContext(vertical, context);
+    throw error;
+  }
 };
