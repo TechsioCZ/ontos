@@ -258,6 +258,17 @@ jobs:
             test -f ".codex/reports/releases/$id/plan.json"
           done < <(jq -r '.[] | [.id, .package] | @tsv' <<<"$UNITS_JSON")
 
+      # Every upload takes the composition publication advisory lock in the stage database.
+      - name: Connect the runner to the private Zerops database network
+        id: composition-vpn
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: connect
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          database-url: ${{ secrets.DATABASE_URL }}
+          database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
+
       # Deploys only upload immutable release Workers; nothing serves them until publication.
       - name: Upload every immutable release Worker
         working-directory: app
@@ -317,16 +328,6 @@ jobs:
           mkdir -p "$(dirname "$ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE")"
           printf '%s' '{"environment":"stage","inventorySha256":"40ec38189570c5e41abcfb1852b47e9d167902d2490c89a28bac432adbac6ae0","schemaVersion":"2","verifiedAt":"2026-10-22T01:51:15.913Z"}' \
             >"$ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE"
-
-      - name: Connect the runner to the private Zerops database network
-        id: composition-vpn
-        uses: ./.github/actions/zerops-vpn
-        with:
-          operation: connect
-          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
-          token: ${{ secrets.ZEROPS_TOKEN }}
-          database-url: ${{ secrets.DATABASE_URL }}
-          database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
 
       - name: Publish the Application Composition
         timeout-minutes: 20
