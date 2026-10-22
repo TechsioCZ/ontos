@@ -3,10 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "imports": {
-    "#cimd-transport": {
-      "workerd": "./api/auth/cimd-transport.workerd.ts",
-      "default": "./api/auth/cimd-transport.node.ts"
-    },
     "#auth-configuration-provider": {
       "workerd": "./api/auth/configuration-provider.workerd.ts",
       "default": "./api/auth/configuration-provider.node.ts"
