@@ -30,7 +30,11 @@ import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
 import developmentOverlay from '../../topology/local-overlays/development.json';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
-import { CLOUDFLARE_WORKER_CPU_MS, createCloudflareWorkerConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
+import {
+  CLOUDFLARE_WORKER_CPU_MS,
+  createCloudflareRspack,
+  createCloudflareWorkerConfig,
+} from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 const appId = 'tagging';
 const cloudflareWorkerName = 'app-tagging';
@@ -293,6 +297,7 @@ export default defineConfig(
         mainEntryName: 'index',
       },
       tools: {
+        rspack: createCloudflareRspack(cloudflareDeployEnabled, fileURLToPath(new URL('api/', import.meta.url))),
         autoprefixer: {
           overrideBrowserslist: ['defaults'],
         },

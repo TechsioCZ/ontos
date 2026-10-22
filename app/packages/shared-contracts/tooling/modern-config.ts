@@ -422,7 +422,8 @@ interface RspackContext {
 }
 /* oxlint-enable anti-slop/no-unknown-returns */
 
-const createCloudflareRspack = (cloudflareDeployEnabled: boolean, sourceDirectory: string) => {
+/** Worker build wiring every OntOS app needs (runtime externals, Worker SSR module replacements). */
+export const createCloudflareRspack = (cloudflareDeployEnabled: boolean, sourceDirectory: string) => {
   const cloudflareRuntimeExternal = createCloudflareRuntimeExternal(cloudflareDeployEnabled);
   return (config: RspackConfiguration, { environment, rspack }: RspackContext) => {
     if (!cloudflareDeployEnabled) {
@@ -656,9 +657,3 @@ export const createBrowserOnlySsrReplacement = <ReplacementPlugin>(rspack: {
     resource.request = BROWSER_ONLY_SSR_MODULE;
   });
 
-/** `tools.rspack` for apps with their own Modern config whose UI pulls in browser-only libraries. */
-export const browserOnlyWorkerSsrRspack = (config: RspackConfiguration, { environment, rspack }: RspackContext) => {
-  if (environment.name === 'workerSSR') {
-    config.plugins.push(createBrowserOnlySsrReplacement(rspack));
-  }
-};

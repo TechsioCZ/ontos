@@ -31,7 +31,11 @@ import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
 import developmentOverlay from '../../topology/local-overlays/development.json';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
-import { CLOUDFLARE_WORKER_CPU_MS, createCloudflareWorkerConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
+import {
+  CLOUDFLARE_WORKER_CPU_MS,
+  createCloudflareRspack,
+  createCloudflareWorkerConfig,
+} from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 // Cross-vertical clients are compiled into this remote. Invalidate persisted bundles when the producer's wire
 // contract changes (notably work.referenceDate), even when this remote's own source is otherwise unchanged.
@@ -299,6 +303,7 @@ export default defineConfig(
         mainEntryName: 'index',
       },
       tools: {
+        rspack: createCloudflareRspack(cloudflareDeployEnabled, fileURLToPath(new URL('api/', import.meta.url))),
         autoprefixer: {
           overrideBrowserslist: ['defaults'],
         },

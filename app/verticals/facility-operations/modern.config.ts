@@ -32,8 +32,8 @@ import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 import developmentOverlay from '../../topology/local-overlays/development.json';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
 import {
-  browserOnlyWorkerSsrRspack,
   CLOUDFLARE_WORKER_CPU_MS,
+  createCloudflareRspack,
   createCloudflareWorkerConfig,
 } from '../../packages/shared-contracts/tooling/modern-config.ts';
 
@@ -307,7 +307,7 @@ export default defineConfig(
         mainEntryName: 'index',
       },
       tools: {
-        rspack: browserOnlyWorkerSsrRspack,
+        rspack: createCloudflareRspack(cloudflareDeployEnabled, fileURLToPath(new URL('api/', import.meta.url))),
         autoprefixer: {
           overrideBrowserslist: ['defaults'],
         },
