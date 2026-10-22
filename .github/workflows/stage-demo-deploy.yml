@@ -18,6 +18,10 @@ on:
         description: Deploy and publish after building (off = build every unit only, stage untouched).
         type: boolean
         default: false
+      outbox_only:
+        description: Only push the outbox worker host at this revision and verify (after a failed outbox push).
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -39,7 +43,7 @@ env:
 jobs:
   plan:
     name: Plan the served units
-    if: github.event_name == 'workflow_dispatch' || vars.STAGE_DEMO_CI_DEPLOY == 'true'
+    if: (github.event_name == 'workflow_dispatch' && !inputs.outbox_only) || (github.event_name == 'push' && vars.STAGE_DEMO_CI_DEPLOY == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -264,10 +268,8 @@ jobs:
             test -f ".codex/reports/releases/$id/plan.json"
           done < <(jq -r '.[] | [.id, .package] | @tsv' <<<"$UNITS_JSON")
 
-      # Wrangler writes .wrangler/tmp next to each unit while it uploads; locally .git/info/exclude ignores it.
       - name: Require a clean checkout before the uploads
         run: |
-          echo '.wrangler/' >>.git/info/exclude
           dirty="$(git status --porcelain=v1 --untracked-files=all)"
           if [[ -n "$dirty" ]]; then
             echo "::error title=Dirty checkout::release scripts require a clean Git checkout"
@@ -422,6 +424,7 @@ jobs:
   outbox-host:
     name: Push the outbox worker host
     needs: [release]
+    if: always() && (needs.release.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.outbox_only))
     runs-on: ubuntu-latest
     timeout-minutes: 40
     environment:
@@ -442,12 +445,16 @@ jobs:
           npm install --global @zerops/zcli@1.1.0
           mise reshim
 
-      - name: Materialize the stage zerops.yaml
+      # Zerops rejects a build file over 50 kB, so the push reads only the outbox host's setup.
+      - name: Materialize the stage outbox host zerops.yaml
         working-directory: app
         env:
-          ZEROPS_YAML_PATH: ${{ runner.temp }}/zerops.yaml
+          ZEROPS_YAML_PATH: ${{ runner.temp }}/zerops.outbox.yaml
         run: |
-          mise exec -- pnpm --silent zerops:materialize-environment --environment stage --input zerops.yaml --output "$ZEROPS_YAML_PATH"
+          mise exec -- pnpm --silent zerops:materialize-environment --environment stage --input zerops.yaml --output "$RUNNER_TEMP/zerops.yaml"
+          awk 'BEGIN { print "zerops:" } /^  - setup: / { keep = ($0 ~ /outbox-worker-host/) } keep' "$RUNNER_TEMP/zerops.yaml" >"$ZEROPS_YAML_PATH"
+          grep -q "setup: 'outbox-worker-host'" "$ZEROPS_YAML_PATH"
+          wc -c "$ZEROPS_YAML_PATH"
           echo "ZEROPS_YAML_PATH=$ZEROPS_YAML_PATH" >>"$GITHUB_ENV"
 
       - name: Push the outbox worker host
@@ -462,6 +469,7 @@ jobs:
   verify:
     name: Verify stage once
     needs: [release, outbox-host]
+    if: always() && needs.outbox-host.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

@@ -21,6 +21,8 @@ build/
 !**/.env.example
 .output/
 **/.output/
+# Wrangler's per-run state (.wrangler/tmp while it deploys); release uploads require a clean checkout.
+**/.wrangler/
 # Transient module-contract bundles; a concurrent unit build reads the worktree as its release source.
 **/.ontos-contract-*/
 **/src/modern-tanstack/
