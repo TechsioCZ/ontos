@@ -28,6 +28,7 @@ import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
 import developmentOverlay from '../../topology/local-overlays/development.json';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
+import { browserOnlyWorkerSsrRspack } from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 const appId = 'property-portfolio';
 const cloudflareWorkerName = 'app-property-portfolio';
@@ -231,6 +232,7 @@ const applicationConfig: Parameters<typeof presetUltramodern>[0] = {
     mainEntryName: 'index',
   },
   tools: {
+    rspack: browserOnlyWorkerSsrRspack,
     autoprefixer: {
       overrideBrowserslist: ['defaults'],
     },
