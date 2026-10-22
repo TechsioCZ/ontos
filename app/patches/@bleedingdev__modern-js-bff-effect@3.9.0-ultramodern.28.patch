@@ -1,0 +1,131 @@
+diff --git a/dist/cjs/effect/handler/openapi.js b/dist/cjs/effect/handler/openapi.js
+index 04d77c0..c085d8e 100644
+--- a/dist/cjs/effect/handler/openapi.js
++++ b/dist/cjs/effect/handler/openapi.js
+@@ -30,6 +30,7 @@ __webpack_require__.r(__webpack_exports__);
+ __webpack_require__.d(__webpack_exports__, {
+     createOpenApiLayer: ()=>createOpenApiLayer
+ });
++const Effect_namespaceObject = require("effect/Effect");
+ const http_namespaceObject = require("effect/unstable/http");
+ const httpapi_namespaceObject = require("effect/unstable/httpapi");
+ const DEFAULT_OPENAPI_PATH = '/openapi.json';
+@@ -44,10 +45,18 @@ function getOpenApiOptions(openapi) {
+         path: normalizeOpenApiPath(path ?? DEFAULT_OPENAPI_PATH)
+     };
+ }
++const openApiDocuments = new WeakMap();
++function openApiDocument(api) {
++    const existing = openApiDocuments.get(api);
++    if (void 0 !== existing) return existing;
++    const document = httpapi_namespaceObject.OpenApi.fromApi(api);
++    openApiDocuments.set(api, document);
++    return document;
++}
+ function createOpenApiLayer(api, openapi) {
+     const openApiOptions = getOpenApiOptions(openapi);
+     if (!openApiOptions) return null;
+-    return http_namespaceObject.HttpRouter.add('GET', openApiOptions.path, http_namespaceObject.HttpServerResponse.jsonUnsafe(httpapi_namespaceObject.OpenApi.fromApi(api)));
++    return http_namespaceObject.HttpRouter.add('GET', openApiOptions.path, Effect_namespaceObject.sync(()=>http_namespaceObject.HttpServerResponse.jsonUnsafe(openApiDocument(api))));
+ }
+ exports.createOpenApiLayer = __webpack_exports__.createOpenApiLayer;
+ for(var __rspack_i in __webpack_exports__)if (-1 === [
+diff --git a/dist/esm/effect/handler/openapi.mjs b/dist/esm/effect/handler/openapi.mjs
+index f29b73f..03413ad 100644
+--- a/dist/esm/effect/handler/openapi.mjs
++++ b/dist/esm/effect/handler/openapi.mjs
+@@ -1,3 +1,4 @@
++import * as Effect from "effect/Effect";
+ import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+ import { OpenApi } from "effect/unstable/httpapi";
+ const DEFAULT_OPENAPI_PATH = '/openapi.json';
+@@ -12,9 +13,17 @@ function getOpenApiOptions(openapi) {
+         path: normalizeOpenApiPath(path ?? DEFAULT_OPENAPI_PATH)
+     };
+ }
++const openApiDocuments = new WeakMap();
++function openApiDocument(api) {
++    const existing = openApiDocuments.get(api);
++    if (void 0 !== existing) return existing;
++    const document = OpenApi.fromApi(api);
++    openApiDocuments.set(api, document);
++    return document;
++}
+ function createOpenApiLayer(api, openapi) {
+     const openApiOptions = getOpenApiOptions(openapi);
+     if (!openApiOptions) return null;
+-    return HttpRouter.add('GET', openApiOptions.path, HttpServerResponse.jsonUnsafe(OpenApi.fromApi(api)));
++    return HttpRouter.add('GET', openApiOptions.path, Effect.sync(()=>HttpServerResponse.jsonUnsafe(openApiDocument(api))));
+ }
+ export { createOpenApiLayer };
+diff --git a/dist/esm-node/effect/handler/openapi.mjs b/dist/esm-node/effect/handler/openapi.mjs
+index 0f34dc2..fb979bf 100644
+--- a/dist/esm-node/effect/handler/openapi.mjs
++++ b/dist/esm-node/effect/handler/openapi.mjs
+@@ -1,4 +1,5 @@
+ import "node:module";
++import * as Effect from "effect/Effect";
+ import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+ import { OpenApi } from "effect/unstable/httpapi";
+ const DEFAULT_OPENAPI_PATH = '/openapi.json';
+@@ -13,9 +14,17 @@ function getOpenApiOptions(openapi) {
+         path: normalizeOpenApiPath(path ?? DEFAULT_OPENAPI_PATH)
+     };
+ }
++const openApiDocuments = new WeakMap();
++function openApiDocument(api) {
++    const existing = openApiDocuments.get(api);
++    if (void 0 !== existing) return existing;
++    const document = OpenApi.fromApi(api);
++    openApiDocuments.set(api, document);
++    return document;
++}
+ function createOpenApiLayer(api, openapi) {
+     const openApiOptions = getOpenApiOptions(openapi);
+     if (!openApiOptions) return null;
+-    return HttpRouter.add('GET', openApiOptions.path, HttpServerResponse.jsonUnsafe(OpenApi.fromApi(api)));
++    return HttpRouter.add('GET', openApiOptions.path, Effect.sync(()=>HttpServerResponse.jsonUnsafe(openApiDocument(api))));
+ }
+ export { createOpenApiLayer };
+diff --git a/src/effect/handler/openapi.ts b/src/effect/handler/openapi.ts
+index 16a725c..22652c2 100644
+--- a/src/effect/handler/openapi.ts
++++ b/src/effect/handler/openapi.ts
+@@ -1,4 +1,5 @@
+ // @effect-diagnostics anyUnknownInErrorContext:off asyncFunction:off globalDate:off globalTimers:off newPromise:off strictBooleanExpressions:off
++import * as Effect from 'effect/Effect';
+ import { HttpRouter, HttpServerResponse } from 'effect/unstable/http';
+ import { type HttpApi, OpenApi } from 'effect/unstable/httpapi';
+ 
+@@ -24,6 +25,18 @@ function getOpenApiOptions(openapi: EffectBffOpenApiConfig | undefined) {
+   };
+ }
+ 
++const openApiDocuments = new WeakMap<HttpApi.Constraint, OpenApi.OpenAPISpec>();
++
++function openApiDocument(api: HttpApi.Constraint) {
++  const existing = openApiDocuments.get(api);
++  if (existing !== undefined) {
++    return existing;
++  }
++  const document = OpenApi.fromApi(api as HttpApi.Top);
++  openApiDocuments.set(api, document);
++  return document;
++}
++
+ export function createOpenApiLayer(
+   api: HttpApi.Constraint,
+   openapi: EffectBffOpenApiConfig | undefined,
+@@ -37,9 +50,11 @@ export function createOpenApiLayer(
+   // concrete api is assignable to the widened `HttpApi.Top` instance type.
+   // `HttpApi.Constraint` is the erased bound every api satisfies; `fromApi`
+   // only reads runtime properties, which `Top` preserves.
++  // The document is generated on the first request for it and kept for the api's lifetime, so a
++  // handler built per request (Workers build the BFF runtime for every request) never pays for it.
+   return HttpRouter.add(
+     'GET',
+     openApiOptions.path,
+-    HttpServerResponse.jsonUnsafe(OpenApi.fromApi(api as HttpApi.Top)),
++    Effect.sync(() => HttpServerResponse.jsonUnsafe(openApiDocument(api))),
+   );
+ }

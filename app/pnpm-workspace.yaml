@@ -124,6 +124,8 @@ allowBuilds:
 patchedDependencies:
   # upstream: https://github.com/BleedingDev/ultramodern.js/pull/210
   '@bleedingdev/modern-js-app-tools-extensions@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-app-tools-extensions@3.9.0-ultramodern.28.patch
+  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/server/bff-effect (OpenAPI document built lazily, once per api)
+  '@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-bff-effect@3.9.0-ultramodern.28.patch
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/toolkit/code-tools
   '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-code-tools@3.9.0-ultramodern.28.patch
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/cli/plugin-bff-build-extensions
