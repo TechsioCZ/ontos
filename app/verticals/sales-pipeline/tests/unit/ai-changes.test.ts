@@ -1,3 +1,4 @@
+import { AiSnapshotSchema } from '@app/shared-contracts/ai-approvals';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SalesPipelineCommandSchema } from '../../shared/actions/apply-command.ts';
@@ -8,13 +9,31 @@ import { assertCommandAllowed } from '../../shared/actions/command-guard.ts';
 import { applySalesPipelineAiCommand } from '../../src/services/ai-changes.ts';
 import { evolveOpportunityState } from '../../src/services/persistence.service.ts';
 
+it('round-trips JSON values in shared approval snapshots', () => {
+  for (const value of [null, 42, true, 'value', [1, null], { nested: { values: [1, 'value', false] } }]) {
+    const snapshot = { after: value, before: value, id: 'snapshot-1', kind: 'opportunity' };
+    const decoded = Schema.decodeUnknownSync(AiSnapshotSchema)(snapshot);
+    expect(Schema.encodeSync(AiSnapshotSchema)(decoded)).toEqual(snapshot);
+  }
+});
+
+it('rejects non-JSON values in either side of shared approval snapshots', () => {
+  for (const value of [Number.NaN, Number.POSITIVE_INFINITY, 1n, { nested: Symbol('not-json') }]) {
+    expect(Schema.is(AiSnapshotSchema)({ after: value, id: 'snapshot-1', kind: 'opportunity' })).toBe(false);
+    expect(Schema.is(AiSnapshotSchema)({ before: value, id: 'snapshot-1', kind: 'opportunity' })).toBe(false);
+  }
+});
+
 const now = DateTime.makeUnsafe('2026-10-21T08:00:00Z');
 const partyId = '50000000-0000-4000-8000-000000000001';
 const opportunityA = '60000000-0000-4000-8000-000000000001';
 const agent = 'ai-agent-c-obchod';
 const approver = 'vedouci-obchodu';
 
-type AiCommand = Extract<SalesPipelineCommand, { readonly _tag: 'AiDecideChanges' | 'AiProposeChanges' | 'AiRevertBatch' }>;
+type AiCommand = Extract<
+  SalesPipelineCommand,
+  { readonly _tag: 'AiDecideChanges' | 'AiProposeChanges' | 'AiRevertBatch' }
+>;
 const decode = Schema.decodeUnknownSync(SalesPipelineCommandSchema);
 /** Persistence round trip: every step starts from what the database would return. */
 const roundTrip = (state: SalesPipelineState) =>

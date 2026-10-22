@@ -1,11 +1,28 @@
 import { describe, expect, it } from '@rstest/core';
-import { Effect, Exit } from 'effect';
+import { Effect, Exit, Schema } from 'effect';
 import { dispatchCrmCommand } from '../../shared/commands/index.ts';
 import type { CrmCommand } from '../../shared/commands/index.ts';
 import type { CrmViewer } from '../../shared/domain/access.ts';
-import { newClientContactsDiff } from '../../shared/domain/ai-changes.ts';
+import { AiSnapshotSchema, newClientContactsDiff } from '../../shared/domain/ai-changes.ts';
 import { initialCrmState, projectCrmState } from '../../shared/domain/state.ts';
 import type { CrmState } from '../../shared/domain/state.ts';
+
+describe('CRM snapshot wire contract', () => {
+  it('round-trips JSON values, including nested entity snapshots', () => {
+    for (const value of [null, 42, true, 'value', [1, null], { nested: { values: [1, 'value', false] } }]) {
+      const snapshot = { after: value, before: value, id: 'snapshot-1', kind: 'client' };
+      const decoded = Schema.decodeUnknownSync(AiSnapshotSchema)(snapshot);
+      expect(Schema.encodeSync(AiSnapshotSchema)(decoded)).toEqual(snapshot);
+    }
+  });
+
+  it('rejects non-JSON values in either side of a snapshot', () => {
+    for (const value of [Number.NaN, Number.POSITIVE_INFINITY, 1n, { nested: Symbol('not-json') }]) {
+      expect(Schema.is(AiSnapshotSchema)({ after: value, id: 'snapshot-1', kind: 'client' })).toBe(false);
+      expect(Schema.is(AiSnapshotSchema)({ before: value, id: 'snapshot-1', kind: 'client' })).toBe(false);
+    }
+  });
+});
 
 const now = '2026-10-20T08:00:00.000Z';
 const human: CrmViewer = {

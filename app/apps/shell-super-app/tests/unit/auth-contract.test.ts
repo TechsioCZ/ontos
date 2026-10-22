@@ -115,8 +115,6 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     connectDraft: '/auth/oauth-connections/draft',
     connectDraftSummary: '/auth/oauth-connections/draft-summary',
     connectOptions: '/auth/oauth-connections/options',
-    connectorDescribe: '/auth/connector/describe',
-    connectorGatewayContext: '/auth/connector/gateway-context',
     createNonHumanPrincipal: '/auth/identity/principals',
     currentSession: '/auth/session',
     demoAccountCapability: '/auth/identity/demo-accounts/capability',

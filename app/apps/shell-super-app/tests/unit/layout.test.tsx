@@ -115,6 +115,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
         'shell.modules.discovery.revoked': 'Module revoked',
         'shell.modules.discovery.timeout': 'Module deployment timed out',
         'shell.modules.discovery.unavailable': 'Module deployment unavailable',
+        'shell.profile.menu': 'Profile',
       })[key] ?? key,
   }),
 }));
@@ -382,10 +383,11 @@ it.effect('renders the account Menu last and dispatches only the logout command 
 
     trigger.focus();
     yield* Effect.promise(() => user.keyboard('{Enter}'));
-    const commands = yield* Effect.promise(() => screen.findAllByRole('menuitem'));
-    expect(commands).toHaveLength(1);
-    expect(commands[0]?.textContent).toBe('Logout');
-    yield* Effect.promise(() => user.keyboard('{ArrowDown}{Enter}'));
+    expect(yield* Effect.promise(() => screen.findByRole('menuitem', { name: 'Profile' }))).toBeTruthy();
+    const logout = screen.getByRole('menuitem', { name: 'Logout' });
+    yield* Effect.promise(() => user.keyboard('{End}'));
+    expect(screen.getByRole('menu').getAttribute('aria-activedescendant')).toBe(logout.id);
+    yield* Effect.promise(() => user.keyboard('{Enter}'));
     expect(onLogout).toHaveBeenCalledTimes(1);
 
     accountMenuSelectHandlers.at(-1)?.({ value: 'unexpected' });
@@ -393,7 +395,7 @@ it.effect('renders the account Menu last and dispatches only the logout command 
   }),
 );
 
-it.effect('retains the account trigger and disables the sole command while logout is pending', () =>
+it.effect('retains the account trigger and profile item while disabling logout when pending', () =>
   Effect.gen(function* pendingLogoutCommand() {
     const onLogout = rstest.fn();
     const user = userEvent.setup();
@@ -413,6 +415,7 @@ it.effect('retains the account trigger and disables the sole command while logou
     const trigger = screen.getByRole('button', { name: 'Ada Lovelace' });
     yield* Effect.promise(() => user.click(trigger));
     const command = yield* Effect.promise(() => screen.findByRole('menuitem', { name: 'Logging out…' }));
+    expect(screen.getByRole('menuitem', { name: 'Profile' }).getAttribute('aria-disabled')).not.toBe('true');
     expect(command.getAttribute('aria-disabled')).toBe('true');
     yield* Effect.promise(() => user.click(command));
     expect(onLogout).not.toHaveBeenCalled();

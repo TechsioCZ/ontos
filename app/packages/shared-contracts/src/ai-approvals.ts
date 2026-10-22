@@ -30,10 +30,22 @@ export const AiDiffLineSchema = Schema.Struct({
 });
 export type AiDiffLine = typeof AiDiffLineSchema.Type;
 
+/** An encoded entity snapshot contains only JSON values. */
+export const AiSnapshotValueSchema: Schema.Codec<Schema.Json> = Schema.suspend(() =>
+  Schema.Union([
+    Schema.Null,
+    Schema.Finite,
+    Schema.Boolean,
+    Schema.String,
+    Schema.Array(AiSnapshotValueSchema),
+    Schema.Record(Schema.String, AiSnapshotValueSchema),
+  ]),
+);
+
 /** Exact encoded entity before/after the change; absent before = the change created the entity. */
 export const AiSnapshotSchema = Schema.Struct({
-  after: Schema.optionalKey(Schema.Unknown),
-  before: Schema.optionalKey(Schema.Unknown),
+  after: Schema.optionalKey(AiSnapshotValueSchema),
+  before: Schema.optionalKey(AiSnapshotValueSchema),
   id: ShortText,
   kind: ShortText,
 });
@@ -206,7 +218,7 @@ export interface AiApprovalAdapter<State, Operation extends { readonly _tag: str
   readonly kinds: readonly string[];
   readonly entities: (state: State, kind: string) => readonly AiEntity[];
   /** Wire (JSON) form of one entity of `kind`. */
-  readonly encode: (kind: string, entity: AiEntity) => unknown;
+  readonly encode: (kind: string, entity: AiEntity) => Schema.Json;
   /** Runs one operation through the module's own reducer; every module rule applies. Failure = readable reason. */
   readonly run: (
     state: State,
@@ -449,7 +461,11 @@ export const proposeAiChanges = <State, Operation extends { readonly _tag: strin
 export const decideAiChanges = <State, Operation extends { readonly _tag: string }>(
   adapter: AiApprovalAdapter<State, Operation>,
   state: State,
-  input: { readonly changeIds: readonly string[]; readonly decision: 'approve' | 'reject'; readonly note?: string | undefined },
+  input: {
+    readonly changeIds: readonly string[];
+    readonly decision: 'approve' | 'reject';
+    readonly note?: string | undefined;
+  },
   context: AiContext,
 ): Effect.Effect<AiOutcome<State>, AiFailure> =>
   Effect.gen(function* decide() {
@@ -506,9 +522,7 @@ export const decideAiChanges = <State, Operation extends { readonly _tag: string
       });
       if (stale) {
         return yield* Effect.fail(
-          conflict(
-            `Záznam „${change.target.label}“ se od návrhu změnil. Obnovte data a požádejte AI o nový návrh.`,
-          ),
+          conflict(`Záznam „${change.target.label}“ se od návrhu změnil. Obnovte data a požádejte AI o nový návrh.`),
         );
       }
       const applied = yield* adapter

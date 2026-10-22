@@ -292,9 +292,7 @@ const describe = (state: CrmState, operation: AiOperation): Described => {
 
 // ------------------------------------------------------------------------------------------------ snapshots
 
-interface Entity {
-  readonly id: string;
-}
+type Entity = Client | ContactPerson | ImportedOrder | PlanItem;
 interface Collection {
   readonly get: (state: CrmState) => readonly Entity[];
   readonly set: (state: CrmState, items: readonly Entity[]) => CrmState;

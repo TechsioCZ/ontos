@@ -5,6 +5,7 @@
 // keeps entity snapshots (before -> after), so a human can revert a whole batch ("Vrátit vše"). A readable log of
 // every step lives next to the Core audit record of each invocation.
 // Adding fields: make them Schema.optionalKey (persisted JSON from older revisions must still decode).
+import { AiSnapshotValueSchema } from '@app/shared-contracts/ai-approvals';
 import { Schema } from 'effect';
 import { clientsCommandSchemas } from '../commands/clients.ts';
 import { importsCommandSchemas } from '../commands/imports.ts';
@@ -84,8 +85,8 @@ export const newClientContactsDiff = (
 
 /** Exact entity state before/after applying the change; absent before = the change created the entity. */
 export const AiSnapshotSchema = Schema.Struct({
-  after: Schema.optionalKey(Schema.Unknown),
-  before: Schema.optionalKey(Schema.Unknown),
+  after: Schema.optionalKey(AiSnapshotValueSchema),
+  before: Schema.optionalKey(AiSnapshotValueSchema),
   id: EntityIdSchema,
   kind: AiEntityKindSchema,
 });
