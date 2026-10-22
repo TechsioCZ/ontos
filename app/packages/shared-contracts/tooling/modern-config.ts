@@ -412,6 +412,7 @@ interface RspackConfiguration {
 /* oxlint-disable anti-slop/no-unknown-returns -- Rspack supplies opaque plugin constructors; their instances are forwarded unchanged to its generic plugin collection and are never inspected here. */
 interface RspackContext {
   environment: { name: string };
+  isServer: boolean;
   rspack: {
     DefinePlugin: new (definitions: Record<string, string>) => unknown;
     NormalModuleReplacementPlugin: new (
@@ -425,7 +426,10 @@ interface RspackContext {
 /** Worker build wiring every OntOS app needs (runtime externals, Worker SSR module replacements). */
 export const createCloudflareRspack = (cloudflareDeployEnabled: boolean, sourceDirectory: string) => {
   const cloudflareRuntimeExternal = createCloudflareRuntimeExternal(cloudflareDeployEnabled);
-  return (config: RspackConfiguration, { environment, rspack }: RspackContext) => {
+  return (config: RspackConfiguration, { environment, isServer, rspack }: RspackContext) => {
+    if (!isServer && environment.name !== 'workerSSR') {
+      config.plugins.push(createServerOnlyBrowserReplacement(rspack)); // oxlint-disable-line eslint/no-use-before-define -- The replacement factory remains beside the other module replacements.
+    }
     if (!cloudflareDeployEnabled) {
       return;
     }
@@ -655,5 +659,26 @@ export const createBrowserOnlySsrReplacement = <ReplacementPlugin>(rspack: {
 }) =>
   new rspack.NormalModuleReplacementPlugin(/^pdfjs-dist(?:\/.*)?$/u, (resource) => {
     resource.request = BROWSER_ONLY_SSR_MODULE;
+  });
+
+const EFFECT_SCALAR_BROWSER_MODULE = fileURLToPath(new URL('effect-scalar-browser-module.mjs', import.meta.url));
+const EFFECT_HTTPAPI_DIRECTORY = /[/\\]effect[/\\]dist[/\\]unstable[/\\]httpapi$/u;
+
+/**
+ * Module Federation shares every `effect/*` request without tree shaking, so the browser gets the whole
+ * `effect/unstable/httpapi` barrel, including the 3 MB Scalar API reference bundle that HttpApiScalar
+ * embeds as a string (1.4 MB compressed, fetched before hydration). Only server routes serve Scalar,
+ * so browser builds get an empty bundle string instead.
+ */
+export const createServerOnlyBrowserReplacement = <ReplacementPlugin>(rspack: {
+  NormalModuleReplacementPlugin: new (
+    pattern: RegExp,
+    replace: (resource: ReplacementResource) => void,
+  ) => ReplacementPlugin;
+}) =>
+  new rspack.NormalModuleReplacementPlugin(/^\.\/internal\/httpApiScalar\.js$/u, (resource) => {
+    if (EFFECT_HTTPAPI_DIRECTORY.test(resource.context)) {
+      resource.request = EFFECT_SCALAR_BROWSER_MODULE;
+    }
   });
 

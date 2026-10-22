@@ -40,6 +40,7 @@ import {
   createCloudflareEmailBindings,
   createCloudflareWorkerConfig,
   createCloudflareWorkerSecurity,
+  createServerOnlyBrowserReplacement,
   createWorkerSsrPlugins,
   createZephyrRspackPlugin,
   resolveCloudflareExternal,
@@ -306,11 +307,11 @@ export default defineConfig(
               .chunkLoadingGlobal('__ULTRAMODERN_SHELL_SUPER_APP_LOADED_CHUNKS__');
           },
           rspack: ((config, { environment, isServer, rspack }) => {
-            config.plugins.push(
-              new rspack.DefinePlugin({
-                __ONTOS_BROWSER_BUILD__: !(isServer || environment.name === 'workerSSR'),
-              }),
-            );
+            const browserBuild = !(isServer || environment.name === 'workerSSR');
+            config.plugins.push(new rspack.DefinePlugin({ __ONTOS_BROWSER_BUILD__: browserBuild }));
+            if (browserBuild) {
+              config.plugins.push(createServerOnlyBrowserReplacement(rspack));
+            }
             if (!cloudflareDeployEnabled) {
               return;
             }
