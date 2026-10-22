@@ -21,6 +21,11 @@ export { tenantLegalEntityRlsPolicies, tenantRlsPolicies } from '../db/scoped-tr
 export { DatabaseConfigLive } from '../db/config.ts';
 export { CorePersistenceLive } from '../runtime-infrastructure.ts';
 export { CoreSearchIngestion, CoreSearchIngestionLive } from '../search/ingestion.ts';
+export {
+  coreSearchIngestionRegistryLayer,
+  CoreSearchIngestionRegistry,
+  defineCoreSearchIngestionRegistrations,
+} from '../search/ingestion-registry.ts';
 export { CoreSearchProjectionStoreLive } from '../search/persistence.ts';
 export {
   CoreSearchProjectionDocumentSchema,
