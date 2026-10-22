@@ -1,6 +1,6 @@
 import { AsyncResource } from 'node:async_hooks';
 
-import type { BetterAuthOptions, DBPrimitive } from 'better-auth';
+import type { BetterAuthOptions, DBPrimitive, JoinConfig } from 'better-auth';
 import { createAdapterFactory } from 'better-auth/adapters';
 import type {
   AdapterFactoryConfig,
@@ -206,9 +206,57 @@ const incrementAssignments = Effect.fnUntraced(function* incrementAssignments(
   return Object.fromEntries(entries);
 });
 
+interface OneToOneJoin {
+  readonly condition: SQL;
+  readonly key: string;
+  readonly table: PgTable;
+}
+
+/** A row and the rows Better Auth joined to it, each under the joined model's key; absent rows come back as null. */
+const selection = (fields: Record<string, PgColumn>, joins: readonly OneToOneJoin[]) => ({
+  ...fields,
+  ...Object.fromEntries(joins.map(({ key, table }) => [key, getColumns(table)])),
+});
+
 /** The adapter's operations as Effects over one executor: the root database or an open transaction. */
 const makeOperations = (tables: EffectDrizzleAuthTables, executor: Executor) => (getFieldName: FieldName) => {
   const resolve = resolveModel(tables, getFieldName);
+  /**
+   * The one-to-one joins of a read (a session's user) as LEFT JOINs of the same statement, so reading a session and its
+   * user is one database round trip. Better Auth's factory reads each joined row under its model key and fetches every
+   * join this leaves out (one-to-many) with its own query, exactly as without native joins.
+   */
+  const oneToOneJoins = Effect.fnUntraced(function* oneToOneJoins(
+    base: ModelTable,
+    fields: Record<string, PgColumn>,
+    join: JoinConfig | undefined,
+  ) {
+    const baseColumns = getColumns(base.table);
+    // Pure schema lookups; sequential keeps the joins in Better Auth's order.
+    const joins = yield* Effect.forEach(
+      Object.entries(join ?? {}),
+      Effect.fnUntraced(function* oneToOneJoin([key, config]) {
+        const joined = yield* resolve(key);
+        const from = baseColumns[config.on.from];
+        const to = getColumns(joined.table)[config.on.to];
+        if (from === undefined || to === undefined) {
+          return yield* schemaError(`Better Auth join "${key}" names a column its Drizzle tables do not declare`);
+        }
+        return config.relation === 'one-to-one' && joined.table !== base.table && !(key in fields)
+          ? [{ condition: eq(to, from), key, table: joined.table } satisfies OneToOneJoin]
+          : [];
+      }),
+      { concurrency: 1 },
+    );
+    return joins.flat();
+  });
+  const selectWithJoins = (target: ModelTable, fields: Record<string, PgColumn>, joins: readonly OneToOneJoin[]) => {
+    let query = executor.select(selection(fields, joins)).from(target.table).$dynamic();
+    for (const { condition, table } of joins) {
+      query = query.leftJoin(table, condition);
+    }
+    return query;
+  };
   const firstMatchingId = Effect.fnUntraced(function* firstMatchingId(target: ModelTable, where: CleanedWhere[]) {
     // Both are pure schema lookups.
     const [id, condition] = yield* Effect.all([target.column('id'), whereCondition(target, where)], {
@@ -263,6 +311,7 @@ const makeOperations = (tables: EffectDrizzleAuthTables, executor: Executor) => 
       return rows.length;
     }),
     findMany: Effect.fn('EffectDrizzleAuthAdapter.findMany')(function* findMany(query: {
+      join?: JoinConfig | undefined;
       limit: number;
       model: string;
       offset?: number | undefined;
@@ -271,9 +320,9 @@ const makeOperations = (tables: EffectDrizzleAuthTables, executor: Executor) => 
       where?: CleanedWhere[] | undefined;
     }) {
       const target = yield* resolve(query.model);
-      const rows = executor
-        .select(yield* projection(target, query.select))
-        .from(target.table)
+      const fields = yield* projection(target, query.select);
+      const joins = yield* oneToOneJoins(target, fields, query.join);
+      const rows = selectWithJoins(target, fields, joins)
         .where(yield* whereCondition(target, query.where))
         .limit(query.limit)
         .offset(query.offset ?? 0);
@@ -285,14 +334,15 @@ const makeOperations = (tables: EffectDrizzleAuthTables, executor: Executor) => 
       return yield* rows.orderBy(sortBy.direction === 'desc' ? desc(column) : asc(column));
     }),
     findOne: Effect.fn('EffectDrizzleAuthAdapter.findOne')(function* findOne(query: {
+      join?: JoinConfig | undefined;
       model: string;
       select?: string[] | undefined;
       where: CleanedWhere[];
     }) {
       const target = yield* resolve(query.model);
-      const [row] = yield* executor
-        .select(yield* projection(target, query.select))
-        .from(target.table)
+      const fields = yield* projection(target, query.select);
+      const joins = yield* oneToOneJoins(target, fields, query.join);
+      const [row] = yield* selectWithJoins(target, fields, joins)
         .where(yield* whereCondition(target, query.where))
         .limit(1);
       return row ?? null;

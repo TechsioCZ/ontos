@@ -512,6 +512,9 @@ const makeShellBetterAuth = (configuration: AuthConfigValue, allowFixtureSignUp:
   const mcpResourceUrl = mcpResourceUrlOf(configuration.baseUrl);
   return betterAuth({
     advanced: {
+      // Every Shell call reads its session; the adapter joins the session's user into that one statement instead of a
+      // second query. Revocation is unchanged: each read still asks the database, nothing is cached.
+      database: { joins: true },
       defaultCookieAttributes: {
         httpOnly: true,
         sameSite: 'lax',
@@ -582,7 +585,9 @@ const makeShellBetterAuth = (configuration: AuthConfigValue, allowFixtureSignUp:
       cimd({
         // The BFF source loader resolves this app's own imports with Node conditions, so the runtime picks.
         fetchClientMetadataResource:
-          globalThis.navigator?.userAgent === 'Cloudflare-Workers' ? fetchClientMetadataOnWorkerd : fetchClientMetadataOnNode,
+          globalThis.navigator?.userAgent === 'Cloudflare-Workers'
+            ? fetchClientMetadataOnWorkerd
+            : fetchClientMetadataOnNode,
         metadataProfile: 'mcp-2026-07-28',
       }),
     ],
