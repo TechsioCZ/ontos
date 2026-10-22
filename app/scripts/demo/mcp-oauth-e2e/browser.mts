@@ -41,8 +41,33 @@ export const WRITE_MODE_LABEL = {
 
 export type ActAs = { readonly kind: 'me' } | { readonly kind: 'agent'; readonly agentName: string };
 
-/** Opens one tab on the machine-wide shared headless browser (max 2 sessions; see browser-concurrency-cap). */
+/**
+ * Opens one tab on the machine-wide shared headless browser (max 2 sessions; see browser-concurrency-cap).
+ * On a CI runner, E2E_PLAYWRIGHT_MODULE names a Playwright module and the proof launches its own headless Chromium.
+ */
 export async function openSharedTab(): Promise<E2eTab> {
+  const playwrightModule = process.env.E2E_PLAYWRIGHT_MODULE;
+  if (playwrightModule) {
+    type Launcher = {
+      launch(): Promise<{
+        newContext(options: object): Promise<{ newPage(): Promise<E2ePage>; close(): Promise<void> }>;
+        close(): Promise<void>;
+      }>;
+    };
+    const mod = (await import(playwrightModule)) as { chromium?: Launcher; default?: { chromium: Launcher } };
+    const chromium = mod.chromium ?? mod.default?.chromium;
+    if (!chromium) throw new Error(`${playwrightModule} exports no chromium launcher`);
+    const browser = await chromium.launch();
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+    return {
+      page,
+      close: async () => {
+        await context.close();
+        await browser.close();
+      },
+    };
+  }
   // A string-typed variable keeps TypeScript from resolving the untyped .mjs module.
   const clientPath: string = '/Volumes/TraceDecayKingston/techsio-demo/shared-browser/client.mjs';
   const mod = (await import(clientPath)) as { openTab: (options?: object) => Promise<E2eTab> };

@@ -440,3 +440,48 @@ jobs:
           ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: app/scripts/push-zerops-units.sh
+
+  # One verification pass after every deploy, no load (the stage Workers CPU budget is capped).
+  verify:
+    name: Verify stage once
+    needs: [release, outbox-host]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Install headless Chromium for the OAuth consent screens
+        working-directory: app
+        run: mise exec -- pnpm --filter @app/shell-super-app exec playwright install --with-deps chromium
+
+      - name: Time /cs, OAuth metadata and the storefront home
+        working-directory: app
+        run: mise exec -- node scripts/ops/stage-demo-verify.mjs
+
+      - name: Prove MCP over OAuth end to end
+        working-directory: app
+        env:
+          ONTOS_SHELL_URL: ${{ env.STAGE_SHELL_URL }}
+          ONTOS_OAUTH_ISSUER: ${{ env.STAGE_SHELL_URL }}/shell-super-app-api/oauth
+          E2E_OUT_DIR: ${{ runner.temp }}/mcp-oauth-e2e
+          E2E_SHOTS_DIR: ${{ runner.temp }}/mcp-oauth-e2e/shots
+        run: |
+          E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
+          export E2E_PLAYWRIGHT_MODULE
+          mise exec -- node scripts/demo/prove-mcp-oauth.mts --variant=all
+
+      - name: Upload the MCP OAuth proof
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mcp-oauth-e2e
+          path: ${{ runner.temp }}/mcp-oauth-e2e
+          if-no-files-found: ignore
+          retention-days: 14
