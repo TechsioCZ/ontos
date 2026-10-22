@@ -1,6 +1,6 @@
 import { Logger, References, Tracer, Layer as GovernedReadLayer } from 'effect';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
-import { Effect, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
+import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 
 import { propertyLeasingApi, propertyLeasingOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
@@ -35,6 +35,7 @@ import {
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
+import { agentReviewReadApiLive } from './agent-review-read-server.ts';
 import { applyCommandActionApiLive } from './apply-command-action-server.ts';
 import { recordsReadApiLive } from './records-read-server.ts';
 // </generated-governed-http-handler-imports>
@@ -80,11 +81,9 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit)
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
+  agentReviewReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), Layer.provide(ActionPermissionLive)),
   applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  recordsReadApiLive.pipe(
-    GovernedReadLayer.provide(governedReadRuntimeLive),
-    GovernedReadLayer.provide(ActionPermissionLive),
-  ),
+  recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), Layer.provide(ActionPermissionLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   // <generated-governed-http-handler-support-layers>

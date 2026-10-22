@@ -16,6 +16,7 @@ export const crmRegistration = defineVerticalRuntimeRegistration({
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'agent-review': () => import('./src/api/agent-review-client.ts'),
       records: () => import('./src/api/records-client.ts'),
       // </generated-module-registration-apis>
     },

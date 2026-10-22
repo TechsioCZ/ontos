@@ -8,6 +8,7 @@ import {
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
+import { AgentReviewApi } from './shared/apis/agent-review.ts';
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
 import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/ukoly/page.tsx';
@@ -51,6 +52,7 @@ export const workTasksManifest = defineOntosModuleManifest({
     ],
     api: {
       // <generated-module-manifest-apis>
+      'agent-review': AgentReviewApi,
       records: RecordsApi,
       // </generated-module-manifest-apis>
     },

@@ -12,9 +12,9 @@ import type {
 } from '@modern-js/bff-effect/microvertical-api';
 
 // <generated-governed-http-api-imports>
-
-import { RecordsApi } from './apis/records.ts';
+import { AgentReviewApi } from './apis/agent-review.ts';
 import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
+import { RecordsApi } from './apis/records.ts';
 // </generated-governed-http-api-imports>
 
 export type PropertyLeasingMarker = MicroVerticalBuildMarker;
@@ -34,6 +34,7 @@ export const propertyLeasingFoundationApi = HttpApi.make('PropertyLeasingApiFoun
 export const propertyLeasingApi = HttpApi.make('PropertyLeasingApi')
   .addHttpApi(propertyLeasingFoundationApi)
   // <generated-governed-http-api-additions>
+  .addHttpApi(AgentReviewApi)
   .addHttpApi(ApplyCommandActionApi)
   .addHttpApi(RecordsApi)
   // </generated-governed-http-api-additions>

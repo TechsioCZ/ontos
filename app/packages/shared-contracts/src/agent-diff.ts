@@ -1,6 +1,6 @@
-// Platform-built "before -> after" lines for agent commands the platform understands. The approval page shows these
-// instead of the agent's own description, so a person approves exactly what the stored command will do. `before` is
-// the wire JSON of the target entity read live (undefined for create commands or when it could not be read).
+// Generic "before -> after" lines for agent commands. A module builds the lines of its own commands with these
+// helpers in its agent review read (see agent-review.ts); the platform only uses `agentCommandDiff` for modules
+// that do not describe their commands themselves.
 import type { AgentCommand, AgentDiffLine } from './agent-proposals.ts';
 
 type Rec = Readonly<Record<string, unknown>>;
@@ -8,7 +8,7 @@ type Rec = Readonly<Record<string, unknown>>;
 const isRecord = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 /** The entry of `list` (wire array) whose `id` is `id`. */
-const entryWithId = (list: unknown, id: string): Rec | undefined => {
+export const agentEntryWithId = (list: unknown, id: string): Rec | undefined => {
   const entries: readonly unknown[] = Array.isArray(list) ? list : [];
   const found = entries.find((entry) => isRecord(entry) && entry['id'] === id);
   return isRecord(found) ? found : undefined;
@@ -20,92 +20,31 @@ const number = new Intl.NumberFormat('cs-CZ');
 /** 349000 -> „3 490,00 Kč“. */
 export const formatAgentMoneyMinor = (minor: number): string => czk.format(minor / 100);
 
-const TASK_STATES: Readonly<Record<string, string>> = {
-  CANCELLED: 'Zrušeno',
-  DONE: 'Hotovo',
-  IN_PROGRESS: 'Rozpracováno',
-  NEW: 'Nový',
-  WAITING: 'Čeká',
-};
-const TASK_PRIORITIES: Readonly<Record<string, string>> = { HIGH: 'Vysoká', LOW: 'Nízká', NORMAL: 'Běžná' };
-
-const TASK_LABELS: Readonly<Record<string, string>> = {
-  archived: 'Archivováno',
-  assigneeEmployeeId: 'Zaměstnanec',
-  contextRefs: 'Souvislosti',
-  description: 'Popis',
-  dueDate: 'Termín',
-  opportunityId: 'Obchodní případ',
-  ownerPrincipalRef: 'Řešitel',
-  partyId: 'Zákazník',
-  plannedHours: 'Plánované hodiny',
-  priority: 'Priorita',
-  projectId: 'Projekt',
-  state: 'Stav',
-  title: 'Název úkolu',
-};
-
-const PRODUCT_LABELS: Readonly<Record<string, string>> = {
-  active: 'Aktivní v nabídce',
-  category: 'Kategorie',
-  description: 'Popis',
-  lowStockThreshold: 'Hranice nízké zásoby',
-  name: 'Název',
-  priceMinor: 'Cena bez DPH',
-  sku: 'Kód (SKU)',
-  unit: 'Jednotka',
-  vatRate: 'Sazba DPH',
-};
-
-const CLIENT_LABELS: Readonly<Record<string, string>> = {
-  address: 'Adresa',
-  email: 'E-mail',
-  kind: 'Druh klienta',
-  name: 'Název',
-  note: 'Poznámka',
-  phone: 'Telefon',
-  regNo: 'IČO',
-  segment: 'Segment',
-  vatNo: 'DIČ',
-  website: 'Web',
-};
-const CLIENT_KINDS: Readonly<Record<string, string>> = { organization: 'Firma', person: 'Osoba' };
-const CLIENT_SEGMENTS: Readonly<Record<string, string>> = {
-  bakery: 'Pekárna',
-  cafe: 'Kavárna',
-  catering: 'Catering',
-  hotel: 'Hotel',
-  institution: 'Instituce',
-  restaurant: 'Restaurace',
-  retail: 'Maloobchod',
-  wholesale: 'Velkoobchod',
-};
+/** How a module shows its own field values: Czech names of enum values and which numbers are money. */
+export interface AgentDiffValueOptions {
+  /** Czech text per wire value, by field, e.g. `{ state: { DONE: 'Hotovo' } }`. */
+  readonly valueLabels?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  /** Fields whose number is an amount in minor units (haléře). */
+  readonly moneyFields?: ReadonlySet<string>;
+}
 
 const isoDate = /^(\d{4})-(\d{2})-(\d{2})$/u;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
 /** Readable Czech text of one wire value; undefined for empty values. */
-const show = (field: string, value: unknown): string | undefined => {
+export const agentDiffValue = (field: string, value: unknown, options: AgentDiffValueOptions = {}): string | undefined => {
   if (value === undefined || value === null || value === '') {
     return undefined;
   }
-  if (field === 'state' && typeof value === 'string') {
-    return TASK_STATES[value] ?? value;
-  }
-  if (field === 'priority' && typeof value === 'string') {
-    return TASK_PRIORITIES[value] ?? value;
-  }
-  if (field === 'segment' && typeof value === 'string') {
-    return CLIENT_SEGMENTS[value] ?? value;
-  }
-  if (field === 'kind' && typeof value === 'string' && CLIENT_KINDS[value] !== undefined) {
-    return CLIENT_KINDS[value];
+  const labels = options.valueLabels?.[field];
+  if (typeof value === 'string' && labels?.[value] !== undefined) {
+    return labels[value];
   }
   if (typeof value === 'boolean') {
     return value ? 'Ano' : 'Ne';
   }
   if (typeof value === 'number') {
-    return field.endsWith('PriceMinor') || field === 'priceMinor' ? formatAgentMoneyMinor(value) : number.format(value);
+    return options.moneyFields?.has(field) === true ? formatAgentMoneyMinor(value) : number.format(value);
   }
   if (typeof value === 'string' && uuid.test(value)) {
     // A bare reference id says nothing to a person; the card title names the record.
@@ -124,9 +63,16 @@ const show = (field: string, value: unknown): string | undefined => {
   return JSON.stringify(value);
 };
 
-const line = (field: string, label: string, before: unknown, after: unknown): AgentDiffLine => {
-  const beforeText = show(field, before);
-  const afterText = show(field, after);
+/** One line; empty values are left out (absent before = new value, absent after = cleared). */
+export const agentDiffLine = (
+  field: string,
+  label: string,
+  before: unknown,
+  after: unknown,
+  options: AgentDiffValueOptions = {},
+): AgentDiffLine => {
+  const beforeText = agentDiffValue(field, before, options);
+  const afterText = agentDiffValue(field, after, options);
   return {
     field,
     label,
@@ -135,95 +81,41 @@ const line = (field: string, label: string, before: unknown, after: unknown): Ag
   };
 };
 
-const fieldLines = (
+/** One line per field of `fields` (except `skip` and `_tag`), `before` taken from the same key of the record. */
+export const agentFieldLines = (
   fields: Rec,
   labels: Readonly<Record<string, string>>,
   before: Rec | undefined,
   skip: ReadonlySet<string>,
+  options: AgentDiffValueOptions = {},
 ): AgentDiffLine[] =>
   Object.entries(fields)
     .filter(([key]) => !skip.has(key) && key !== '_tag')
-    .map(([key, value]) => line(key, labels[key] ?? key, before?.[key], value));
+    .map(([key, value]) => agentDiffLine(key, labels[key] ?? key, before?.[key], value, options));
 
-const TASK_SKIP: ReadonlySet<string> = new Set(['taskRef']);
-
-const taskDiff = (command: AgentCommand, before: Rec | undefined): AgentDiffLine[] | undefined => {
-  switch (command['_tag']) {
-    case 'CreateTask': {
-      return fieldLines(command, TASK_LABELS, undefined, TASK_SKIP);
-    }
-    case 'UpdateTask':
-    case 'ChangeTaskState':
-    case 'AssignTask':
-    case 'SetTaskArchived': {
-      return fieldLines(command, TASK_LABELS, before, TASK_SKIP);
-    }
-    default: {
-      return undefined;
-    }
+/** Does `actual` still hold every value of `expected` (objects compared by the keys of `expected`)? */
+export const agentRecordHolds = (expected: unknown, actual: unknown): boolean => {
+  if (expected === null || expected === undefined) {
+    return actual === null || actual === undefined;
   }
-};
-
-const merchandiseDiff = (command: AgentCommand, before: Rec | undefined): AgentDiffLine[] | undefined => {
-  switch (command['_tag']) {
-    case 'ChangePrice': {
-      const { variantId } = command;
-      if (typeof variantId === 'string') {
-        const variant = entryWithId(before?.['variants'], variantId);
-        return [line('priceMinor', 'Cena varianty bez DPH', variant?.['priceMinor'], command['priceMinor'])];
-      }
-      return [line('priceMinor', 'Cena bez DPH', before?.['currentPriceMinor'], command['priceMinor'])];
-    }
-    case 'UpdateProduct': {
-      const { patch } = command;
-      return isRecord(patch) ? fieldLines(patch, PRODUCT_LABELS, before, new Set()) : undefined;
-    }
-    case 'CreateProduct': {
-      return fieldLines(command, PRODUCT_LABELS, undefined, new Set(['id']));
-    }
-    default: {
-      return undefined;
-    }
+  if (Array.isArray(expected)) {
+    return (
+      Array.isArray(actual) &&
+      actual.length === expected.length &&
+      expected.every((item, index) => agentRecordHolds(item, actual[index]))
+    );
   }
-};
-
-const crmDiff = (command: AgentCommand, before: Rec | undefined): AgentDiffLine[] | undefined => {
-  if (command['_tag'] !== 'UpdateClient') {
-    return undefined;
+  if (isRecord(expected)) {
+    return isRecord(actual) && Object.entries(expected).every(([key, value]) => agentRecordHolds(value, actual[key]));
   }
-  const { patch } = command;
-  return isRecord(patch) ? fieldLines(patch, CLIENT_LABELS, before, new Set()) : undefined;
-};
-
-/**
- * Lines built from the command itself (after) and the live entity (before). Undefined when the platform does not
- * understand the command; the page then shows the agent's own description with a warning.
- */
-export const agentPlatformDiff = (
-  appId: string,
-  command: AgentCommand,
-  before: Rec | undefined,
-): readonly AgentDiffLine[] | undefined => {
-  switch (appId) {
-    case 'work-tasks': {
-      return taskDiff(command, before);
-    }
-    case 'merchandise': {
-      return merchandiseDiff(command, before);
-    }
-    case 'crm': {
-      return crmDiff(command, before);
-    }
-    default: {
-      return undefined;
-    }
-  }
+  return expected === actual;
 };
 
 // `id` names the record the command changes; the card's title already says which record that is.
 const COMMAND_SKIP: ReadonlySet<string> = new Set(['_tag', 'expectedRevision', 'id', 'idempotencyKey']);
 /** Nested objects whose fields are the change itself (`UpdateX { id, patch: {...} }`), listed field by field. */
 const COMMAND_FLATTEN: ReadonlySet<string> = new Set(['changes', 'fields', 'patch']);
+/** Czech names of common command fields. */
 const COMMAND_LABELS: Readonly<Record<string, string>> = {
   address: 'Adresa',
   amountMinor: 'Částka',
@@ -280,13 +172,14 @@ const COMMAND_LABELS: Readonly<Record<string, string>> = {
   unitRef: 'Jednotka',
   value: 'Hodnota',
 };
+const isMoneyField = (key: string): boolean => key === 'priceMinor' || key.endsWith('PriceMinor');
 const MAX_COMMAND_TEXT = 200;
 const isEmptyValue = (value: unknown): boolean =>
   value === undefined || value === null || value === '' || (Array.isArray(value) && value.length === 0);
 
 /**
- * Lines for modules without their own diff: one line per filled field of the stored command, `after` only. The
- * platform does not read these records, so there is no `before`. Empty when the command has no plain fields.
+ * Lines for modules that do not describe their commands: one line per filled field of the stored command, `after`
+ * only. The platform does not read these records, so there is no `before`. Empty when the command has no plain fields.
  */
 export const agentCommandDiff = (command: AgentCommand): readonly AgentDiffLine[] =>
   Object.entries(command)
@@ -296,71 +189,10 @@ export const agentCommandDiff = (command: AgentCommand): readonly AgentDiffLine[
     .filter(([key, value]) => !COMMAND_SKIP.has(key) && !isEmptyValue(value))
     .slice(0, 60)
     .map(([key, value]) => {
-      const text = show(key, value) ?? '';
+      const text = agentDiffValue(key, value, isMoneyField(key) ? { moneyFields: new Set([key]) } : {}) ?? '';
       return {
         after: text.length > MAX_COMMAND_TEXT ? `${text.slice(0, MAX_COMMAND_TEXT - 1)}…` : text,
         field: key.slice(0, 300),
         label: (COMMAND_LABELS[key] ?? key).slice(0, 300),
       };
     });
-
-/** Does `actual` still hold every value of `expected` (objects compared by the keys of `expected`)? */
-const holds = (expected: unknown, actual: unknown): boolean => {
-  if (expected === null || expected === undefined) {
-    return actual === null || actual === undefined;
-  }
-  if (Array.isArray(expected)) {
-    return (
-      Array.isArray(actual) &&
-      actual.length === expected.length &&
-      expected.every((item, index) => holds(item, actual[index]))
-    );
-  }
-  if (isRecord(expected)) {
-    return isRecord(actual) && Object.entries(expected).every(([key, value]) => holds(value, actual[key]));
-  }
-  return expected === actual;
-};
-
-/**
- * Before „Vrátit vše“: does the record still hold what the approved command set? `false` means someone changed it
- * since, so the undo would overwrite their edit. Undefined when there is nothing to compare (create commands).
- */
-export const agentChangeStillInPlace = (
-  appId: string,
-  command: AgentCommand,
-  current: Rec | undefined,
-): boolean | undefined => {
-  const tag = command['_tag'];
-  if (appId === 'merchandise' && tag === 'ChangePrice') {
-    if (current === undefined) {
-      return false;
-    }
-    const { variantId } = command;
-    if (typeof variantId === 'string') {
-      const variant = entryWithId(current['variants'], variantId);
-      return variant !== undefined && variant['priceMinor'] === command['priceMinor'];
-    }
-    return current['currentPriceMinor'] === command['priceMinor'];
-  }
-  if (appId === 'merchandise' && tag === 'UpdateProduct') {
-    return current !== undefined && holds(command['patch'], current);
-  }
-  if (appId === 'work-tasks' && (tag === 'UpdateTask' || tag === 'ChangeTaskState' || tag === 'AssignTask')) {
-    if (current === undefined) {
-      return false;
-    }
-    const { _tag: _ignored, taskRef: _ref, ...fields } = command;
-    return Object.entries(fields).every(([key, value]) => holds(value, current[key]));
-  }
-  if (appId === 'crm' && tag === 'UpdateClient') {
-    return current !== undefined && holds(command['patch'], current);
-  }
-  if (appId === 'property-leasing' && tag === 'SetRentTerms') {
-    return current !== undefined && holds(command['rentTerms'], current['rentTerms']);
-  }
-  if (appId === 'property-leasing' && tag === 'UpdateDraft') {
-    return current !== undefined && current['startDate'] === command['startDate'];
-  }
-  return undefined;
-};

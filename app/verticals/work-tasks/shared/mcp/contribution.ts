@@ -1,10 +1,11 @@
 /** MCP tools of Work Tasks: what agents may read and change, in Czech and English. */
-import { defineOntosMcpContribution } from '@app/core-runtime';
+import { OntosMcpHidden, defineOntosMcpContribution } from '@app/core-runtime';
 
 /** Commands with an assignee need the Workforce assertion to resolve the employee. */
 const withWorkforce = ['workforce'] as const;
 
 export const workTasksMcpContribution = defineOntosMcpContribution({
+  approvalReview: { read: 'agent-review' },
   approvals: true,
   commands: {
     AddTaskComment: { title: { cs: 'Přidat komentář k úkolu', en: 'Add a task comment' } },
@@ -29,6 +30,7 @@ export const workTasksMcpContribution = defineOntosMcpContribution({
   label: { cs: 'Úkoly a projekty', en: 'Tasks and projects' },
   page: '/ukoly',
   reads: {
+    'agent-review': OntosMcpHidden,
     records: { title: { cs: 'Přehled úkolů a projektů', en: 'Tasks and projects overview' } },
   },
   revision: { read: 'records' },

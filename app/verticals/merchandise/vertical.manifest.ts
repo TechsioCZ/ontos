@@ -8,6 +8,7 @@ import {
 } from '@app/core-runtime';
 import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
+import { AgentReviewApi } from './shared/apis/agent-review.ts';
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
 import { merchandiseReadAllPermission } from './shared/permissions/merchandise-read-all.ts';
 import { merchandiseWriteAllPermission } from './shared/permissions/merchandise-write-all.ts';
@@ -54,6 +55,7 @@ export const merchandiseManifest = defineOntosModuleManifest({
     ],
     api: {
       // <generated-module-manifest-apis>
+      'agent-review': AgentReviewApi,
       records: RecordsApi,
       // </generated-module-manifest-apis>
     },

@@ -1,205 +1,39 @@
-// Revert recipes for approved agent commands. Pure data logic: `before` is the wire JSON of the target entity
-// captured before the change; the plan runs as the reverting person through the module's own command handler.
+// Generic parts of undo plans for approved agent commands. A module builds the plan of its own commands in its agent
+// review read (see agent-review.ts); the platform stores it at approval, fills in the id of a record the approved
+// command created and runs the plan as the reverting person through the module's own command handler.
 import type { AgentCommand, AgentRevertPlan } from './agent-proposals.ts';
 import { AGENT_CREATED_ID_PLACEHOLDER, AGENT_REVERT_UNAVAILABLE } from './agent-proposals.ts';
 
-export interface AgentRevertInput {
-  readonly before?: Readonly<Record<string, unknown>> | undefined;
-  readonly command: AgentCommand;
-  readonly tenantId: string;
-}
-
-const MISSING_BEFORE = 'Chybí původní hodnoty, změnu nelze automaticky vrátit.';
+export const AGENT_REVERT_MISSING_BEFORE = 'Chybí původní hodnoty, změnu nelze automaticky vrátit.';
 const CREATED_UNKNOWN = 'Nepodařilo se zjistit nově založený záznam, změnu nelze automaticky vrátit.';
-const TASK_STATE_UNAVAILABLE = 'Úkol nelze vrátit do původního stavu.';
-const RENT_STATE_UNAVAILABLE = 'Změnu stavu nájmu nelze automaticky vrátit.';
-const NULLABLE_TASK_KEYS = new Set(['dueDate', 'plannedHours', 'projectId']);
 
-const TASK_STATE_TRANSITIONS: Readonly<Record<string, readonly string[]>> = {
-  CANCELLED: [],
-  DONE: [],
-  IN_PROGRESS: ['WAITING', 'DONE', 'CANCELLED'],
-  NEW: ['IN_PROGRESS', 'CANCELLED'],
-  WAITING: ['IN_PROGRESS', 'DONE', 'CANCELLED'],
-};
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const none = (reason: string): AgentRevertPlan => ({ kind: 'none', reason });
+export const agentRevertNone = (reason: string = AGENT_REVERT_UNAVAILABLE): AgentRevertPlan => ({
+  kind: 'none',
+  reason,
+});
 
-const commands = (list: AgentCommand[], createdIdPath?: string): AgentRevertPlan => ({
+export const agentRevertCommands = (list: readonly AgentCommand[], createdIdPath?: string): AgentRevertPlan => ({
   commands: [...list],
   kind: 'commands',
   ...(createdIdPath === undefined ? {} : { createdIdPath }),
 });
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const taskRevert = ({ before, command, tenantId }: AgentRevertInput): AgentRevertPlan => {
-  const taskRef = command['taskRef'];
-  const createdRef = {
-    moduleId: 'work.tasks',
-    resourceId: AGENT_CREATED_ID_PLACEHOLDER,
-    resourceType: 'work.tasks.task',
-    tenantId,
-  };
-  switch (command['_tag']) {
-    case 'CreateTask':
-      return commands(
-        [
-          { _tag: 'ChangeTaskState', state: 'CANCELLED', taskRef: createdRef },
-          { _tag: 'SetTaskArchived', archived: true, taskRef: createdRef },
-        ],
-        'task.ref.resourceId',
-      );
-    case 'UpdateTask': {
-      if (before === undefined) return none(MISSING_BEFORE);
-      const fields: Record<string, unknown> = {};
-      for (const key of Object.keys(command)) {
-        if (key === '_tag' || key === 'taskRef') continue;
-        const previous = before[key];
-        if (previous !== undefined) {
-          fields[key] = previous;
-        } else if (NULLABLE_TASK_KEYS.has(key)) {
-          fields[key] = null;
-        } else {
-          return none(MISSING_BEFORE);
-        }
-      }
-      return commands([{ _tag: 'UpdateTask', taskRef, ...fields }]);
-    }
-    case 'ChangeTaskState': {
-      const from = command['state'];
-      const to = before?.['state'];
-      const allowed = typeof from === 'string' ? (TASK_STATE_TRANSITIONS[from] ?? []) : [];
-      if (typeof to === 'string' && allowed.includes(to)) {
-        return commands([{ _tag: 'ChangeTaskState', state: to, taskRef }]);
-      }
-      return none(TASK_STATE_UNAVAILABLE);
-    }
-    case 'AssignTask': {
-      const owner = before?.['ownerPrincipalRef'];
-      return isRecord(owner)
-        ? commands([{ _tag: 'AssignTask', ownerPrincipalRef: owner, taskRef }])
-        : none(MISSING_BEFORE);
-    }
-    default:
-      return none(AGENT_REVERT_UNAVAILABLE);
-  }
-};
-
-const merchandiseRevert = ({ before, command }: AgentRevertInput): AgentRevertPlan => {
-  switch (command['_tag']) {
-    case 'ChangePrice': {
-      if (before === undefined) return none(MISSING_BEFORE);
-      const id = command['id'];
-      const variantId = command['variantId'];
-      if (typeof variantId === 'string') {
-        const variants = before['variants'];
-        const variant = Array.isArray(variants)
-          ? variants.find((entry: unknown) => isRecord(entry) && entry['id'] === variantId)
-          : undefined;
-        return isRecord(variant) && typeof variant['priceMinor'] === 'number'
-          ? commands([{ _tag: 'ChangePrice', id, priceMinor: variant['priceMinor'], variantId }])
-          : none(MISSING_BEFORE);
-      }
-      const price = before['currentPriceMinor'];
-      return typeof price === 'number'
-        ? commands([{ _tag: 'ChangePrice', id, priceMinor: price }])
-        : none(MISSING_BEFORE);
-    }
-    case 'UpdateProduct': {
-      const patch = command['patch'];
-      if (!isRecord(patch) || before === undefined) return none(MISSING_BEFORE);
-      const restoredPatch: Record<string, unknown> = {};
-      for (const key of Object.keys(patch)) {
-        const previous = before[key];
-        if (previous === undefined) return none(MISSING_BEFORE);
-        restoredPatch[key] = previous;
-      }
-      return commands([{ _tag: 'UpdateProduct', id: command['id'], patch: restoredPatch }]);
-    }
-    case 'CreateProduct':
-      return commands(
-        [{ _tag: 'UpdateProduct', id: AGENT_CREATED_ID_PLACEHOLDER, patch: { active: false } }],
-        'entityIds.0',
-      );
-    default:
-      return none(AGENT_REVERT_UNAVAILABLE);
-  }
-};
-
-/** CRM: an edited client gets its previous values back (only when every changed field had a value before). */
-const crmRevert = ({ before, command }: AgentRevertInput): AgentRevertPlan => {
-  if (command['_tag'] !== 'UpdateClient') return none(AGENT_REVERT_UNAVAILABLE);
-  const patch = command['patch'];
-  if (!isRecord(patch) || before === undefined) return none(MISSING_BEFORE);
-  const restoredPatch: Record<string, unknown> = {};
+/** The previous value of every key of `patch` from `before`; undefined when any of them had no value. */
+export const agentRestoredPatch = (
+  patch: unknown,
+  before: Readonly<Record<string, unknown>> | undefined,
+): Record<string, unknown> | undefined => {
+  if (!isRecord(patch) || before === undefined) return undefined;
+  const restored: Record<string, unknown> = {};
   for (const key of Object.keys(patch)) {
     const previous = before[key];
-    if (previous === undefined) return none(MISSING_BEFORE);
-    restoredPatch[key] = previous;
+    if (previous === undefined) return undefined;
+    restored[key] = previous;
   }
-  return commands([{ _tag: 'UpdateClient', id: command['id'], patch: restoredPatch }]);
-};
-
-const occupancyRevert = ({ before, command, tenantId }: AgentRevertInput): AgentRevertPlan => {
-  const occupancyRef = command['occupancyRef'];
-  switch (command['_tag']) {
-    case 'SetRentTerms': {
-      const rentTerms = before?.['rentTerms'];
-      return isRecord(rentTerms) ? commands([{ _tag: 'SetRentTerms', occupancyRef, rentTerms }]) : none(MISSING_BEFORE);
-    }
-    case 'UpdateDraft': {
-      if (before === undefined || typeof before['startDate'] !== 'string') return none(MISSING_BEFORE);
-      const rentTerms = before['rentTerms'];
-      return commands([
-        {
-          _tag: 'UpdateDraft',
-          occupancyRef,
-          startDate: before['startDate'],
-          endDate: before['endDate'] ?? null,
-          ...(isRecord(rentTerms) ? { rentTerms } : {}),
-        },
-      ]);
-    }
-    case 'CreateDraft':
-      return commands(
-        [
-          {
-            _tag: 'Cancel',
-            occupancyRef: {
-              moduleId: 'property.leasing',
-              resourceId: AGENT_CREATED_ID_PLACEHOLDER,
-              resourceType: 'property.leasing.occupancy',
-              tenantId,
-            },
-          },
-        ],
-        'resourceRef.resourceId',
-      );
-    case 'Confirm':
-    case 'Activate':
-    case 'Complete':
-    case 'Cancel':
-      return none(RENT_STATE_UNAVAILABLE);
-    default:
-      return none(AGENT_REVERT_UNAVAILABLE);
-  }
-};
-
-export const buildAgentRevertPlan = (appId: string, input: AgentRevertInput): AgentRevertPlan => {
-  switch (appId) {
-    case 'work-tasks':
-      return taskRevert(input);
-    case 'merchandise':
-      return merchandiseRevert(input);
-    case 'property-leasing':
-      return occupancyRevert(input);
-    case 'crm':
-      return crmRevert(input);
-    default:
-      return none(AGENT_REVERT_UNAVAILABLE);
-  }
+  return restored;
 };
 
 /** Value at a dot path; numeric segments index arrays. Returns undefined when the path is missing. */
@@ -226,37 +60,28 @@ const replaceCreatedId = (value: unknown, created: string): unknown => {
   return value;
 };
 
+/**
+ * Commands with every `$createdId` replaced by the value at `createdIdPath` of the apply result; the commands as
+ * they are without a path, undefined when the path names no id.
+ */
+export const withAgentCreatedId = (
+  commands: readonly AgentCommand[],
+  createdIdPath: string | undefined,
+  applyResult: unknown,
+): AgentCommand[] | undefined => {
+  if (createdIdPath === undefined) return [...commands];
+  const created = valueAtPath(applyResult, createdIdPath);
+  if (typeof created !== 'string' || created.length === 0) return undefined;
+  return commands.map((command) => replaceCreatedId(command, created) as AgentCommand);
+};
+
 /** Fills the created-record id from the apply result. Plans without `createdIdPath` pass through unchanged. */
 export const resolveAgentRevertPlan = (
   plan: AgentRevertPlan | null | undefined,
   applyResult: unknown,
 ): AgentRevertPlan => {
-  if (plan === null || plan === undefined) return none(AGENT_REVERT_UNAVAILABLE);
+  if (plan === null || plan === undefined) return agentRevertNone();
   if (plan.kind === 'none' || plan.createdIdPath === undefined) return plan;
-  const created = valueAtPath(applyResult, plan.createdIdPath);
-  if (typeof created !== 'string' || created.length === 0) return none(CREATED_UNKNOWN);
-  return {
-    commands: plan.commands.map((command) => replaceCreatedId(command, created) as AgentCommand),
-    kind: 'commands',
-  };
-};
-
-const REVERTIBLE_COMMANDS: Readonly<Record<string, ReadonlySet<string>>> = {
-  crm: new Set(['UpdateClient']),
-  merchandise: new Set(['ChangePrice', 'UpdateProduct', 'CreateProduct']),
-  'property-leasing': new Set(['SetRentTerms', 'UpdateDraft', 'CreateDraft']),
-  'work-tasks': new Set(['CreateTask', 'UpdateTask', 'ChangeTaskState', 'AssignTask']),
-};
-
-/**
- * For a proposal that is still pending: why its change will not be undoable by „Vrátit vše“, or undefined when the
- * module declares an undo for this command (the exact plan is built from the live record at approval).
- */
-export const agentRevertUnavailableBeforeApproval = (appId: string, command: AgentCommand): string | undefined => {
-  const tag = command['_tag'];
-  if (typeof tag === 'string' && REVERTIBLE_COMMANDS[appId]?.has(tag) === true) return undefined;
-  if (appId === 'property-leasing' && ['Confirm', 'Activate', 'Complete', 'Cancel'].includes(String(tag))) {
-    return RENT_STATE_UNAVAILABLE;
-  }
-  return AGENT_REVERT_UNAVAILABLE;
+  const commands = withAgentCreatedId(plan.commands, plan.createdIdPath, applyResult);
+  return commands === undefined ? agentRevertNone(CREATED_UNKNOWN) : { commands, kind: 'commands' };
 };

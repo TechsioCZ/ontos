@@ -12,21 +12,21 @@ import type {
   AgentQueueBatch,
   AgentQueueResponse,
 } from '@app/shared-contracts/agent-proposals';
-import { agentCommandDiff, agentPlatformDiff } from '@app/shared-contracts/agent-diff';
+import { agentCommandDiff } from '@app/shared-contracts/agent-diff';
 import { Effect } from 'effect';
 
 import { loadAgentProfiles } from '../auth/agent-store.ts';
 
-import { approverCheck, crmClientIdOf, crmClientsOf } from './approval-logic.ts';
+import { approverCheck, hiddenByReview } from './approval-logic.ts';
 import { AgentPlatformForbidden, AgentPlatformInvalid, callerModuleAccess } from './caller.ts';
 import { loadComposedModules } from './composed-modules.ts';
 import type { ComposedModules } from './composed-modules.ts';
-import { readTargetEntity } from './service-decide.ts';
 import type { AgentPlatformCaller } from './caller.ts';
-import { readLegacyBatches, seesWholeModule } from './legacy-queue.ts';
+import { readLegacyBatches } from './legacy-queue.ts';
 import { rowsToQueueBatches } from './mappers.ts';
 import type { AgentProposalRow } from './mappers.ts';
 import { readModuleRecords } from './module-call.ts';
+import { reviewByModule, reviewedItem, reviewInModule } from './module-review.ts';
 import {
   AgentStoreUnavailable,
   findRunProposals,
@@ -42,8 +42,6 @@ const HUMAN_ONLY_COMMANDS: ReadonlySet<string> = new Set(['AiDecideChanges', 'Ai
 /** Named Action slugs, e.g. `update-party`; `apply-command` is the default command envelope. */
 const ACTION_SLUG = /^[a-z][a-z0-9-]{0,99}$/u;
 const QUEUE_LIMIT = 300;
-/** Modules whose records are private per person (see legacy-queue.ts seesWholeModule). */
-const PRIVATE_SCOPE_APPS: ReadonlySet<string> = new Set(['crm']);
 const REVIEW_PATH = `/cs${AGENT_APPROVALS_PATH}`;
 const NO_DECIDER = 'Návrhy agentů schvalují jen lidé s oprávněním k zápisu v některém modulu firmy.';
 
@@ -126,6 +124,18 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
   const composed = yield* loadComposedModules;
   const names = yield* principalNames(tenantId);
   const batchId = randomUUID();
+  // The modules describe their own commands (read as the agent); the platform never trusts the agent's diff.
+  const reviews = yield* reviewByModule(
+    agent.principal,
+    composed.byAppId,
+    request.proposals.map((proposal, index) => ({
+      actionSlug: proposal.actionSlug ?? 'apply-command',
+      appId: proposal.appId,
+      command: proposal.command,
+      key: `p${index}`,
+      stage: 'proposed' as const,
+    })),
+  );
   const rows: NewAgentProposal[] = [];
   for (const [index, proposal] of request.proposals.entries()) {
     const composedModule = composed.byAppId(proposal.appId);
@@ -147,15 +157,15 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
     if (!allowedCommand) {
       return yield* new AgentPlatformInvalid({ reason: `Návrh ${index + 1} nemá povolený příkaz modulu.` });
     }
-    // The platform describes commands it understands itself (read as the agent), never trusting the agent's diff.
-    const target = yield* readTargetEntity(agent.principal, module.appId, proposal.command);
-    if (target.needed && target.available && target.value === undefined) {
+    const review = reviews.get(module.appId);
+    const reviewed = reviewedItem(review, `p${index}`);
+    if (hiddenByReview(review, reviewed)) {
       // Approval runs as a person who could not apply a change to a record the proposer cannot even see.
       return yield* new AgentPlatformInvalid({
         reason: `Návrh ${index + 1}: záznam, který má změnit, neexistuje nebo k němu nemáte přístup. Načtěte ho znovu přes ontos_read.`,
       });
     }
-    const platformDiff = agentPlatformDiff(module.appId, proposal.command, target.needed ? target.value : undefined);
+    const platformDiff = reviewed?.diff;
     const commandDiff = agentCommandDiff(proposal.command);
     rows.push({
       actionSlug,
@@ -228,54 +238,34 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
   const moduleRows = (yield* listCompanyProposals(tenantId, legalEntityId, { limit: QUEUE_LIMIT })).filter(
     (row) => modules.access.has(row.moduleKey) || modules.write.has(row.moduleKey),
   );
-  // Approval runs as the approver: each module is read once as this person to learn what they may change and,
-  // for modules with private records (CRM clients of other salespeople), which records they may even see.
-  const appIds = [
-    ...new Set(
-      moduleRows.filter((row) => row.status === 'pending' || PRIVATE_SCOPE_APPS.has(row.appId)).map((row) => row.appId),
-    ),
-  ];
+  // Approval runs as the approver: each module reviews its proposals once as this person (visibility, whether they
+  // can carry them out, live before -> after lines). Modules without a review are read once for their write flag.
+  const reviews = yield* reviewByModule(
+    caller.principal,
+    composed.byAppId,
+    moduleRows.map((row) => ({
+      actionSlug: row.actionSlug,
+      appId: row.appId,
+      command: row.command,
+      key: row.proposalId,
+      stage: row.status === 'pending' ? ('proposed' as const) : ('history' as const),
+    })),
+  );
+  const itemOf = (row: AgentProposalRow) => reviewedItem(reviews.get(row.appId), row.proposalId);
+  const visible = moduleRows.filter((row) => !hiddenByReview(reviews.get(row.appId), itemOf(row)));
+  const pending = visible.filter((row) => row.status === 'pending');
+  const unreviewed = [...new Set(pending.filter((row) => itemOf(row) === undefined).map((row) => row.appId))];
   const moduleReads = new Map(
     yield* Effect.forEach(
-      appIds,
+      unreviewed,
       (appId) => readModuleRecords(caller.principal, appId).pipe(Effect.map((body) => [appId, body] as const)),
       { concurrency: 3 },
     ),
   );
-  const rows = moduleRows.filter((row) => {
-    if (!PRIVATE_SCOPE_APPS.has(row.appId) || crmClientIdOf(row.command) === undefined) {
-      return true;
-    }
-    // History and pending proposals about a client the person cannot see stay hidden (also when CRM is down).
-    const body = moduleReads.get(row.appId);
-    return body !== undefined && crmClientsOf(body).some((client) => client['id'] === crmClientIdOf(row.command));
-  });
-  // Pending items show "before" from the live record, read as this person.
-  const pending = rows.filter((row) => row.status === 'pending');
-  const targets = new Map(
-    yield* Effect.forEach(
-      pending,
-      (row) =>
-        readTargetEntity(caller.principal, row.appId, row.command).pipe(
-          Effect.map((read) => [row.proposalId, read] as const),
-        ),
-      { concurrency: 4 },
-    ),
-  );
   const checks = new Map(
-    pending.map((row) => {
-      const target = targets.get(row.proposalId) ?? { needed: false as const };
-      const moduleBody = target.needed && target.body !== undefined ? target.body : moduleReads.get(row.appId);
-      return [row.proposalId, approverCheck(row.appId, row.command, moduleBody, target)] as const;
-    }),
-  );
-  const visible = rows.filter((row) => {
-    const check = checks.get(row.proposalId);
-    return check === undefined || check.ok || !check.hidden;
-  });
-  const liveBefore = new Map(
-    [...targets].flatMap(([proposalId, read]) =>
-      read.needed && read.value !== undefined ? [[proposalId, read.value] as const] : [],
+    pending.map(
+      (row) =>
+        [row.proposalId, approverCheck(reviews.get(row.appId), itemOf(row), moduleReads.get(row.appId))] as const,
     ),
   );
   const coreBatches = rowsToQueueBatches(visible, {
@@ -289,9 +279,9 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
       const check = checks.get(row.proposalId);
       return check === undefined || check.ok ? { allowed: true } : { allowed: false, reason: check.reason };
     },
-    liveBefore,
     modules: moduleTextsOf(composed),
     names,
+    reviewOf: itemOf,
   });
   const legacyModules = composed.all
     .filter((module) => module.ownProposalEngine && modules.access.has(module.moduleId))
@@ -336,13 +326,17 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
   const proposalOnlyAgents = new Set(
     agentIds.filter((principalId) => profiles.get(principalId)?.writePolicy === 'approval'),
   );
-  // People see agent activity only in modules where they approve agent changes, and only company-wide when the
-  // module shows them the whole company (CRM salespeople see their own clients only).
+  // People see agent activity only in modules where they approve agent changes, and in modules with private
+  // records only when the module shows them every record (not only their own).
   const composed = yield* loadComposedModules;
   const scoped = yield* Effect.forEach(
-    composed.all.filter((module) => PRIVATE_SCOPE_APPS.has(module.appId) && modules.write.has(module.moduleId)),
+    composed.all.filter(
+      (module) => module.approvalReview?.privateRecords === true && modules.write.has(module.moduleId),
+    ),
     (module) =>
-      seesWholeModule(caller.principal, module.appId).pipe(Effect.map((whole) => (whole ? [] : [module.moduleId]))),
+      reviewInModule(caller.principal, module, []).pipe(
+        Effect.map((review) => (review.state === 'ok' && review.seesAllRecords ? [] : [module.moduleId])),
+      ),
     { concurrency: 2 },
   );
   const hidden = new Set(scoped.flat());

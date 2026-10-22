@@ -4,11 +4,12 @@ import { expect, test } from 'effect-rstest';
 import {
   approverCheck,
   czechModuleFailure,
+  hiddenByReview,
   moduleAccessSets,
   parseCoreKey,
-  revertBeforeLookup,
   revertResultMessage,
 } from '../../../api/agent-platform/approval-logic.ts';
+import type { ModuleReview } from '../../../api/agent-platform/module-review.ts';
 
 const tenant = '70000000-0000-4000-8000-000000000020';
 const company = '71000000-0000-4000-8000-000000000020';
@@ -42,32 +43,6 @@ test('parseCoreKey strips the core prefix and rejects other keys', () => {
   expect(parseCoreKey('legacy:crm:x')).toBeUndefined();
 });
 
-test('revertBeforeLookup reads the task for work-tasks task updates only', () => {
-  const lookup = revertBeforeLookup('work-tasks', { _tag: 'UpdateTask', taskRef: { resourceId: 't1' }, title: 'X' });
-  expect(lookup?.query).toEqual({ includeArchived: true, resourceId: 't1' });
-  expect(lookup?.pick({ items: [{ ref: { resourceId: 't2' } }, { ref: { resourceId: 't1' }, title: 'A' }] })).toEqual({
-    ref: { resourceId: 't1' },
-    title: 'A',
-  });
-  expect(revertBeforeLookup('work-tasks', { _tag: 'CreateTask', title: 'X' })).toBeUndefined();
-});
-
-test('revertBeforeLookup reads the product for merchandise price changes', () => {
-  const lookup = revertBeforeLookup('merchandise', { _tag: 'ChangePrice', id: 'p1', priceMinor: 100 });
-  expect(lookup?.query).toEqual({ view: { productId: 'p1' } });
-  expect(lookup?.pick({ products: [{ id: 'p1', currentPriceMinor: 90 }] })).toEqual({
-    id: 'p1',
-    currentPriceMinor: 90,
-  });
-});
-
-test('revertBeforeLookup reads the occupancy for rent term changes', () => {
-  const occupancy = { occupancyRef: { resourceId: 'o1' }, startDate: '2026-01-01' };
-  const lookup = revertBeforeLookup('property-leasing', { _tag: 'SetRentTerms', occupancyRef: { resourceId: 'o1' } });
-  expect(lookup?.pick({ occupancies: [occupancy] })).toEqual(occupancy);
-  expect(revertBeforeLookup('crm', { _tag: 'UpdateClient' })).toBeUndefined();
-});
-
 test('revertResultMessage writes the Czech summary and outcome', () => {
   expect(revertResultMessage({ changed: 0, failed: 0, reverted: 2, unavailable: 0 })).toEqual({
     message: 'Vráceno změn: 2.',
@@ -92,47 +67,45 @@ test('revertResultMessage reports records a person changed after the approval', 
   expect(revertResultMessage({ changed: 1, failed: 0, reverted: 1, unavailable: 0 }).outcome).toBe('partial');
 });
 
-const clientOfJan = { id: 'c-jan', ownerSalespersonId: 'sp-jan', phone: '+420 541 100 200' };
-const crmBody = (viewer: Record<string, unknown>, clients: readonly Record<string, unknown>[]) => ({
-  state: { clients: { items: clients } },
-  viewer: { assign: false, readAll: false, readAssigned: true, writeAll: false, writeAssigned: true, ...viewer },
+const reviewed = (visible: boolean, blockedReason?: string) => ({
+  key: 'p1',
+  visible,
+  ...(blockedReason === undefined ? {} : { blockedReason }),
 });
-const updateJansClient = { _tag: 'UpdateClient', id: 'c-jan', patch: { phone: '+420 541 100 299' } };
-
-test('a salesperson cannot see or decide a proposal about a colleague client', () => {
-  expect(approverCheck('crm', updateJansClient, crmBody({ salespersonId: 'sp-petra' }, []))).toMatchObject({
-    hidden: true,
-    ok: false,
-  });
-  expect(approverCheck('crm', updateJansClient, crmBody({ salespersonId: 'sp-jan' }, [clientOfJan]))).toEqual({
-    ok: true,
-  });
-  expect(
-    approverCheck('crm', updateJansClient, crmBody({ readAll: true, salespersonId: 'sp-petra' }, [clientOfJan])),
-  ).toMatchObject({ hidden: false, ok: false });
-  expect(approverCheck('crm', updateJansClient, crmBody({ writeAll: true }, [clientOfJan]))).toEqual({ ok: true });
+const ok = (privateRecords: boolean): ModuleReview => ({
+  item: () => undefined,
+  privateRecords,
+  seesAllRecords: false,
+  state: 'ok',
 });
 
-test('a catalog change needs catalog management, any change needs module write', () => {
-  const changePrice = { _tag: 'ChangePrice', id: 'p', priceMinor: 100 };
-  expect(approverCheck('merchandise', changePrice, { canManageCatalog: false, canWrite: true })).toMatchObject({
-    ok: false,
-  });
-  expect(approverCheck('merchandise', changePrice, { canManageCatalog: true, canWrite: true })).toEqual({ ok: true });
-  expect(approverCheck('tagging', { _tag: 'AttachTag' }, { canWrite: false })).toMatchObject({
+test('the module review decides whether a proposal is shown', () => {
+  expect(hiddenByReview(ok(true), reviewed(false))).toBe(true);
+  expect(hiddenByReview(ok(true), reviewed(true))).toBe(false);
+  expect(hiddenByReview({ state: 'none' }, undefined)).toBe(false);
+  // Modules with private records keep their proposals hidden while their review cannot answer.
+  expect(hiddenByReview({ privateRecords: true, state: 'unavailable' }, undefined)).toBe(true);
+  expect(hiddenByReview({ privateRecords: false, state: 'unavailable' }, undefined)).toBe(false);
+  expect(hiddenByReview(ok(true), undefined)).toBe(true);
+});
+
+test('the module review decides who can carry out a proposal', () => {
+  expect(approverCheck(ok(true), reviewed(false), undefined)).toMatchObject({ hidden: true, ok: false });
+  expect(approverCheck(ok(false), reviewed(true, 'Jen správce katalogu.'), { canWrite: true })).toEqual({
     hidden: false,
     ok: false,
+    reason: 'Jen správce katalogu.',
   });
-  expect(approverCheck('tagging', { _tag: 'AttachTag' }, undefined)).toEqual({ ok: true });
+  expect(approverCheck(ok(false), reviewed(true), { canWrite: false })).toEqual({ ok: true });
+});
+
+test('modules without a review only block people whose records read says they cannot write', () => {
+  expect(approverCheck({ state: 'none' }, undefined, { canWrite: false })).toMatchObject({ hidden: false, ok: false });
+  expect(approverCheck({ state: 'none' }, undefined, { canWrite: true })).toEqual({ ok: true });
+  expect(approverCheck({ privateRecords: false, state: 'unavailable' }, undefined, undefined)).toEqual({ ok: true });
 });
 
 test('English framework failures are shown in Czech', () => {
   expect(czechModuleFailure('The requested resource was not found.')).toContain('nebyl nalezen');
   expect(czechModuleFailure('The apply-command Action request is invalid.')).toContain('neplatný');
-});
-
-test('CRM client commands read the client before the change', () => {
-  const lookup = revertBeforeLookup('crm', updateJansClient);
-  expect(lookup?.query).toEqual({ clientId: 'c-jan' });
-  expect(lookup?.pick(crmBody({}, [clientOfJan]))).toEqual(clientOfJan);
 });

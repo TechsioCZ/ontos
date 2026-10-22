@@ -1,7 +1,9 @@
 /** CRM tools offered to agents, without approval plumbing or internal status callbacks. */
-import { defineOntosMcpContribution } from '@app/core-runtime';
+import { OntosMcpHidden, defineOntosMcpContribution } from '@app/core-runtime';
 
 export const crmMcpContribution = defineOntosMcpContribution({
+  // Clients are private per salesperson: proposals about clients the reader cannot see stay hidden.
+  approvalReview: { privateRecords: true, read: 'agent-review' },
   approvals: true,
   ownProposalEngine: true,
   commands: {
@@ -56,6 +58,7 @@ export const crmMcpContribution = defineOntosMcpContribution({
   label: { cs: 'CRM – klienti a obchodníci', en: 'CRM – clients and salespeople' },
   page: '/crm/klienti',
   reads: {
+    'agent-review': OntosMcpHidden,
     records: { title: { cs: 'Přehled klientů, kontaktů a objednávek', en: 'Clients, contacts and orders overview' } },
   },
   revision: { read: 'records' },

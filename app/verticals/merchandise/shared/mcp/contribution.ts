@@ -1,7 +1,8 @@
 /** Catalog, stock and order tools offered to agents, without approval plumbing or demo maintenance. */
-import { defineOntosMcpContribution } from '@app/core-runtime';
+import { OntosMcpHidden, defineOntosMcpContribution } from '@app/core-runtime';
 
 export const merchandiseMcpContribution = defineOntosMcpContribution({
+  approvalReview: { read: 'agent-review' },
   approvals: true,
   ownProposalEngine: true,
   commands: {
@@ -53,6 +54,7 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
   label: { cs: 'E-shop – katalog, sklad a objednávky', en: 'E-commerce – catalog, stock and orders' },
   page: '/prodej/objednavky',
   reads: {
+    'agent-review': OntosMcpHidden,
     records: { title: { cs: 'Přehled produktů, skladu a objednávek', en: 'Products, stock and orders overview' } },
   },
   revision: { query: { view: {} }, read: 'records' },

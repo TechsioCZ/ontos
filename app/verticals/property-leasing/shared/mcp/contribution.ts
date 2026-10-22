@@ -1,6 +1,7 @@
-import { defineOntosMcpContribution } from '@app/core-runtime';
+import { OntosMcpHidden, defineOntosMcpContribution } from '@app/core-runtime';
 
 export const propertyLeasingMcpContribution = defineOntosMcpContribution({
+  approvalReview: { read: 'agent-review' },
   approvals: true,
   commands: {
     Activate: { title: { cs: 'Zahájit nájem', en: 'Activate a lease' } },
@@ -26,6 +27,7 @@ export const propertyLeasingMcpContribution = defineOntosMcpContribution({
   label: { cs: 'Pronájmy a obsazenost', en: 'Leasing and occupancy' },
   page: '/najmy',
   reads: {
+    'agent-review': OntosMcpHidden,
     records: { title: { cs: 'Přehled nájmů a obsazenosti', en: 'Leases and occupancy overview' } },
   },
   revision: { read: 'records' },

@@ -8,7 +8,7 @@ import type { MicroVerticalReadiness, MicroVerticalOperationContext } from '@mod
 import { identity } from 'effect';
 
 // <generated-governed-http-api-imports>
-
+import { AgentReviewApi } from './apis/agent-review.ts';
 import { ApplyCommandActionApi } from './apis/apply-command-action.ts';
 import { RecordsApi } from './apis/records.ts';
 // </generated-governed-http-api-imports>
@@ -31,6 +31,7 @@ export const workTasksFoundationApi = HttpApi.make('WorkTasksApiFoundation').add
 export const workTasksApi = HttpApi.make('WorkTasksApi')
   .addHttpApi(workTasksFoundationApi)
   // <generated-governed-http-api-additions>
+  .addHttpApi(AgentReviewApi)
   .addHttpApi(ApplyCommandActionApi)
   .addHttpApi(RecordsApi)
   // </generated-governed-http-api-additions>

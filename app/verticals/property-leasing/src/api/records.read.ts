@@ -16,7 +16,7 @@ import { persistenceService, filterOccupancyRecords } from '../services/persiste
 
 const OWNER_MODULE_KEY = 'property.leasing';
 
-type Services = Effect.Success<ReturnType<typeof persistenceService>> & { readonly canWrite: boolean };
+export type Services = Effect.Success<ReturnType<typeof persistenceService>> & { readonly canWrite: boolean };
 
 /** Same Core decision the gateway applies to `apply-command`, so the UI only offers permitted actions. */
 const occupancyWriteCapability = (scope: Pick<OperationalScope, 'principalId' | 'correlationId'>) =>
@@ -33,7 +33,8 @@ const occupancyWriteCapability = (scope: Pick<OperationalScope, 'principalId' | 
     Effect.orElseSucceed(() => false),
   );
 
-const makeRecordsServices: ReadServiceFactory<Services, ActionPermission> = (transaction, scope) =>
+/** Also the agent review read's services: it reads leases and the write right exactly as this read does. */
+export const makeRecordsServices: ReadServiceFactory<Services, ActionPermission> = (transaction, scope) =>
   // A read-only or approval-only MCP connection never offers direct changes.
   Effect.all({
     persistence: persistenceService(transaction, scope),

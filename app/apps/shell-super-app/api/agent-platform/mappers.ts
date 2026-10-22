@@ -15,8 +15,8 @@ import {
   type AgentRevertPlan,
   type AgentRisk,
 } from '@app/shared-contracts/agent-proposals';
-import { agentCommandDiff, agentPlatformDiff } from '@app/shared-contracts/agent-diff';
-import { agentRevertUnavailableBeforeApproval } from '@app/shared-contracts/agent-revert';
+import { agentCommandDiff } from '@app/shared-contracts/agent-diff';
+import type { AgentReviewItem } from '@app/shared-contracts/agent-review';
 import { DateTime } from 'effect';
 
 import { czechModuleFailure, isGenericProblemText } from './approval-logic.ts';
@@ -95,8 +95,8 @@ export interface ModuleTexts {
 export interface QueueItemOptions {
   readonly canDecide: (row: AgentProposalRow) => QueueItemDecision;
   readonly modules: ModuleTexts;
-  /** Live wire JSON of the target entity of pending proposals (by proposal id), read as the person. */
-  readonly liveBefore?: ReadonlyMap<string, Readonly<Record<string, unknown>>>;
+  /** The module's review of a proposal, read as the person (undefined: the module has none or it did not answer). */
+  readonly reviewOf?: (row: AgentProposalRow) => AgentReviewItem | undefined;
   readonly names: ReadonlyMap<string, string>;
 }
 
@@ -110,21 +110,23 @@ const withStoredBefore = (
     return before === undefined ? line : { ...line, before };
   });
 
-/** The diff a person sees: platform-built from the command whenever the platform understands it. */
+/**
+ * The diff a person sees: the module's own lines whenever it describes the command (pending: before from the live
+ * record; decided: before as stored at submission or approval), otherwise the platform lists the stored command.
+ */
 export const itemDiff = (
   row: AgentProposalRow,
-  liveBefore: Readonly<Record<string, unknown>> | undefined,
+  review: AgentReviewItem | undefined,
 ): { readonly diff: readonly AgentDiffLine[]; readonly diffSource: 'agent' | 'command' | 'platform' } => {
-  const live = row.status === 'pending' ? liveBefore : undefined;
-  const platform = agentPlatformDiff(row.appId, row.command, live);
-  if (platform === undefined) {
+  const lines = review?.diff;
+  if (lines === undefined) {
     // Modules without their own lines: the platform lists the stored command itself (never the agent's text).
     const fromCommand = agentCommandDiff(row.command);
     return fromCommand.length > 0
       ? { diff: fromCommand, diffSource: 'command' }
       : { diff: row.diff, diffSource: 'agent' };
   }
-  return { diff: live === undefined ? withStoredBefore(platform, row.diff) : platform, diffSource: 'platform' };
+  return { diff: row.status === 'pending' ? lines : withStoredBefore(lines, row.diff), diffSource: 'platform' };
 };
 
 /** Failures stored before module problems were translated can be English framework texts; show them in Czech. */
@@ -136,23 +138,24 @@ export const storedFailureText = (failure: string): string =>
       : failure;
 
 const toItem = (row: AgentProposalRow, options: QueueItemOptions): AgentQueueItem => {
+  const review = options.reviewOf?.(row);
   const revertUnavailableReason =
     row.status === 'pending'
-      ? agentRevertUnavailableBeforeApproval(row.appId, row.command)
+      ? review === undefined
+        ? AGENT_REVERT_UNAVAILABLE
+        : review.revertUnavailableReason
       : row.revert === null
         ? AGENT_REVERT_UNAVAILABLE
         : row.revert.kind === 'none'
           ? row.revert.reason
           : undefined;
-  const { diff, diffSource } = itemDiff(row, options.liveBefore?.get(row.proposalId));
+  const { diff, diffSource } = itemDiff(row, review);
   // A pending row with decided_at is only claimed by an approval in progress; it has no decision yet.
   const decided = row.status !== 'pending';
   const decision = options.canDecide(row);
-  const live = options.liveBefore?.get(row.proposalId);
-  const liveName = live?.['name'] ?? live?.['title'];
+  const liveName = row.status === 'pending' ? review?.targetName : undefined;
   // Agents often repeat the action name as the target; the record's own name says more.
-  const targetLabel =
-    row.targetLabel === row.summary && typeof liveName === 'string' && liveName !== '' ? liveName : row.targetLabel;
+  const targetLabel = row.targetLabel === row.summary && liveName !== undefined ? liveName : row.targetLabel;
   return {
     appId: row.appId,
     canDecide: decision.allowed,

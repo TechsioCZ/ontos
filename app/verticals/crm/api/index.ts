@@ -32,6 +32,7 @@ import type { OperationContext } from '../shared/api.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
+import { agentReviewReadApiLive } from './agent-review-read-server.ts';
 import { applyCommandActionApiLive } from './apply-command-action-server.ts';
 import { recordsReadApiLive } from './records-read-server.ts';
 // </generated-governed-http-handler-imports>
@@ -77,6 +78,7 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit)
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
+  agentReviewReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>

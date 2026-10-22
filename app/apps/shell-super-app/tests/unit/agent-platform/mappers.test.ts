@@ -217,26 +217,55 @@ it('keeps the agent list unfiltered when filtering by kind and applies the limit
   expect(limited.entries[0]?.id).toBe('audit:a1');
 });
 
-it('builds the price diff from the command and the live product, not from the agent text', () => {
+it('shows the module review lines and live record name, never the agent text', () => {
   const row: AgentProposalRow = {
     ...baseRow,
-    appId: 'merchandise',
     command: { _tag: 'ChangePrice', id: 'p1', priceMinor: 100 },
     diff: [{ after: '3 660,00 Kč', before: '3 490,00 Kč', field: 'currentPriceMinor', label: 'Cena bez DPH' }],
-    moduleKey: 'demo.merchandise',
+    summary: 'Změna ceny',
+    targetLabel: 'Změna ceny',
   };
+  const lines = [{ after: '1,00 Kč', before: '3 490,00 Kč', field: 'priceMinor', label: 'Cena bez DPH' }];
   const [batch] = rowsToQueueBatches([row], {
     canDecide: canDecideAll,
-    liveBefore: new Map([[row.proposalId, { currentPriceMinor: 349_000, id: 'p1' }]]),
     modules,
     names,
+    reviewOf: () => ({ diff: lines, key: row.proposalId, targetName: 'Croissant', visible: true }),
   });
   const item = batch?.items[0];
   expect(item?.diffSource).toBe('platform');
-  expect(item?.diff).toEqual([
-    { after: '1,00\u00a0Kč', before: '3\u00a0490,00\u00a0Kč', field: 'priceMinor', label: 'Cena bez DPH' },
-  ]);
+  expect(item?.diff).toEqual(lines);
+  expect(item?.targetLabel).toBe('Croissant');
   expect(item?.revertUnavailableReason).toBeUndefined();
+});
+
+it('keeps the stored before of decided proposals next to the module lines', () => {
+  const row: AgentProposalRow = {
+    ...baseRow,
+    diff: [{ after: '1,00 Kč', before: '3 490,00 Kč', field: 'priceMinor', label: 'Cena bez DPH' }],
+    status: 'applied',
+  };
+  const [batch] = rowsToQueueBatches([row], {
+    canDecide: canDecideAll,
+    modules,
+    names,
+    reviewOf: () => ({
+      diff: [{ after: '1,00 Kč', field: 'priceMinor', label: 'Cena bez DPH' }],
+      key: row.proposalId,
+      visible: true,
+    }),
+  });
+  expect(batch?.items[0]?.diff).toEqual(row.diff);
+});
+
+it('shows why the module will not undo a pending change', () => {
+  const [batch] = rowsToQueueBatches([baseRow], {
+    canDecide: canDecideAll,
+    modules,
+    names,
+    reviewOf: () => ({ key: baseRow.proposalId, revertUnavailableReason: 'Nelze vrátit.', visible: true }),
+  });
+  expect(batch?.items[0]?.revertUnavailableReason).toBe('Nelze vrátit.');
 });
 
 it('marks commands the platform does not understand as agent-described', () => {
