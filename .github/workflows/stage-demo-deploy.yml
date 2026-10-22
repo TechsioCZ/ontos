@@ -456,7 +456,9 @@ jobs:
           check "$STAGE_SHELL_URL/cs/login"
           check "$STAGE_SHELL_URL/.well-known/oauth-authorization-server"
 
-  # The outbox worker host must run the published revision. A Zerops push builds remotely (about 10 min).
+  # The outbox worker host admits only the composition built from its exact commit (the build marker
+  # carries the source revision), so it is always built from the published commit: this run's commit after
+  # a release, or the last successful stage-edge deployment for an outbox-only dispatch.
   outbox-host:
     name: Push the outbox worker host
     needs: [release]
@@ -466,10 +468,35 @@ jobs:
     environment:
       name: stage-edge
       deployment: false
+    permissions:
+      contents: read
+      deployments: read
     steps:
-      - name: Checkout
+      - name: Resolve the published commit
+        id: published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASED: ${{ needs.release.result == 'success' }}
+        run: |
+          if [[ "$RELEASED" == true ]]; then
+            echo "sha=$GITHUB_SHA" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+          while IFS=$'\t' read -r id sha; do
+            state="$(gh api "repos/$GITHUB_REPOSITORY/deployments/$id/statuses?per_page=1" --jq '.[0].state // ""')"
+            if [[ "$state" == success ]]; then
+              echo "Active stage-edge deployment: $sha"
+              echo "sha=$sha" >>"$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done < <(gh api "repos/$GITHUB_REPOSITORY/deployments?environment=stage-edge&per_page=20" --jq '.[] | [.id, .sha] | @tsv')
+          echo "::error title=No published commit::no successful stage-edge deployment found" >&2
+          exit 1
+
+      - name: Checkout the published commit
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ steps.published.outputs.sha }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -500,6 +527,27 @@ jobs:
           ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: app/scripts/push-zerops-units.sh
+
+      # A host that does not match the published composition logs OutboxWorkerDescriptorError on every poll.
+      - name: Require the new host to admit the published composition
+        env:
+          ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+          ZEROPS_SERVICE_ID: ${{ vars.ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: |
+          # zcli push returns once the new container is ready; only its lines count.
+          since="$(date -u +%Y-%m-%dT%H:%M:%S)"
+          sleep 60
+          zcli service log --project-id "$ZEROPS_PROJECT_ID" --service-id "$ZEROPS_SERVICE_ID" \
+            --limit 500 --minimum-severity DEBUG >"$RUNNER_TEMP/outbox.log" 2>&1 || true
+          awk -v since="$since" '$2 >= since' "$RUNNER_TEMP/outbox.log" >"$RUNNER_TEMP/outbox-new.log"
+          echo "$(wc -l <"$RUNNER_TEMP/outbox-new.log") host log lines since $since"
+          if grep -q 'OutboxWorkerDescriptorError\|outbox_worker_descriptor_invalid' "$RUNNER_TEMP/outbox-new.log"; then
+            grep -m 20 -B1 -A3 'OutboxWorkerDescriptorError' "$RUNNER_TEMP/outbox-new.log" || true
+            echo "::error title=Outbox host rejects the composition::OutboxWorkerDescriptorError after the push"
+            exit 1
+          fi
+          tail -15 "$RUNNER_TEMP/outbox-new.log"
 
   # One verification pass after every deploy, no load (the stage Workers CPU budget is capped).
   verify:
