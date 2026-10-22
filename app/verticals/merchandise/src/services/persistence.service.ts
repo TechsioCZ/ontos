@@ -1648,8 +1648,9 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
               Effect.mapError(unavailable),
             )
           : undefined;
+      // Product category labels stand in for the storefront tree; a company with a tree filters by the tree.
       const productCategories =
-        staff && view.includeProductCategories === true
+        staff && view.includeProductCategories === true && (tree === undefined || tree.length === 0)
           ? yield* productCategoryCounts(transaction, store).pipe(Effect.mapError(unavailable))
           : undefined;
       // The storefront view never reveals staff totals: its indicators cover only what the view returns.

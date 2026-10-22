@@ -120,7 +120,10 @@ export const RecordsViewSchema = Schema.Struct({
   active: Schema.optionalKey(Schema.Boolean),
   category: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120))),
   lowStockOnly: Schema.optionalKey(Schema.Boolean),
-  /** Staff reads: also return the distinct `products.category` labels with counts as `productCategories`. */
+  /**
+   * Staff reads: also return the distinct `products.category` labels with counts as `productCategories`; with
+   * `includeCategories`, only when the company has no storefront tree.
+   */
   includeProductCategories: Schema.optionalKey(Schema.Boolean),
   /** Only products with these ids: the products carrying the tag selected in the staff list. */
   taggedProductIds: Schema.optionalKey(TaggedIdListSchema),
