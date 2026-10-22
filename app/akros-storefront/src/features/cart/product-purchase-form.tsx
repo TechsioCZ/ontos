@@ -399,7 +399,7 @@ export function ProductPurchaseForm({
         <section className="w-full max-w-full rounded-sm border-(length:--border-sm) border-base-dark bg-base p-(--akros-variant-filter-padding) md:w-fit md:@max-akros-variant-table/akros-variants:w-full">
           <form
             aria-label="Filtrování variant"
-            className="akros-variant-purchase__filter-bar flex flex-col gap-y-(--dimension-12) md:flex-row md:flex-wrap md:items-center"
+            className="akros-variant-purchase__filter-bar flex flex-col gap-y-(--dimension-12) md:flex-row md:flex-wrap md:items-baseline-last"
             onSubmit={(event) => event.preventDefault()}
           >
             {filters.map((filter) => (
