@@ -661,14 +661,14 @@ export const createBrowserOnlySsrReplacement = <ReplacementPlugin>(rspack: {
     resource.request = BROWSER_ONLY_SSR_MODULE;
   });
 
-const EFFECT_SCALAR_BROWSER_MODULE = fileURLToPath(new URL('effect-scalar-browser-module.mjs', import.meta.url));
+const EFFECT_API_DOCS_BROWSER_MODULE = fileURLToPath(new URL('effect-api-docs-browser-module.mjs', import.meta.url));
 const EFFECT_HTTPAPI_DIRECTORY = /[/\\]effect[/\\]dist[/\\]unstable[/\\]httpapi$/u;
 
 /**
  * Module Federation shares every `effect/*` request without tree shaking, so the browser gets the whole
- * `effect/unstable/httpapi` barrel, including the 3 MB Scalar API reference bundle that HttpApiScalar
- * embeds as a string (1.4 MB compressed, fetched before hydration). Only server routes serve Scalar,
- * so browser builds get an empty bundle string instead.
+ * `effect/unstable/httpapi` barrel, including the Scalar (3.2 MB) and Swagger UI (1.9 MB) bundles that
+ * HttpApiScalar and HttpApiSwagger embed as strings (1.4 MB compressed, fetched before hydration). Only
+ * server routes serve those docs pages, so browser builds get empty bundle strings instead.
  */
 export const createServerOnlyBrowserReplacement = <ReplacementPlugin>(rspack: {
   NormalModuleReplacementPlugin: new (
@@ -676,9 +676,8 @@ export const createServerOnlyBrowserReplacement = <ReplacementPlugin>(rspack: {
     replace: (resource: ReplacementResource) => void,
   ) => ReplacementPlugin;
 }) =>
-  new rspack.NormalModuleReplacementPlugin(/^\.\/internal\/httpApiScalar\.js$/u, (resource) => {
+  new rspack.NormalModuleReplacementPlugin(/^\.\/internal\/httpApi(?:Scalar|Swagger)\.js$/u, (resource) => {
     if (EFFECT_HTTPAPI_DIRECTORY.test(resource.context)) {
-      resource.request = EFFECT_SCALAR_BROWSER_MODULE;
+      resource.request = EFFECT_API_DOCS_BROWSER_MODULE;
     }
   });
-
