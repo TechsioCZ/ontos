@@ -75,8 +75,6 @@ export const rankCategories = <Candidate extends CategoryCandidate>(
     scored.push({ candidate, depth: candidate.trail.split(' › ').length, score: suffix * 2 + ordered + exactness });
   }
   return scored
-    .sort(
-      (a, b) => b.score - a.score || a.depth - b.depth || a.candidate.trail.localeCompare(b.candidate.trail, 'cs'),
-    )
+    .sort((a, b) => b.score - a.score || a.depth - b.depth || a.candidate.trail.localeCompare(b.candidate.trail, 'cs'))
     .map((entry) => entry.candidate);
 };

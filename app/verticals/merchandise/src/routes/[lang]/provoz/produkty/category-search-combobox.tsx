@@ -24,6 +24,8 @@ export interface CategorySearchComboboxProps {
   /** An extra first option that picks no category (the list filter's „all categories“). */
   readonly allLabel?: string;
   readonly errorMessage: string;
+  /** The label is for assistive tech only (filter rows whose controls carry no visible label). */
+  readonly hiddenLabel?: boolean;
   readonly id: string;
   readonly label: string;
   readonly loadingMessage: string;
@@ -46,6 +48,7 @@ export interface CategorySearchComboboxProps {
 export const CategorySearchCombobox = ({
   allLabel,
   errorMessage,
+  hiddenLabel = false,
   id,
   label,
   loadingMessage,
@@ -98,39 +101,46 @@ export const CategorySearchCombobox = ({
   ];
 
   return (
-    // Not clearable: ui-kit names the clear control "Clear value" in English; the „all“ option clears instead.
-    <Combobox
-      clearable={false}
-      error={failed ? errorMessage : undefined}
-      filterBehavior="external"
-      {...(total > found.length ? { helpText: moreMessage(found.length, total) } : {})}
-      id={id}
-      items={items}
-      label={label}
-      loading={loading && found.length === 0}
-      loadingMessage={loadingMessage}
-      noResultsMessage={noResultsMessage}
-      onChange={(values) => {
-        const picked = Array.isArray(values) ? values[0] : values;
-        if (picked === (selected?.id ?? ALL)) {
-          return;
-        }
-        onSelect(picked === ALL ? null : (found.find((category) => category.id === picked) ?? null));
-      }}
-      onInputValueChange={setTyped}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) {
-          setTyped(selectedLabel);
-        }
-      }}
-      onRetry={() => setAttempt((current) => current + 1)}
-      openOnClick
-      placeholder={placeholder}
-      retryLabel={retryLabel}
-      {...(size === undefined ? {} : { size })}
-      translations={comboboxTranslations}
-      value={selected === null ? (allLabel === undefined ? [] : [ALL]) : [selected.id]}
-    />
+    <>
+      {hiddenLabel ? (
+        <label className="sr-only" htmlFor={`${id}-input`}>
+          {label}
+        </label>
+      ) : null}
+      {/* Not clearable: ui-kit names the clear control "Clear value" in English; the „all“ option clears instead. */}
+      <Combobox
+        clearable={false}
+        error={failed ? errorMessage : undefined}
+        filterBehavior="external"
+        {...(total > found.length ? { helpText: moreMessage(found.length, total) } : {})}
+        id={id}
+        items={items}
+        {...(hiddenLabel ? {} : { label })}
+        loading={loading && found.length === 0}
+        loadingMessage={loadingMessage}
+        noResultsMessage={noResultsMessage}
+        onChange={(values) => {
+          const picked = Array.isArray(values) ? values[0] : values;
+          if (picked === (selected?.id ?? ALL)) {
+            return;
+          }
+          onSelect(picked === ALL ? null : (found.find((category) => category.id === picked) ?? null));
+        }}
+        onInputValueChange={setTyped}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) {
+            setTyped(selectedLabel);
+          }
+        }}
+        onRetry={() => setAttempt((current) => current + 1)}
+        openOnClick
+        placeholder={placeholder}
+        retryLabel={retryLabel}
+        {...(size === undefined ? {} : { size })}
+        translations={comboboxTranslations}
+        value={selected === null ? (allLabel === undefined ? [] : [ALL]) : [selected.id]}
+      />
+    </>
   );
 };

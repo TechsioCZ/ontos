@@ -55,7 +55,10 @@ export const searchProducts = (search: string, activeOnly: boolean) =>
 export const searchCategoryTrails = (text: string) =>
   correlation('categories').pipe(
     Effect.flatMap((id) =>
-      executeRecords({ view: { categorySearch: { limit: CATEGORY_RESULT_LIMIT, text }, limit: 0, ordersLimit: 0 } }, id),
+      executeRecords(
+        { view: { categorySearch: { limit: CATEGORY_RESULT_LIMIT, text }, limit: 0, ordersLimit: 0 } },
+        id,
+      ),
     ),
     Effect.map((response) => ({ matches: response.categoryMatches ?? [], total: response.categoryMatchTotal ?? 0 })),
   );

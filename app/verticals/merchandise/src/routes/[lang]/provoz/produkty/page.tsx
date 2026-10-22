@@ -12,7 +12,12 @@ import { Effect, Schema } from 'effect';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { BulkProductPatch } from '../../../../../shared/actions/apply-command.ts';
-import type { CategoryTrail, ProductCategoryCount, ProductRecord, RecordsResponse } from '../../../../../shared/apis/records.ts';
+import type {
+  CategoryTrail,
+  ProductCategoryCount,
+  ProductRecord,
+  RecordsResponse,
+} from '../../../../../shared/apis/records.ts';
 import { ProductIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import csResource from '../../../../../locales/cs/merchandise.json';
 import enResource from '../../../../../locales/en/merchandise.json';
@@ -346,11 +351,11 @@ const RecordsPageContent = () => {
             value={search}
           />
           {byTree && (
-            // The label stays for assistive tech only, so the field lines up with the other filter controls.
-            <div className="w-64 [&_label]:sr-only">
+            <div className="w-64">
               <CategorySearchCombobox
                 allLabel={k('filters.allCategories')}
                 errorMessage={k('filters.categoryError')}
+                hiddenLabel
                 id="products-category-filter"
                 label={k('filters.category')}
                 loadingMessage={t('merchandise.loading')}
