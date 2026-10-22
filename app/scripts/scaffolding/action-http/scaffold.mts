@@ -1,4 +1,5 @@
 import { createCodesmithGenerator } from '../generator-adapter.mts';
+import { matchingDelimiter } from '../../boundary-source-structure.mts';
 import { Effect, FileSystem, Option, Predicate, Schema, SchemaAST } from 'effect';
 import {
   GOVERNED_HTTP_API_ADDITION_SLOT_END,
@@ -15,6 +16,8 @@ import {
   ensureUniqueMutationPaths,
   generatedSlotContainsExactEntry,
   insertSortedSlot,
+  isGovernedHttpHandlerLayerSlotEntry,
+  maskNonCode,
   readGeneratedSlotEntries,
   requireCanonicalSlug,
   raiseScaffoldFailure,
@@ -824,7 +827,7 @@ const patchClientRoot = (content: string, action: string): string => {
   return nextContent;
 };
 
-const patchRuntimeRoot = (content: string, vertical: OntosVerticalMetadata, layerValue: string): string => {
+export const patchRuntimeRoot = (content: string, vertical: OntosVerticalMetadata, layerValue: string): string => {
   let nextContent = deduplicateGeneratedSlotEntries(
     content,
     GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
@@ -880,6 +883,22 @@ const patchRuntimeRoot = (content: string, vertical: OntosVerticalMetadata, laye
     'Layer.mergeAll(GovernedActionPrincipalVerifierLive, gatewayAssertionRedemption)',
     'Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)',
   );
+  // These runtimes are request outputs, never dependencies provided to individual groups.
+  const structure = maskNonCode(nextContent);
+  const serviceMerges = [
+    ...structure.matchAll(/const\s+[A-Za-z][A-Za-z0-9]*\s*=\s*(?:GovernedReadLayer|Layer)\.mergeAll\(/gu),
+  ];
+  for (const merge of serviceMerges.toReversed()) {
+    const opening = structure.indexOf('(', merge.index);
+    const closing = matchingDelimiter(structure, opening, '(', ')');
+    if (closing === undefined) {
+      continue;
+    }
+    const runtimes = nextContent.slice(opening + 1, closing);
+    if (/\bgovernedReadRuntimeLive\b/u.test(runtimes) && !/\bgovernedActionRuntimeLive\b/u.test(runtimes)) {
+      nextContent = `${nextContent.slice(0, opening + 1)}${runtimes.replace(/\bgovernedReadRuntimeLive\b/u, 'governedReadRuntimeLive, governedActionRuntimeLive')}${nextContent.slice(closing)}`;
+    }
+  }
   const defaultCall = `const apiRuntime = make${appType}ApiRuntime(\n`;
   nextContent = nextContent.replace(
     `${defaultCall}  productionActionRuntimeLive,\n  productionActionRuntimeLive,\n  productionReadRuntimeLive,`,
@@ -906,8 +925,8 @@ const patchRuntimeRoot = (content: string, vertical: OntosVerticalMetadata, laye
     nextContent,
     GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
     GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
-    `${layerValue}.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),`,
-    (candidate) => /^[A-Za-z][A-Za-z0-9]*(?:Read|Action)ApiLive\.pipe\(/u.test(candidate) && candidate.endsWith('),'),
+    `${layerValue},`,
+    isGovernedHttpHandlerLayerSlotEntry,
   );
 };
 

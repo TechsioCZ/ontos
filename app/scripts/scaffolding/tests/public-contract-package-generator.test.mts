@@ -243,3 +243,36 @@ it.live(
     }
   }),
 );
+
+it.live(
+  'requires bare Action slot entries and an output-bearing request Action runtime',
+  Effect.fn(function* actionRequestServicesBoundary() {
+    const sources = yield* Effect.promise(loadPaymentContractSources);
+    const handlerFile = `${paymentVerticalPath}/api/index.ts`;
+    const handler = sources.get(handlerFile) ?? '';
+    const runtimes = 'Layer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive)';
+    const entry = '  createPaymentTermActionApiLive,';
+    expect(handler).toContain(runtimes);
+    expect(handler).toContain(entry);
+    expect(expectsCompletePaymentSeam(sources)).toBe(true);
+    for (const invalid of [
+      handler.replace(
+        entry,
+        '  createPaymentTermActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),',
+      ),
+      handler.replace(runtimes, 'Layer.mergeAll(governedReadRuntimeLive)'),
+      handler.replace(
+        runtimes,
+        'Layer.mergeAll(governedReadRuntimeLive).pipe(Layer.provide(governedActionRuntimeLive))',
+      ),
+      handler.replace('services: requestServicesLive', 'services: unrelatedServicesLive'),
+    ]) {
+      expect(expectsCompletePaymentSeam(new Map([...sources, [handlerFile, invalid]]))).toBe(false);
+    }
+    const merged = handler.replace(
+      runtimes,
+      'Layer.mergeAll(governedReadRuntimeLive).pipe(Layer.provideMerge(governedActionRuntimeLive))',
+    );
+    expect(expectsCompletePaymentSeam(new Map([...sources, [handlerFile, merged]]))).toBe(true);
+  }),
+);

@@ -5,7 +5,7 @@ import type { ActionRuntime, ReadRuntime, GatewayAssertionRedemptionService } fr
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime, EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
-import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
+import { Logger, References, Schema, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 import { partyRegistryApi } from '../shared/api.ts';
@@ -117,40 +117,44 @@ export const makePartyRegistryApiRuntime = (
   const actionPrincipalVerifierLive = ActionPrincipalVerifierLive.pipe(Layer.provide(governedActionRuntimeLive));
   const apiHandlersLive = Layer.mergeAll(
     partyRegistryFoundationLive,
-    partyRegistryCommandsLive.pipe(Layer.provide(governedActionRuntimeLive)),
-    partyRegistryCommandRecoveryLive.pipe(Layer.provide(governedActionRuntimeLive)),
-    engagementProfileApiHandlersLive.pipe(Layer.provide(governedActionRuntimeLive)),
+    partyRegistryCommandsLive,
+    partyRegistryCommandRecoveryLive,
+    engagementProfileApiHandlersLive,
     // <generated-governed-http-handler-layers>
-    aresLookupReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), Layer.provide(aresSubjectService)),
-    counterpartiesReadApiLive.pipe(
-      GovernedReadLayer.provide(governedReadRuntimeLive),
-      Layer.provide(searchProjectionGateway),
-    ),
-    counterpartyReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    counterpartyRoleHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    customerListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    duplicateCandidateDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    executePrivacyMeasureActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    guestPartyResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    organizationEngagementProfileReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    partiesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), Layer.provide(searchProjectionGateway)),
-    partyContactPointDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    partyContactPointsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    partyCorrectionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    partyDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    partyMatchDecisionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    partyMatchReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    partyMergeReadinessReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    partyOfficialIdentifierDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    partyOfficialIdentifierHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    partyRelationshipDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    personEngagementProfileReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    privacyMeasureExecutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    aresLookupReadApiLive,
+    counterpartiesReadApiLive,
+    counterpartyReadReadApiLive,
+    counterpartyRoleHistoryReadApiLive,
+    customerListReadApiLive,
+    duplicateCandidateDetailReadApiLive,
+    executePrivacyMeasureActionApiLive,
+    guestPartyResolutionReadApiLive,
+    organizationEngagementProfileReadApiLive,
+    partiesReadApiLive,
+    partyContactPointDetailReadApiLive,
+    partyContactPointsReadApiLive,
+    partyCorrectionReadApiLive,
+    partyDetailReadApiLive,
+    partyMatchDecisionReadApiLive,
+    partyMatchReadApiLive,
+    partyMergeReadinessReadApiLive,
+    partyOfficialIdentifierDetailReadApiLive,
+    partyOfficialIdentifierHistoryReadApiLive,
+    partyRelationshipDetailReadApiLive,
+    personEngagementProfileReadApiLive,
+    privacyMeasureExecutionReadApiLive,
     // </generated-governed-http-handler-layers>
-  ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
-  const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive)),
-    Layer.provide(
+  );
+  const requestServicesLive = Layer.mergeAll(
+    governedReadRuntimeLive,
+    governedActionRuntimeLive,
+    aresSubjectService,
+    searchProjectionGateway,
+    actionPrincipalVerifierLive,
+    gatewayAssertionRedemption,
+  ).pipe(
+    Layer.provideMerge(runtimeObservabilityLive),
+    Layer.provideMerge(
       ActiveApplicationCompositionSourceLive.pipe(
         Layer.provide(
           FetchHttpClient.layer.pipe(
@@ -161,6 +165,7 @@ export const makePartyRegistryApiRuntime = (
     ),
     Layer.orDie,
   );
+  const resolvedApiHandlersLive = apiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));
   const transportLive = HttpRouter.cors({
     allowedHeaders: [...partyRegistryCorsAllowedHeaders],
     allowedMethods: [...partyRegistryCorsAllowedMethods],
@@ -171,6 +176,7 @@ export const makePartyRegistryApiRuntime = (
   return assembleEffectBffRuntime({
     api: partyRegistryApi,
     handlers: resolvedApiHandlersLive,
+    services: requestServicesLive,
     transport: transportLive,
   });
 };

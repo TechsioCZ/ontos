@@ -78,20 +78,23 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit)
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
-  agentReviewReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-  applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  agentReviewReadApiLive,
+  applyCommandActionApiLive,
+  recordsReadApiLive,
   // </generated-governed-http-handler-layers>
-).pipe(
+);
+
+/** What the handlers resolve when they run: built for each request on Workers, once on Node. */
+const governedRequestServicesLive = GovernedReadLayer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive).pipe(
   // <generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provide(
+  GovernedReadLayer.provideMerge(
     GovernedReadLayer.mergeAll(
       GovernedActionPrincipalVerifierLive,
       GovernedGatewayAssertionRedemptionLive.pipe(GovernedReadLayer.provide(GatewayAssertionRedemptionDatabaseLive)),
     ),
   ),
   // </generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
+  GovernedReadLayer.provideMerge(governedReadRuntimeDependenciesLive),
 );
 
 const operationAttributes = (operationContext: OperationContext) => ({
@@ -128,17 +131,18 @@ const runtimeObservabilityLive = GovernedReadLayer.mergeAll(
   GovernedReadLayer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
   GovernedReadLayer.succeed(References.MinimumLogLevel, 'Info'),
 );
-const governedResolvedApiHandlersLive = GovernedReadLayer.mergeAll(apiHandlersLive, governedReadApiHandlersLive).pipe(
-  GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
-  GovernedReadLayer.provide(GovernedDatabaseConfigLive),
-  GovernedReadLayer.provide(runtimeObservabilityLive),
+const governedResolvedRequestServicesLive = governedRequestServicesLive.pipe(
+  GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive),
+  GovernedReadLayer.provideMerge(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provideMerge(runtimeObservabilityLive),
   GovernedReadLayer.orDie,
 );
 
 export const makeCrmApiRuntime = () =>
   assembleEffectBffRuntime({
     api: crmApi,
-    handlers: governedResolvedApiHandlersLive,
+    handlers: GovernedReadLayer.mergeAll(apiHandlersLive, governedReadApiHandlersLive),
+    services: governedResolvedRequestServicesLive,
   });
 const apiRuntime = makeCrmApiRuntime();
 

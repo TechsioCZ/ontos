@@ -100,9 +100,8 @@ const relationshipsOf = (rpc: SpiceDbRpc, principalId: string) =>
             ),
           ),
         ),
-    // Each read is a Workers VPC round trip (0.1-0.5 s on stage), so all five run at once. A Worker queues fetches
-    // beyond its six open connections per request, so callers fanning out over several principals only wait longer.
-    { concurrency: 'unbounded' },
+    // Workers allow six concurrent outbound connections per request and callers fan out over several principals.
+    { concurrency: 2 },
   ).pipe(
     Effect.map((groups) => groups.flat()),
     Effect.mapError(unavailable),

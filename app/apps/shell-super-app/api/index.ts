@@ -2482,33 +2482,27 @@ export const makeShellAuthenticationApiRuntime = (
     // @ontos-codesmith-core-read-server-layers:end
     externalIdentityGroupLive,
     oauthConnectionsAdminGroupLive,
-    // The agent platform calls module APIs in-process (approve/revert as the person), so it needs the active composition.
-    agentPlatformGroupLive.pipe(Layer.provide(activeApplicationCompositionLive)),
-  ).pipe(
-    Layer.provide(outboxMatcherLayer),
-    Layer.provide(handlerDependenciesLive),
-    Layer.provide(compositionSourceLive),
+    agentPlatformGroupLive,
+  );
+  // Workers build these services for each request; handlers and transport routes share that request context.
+  const requestServicesLive = outboxMatcherLayer.pipe(
+    Layer.provideMerge(handlerDependenciesLive),
+    Layer.provideMerge(activeApplicationCompositionLive),
+    Layer.provideMerge(compositionSourceLive),
     Layer.orDie,
   );
 
   return assembleEffectBffRuntime({
     api: ShellAuthenticationApi,
     handlers: apiHandlersLive,
+    services: requestServicesLive,
     transport: Layer.mergeAll(
-      ModuleApiTransportLive.pipe(Layer.provide(activeApplicationCompositionLive)),
-      EmailTransportLive.pipe(
-        Layer.provide(Layer.mergeAll(authenticationLayer, contextAccessLayer, legalEntityContextLive)),
-        Layer.orDie,
-      ),
-      // The same authentication layer as the handlers, so one Better Auth instance serves both.
-      OAuthServerTransportLive.pipe(Layer.provide(authenticationLayer), Layer.orDie),
-      // The MCP endpoint runs tools in-process as the connection's principal, with the agent platform's services.
-      McpTransportLive.pipe(
-        Layer.provide(activeApplicationCompositionLive),
-        Layer.provide(handlerDependenciesLive),
-        Layer.provide(compositionSourceLive),
-        Layer.orDie,
-      ),
+      ModuleApiTransportLive,
+      EmailTransportLive,
+      // Resolves the same per-request authentication service as the handlers, backed by the isolate's Better Auth instance.
+      OAuthServerTransportLive,
+      // The MCP endpoint runs tools as the connection's principal, with the agent platform's request services.
+      McpTransportLive,
     ),
   });
 };

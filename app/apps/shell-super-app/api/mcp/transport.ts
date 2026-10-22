@@ -16,7 +16,7 @@ import { loadOAuthServerConfig } from '../oauth-connections/server-config.ts';
 import { loadMcpCatalog } from './catalog.ts';
 import { authenticateMcpRequest, connectionPrincipalContext } from './connection.ts';
 import { createMcpFetch, createMcpMetadataFetch } from './http.ts';
-import type { McpAuthentication, McpEndpointConfig } from './http.ts';
+import type { McpAuthentication, McpEndpointConfig, McpEndpointDeps } from './http.ts';
 import { buildConnectionTools } from './tools.ts';
 import type { McpBackend } from './types.ts';
 import { ModuleUnavailable, ProposalRefused } from './types.ts';
@@ -40,7 +40,8 @@ const reasonOf = (error: unknown, fallback: string): string => {
   return typeof reason === 'string' ? reason : fallback;
 };
 
-const makeRoutes = Effect.gen(function* makeMcpRoutes() {
+// Promise-based MCP callbacks borrow services only from the request currently being served.
+const makeRequestDeps = Effect.gen(function* makeMcpRequestDeps() {
   const run = Effect.runPromiseWith(yield* Effect.context<McpServices>());
 
   const config = async (): Promise<McpEndpointConfig> => {
@@ -53,7 +54,9 @@ const makeRoutes = Effect.gen(function* makeMcpRoutes() {
       describeConnection(token).pipe(
         Effect.map((value) => ({ _tag: 'ok' as const, ...value })),
         Effect.catch((error) =>
-          Effect.succeed({ _tag: Predicate.isTagged(error, 'ConnectionUnauthorized') ? ('invalid' as const) : ('unavailable' as const) }),
+          Effect.succeed({
+            _tag: Predicate.isTagged(error, 'ConnectionUnauthorized') ? ('invalid' as const) : ('unavailable' as const),
+          }),
         ),
         Effect.catchDefect((defect) =>
           Effect.logError('MCP authentication defect', defect).pipe(Effect.as({ _tag: 'unavailable' as const })),
@@ -107,22 +110,29 @@ const makeRoutes = Effect.gen(function* makeMcpRoutes() {
     };
   };
 
-  const serve = (fetch: (request: Request) => Promise<Response>) => (request: HttpServerRequest.HttpServerRequest) =>
+  return { authenticate, config };
+});
+
+const serve =
+  (makeFetch: (deps: McpEndpointDeps) => (request: Request) => Promise<Response>) =>
+  (request: HttpServerRequest.HttpServerRequest) =>
     HttpServerRequest.toWeb(request).pipe(
-      Effect.flatMap((webRequest) => Effect.promise(() => fetch(webRequest))),
+      Effect.flatMap((webRequest) =>
+        makeRequestDeps.pipe(Effect.flatMap((deps) => Effect.promise(() => makeFetch(deps)(webRequest)))),
+      ),
       Effect.match({
         onFailure: () =>
-          HttpServerResponse.text('MCP endpoint is unavailable', { headers: { 'cache-control': 'no-store' }, status: 503 }),
+          HttpServerResponse.text('MCP endpoint is unavailable', {
+            headers: { 'cache-control': 'no-store' },
+            status: 503,
+          }),
         onSuccess: (response) =>
           HttpServerResponse.raw(response, { status: response.status, statusText: response.statusText }),
       }),
     );
 
-  return Layer.mergeAll(
-    HttpRouter.add('*', MCP_BFF_ROUTE, serve(createMcpFetch({ authenticate, config }))),
-    HttpRouter.add('*', MCP_METADATA_BFF_ROUTE, serve(createMcpMetadataFetch({ config }))),
-  );
-});
-
 /** The BFF transport layer of the MCP endpoint; its services are the same ones the agent platform handlers use. */
-export const McpTransportLive = Layer.unwrap(makeRoutes);
+export const McpTransportLive = Layer.mergeAll(
+  HttpRouter.add('*', MCP_BFF_ROUTE, serve(createMcpFetch)),
+  HttpRouter.add('*', MCP_METADATA_BFF_ROUTE, serve(createMcpMetadataFetch)),
+);

@@ -315,14 +315,15 @@ export const commercePortalAuthMfaFreshnessReaderFromApi = (
  * The gate reads the current session through `CommercePortalAuthService` — the same typed Better
  * Auth `api` port the sibling session transport calls — rather than the constructed realm itself,
  * and reads when that session was last authenticated through `CommercePortalAuthSessionLifecycle`.
+ * Resolve both tags inside the route effect, never while building the isolate's handler layer.
  * Both are tags the portal-auth groups already read, so the installed realm and the fail-closed
  * realm a host that opted out gets (`../../realm-unavailable.ts`) both satisfy them: on the
  * uninstalled realm each call refuses, the read above turns that into "no session", and the
  * freshness gate denies.
  */
-const commercePortalAuthMfaFreshnessReaderLive = Layer.effect(
+const withCommercePortalAuthMfaFreshnessReader = Effect.provideServiceEffect(
   CommercePortalAuthMfaFreshnessReaderService,
-  Effect.gen(function* makeCommercePortalAuthMfaFreshnessReaderLive() {
+  Effect.gen(function* readCommercePortalAuthMfaFreshnessServices() {
     const provider = yield* CommercePortalAuthService;
     const lifecycle = yield* CommercePortalAuthSessionLifecycle;
     return commercePortalAuthMfaFreshnessReaderFromApi(
@@ -529,19 +530,27 @@ export const portalAuthMfaApiLive = HttpApiBuilder.group(commerceCustomerContext
     .handle('verifyTotp', ({ payload, request }) => verifyTotp(payload, request))
     .handle('verifyOtp', ({ payload, request }) => verifyOtp(payload, request))
     .handle('verifyBackupCode', ({ payload, request }) => verifyBackupCode(payload, request))
-    .handle('enable', ({ payload, request }) => enable(payload, request))
-    .handle('confirmEnable', ({ payload, request }) => confirmEnable(payload, request))
-    .handle('disable', ({ payload, request }) => disable(payload, request))
-    .handle('regenerateBackupCodes', ({ payload, request }) => regenerateBackupCodes(payload, request))
-    .handle('totpUri', ({ payload, request }) => totpUri(payload, request)),
-).pipe(Layer.provide(commercePortalAuthMfaSchemaErrorLive), Layer.provide(commercePortalAuthMfaFreshnessReaderLive));
+    .handle('enable', ({ payload, request }) => enable(payload, request).pipe(withCommercePortalAuthMfaFreshnessReader))
+    .handle('confirmEnable', ({ payload, request }) =>
+      confirmEnable(payload, request).pipe(withCommercePortalAuthMfaFreshnessReader),
+    )
+    .handle('disable', ({ payload, request }) =>
+      disable(payload, request).pipe(withCommercePortalAuthMfaFreshnessReader),
+    )
+    .handle('regenerateBackupCodes', ({ payload, request }) =>
+      regenerateBackupCodes(payload, request).pipe(withCommercePortalAuthMfaFreshnessReader),
+    )
+    .handle('totpUri', ({ payload, request }) =>
+      totpUri(payload, request).pipe(withCommercePortalAuthMfaFreshnessReader),
+    ),
+).pipe(Layer.provide(commercePortalAuthMfaSchemaErrorLive));
 
 /**
  * The same handlers mounted on the standalone MFA API. The composed Commerce runtime uses
  * `portalAuthMfaApiLive`; this mount is the isolated MFA topology the owner's transport tests
  * drive, mirroring `portalAuthStepUpStandaloneApiLive`.
  *
- * Unlike `portalAuthMfaApiLive`, this mount does not bake in `commercePortalAuthMfaFreshnessReaderLive`:
+ * Unlike `portalAuthMfaApiLive`, this mount does not derive its freshness reader from the request's realm:
  * `CommercePortalAuthMfaFreshnessReaderService` stays a visible requirement so the owner's transport
  * tests can substitute a fixture reader directly, the same shape the sibling step-up group's
  * `CommercePortalAuthStepUpHttpProviderService` is overridden with, instead of having to stand up a

@@ -695,18 +695,14 @@ const createVertical = (root: string, vertical: FixtureVertical): Effect.Effect<
     yield* write(
       root,
       `verticals/${vertical.slug}/api/index.ts`,
-      `import { defineEffectBff, Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
+      `import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
+import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { fixtureApi } from '../shared/api.ts';
 
 const fixtureLayer = HttpApiBuilder.group(fixtureApi, 'fixture', (handlers) =>
   handlers.handle('readiness', () => Effect.succeed({ ok: true as const })),
 );
-const layer = HttpApiBuilder.layer(fixtureApi).pipe(
-  Layer.provide(fixtureLayer),
-) satisfies EffectRuntimeLayer;
-
-export default defineEffectBff({ api: fixtureApi, layer });
+export default assembleEffectBffRuntime({ api: fixtureApi, handlers: fixtureLayer, services: Layer.empty });
 `,
     );
     yield* write(
@@ -1517,9 +1513,7 @@ const assertComposedGovernedReads = (composedApi: string, composedHandlers: stri
     expect(composedApi).toMatch(new RegExp(`import \\{ ${contract} \\}`, 'u'));
     expect(composedApi).toMatch(new RegExp(`\\.addHttpApi\\(${contract}\\)`, 'u'));
     expect(composedHandlers).toMatch(new RegExp(`import \\{ ${layer} \\}`, 'u'));
-    expect(composedHandlers).toMatch(
-      new RegExp(`${layer}\\.pipe\\([\\s\\S]*?GovernedReadLayer\\.provide\\(governedReadRuntimeLive\\)`, 'u'),
-    );
+    expect(composedHandlers).toMatch(new RegExp(`^\\s*${layer},$`, 'mu'));
   }
 };
 const assertGovernedProblemDetailsContracts = (contracts: readonly string[]): void => {
@@ -2074,7 +2068,7 @@ console.log(
           writeFile(
             handlerRootPath,
             validHandlerRoot.replace(
-              /resourceDetailReadApiLive\.pipe\(\s*GovernedReadLayer\.provide\(governedReadRuntimeLive\),?\s*\),/u,
+              /resourceDetailReadApiLive,/u,
               'resourceDetailReadApiLive.pipe(\n    GovernedReadLayer.provide(governedReadRuntimeLive),\n    GovernedReadLayer.provide(ownerCustomizedRuntime),\n  ),',
             ),
             'utf-8',
@@ -2084,7 +2078,7 @@ console.log(
           fixture,
           scaffoldCommand.moduleApi,
           [scaffoldFlag.vertical, inventorySlug, '--name', fixtureName.resourceDetail],
-          /contains drift/u,
+          /composition slots are not bound/u,
         );
         yield* Effect.promise(() => writeFile(handlerRootPath, validHandlerRoot, 'utf-8'));
         yield* assertRelocatedSlotRefused(fixture, handlerRootPath, validHandlerRoot, [
@@ -6638,6 +6632,11 @@ it.live(
     const shared = yield* Effect.promise(() => readFile(path.join(appRoot, partyGovernedContractPath), 'utf-8'));
     const handler = yield* Effect.promise(() => readFile(path.join(appRoot, partyGovernedHandlerPath), 'utf-8'));
     expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(true);
+    const inferredRuntime = handler.replace(
+      /readRuntime: Layer\.Layer<\s*ReadRuntime,/u,
+      'readRuntime: Layer.Layer<Layer.Success<typeof productionReadRuntimeLive>,',
+    );
+    expect(hasValidGovernedHttpCompositionRoot(shared, inferredRuntime)).toBe(true);
     const typedShared = shared.replace(
       'export const partyRegistryApi = HttpApi.make(',
       'export const partyRegistryApi: PartyRegistryApi = HttpApi.make(',

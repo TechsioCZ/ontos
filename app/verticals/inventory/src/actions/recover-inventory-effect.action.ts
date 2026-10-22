@@ -35,7 +35,6 @@ import { inventoryObligationPersistenceForScope } from '../persistence/inventory
 import { physicalStockEffectPersistenceForScope } from '../persistence/physical-stock-effect-repository.ts';
 import { reservationCreateEffectPersistenceForScope } from '../persistence/reservation-create-effect-repository.ts';
 import { reservationReleaseEffectPersistenceForScope } from '../persistence/reservation-release-effect-repository.ts';
-import type { InventoryEffectRecoveryAuthority } from '../services/inventory-effect-recovery-authority.ts';
 import { InventoryEffectRecoveryAuthorityPort } from '../services/inventory-effect-recovery-authority.ts';
 import type {
   InventoryEffectRecoveryError,
@@ -222,8 +221,7 @@ export const recoverInventoryEffectAction: ActionRegistration<
   typeof RecoverInventoryEffectErrorSchema,
   typeof domainEvents,
   'commerce.inventory',
-  RecoverInventoryEffectServices,
-  InventoryEffectRecoveryAuthority
+  RecoverInventoryEffectServices
 > = defineAction(
   {
     accessEvidencePolicy: {

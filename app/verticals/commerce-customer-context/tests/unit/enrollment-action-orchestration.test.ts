@@ -1,6 +1,6 @@
 import { makeActionAuthorizationPreflightPermit } from '@app/core-runtime';
 import type { ActionAuthorizationPreflightInput, OperationalScope, TrustedPrincipalContext } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Context, Effect, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { ClaimPortalEnrollmentTransitionPayload } from '../../shared/actions/claim-portal-enrollment-transition.ts';
@@ -23,6 +23,8 @@ import {
   CLAIM_PORTAL_ENROLLMENT_TRANSITION_ACTION_KEY,
   CommerceEnrollmentOwnerTransitionPreparation,
   CommerceEnrollmentPreparedOwnerCapability,
+  CommerceEnrollmentPreparedOwnerExecutionService,
+  commerceEnrollmentPreparedOwnerExecutionLive,
   makeCommerceEnrollmentPreparedOwnerExecution,
   PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
   PORTAL_AUTH_OWNER_MODULE_KEY,
@@ -178,6 +180,25 @@ it.effect('preserves a later ordinary preflight after owner preparation returns 
     );
     expect(decision.outcome).toBe('allowed');
     execution.clear();
+  }),
+);
+
+it.effect('clears prepared owner evidence when its services scope closes', () =>
+  Effect.gen(function* clearsScopedEvidence() {
+    const execution = yield* Effect.scoped(
+      Effect.gen(function* stageScopedEvidence() {
+        const context = yield* Layer.build(
+          commerceEnrollmentPreparedOwnerExecutionLive.pipe(
+            Layer.provide(Layer.succeed(CommerceEnrollmentOwnerTransitionPreparation, preparation)),
+          ),
+        );
+        const scopedExecution = Context.get(context, CommerceEnrollmentPreparedOwnerExecutionService);
+        yield* scopedExecution.preflight.prepare(inputFor(CLAIM_PORTAL_ENROLLMENT_TRANSITION_ACTION_KEY, claimPayload));
+        return scopedExecution;
+      }),
+    );
+    const failure = yield* execution.capability.take(claimBinding).pipe(Effect.flip);
+    expect(Schema.is(CommerceEnrollmentAttemptUnavailable)(failure)).toBe(true);
   }),
 );
 
