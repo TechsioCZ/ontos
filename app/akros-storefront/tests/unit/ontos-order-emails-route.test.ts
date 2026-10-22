@@ -2,7 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET } from "@/app/api/ontos/order-emails/route";
 
 vi.mock("server-only", () => ({}));
-vi.mock("@/ontos/config", () => ({ isOntos: () => true }));
+vi.mock("@/ontos/config", () => ({
+  isOntos: () => true,
+  getConfig: () => ({ shellUrl: "https://ontos-stage.bleeding.dev" }),
+}));
 
 const fetchMock = vi.fn();
 function get(orderNumber: string, email: string | null = "pavel@zakaznik.example") {
@@ -46,7 +49,7 @@ describe("order e-mail status route", () => {
       ],
     });
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:3096/v1/deliveries?source=akros-order&subjectNumber=OBJ-2026-0026&recipient=pavel%40zakaznik.example",
+      "https://ontos-stage.bleeding.dev/shell-super-app-api/email/deliveries?source=akros-order&subjectNumber=OBJ-2026-0026&recipient=pavel%40zakaznik.example",
       expect.anything(),
     );
   });
