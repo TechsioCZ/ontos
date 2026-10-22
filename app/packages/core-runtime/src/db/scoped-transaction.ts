@@ -2,7 +2,7 @@ import { sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import { pgPolicy } from 'drizzle-orm/pg-core';
-import { Context, Effect, Option } from 'effect';
+import { Context, DateTime, Effect, Option, Predicate } from 'effect';
 
 import type { OperationalScope } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
@@ -93,32 +93,74 @@ const operationalScopeTransactionFromCoreTransaction = (
     ),
 });
 
+const installedScopeMatches = (installed: SettingRow, scope: OperationalScope) =>
+  installed.tenant_id === scope.tenantId && installed.legal_entity_id === (scope.legalEntityId ?? '');
+
+const scopedTransactionExecutor = (
+  transaction: Pick<CoreTransaction, 'delete' | 'insert' | 'select' | 'update'>,
+  routineInvoker: ScopedRoutineInvoker,
+  scope: OperationalScope,
+): ScopedTransactionExecutor =>
+  Object.freeze({
+    delete: transaction.delete.bind(transaction),
+    insert: transaction.insert.bind(transaction),
+    invoke: routineInvoker.invoke,
+    scope: Object.freeze(
+      scope.legalEntityId === undefined
+        ? { tenantId: scope.tenantId }
+        : { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId },
+    ),
+    [scopedTransaction]: true as const,
+    select: transaction.select.bind(transaction),
+    update: transaction.update.bind(transaction),
+  });
+
 export const installOperationalScopeFromTransactionService = Effect.fn('installOperationalScopeFromTransactionService')(
   function* installOperationalScopeFromTransactionServiceEffect(scope: OperationalScope) {
     const transaction = yield* OperationalScopeTransaction;
     yield* transaction.install(scope);
     const setting = yield* transaction.verify;
+    if (Option.isNone(setting) || !installedScopeMatches(setting.value, scope)) {
+      return yield* operationContextUnavailable();
+    }
+    return scopedTransactionExecutor(transaction, transaction.scopedRoutineInvoker(scope), scope);
+  },
+);
+
+interface InstalledScopeRow extends SettingRow {
+  readonly operation_at: unknown;
+}
+
+/**
+ * Installs the operation scope and reads the transaction's trusted start time in ONE statement. `set_config` returns
+ * the value it installed, so the returned row is the verification that a separate `current_setting` read gave, and
+ * `transaction_timestamp()` is the same immutable start time a separate read returns: three round trips become one
+ * on every governed Read transaction.
+ */
+export const installOperationalScopeAt = Effect.fn('installOperationalScopeAt')(
+  function* installOperationalScopeAtEffect(transaction: OperationalScopeRawTransaction, scope: OperationalScope) {
+    const [installed] = yield* transaction
+      .execute<InstalledScopeRow>(
+        sql`select set_config('ontos.tenant_id', ${scope.tenantId}, true) as tenant_id, set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true) as legal_entity_id, transaction_timestamp() as operation_at`,
+        'objects',
+      )
+      .pipe(Effect.mapError(operationContextUnavailable));
     if (
-      Option.isNone(setting) ||
-      setting.value.tenant_id !== scope.tenantId ||
-      setting.value.legal_entity_id !== (scope.legalEntityId ?? '')
+      installed === undefined ||
+      !installedScopeMatches(installed, scope) ||
+      !Predicate.isDate(installed.operation_at) ||
+      !Number.isFinite(installed.operation_at.getTime())
     ) {
       return yield* operationContextUnavailable();
     }
-    const routineInvoker = transaction.scopedRoutineInvoker(scope);
-    return Object.freeze({
-      delete: transaction.delete.bind(transaction),
-      insert: transaction.insert.bind(transaction),
-      invoke: routineInvoker.invoke,
-      scope: Object.freeze(
-        scope.legalEntityId === undefined
-          ? { tenantId: scope.tenantId }
-          : { legalEntityId: scope.legalEntityId, tenantId: scope.tenantId },
-      ),
-      [scopedTransaction]: true as const,
-      select: transaction.select.bind(transaction),
-      update: transaction.update.bind(transaction),
-    });
+    const routineInvoker = scopedRoutineInvokerFromTransaction(
+      (statement) => transaction.execute<ScopedRoutineRawRow>(statement, 'objects'),
+      scope,
+    );
+    return {
+      operationAt: DateTime.fromDateUnsafe(installed.operation_at),
+      scoped: scopedTransactionExecutor(transaction, routineInvoker, scope),
+    };
   },
 );
 

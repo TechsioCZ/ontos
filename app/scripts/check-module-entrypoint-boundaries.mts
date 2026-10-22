@@ -1301,6 +1301,7 @@ const validateRouteManifests = (path: Path.Path, files: readonly string[], root:
 
 const GATEWAY_CONTRACT_SOURCE = 'packages/shared-contracts/src/gateway-context.ts';
 const DOCUMENT_GATEWAY_CONTRACT_SOURCE = 'apps/shell-super-app/shared/document-gateway-api.ts';
+const SHELL_API_CONTRACT_SOURCE = 'apps/shell-super-app/shared/api.ts';
 
 type GatewayIssuer = (typeof gatewayContextAuthorizationEntrypoints)[number];
 
@@ -1310,19 +1311,29 @@ interface GatewayIssuerBinding {
   readonly endpoint: string;
   readonly group: string;
   readonly groupId: string;
-  readonly groupImport: string;
+  /** The module the Shell API contract imports the group from; null when the contract declares it itself. */
+  readonly groupModule: string | null;
   readonly path: string;
 }
 
 // Every classified capability issuer and the exact Shell HttpApi endpoint that serves it.
 const gatewayIssuerBindings = {
+  'shell.document-context.issue.session': {
+    contractFile: SHELL_API_CONTRACT_SOURCE,
+    credential: 'session',
+    endpoint: 'documentContext',
+    group: 'ShellDocumentContextApiGroup',
+    groupId: 'documentContext',
+    groupModule: null,
+    path: shellGatewayContextContract.documentContextPath,
+  },
   'shell.gateway-context.issue.api-key': {
     contractFile: GATEWAY_CONTRACT_SOURCE,
     credential: 'api_key',
     endpoint: 'issueApiKeyGatewayContext',
     group: 'GatewayContextApiGroup',
     groupId: 'gatewayContext',
-    groupImport: "import { GatewayContextApiGroup } from '@app/shared-contracts'",
+    groupModule: '@app/shared-contracts',
     path: shellGatewayContextContract.issueApiKeyGatewayContextPath,
   },
   'shell.gateway-context.issue.session': {
@@ -1331,7 +1342,7 @@ const gatewayIssuerBindings = {
     endpoint: 'issueGatewayContext',
     group: 'GatewayContextApiGroup',
     groupId: 'gatewayContext',
-    groupImport: "import { GatewayContextApiGroup } from '@app/shared-contracts'",
+    groupModule: '@app/shared-contracts',
     path: shellGatewayContextContract.issueGatewayContextPath,
   },
   'shell.gateway-contexts.issue.session': {
@@ -1340,7 +1351,7 @@ const gatewayIssuerBindings = {
     endpoint: 'issueDocumentGatewayContexts',
     group: 'DocumentGatewayApiGroup',
     groupId: 'documentGateway',
-    groupImport: "import { DocumentGatewayApiGroup } from './document-gateway-api.ts'",
+    groupModule: './document-gateway-api.ts',
     path: shellGatewayContextContract.issueDocumentGatewayContextsPath,
   },
 } as const satisfies Record<GatewayIssuer['entrypointKey'], GatewayIssuerBinding>;
@@ -1364,7 +1375,7 @@ const validateIssuerCredentials = () =>
     ) {
       yield* fail(
         GATEWAY_CONTRACT_SOURCE,
-        'gateway authorization contract must classify exactly the session, API-key, and document batch issuers',
+        'gateway authorization contract must classify exactly the session, API-key, document batch, and document context issuers',
       );
     }
   });
@@ -1401,13 +1412,24 @@ const gatewayDeclaration = (source: string, name: string): string => {
   return maskNonCode(source.slice(start, end), true).trim();
 };
 
+const escapeRegExp = (value: string) => value.replaceAll(/[$()*+.?[\\\]^{|}]/gu, String.raw`\$&`);
+
+/** `import { ..., name, ... } from 'module'`: a value import of that exact name from that exact module. */
+const importsNamedFrom = (source: string, name: string, module: string): boolean =>
+  new RegExp(
+    `import\\s*\\{[^}]*(?<![\\w$])${escapeRegExp(name)}(?![\\w$])[^}]*\\}\\s*from\\s*'${escapeRegExp(module)}'`,
+    'u',
+  ).test(source);
+
 const hasMountedIssuerPath = (source: string, groupSource: string, issuer: GatewayIssuer): boolean => {
   const binding = gatewayIssuerBinding(issuer);
   const endpointPath = issuer.path.slice(shellGatewayContextContract.apiPrefix.length);
   const group = gatewayDeclaration(groupSource, binding.group);
   const shellApi = gatewayDeclaration(source, 'ShellAuthenticationApi');
   return (
-    maskNonCode(source, true).includes(binding.groupImport) &&
+    (binding.groupModule === null
+      ? binding.contractFile === SHELL_API_CONTRACT_SOURCE
+      : importsNamedFrom(maskNonCode(source, true), binding.group, binding.groupModule)) &&
     shellApi.startsWith('HttpApi.make(') &&
     new RegExp(`\\.add\\(\\s*${binding.group}\\s*\\)`, 'u').test(shellApi) &&
     group.startsWith(`HttpApiGroup.make('${binding.groupId}')`) &&
@@ -1421,7 +1443,7 @@ const hasMountedIssuerPath = (source: string, groupSource: string, issuer: Gatew
 const validateGatewayContract = (state: BoundaryCheckState) =>
   Effect.gen(function* validateGatewayContractEffect() {
     const gatewayContract = sourceOrEmpty(state.sourceMap, GATEWAY_CONTRACT_SOURCE);
-    const shellApiContract = sourceOrEmpty(state.sourceMap, 'apps/shell-super-app/shared/api.ts');
+    const shellApiContract = sourceOrEmpty(state.sourceMap, SHELL_API_CONTRACT_SOURCE);
     const shellApiRuntime = sourceOrEmpty(state.sourceMap, 'apps/shell-super-app/api/index.ts');
     yield* validateIssuerCredentials();
     for (const issuer of gatewayContextAuthorizationEntrypoints) {

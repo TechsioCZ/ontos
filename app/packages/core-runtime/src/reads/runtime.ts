@@ -10,8 +10,7 @@ import {
 } from '../auth/system-principal-context-provenance.ts';
 import { CONNECTION_SCOPE_REASON_CODE, isConnectionReadAllowed } from '../auth/oauth-connection-scope.ts';
 import { CoreDatabase } from '../db/client.ts';
-import { trustedTransactionTime } from '../operations/transaction-time.ts';
-import { installOperationalScope } from '../db/scoped-transaction.ts';
+import { installOperationalScope, installOperationalScopeAt } from '../db/scoped-transaction.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import {
   lockApplicationCompositionAuthority,
@@ -1510,9 +1509,8 @@ const readRuntimeFromDependencies = <
       // Remote I/O and a second pooled connection refuse to run inside it (`insideDatabaseTransaction`).
       const finishOwner = yield* admittedTransaction(
         Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBody(transaction: CoreTransaction) {
-          const scoped = yield* installOperationalScope(transaction, scope);
+          const { operationAt, scoped } = yield* installOperationalScopeAt(transaction, scope);
           stage('scope_installed');
-          const operationAt = yield* trustedTransactionTime(transaction);
           const ownerAuthorizationDecision = yield* ownerAuthorizationCheck(scoped, operationAt);
           if (ownerAuthorizationDecision === 'denied') {
             return yield* new ReadPermissionDenied({

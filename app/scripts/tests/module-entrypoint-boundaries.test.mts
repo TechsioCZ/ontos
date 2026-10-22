@@ -693,7 +693,10 @@ import { routeMeta as route1 } from './[lang]/$/route.meta';`,
     SHELL_API_CONTRACT_FILE,
     `import { GatewayContextApiGroup } from '@app/shared-contracts';
 import { DocumentGatewayApiGroup } from './document-gateway-api.ts';
-export const ShellAuthenticationApi = HttpApi.make('shell').add(GatewayContextApiGroup).add(DocumentGatewayApiGroup);
+export const ShellDocumentContextApiGroup = HttpApiGroup.make('documentContext').add(
+  HttpApiEndpoint.post('documentContext', '/shell/document-context', {}),
+);
+export const ShellAuthenticationApi = HttpApi.make('shell').add(GatewayContextApiGroup).add(DocumentGatewayApiGroup).add(ShellDocumentContextApiGroup);
 export const paths = ['/shell-super-app-api/auth/gateway-context', '/shell-super-app-api/auth/api-key/gateway-context'];`,
   );
   yield* write(root, DOCUMENT_GATEWAY_CONTRACT_FILE, DOCUMENT_GATEWAY_FIXTURE);
@@ -702,7 +705,8 @@ export const paths = ['/shell-super-app-api/auth/gateway-context', '/shell-super
     'apps/shell-super-app/api/index.ts',
     `export const issueGatewayContext = true;
 export const issueApiKeyGatewayContext = true;
-export const issueDocumentGatewayContexts = true;`,
+export const issueDocumentGatewayContexts = true;
+export const documentContext = true;`,
   );
   yield* write(
     root,
@@ -725,7 +729,7 @@ export const routeMeta = { moduleId: 'inventory.stock', ownerAppId: 'inventory-s
     `export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
   .add(HttpApiEndpoint.post('issueGatewayContext', '/auth/gateway-context', {}))
   .add(HttpApiEndpoint.post('issueApiKeyGatewayContext', '/auth/api-key/gateway-context', {}));
-export const shellGatewayContextContract = { issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context', issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context', issueDocumentGatewayContextsPath: '/shell-super-app-api/auth/gateway-contexts' };`,
+export const shellGatewayContextContract = { issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context', issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context', issueDocumentGatewayContextsPath: '/shell-super-app-api/auth/gateway-contexts', documentContextPath: '/shell-super-app-api/shell/document-context' };`,
   );
   yield* write(root, 'packages/core-runtime/src/index.ts', `export const core = true;`);
   return root;
@@ -3045,12 +3049,14 @@ const TAMPERED_ENDPOINT = "post('unusedNeighbor'";
 
 const TAMPERED_PATH = "'/auth/tampered'";
 
+const TAMPERED_GROUP = "make('unrelated')";
+
 for (const [before, after] of [
   [/post\(\s*'issueGatewayContext'/u, TAMPERED_ENDPOINT],
   [/post\(\s*'issueApiKeyGatewayContext'/u, TAMPERED_ENDPOINT],
   ["'/auth/gateway-context'", TAMPERED_PATH],
   ["'/auth/api-key/gateway-context'", TAMPERED_PATH],
-  ["make('gatewayContext')", "make('unrelated')"],
+  ["make('gatewayContext')", TAMPERED_GROUP],
   ['export const GatewayContextApiGroup =', 'export const UnmountedApiGroup ='],
 ] as const) {
   it.live(
@@ -3076,7 +3082,7 @@ for (const [before, after] of [
 for (const [before, after] of [
   [/post\(\s*'issueDocumentGatewayContexts'/u, TAMPERED_ENDPOINT],
   ["'/auth/gateway-contexts'", TAMPERED_PATH],
-  ["make('documentGateway')", "make('unrelated')"],
+  ["make('documentGateway')", TAMPERED_GROUP],
   ['export const DocumentGatewayApiGroup =', 'export const UnmountedApiGroup ='],
 ] as const) {
   it.live(
@@ -3137,6 +3143,39 @@ it.live(
         throw new Error(EXPECTED_EFFECT_FAILURE);
       },
     });
+  }),
+);
+
+it.live(
+  'classifies the document context as a session capability issuer that the Shell contract declares and mounts',
+  Effect.fn(function* documentContextIssuerMounted() {
+    const root = yield* makeFixture();
+    const contractFile = SHELL_API_CONTRACT_FILE;
+    const source = yield* Effect.promise(() => readFile(new URL(`../../${contractFile}`, import.meta.url), 'utf-8'));
+    const gatewaySource = yield* Effect.promise(() =>
+      readFile(new URL(`../../${GATEWAY_CONTRACT_FILE}`, import.meta.url), 'utf-8'),
+    );
+    yield* write(root, contractFile, source);
+    yield* write(root, GATEWAY_CONTRACT_FILE, gatewaySource);
+    yield* checkModuleEntrypointBoundaries(root);
+    const inventory = yield* Effect.promise(() => readFile(path.join(root, INVENTORY_REPORT_FILE), 'utf-8'));
+    expect(inventory).toContain('"entrypointKey": "shell.document-context.issue.session"');
+    for (const tampered of [
+      source.replace('.add(ShellDocumentContextApiGroup)', ''),
+      source.replace(/post\(\s*'documentContext'/u, "get('documentContext'"),
+      source.replace("make('documentContext')", TAMPERED_GROUP),
+      source.replace("'/shell/document-context'", TAMPERED_PATH),
+    ]) {
+      expect(tampered).not.toBe(source);
+      yield* write(root, contractFile, tampered);
+      yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
+        onFailure: (cause) =>
+          expect(String(Cause.squash(cause))).toMatch(/document-context is missing from the mounted/u),
+        onSuccess: () => {
+          throw new Error(EXPECTED_EFFECT_FAILURE);
+        },
+      });
+    }
   }),
 );
 
