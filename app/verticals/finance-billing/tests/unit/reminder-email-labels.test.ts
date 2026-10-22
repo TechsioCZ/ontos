@@ -32,7 +32,7 @@ describe('reminder e-mail labels', () => {
 
   test('RETRY shows the retry label', () => {
     expect(deliveryLabel(delivery({ status: 'RETRY' }), (iso) => iso)).toBe(
-      'Čeká na opakování – SMTP server nedostupný',
+      'Čeká na opakování – e-mailová služba nedostupná',
     );
   });
 
