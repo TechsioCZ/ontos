@@ -40,6 +40,7 @@ import { ruleRevisionResourceDescriptor } from './shared/resources/rule-revision
 import { stableRuleResourceDescriptor } from './shared/resources/stable-rule.ts';
 import { VisibilityApi } from './shared/apis/visibility.ts';
 // </generated-module-manifest-imports>
+import { assortmentMcpContribution } from './shared/mcp/contribution.ts';
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
@@ -113,6 +114,7 @@ export const assortmentManifest = defineOntosModuleManifest({
       // </generated-module-manifest-components>
     },
     events: [],
+    mcp: assortmentMcpContribution,
     reports: [
       // <generated-module-manifest-reports>
       // </generated-module-manifest-reports>
