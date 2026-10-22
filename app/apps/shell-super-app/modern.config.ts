@@ -190,6 +190,8 @@ export default defineConfig(
           ...cloudflareWorkerConfig,
           wrangler: { ...cloudflareWorkerConfig?.wrangler, ...createCloudflareEmailBindings(envValue) },
           compatibilityDate: '2026-06-02',
+          // server/modern.server.ts is Node middleware; the Worker serves its root routes through the BFF hooks.
+          publicAssetExcludes: ['server'],
           name: cloudflareWorkerName,
           security: createCloudflareWorkerSecurity(),
           ssr: true,
