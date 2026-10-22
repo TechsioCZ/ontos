@@ -378,16 +378,18 @@ const bindingSubjectRead = defineRead<
     resultSchema: ExternalAuthenticationSubjectSchema,
     schemaVersion: '1',
   },
-  (input, context) =>
-    context.services
-      .lookup({
-        ...input,
-        tenantId: context.scope.tenantId,
-      })
-      .pipe(
-        Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })),
-        Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
-      ),
+  {
+    load: (input, context) =>
+      context.services
+        .lookup({
+          ...input,
+          tenantId: context.scope.tenantId,
+        })
+        .pipe(
+          Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })),
+          Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+        ),
+  },
   (transaction) =>
     Effect.succeed({
       lookup: (input: {
@@ -431,21 +433,23 @@ const resolveExternalSubjectRead = defineRead<
     resultSchema: ResolveExternalSubjectResultSchema,
     schemaVersion: '1',
   },
-  (subject, context) =>
-    Effect.serviceOption(ExternalIdentityAdmission).pipe(
-      Effect.flatMap((admission) =>
-        Option.isNone(admission)
-          ? Effect.fail(new ExternalIdentityError({ code: 'identity_unavailable' }))
-          : context.services
-              .resolve({
-                admission: admission.value,
-                subject,
-                tenantId: context.scope.tenantId,
-              })
-              .pipe(Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code }))),
+  {
+    load: (subject, context) =>
+      Effect.serviceOption(ExternalIdentityAdmission).pipe(
+        Effect.flatMap((admission) =>
+          Option.isNone(admission)
+            ? Effect.fail(new ExternalIdentityError({ code: 'identity_unavailable' }))
+            : context.services
+                .resolve({
+                  admission: admission.value,
+                  subject,
+                  tenantId: context.scope.tenantId,
+                })
+                .pipe(Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code }))),
+        ),
+        Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
       ),
-      Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
-    ),
+  },
   (transaction) => Effect.succeed({ resolve: resolveExternalSubjectFromTransaction(transaction) }),
   () => ({ kind: 'tenant', permission: 'access' }),
 );

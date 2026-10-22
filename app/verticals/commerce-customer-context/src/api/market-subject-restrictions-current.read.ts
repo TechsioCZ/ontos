@@ -2,7 +2,7 @@
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type {
   OperationalScope,
-  ReadHandlerContext,
+  ReadLoadContext,
   ReadHandlerUnavailable,
   ResolvedReadPermissionTarget,
 } from '@app/core-runtime';
@@ -196,13 +196,15 @@ export const marketSubjectRestrictionsCurrentRead = defineRead(
     resultSchema: MarketSubjectRestrictionsCurrentResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<MarketSubjectRestrictionsCurrentServices>) =>
-    readCurrentMarketSubjectRestrictionsFromServices(input, context.scope, context.services).pipe(
-      Effect.map((result) => ({
-        evidence: { resultCount: result.outcome === 'SUBJECT_RESTRICTIONS_CURRENT' ? 1 : 0 },
-        result,
-      })),
-    ),
+  {
+    load: (input, context: ReadLoadContext<MarketSubjectRestrictionsCurrentServices>) =>
+      readCurrentMarketSubjectRestrictionsFromServices(input, context.scope, context.services).pipe(
+        Effect.map((result) => ({
+          evidence: { resultCount: result.outcome === 'SUBJECT_RESTRICTIONS_CURRENT' ? 1 : 0 },
+          result,
+        })),
+      ),
+  },
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(

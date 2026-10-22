@@ -76,7 +76,7 @@ it.live('commits live allowed evidence before releasing a governed read result',
         resultSchema: Schema.Array(Schema.String),
         schemaVersion: '1',
       },
-      () => Effect.succeed({ evidence: { resultCount: 1 }, result: ['visible'] }),
+      { load: () => Effect.succeed({ evidence: { resultCount: 1 }, result: ['visible'] }) },
       () => Effect.succeed({}),
       () => ({ kind: 'module', moduleId: 'core.shell' }),
     );
@@ -274,11 +274,13 @@ it.live('holds native Read authority through owner work and commits denial evide
         resultSchema: Schema.Array(Schema.String),
         schemaVersion: '1',
       },
-      () =>
-        Effect.sync(() => {
-          handlerCalls += 1;
-          return { evidence: { resultCount: 1 }, result: ['visible'] };
-        }),
+      {
+        load: () =>
+          Effect.sync(() => {
+            handlerCalls += 1;
+            return { evidence: { resultCount: 1 }, result: ['visible'] };
+          }),
+      },
       (transaction) =>
         Effect.gen(function* nativeReadFactory() {
           factoryCalls += 1;

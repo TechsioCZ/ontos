@@ -1,4 +1,4 @@
-import type { OperationalScope, ReadHandlerContext } from '@app/core-runtime';
+import type { OperationalScope, ReadLoadContext } from '@app/core-runtime';
 import {
   ReadHandlerUnavailable,
   ReadPermissionDenied,
@@ -175,7 +175,7 @@ const scope = {
 
 const context = (
   services: MarketAffectedUseAssessmentServices,
-): ReadHandlerContext<MarketAffectedUseAssessmentServices> => ({
+): ReadLoadContext<MarketAffectedUseAssessmentServices> => ({
   readKey: 'commerce.customer-context.api.market-affected-use-assessment',
   scope,
   services,

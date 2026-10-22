@@ -366,11 +366,13 @@ const registration = (items: readonly string[] = []) =>
       resultSchema: Schema.Array(Schema.String),
       schemaVersion: '1',
     },
-    (_input, context) =>
-      Effect.succeed({
-        evidence: { resultCount: 0 },
-        result: context.services.items,
-      }),
+    {
+      load: (_input, context) =>
+        Effect.succeed({
+          evidence: { resultCount: 0 },
+          result: context.services.items,
+        }),
+    },
     () => Effect.succeed({ items }),
     () => ({ kind: 'module', moduleId: 'core.shell' }),
   );
@@ -421,9 +423,11 @@ const assortmentReadRegistration = (handler: () => void) =>
       resultSchema: Schema.String,
       schemaVersion: '1',
     },
-    () => {
-      handler();
-      return Effect.succeed({ evidence: { resultCount: 1 }, result: 'ok' });
+    {
+      load: () => {
+        handler();
+        return Effect.succeed({ evidence: { resultCount: 1 }, result: 'ok' });
+      },
     },
     () => Effect.succeed({}),
     () => ({ assortmentPermission: assortmentReadTarget, kind: 'assortment_permission' }),
@@ -552,9 +556,11 @@ it.effect('derives configuration read scope from the scope the owning module dec
           resultSchema: Schema.String,
           schemaVersion: '1',
         },
-        () => {
-          handlerCalls += 1;
-          return Effect.succeed({ evidence: { resultCount: 1 }, result: 'ok' });
+        {
+          load: () => {
+            handlerCalls += 1;
+            return Effect.succeed({ evidence: { resultCount: 1 }, result: 'ok' });
+          },
         },
         () => Effect.succeed({}),
         () => ({ assortmentPermission: target, kind: 'assortment_permission' }),
@@ -629,9 +635,11 @@ it.effect('runs the owner authorization overlay inside the transaction before th
     });
     const deniedRegistration = defineRead(
       registration().descriptor,
-      () => {
-        handlerCalls += 1;
-        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+      {
+        load: () => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        },
       },
       () => Effect.succeed({}),
       () => ({ kind: 'module', moduleId: 'core.shell' }),
@@ -672,9 +680,11 @@ it.effect('fails closed before owner authorization when PostgreSQL cannot provid
     });
     const testRegistration = defineRead(
       registration().descriptor,
-      () => {
-        handlerCalls += 1;
-        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+      {
+        load: () => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        },
       },
       () => Effect.succeed({}),
       () => ({ kind: 'module', moduleId: 'core.shell' }),
@@ -719,11 +729,13 @@ it.effect('validates decoded transformed results and preserves their nullable JS
     });
     const transformedRegistration = defineRead(
       { ...registration().descriptor, resultSchema: ResultSchema },
-      () =>
-        Effect.succeed({
-          evidence: { resultCount: 1 },
-          result: { value: Option.none() },
-        }),
+      {
+        load: () =>
+          Effect.succeed({
+            evidence: { resultCount: 1 },
+            result: { value: Option.none() },
+          }),
+      },
       () => Effect.succeed({}),
       () => ({ kind: 'module', moduleId: 'core.shell' }),
     );
@@ -753,7 +765,7 @@ it.effect('uses each denying Policy reference own declared HTTP status', () =>
             ...registration().descriptor,
             policies: [{ denialStatus, policyKey: policy.policyKey }],
           },
-          () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
+          { load: () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }) },
           () => Effect.succeed({}),
           () => ({ kind: 'module', moduleId: 'core.shell' }),
           undefined,
@@ -797,7 +809,7 @@ it.effect('persists the canonical permission target when a Policy denies the rea
         policies: [{ denialStatus: 422, policyKey: policy.policyKey }],
         resultSchema: Schema.String,
       },
-      () => Effect.succeed({ evidence: { resultCount: 1 }, result: 'hidden' }),
+      { load: () => Effect.succeed({ evidence: { resultCount: 1 }, result: 'hidden' }) },
       () => Effect.succeed({}),
       (input) => ({ kind: 'resource', resource: input }),
       undefined,
@@ -840,7 +852,7 @@ it.effect('executes every governed access kind and computes hash-only query evid
             },
             legalEntityScope: 'required',
           },
-          () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
+          { load: () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }) },
           () => Effect.succeed({}),
           () => ({ kind: 'module', moduleId: 'core.shell' }),
           accessKind === 'search' ? () => [] : undefined,
@@ -886,11 +898,13 @@ it.effect('preserves typed result-validation failure across transaction rollback
     const harness = yield* makeHarness();
     const invalidRegistration = defineRead(
       registration().descriptor,
-      () => {
-        const result: string[] = [];
-        const handlerResult = { evidence: { resultCount: 1 }, result };
-        Object.defineProperty(handlerResult, 'result', { value: 42 });
-        return Effect.succeed(handlerResult);
+      {
+        load: () => {
+          const result: string[] = [];
+          const handlerResult = { evidence: { resultCount: 1 }, result };
+          Object.defineProperty(handlerResult, 'result', { value: 42 });
+          return Effect.succeed(handlerResult);
+        },
       },
       () => Effect.succeed({}),
       () => ({ kind: 'module', moduleId: 'core.shell' }),
@@ -934,9 +948,11 @@ it.effect('preserves scoped service-factory unavailability and never invokes the
     let handlerCalls = 0;
     const unavailableRegistration = defineRead(
       registration().descriptor,
-      () => {
-        handlerCalls += 1;
-        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+      {
+        load: () => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        },
       },
       () =>
         Effect.fail(
@@ -968,7 +984,7 @@ it.effect('passes only the exact verified gateway revision into scoped Read serv
     const revisions: (string | undefined)[] = [];
     const scopedRegistration = defineRead(
       registration().descriptor,
-      () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }),
+      { load: () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }) },
       (_transaction, _scope, compositionRevision) =>
         Effect.sync(() => {
           revisions.push(compositionRevision);
@@ -1024,9 +1040,11 @@ it.effect('rejects stale, draining, sealed, migrated, expired, or missing Read a
       });
       const scopedRegistration = defineRead(
         { ...registration().descriptor, policies: [{ denialStatus: 422, policyKey: policy.policyKey }] },
-        () => {
-          handlerCalls += 1;
-          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        {
+          load: () => {
+            handlerCalls += 1;
+            return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+          },
         },
         () =>
           Effect.sync(() => {
@@ -1071,9 +1089,11 @@ it.effect('admits the new active Read revision before scope, service factory, an
     });
     const scopedRegistration = defineRead(
       registration().descriptor,
-      () => {
-        events.push('handler');
-        return Effect.succeed({ evidence: { resultCount: 0 }, result: ['current'] });
+      {
+        load: () => {
+          events.push('handler');
+          return Effect.succeed({ evidence: { resultCount: 0 }, result: ['current'] });
+        },
       },
       (_transaction, _scope, compositionRevision) =>
         Effect.sync(() => {
@@ -1161,9 +1181,11 @@ it.effect('does not mint a revision for a local Read that requires cross-owner c
     let handlerCalls = 0;
     const credentialedRegistration = defineRead(
       registration().descriptor,
-      () => {
-        handlerCalls += 1;
-        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+      {
+        load: () => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        },
       },
       (_transaction, _scope, compositionRevision) =>
         compositionRevision === undefined
@@ -1197,9 +1219,11 @@ const counterpartyReadRegistration = (legalEntityScope: 'required' | 'optional',
       legalEntityScope,
       permissionTarget: 'legal_entity',
     },
-    () => {
-      onHandler();
-      return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+    {
+      load: () => {
+        onHandler();
+        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+      },
     },
     () => Effect.succeed({}),
     () => ({ kind: 'legal_entity', permission: 'read_counterparty' }),
@@ -1228,6 +1252,62 @@ it.effect('keeps authorization round trips and evidence outside the owner transa
   }),
 );
 
+it.effect('runs owner prepare before the transaction, only owner load inside it, and owner finish after commit', () =>
+  Effect.gen(function* ownerPipelineOutsideTransaction() {
+    const events: string[] = [];
+    const harness = yield* makeHarness({
+      onLegalEntityTarget: () => events.push('spicedb'),
+      permissionDecision: 'allowed',
+      resolvedScope: { ...scope, legalEntityId: '00000000-0000-4000-8000-000000000004' },
+      sqlEvents: events,
+    });
+    const base = counterpartyReadRegistration('required', () => events.length);
+    const ownerPipeline = defineRead(
+      base.descriptor,
+      {
+        // Owner SpiceDB grants (prepare) and row filters (finish) stand in as the recorded owner events.
+        // oxlint-disable perfectionist/sort-objects -- Steps stay in execution order: each step's types infer from the previous one.
+        prepare: () =>
+          Effect.sync(() => {
+            events.push('owner-spicedb-grants');
+            return { readAll: false };
+          }),
+        load: (_input, context) =>
+          Effect.sync(() => {
+            events.push('owner-load');
+            expect(context.prepared).toEqual({ readAll: false });
+            return ['visible', 'hidden'];
+          }),
+        finish: (_input, context) =>
+          Effect.sync(() => {
+            events.push('owner-spicedb-row-filter');
+            const result = context.loaded.filter((row) => row === 'visible');
+            return { evidence: { resultCount: result.length }, result };
+          }),
+        // oxlint-enable perfectionist/sort-objects
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'legal_entity', permission: 'read_counterparty' }),
+    );
+    expect(
+      yield* harness.runtime.runRead({
+        input: {},
+        principal: trustVerifiedGatewayPrincipalContext(scope, approvedCompositionRevision),
+        registration: ownerPipeline,
+        transport: { correlationId: scope.correlationId },
+      }),
+    ).toEqual(['visible']);
+    const begin = events.indexOf('BEGIN');
+    const commit = events.indexOf('COMMIT');
+    // No SpiceDB round trip, Core's or the owner's, runs while the transaction holds its connection.
+    expect(events.slice(begin, commit + 1)).toEqual(['BEGIN', 'owner-load', 'COMMIT']);
+    expect(events.indexOf('owner-spicedb-grants')).toBeLessThan(begin);
+    expect(events.lastIndexOf('spicedb')).toBeLessThan(begin);
+    expect(events.indexOf('owner-spicedb-row-filter')).toBeGreaterThan(commit);
+    expect(harness.evidence()).toBe(1);
+  }),
+);
+
 it.effect(
   'authorizes an explicit Legal Entity target before handler resolution without substituting the selected context',
   Effect.fn(function* explicitLegalEntityTarget() {
@@ -1250,9 +1330,11 @@ it.effect(
         permissionTarget: 'legal_entity',
         readKey: 'core.identity.api.target-test',
       },
-      () => {
-        handlerCalls += 1;
-        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+      {
+        load: () => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        },
       },
       () => Effect.succeed({}),
       () => ({ kind: 'legal_entity', legalEntityId: targetId, permission: 'access' }),
@@ -1339,10 +1421,12 @@ it.effect(
         resultSchema: Schema.String,
         schemaVersion: '1',
       },
-      () => {
-        observed.push('handler');
-        handlerCalls += 1;
-        return Effect.succeed({ evidence: { resultCount: 1 }, result: 'CZK' });
+      {
+        load: () => {
+          observed.push('handler');
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 1 }, result: 'CZK' });
+        },
       },
       () => Effect.succeed({}),
       ({ authorizationProfileId }, trustedScope) => ({
@@ -1504,9 +1588,11 @@ it.effect('rejects payload Storefront promotion and requires an exact trusted sc
         resultSchema: Schema.Array(Schema.String),
         schemaVersion: '1',
       },
-      () => {
-        handlerCalls += 1;
-        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+      {
+        load: () => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        },
       },
       () => Effect.succeed({}),
       ({ counterpartyId, storefrontId }, trustedScope) => ({
@@ -1618,9 +1704,11 @@ it.effect('governs tenant-only Price Group reads with stable target evidence and
           resultSchema: Schema.String,
           schemaVersion: '1',
         },
-        ({ priceGroupId: handledPriceGroupId }) => {
-          handlerCalls += 1;
-          return Effect.succeed({ evidence: { resultCount: 1 }, result: handledPriceGroupId });
+        {
+          load: ({ priceGroupId: handledPriceGroupId }) => {
+            handlerCalls += 1;
+            return Effect.succeed({ evidence: { resultCount: 1 }, result: handledPriceGroupId });
+          },
         },
         () => Effect.succeed({}),
         (input) => ({
@@ -1773,9 +1861,11 @@ it.effect('governs one exact Inventory Resource read without deriving authority 
         resultSchema: Schema.String,
         schemaVersion: '1',
       },
-      ({ resourceId }) => {
-        handlerCalls += 1;
-        return Effect.succeed({ evidence: { resultCount: 1 }, result: resourceId });
+      {
+        load: ({ resourceId }) => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 1 }, result: resourceId });
+        },
       },
       () => Effect.succeed(Object.freeze({})),
       (input) => ({
@@ -1903,7 +1993,7 @@ it.effect('derives the authorized resource from decoded input and ignores confli
         permissionTarget: 'resource',
         resultSchema: Schema.String,
       },
-      () => Effect.succeed({ evidence: { resultCount: 1 }, result: 'visible' }),
+      { load: () => Effect.succeed({ evidence: { resultCount: 1 }, result: 'visible' }) },
       () => Effect.succeed({}),
       (input) => ({ kind: 'resource', resource: input }),
     );
@@ -1954,12 +2044,14 @@ it.effect('authorizes a canonical Resource through explicit tenant Party adminis
         policies: [{ denialStatus: 422, policyKey: policy.policyKey }],
         resultSchema: Schema.String,
       },
-      () => {
-        handlerCalls += 1;
-        return Effect.succeed({
-          evidence: { resultCount: 1 },
-          result: 'visible',
-        });
+      {
+        load: () => {
+          handlerCalls += 1;
+          return Effect.succeed({
+            evidence: { resultCount: 1 },
+            result: 'visible',
+          });
+        },
       },
       () => Effect.succeed({}),
       (input) => ({
@@ -2065,9 +2157,11 @@ it.effect('rejects generic tenant access as an alternative permission target', (
         legalEntityScope: 'required',
         permissionTarget: 'resource',
       },
-      () => {
-        handlerCalls += 1;
-        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+      {
+        load: () => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        },
       },
       () => Effect.succeed({}),
       () =>
@@ -2128,9 +2222,11 @@ for (const scenario of [
       let handlerCalls = 0;
       const alternativeRead = defineRead(
         { ...registration().descriptor, permissionTarget: 'tenant' },
-        () => {
-          handlerCalls += 1;
-          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        {
+          load: () => {
+            handlerCalls += 1;
+            return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+          },
         },
         () => Effect.succeed({}),
         () => ({
@@ -2185,7 +2281,7 @@ for (const scenario of [
       const harness = yield* makeHarness();
       const failingRead = defineRead(
         registration().descriptor,
-        () => scenario.outcome,
+        { load: () => scenario.outcome },
         () => Effect.succeed({}),
         () => ({ kind: 'module', moduleId: 'core.shell' }),
       );
@@ -2222,7 +2318,7 @@ it.effect('does not release generated search candidates denied by result-level a
         legalEntityScope: 'required',
         resultSchema: Schema.Array(ResourceTargetSchema),
       },
-      () => Effect.succeed({ evidence: { resultCount: 1 }, result: [candidate] }),
+      { load: () => Effect.succeed({ evidence: { resultCount: 1 }, result: [candidate] }) },
       () => Effect.succeed({}),
       () => ({ kind: 'module', moduleId: 'core.shell' }),
       (result) => result,
@@ -2269,7 +2365,7 @@ it.effect('authorizes tenant-scoped Party search results without fabricating a L
         permissionTarget: 'tenant',
         resultSchema: Schema.Array(ResourceTargetSchema),
       },
-      () => Effect.succeed({ evidence: { resultCount: 1 }, result: [candidate] }),
+      { load: () => Effect.succeed({ evidence: { resultCount: 1 }, result: [candidate] }) },
       () => Effect.succeed({}),
       () => ({ kind: 'tenant', permission: 'read_party_identity' }),
       (result) => result,
@@ -2306,7 +2402,7 @@ it.effect('fails closed when tenant-scoped Party result authorization becomes un
         permissionTarget: 'tenant',
         resultSchema: Schema.Array(ResourceTargetSchema),
       },
-      () => Effect.succeed({ evidence: { resultCount: 1 }, result: [candidate] }),
+      { load: () => Effect.succeed({ evidence: { resultCount: 1 }, result: [candidate] }) },
       () => Effect.succeed({}),
       () => ({ kind: 'tenant', permission: 'read_party_identity' }),
       (result) => result,
@@ -2343,7 +2439,7 @@ it.effect('preserves declared owner read availability and not-found failures but
           const harness = yield* makeHarness();
           const failingRegistration = defineRead(
             registration().descriptor,
-            () => Effect.fail(failure),
+            { load: () => Effect.fail(failure) },
             () => Effect.succeed({}),
             () => ({ kind: 'module', moduleId: 'core.shell' }),
           );
@@ -2378,12 +2474,14 @@ for (const mode of ['local', 'governed'] as const) {
       const blocked = yield* Deferred.make<boolean>();
       const governed = defineRead(
         registration().descriptor,
-        () =>
-          Effect.gen(function* blockedReadHandler() {
-            yield* Deferred.succeed(entered, true);
-            yield* Deferred.await(blocked);
-            return { evidence: { resultCount: 0 }, result: [] };
-          }),
+        {
+          load: () =>
+            Effect.gen(function* blockedReadHandler() {
+              yield* Deferred.succeed(entered, true);
+              yield* Deferred.await(blocked);
+              return { evidence: { resultCount: 0 }, result: [] };
+            }),
+        },
         () => Effect.succeed({}),
         () => ({ kind: 'module', moduleId: 'core.shell' }),
       );
@@ -2427,7 +2525,7 @@ for (const mode of ['local', 'governed'] as const) {
       });
       const governed = defineRead(
         registration().descriptor,
-        () => Effect.fail(denied),
+        { load: () => Effect.fail(denied) },
         () => Effect.succeed({}),
         () => ({ kind: 'module', moduleId: 'core.shell' }),
       );
@@ -2482,9 +2580,11 @@ it.effect('enforces named entrypoint context permission before services and hand
         owningModuleKey: 'commerce.customer-context',
         permissionTarget: 'resource',
       },
-      () => {
-        handlerCalls += 1;
-        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+      {
+        load: () => {
+          handlerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        },
       },
       () => {
         serviceCalls += 1;
@@ -2611,12 +2711,14 @@ it.effect('executes only the selected finite conditional authorization branch', 
         owningModuleKey: 'commerce.customer-context',
         permissionTarget: 'conditional',
       },
-      () => {
-        handlerCalls += 1;
-        return Effect.succeed({
-          evidence: { resultCount: 1 },
-          result: ['visible'],
-        });
+      {
+        load: () => {
+          handlerCalls += 1;
+          return Effect.succeed({
+            evidence: { resultCount: 1 },
+            result: ['visible'],
+          });
+        },
       },
       () => Effect.succeed({}),
       conditional,
@@ -2692,7 +2794,7 @@ it.effect('preserves only schema-declared owner Read failures', () =>
     }) {}
     const declared = defineRead(
       { ...registration().descriptor, domainErrorSchema: DeclaredReadFailure },
-      () => Effect.fail(new DeclaredReadFailure({ reasonCode: 'PURPOSE_NOT_ALLOWED' })),
+      { load: () => Effect.fail(new DeclaredReadFailure({ reasonCode: 'PURPOSE_NOT_ALLOWED' })) },
       () => Effect.succeed({}),
       () => ({ kind: 'module', moduleId: 'core.shell' }),
     );

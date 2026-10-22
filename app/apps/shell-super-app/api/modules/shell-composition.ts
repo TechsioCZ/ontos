@@ -7,7 +7,7 @@ import type {
 } from '@app/core-runtime';
 import { decideModuleStateAccess, isReservedShellRouteRoot, toContextPermissionAccessKey } from '@app/core-runtime';
 import type { LegalEntityNavigationExclusionsContract } from '@app/core-runtime/modules/legal-entity-navigation-exclusions';
-import { Context, Effect, Layer, Schema } from 'effect';
+import { Context, Effect, Layer, Option, Schema } from 'effect';
 
 import { ShellCompositionSchema, ShellNavigationItemSchema } from '../../shared/api.ts';
 import type { InstalledModuleCatalogError, ShellInstalledCatalog } from './installed-module-catalog.ts';
@@ -43,9 +43,14 @@ export interface ShellCompositionContext {
   readonly tenantId: string;
 }
 
-export interface ShellCompositionSources {
+/** What composition decides before and after its transaction: the approved catalog and SpiceDB access. */
+export interface ShellCompositionAccessSources {
   readonly catalog: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogError>;
   readonly contextAccess: Pick<ContextAccessService, 'modules' | 'contextPermissions'>;
+}
+
+/** What composition reads inside the governed-read transaction: tenant data only. */
+export interface ShellCompositionDataSources {
   readonly moduleStates: Pick<TenantModuleStateServiceContract, 'getTenantModuleStates'>;
   /** Destinations the selected company does not offer (tenant data keyed by page entrypoint). */
   readonly navigationExclusions: LegalEntityNavigationExclusionsContract;
@@ -54,11 +59,15 @@ export interface ShellCompositionSources {
 const isVisibleState = Schema.is(ShellNavigationItemSchema.fields.state);
 
 const loadCatalog = (
-  sources: ShellCompositionSources,
+  sources: ShellCompositionAccessSources,
 ): Effect.Effect<ShellInstalledCatalog, ShellCompositionUnavailableError> =>
   sources.catalog.pipe(Effect.mapError((cause) => new ShellCompositionUnavailableErrorConstructor({ cause })));
 
-const loadStates = (sources: ShellCompositionSources, context: ShellCompositionContext, moduleIds: readonly string[]) =>
+const loadStates = (
+  sources: ShellCompositionDataSources,
+  context: ShellCompositionContext,
+  moduleIds: readonly string[],
+) =>
   sources.moduleStates
     .getTenantModuleStates(context.tenantId, moduleIds)
     .pipe(Effect.mapError((cause) => new ShellCompositionUnavailableErrorConstructor({ cause })));
@@ -222,7 +231,7 @@ const resolvePageSelection = (catalog: InstalledModuleCatalog, input: ShellModul
 };
 
 const resolveTargetPermission = Effect.fn('ShellComposition.resolveTargetPermission')(function* resolveTargetPermission(
-  sources: ShellCompositionSources,
+  sources: ShellCompositionAccessSources,
   context: ShellCompositionContext & {
     readonly legalEntityId: string;
     readonly moduleId: string;
@@ -258,7 +267,7 @@ const matchesComponentExposure = (
 /** Public components require their declared permission in addition to module access. */
 const resolvePublicComponentPermission = Effect.fn('ShellComposition.resolvePublicComponentPermission')(
   function* resolvePublicComponentPermissionEffect(
-    sources: ShellCompositionSources,
+    sources: ShellCompositionAccessSources,
     context: ShellCompositionContext,
     page: ShellRenderableContribution,
   ) {
@@ -296,10 +305,9 @@ const resolvePublicComponentPermission = Effect.fn('ShellComposition.resolvePubl
  */
 const resolveDeniedNavigationEntrypoints = Effect.fn('ShellComposition.resolveDeniedNavigationEntrypoints')(
   function* resolveDeniedNavigationEntrypointsEffect(
-    sources: ShellCompositionSources,
+    sources: ShellCompositionAccessSources,
     context: ShellCompositionContext & { readonly legalEntityId: string },
     catalog: ShellInstalledCatalog,
-    permissionByModule: ReadonlyMap<string, string>,
   ) {
     const check = sources.contextAccess.contextPermissions;
     if (check === undefined) {
@@ -308,9 +316,7 @@ const resolveDeniedNavigationEntrypoints = Effect.fn('ShellComposition.resolveDe
     const targets = new Map<string, { readonly moduleId: string; readonly permission: string }>();
     for (const contract of catalog.contracts) {
       const moduleId = contract.manifest.module.id;
-      if (permissionByModule.get(moduleId) !== 'allowed') {
-        continue;
-      }
+      // Asked for every module so this check runs alongside the module check; denied modules list nothing anyway.
       for (const contribution of contract.manifest.publicSurface.shellContributions.navigation) {
         const { authorization } = contribution.entrypoint;
         if (authorization.kind === 'context_permission' && authorization.permission !== 'module.access') {
@@ -332,43 +338,164 @@ const resolveDeniedNavigationEntrypoints = Effect.fn('ShellComposition.resolveDe
   },
 );
 
-export const makeShellComposition = (sources: ShellCompositionSources) => {
-  const compose = Effect.fn('makeShellComposition.compose')(function* composeShellEffect(
+/** Composition access decided before the transaction: the catalog and both SpiceDB checks, in parallel. */
+export type ShellCompositionAuthorization =
+  | { readonly state: 'selection_required' }
+  | {
+      readonly catalog: ShellInstalledCatalog;
+      readonly deniedEntrypoints: ReadonlySet<string>;
+      readonly legalEntityId: string;
+      readonly permissionByModule: ReadonlyMap<string, string>;
+      readonly state: 'authorized';
+    };
+
+type ModuleState = Effect.Success<
+  ReturnType<ShellCompositionDataSources['moduleStates']['getTenantModuleStates']>
+>[number]['state'];
+
+/** The tenant data composition read inside its transaction. */
+export interface ShellCompositionData {
+  readonly excludedEntrypoints: ReadonlySet<string>;
+  readonly states: ReadonlyMap<string, ModuleState>;
+}
+
+/** A module target whose catalog page and access are decided; its module state is still to be read. */
+export type ShellModuleTargetAuthorization =
+  | { readonly outcome: 'not_found' | 'reload_required' | 'selection_required' | 'unavailable' }
+  | {
+      readonly access: ModuleEntrypointAccess;
+      readonly appId: string;
+      readonly compositionRevision: string;
+      readonly denial: { readonly outcome: 'forbidden' | 'unavailable' } | null;
+      readonly federation: {
+        readonly expose: string;
+        readonly manifest: Extract<
+          ShellInstalledCatalog['composition']['modules'][number]['federation'],
+          { readonly execution: 'browser' }
+        >['manifest'];
+        readonly remoteName: string;
+      };
+      readonly moduleId: string;
+      readonly outcome: 'candidate';
+      readonly page: ShellRenderableContribution;
+      readonly routeParameters: Readonly<Record<string, string>>;
+    };
+
+const moduleTargetAuthorization = (authorization: ShellModuleTargetAuthorization) => authorization;
+
+/** The transaction step of composition and module targets: scoped tenant data only. */
+export const makeShellCompositionData = (sources: ShellCompositionDataSources) => {
+  const loadComposition = Effect.fn('ShellCompositionData.loadComposition')(function* loadCompositionEffect(
     context: ShellCompositionContext,
+    authorization: ShellCompositionAuthorization,
   ) {
-    if (context.legalEntityId === undefined) {
-      return { navigation: [], state: 'selection_required' } as const;
+    if (authorization.state !== 'authorized') {
+      return {
+        excludedEntrypoints: new Set<string>(),
+        states: new Map<string, ModuleState>(),
+      } satisfies ShellCompositionData;
     }
-    const catalog = yield* loadCatalog(sources);
-    const { moduleIds } = catalog;
-    const records = yield* loadStates(sources, context, moduleIds);
-    const states = new Map(records.map(({ moduleKey, state }) => [moduleKey, state]));
-    const decisions = yield* sources.contextAccess.modules({
-      legalEntityId: context.legalEntityId,
-      moduleIds,
-      principalId: context.principalId,
-      tenantId: context.tenantId,
-    });
-    if (decisions.length !== moduleIds.length || decisions.some(({ key }, index) => key !== moduleIds[index])) {
-      return yield* new ShellCompositionUnavailableErrorConstructor();
-    }
-    const permissionByModule = new Map(decisions.map(({ decision, key }) => [key, decision]));
-    const pages = pageByContributionKey(catalog);
     // Sequential on purpose: both reads share the governed read's Core transaction.
-    const { deniedEntrypoints, excludedEntrypoints } = yield* Effect.all(
+    const { excludedEntrypoints, records } = yield* Effect.all(
       {
-        deniedEntrypoints: resolveDeniedNavigationEntrypoints(
-          sources,
-          { ...context, legalEntityId: context.legalEntityId },
-          catalog,
-          permissionByModule,
-        ),
+        records: loadStates(sources, context, authorization.catalog.moduleIds),
         excludedEntrypoints: sources.navigationExclusions
-          .listExcludedEntrypoints(context.tenantId, context.legalEntityId)
+          .listExcludedEntrypoints(context.tenantId, authorization.legalEntityId)
           .pipe(Effect.mapError((cause) => new ShellCompositionUnavailableErrorConstructor({ cause }))),
       },
       { concurrency: 1 },
     );
+    return {
+      excludedEntrypoints,
+      states: new Map(records.map(({ moduleKey, state }) => [moduleKey, state])),
+    } satisfies ShellCompositionData;
+  });
+
+  const loadModuleTarget = Effect.fn('ShellCompositionData.loadModuleTarget')(function* loadModuleTargetEffect(
+    context: ShellCompositionContext,
+    authorization: ShellModuleTargetAuthorization,
+  ) {
+    if (authorization.outcome !== 'candidate') {
+      return Option.none<ModuleState>();
+    }
+    const [record] = yield* loadStates(sources, context, [authorization.moduleId]);
+    return record?.moduleKey === authorization.moduleId ? Option.some(record.state) : Option.none<ModuleState>();
+  });
+
+  return Object.freeze({ loadComposition, loadModuleTarget });
+};
+
+/** After commit: the module state read inside the transaction decides before the access outcome. */
+const finishShellModuleTarget = (authorization: ShellModuleTargetAuthorization, state: Option.Option<ModuleState>) => {
+  if (authorization.outcome !== 'candidate') {
+    return authorization;
+  }
+  if (Option.isNone(state) || decideModuleStateAccess(state.value, authorization.access) === 'deny') {
+    return { outcome: 'not_found' } as const;
+  }
+  if (authorization.denial !== null) {
+    return authorization.denial;
+  }
+  return {
+    appId: authorization.appId,
+    compositionRevision: authorization.compositionRevision,
+    federation: authorization.federation,
+    moduleId: authorization.moduleId,
+    outcome: 'resolved',
+    page: authorization.page,
+    routeParameters: authorization.routeParameters,
+    writable: state.value === 'active',
+  } as const;
+};
+
+/** The steps of composition and module targets around the transaction: catalog and SpiceDB, no database. */
+export const makeShellCompositionAccess = (sources: ShellCompositionAccessSources) => {
+  const authorizeComposition = Effect.fn('ShellCompositionAccess.authorizeComposition')(
+    function* authorizeCompositionEffect(context: ShellCompositionContext) {
+      if (context.legalEntityId === undefined) {
+        return { state: 'selection_required' } as const satisfies ShellCompositionAuthorization;
+      }
+      const catalog = yield* loadCatalog(sources);
+      const { moduleIds } = catalog;
+      const { decisions, deniedEntrypoints } = yield* Effect.all(
+        {
+          decisions: sources.contextAccess.modules({
+            legalEntityId: context.legalEntityId,
+            moduleIds,
+            principalId: context.principalId,
+            tenantId: context.tenantId,
+          }),
+          deniedEntrypoints: resolveDeniedNavigationEntrypoints(
+            sources,
+            { ...context, legalEntityId: context.legalEntityId },
+            catalog,
+          ),
+        },
+        { concurrency: 2 },
+      );
+      if (decisions.length !== moduleIds.length || decisions.some(({ key }, index) => key !== moduleIds[index])) {
+        return yield* new ShellCompositionUnavailableErrorConstructor();
+      }
+      return {
+        catalog,
+        deniedEntrypoints,
+        legalEntityId: context.legalEntityId,
+        permissionByModule: new Map(decisions.map(({ decision, key }) => [key, decision])),
+        state: 'authorized',
+      } as const satisfies ShellCompositionAuthorization;
+    },
+  );
+
+  const finishComposition = Effect.fn('ShellCompositionAccess.finishComposition')(function* finishCompositionEffect(
+    authorization: ShellCompositionAuthorization,
+    data: ShellCompositionData,
+  ) {
+    if (authorization.state !== 'authorized') {
+      return { navigation: [], state: 'selection_required' } as const;
+    }
+    const { catalog, deniedEntrypoints, permissionByModule } = authorization;
+    const { excludedEntrypoints, states } = data;
+    const pages = pageByContributionKey(catalog);
     const navigation = catalog.contracts.flatMap((contract) => {
       const moduleId = contract.manifest.module.id;
       const state = states.get(moduleId);
@@ -472,83 +599,81 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
     return composition;
   });
 
-  const resolveModuleTarget = Effect.fn('makeShellComposition.resolveModuleTarget')(function* resolveModuleTargetEffect(
-    context: ShellCompositionContext,
-    input: {
-      readonly access?: ModuleEntrypointAccess;
-      readonly canonicalPath?: string;
-      readonly compositionRevision?: string;
-      readonly entrypointKey?: string;
-      readonly moduleId?: string;
-    },
-  ) {
-    if (context.legalEntityId === undefined) {
-      return { outcome: 'selection_required' } as const;
-    }
-    const catalog = yield* loadCatalog(sources);
-    if (input.compositionRevision !== undefined && input.compositionRevision !== catalog.composition.revision) {
-      return { outcome: 'reload_required' } as const;
-    }
-    const selected = resolvePageSelection(catalog, input);
-    if (selected === null) {
-      // An unknown module, page or path is "not found"; module-level denial is decided below for real targets.
-      return { outcome: 'not_found' } as const;
-    }
-    const { contract, page, routeParameters } = selected;
-    const moduleId = contract.manifest.module.id;
-    const approvedModule = catalog.composition.modules.find((module) => module.moduleId === moduleId);
-    const component = contract.manifest.publicSurface.components.find(({ key }) => key === page.componentKey);
-    if (approvedModule?.federation.execution !== 'browser' || component === undefined) {
-      return { outcome: 'unavailable' } as const;
-    }
-    if (!matchesComponentExposure(component, approvedModule.federation, page.expose)) {
-      return { outcome: 'unavailable' } as const;
-    }
-    const records = yield* loadStates(sources, context, [moduleId]);
-    const [record] = records;
-    const state = record?.moduleKey === moduleId ? record.state : undefined;
-    if (state === undefined) {
-      return { outcome: 'not_found' } as const;
-    }
-    const access = input.access ?? page.entrypoint.access;
-    if (decideModuleStateAccess(state, access) === 'deny') {
-      return { outcome: 'not_found' } as const;
-    }
-    const permission = yield* resolveTargetPermission(sources, {
-      legalEntityId: context.legalEntityId,
-      moduleId,
-      principalId: context.principalId,
-      tenantId: context.tenantId,
-    });
-    if (permission !== null) {
-      return permission;
-    }
-    const publicPermission = yield* resolvePublicComponentPermission(sources, context, page);
-    if (publicPermission !== null) {
-      return publicPermission;
-    }
-
-    return {
-      appId: contract.deployment.appId,
-      compositionRevision: catalog.composition.revision,
-      federation: {
-        expose: page.expose,
-        manifest: approvedModule.federation.manifest,
-        remoteName: approvedModule.federation.remoteName,
+  const authorizeModuleTarget = Effect.fn('ShellCompositionAccess.authorizeModuleTarget')(
+    function* authorizeModuleTargetEffect(
+      context: ShellCompositionContext,
+      input: {
+        readonly access?: ModuleEntrypointAccess;
+        readonly canonicalPath?: string;
+        readonly compositionRevision?: string;
+        readonly entrypointKey?: string;
+        readonly moduleId?: string;
       },
-      moduleId,
-      outcome: 'resolved',
-      page,
-      routeParameters,
-      writable: state === 'active',
-    } as const;
-  });
+    ) {
+      if (context.legalEntityId === undefined) {
+        return moduleTargetAuthorization({ outcome: 'selection_required' });
+      }
+      const catalog = yield* loadCatalog(sources);
+      if (input.compositionRevision !== undefined && input.compositionRevision !== catalog.composition.revision) {
+        return moduleTargetAuthorization({ outcome: 'reload_required' });
+      }
+      const selected = resolvePageSelection(catalog, input);
+      if (selected === null) {
+        // An unknown module, page or path is "not found"; module-level denial is decided below for real targets.
+        return moduleTargetAuthorization({ outcome: 'not_found' });
+      }
+      const { contract, page, routeParameters } = selected;
+      const moduleId = contract.manifest.module.id;
+      const approvedModule = catalog.composition.modules.find((module) => module.moduleId === moduleId);
+      const component = contract.manifest.publicSurface.components.find(({ key }) => key === page.componentKey);
+      if (approvedModule?.federation.execution !== 'browser' || component === undefined) {
+        return moduleTargetAuthorization({ outcome: 'unavailable' });
+      }
+      if (!matchesComponentExposure(component, approvedModule.federation, page.expose)) {
+        return moduleTargetAuthorization({ outcome: 'unavailable' });
+      }
+      // Module access and the public component's own permission are independent SpiceDB checks.
+      const [permission, publicPermission] = yield* Effect.all(
+        [
+          resolveTargetPermission(sources, {
+            legalEntityId: context.legalEntityId,
+            moduleId,
+            principalId: context.principalId,
+            tenantId: context.tenantId,
+          }),
+          resolvePublicComponentPermission(sources, context, page),
+        ],
+        { concurrency: 2 },
+      );
+      return moduleTargetAuthorization({
+        access: input.access ?? page.entrypoint.access,
+        appId: contract.deployment.appId,
+        compositionRevision: catalog.composition.revision,
+        denial: permission ?? publicPermission,
+        federation: {
+          expose: page.expose,
+          manifest: approvedModule.federation.manifest,
+          remoteName: approvedModule.federation.remoteName,
+        },
+        moduleId,
+        outcome: 'candidate',
+        page,
+        routeParameters,
+      });
+    },
+  );
 
-  return Object.freeze({ compose, resolveModuleTarget });
+  return Object.freeze({
+    authorizeComposition,
+    authorizeModuleTarget,
+    finishComposition,
+    finishModuleTarget: finishShellModuleTarget,
+  });
 };
 
 export interface ShellCompositionFactoryService {
-  readonly create: typeof makeShellComposition;
+  readonly access: typeof makeShellCompositionAccess;
+  readonly data: typeof makeShellCompositionData;
 }
 
 export class ShellCompositionFactory extends Context.Service<ShellCompositionFactory, ShellCompositionFactoryService>()(
@@ -557,5 +682,5 @@ export class ShellCompositionFactory extends Context.Service<ShellCompositionFac
 
 export const ShellCompositionFactoryLive = Layer.succeed(
   ShellCompositionFactory,
-  Object.freeze({ create: makeShellComposition }),
+  Object.freeze({ access: makeShellCompositionAccess, data: makeShellCompositionData }),
 );

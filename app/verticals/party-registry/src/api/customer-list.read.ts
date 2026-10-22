@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 
 import {
@@ -58,14 +58,16 @@ export const customerListRead = defineRead(
     resultSchema: CustomerListResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<CustomerListServices>) =>
-    context.services.list(input).pipe(
-      Effect.mapError(customerListUnavailable),
-      Effect.map((items) => ({
-        evidence: { resultCount: items.length },
-        result: { items },
-      })),
-    ),
+  {
+    load: (input, context: ReadLoadContext<CustomerListServices>) =>
+      context.services.list(input).pipe(
+        Effect.mapError(customerListUnavailable),
+        Effect.map((items) => ({
+          evidence: { resultCount: items.length },
+          result: { items },
+        })),
+      ),
+  },
   Effect.fn('CustomerListRead.services')(function* makeCustomerListServices(transaction, scope) {
     const { legalEntityId } = scope;
     if (legalEntityId === undefined) {

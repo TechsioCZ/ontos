@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
 
 import {
@@ -60,27 +60,29 @@ export const partyRelationshipDetailRead = defineRead(
     resultSchema: PartyRelationshipDetailResponseSchema,
     schemaVersion: '1',
   },
-  Effect.fn('PartyRelationshipDetailRead.partyRelationshipDetailRead')(function* readRelationship(
-    input: PartyRelationshipDetailRequest,
-    context: ReadHandlerContext<Services>,
-  ) {
-    if (input.relationshipRef.tenantId !== context.scope.tenantId) {
-      return yield* new ReadHandlerNotFound({
-        code: 'read_handler_not_found',
-        reason: 'The requested Party Relationship does not exist',
-      });
-    }
-    const relationship = yield* context.services
-      .find(input.relationshipRef.resourceId)
-      .pipe(Effect.mapError(relationshipUnavailable));
-    if (Option.isNone(relationship)) {
-      return yield* new ReadHandlerNotFound({
-        code: 'read_handler_not_found',
-        reason: 'The requested Party Relationship does not exist',
-      });
-    }
-    return { evidence: { resultCount: 1 }, result: relationship.value };
-  }),
+  {
+    load: Effect.fn('PartyRelationshipDetailRead.partyRelationshipDetailRead')(function* readRelationship(
+      input: PartyRelationshipDetailRequest,
+      context: ReadLoadContext<Services>,
+    ) {
+      if (input.relationshipRef.tenantId !== context.scope.tenantId) {
+        return yield* new ReadHandlerNotFound({
+          code: 'read_handler_not_found',
+          reason: 'The requested Party Relationship does not exist',
+        });
+      }
+      const relationship = yield* context.services
+        .find(input.relationshipRef.resourceId)
+        .pipe(Effect.mapError(relationshipUnavailable));
+      if (Option.isNone(relationship)) {
+        return yield* new ReadHandlerNotFound({
+          code: 'read_handler_not_found',
+          reason: 'The requested Party Relationship does not exist',
+        });
+      }
+      return { evidence: { resultCount: 1 }, result: relationship.value };
+    }),
+  },
   (transaction, scope) =>
     Effect.succeed({
       find: (relationshipId: string) =>

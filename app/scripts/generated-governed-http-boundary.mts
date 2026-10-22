@@ -77,7 +77,8 @@ const arrowReturnTypeEnd = (
 ): number | undefined => {
   const previousSeparator = topLevelSeparators(structure, ',', callStart + 1, colon).at(-1);
   const argumentStart = (previousSeparator ?? callStart) + 1;
-  const prefix = /^\s*(?:async\s+)?\(/u.exec(structure.slice(argumentStart, colon));
+  // An object entry (`load: (input): Type => …`) carries its key before the callback parameters.
+  const prefix = /^\s*(?:[A-Za-z_$][\w$]*\s*:\s*)?(?:async\s+)?\(/u.exec(structure.slice(argumentStart, colon));
   if (prefix === null) {
     return undefined;
   }
@@ -146,7 +147,8 @@ const topLevelObjectEntries = (source: string): readonly string[] | undefined =>
   if (!source.startsWith('{') || matchingDelimiterEnd(source, 0, '{', '}') !== source.length - 1) {
     return undefined;
   }
-  const separators = topLevelSeparators(maskNonCode(source), ',', 1, source.length - 1);
+  const structure = maskArrowReturnTypeCommas(maskNonCode(source), 0, source.length - 1);
+  const separators = topLevelSeparators(structure, ',', 1, source.length - 1);
   return separatedSource(source, separators, 1, source.length - 1).filter((entry) => entry !== '');
 };
 
@@ -1781,7 +1783,7 @@ const hasReadCallbacks = (
   readFile: string,
   ownerPath: string,
 ): boolean => {
-  const handler = callArgument(readExpression, /^defineRead\(/u, 1);
+  const pipeline = callArgument(readExpression, /^defineRead\(/u, 1);
   const callbacks = [2, 3];
   if (kind === SEARCH_PROVIDER_KIND) {
     callbacks.push(4);
@@ -1820,8 +1822,21 @@ const hasReadCallbacks = (
       hasExactValueImport(source, 'defineReadConditionalPermission', CORE_RUNTIME_MODULE)
     );
   };
+  // The owner pipeline: an executable `load` step, plus optional executable `prepare` and `finish` steps.
+  const load = pipeline === undefined ? undefined : objectPropertyValue(pipeline, 'load');
+  const optionalSteps = ['prepare', 'finish'].flatMap((step) => {
+    const callback = pipeline === undefined ? undefined : objectPropertyValue(pipeline, step);
+    return callback === undefined ? [] : [callback];
+  });
   return (
-    (isReadHandlerCallback(handler, source) || isOwnerLocalImportedFactoryResult(handler)) &&
+    pipeline?.trimStart().startsWith('{') === true &&
+    (isReadHandlerCallback(load, source) || isOwnerLocalImportedFactoryResult(load)) &&
+    optionalSteps.every(
+      (callback) =>
+        isExecutableCallback(callback, source) ||
+        isOwnerLocalImportedCallback(callback) ||
+        isOwnerLocalImportedFactoryResult(callback),
+    ) &&
     callbacks.every((index) => {
       const callback = callArgument(readExpression, /^defineRead\(/u, index);
       return (

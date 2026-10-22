@@ -8,7 +8,7 @@ import { tenants } from '../../src/db/schema.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import type { ReadServiceFactory } from '../../src/reads/definition.ts';
-import type { ReadHandlerContext } from '../../src/reads/context.ts';
+import type { ReadLoadContext } from '../../src/reads/context.ts';
 import { ReadHandlerUnavailable, ReadPermissionDenied } from '../../src/reads/errors.ts';
 import { makeReadTestHarness } from '../../src/testing/reads.ts';
 
@@ -59,8 +59,10 @@ const registration = defineRead(
     resultSchema: Schema.Array(Schema.String),
     schemaVersion: '1',
   },
-  (_input, context: ReadHandlerContext<Services>) =>
-    context.services.read.pipe(Effect.map((result) => ({ evidence: { resultCount: result.length }, result }))),
+  {
+    load: (_input, context: ReadLoadContext<Services>) =>
+      context.services.read.pipe(Effect.map((result) => ({ evidence: { resultCount: result.length }, result }))),
+  },
   makeServices,
   () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );

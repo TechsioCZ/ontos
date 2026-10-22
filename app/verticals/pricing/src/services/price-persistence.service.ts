@@ -370,19 +370,19 @@ export interface DefinePricePersistenceCommand {
   readonly trustedOperationAt: Date;
 }
 
-interface ReadExactPriceCandidateSetPersistenceQuery {
+export interface ReadExactPriceCandidateSetPersistenceQuery {
   readonly effectiveAt: typeof PricingInstantSchema.Type;
   readonly exactKey: PriceIdentityKey;
 }
 
-interface VerifyExactPriceCandidateSetGenerationPersistenceQuery {
+export interface VerifyExactPriceCandidateSetGenerationPersistenceQuery {
   readonly authority: ExactPriceCandidateSetAuthority;
   readonly effectiveAt: typeof PricingInstantSchema.Type;
   readonly exactKey: PriceIdentityKey;
   readonly through: typeof PricingInstantSchema.Type;
 }
 
-interface PriceActionResultLookupQuery {
+export interface PriceActionResultLookupQuery {
   readonly actionInvocationId: string;
 }
 

@@ -1,6 +1,6 @@
 import { expect, it } from 'effect-rstest';
 import { Crypto, Effect, Layer, Predicate } from 'effect';
-import { getReadHandler } from '../../../../packages/core-runtime/src/reads/definition.ts';
+import { runReadOwnerSteps } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import {
   BusinessPermissionRelationshipMutation,
   ContextAccess,
@@ -399,7 +399,8 @@ const scopeWithoutLegalEntity = {
 
 it.effect('fails closed when the access-list handler lacks Legal Entity context', () =>
   Effect.gen(function* missingListLegalEntity() {
-    const unavailable = yield* getReadHandler(counterpartyCommerceAccessListRead)(
+    const unavailable = yield* runReadOwnerSteps(
+      counterpartyCommerceAccessListRead,
       { counterpartyRef, scope },
       {
         readKey: counterpartyCommerceAccessListRead.descriptor.readKey,
@@ -418,7 +419,8 @@ it.effect('fails closed when the access-list handler lacks Legal Entity context'
 
 it.effect('fails closed when the access-detail handler lacks Legal Entity context', () =>
   Effect.gen(function* missingDetailLegalEntity() {
-    const unavailable = yield* getReadHandler(counterpartyCommerceAccessDetailRead)(
+    const unavailable = yield* runReadOwnerSteps(
+      counterpartyCommerceAccessDetailRead,
       { counterpartyRef, grantRef, scope },
       {
         readKey: counterpartyCommerceAccessDetailRead.descriptor.readKey,
@@ -437,7 +439,8 @@ it.effect('fails closed when the access-detail handler lacks Legal Entity contex
 
 it.effect('fails closed when the invitation handler lacks Legal Entity context', () =>
   Effect.gen(function* missingInvitationLegalEntity() {
-    const unavailable = yield* getReadHandler(counterpartyAccessInvitationReadRead)(
+    const unavailable = yield* runReadOwnerSteps(
+      counterpartyAccessInvitationReadRead,
       { counterpartyRef, invitationRef, scope },
       {
         readKey: counterpartyAccessInvitationReadRead.descriptor.readKey,

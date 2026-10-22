@@ -8,13 +8,13 @@ import {
 } from '@app/core-runtime';
 import { ActionPermission } from '@app/core-runtime/actions/runtime-wiring';
 import { DateTime, Effect } from 'effect';
-import type { OperationalScope, ReadHandlerContext, ReadServiceFactory } from '@app/core-runtime';
-import { persistenceService } from '../services/finance-state-repository.ts';
+import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
+import { decodeFinanceState, persistenceService } from '../services/finance-state-repository.ts';
 import { projectFinanceRecords } from '../services/persistence.service.ts';
 import { pragueCalendarDate } from '../../shared/domain/finance-planning.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 
-type Services = Effect.Success<ReturnType<typeof persistenceService>> & { readonly canWrite: boolean };
+type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
 const financeModuleKey = 'finance.billing';
 
@@ -68,13 +68,8 @@ export const withoutExportFiles = <Result extends ReturnType<typeof projectFinan
         },
       };
 
-const makeRecordsServices: ReadServiceFactory<Services, ActionPermission> = Effect.fn('Finance.makeRecordsServices')(
-  function* makeServices(transaction, scope) {
-    const persistence = yield* persistenceService(transaction, scope);
-    const canWrite = yield* financeWriteCapability(scope);
-    return { ...persistence, canWrite };
-  },
-);
+const makeRecordsServices: ReadServiceFactory<Services> = (transaction, scope) =>
+  persistenceService(transaction, scope);
 
 export const recordsRead = defineRead(
   {
@@ -93,40 +88,60 @@ export const recordsRead = defineRead(
     resultSchema: RecordsResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<Services>) =>
-    Effect.gen(function* recordsHandler() {
-      const { revision, state } = yield* context.services.load();
-      const businessDate = pragueCalendarDate(DateTime.toEpochMillis(yield* DateTime.now));
-      const result = projectFinanceRecords(state, revision, input, businessDate);
-      const metadata =
-        input.documentId === undefined
-          ? undefined
-          : (state.documents ?? []).find((document) => document.id === input.documentId);
-      const stored = metadata === undefined ? undefined : yield* context.services.loadDocument(metadata.id);
-      const document =
-        metadata === undefined || stored === undefined
-          ? undefined
-          : {
-              contentBase64: stored.contentBase64,
-              fileName: metadata.fileName,
-              id: metadata.id,
-              mimeType: metadata.mimeType,
-            };
-      // Handover files carry partner IČO/DIČ and amounts: only principals who may run finance commands get them.
-      const visible = context.services.canWrite ? result : withoutExportFiles(result);
-      return {
-        evidence: { resultCount: result.state.invoices.length + result.state.financialPlanEntries.length },
-        result: {
-          ...visible,
-          ...(document === undefined ? {} : { document }),
-          canWrite: context.services.canWrite,
+  {
+    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
+    // The Action permission behind `canWrite` is a SpiceDB round trip: it runs before the transaction opens.
+    prepare: (_input, context) => financeWriteCapability(context.scope),
+    load: (input, context) =>
+      Effect.all(
+        {
+          document: input.documentId === undefined ? Effect.void : context.services.loadDocument(input.documentId),
+          row: context.services.loadStateRow(),
         },
-      };
-    }).pipe(
-      Effect.mapError(
-        (failure) => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: failure.reason }),
+        // Both reads share the read's single transaction connection.
+        { concurrency: 1 },
+      ).pipe(
+        Effect.mapError(
+          (failure) => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: failure.reason }),
+        ),
       ),
-    ),
+    finish: (input, context) =>
+      Effect.gen(function* recordsFinish() {
+        const canWrite = context.prepared;
+        const { revision, state } = yield* decodeFinanceState(context.loaded.row);
+        const businessDate = pragueCalendarDate(DateTime.toEpochMillis(yield* DateTime.now));
+        const result = projectFinanceRecords(state, revision, input, businessDate);
+        const metadata =
+          input.documentId === undefined
+            ? undefined
+            : (state.documents ?? []).find((document) => document.id === input.documentId);
+        const stored = context.loaded.document;
+        const document =
+          metadata === undefined || stored === undefined
+            ? undefined
+            : {
+                contentBase64: stored.contentBase64,
+                fileName: metadata.fileName,
+                id: metadata.id,
+                mimeType: metadata.mimeType,
+              };
+        // Handover files carry partner IČO/DIČ and amounts: only principals who may run finance commands get them.
+        const visible = canWrite ? result : withoutExportFiles(result);
+        return {
+          evidence: { resultCount: result.state.invoices.length + result.state.financialPlanEntries.length },
+          result: {
+            ...visible,
+            ...(document === undefined ? {} : { document }),
+            canWrite,
+          },
+        };
+      }).pipe(
+        Effect.mapError(
+          (failure) => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: failure.reason }),
+        ),
+      ),
+    // oxlint-enable perfectionist/sort-objects
+  },
   makeRecordsServices,
   () => ({ kind: 'module', moduleId: financeModuleKey }),
 );

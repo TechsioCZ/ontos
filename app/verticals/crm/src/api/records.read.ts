@@ -7,20 +7,17 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
-import type {
-  ReadHandlerContext,
-  ReadHandlerResult,
-  ReadPermissionDenied,
-  ReadServiceFactory,
-} from '@app/core-runtime';
+import type { ReadServiceFactory } from '@app/core-runtime';
 import { authorizedImportSamples } from '../../api/authorized-import-samples.ts';
 import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
-import { persistenceService } from '../services/persistence.service.ts';
+import { crmRecordsGrants, finishCrmRecords, persistenceService } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
-const readFailure = (failure: Effect.Error<ReturnType<Services['records']>>) =>
+const readFailure = (
+  failure: Effect.Error<ReturnType<typeof crmRecordsGrants>> | Effect.Error<ReturnType<typeof finishCrmRecords>>,
+) =>
   Match.value(failure).pipe(
     Match.tag(
       'CrmPersistenceUnavailable',
@@ -77,30 +74,29 @@ export const recordsRead = defineRead(
     resultSchema: RecordsResponseSchema,
     schemaVersion: '1',
   },
-  (
-    input: RecordsRequest,
-    context: ReadHandlerContext<Services>,
-  ): Effect.Effect<
-    ReadHandlerResult<RecordsResponse>,
-    ReadPermissionDenied | ReadHandlerNotFound | ReadHandlerUnavailable,
-    Effect.Services<ReturnType<typeof persistenceService>>
-  > =>
-    context.services.records(input).pipe(
-      Effect.mapError(readFailure),
-      // A clientId the viewer may not see (foreign rep's client, or none) answers 404 with no data (C00).
-      Effect.filterOrFail(
-        (result) => input.clientId === undefined || result.state.clients.items.length > 0,
-        () =>
-          new ReadHandlerNotFound({
-            code: 'read_handler_not_found',
-            reason: 'Klient neexistuje nebo k němu nemáte přístup',
-          }),
+  {
+    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
+    prepare: (_input, context) => crmRecordsGrants(context.scope).pipe(Effect.mapError(readFailure)),
+    load: (_input, context) => context.services.loadRecords().pipe(Effect.mapError(readFailure)),
+    finish: (input: RecordsRequest, context) =>
+      finishCrmRecords(input, context.loaded, context.prepared, context.scope).pipe(
+        Effect.mapError(readFailure),
+        // A clientId the viewer may not see (foreign rep's client, or none) answers 404 with no data (C00).
+        Effect.filterOrFail(
+          (result) => input.clientId === undefined || result.state.clients.items.length > 0,
+          () =>
+            new ReadHandlerNotFound({
+              code: 'read_handler_not_found',
+              reason: 'Klient neexistuje nebo k němu nemáte přístup',
+            }),
+        ),
+        Effect.map((result) => ({
+          evidence: { resultCount: result.state.clients.items.length },
+          result: { ...result, importSamples: authorizedImportSamples(result.viewer) },
+        })),
       ),
-      Effect.map((result) => ({
-        evidence: { resultCount: result.state.clients.items.length },
-        result: { ...result, importSamples: authorizedImportSamples(result.viewer) },
-      })),
-    ),
+    // oxlint-enable perfectionist/sort-objects
+  },
   makeRecordsServices,
   () => ({ kind: 'module', moduleId: moduleKey }),
 );

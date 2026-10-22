@@ -6,7 +6,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { AuthorizationMutationState, OperationalScope, ReadHandlerContext } from '@app/core-runtime';
+import type { AuthorizationMutationState, OperationalScope, ReadLoadContext } from '@app/core-runtime';
 import { Effect, Option, Result, Schema } from 'effect';
 import {
   RetailAccessDecisionRequestSchema,
@@ -129,10 +129,12 @@ export const retailAccessDecisionRead = defineRead(
     resultSchema: RetailAccessDecisionResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<RetailAccessDecisionServices>) =>
-    decideRetailAccessFromServices(input, context.scope.principalId, context.scope.tenantId, context.services).pipe(
-      Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
-    ),
+  {
+    load: (input, context: ReadLoadContext<RetailAccessDecisionServices>) =>
+      decideRetailAccessFromServices(input, context.scope.principalId, context.scope.tenantId, context.services).pipe(
+        Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+      ),
+  },
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(({ retailAccessDecision }) => retailAccessDecision),

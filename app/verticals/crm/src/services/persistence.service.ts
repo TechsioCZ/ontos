@@ -307,33 +307,18 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
       const revision = yield* save(expectedRevision, change.state);
       return { entityIds: [...change.entityIds], revision };
     });
-    const records = Effect.fn('Crm.records')(function* records(request: RecordsRequest) {
-      // Permission resolution and the company-scoped snapshot are independent reads. Do not hold the
-      // database read behind the remote permission round trip; still project only after BOTH succeed.
-      const [has, snapshot] = yield* Effect.all([grantedPermissions(access, scope), load()], { concurrency: 2 });
-      const viewer = viewerFor(snapshot.state, scope.principalId, has);
-      const projected = projectCrmState(snapshot.state, viewer);
-      const narrowed =
-        request.clientId === undefined
-          ? projected
-          : projectCrmState(
-              {
-                ...projected,
-                clients: {
-                  ...projected.clients,
-                  items: projected.clients.items.filter((client) => client.id === request.clientId),
-                },
-              },
-              viewer,
-            );
-      return {
-        now: DateTime.formatIso(yield* DateTime.now),
-        revision: snapshot.revision,
-        state: narrowed,
-        viewer: reportedViewer(viewer, scope),
-      } satisfies RecordsResponse;
-    });
-    return { apply, records };
+    /** The records read's whole transaction step: the raw state row; {@link finishCrmRecords} decodes it. */
+    const loadRecords = () =>
+      transaction
+        .select({ revision: crmStates.revision, state: crmStates.state })
+        .from(crmStates)
+        .where(whereScope)
+        .limit(1)
+        .pipe(
+          Effect.map(([row]): LoadedCrmRecords => row),
+          Effect.mapError(unavailable),
+        );
+    return { apply, loadRecords };
   },
   Effect.mapError((cause) =>
     withCause(
@@ -345,3 +330,50 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
     ),
   ),
 );
+
+/** What a records read knows before its transaction opens: every CRM permission, in one bulk check. */
+export const crmRecordsGrants = Effect.fn('Crm.recordsGrants')(function* crmRecordsGrants(scope: OperationalScope) {
+  return yield* grantedPermissions(yield* ContextAccess, scope);
+});
+
+/** The stored CRM row as the owner transaction read it (still encoded). */
+export type LoadedCrmRecords = { readonly revision: number; readonly state: unknown } | undefined;
+
+/** After commit: decodes the stored CRM state and projects it for the viewer. No database access. */
+export const finishCrmRecords = Effect.fn('Crm.finishRecords')(function* finishCrmRecords(
+  request: RecordsRequest,
+  loaded: LoadedCrmRecords,
+  has: (permission: CrmPermissionKey) => boolean,
+  scope: OperationalScope,
+) {
+  const snapshot =
+    loaded === undefined
+      ? { revision: 0, state: initialCrmState }
+      : {
+          revision: loaded.revision,
+          state: yield* Schema.decodeUnknownEffect(CrmStateSchema)(withDefaultSlices(loaded.state)).pipe(
+            Effect.mapError(unavailable),
+          ),
+        };
+  const viewer = viewerFor(snapshot.state, scope.principalId, has);
+  const projected = projectCrmState(snapshot.state, viewer);
+  const narrowed =
+    request.clientId === undefined
+      ? projected
+      : projectCrmState(
+          {
+            ...projected,
+            clients: {
+              ...projected.clients,
+              items: projected.clients.items.filter((client) => client.id === request.clientId),
+            },
+          },
+          viewer,
+        );
+  return {
+    now: DateTime.formatIso(yield* DateTime.now),
+    revision: snapshot.revision,
+    state: narrowed,
+    viewer: reportedViewer(viewer, scope),
+  } satisfies RecordsResponse;
+});

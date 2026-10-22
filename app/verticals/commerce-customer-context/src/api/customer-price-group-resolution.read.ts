@@ -8,7 +8,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { OperationalScope, ReadHandlerContext } from '@app/core-runtime';
+import type { OperationalScope, ReadLoadContext } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 import {
   CustomerPriceGroupResolutionRequestSchema,
@@ -227,20 +227,25 @@ export const customerPriceGroupResolutionRead = defineRead(
     resultSchema: CustomerPriceGroupResolutionResponseSchema,
     schemaVersion: '1',
   },
-  (input: CustomerPriceGroupResolutionRequest, context: ReadHandlerContext<CustomerPriceGroupResolutionServices>) =>
-    resolveCustomerPriceGroupFromServices(input, context.scope.tenantId, context.services).pipe(
-      Effect.map((result) => ({
-        evidence: {
-          resultCount:
-            result.resolution._tag === 'NONE'
-              ? 0
-              : result.resolution._tag === 'INCONSISTENT'
-                ? result.resolution.currentAssignmentCount
-                : 1,
-        },
-        result,
-      })),
-    ),
+  {
+    load: (
+      input: CustomerPriceGroupResolutionRequest,
+      context: ReadLoadContext<CustomerPriceGroupResolutionServices>,
+    ) =>
+      resolveCustomerPriceGroupFromServices(input, context.scope.tenantId, context.services).pipe(
+        Effect.map((result) => ({
+          evidence: {
+            resultCount:
+              result.resolution._tag === 'NONE'
+                ? 0
+                : result.resolution._tag === 'INCONSISTENT'
+                  ? result.resolution.currentAssignmentCount
+                  : 1,
+          },
+          result,
+        })),
+      ),
+  },
   customerPriceGroupResolutionServicesForTransaction,
   customerPriceGroupReadPermission,
 );

@@ -10,7 +10,7 @@ import { executeRecordsWithAuthorization as executeAgreementRecords } from '@app
 import { executeRecordsWithAuthorization as executePropertyRecords } from '@app/property-portfolio/clients/records';
 import { executeRecordsWithAuthorization as executeWorkforceRecords } from '@app/workforce/clients/records';
 import type { ContextAccessService, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { Context, DateTime, Effect, Match, Option, Predicate, Result, Schema, Struct } from 'effect';
 
 import {
@@ -431,9 +431,13 @@ export const evolveBulkWorkState = Effect.fn('Work.evolveBulkState')(function* e
   };
 });
 
-const contextGrant = Effect.fn('Work.contextGrant')(function* contextGrant(
+const WorkGrantSchema = Schema.Literals(['read_all', 'write_all']);
+type WorkGrant = typeof WorkGrantSchema.Type;
+
+/** One bulk SpiceDB check for the given Work context permissions of the scope's company. */
+const contextGrants = Effect.fn('Work.contextGrants')(function* contextGrants(
   scope: OperationalScope,
-  permission: 'read_all' | 'write_all',
+  permissions: readonly WorkGrant[],
 ) {
   const access = yield* ContextAccess;
   if (scope.legalEntityId === undefined || access.contextPermissions === undefined) {
@@ -442,25 +446,41 @@ const contextGrant = Effect.fn('Work.contextGrant')(function* contextGrant(
   const decisions = yield* access.contextPermissions({
     legalEntityId: scope.legalEntityId,
     principalId: scope.principalId,
-    targets: [{ moduleId: workModuleId, permission: `work.tasks.${permission}` }],
+    targets: permissions.map((permission) => ({ moduleId: workModuleId, permission: `work.tasks.${permission}` })),
     tenantId: scope.tenantId,
   });
   if (
-    decisions.length !== 1 ||
-    decisions[0]?.key !== `work.tasks:work.tasks.${permission}` ||
-    decisions[0]?.decision === 'unavailable'
+    decisions.length !== permissions.length ||
+    decisions.some(
+      (decision, index) =>
+        decision.key !== `work.tasks:work.tasks.${permissions[index]}` || decision.decision === 'unavailable',
+    )
   ) {
     return yield* referenceUnavailable();
   }
-  return decisions[0]?.decision === 'allowed';
+  return (permission: WorkGrant) => decisions[permissions.indexOf(permission)]?.decision === 'allowed';
 });
+
+const contextGrant = (scope: OperationalScope, permission: WorkGrant) =>
+  contextGrants(scope, [permission]).pipe(Effect.map((granted) => granted(permission)));
+
+/** What a records read knows before its transaction opens: Work grants and lookup hints, in parallel. */
+export const workRecordsGrants = Effect.fn('Work.recordsGrants')(function* workRecordsGrants(scope: OperationalScope) {
+  const [granted, lookupAccess] = yield* Effect.all(
+    [contextGrants(scope, ['read_all', 'write_all']), taskLookupAccess(scope)],
+    { concurrency: 2 },
+  );
+  return { lookupAccess, readAll: granted('read_all'), writeAll: granted('write_all') };
+});
+export type WorkRecordsGrants = Effect.Success<ReturnType<typeof workRecordsGrants>>;
 
 export const visibleWorkTasks = Effect.fn('Work.visibleTasks')(function* visibleTasks(
   tasks: readonly Task[],
   scope: OperationalScope,
+  readAll: boolean,
 ) {
   const access = yield* ContextAccess;
-  if (yield* contextGrant(scope, 'read_all')) {
+  if (readAll) {
     return tasks;
   }
   if (scope.legalEntityId === undefined) {
@@ -487,6 +507,122 @@ export const visibleWorkTasks = Effect.fn('Work.visibleTasks')(function* visible
     (task, index) =>
       decisions[index]?.decision === 'allowed' || task.ownerPrincipalRef?.principalId === scope.principalId,
   );
+});
+
+const emptyWorkState = (scope: OperationalScope, legalEntityId: string) =>
+  Schema.decodeEffect(WorkStateSchema)({
+    collection: {
+      properties: {
+        dueDate: { locked: true, type: 'DATE' },
+        ownerPrincipalRef: { locked: true, type: 'PRINCIPAL' },
+        status: { groups: ['NOT_STARTED', 'IN_PROGRESS', 'DONE'], locked: true, type: 'STATUS' },
+        title: { locked: true, type: 'TEXT' },
+      },
+      ref: {
+        moduleId: 'work.tasks',
+        resourceId: `default:${legalEntityId}`,
+        resourceType: 'work.tasks.task-collection',
+        tenantId: scope.tenantId,
+      },
+      title: 'Tasks',
+    },
+    tasks: [],
+  });
+
+/** Older entries written before the snapshot existed get the current Core display name at read time. */
+const withActorNames = (
+  tasks: readonly Task[],
+  projects: readonly WorkProject[],
+  names: ReadonlyMap<string, string>,
+) => {
+  if (names.size === 0) return { projects, tasks };
+  const named = (history: readonly HistoryEntry[] | undefined) =>
+    history?.map((entry) => {
+      const name = entry.actorDisplayName ?? names.get(entry.actorPrincipalRef.principalId);
+      return name === undefined ? entry : { ...entry, actorDisplayName: name };
+    });
+  return {
+    projects: projects.map((project) =>
+      project.history === undefined ? project : { ...project, history: named(project.history) ?? [] },
+    ),
+    tasks: tasks.map((task): Task => {
+      const comments = task.comments?.map((comment) => {
+        const name = comment.authorDisplayName ?? names.get(comment.authorPrincipalRef.principalId);
+        return name === undefined ? comment : { ...comment, authorDisplayName: name };
+      });
+      return {
+        ...task,
+        ...(task.history === undefined ? {} : { history: named(task.history) ?? [] }),
+        ...(comments === undefined ? {} : { comments }),
+      };
+    }),
+  };
+};
+
+/** The stored Work row and the Core display names it mentions, as the owner transaction read them. */
+export interface LoadedWorkRecords {
+  readonly names: ReadonlyMap<string, string>;
+  readonly revision: number;
+  readonly state: unknown;
+}
+
+/**
+ * After commit: decodes the stored state, keeps the tasks the person may see (SpiceDB row filter when the
+ * company grant is missing), and shapes the records response.
+ */
+export const finishWorkRecords = Effect.fn('Work.finishRecords')(function* finishWorkRecords(
+  request: RecordsRequest,
+  loaded: LoadedWorkRecords,
+  grants: WorkRecordsGrants,
+  scope: OperationalScope,
+) {
+  const { legalEntityId } = scope;
+  if (legalEntityId === undefined) {
+    return yield* referenceUnavailable();
+  }
+  const state =
+    loaded.state === undefined
+      ? yield* emptyWorkState(scope, legalEntityId).pipe(Effect.mapError(unavailable))
+      : yield* Schema.decodeUnknownEffect(WorkStateSchema)(loaded.state).pipe(Effect.mapError(unavailable));
+  const visible = yield* visibleWorkTasks(state.tasks, scope, grants.readAll);
+  if (request.resourceId !== undefined && !visible.some((task) => task.ref.resourceId === request.resourceId)) {
+    return yield* new WorkPermissionDenied({
+      code: 'work_permission_denied',
+      reason: 'Task detail is forbidden or absent',
+    });
+  }
+  const items = visible.filter(
+    (task) =>
+      (request.resourceId === undefined || task.ref.resourceId === request.resourceId) &&
+      // Hidden tasks stay out of lists; a direct link (one resourceId) still opens them.
+      (task.archivedAt === undefined || request.resourceId !== undefined || request.includeArchived === true) &&
+      (request.state === undefined || task.state === request.state) &&
+      (request.ownerPrincipalId === undefined || task.ownerPrincipalRef?.principalId === request.ownerPrincipalId) &&
+      (request.assigneeEmployeeId === undefined || task.assigneeEmployeeId === request.assigneeEmployeeId) &&
+      (request.partyId === undefined || task.partyId === request.partyId) &&
+      (request.opportunityId === undefined || task.opportunityId === request.opportunityId) &&
+      (request.contextResourceId === undefined ||
+        task.contextRefs.some((ref) => ref.resourceId === request.contextResourceId)),
+  );
+  const named = withActorNames(items, grants.readAll ? (state.projects ?? []) : [], loaded.names);
+  const referenceDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Prague' }).format(
+    DateTime.toDateUtc(yield* DateTime.now),
+  );
+  return {
+    actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
+    lookupAccess: grants.lookupAccess,
+    canWrite: grants.writeAll && isConnectionWriteAllowed(scope, workModuleId),
+    collection: state.collection,
+    projects: named.projects,
+    indicators: {
+      open: items.filter((task) => taskStatusGroup(task.state) !== 'DONE').length,
+      openByAssignee: openByAssignee(items),
+      overdue: items.filter((task) => taskIsOverdue(task, referenceDate)).length,
+    },
+    items: named.tasks,
+    referenceDate,
+    revision: loaded.revision,
+  };
 });
 
 const validWriteDecision = (
@@ -559,73 +695,44 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
     const actorDisplayName = Effect.fn('Work.actorDisplayName')(function* actorDisplayName() {
       return (yield* principalNames(new Set([scope.principalId]))).get(scope.principalId);
     });
-    /** Older entries written before the snapshot existed get the current Core display name at read time. */
-    const withActorNames = Effect.fn('Work.withActorNames')(function* withActorNames(
-      tasks: readonly Task[],
-      projects: readonly WorkProject[],
-    ) {
-      const unnamed = new Set<string>();
-      const collect = (history: readonly HistoryEntry[] | undefined) => {
-        for (const entry of history ?? [])
-          if (entry.actorDisplayName === undefined) unnamed.add(entry.actorPrincipalRef.principalId);
-      };
-      for (const task of tasks) {
-        collect(task.history);
-        for (const comment of task.comments ?? [])
-          if (comment.authorDisplayName === undefined) unnamed.add(comment.authorPrincipalRef.principalId);
-      }
-      for (const project of projects) collect(project.history);
-      const names = yield* principalNames(unnamed);
-      if (names.size === 0) return { projects, tasks };
-      const named = (history: readonly HistoryEntry[] | undefined) =>
-        history?.map((entry) => {
-          const name = entry.actorDisplayName ?? names.get(entry.actorPrincipalRef.principalId);
-          return name === undefined ? entry : { ...entry, actorDisplayName: name };
-        });
-      return {
-        projects: projects.map((project) =>
-          project.history === undefined ? project : { ...project, history: named(project.history) ?? [] },
-        ),
-        tasks: tasks.map((task): Task => {
-          const comments = task.comments?.map((comment) => {
-            const name = comment.authorDisplayName ?? names.get(comment.authorPrincipalRef.principalId);
-            return name === undefined ? comment : { ...comment, authorDisplayName: name };
-          });
-          return {
-            ...task,
-            ...(task.history === undefined ? {} : { history: named(task.history) ?? [] }),
-            ...(comments === undefined ? {} : { comments }),
-          };
-        }),
-      };
-    });
     const whereScope = and(eq(workStates.tenantId, scope.tenantId), eq(workStates.legalEntityId, legalEntityId));
     const load = Effect.fn('Work.load')(function* load() {
-      const rows = yield* transaction.select().from(workStates).where(whereScope).limit(1);
-      const [row] = rows;
+      const [row] = yield* transaction.select().from(workStates).where(whereScope).limit(1);
       if (row === undefined) {
-        const state = yield* Schema.decodeEffect(WorkStateSchema)({
-          collection: {
-            properties: {
-              dueDate: { locked: true, type: 'DATE' },
-              ownerPrincipalRef: { locked: true, type: 'PRINCIPAL' },
-              status: { groups: ['NOT_STARTED', 'IN_PROGRESS', 'DONE'], locked: true, type: 'STATUS' },
-              title: { locked: true, type: 'TEXT' },
-            },
-            ref: {
-              moduleId: 'work.tasks',
-              resourceId: `default:${legalEntityId}`,
-              resourceType: 'work.tasks.task-collection',
-              tenantId: scope.tenantId,
-            },
-            title: 'Tasks',
-          },
-          tasks: [],
-        });
-        return { revision: 0, state };
+        return { revision: 0, state: yield* emptyWorkState(scope, legalEntityId) };
       }
       const state = yield* Schema.decodeUnknownEffect(WorkStateSchema)(row.state);
       return { revision: row.revision, state };
+    }, Effect.mapError(unavailable));
+    /**
+     * The records read's whole transaction step: the raw state row and the display names of every principal it
+     * mentions. Decoding and visibility filtering run after commit in {@link finishWorkRecords}.
+     */
+    const loadRecords = Effect.fn('Work.loadRecords')(function* loadRecords() {
+      const [row] = yield* transaction
+        .select({ revision: workStates.revision, state: workStates.state })
+        .from(workStates)
+        .where(whereScope)
+        .limit(1);
+      if (row === undefined) {
+        return { names: new Map<string, string>(), revision: 0, state: undefined } satisfies LoadedWorkRecords;
+      }
+      const mentioned = yield* transaction
+        .select({ displayName: corePrincipals.displayName, principalId: corePrincipals.principalId })
+        .from(corePrincipals)
+        .where(
+          and(
+            eq(corePrincipals.tenantId, scope.tenantId),
+            sql`${corePrincipals.principalId}::text in (select jsonb_path_query(${workStates.state}, 'lax $.**.principalId') #>> '{}' from ${workStates} where ${whereScope})`,
+          ),
+        )
+        // Best-effort: an unreadable principal table leaves the names out and history shows a generic label.
+        .pipe(Effect.catchCause(() => Effect.succeed([])));
+      return {
+        names: new Map(mentioned.map((entry) => [entry.principalId, entry.displayName] as const)),
+        revision: row.revision,
+        state: row.state,
+      } satisfies LoadedWorkRecords;
     }, Effect.mapError(unavailable));
     const save = Effect.fn('Work.save')(function* save(expectedRevision: number, state: WorkState) {
       const encoded = yield* Schema.encodeEffect(WorkStateSchema)(state).pipe(Effect.mapError(unavailable));
@@ -939,53 +1046,7 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
         task: recorded.tasks.find((item) => item.ref.resourceId === change.task.ref.resourceId) ?? change.task,
       };
     });
-    const records = Effect.fn('Work.records')(function* records(request: RecordsRequest) {
-      const snapshot = yield* load();
-      const visible = yield* visibleWorkTasks(snapshot.state.tasks, scope);
-      if (request.resourceId !== undefined && !visible.some((task) => task.ref.resourceId === request.resourceId)) {
-        return yield* new WorkPermissionDenied({
-          code: 'work_permission_denied',
-          reason: 'Task detail is forbidden or absent',
-        });
-      }
-      const items = visible.filter(
-        (task) =>
-          (request.resourceId === undefined || task.ref.resourceId === request.resourceId) &&
-          // Hidden tasks stay out of lists; a direct link (one resourceId) still opens them.
-          (task.archivedAt === undefined || request.resourceId !== undefined || request.includeArchived === true) &&
-          (request.state === undefined || task.state === request.state) &&
-          (request.ownerPrincipalId === undefined ||
-            task.ownerPrincipalRef?.principalId === request.ownerPrincipalId) &&
-          (request.assigneeEmployeeId === undefined || task.assigneeEmployeeId === request.assigneeEmployeeId) &&
-          (request.partyId === undefined || task.partyId === request.partyId) &&
-          (request.opportunityId === undefined || task.opportunityId === request.opportunityId) &&
-          (request.contextResourceId === undefined ||
-            task.contextRefs.some((ref) => ref.resourceId === request.contextResourceId)),
-      );
-      const named = yield* withActorNames(
-        items,
-        (yield* contextGrant(scope, 'read_all')) ? (snapshot.state.projects ?? []) : [],
-      );
-      const referenceDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Prague' }).format(
-        DateTime.toDateUtc(yield* DateTime.now),
-      );
-      return {
-        actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
-        lookupAccess: yield* taskLookupAccess(scope),
-        canWrite: (yield* contextGrant(scope, 'write_all')) && isConnectionWriteAllowed(scope, workModuleId),
-        collection: snapshot.state.collection,
-        projects: named.projects,
-        indicators: {
-          open: items.filter((task) => taskStatusGroup(task.state) !== 'DONE').length,
-          openByAssignee: openByAssignee(items),
-          overdue: items.filter((task) => taskIsOverdue(task, referenceDate)).length,
-        },
-        items: named.tasks,
-        referenceDate,
-        revision: snapshot.revision,
-      };
-    });
-    return { apply, records };
+    return { apply, loadRecords };
   },
   Effect.mapError((cause) =>
     Object.defineProperty(

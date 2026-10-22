@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext, ReadHandlerResult } from '@app/core-runtime';
+import type { ReadLoadContext, ReadHandlerResult } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   DecisionExplanationRequestSchema,
@@ -63,7 +63,7 @@ const evidencePersistenceUnavailable = (cause: unknown) => {
 
 const readDecisionExplanation = (
   input: DecisionExplanationRequest,
-  context: ReadHandlerContext<DecisionExplanationServices>,
+  context: ReadLoadContext<DecisionExplanationServices>,
 ): Effect.Effect<ReadHandlerResult<DecisionExplanationResponse>, ReadHandlerNotFound | ReadHandlerUnavailable> =>
   context.services.explanation.explain(input).pipe(
     Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
@@ -90,7 +90,7 @@ export const decisionExplanationRead = defineRead(
     resultSchema: DecisionExplanationResponseSchema,
     schemaVersion: '1',
   },
-  readDecisionExplanation,
+  { load: readDecisionExplanation },
   (transaction, scope) => {
     const resolveEvidence = assortmentDecisionEvidenceReferenceForScope(transaction, scope);
     return Effect.succeed({

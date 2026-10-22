@@ -276,9 +276,13 @@ export const visibleEmailObservations = (
     ),
   );
 
-const contextGrant = Effect.fn('Relationships.contextGrant')(function* contextGrant(
+const ContextGrantSchema = Schema.Literals(['read_all', 'write_all']);
+type ContextGrant = typeof ContextGrantSchema.Type;
+
+/** One bulk SpiceDB check for the given context permissions of the scope's company. */
+const contextGrants = Effect.fn('Relationships.contextGrants')(function* contextGrants(
   scope: OperationalScope,
-  permission: 'read_all' | 'write_all',
+  permissions: readonly ContextGrant[],
 ) {
   const access = yield* ContextAccess;
   if (scope.legalEntityId === undefined || access.contextPermissions === undefined) {
@@ -287,24 +291,42 @@ const contextGrant = Effect.fn('Relationships.contextGrant')(function* contextGr
   const decisions = yield* access.contextPermissions({
     legalEntityId: scope.legalEntityId,
     principalId: scope.principalId,
-    targets: [{ moduleId: 'crm.activities', permission: `crm.activities.${permission}` }],
+    targets: permissions.map((permission) => ({
+      moduleId: 'crm.activities',
+      permission: `crm.activities.${permission}`,
+    })),
     tenantId: scope.tenantId,
   });
   if (
-    decisions.length !== 1 ||
-    decisions[0]?.key !== `crm.activities:crm.activities.${permission}` ||
-    decisions[0]?.decision === 'unavailable'
+    decisions.length !== permissions.length ||
+    decisions.some(
+      (decision, index) =>
+        decision.key !== `crm.activities:crm.activities.${permissions[index]}` || decision.decision === 'unavailable',
+    )
   ) {
     return yield* referenceUnavailable();
   }
-  return decisions[0]?.decision === 'allowed';
+  return (permission: ContextGrant) => decisions[permissions.indexOf(permission)]?.decision === 'allowed';
 });
+
+const contextGrant = (scope: OperationalScope, permission: ContextGrant) =>
+  contextGrants(scope, [permission]).pipe(Effect.map((granted) => granted(permission)));
+
+/** What a records read knows before its transaction opens: both grants in one bulk check. */
+export const crmActivitiesRecordsGrants = Effect.fn('Relationships.recordsGrants')(function* recordsGrants(
+  scope: OperationalScope,
+) {
+  const granted = yield* contextGrants(scope, ['read_all', 'write_all']);
+  return { readAll: granted('read_all'), writeAll: granted('write_all') };
+});
+export type RecordsGrants = Effect.Success<ReturnType<typeof crmActivitiesRecordsGrants>>;
 export const visibleActivities = Effect.fn('Relationships.visibleActivities')(function* visibleActivities(
   activities: readonly Activity[],
   scope: OperationalScope,
+  readAll: boolean,
 ) {
   const access = yield* ContextAccess;
-  if (yield* contextGrant(scope, 'read_all')) {
+  if (readAll) {
     return activities;
   }
   if (scope.legalEntityId === undefined) {
@@ -328,6 +350,47 @@ export const visibleActivities = Effect.fn('Relationships.visibleActivities')(fu
     return yield* referenceUnavailable();
   }
   return activities.filter((_, index) => decisions[index]?.decision === 'allowed');
+});
+
+/** The stored row as the owner transaction read it (still encoded). */
+export type LoadedRecords = { readonly revision: number; readonly state: unknown } | undefined;
+
+/** After commit: decodes the stored state, keeps what the person may see (SpiceDB row filter), shapes the response. */
+export const finishCrmActivitiesRecords = Effect.fn('Relationships.finishRecords')(function* finishRecords(
+  request: RecordsRequest,
+  loaded: LoadedRecords,
+  grants: RecordsGrants,
+  scope: OperationalScope,
+) {
+  if (loaded === undefined) {
+    return yield* unavailable();
+  }
+  const snapshot = {
+    revision: loaded.revision,
+    state: yield* Schema.decodeUnknownEffect(RelationshipsStateSchema)(loaded.state).pipe(Effect.mapError(unavailable)),
+  };
+  const visible = yield* visibleActivities(snapshot.state.activities, scope, grants.readAll);
+  if (request.resourceId !== undefined && !visible.some((activity) => activity.ref.resourceId === request.resourceId)) {
+    return yield* new ActivityPermissionDenied({
+      code: 'activity_permission_denied',
+      reason: 'Activity detail is forbidden or absent',
+    });
+  }
+  const items = visible
+    .filter(
+      (activity) =>
+        (request.resourceId === undefined || activity.ref.resourceId === request.resourceId) &&
+        (request.partyId === undefined || activity.partyRef?.resourceId === request.partyId) &&
+        (request.counterpartyId === undefined || activity.counterpartyRef?.resourceId === request.counterpartyId),
+    )
+    .toSorted((left, right) => DateTime.toEpochMillis(right.occurredAt) - DateTime.toEpochMillis(left.occurredAt));
+  return {
+    actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
+    canWrite: grants.writeAll,
+    emailObservations: visibleEmailObservations(snapshot.state.emailObservations, items),
+    items,
+    revision: snapshot.revision,
+  };
 });
 
 export const persistenceService = Effect.fn('Relationships.persistenceService')(
@@ -426,35 +489,18 @@ export const persistenceService = Effect.fn('Relationships.persistenceService')(
       }
       return { activity: change.activity, revision: expectedRevision + 1 };
     });
-    const records = Effect.fn('Relationships.records')(function* records(request: RecordsRequest) {
-      const snapshot = yield* load();
-      const visible = yield* visibleActivities(snapshot.state.activities, scope);
-      if (
-        request.resourceId !== undefined &&
-        !visible.some((activity) => activity.ref.resourceId === request.resourceId)
-      ) {
-        return yield* new ActivityPermissionDenied({
-          code: 'activity_permission_denied',
-          reason: 'Activity detail is forbidden or absent',
-        });
-      }
-      const items = visible
-        .filter(
-          (activity) =>
-            (request.resourceId === undefined || activity.ref.resourceId === request.resourceId) &&
-            (request.partyId === undefined || activity.partyRef?.resourceId === request.partyId) &&
-            (request.counterpartyId === undefined || activity.counterpartyRef?.resourceId === request.counterpartyId),
-        )
-        .toSorted((left, right) => DateTime.toEpochMillis(right.occurredAt) - DateTime.toEpochMillis(left.occurredAt));
-      return {
-        actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
-        canWrite: yield* contextGrant(scope, 'write_all'),
-        emailObservations: visibleEmailObservations(snapshot.state.emailObservations, items),
-        items,
-        revision: snapshot.revision,
-      };
-    });
-    return { apply, records };
+    /** The records read's whole transaction step: the raw state row; decoding runs after commit. */
+    const loadRecords = () =>
+      transaction
+        .select({ revision: relationshipsStates.revision, state: relationshipsStates.state })
+        .from(relationshipsStates)
+        .where(whereScope)
+        .limit(1)
+        .pipe(
+          Effect.map(([row]): LoadedRecords => row),
+          Effect.mapError(unavailable),
+        );
+    return { apply, loadRecords };
   },
   Effect.mapError((cause) =>
     Object.defineProperty(

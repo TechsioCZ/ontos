@@ -10,7 +10,7 @@ import { Effect, Schema } from 'effect';
 import { AgentReviewRequestSchema, AgentReviewResponseSchema } from '../../shared/apis/agent-review.ts';
 import type { AgentReviewRequest } from '../../shared/apis/agent-review.ts';
 import { CrmStateSchema } from '../../shared/apis/records.ts';
-import { persistenceService } from '../services/persistence.service.ts';
+import { crmRecordsGrants, finishCrmRecords, persistenceService } from '../services/persistence.service.ts';
 import { reviewCrmProposal, seesAllClients } from './agent-review.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
@@ -42,6 +42,12 @@ const makeAgentReviewServices: ReadServiceFactory<Services, Effect.Services<Retu
   );
 
 const encodeState = Schema.encodeSync(CrmStateSchema);
+const crmUnavailable = (cause: unknown) =>
+  Object.defineProperty(
+    new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'CRM is temporarily unavailable' }),
+    'cause',
+    { configurable: true, value: cause },
+  );
 
 export const agentReviewRead = defineRead(
   {
@@ -60,18 +66,25 @@ export const agentReviewRead = defineRead(
     resultSchema: AgentReviewResponseSchema,
     schemaVersion: '1',
   },
-  (input: AgentReviewRequest, context) =>
-    // The reader's own records answer: clients narrowed to what they may see, and their rights.
-    context.services.records({}).pipe(
-      Effect.mapError(
-        () => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'CRM is temporarily unavailable' }),
+  {
+    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
+    prepare: (_input, context) => crmRecordsGrants(context.scope).pipe(Effect.mapError(crmUnavailable)),
+    load: (_input, context) => context.services.loadRecords().pipe(Effect.mapError(crmUnavailable)),
+    finish: (input: AgentReviewRequest, context) =>
+      // The reader's own records answer: clients narrowed to what they may see, and their rights.
+      finishCrmRecords({}, context.loaded, context.prepared, context.scope).pipe(
+        Effect.mapError(crmUnavailable),
+        Effect.map((records) => {
+          const clients = encodeState(records.state).clients.items;
+          const items = input.items.map((request) => reviewCrmProposal(request, records.viewer, clients));
+          return {
+            evidence: { resultCount: items.length },
+            result: { items, seesAllRecords: seesAllClients(records.viewer) },
+          };
+        }),
       ),
-      Effect.map((records) => {
-        const clients = encodeState(records.state).clients.items;
-        const items = input.items.map((request) => reviewCrmProposal(request, records.viewer, clients));
-        return { evidence: { resultCount: items.length }, result: { items, seesAllRecords: seesAllClients(records.viewer) } };
-      }),
-    ),
+    // oxlint-enable perfectionist/sort-objects
+  },
   makeAgentReviewServices,
   () => ({ kind: 'module', moduleId: moduleKey }),
 );

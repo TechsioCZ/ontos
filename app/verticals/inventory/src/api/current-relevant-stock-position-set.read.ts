@@ -8,7 +8,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext, BusinessPermissionAccessTarget, OperationalScope } from '@app/core-runtime';
+import type { ReadLoadContext, BusinessPermissionAccessTarget, OperationalScope } from '@app/core-runtime';
 import type { RelevantStockPositionSetRequest } from '../../shared/domain/current-relevant-stock-position-set.ts';
 import { Effect, Schema } from 'effect';
 import {
@@ -104,17 +104,19 @@ export const currentRelevantStockPositionSetRead = defineRead(
     resultSchema: CurrentRelevantStockPositionSetResponseSchema,
     schemaVersion: '1',
   },
-  (
-    input: RelevantStockPositionSetRequest,
-    context: ReadHandlerContext<ReturnType<typeof currentRelevantStockPositionSetService>>,
-  ) =>
-    context.services.read(input).pipe(
-      Effect.map((result) => ({
-        evidence: { resultCount: result.outcome === 'COMPLETE' ? result.positionRefs.length : 0 },
-        result,
-      })),
-      Effect.mapError(mapPositionSetReadFailure),
-    ),
+  {
+    load: (
+      input: RelevantStockPositionSetRequest,
+      context: ReadLoadContext<ReturnType<typeof currentRelevantStockPositionSetService>>,
+    ) =>
+      context.services.read(input).pipe(
+        Effect.map((result) => ({
+          evidence: { resultCount: result.outcome === 'COMPLETE' ? result.positionRefs.length : 0 },
+          result,
+        })),
+        Effect.mapError(mapPositionSetReadFailure),
+      ),
+  },
   Effect.fn('PositionSet.makeServices')(function* makeServices(transaction, scope) {
     return currentRelevantStockPositionSetService({
       authorizePositions: yield* makePositionSetAuthorization(scope),

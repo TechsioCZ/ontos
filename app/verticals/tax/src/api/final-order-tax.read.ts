@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext, ReadHandlerResult } from '@app/core-runtime';
+import type { ReadLoadContext, ReadHandlerResult } from '@app/core-runtime';
 import { Effect, Option } from 'effect';
 import { FinalOrderTaxRequestSchema, FinalOrderTaxResponseSchema } from '../../shared/apis/final-order-tax.ts';
 import type { FinalOrderTaxRequest, FinalOrderTaxResponse } from '../../shared/apis/final-order-tax.ts';
@@ -29,7 +29,7 @@ const finalOrderTaxEntrypoint = defineTenantModuleEntrypoint({
 /** Lost-response recovery of the durable final by submission identity, without re-sending the candidate (#944 F10). */
 export const readFinalOrderTax = (
   input: FinalOrderTaxRequest,
-  context: ReadHandlerContext<FinalOrderTaxServices>,
+  context: ReadLoadContext<FinalOrderTaxServices>,
 ): Effect.Effect<ReadHandlerResult<FinalOrderTaxResponse>, ReadHandlerNotFound | ReadHandlerUnavailable> =>
   context.services.finalizations.finalOrderTax(input).pipe(
     Effect.catchTag('TaxGovernancePersistenceUnavailable', () =>
@@ -71,7 +71,7 @@ export const finalOrderTaxRead = defineRead(
     resultSchema: FinalOrderTaxResponseSchema,
     schemaVersion: '1',
   },
-  readFinalOrderTax,
+  { load: readFinalOrderTax },
   (transaction, scope) => Effect.succeed({ finalizations: orderTaxFinalizationsForScope(transaction, scope) }),
   () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

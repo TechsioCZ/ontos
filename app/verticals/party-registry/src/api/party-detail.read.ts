@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect, Match, Option } from 'effect';
 
 import { PartyDetailRequestSchema, PartyDetailResponseSchema } from '../../shared/apis/party-detail.ts';
@@ -130,13 +130,15 @@ export const partyDetailRead = defineRead(
     resultSchema: PartyDetailResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<Services>) =>
-    readPartyDetailFromServices(
-      input.partyRef,
-      context.scope.tenantId,
-      context.services,
-      input.includeFactHistory,
-    ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
+  {
+    load: (input, context: ReadLoadContext<Services>) =>
+      readPartyDetailFromServices(
+        input.partyRef,
+        context.scope.tenantId,
+        context.services,
+        input.includeFactHistory,
+      ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
+  },
   (transaction, scope) =>
     Effect.succeed({
       facts: (partyId: string, includeFactHistory: boolean) =>

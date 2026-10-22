@@ -164,11 +164,13 @@ const registration = defineRead(
     resultSchema: Schema.Struct({ ok: Schema.Literal(true) }),
     schemaVersion: '1',
   },
-  () =>
-    Effect.succeed({
-      evidence: { resultCount: 1 },
-      result: { ok: true as const },
-    }),
+  {
+    load: () =>
+      Effect.succeed({
+        evidence: { resultCount: 1 },
+        result: { ok: true as const },
+      }),
+  },
   () => Effect.succeed({}),
   () => ({ kind: 'module', moduleId: 'core.shell' }),
 );
@@ -381,12 +383,14 @@ it.effect('maps only schema-declared owner failures to concrete public Problems'
         ...registration.descriptor,
         domainErrorSchema: DeclaredHttpDomainFailure,
       },
-      () =>
-        Effect.fail(
-          new DeclaredHttpDomainFailure({
-            reasonCode: 'PURPOSE_NOT_ALLOWED',
-          }),
-        ),
+      {
+        load: () =>
+          Effect.fail(
+            new DeclaredHttpDomainFailure({
+              reasonCode: 'PURPOSE_NOT_ALLOWED',
+            }),
+          ),
+      },
       () => Effect.succeed({}),
       () => ({ kind: 'module', moduleId: 'core.shell' }),
     );

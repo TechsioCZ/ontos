@@ -56,7 +56,7 @@ import type {
 import {
   getReadConditionalPermissionPlan,
   getReadDomainErrorSchema,
-  getReadHandler,
+  getReadStages,
   getReadPermissionTargetResolver,
   getReadPolicyImplementations,
   getReadResourcePermissionTargetResolver,
@@ -1465,9 +1465,16 @@ const readRuntimeFromDependencies = <
     );
     stage('policies_checked');
 
+    const sanitizeOwnerFailure = Effect.mapError((failure: unknown) =>
+      sanitizeReadHandlerFailure(getReadDomainErrorSchema(input.registration), failure),
+    );
+    const ownerContext = Object.freeze({ readKey: input.registration.descriptor.readKey, scope });
+
     const executeAuthorizedRead = Effect.fn('ReadRuntime.executeAuthorizedRead')(function* executeAuthorizedRead() {
-      // Owner work: the transaction holds only the scope installation, owner authorization state, and the handler.
-      const handlerResult = yield* admittedTransaction(
+      // Owner `prepare`: SpiceDB grants and other remote calls, before any transaction exists.
+      const loadWith = yield* getReadStages(input.registration)(decodedInput, ownerContext).pipe(sanitizeOwnerFailure);
+      // Owner work: the transaction holds only the scope installation, owner authorization state, and `load`.
+      const finishOwner = yield* admittedTransaction(
         Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBody(transaction: CoreTransaction) {
           const scoped = yield* installOperationalScope(transaction, scope);
           stage('scope_installed');
@@ -1496,25 +1503,13 @@ const readRuntimeFromDependencies = <
             });
           }
           const services = yield* getReadServiceFactory(input.registration)(scoped, scope, compositionRevision);
-          const ownerResult = yield* Effect.suspend(() =>
-            getReadHandler(input.registration)(
-              decodedInput,
-              Object.freeze({
-                readKey: input.registration.descriptor.readKey,
-                scope,
-                services,
-              }),
-            ),
-          ).pipe(
-            Effect.mapError((failure) =>
-              sanitizeReadHandlerFailure(getReadDomainErrorSchema(input.registration), failure),
-            ),
-          );
+          const finish = yield* loadWith(services).pipe(sanitizeOwnerFailure);
           stage('handler_executed');
-          return ownerResult;
+          return finish;
         }),
       );
-      // The connection is back in the pool: result validation, result authorization, and evidence follow.
+      // The connection is back in the pool: owner `finish`, result validation, result authorization, and evidence.
+      const handlerResult = yield* finishOwner.pipe(sanitizeOwnerFailure);
       const result = yield* Schema.decodeUnknownEffect(Schema.toType(input.registration.descriptor.resultSchema), {
         onExcessProperty: 'error',
       })(handlerResult.result).pipe(

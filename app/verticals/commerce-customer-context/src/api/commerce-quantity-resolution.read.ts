@@ -2,7 +2,7 @@
 import type {
   OperationalScope,
   ScopedRoutineInvoker,
-  ReadHandlerContext,
+  ReadLoadContext,
   ReadHandlerResult,
   ResolvedReadConditionalPermissionRequirement,
 } from '@app/core-runtime';
@@ -68,7 +68,7 @@ export const handleCommerceQuantityResolution = Effect.fn(
   'CommerceQuantityResolutionRead.handleCommerceQuantityResolution',
 )(function* commerceQuantityResolutionReadEffect(
   input: CommerceQuantityResolutionRequest,
-  context: ReadHandlerContext<CommerceQuantityResolutionServices>,
+  context: ReadLoadContext<CommerceQuantityResolutionServices>,
 ): Effect.fn.Return<
   ReadHandlerResult<CommerceQuantityResolutionResponse>,
   ReadHandlerUnavailable | ReadPermissionDenied
@@ -302,7 +302,7 @@ export const commerceQuantityResolutionRead = defineRead(
     resultSchema: CommerceQuantityResolutionResponseSchema,
     schemaVersion: '1',
   },
-  handleCommerceQuantityResolution,
+  { load: handleCommerceQuantityResolution },
   makeCommerceQuantityResolutionServices,
   commerceQuantityResolutionPermission,
 );

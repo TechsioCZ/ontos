@@ -11,7 +11,7 @@ import { AgentReviewRequestSchema, AgentReviewResponseSchema } from '../../share
 import type { AgentReviewRequest } from '../../shared/apis/agent-review.ts';
 import { TaskSchema } from '../../shared/apis/records.ts';
 import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
-import { persistenceService } from '../services/persistence.service.ts';
+import { finishWorkRecords, persistenceService, workRecordsGrants } from '../services/persistence.service.ts';
 import { reviewTaskProposal, targetTaskId } from './agent-review.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
@@ -43,6 +43,12 @@ const makeAgentReviewServices: ReadServiceFactory<Services, Effect.Services<Retu
   );
 
 const encodeTask = Schema.encodeSync(TaskSchema);
+const tasksUnavailable = (cause: unknown) =>
+  Object.defineProperty(
+    new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Tasks are temporarily unavailable' }),
+    'cause',
+    { configurable: true, value: cause },
+  );
 
 export const agentReviewRead = defineRead(
   {
@@ -61,52 +67,55 @@ export const agentReviewRead = defineRead(
     resultSchema: AgentReviewResponseSchema,
     schemaVersion: '1',
   },
-  (input: AgentReviewRequest, context) =>
-    Effect.gen(function* () {
-      // As the person's own records read shows it; a task they may not open reads as undefined.
-      const read = (request: RecordsRequest) =>
-        context.services.records(request).pipe(
-          Effect.map(Option.some<RecordsResponse>),
-          Effect.catchTag('WorkPermissionDenied', () => Effect.succeedNone),
-          Effect.map(Option.getOrUndefined),
-          Effect.mapError(
-            () =>
-              new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Tasks are temporarily unavailable' }),
+  {
+    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
+    prepare: (_input, context) => workRecordsGrants(context.scope).pipe(Effect.mapError(tasksUnavailable)),
+    load: (_input, context) => context.services.loadRecords().pipe(Effect.mapError(tasksUnavailable)),
+    finish: (input: AgentReviewRequest, context) =>
+      Effect.gen(function* () {
+        // As the person's own records read shows it; a task they may not open reads as undefined.
+        const read = (request: RecordsRequest) =>
+          finishWorkRecords(request, context.loaded, context.prepared, context.scope).pipe(
+            Effect.map(Option.some<RecordsResponse>),
+            Effect.catchTag('WorkPermissionDenied', () => Effect.succeedNone),
+            Effect.map(Option.getOrUndefined),
+            Effect.mapError(tasksUnavailable),
+          );
+        const live = input.items.filter((item) => item.stage !== 'history');
+        const taskIds = [...new Set(live.flatMap((item) => targetTaskId(item.command) ?? []))];
+        const byTask = new Map(
+          yield* Effect.forEach(
+            taskIds,
+            (resourceId) =>
+              read({ includeArchived: true, resourceId: resourceId as RecordsRequest['resourceId'] & string }).pipe(
+                Effect.map((response) => [resourceId, response] as const),
+              ),
+            { concurrency: 4 },
           ),
         );
-      const live = input.items.filter((item) => item.stage !== 'history');
-      const taskIds = [...new Set(live.flatMap((item) => targetTaskId(item.command) ?? []))];
-      const byTask = new Map(
-        yield* Effect.forEach(
-          taskIds,
-          (resourceId) =>
-            read({ includeArchived: true, resourceId: resourceId as RecordsRequest['resourceId'] & string }).pipe(
-              Effect.map((response) => [resourceId, response] as const),
-            ),
-          { concurrency: 4 },
-        ),
-      );
-      const responseOf = (resourceId: string | undefined) =>
-        resourceId === undefined ? undefined : byTask.get(resourceId);
-      // Whether the person may write at all, for proposals whose task read did not say it.
-      const needsModuleRead = live.some(
-        (item) => item.stage === 'proposed' && responseOf(targetTaskId(item.command)) === undefined,
-      );
-      const moduleRead = needsModuleRead ? yield* read({}) : undefined;
-      const items = input.items.map((request) => {
-        const resourceId = targetTaskId(request.command);
-        const response = responseOf(resourceId);
-        const task = response?.items.find((entry) => entry.ref.resourceId === resourceId);
-        return reviewTaskProposal({
-          canWrite: (response ?? moduleRead)?.canWrite,
-          request,
-          task: task === undefined ? undefined : encodeTask(task),
-          taskRead: response !== undefined,
-          tenantId: context.scope.tenantId,
+        const responseOf = (resourceId: string | undefined) =>
+          resourceId === undefined ? undefined : byTask.get(resourceId);
+        // Whether the person may write at all, for proposals whose task read did not say it.
+        const needsModuleRead = live.some(
+          (item) => item.stage === 'proposed' && responseOf(targetTaskId(item.command)) === undefined,
+        );
+        const moduleRead = needsModuleRead ? yield* read({}) : undefined;
+        const items = input.items.map((request) => {
+          const resourceId = targetTaskId(request.command);
+          const response = responseOf(resourceId);
+          const task = response?.items.find((entry) => entry.ref.resourceId === resourceId);
+          return reviewTaskProposal({
+            canWrite: (response ?? moduleRead)?.canWrite,
+            request,
+            task: task === undefined ? undefined : encodeTask(task),
+            taskRead: response !== undefined,
+            tenantId: context.scope.tenantId,
+          });
         });
-      });
-      return { evidence: { resultCount: items.length }, result: { items, seesAllRecords: true } };
-    }),
+        return { evidence: { resultCount: items.length }, result: { items, seesAllRecords: true } };
+      }),
+    // oxlint-enable perfectionist/sort-objects
+  },
   makeAgentReviewServices,
   () => ({ kind: 'module', moduleId: moduleKey }),
 );

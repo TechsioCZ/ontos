@@ -97,14 +97,16 @@ export const legalEntityDetailRead = defineRead<
     resultSchema: LegalEntityDetailResponseSchema,
     schemaVersion: '1',
   },
-  Effect.fn('LegalEntityDetail.read')(function* legalEntityDetailHandler(input, context) {
-    if (input.legalEntityRef.tenantId !== context.scope.tenantId) {
-      return yield* new ReadHandlerNotFound({ code: 'read_handler_not_found', reason: 'Legal Entity not found' });
-    }
-    const rows = yield* context.services.find(input.legalEntityRef.resourceId);
-    const result = yield* classifyLegalEntityDetail(input, context.scope.tenantId, rows);
-    return { evidence: { resultCount: 1 }, result };
-  }),
+  {
+    load: Effect.fn('LegalEntityDetail.read')(function* legalEntityDetailHandler(input, context) {
+      if (input.legalEntityRef.tenantId !== context.scope.tenantId) {
+        return yield* new ReadHandlerNotFound({ code: 'read_handler_not_found', reason: 'Legal Entity not found' });
+      }
+      const rows = yield* context.services.find(input.legalEntityRef.resourceId);
+      const result = yield* classifyLegalEntityDetail(input, context.scope.tenantId, rows);
+      return { evidence: { resultCount: 1 }, result };
+    }),
+  },
   (transaction, scope) => Effect.succeed(services(transaction, scope.tenantId)),
   (input) => ({ kind: 'legal_entity', legalEntityId: input.legalEntityRef.resourceId, permission: 'access' }),
 );

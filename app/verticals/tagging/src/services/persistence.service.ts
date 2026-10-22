@@ -255,9 +255,13 @@ export const evolveTaggingState = Effect.fn('Tagging.evolveState')(function* evo
   );
 });
 
-const contextGrant = Effect.fn('Tagging.contextGrant')(function* contextGrant(
+const ContextGrantSchema = Schema.Literals(['read_all', 'write_all']);
+type ContextGrant = typeof ContextGrantSchema.Type;
+
+/** One bulk SpiceDB check for the given context permissions of the scope's company. */
+const contextGrants = Effect.fn('Tagging.contextGrants')(function* contextGrants(
   scope: OperationalScope,
-  permission: 'read_all' | 'write_all',
+  permissions: readonly ContextGrant[],
 ) {
   const access = yield* ContextAccess;
   if (scope.legalEntityId === undefined || access.contextPermissions === undefined) {
@@ -266,18 +270,32 @@ const contextGrant = Effect.fn('Tagging.contextGrant')(function* contextGrant(
   const decisions = yield* access.contextPermissions({
     legalEntityId: scope.legalEntityId,
     principalId: scope.principalId,
-    targets: [{ moduleId: 'demo.tagging', permission: `demo.tagging.${permission}` }],
+    targets: permissions.map((permission) => ({ moduleId: 'demo.tagging', permission: `demo.tagging.${permission}` })),
     tenantId: scope.tenantId,
   });
   if (
-    decisions.length !== 1 ||
-    decisions[0]?.key !== `demo.tagging:demo.tagging.${permission}` ||
-    decisions[0]?.decision === 'unavailable'
+    decisions.length !== permissions.length ||
+    decisions.some(
+      (decision, index) =>
+        decision.key !== `demo.tagging:demo.tagging.${permissions[index]}` || decision.decision === 'unavailable',
+    )
   ) {
     return yield* referenceUnavailable();
   }
-  return decisions[0]?.decision === 'allowed';
+  return (permission: ContextGrant) => decisions[permissions.indexOf(permission)]?.decision === 'allowed';
 });
+
+const contextGrant = (scope: OperationalScope, permission: ContextGrant) =>
+  contextGrants(scope, [permission]).pipe(Effect.map((granted) => granted(permission)));
+
+/** What a records read knows before its transaction opens: both grants in one bulk check. */
+export const taggingRecordsGrants = Effect.fn('Tagging.recordsGrants')(function* recordsGrants(
+  scope: OperationalScope,
+) {
+  const granted = yield* contextGrants(scope, ['read_all', 'write_all']);
+  return { readAll: granted('read_all'), writeAll: granted('write_all') };
+});
+export type RecordsGrants = Effect.Success<ReturnType<typeof taggingRecordsGrants>>;
 
 const tagRefFor = Effect.fn('Tagging.tagRef')(function* tagRefFor(tagId: string, tenantId: string) {
   return yield* Schema.decodeEffect(TagRefSchema)({
@@ -301,9 +319,10 @@ const refKey = (ref: TagRef) => `${ref.moduleId}:${ref.resourceType}:${ref.resou
 const visibleTags = Effect.fn('Tagging.visibleTags')(function* visibleTags(
   tags: readonly Tag[],
   scope: OperationalScope,
+  readAll: boolean,
 ) {
   const access = yield* ContextAccess;
-  if (yield* contextGrant(scope, 'read_all')) {
+  if (readAll) {
     return tags;
   }
   if (scope.legalEntityId === undefined) {
@@ -340,6 +359,43 @@ const countsFor = (assignments: readonly Assignment[], tagId: TagId): TagWithCou
     product: countOf('product'),
   };
 };
+
+/** The stored row as the owner transaction read it (still encoded). */
+export type LoadedRecords = { readonly revision: number; readonly state: unknown } | undefined;
+
+/** After commit: decodes the stored state, keeps what the person may see (SpiceDB row filter), shapes the response. */
+export const finishTaggingRecords = Effect.fn('Tagging.finishRecords')(function* finishRecords(
+  request: RecordsRequest,
+  loaded: LoadedRecords,
+  grants: RecordsGrants,
+  scope: OperationalScope,
+) {
+  const snapshot =
+    loaded === undefined
+      ? { revision: 0, state: { assignments: [], tags: [] } satisfies TaggingState }
+      : {
+          revision: loaded.revision,
+          state: yield* Schema.decodeUnknownEffect(TaggingStateSchema)(loaded.state).pipe(Effect.mapError(unavailable)),
+        };
+  const visible = yield* visibleTags(snapshot.state.tags, scope, grants.readAll);
+  const tags = visible.filter((tag) => request.tagId === undefined || tag.id === request.tagId);
+  const tagIds = new Set(tags.map((tag) => tag.id));
+  const subjectIds =
+    request.subjectIds === undefined ? undefined : new Set(request.subjectIds.split(',').filter((id) => id !== ''));
+  const assignments = snapshot.state.assignments.filter(
+    (assignment) =>
+      tagIds.has(assignment.tagId) &&
+      (request.subjectKind === undefined || assignment.subject.kind === request.subjectKind) &&
+      (subjectIds === undefined || subjectIds.has(assignment.subject.id)),
+  );
+  return {
+    assignments,
+    canWrite: grants.writeAll && isConnectionWriteAllowed(scope, 'demo.tagging'),
+    indicators: { assignmentCount: assignments.length, tagCount: tags.length },
+    revision: snapshot.revision,
+    tags: tags.map((tag) => ({ ...tag, counts: countsFor(snapshot.state.assignments, tag.id) })),
+  } satisfies RecordsResponse;
+});
 
 export const persistenceService = Effect.fn('Tagging.persistenceService')(
   function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
@@ -458,28 +514,18 @@ export const persistenceService = Effect.fn('Tagging.persistenceService')(
       const revision = yield* save(expectedRevision, change.state);
       return { affectedAssignments: change.affectedAssignments, revision, tagId: change.tagId };
     });
-    const records = Effect.fn('Tagging.records')(function* records(request: RecordsRequest) {
-      const snapshot = yield* load();
-      const visible = yield* visibleTags(snapshot.state.tags, scope);
-      const tags = visible.filter((tag) => request.tagId === undefined || tag.id === request.tagId);
-      const tagIds = new Set(tags.map((tag) => tag.id));
-      const subjectIds =
-        request.subjectIds === undefined ? undefined : new Set(request.subjectIds.split(',').filter((id) => id !== ''));
-      const assignments = snapshot.state.assignments.filter(
-        (assignment) =>
-          tagIds.has(assignment.tagId) &&
-          (request.subjectKind === undefined || assignment.subject.kind === request.subjectKind) &&
-          (subjectIds === undefined || subjectIds.has(assignment.subject.id)),
-      );
-      return {
-        assignments,
-        canWrite: (yield* contextGrant(scope, 'write_all')) && isConnectionWriteAllowed(scope, 'demo.tagging'),
-        indicators: { assignmentCount: assignments.length, tagCount: tags.length },
-        revision: snapshot.revision,
-        tags: tags.map((tag) => ({ ...tag, counts: countsFor(snapshot.state.assignments, tag.id) })),
-      } satisfies RecordsResponse;
-    });
-    return { apply, records };
+    /** The records read's whole transaction step: the raw state row; decoding runs after commit. */
+    const loadRecords = () =>
+      transaction
+        .select({ revision: taggingStates.revision, state: taggingStates.state })
+        .from(taggingStates)
+        .where(whereScope)
+        .limit(1)
+        .pipe(
+          Effect.map(([row]): LoadedRecords => row),
+          Effect.mapError(unavailable),
+        );
+    return { apply, loadRecords };
   },
   Effect.mapError((cause) =>
     withCause(

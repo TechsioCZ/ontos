@@ -260,7 +260,7 @@ it.live('allows nested governed-read evidence under the write fence while serial
         resultSchema: Schema.Array(Schema.String),
         schemaVersion: '1',
       },
-      () => Effect.succeed({ evidence: { resultCount: 1 }, result: ['visible'] }),
+      { load: () => Effect.succeed({ evidence: { resultCount: 1 }, result: ['visible'] }) },
       () => Effect.succeed({}),
       () => ({ kind: 'module', moduleId: 'core.shell' }),
     );

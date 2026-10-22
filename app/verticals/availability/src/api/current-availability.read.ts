@@ -34,10 +34,12 @@ export const currentAvailabilityRead = defineRead(
     resultSchema: CurrentAvailabilityResponseSchema,
     schemaVersion: '1',
   },
-  (input, context) =>
-    availabilityConsumerContractService(input, context.scope).pipe(
-      Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
-    ),
+  {
+    load: (input, context) =>
+      availabilityConsumerContractService(input, context.scope).pipe(
+        Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+      ),
+  },
   () => Effect.succeed({}),
   () => ({ kind: 'module', moduleId: availabilityModuleKey }),
 );

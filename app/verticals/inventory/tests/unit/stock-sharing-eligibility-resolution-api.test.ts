@@ -23,7 +23,7 @@ import {
 import { stockSharingEligibilityResolutionRead } from '../../src/api/stock-sharing-eligibility-resolution.read.ts';
 import { makeStockSharingEligibilityEvaluator } from '../../src/services/stock-sharing-eligibility-service.ts';
 import {
-  getReadHandler,
+  runReadOwnerSteps,
   getReadPermissionTargetResolver,
 } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
@@ -171,7 +171,7 @@ it.effect('returns only a proven positive-union decision and records result evid
   Effect.gen(function* resolvePositiveUnion() {
     const calls: unknown[] = [];
     const evaluationService = makeStockSharingEligibilityEvaluator(evaluationPersistence);
-    const result = yield* getReadHandler(stockSharingEligibilityResolutionRead)(request, {
+    const result = yield* runReadOwnerSteps(stockSharingEligibilityResolutionRead, request, {
       readKey: stockSharingEligibilityResolutionRead.descriptor.readKey,
       scope,
       services: {
@@ -203,7 +203,7 @@ it.effect('fails closed before evaluation when the trusted seller is not the sel
         },
       },
     });
-    const failure = yield* getReadHandler(stockSharingEligibilityResolutionRead)(crossLegalEntityRequest, {
+    const failure = yield* runReadOwnerSteps(stockSharingEligibilityResolutionRead, crossLegalEntityRequest, {
       readKey: stockSharingEligibilityResolutionRead.descriptor.readKey,
       scope,
       services: {

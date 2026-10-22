@@ -4,7 +4,7 @@ import { NodeFileSystem } from '@effect/platform-node';
 import { FileSystem, Effect, Schema, SchemaAST, Predicate, Struct } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
-import { getReadHandler } from '../../../../packages/core-runtime/src/reads/definition.ts';
+import { runReadOwnerSteps } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { TrustedPrincipalContextSchema } from '../../../../packages/core-runtime/src/actions/principal-context.ts';
 import {
   AresLookupApi,
@@ -86,7 +86,7 @@ it.layer(NodeFileSystem.layer)('ares-lookup-read', (suite) => {
   suite.effect('passes trusted correlation to the private adapter and returns exactly one evidence result', () =>
     Effect.gen(function* aresLookupReadCase1() {
       const calls: unknown[] = [];
-      const result = yield* getReadHandler(aresLookupRead)(request, {
+      const result = yield* runReadOwnerSteps(aresLookupRead, request, {
         readKey: aresLookupRead.descriptor.readKey,
         scope,
         services: {
@@ -159,7 +159,7 @@ it.layer(NodeFileSystem.layer)('ares-lookup-read', (suite) => {
       const errors = yield* Effect.all(
         failures.map(([failure, expectedTag]) =>
           Effect.flip(
-            getReadHandler(aresLookupRead)(request, {
+            runReadOwnerSteps(aresLookupRead, request, {
               readKey: aresLookupRead.descriptor.readKey,
               scope,
               services: { lookup: () => Effect.fail(failure) },

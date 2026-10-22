@@ -7,14 +7,19 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
-import type { ReadHandlerContext, ReadHandlerResult, ReadServiceFactory } from '@app/core-runtime';
+import type { ReadServiceFactory } from '@app/core-runtime';
 import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
-import { persistenceService } from '../services/persistence.service.ts';
+import { finishWorkforceRecords, workforceRecordsGrants, persistenceService } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
-const readFailure = (failure: Effect.Error<ReturnType<Services['records']>>) =>
+const readFailure = (
+  failure:
+    | Effect.Error<ReturnType<typeof workforceRecordsGrants>>
+    | Effect.Error<ReturnType<Services['loadRecords']>>
+    | Effect.Error<ReturnType<typeof finishWorkforceRecords>>,
+) =>
   Match.value(failure).pipe(
     Match.tag(
       'WorkforcePermissionDenied',
@@ -75,18 +80,17 @@ export const recordsRead = defineRead(
     resultSchema: RecordsResponseSchema,
     schemaVersion: '1',
   },
-  (
-    input: RecordsRequest,
-    context: ReadHandlerContext<Services>,
-  ): Effect.Effect<
-    ReadHandlerResult<RecordsResponse>,
-    ReadPermissionDenied | ReadHandlerUnavailable,
-    Effect.Services<ReturnType<typeof persistenceService>>
-  > =>
-    context.services.records(input).pipe(
-      Effect.mapError(readFailure),
-      Effect.map((result) => ({ evidence: { resultCount: result.items.length }, result })),
-    ),
+  {
+    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
+    prepare: (_input, context) => workforceRecordsGrants(context.scope).pipe(Effect.mapError(readFailure)),
+    load: (input: RecordsRequest, context) => context.services.loadRecords(input).pipe(Effect.mapError(readFailure)),
+    finish: (input: RecordsRequest, context) =>
+      finishWorkforceRecords(input, context.loaded, context.prepared, context.scope).pipe(
+        Effect.mapError(readFailure),
+        Effect.map((result: RecordsResponse) => ({ evidence: { resultCount: result.items.length }, result })),
+      ),
+    // oxlint-enable perfectionist/sort-objects
+  },
   makeRecordsServices,
   () => ({ kind: 'module', moduleId: moduleKey }),
 );

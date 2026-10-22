@@ -19,10 +19,24 @@ export interface ReadEvidenceMetadata {
   readonly resultFingerprintSchema?: string;
 }
 
-export interface ReadHandlerContext<Services> {
+/** What every owner step of a Read knows: the Read and its Core-verified scope. */
+export interface ReadPrepareContext {
   readonly readKey: string;
   readonly scope: OperationalScope;
+}
+
+/**
+ * The owner transaction step: scoped database services and whatever `prepare` established. A pipeline without
+ * `prepare` has nothing prepared, so its load step may be called without it.
+ */
+export type ReadLoadContext<Services, Prepared = undefined> = ReadPrepareContext & {
   readonly services: Services;
+} & (undefined extends Prepared ? { readonly prepared?: Prepared } : { readonly prepared: Prepared });
+
+/** The step after commit: what `prepare` established and what `load` read. */
+export interface ReadFinishContext<Prepared, Loaded> extends ReadPrepareContext {
+  readonly loaded: Loaded;
+  readonly prepared: Prepared;
 }
 
 export interface ReadHandlerResult<Result> {

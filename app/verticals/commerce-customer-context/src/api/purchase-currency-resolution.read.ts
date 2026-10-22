@@ -8,7 +8,7 @@ import {
 } from '@app/core-runtime';
 import type {
   OperationalScope,
-  ReadHandlerContext,
+  ReadLoadContext,
   ReadHandlerResult,
   ResolvedReadConditionalPermissionRequirement,
 } from '@app/core-runtime';
@@ -215,7 +215,7 @@ export const handlePurchaseCurrencyResolution = Effect.fn(
   'PurchaseCurrencyResolutionRead.handlePurchaseCurrencyResolution',
 )(function* purchaseCurrencyResolutionReadEffect(
   input: PurchaseCurrencyResolutionRequest,
-  context: ReadHandlerContext<PurchaseCurrencyResolutionServices>,
+  context: ReadLoadContext<PurchaseCurrencyResolutionServices>,
 ): Effect.fn.Return<
   ReadHandlerResult<PurchaseCurrencyResolutionResponse>,
   PurchaseCurrencyDependencyUnavailable | PurchaseCurrencyResolutionFailure | ReadPermissionDenied
@@ -339,7 +339,7 @@ export const purchaseCurrencyResolutionRead = defineRead(
     resultSchema: PurchaseCurrencyResolutionResponseSchema,
     schemaVersion: '1',
   },
-  handlePurchaseCurrencyResolution,
+  { load: handlePurchaseCurrencyResolution },
   Effect.fn('PurchaseCurrencyResolutionRead.serviceFactory')(
     function* purchaseCurrencyResolutionServiceFactory(transaction, scope, compositionRevision) {
       if (compositionRevision === undefined) {

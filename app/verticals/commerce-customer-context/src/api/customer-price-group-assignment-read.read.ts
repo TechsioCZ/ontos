@@ -7,7 +7,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 import {
   CustomerPriceGroupAssignmentReadRequestSchema,
@@ -121,16 +121,18 @@ export const customerPriceGroupAssignmentReadRead = defineRead(
     resultSchema: CustomerPriceGroupAssignmentReadResponseSchema,
     schemaVersion: '1',
   },
-  (
-    input: CustomerPriceGroupAssignmentReadRequest,
-    context: ReadHandlerContext<CustomerPriceGroupAssignmentReadServices>,
-  ) =>
-    readCustomerPriceGroupAssignments(input, context.scope.tenantId, context.services).pipe(
-      Effect.map((result) => ({
-        evidence: { resultCount: result.assignments.length },
-        result,
-      })),
-    ),
+  {
+    load: (
+      input: CustomerPriceGroupAssignmentReadRequest,
+      context: ReadLoadContext<CustomerPriceGroupAssignmentReadServices>,
+    ) =>
+      readCustomerPriceGroupAssignments(input, context.scope.tenantId, context.services).pipe(
+        Effect.map((result) => ({
+          evidence: { resultCount: result.assignments.length },
+          result,
+        })),
+      ),
+  },
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(

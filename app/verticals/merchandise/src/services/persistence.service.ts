@@ -61,13 +61,7 @@ import {
 } from './merchandise-queries.ts';
 import { loadHead, loadWorkingSet, persistChange } from './merchandise-store.ts';
 import type { StoreScope, WorkingSet, WorkingSetRequest } from './merchandise-store.ts';
-import {
-  realVariantsOf,
-  stockLevelsOf,
-  stockOnHandOf,
-  toProductRecord,
-  variantStockOf,
-} from './stock-levels.ts';
+import { realVariantsOf, stockLevelsOf, stockOnHandOf, toProductRecord, variantStockOf } from './stock-levels.ts';
 import { normalizeSearchText } from './storefront-catalog.ts';
 
 const unavailable = (cause?: unknown) =>
@@ -92,7 +86,9 @@ const referenceUnavailable = (cause?: unknown) =>
 
 /** Next order number above every order of the company (the working set carries the highest stored one). */
 const nextOrderNumberOf = (state: MerchandiseState) =>
-  nextOrderNumber(state.lastOrderNumber === undefined ? state.orders : [...state.orders, { number: state.lastOrderNumber }]);
+  nextOrderNumber(
+    state.lastOrderNumber === undefined ? state.orders : [...state.orders, { number: state.lastOrderNumber }],
+  );
 
 /** An imported source catalog (AKROS) labels personal pickup as AKROS. */
 const isSourceCatalog = (state: MerchandiseState) =>
@@ -873,10 +869,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
       vatRate: product.vatRate,
     });
   }
-  const method = shippingMethodFor(
-    value.shippingMethod,
-    isSourceCatalog(state),
-  );
+  const method = shippingMethodFor(value.shippingMethod, isSourceCatalog(state));
   if (value.expectedShippingPriceMinor !== undefined && value.expectedShippingPriceMinor !== method.grossPriceMinor) {
     issues.push({
       code: 'SHIPPING_PRICE_CHANGED',
@@ -1109,10 +1102,7 @@ const editOrder = Effect.fn('Merchandise.editOrder')(function* editOrder(
     }
   }
   if (value.shipping !== undefined) {
-    const method = shippingMethodFor(
-      value.shipping.method,
-      isSourceCatalog(state),
-    );
+    const method = shippingMethodFor(value.shipping.method, isSourceCatalog(state));
     const shipping = {
       label: method.label,
       method: value.shipping.method,
@@ -1293,8 +1283,10 @@ export const evolveMerchandiseState = (
     Match.exhaustive,
   );
 
-
-type AiCommand = Extract<MerchandiseCommand, { readonly _tag: 'AiDecideChanges' | 'AiProposeChanges' | 'AiRevertBatch' }>;
+type AiCommand = Extract<
+  MerchandiseCommand,
+  { readonly _tag: 'AiDecideChanges' | 'AiProposeChanges' | 'AiRevertBatch' }
+>;
 type AiOperation = Extract<MerchandiseCommand, { readonly _tag: 'ChangeOrderStatus' | 'EditOrder' }>;
 
 const operationNeeds = (operations: readonly AiOperation[]) => ({
@@ -1328,7 +1320,10 @@ const aiWorkingSetRequest = (command: AiCommand, slice: MerchandiseState['aiChan
   return {
     aiChanges: true,
     movements: true,
-    orderIds: [...needs.orderIds, ...chosen.flatMap((change) => (change.target.id === undefined ? [] : [change.target.id]))],
+    orderIds: [
+      ...needs.orderIds,
+      ...chosen.flatMap((change) => (change.target.id === undefined ? [] : [change.target.id])),
+    ],
     productIds: [...needs.productIds, ...snapshotProducts],
     sourceCatalog: true,
   };
@@ -1385,6 +1380,75 @@ export const workingSetRequestOf = (
 
 const revisionConflict = (reason = 'Merchandise changed; refresh before another operation') =>
   new MerchandiseRevisionConflict({ code: 'merchandise_revision_conflict', reason });
+
+/** Staff rights a records read needs; the public storefront catalog needs none. */
+export interface MerchandiseRecordsGrants {
+  readonly administrator: boolean;
+  readonly readAll: boolean;
+  readonly writeAll: boolean;
+}
+
+const storefrontCatalogView = (request: RecordsRequest) =>
+  request.view?.storefront === true &&
+  (request.view.storefrontCatalog !== undefined || request.view.storefrontOrderStatus !== undefined);
+
+/**
+ * Resolves a records read's rights before its transaction opens: one bulk check of both catalog permissions
+ * and the tenant identity-administrator check, in parallel. The storefront catalog view skips both.
+ */
+export const merchandiseRecordsGrants = Effect.fn('Merchandise.recordsGrants')(function* merchandiseRecordsGrants(
+  scope: OperationalScope,
+  request: RecordsRequest,
+) {
+  if (storefrontCatalogView(request)) {
+    return { administrator: false, readAll: false, writeAll: false } satisfies MerchandiseRecordsGrants;
+  }
+  const access = yield* ContextAccess;
+  if (scope.legalEntityId === undefined || access.contextPermissions === undefined) {
+    return yield* referenceUnavailable();
+  }
+  const permissions = ['read_all', 'write_all'] as const;
+  const [decisions, tenantDecisions] = yield* Effect.all(
+    [
+      access.contextPermissions({
+        legalEntityId: scope.legalEntityId,
+        principalId: scope.principalId,
+        targets: permissions.map((permission) => ({
+          moduleId: 'demo.merchandise',
+          permission: `demo.merchandise.${permission}`,
+        })),
+        tenantId: scope.tenantId,
+      }),
+      request.view?.storefront === true
+        ? Effect.succeed([])
+        : access.tenants({
+            permission: 'manage_identity',
+            principalId: scope.principalId,
+            tenantIds: [scope.tenantId],
+          }),
+    ],
+    { concurrency: 'unbounded' },
+  );
+  if (
+    decisions.length !== permissions.length ||
+    decisions.some(
+      (decision, index) =>
+        decision.key !== `demo.merchandise:demo.merchandise.${permissions[index]}` ||
+        decision.decision === 'unavailable',
+    )
+  ) {
+    return yield* referenceUnavailable();
+  }
+  return {
+    // Existing trusted identity-administrator capability; no email, browser flag or principal-id allowlist.
+    administrator:
+      tenantDecisions.length === 1 &&
+      tenantDecisions[0]?.key === scope.tenantId &&
+      tenantDecisions[0]?.decision === 'allowed',
+    readAll: decisions[0]?.decision === 'allowed',
+    writeAll: decisions[1]?.decision === 'allowed',
+  } satisfies MerchandiseRecordsGrants;
+});
 
 export const persistenceService = Effect.fn('Merchandise.persistenceService')(
   function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
@@ -1453,7 +1517,11 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       const head = yield* lockedHead(false);
       // Storefront guests cannot know the revision; their command re-validates against the current rows.
       // An order edit carrying the order's own updatedAt conflicts only when that order changed.
-      if (!isOrderScopedEdit(command) && command._tag !== 'PlaceStorefrontOrder' && head.revision !== expectedRevision) {
+      if (
+        !isOrderScopedEdit(command) &&
+        command._tag !== 'PlaceStorefrontOrder' &&
+        head.revision !== expectedRevision
+      ) {
         return yield* revisionConflict();
       }
       if (command._tag === 'ResetDemoData') {
@@ -1509,9 +1577,12 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       if (head.revision !== expectedRevision) {
         return yield* revisionConflict();
       }
-      const working = yield* loadWorkingSet(transaction, store, head, aiWorkingSetRequest(command, head.aiChanges)).pipe(
-        Effect.mapError(unavailable),
-      );
+      const working = yield* loadWorkingSet(
+        transaction,
+        store,
+        head,
+        aiWorkingSetRequest(command, head.aiChanges),
+      ).pipe(Effect.mapError(unavailable));
       const now = yield* DateTime.now;
       const outcome = yield* applyMerchandiseAiCommand(working.state, command, {
         actor: { principalId: scope.principalId, tenantId: scope.tenantId },
@@ -1607,14 +1678,16 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       return response;
     });
     /** `detailLimit` lifts the 2-product cap of variant-carrying pages for in-process callers (agent review). */
+    /** The records read's transaction step: database queries only; rights come from {@link merchandiseRecordsGrants}. */
     const records = Effect.fn('Merchandise.records')(function* records(
       request: RecordsRequest,
+      grants: MerchandiseRecordsGrants,
       options: { readonly detailLimit?: number } = {},
     ) {
       const view = request.view ?? {};
       const storefront = view.storefront === true;
       const staff = !storefront;
-      if (storefront && (view.storefrontCatalog !== undefined || view.storefrontOrderStatus !== undefined)) {
+      if (storefrontCatalogView(request)) {
         const head = yield* loadHead(transaction, store).pipe(Effect.mapError(unavailable));
         if (head === undefined) return yield* unavailable();
         return yield* storefrontRecords(view, head.revision, head.homepageFeaturedProductIds).pipe(
@@ -1622,11 +1695,13 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         );
       }
       // A read-only or approval-only MCP connection cannot change the catalog directly.
-      const canWrite = (yield* contextGrant('write_all')) && isConnectionWriteAllowed(scope, 'demo.merchandise');
-      const canRead = staff && (canWrite || (yield* contextGrant('read_all')));
+      const canWrite = grants.writeAll && isConnectionWriteAllowed(scope, 'demo.merchandise');
+      const canRead = staff && (canWrite || grants.readAll);
       const head = yield* loadHead(transaction, store, { aiChanges: canRead }).pipe(Effect.mapError(unavailable));
       if (head === undefined) return yield* unavailable();
-      const page = yield* staffProducts(transaction, store, view, storefront, options).pipe(Effect.mapError(unavailable));
+      const page = yield* staffProducts(transaction, store, view, storefront, options).pipe(
+        Effect.mapError(unavailable),
+      );
       const movements =
         staff && view.productId !== undefined
           ? yield* productMovements(transaction, store, view.productId).pipe(Effect.mapError(unavailable))
@@ -1663,7 +1738,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
             productCount: page.products.length,
             stockValueMinor: 0,
           };
-      const isAdministrator = storefront ? false : yield* administrator();
+      const isAdministrator = storefront ? false : grants.administrator;
       const canManageCatalog = canWrite && (legalEntityId !== AKROS_LEGAL_ENTITY_ID || isAdministrator);
       const storefrontOrigin = legalEntityId === AKROS_LEGAL_ENTITY_ID ? AKROS_STOREFRONT_ORIGIN : STOREFRONT_ORIGIN;
       const response: RecordsResponse = {

@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { OperationalScope, ReadHandlerContext, ResolvedReadPermissionTarget } from '@app/core-runtime';
+import type { OperationalScope, ReadLoadContext, ResolvedReadPermissionTarget } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
 import {
   RetailPortalProfileBindingReadRequestSchema,
@@ -110,14 +110,16 @@ export const retailPortalProfileBindingReadRead = defineRead(
     resultSchema: RetailPortalProfileBindingReadResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<RetailPortalProfileBindingReadServices>) =>
-    readRetailPortalProfileBindingFromServices(
-      input,
-      context.scope.principalId,
-      context.scope.tenantId,
-      context.scope.legalEntityId,
-      context.services,
-    ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
+  {
+    load: (input, context: ReadLoadContext<RetailPortalProfileBindingReadServices>) =>
+      readRetailPortalProfileBindingFromServices(
+        input,
+        context.scope.principalId,
+        context.scope.tenantId,
+        context.scope.legalEntityId,
+        context.services,
+      ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
+  },
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(

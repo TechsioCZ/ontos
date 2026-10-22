@@ -7,19 +7,17 @@ import {
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
-import type {
-  ReadHandlerContext,
-  ReadHandlerResult,
-  ReadServiceFactory,
-} from '@app/core-runtime';
+import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
-import { persistenceService } from '../services/persistence.service.ts';
+import { merchandiseRecordsGrants, persistenceService } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import { AKROS_LEGAL_ENTITY_ID, storefrontReadRequest } from '../../shared/actions/command-guard.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
-const readFailure = (failure: Effect.Error<ReturnType<Services['records']>>) =>
+const readFailure = (
+  failure: Effect.Error<ReturnType<Services['records']>> | Effect.Error<ReturnType<typeof merchandiseRecordsGrants>>,
+) =>
   Match.value(failure).pipe(
     Match.tag(
       'MerchandisePersistenceUnavailable',
@@ -34,6 +32,21 @@ const readFailure = (failure: Effect.Error<ReturnType<Services['records']>>) =>
   );
 
 const moduleKey = 'demo.merchandise';
+
+/** The AKROS service key reads only the public storefront catalog. */
+const akrosServiceKeyGuard = (input: RecordsRequest, scope: OperationalScope) =>
+  scope.authMethod === 'api_key' &&
+  scope.legalEntityId === AKROS_LEGAL_ENTITY_ID &&
+  (input.view?.storefront !== true ||
+    input.view.orderClientRequestId !== undefined ||
+    input.view.orderStatus !== undefined)
+    ? Effect.fail(
+        new ReadPermissionDenied({
+          code: 'read_permission_denied',
+          reason: 'The AKROS service key may only read the public storefront catalog',
+        }),
+      )
+    : Effect.void;
 const recordsEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: { kind: 'context_permission', permission: 'module.access' },
@@ -76,23 +89,25 @@ export const recordsRead = defineRead(
     resultSchema: RecordsResponseSchema,
     schemaVersion: '1',
   },
-  (
-    input: RecordsRequest,
-    context: ReadHandlerContext<Services>,
-  ): Effect.Effect<
-    ReadHandlerResult<RecordsResponse>,
-    ReadPermissionDenied | ReadHandlerUnavailable,
-    Effect.Services<ReturnType<typeof persistenceService>>
-  > => {
-    if (context.scope.authMethod === 'api_key' && context.scope.legalEntityId === AKROS_LEGAL_ENTITY_ID && (input.view?.storefront !== true || input.view.orderClientRequestId !== undefined || input.view.orderStatus !== undefined)) {
-      return Effect.fail(new ReadPermissionDenied({ code: 'read_permission_denied', reason: 'The AKROS service key may only read the public storefront catalog' }));
-    }
-    return context.services
-      .records(storefrontReadRequest(context.scope.authMethod, context.scope.legalEntityId, input))
-      .pipe(
-        Effect.mapError(readFailure),
-        Effect.map((result) => ({ evidence: { resultCount: result.products.length }, result })),
-      );
+  {
+    // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
+    prepare: (input: RecordsRequest, context) =>
+      akrosServiceKeyGuard(input, context.scope).pipe(
+        Effect.andThen(
+          merchandiseRecordsGrants(
+            context.scope,
+            storefrontReadRequest(context.scope.authMethod, context.scope.legalEntityId, input),
+          ).pipe(Effect.mapError(readFailure)),
+        ),
+      ),
+    load: (input: RecordsRequest, context) =>
+      context.services
+        .records(storefrontReadRequest(context.scope.authMethod, context.scope.legalEntityId, input), context.prepared)
+        .pipe(
+          Effect.mapError(readFailure),
+          Effect.map((result) => ({ evidence: { resultCount: result.products.length }, result })),
+        ),
+    // oxlint-enable perfectionist/sort-objects
   },
   makeRecordsServices,
   () => ({ kind: 'module', moduleId: moduleKey }),

@@ -14,7 +14,7 @@ import { ContextAccess } from '../../permissions/context-access.ts';
 import { defineSystemModuleEntrypoint } from '../../modules/module-entrypoint.ts';
 import { defineRead } from '../../reads/definition.ts';
 import type { ReadPermissionTargetResolver } from '../../reads/definition.ts';
-import type { ReadHandlerContext } from '../../reads/context.ts';
+import type { ReadLoadContext } from '../../reads/context.ts';
 import type { OperationalScope } from '../../operations/context.ts';
 
 export type ReadPrincipalBindingPayload = Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>;
@@ -78,7 +78,7 @@ const authorizeReadNamespace = (
     );
 };
 
-const handle = (input: ReadPrincipalBindingPayload, context: ReadHandlerContext<ReadPrincipalBindingServices>) => {
+const handle = (input: ReadPrincipalBindingPayload, context: ReadLoadContext<ReadPrincipalBindingServices>) => {
   const readInput =
     input.lookup === 'binding'
       ? {
@@ -134,7 +134,7 @@ export const readPrincipalBinding = defineRead<
     resultSchema: ReadPrincipalBindingResultSchema,
     schemaVersion: '1',
   },
-  handle,
+  { load: handle },
   Effect.fn('ReadPrincipalBinding.services')(function* makeServices(transaction, scope) {
     const registry = yield* Effect.serviceOption(AuthenticationNamespaceRegistry);
     const contextAccess = yield* Effect.serviceOption(ContextAccess);

@@ -88,7 +88,7 @@ it.effect('a restricted persona sees its own tasks, never another principal’s 
       },
       { now, resourceId: 'other', tenantId },
     );
-    const visible = yield* visibleWorkTasks(other.state.tasks, scope).pipe(
+    const visible = yield* visibleWorkTasks(other.state.tasks, scope, false).pipe(
       Effect.provideService(ContextAccess, fakeAccess([])),
     );
     expect(visible.map((task) => task.title)).toEqual(['Vlastní úkol']);
@@ -167,12 +167,12 @@ it.effect('WAITING is in progress, overdue is derived, and resource filtering fa
     const foreignRef = yield* Schema.decodeEffect(TaskRefSchema)({ ...task.ref, resourceId: 'denied' });
     const foreign = { ...task, ref: foreignRef };
     expect(
-      yield* visibleWorkTasks([task, foreign], scope).pipe(
+      yield* visibleWorkTasks([task, foreign], scope, false).pipe(
         Effect.provideService(ContextAccess, fakeAccess(['allowed'])),
       ),
     ).toEqual([task]);
     expect(
-      yield* visibleWorkTasks([task, foreign], scope)
+      yield* visibleWorkTasks([task, foreign], scope, false)
         .pipe(Effect.provideService(ContextAccess, fakeAccess(['allowed'], true)))
         .pipe(Effect.flip),
     ).toBeInstanceOf(WorkReferenceUnavailable);

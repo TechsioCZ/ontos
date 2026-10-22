@@ -366,6 +366,10 @@ const authorizeSearchCandidates = Effect.fn('ShellSearch.authorizeCandidates')(f
   return allowedKeys;
 });
 
+/** Modules whose state a Shell search consults: every module that contributes a search provider. */
+export const searchProviderModuleIds = (catalog: InstalledModuleCatalog): readonly string[] =>
+  [...new Set(searchProviders(catalog).map(({ moduleId }) => moduleId))].toSorted();
+
 type ShellSearchArguments = readonly [dependencies: ShellResourceDependencies, gateway: ShellSearchProviderHandler];
 
 export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments) => ({

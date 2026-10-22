@@ -5,7 +5,7 @@ import {
   OperationContextUnavailable,
   ReadHandlerUnavailable,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   PurchaseLimitEvaluationRequestSchema,
@@ -48,25 +48,27 @@ export const purchaseLimitEvaluationRead = defineRead(
     resultSchema: PurchaseLimitEvaluationResponseSchema,
     schemaVersion: '1',
   },
-  (
-    input,
-    context: ReadHandlerContext<{
-      readonly source: PurchaseLimitEvaluationSourceService;
-    }>,
-  ) =>
-    context.services.source.loadCurrent({ principalId: context.scope.principalId, query: input }).pipe(
-      Effect.mapError((cause) =>
-        preserveFailureCause(
-          new ReadHandlerUnavailable({
-            code: 'read_handler_unavailable',
-            reason: 'Current Purchase Limit evaluation inputs are temporarily unavailable',
-          }),
-          cause,
+  {
+    load: (
+      input,
+      context: ReadLoadContext<{
+        readonly source: PurchaseLimitEvaluationSourceService;
+      }>,
+    ) =>
+      context.services.source.loadCurrent({ principalId: context.scope.principalId, query: input }).pipe(
+        Effect.mapError((cause) =>
+          preserveFailureCause(
+            new ReadHandlerUnavailable({
+              code: 'read_handler_unavailable',
+              reason: 'Current Purchase Limit evaluation inputs are temporarily unavailable',
+            }),
+            cause,
+          ),
         ),
+        Effect.map(evaluatePurchaseLimit),
+        Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
       ),
-      Effect.map(evaluatePurchaseLimit),
-      Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
-    ),
+  },
   (transaction, scope) =>
     PurchaseLimitEvaluationSourceFactory.pipe(
       Effect.flatMap((factory) => factory.make(transaction, scope)),

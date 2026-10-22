@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   CounterpartyCommerceAccessListRequestSchema,
@@ -98,18 +98,20 @@ export const counterpartyCommerceAccessListRead = defineRead(
     resultSchema: CounterpartyCommerceAccessListResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<CounterpartyCommerceAccessListServices>) => {
-    const { legalEntityId } = context.scope;
-    if (legalEntityId === undefined) {
-      return Effect.fail(unavailable());
-    }
-    return listCounterpartyCommerceAccessFromServices(
-      input,
-      context.scope.principalId,
-      legalEntityId,
-      context.scope.tenantId,
-      context.services,
-    ).pipe(Effect.map((result) => ({ evidence: { resultCount: result.grants.length }, result })));
+  {
+    load: (input, context: ReadLoadContext<CounterpartyCommerceAccessListServices>) => {
+      const { legalEntityId } = context.scope;
+      if (legalEntityId === undefined) {
+        return Effect.fail(unavailable());
+      }
+      return listCounterpartyCommerceAccessFromServices(
+        input,
+        context.scope.principalId,
+        legalEntityId,
+        context.scope.tenantId,
+        context.services,
+      ).pipe(Effect.map((result) => ({ evidence: { resultCount: result.grants.length }, result })));
+    },
   },
   (transaction, scope) =>
     counterpartyAccessServicesForTransaction(transaction, scope).pipe(Effect.map((port) => ({ list: port.list }))),

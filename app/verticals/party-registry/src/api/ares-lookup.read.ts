@@ -6,7 +6,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect, Match } from 'effect';
 
 import { AresLookupRequestSchema, AresLookupResponseSchema } from '../../shared/apis/ares-lookup.ts';
@@ -128,17 +128,19 @@ export const aresLookupRead = defineRead(
     resultSchema: AresLookupResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<Services>) =>
-    context.services
-      .lookup({
-        correlationId: context.scope.correlationId,
-        ico: input.ico,
-      } satisfies AresSubjectLookup)
-      .pipe(
-        Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
-        // oxlint-disable-next-line promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining.
-        Effect.catch(mapAresFailure),
-      ),
+  {
+    load: (input, context: ReadLoadContext<Services>) =>
+      context.services
+        .lookup({
+          correlationId: context.scope.correlationId,
+          ico: input.ico,
+        } satisfies AresSubjectLookup)
+        .pipe(
+          Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
+          // oxlint-disable-next-line promise/prefer-await-to-then -- Effect's typed catch combinator is not Promise chaining.
+          Effect.catch(mapAresFailure),
+        ),
+  },
   () => AresSubjectService.pipe(Effect.map((service) => ({ lookup: service.subject }))),
   () => ({ kind: 'tenant', permission: 'read_party_identity' }),
 );

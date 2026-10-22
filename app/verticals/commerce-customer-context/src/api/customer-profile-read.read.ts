@@ -2,7 +2,7 @@
 import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import type {
   OperationalScope,
-  ReadHandlerContext,
+  ReadLoadContext,
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
   ResolvedReadPermissionTarget,
@@ -121,10 +121,15 @@ export const customerProfileReadRead = defineRead(
     resultSchema: CustomerProfileReadResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<CustomerProfileReadServices>) =>
-    readCustomerProfileFromServices(input, context.scope.tenantId, context.scope.legalEntityId, context.services).pipe(
-      Effect.map((result) => ({ evidence: { resultCount: 1 }, result })),
-    ),
+  {
+    load: (input, context: ReadLoadContext<CustomerProfileReadServices>) =>
+      readCustomerProfileFromServices(
+        input,
+        context.scope.tenantId,
+        context.scope.legalEntityId,
+        context.services,
+      ).pipe(Effect.map((result) => ({ evidence: { resultCount: 1 }, result }))),
+  },
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(({ customerProfileRead }): CustomerProfileReadServices => customerProfileRead),

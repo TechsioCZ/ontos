@@ -5,7 +5,7 @@ import {
   defineRead,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import type { ReadHandlerContext } from '@app/core-runtime';
+import type { ReadLoadContext } from '@app/core-runtime';
 import { Effect, Match, Schema } from 'effect';
 
 import {
@@ -52,46 +52,48 @@ export const partyMatchDecisionRead = defineRead(
     resultSchema: PartyMatchDecisionResponseSchema,
     schemaVersion: '1',
   },
-  (input, context: ReadHandlerContext<Services>) => {
-    if (input.decisionRef !== undefined && input.decisionRef.tenantId !== context.scope.tenantId) {
-      return Effect.fail(
-        new ReadHandlerNotFound({
-          code: 'read_handler_not_found',
-          reason: 'The Party Match Decision does not exist',
-        }),
-      );
-    }
-    return context.services
-      .find(
-        input.decisionRef === undefined
-          ? { actionInvocationId: input.actionInvocationId ?? '' }
-          : { decisionId: input.decisionRef.resourceId },
-      )
-      .pipe(
-        Effect.mapError(matchDecisionUnavailable),
-        Effect.flatMap((found) =>
-          Match.value(found).pipe(
-            Match.tag('found', ({ value }) =>
-              Schema.decodeEffect(PartyMatchDecisionResponseSchema)(value).pipe(
-                Effect.map((result) => ({
-                  evidence: { resultCount: 1 },
-                  result,
-                })),
-                Effect.mapError(matchDecisionUnavailable),
+  {
+    load: (input, context: ReadLoadContext<Services>) => {
+      if (input.decisionRef !== undefined && input.decisionRef.tenantId !== context.scope.tenantId) {
+        return Effect.fail(
+          new ReadHandlerNotFound({
+            code: 'read_handler_not_found',
+            reason: 'The Party Match Decision does not exist',
+          }),
+        );
+      }
+      return context.services
+        .find(
+          input.decisionRef === undefined
+            ? { actionInvocationId: input.actionInvocationId ?? '' }
+            : { decisionId: input.decisionRef.resourceId },
+        )
+        .pipe(
+          Effect.mapError(matchDecisionUnavailable),
+          Effect.flatMap((found) =>
+            Match.value(found).pipe(
+              Match.tag('found', ({ value }) =>
+                Schema.decodeEffect(PartyMatchDecisionResponseSchema)(value).pipe(
+                  Effect.map((result) => ({
+                    evidence: { resultCount: 1 },
+                    result,
+                  })),
+                  Effect.mapError(matchDecisionUnavailable),
+                ),
               ),
-            ),
-            Match.tag('not_found', () =>
-              Effect.fail(
-                new ReadHandlerNotFound({
-                  code: 'read_handler_not_found',
-                  reason: 'The Party Match Decision does not exist',
-                }),
+              Match.tag('not_found', () =>
+                Effect.fail(
+                  new ReadHandlerNotFound({
+                    code: 'read_handler_not_found',
+                    reason: 'The Party Match Decision does not exist',
+                  }),
+                ),
               ),
+              Match.exhaustive,
             ),
-            Match.exhaustive,
           ),
-        ),
-      );
+        );
+    },
   },
   (transaction, scope) =>
     Effect.succeed({

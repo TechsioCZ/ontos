@@ -458,14 +458,7 @@ import { executeApplyCommand } from './apply-command-action-client.ts';`,
 
 it.effect('validates the six live owner clients with typed consumer projections and commands', () =>
   Effect.gen(function* validateLiveConsumerClients() {
-    for (const owner of [
-      'merchandise',
-      'sales-pipeline',
-      'finance-billing',
-      'work-tasks',
-      'tagging',
-      'workforce',
-    ]) {
+    for (const owner of ['merchandise', 'sales-pipeline', 'finance-billing', 'work-tasks', 'tagging', 'workforce']) {
       const source = yield* Effect.promise(() =>
         readFile(new URL(`../../verticals/${owner}/src/api/records-client.ts`, import.meta.url), 'utf-8'),
       );
@@ -557,7 +550,7 @@ const moduleReadFixture = (
   camel: string,
 ): string => `${MODULE_API_HEADER}import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 export const ${camel}Entrypoint = defineTenantModuleEntrypoint({ access: 'read', authorization: { kind: 'context_permission', permission: 'module.access' }, entrypointKey: 'inventory.stock.api.${name}', moduleKey: 'inventory.stock', role: 'api' });
-export const ${camel}Read = defineRead({ accessKind: 'list', entrypoint: ${camel}Entrypoint, inputSchema: ${type}RequestSchema, resultSchema: ${type}ResponseSchema, legalEntityScope: 'optional', owningModuleKey: 'inventory.stock', permissionTarget: 'tenant', policies: [], readKey: 'inventory.stock.api.${name}', schemaVersion: '1' }, () => Effect.succeed({}), () => Layer.empty, () => Effect.succeed({}));`;
+export const ${camel}Read = defineRead({ accessKind: 'list', entrypoint: ${camel}Entrypoint, inputSchema: ${type}RequestSchema, resultSchema: ${type}ResponseSchema, legalEntityScope: 'optional', owningModuleKey: 'inventory.stock', permissionTarget: 'tenant', policies: [], readKey: 'inventory.stock.api.${name}', schemaVersion: '1' }, { load: () => Effect.succeed({}) }, () => Layer.empty, () => Effect.succeed({}));`;
 
 it('governed servers bind the trusted handler, authentication, registration, and problem schemas', () => {
   const exportedName = 'stockListReadApiLive';
@@ -2986,7 +2979,7 @@ it.live(
     const source = yield* Effect.promise(() => readFile(path.join(root, STOCK_LIST_READ_FILE), 'utf-8'));
     const typed = source.replace(
       '() => Effect.succeed({})',
-      '(input: StockListRequest, context: ReadHandlerContext<Services>): Effect.Effect<ReadHandlerResult<StockListResponse>, ReadPermissionDenied | ReadHandlerUnavailable, Services> => Effect.succeed({})',
+      '(input: StockListRequest, context: ReadLoadContext<Services>): Effect.Effect<ReadHandlerResult<StockListResponse>, ReadPermissionDenied | ReadHandlerUnavailable, Services> => Effect.succeed({})',
     );
     yield* write(root, STOCK_LIST_READ_FILE, typed);
     yield* checkModuleEntrypointBoundaries(root);

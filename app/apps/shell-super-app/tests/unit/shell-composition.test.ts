@@ -8,7 +8,16 @@ import {
   InstalledModuleCatalogUnavailableError,
   makeInstalledModuleCatalogLoader,
 } from '../../api/modules/installed-module-catalog.ts';
-import { makeShellComposition, ShellCompositionUnavailableError } from '../../api/modules/shell-composition.ts';
+import {
+  makeShellCompositionAccess,
+  makeShellCompositionData,
+  ShellCompositionUnavailableError,
+} from '../../api/modules/shell-composition.ts';
+import type {
+  ShellCompositionAccessSources,
+  ShellCompositionContext,
+  ShellCompositionDataSources,
+} from '../../api/modules/shell-composition.ts';
 import { ShellCompositionSchema } from '../../shared/api.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -213,6 +222,37 @@ const contextAccess = (
 });
 
 const context = { legalEntityId, principalId, tenantId } as const;
+
+/** Runs the composition steps in the governed-read order: access before, tenant data inside, finish after. */
+const makeShellComposition = (sources: ShellCompositionAccessSources & ShellCompositionDataSources) => {
+  const access = makeShellCompositionAccess(sources);
+  const data = makeShellCompositionData(sources);
+  return {
+    compose: (composeContext: ShellCompositionContext) =>
+      access
+        .authorizeComposition(composeContext)
+        .pipe(
+          Effect.flatMap((authorization) =>
+            data
+              .loadComposition(composeContext, authorization)
+              .pipe(Effect.flatMap((loaded) => access.finishComposition(authorization, loaded))),
+          ),
+        ),
+    resolveModuleTarget: (
+      targetContext: ShellCompositionContext,
+      input: Parameters<typeof access.authorizeModuleTarget>[1],
+    ) =>
+      access
+        .authorizeModuleTarget(targetContext, input)
+        .pipe(
+          Effect.flatMap((authorization) =>
+            data
+              .loadModuleTarget(targetContext, authorization)
+              .pipe(Effect.map((state) => access.finishModuleTarget(authorization, state))),
+          ),
+        ),
+  };
+};
 
 /** Company navigation settings with nothing excluded. */
 const noExclusions = { listExcludedEntrypoints: () => Effect.succeed(new Set<string>()) };
@@ -923,7 +963,8 @@ it.effect(
         },
       });
       expect((yield* inactive.resolveModuleTarget(context, selector)).outcome).toBe('not_found');
-      expect(calls.length).toBe(1);
+      // Access is decided before the transaction reads the module state, so an inactive module was checked too.
+      expect(calls.length).toBe(2);
     }),
 );
 

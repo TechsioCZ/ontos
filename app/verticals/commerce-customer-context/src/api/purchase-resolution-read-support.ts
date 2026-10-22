@@ -1,7 +1,7 @@
 import { ReadHandlerUnavailable, ReadPermissionDenied, defineReadConditionalPermission } from '@app/core-runtime';
 import type {
   ReadConditionalPermissionDeclaration,
-  ReadHandlerContext,
+  ReadLoadContext,
   ReadHandlerResult,
   ResolvedReadConditionalPermissionRequirement,
 } from '@app/core-runtime';
@@ -100,7 +100,7 @@ export const makePurchaseResolutionReadHandler = <Input extends PurchaseResoluti
 ) =>
   Effect.fn(config.effectName)(function* purchaseResolutionReadHandler(
     input: Input,
-    context: ReadHandlerContext<Services>,
+    context: ReadLoadContext<Services>,
   ): Effect.fn.Return<
     ReadHandlerResult<{ readonly resolution: Resolution }>,
     ReadHandlerUnavailable | ReadPermissionDenied

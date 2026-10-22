@@ -232,13 +232,15 @@ export const selfApiKeyBindingsRead = defineRead<
     resultSchema: SelfResult,
     schemaVersion: '1',
   },
-  (input, context) =>
-    context.services.listSelf(input).pipe(
-      Effect.map((result) => ({
-        evidence: { resultCount: result.items.length },
-        result,
-      })),
-    ),
+  {
+    load: (input, context) =>
+      context.services.listSelf(input).pipe(
+        Effect.map((result) => ({
+          evidence: { resultCount: result.items.length },
+          result,
+        })),
+      ),
+  },
   (transaction, scope) =>
     scope.authenticationNamespaceId === undefined
       ? Effect.fail(
@@ -284,13 +286,15 @@ export const managedPrincipalsRead = defineRead<
     resultSchema: ManagedResult,
     schemaVersion: '1',
   },
-  (input, context) =>
-    context.services.listManaged(input).pipe(
-      Effect.map((result) => ({
-        evidence: { resultCount: result.items.length },
-        result,
-      })),
-    ),
+  {
+    load: (input, context) =>
+      context.services.listManaged(input).pipe(
+        Effect.map((result) => ({
+          evidence: { resultCount: result.items.length },
+          result,
+        })),
+      ),
+  },
   (transaction, scope) => {
     if (scope.authMethod === 'system') {
       return isTrustedSystemPrincipalContext(scope)

@@ -26,6 +26,7 @@ import type {
   Employee,
   EmployeeRole,
   RecordsRequest,
+  RecordsResponse,
   WorkforceState,
 } from '../../shared/apis/records.ts';
 import { TenantIdSchema } from '../../shared/resources/employee.ts';
@@ -201,9 +202,13 @@ export const evolveEmployeeState = Effect.fn('Workforce.evolveState')(function* 
   return yield* change;
 });
 
-const contextGrant = Effect.fn('Workforce.contextGrant')(function* contextGrant(
+const ContextGrantSchema = Schema.Literals(['read_all', 'write_all']);
+type ContextGrant = typeof ContextGrantSchema.Type;
+
+/** One bulk SpiceDB check for the given context permissions of the scope's company. */
+const contextGrants = Effect.fn('Workforce.contextGrants')(function* contextGrants(
   scope: OperationalScope,
-  permission: 'read_all' | 'write_all',
+  permissions: readonly ContextGrant[],
 ) {
   const access = yield* ContextAccess;
   if (scope.legalEntityId === undefined || access.contextPermissions === undefined) {
@@ -212,26 +217,44 @@ const contextGrant = Effect.fn('Workforce.contextGrant')(function* contextGrant(
   const decisions = yield* access.contextPermissions({
     legalEntityId: scope.legalEntityId,
     principalId: scope.principalId,
-    targets: [{ moduleId: 'demo.workforce', permission: `demo.workforce.${permission}` }],
+    targets: permissions.map((permission) => ({
+      moduleId: 'demo.workforce',
+      permission: `demo.workforce.${permission}`,
+    })),
     tenantId: scope.tenantId,
   });
   if (
-    decisions.length !== 1 ||
-    decisions[0]?.key !== `demo.workforce:demo.workforce.${permission}` ||
-    decisions[0]?.decision === 'unavailable'
+    decisions.length !== permissions.length ||
+    decisions.some(
+      (decision, index) =>
+        decision.key !== `demo.workforce:demo.workforce.${permissions[index]}` || decision.decision === 'unavailable',
+    )
   ) {
     return yield* referenceUnavailable();
   }
-  return decisions[0]?.decision === 'allowed';
+  return (permission: ContextGrant) => decisions[permissions.indexOf(permission)]?.decision === 'allowed';
 });
+
+const contextGrant = (scope: OperationalScope, permission: ContextGrant) =>
+  contextGrants(scope, [permission]).pipe(Effect.map((granted) => granted(permission)));
+
+/** What a records read knows before its transaction opens: both grants in one bulk check. */
+export const workforceRecordsGrants = Effect.fn('Workforce.recordsGrants')(function* recordsGrants(
+  scope: OperationalScope,
+) {
+  const granted = yield* contextGrants(scope, ['read_all', 'write_all']);
+  return { readAll: granted('read_all'), writeAll: granted('write_all') };
+});
+export type RecordsGrants = Effect.Success<ReturnType<typeof workforceRecordsGrants>>;
 
 export const visibleEmployees = Effect.fn('Workforce.visibleEmployees')(function* visibleEmployees(
   employees: readonly Employee[],
   scope: OperationalScope,
   tenantId: TenantId,
+  readAll: boolean,
 ) {
   const access = yield* ContextAccess;
-  if (yield* contextGrant(scope, 'read_all')) {
+  if (readAll) {
     return employees;
   }
   if (scope.legalEntityId === undefined) {
@@ -273,6 +296,58 @@ const departmentCounts = (employees: readonly Employee[]) => {
     .map(([department, count]) => ({ count, department }))
     .toSorted((left, right) => left.department.localeCompare(right.department));
 };
+
+/** What the owner transaction read for a records request: the stored row (still encoded) and the AI feed. */
+export interface LoadedRecords {
+  readonly aiActivity: RecordsResponse['aiActivity'];
+  readonly row: { readonly revision: number; readonly state: unknown } | undefined;
+}
+
+/** After commit: decodes the stored state, keeps what the person may see (SpiceDB row filter), shapes the response. */
+export const finishWorkforceRecords = Effect.fn('Workforce.finishRecords')(function* finishRecords(
+  request: RecordsRequest,
+  loaded: LoadedRecords,
+  grants: RecordsGrants,
+  scope: OperationalScope,
+) {
+  const { row } = loaded;
+  const snapshot =
+    row === undefined
+      ? { revision: 0, state: { employees: [] } satisfies WorkforceState }
+      : {
+          revision: row.revision,
+          state: yield* Schema.decodeUnknownEffect(WorkforceStateSchema)(row.state).pipe(Effect.mapError(unavailable)),
+        };
+  const tenantId = yield* Schema.decodeEffect(TenantIdSchema)(scope.tenantId).pipe(Effect.mapError(unavailable));
+  const visible = yield* visibleEmployees(snapshot.state.employees, scope, tenantId, grants.readAll);
+  if (request.employeeId !== undefined && !visible.some((employee) => employee.id === request.employeeId)) {
+    return yield* new WorkforcePermissionDenied({
+      code: 'workforce_permission_denied',
+      reason: 'Employee detail is forbidden or absent',
+    });
+  }
+  const items = visible.filter(
+    (employee) =>
+      (request.employeeId === undefined || employee.id === request.employeeId) &&
+      (request.role === undefined || employee.role === request.role) &&
+      (request.department === undefined || employee.department === request.department) &&
+      (request.active === undefined || employee.active === request.active),
+  );
+  const activity = loaded.aiActivity === undefined ? {} : { aiActivity: loaded.aiActivity };
+  return {
+    ...activity,
+    actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
+    canWrite: grants.writeAll && isConnectionWriteAllowed(scope, 'demo.workforce'),
+    indicators: {
+      active: items.filter((employee) => employee.active).length,
+      byDepartment: departmentCounts(items),
+      byRole: roleCounts(items),
+      total: items.length,
+    },
+    items,
+    revision: snapshot.revision,
+  };
+});
 
 export const persistenceService = Effect.fn('Workforce.persistenceService')(
   function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
@@ -448,45 +523,22 @@ export const persistenceService = Effect.fn('Workforce.persistenceService')(
         targetModuleKey: row.targetModuleKey ?? null,
       }));
     });
-    const records = Effect.fn('Workforce.records')(function* records(request: RecordsRequest) {
-      const snapshot = yield* load();
-      const visible = yield* visibleEmployees(snapshot.state.employees, scope, tenantId);
-      if (request.employeeId !== undefined && !visible.some((employee) => employee.id === request.employeeId)) {
-        return yield* new WorkforcePermissionDenied({
-          code: 'workforce_permission_denied',
-          reason: 'Employee detail is forbidden or absent',
-        });
-      }
-      const items = visible.filter(
-        (employee) =>
-          (request.employeeId === undefined || employee.id === request.employeeId) &&
-          (request.role === undefined || employee.role === request.role) &&
-          (request.department === undefined || employee.department === request.department) &&
-          (request.active === undefined || employee.active === request.active),
-      );
+    /** The records read's whole transaction step: the raw state row and the AI feed; decoding runs after commit. */
+    const loadRecords = Effect.fn('Workforce.loadRecords')(function* loadRecords(request: RecordsRequest) {
+      const [row] = yield* transaction
+        .select({ revision: workforceStates.revision, state: workforceStates.state })
+        .from(workforceStates)
+        .where(whereScope)
+        .limit(1)
+        .pipe(Effect.mapError(unavailable));
       // The activity feed is best-effort: an unreadable audit table never breaks the employee list.
       const activity =
         request.includeAiActivity === true
-          ? yield* aiActivity().pipe(
-              Effect.map((entries) => ({ aiActivity: entries })),
-              Effect.catchCause(() => Effect.succeed({})),
-            )
-          : {};
-      return {
-        ...activity,
-        actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
-        canWrite: (yield* contextGrant(scope, 'write_all')) && isConnectionWriteAllowed(scope, 'demo.workforce'),
-        indicators: {
-          active: items.filter((employee) => employee.active).length,
-          byDepartment: departmentCounts(items),
-          byRole: roleCounts(items),
-          total: items.length,
-        },
-        items,
-        revision: snapshot.revision,
-      };
+          ? yield* aiActivity().pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+          : undefined;
+      return { aiActivity: activity, row } satisfies LoadedRecords;
     });
-    return { apply, records };
+    return { apply, loadRecords };
   },
   Effect.mapError((cause) =>
     Object.defineProperty(

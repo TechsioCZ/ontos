@@ -10,7 +10,7 @@ import { financeDocumentContents, financeStates } from '../database/schema.ts';
 /* The scoped adapter stays apart from pure transitions so the worker bundle never imports request-time Core. */
 type Transaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 type EncodedState = typeof FinanceStateSchema.Encoded;
-interface StateRow {
+export interface StateRow {
   readonly revision: number;
   readonly state: EncodedState;
 }
@@ -37,23 +37,26 @@ const unavailable = (cause?: Error) =>
   );
 
 /** Missing owner state is an empty company; only an Action save materializes the first revision. */
+export const decodeFinanceState = Effect.fn('Finance.decodeState')(function* decodeFinanceState(
+  row: StateRow | undefined,
+) {
+  if (row === undefined) {
+    return {
+      revision: 0,
+      state: {
+        accountingObservations: [],
+        financialPlanEntries: [],
+        invoices: [],
+        paymentObservations: [],
+      } satisfies FinanceState,
+    };
+  }
+  const state = yield* Schema.decodeEffect(FinanceStateSchema)(row.state).pipe(Effect.mapError(unavailable));
+  return { revision: row.revision, state };
+});
+
 export const financeStateRepository = (persistence: StatePersistence) => ({
-  load: Effect.fn('Finance.load')(function* load() {
-    const row = yield* persistence.load;
-    if (row === undefined) {
-      return {
-        revision: 0,
-        state: {
-          accountingObservations: [],
-          financialPlanEntries: [],
-          invoices: [],
-          paymentObservations: [],
-        } satisfies FinanceState,
-      };
-    }
-    const state = yield* Schema.decodeEffect(FinanceStateSchema)(row.state).pipe(Effect.mapError(unavailable));
-    return { revision: row.revision, state };
-  }),
+  load: () => persistence.load.pipe(Effect.flatMap(decodeFinanceState)),
   save: Effect.fn('Finance.save')(function* save(state: FinanceState, expectedRevision: number) {
     const encoded = yield* Schema.encodeEffect(FinanceStateSchema)(state).pipe(Effect.mapError(unavailable));
     const updated = yield* persistence.update(encoded, expectedRevision);
@@ -92,6 +95,16 @@ export const persistenceService = (transaction: Transaction, scope: OperationalS
     );
   }
   const scopeWhere = and(eq(financeStates.tenantId, scope.tenantId), eq(financeStates.legalEntityId, legalEntityId));
+  /** The stored row, still encoded: a read decodes it after its transaction commits. */
+  const loadStateRow = transaction
+    .select({ revision: financeStates.revision, state: financeStates.state })
+    .from(financeStates)
+    .where(scopeWhere)
+    .limit(1)
+    .pipe(
+      Effect.mapError(unavailable),
+      Effect.map(([row]): StateRow | undefined => row),
+    );
   const documents = {
     loadDocument: (documentId: string) =>
       transaction
@@ -118,6 +131,7 @@ export const persistenceService = (transaction: Transaction, scope: OperationalS
   };
   return Effect.succeed({
     ...documents,
+    loadStateRow: () => loadStateRow,
     ...financeStateRepository({
       insert: (state) =>
         DateTime.now.pipe(
@@ -136,15 +150,7 @@ export const persistenceService = (transaction: Transaction, scope: OperationalS
               .pipe(Effect.mapError(unavailable)),
           ),
         ),
-      load: transaction
-        .select()
-        .from(financeStates)
-        .where(scopeWhere)
-        .limit(1)
-        .pipe(
-          Effect.mapError(unavailable),
-          Effect.map(([row]) => row),
-        ),
+      load: loadStateRow,
       update: (state, revision) =>
         DateTime.now.pipe(
           Effect.flatMap((now) =>

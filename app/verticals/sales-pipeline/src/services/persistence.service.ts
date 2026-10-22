@@ -402,9 +402,13 @@ export const evolveOpportunityState = Effect.fn('SalesPipeline.evolveState')(fun
   );
 });
 
-const contextGrant = Effect.fn('SalesPipeline.contextGrant')(function* contextGrant(
+const SalesPipelineGrantSchema = Schema.Literals(['read_all', 'write_all']);
+type SalesPipelineGrant = typeof SalesPipelineGrantSchema.Type;
+
+/** One bulk SpiceDB check for the given Sales Pipeline context permissions of the scope's company. */
+const contextGrants = Effect.fn('SalesPipeline.contextGrants')(function* contextGrants(
   scope: OperationalScope,
-  permission: 'read_all' | 'write_all',
+  permissions: readonly SalesPipelineGrant[],
 ) {
   const access = yield* ContextAccess;
   if (scope.legalEntityId === undefined || access.contextPermissions === undefined) {
@@ -413,25 +417,44 @@ const contextGrant = Effect.fn('SalesPipeline.contextGrant')(function* contextGr
   const decisions = yield* access.contextPermissions({
     legalEntityId: scope.legalEntityId,
     principalId: scope.principalId,
-    targets: [{ moduleId: 'demo.sales-pipeline', permission: `demo.sales_pipeline.${permission}` }],
+    targets: permissions.map((permission) => ({
+      moduleId: 'demo.sales-pipeline',
+      permission: `demo.sales_pipeline.${permission}`,
+    })),
     tenantId: scope.tenantId,
   });
   if (
-    decisions.length !== 1 ||
-    decisions[0]?.key !== `demo.sales-pipeline:demo.sales_pipeline.${permission}` ||
-    decisions[0]?.decision === 'unavailable'
+    decisions.length !== permissions.length ||
+    decisions.some(
+      (decision, index) =>
+        decision.key !== `demo.sales-pipeline:demo.sales_pipeline.${permissions[index]}` ||
+        decision.decision === 'unavailable',
+    )
   ) {
     return yield* referenceUnavailable();
   }
-  return decisions[0]?.decision === 'allowed';
+  return (permission: SalesPipelineGrant) => decisions[permissions.indexOf(permission)]?.decision === 'allowed';
 });
+
+const contextGrant = (scope: OperationalScope, permission: SalesPipelineGrant) =>
+  contextGrants(scope, [permission]).pipe(Effect.map((granted) => granted(permission)));
+
+/** What a records read knows before its transaction opens. */
+export const salesPipelineRecordsGrants = Effect.fn('SalesPipeline.recordsGrants')(function* recordsGrants(
+  scope: OperationalScope,
+) {
+  const granted = yield* contextGrants(scope, ['read_all', 'write_all']);
+  return { readAll: granted('read_all'), writeAll: granted('write_all') };
+});
+export type SalesPipelineRecordsGrants = Effect.Success<ReturnType<typeof salesPipelineRecordsGrants>>;
 
 export const visibleOpportunities = Effect.fn('SalesPipeline.visibleOpportunities')(function* visibleOpportunities(
   opportunities: readonly Opportunity[],
   scope: OperationalScope,
+  readAll: boolean,
 ) {
   const access = yield* ContextAccess;
-  if (yield* contextGrant(scope, 'read_all')) {
+  if (readAll) {
     return opportunities;
   }
   if (scope.legalEntityId === undefined) {
@@ -452,6 +475,44 @@ export const visibleOpportunities = Effect.fn('SalesPipeline.visibleOpportunitie
     return yield* referenceUnavailable();
   }
   return opportunities.filter((_, index) => decisions[index]?.decision === 'allowed');
+});
+
+/** The stored pipeline row as the owner transaction read it (still encoded). */
+export type LoadedSalesPipelineRecords = { readonly revision: number; readonly state: unknown } | undefined;
+
+/** After commit: decodes the stored pipeline, keeps what the person may see (SpiceDB row filter), shapes the response. */
+export const finishSalesPipelineRecords = Effect.fn('SalesPipeline.finishRecords')(function* finishRecords(
+  request: RecordsRequest,
+  loaded: LoadedSalesPipelineRecords,
+  grants: SalesPipelineRecordsGrants,
+  scope: OperationalScope,
+) {
+  const state: SalesPipelineState =
+    loaded === undefined
+      ? { opportunities: [] }
+      : yield* Schema.decodeUnknownEffect(SalesPipelineStateSchema)(loaded.state).pipe(Effect.mapError(unavailable));
+  const visible = yield* visibleOpportunities(
+    state.opportunities.filter((item) => item.archivedAt === undefined),
+    scope,
+    grants.readAll,
+  );
+  const requestedIds = request.ids === undefined ? undefined : new Set(request.ids);
+  const items = visible.filter(
+    (opportunity) =>
+      (requestedIds === undefined || requestedIds.has(opportunity.id)) &&
+      (request.stage === undefined || opportunity.stage === request.stage) &&
+      (request.ownerEmployeeId === undefined || opportunity.ownerEmployeeId === request.ownerEmployeeId) &&
+      (request.partyId === undefined || opportunity.partyId === request.partyId),
+  );
+  const response: RecordsResponse = {
+    actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
+    ...(grants.readAll && state.aiChanges !== undefined ? { aiChanges: state.aiChanges } : {}),
+    canWrite: grants.writeAll && isConnectionWriteAllowed(scope, 'demo.sales-pipeline'),
+    indicators: opportunityIndicators(items),
+    items,
+    revision: loaded?.revision ?? 0,
+  };
+  return response;
 });
 
 interface PipelineStatePersistence {
@@ -686,32 +747,18 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
       };
       return applied;
     });
-    const records = Effect.fn('SalesPipeline.records')(function* records(request: RecordsRequest) {
-      const snapshot = yield* load();
-      const visible = yield* visibleOpportunities(
-        snapshot.state.opportunities.filter((item) => item.archivedAt === undefined),
-        scope,
-      );
-      const requestedIds = request.ids === undefined ? undefined : new Set(request.ids);
-      const items = visible.filter(
-        (opportunity) =>
-          (requestedIds === undefined || requestedIds.has(opportunity.id)) &&
-          (request.stage === undefined || opportunity.stage === request.stage) &&
-          (request.ownerEmployeeId === undefined || opportunity.ownerEmployeeId === request.ownerEmployeeId) &&
-          (request.partyId === undefined || opportunity.partyId === request.partyId),
-      );
-      const canReadAll = yield* contextGrant(scope, 'read_all');
-      const response: RecordsResponse = {
-        actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
-        ...(canReadAll && snapshot.state.aiChanges !== undefined ? { aiChanges: snapshot.state.aiChanges } : {}),
-        canWrite: (yield* contextGrant(scope, 'write_all')) && isConnectionWriteAllowed(scope, 'demo.sales-pipeline'),
-        indicators: opportunityIndicators(items),
-        items,
-        revision: snapshot.revision,
-      };
-      return response;
-    });
-    return { apply, records };
+    /** The records read's whole transaction step: the raw state row; {@link finishSalesPipelineRecords} decodes it. */
+    const loadRecords = (): Effect.Effect<LoadedSalesPipelineRecords, SalesPipelinePersistenceUnavailable> =>
+      transaction
+        .select({ revision: salesPipelineStates.revision, state: salesPipelineStates.state })
+        .from(salesPipelineStates)
+        .where(whereScope)
+        .limit(1)
+        .pipe(
+          Effect.mapError(unavailable),
+          Effect.map(([row]) => row),
+        );
+    return { apply, loadRecords };
   },
   Effect.mapError((cause) =>
     Object.defineProperty(

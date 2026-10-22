@@ -505,7 +505,7 @@ export const ${toCamelCase(name)}Read = defineRead(
     resultSchema: ${type}ResponseSchema,
     schemaVersion: '1',
   },
-  () => Effect.succeed({ evidence: { resultCount: 1 }, result: { ok: true as const } }),
+  { load: () => Effect.succeed({ evidence: { resultCount: 1 }, result: { ok: true as const } }) },
   () => Effect.succeed({}),
   () => ({ kind: 'module', moduleId: '${vertical.moduleId}' }),
 );
@@ -641,13 +641,15 @@ export const ${toCamelCase(name)}Read = defineRead(
     resultSchema: ${resultSchema},
     schemaVersion: '1',
   },
-  (input, context) =>
-    context.services.load(input).pipe(
-      Effect.map((result) => ({
-        evidence: { resultCount: ${resultCount} },
-        result,
-      })),
-    ),
+  {
+    load: (input, context) =>
+      context.services.load(input).pipe(
+        Effect.map((result) => ({
+          evidence: { resultCount: ${resultCount} },
+          result,
+        })),
+      ),
+  },
   () => Effect.succeed({ load: load${type} }),
   () => ({ kind: 'module', moduleId: '${vertical.moduleId}' }),
 ${kind === SEARCH_PROVIDER_KIND ? '  (result) => result.map(({ ref }) => ref),\n' : ''});

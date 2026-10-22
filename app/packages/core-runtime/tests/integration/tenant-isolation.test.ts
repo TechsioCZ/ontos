@@ -32,7 +32,7 @@ import {
 } from '../../src/db/schema.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../../src/operations/context.ts';
-import type { ReadHandlerContext } from '../../src/reads/context.ts';
+import type { ReadLoadContext } from '../../src/reads/context.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { findPostgresFailure } from '../../src/database/postgres-failure.ts';
@@ -318,12 +318,14 @@ it.live('an unscoped owner repository remains isolated inside a governed read tr
           resultSchema: Schema.Array(Schema.String),
           schemaVersion: '1',
         },
-        (
-          _input,
-          context: ReadHandlerContext<{
-            readonly listWithoutPredicates: () => Effect.Effect<readonly { readonly value: string }[]>;
-          }>,
-        ) => context.services.listWithoutPredicates().pipe(Effect.map(toReadResult)),
+        {
+          load: (
+            _input,
+            context: ReadLoadContext<{
+              readonly listWithoutPredicates: () => Effect.Effect<readonly { readonly value: string }[]>;
+            }>,
+          ) => context.services.listWithoutPredicates().pipe(Effect.map(toReadResult)),
+        },
         (transaction) => {
           const rows = transaction.select().from(records);
           return Effect.succeed({
