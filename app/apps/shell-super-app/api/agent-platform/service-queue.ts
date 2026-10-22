@@ -285,7 +285,12 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
   });
   const legacyModules = composed.all
     .filter((module) => module.ownProposalEngine && modules.access.has(module.moduleId))
-    .map((module) => ({ appId: module.appId, label: module.label.cs, moduleKey: module.moduleId }));
+    .map((module) => ({
+      appId: module.appId,
+      label: module.label.cs,
+      moduleKey: module.moduleId,
+      ...(module.approvalsPage === undefined ? {} : { approvalsPage: module.approvalsPage }),
+    }));
   const legacy = yield* Effect.forEach(
     legacyModules,
     (module) =>
