@@ -189,7 +189,8 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
   const environment = yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
     Effect.orElseSucceed(() => 'unknown'),
   );
-  if (environment !== 'development') {
+  // The demo stage environment runs the same synthetic demo administration as local development.
+  if (environment !== 'development' && environment !== 'stage') {
     return yield* invalid('Demo account administration is available only in development');
   }
   const { transaction } = context.services;
