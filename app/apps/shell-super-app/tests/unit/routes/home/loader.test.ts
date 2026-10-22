@@ -13,6 +13,7 @@ const {
   browserConfigValuesMock,
   canManageDemoAccountsMock,
   currentSessionMock,
+  documentContextMock,
   executeLegalEntityDetailMock,
   issueDocumentGatewayContextsMock,
   resolveModuleTargetMock,
@@ -23,6 +24,7 @@ const {
   browserConfigValuesMock: rstest.fn<() => { readonly BETTER_AUTH_URL?: string }>(),
   canManageDemoAccountsMock: rstest.fn(),
   currentSessionMock: rstest.fn(),
+  documentContextMock: rstest.fn(),
   executeLegalEntityDetailMock: rstest.fn(),
   issueDocumentGatewayContextsMock: rstest.fn(),
   resolveModuleTargetMock: rstest.fn(),
@@ -35,6 +37,7 @@ rstest.mock('../../../../src/api/auth-client.ts', () => ({
   availableTenants: availableTenantsMock,
   canManageDemoAccounts: canManageDemoAccountsMock,
   currentSession: currentSessionMock,
+  documentContext: documentContextMock,
   executeLegalEntityDetail: executeLegalEntityDetailMock,
   issueDocumentGatewayContexts: issueDocumentGatewayContextsMock,
   resolveModuleTarget: resolveModuleTargetMock,
@@ -476,42 +479,158 @@ const serverRequest = (url = 'https://shell.example.test/en') => {
   return Object.defineProperty(new Request(url), 'headers', { value: headers });
 };
 
-it.effect('server rendering starts composition, tenants, legal entities and the capability beside the session', () =>
-  Effect.gen(function* serverReadsStartTogether() {
-    const startedBeforeSession: string[] = [];
-    currentSessionMock.mockImplementation(() =>
-      Effect.sync(() => {
-        for (const [name, mock] of [
-          ['composition', shellCompositionMock],
-          ['legalEntities', availableLegalEntitiesMock],
-          ['peopleCapability', canManageDemoAccountsMock],
-          ['tenants', availableTenantsMock],
-        ] as const) {
-          if (mock.mock.calls.length > 0) {
-            startedBeforeSession.push(name);
-          }
-        }
-        return { identity, state: 'authenticated' as const };
-      }),
-    );
-    const model = yield* asServerRender(loadModel({ request: serverRequest() }));
-    expect(startedBeforeSession).toEqual(['composition', 'legalEntities', 'peopleCapability', 'tenants']);
-    expect(model).toMatchObject({
+const availableComposition = <Overrides extends object>(overrides: Overrides) => ({
+  compositionRevision,
+  deniedAppIds: [],
+  gatewayAudiences: [],
+  homeComponents: [],
+  navigation,
+  state: 'available' as const,
+  unavailableDeployments: [],
+  ...overrides,
+});
+
+const documentContextOf = <Overrides extends object>(overrides: Overrides) => ({
+  canManagePeople: false,
+  composition: availableComposition({}),
+  legalEntities: {
+    legalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+    selectedLegalEntityId: 'legal-1',
+    state: 'authenticated',
+  },
+  session: { identity, state: 'authenticated' as const },
+  tenants: { state: 'available', tenants: [{ name: 'Alpha tenant', tenantId: 'tenant-1' }] },
+  ...overrides,
+});
+
+const withoutLegalEntities = <Context extends { readonly legalEntities: unknown }>({
+  legalEntities: _legalEntities,
+  ...rest
+}: Context) => rest;
+
+const serverModel = (url?: string) => asServerRender(loadModel({ request: serverRequest(url) }));
+
+it.effect('server rendering reads the whole document context in one request', () =>
+  Effect.gen(function* serverReadsOnce() {
+    documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({})));
+    expect(yield* serverModel()).toEqual({
       compositionRevision,
-      legalEntities: { state: 'available' },
+      contextState: 'authenticated',
+      gatewayAudiences: [],
+      homeCandidates: [],
+      identity,
+      legalEntities: { items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }], state: 'available' },
+      navigation: {
+        deniedAppIds: [],
+        items: navigation,
+        moduleIds: ['future.generated'],
+        state: 'available',
+        unavailableDeployments: [],
+      },
+      selectedLegalEntityId: 'legal-1',
       state: 'authenticated',
-      tenants: { state: 'available' },
+      tenants: { items: [{ name: 'Alpha tenant', tenantId: 'tenant-1' }], state: 'available' },
     });
-    // The navigation offers no people administration, so the speculative capability answer is not used.
-    expect(model).toMatchObject({ navigation: { items: navigation } });
+    expect(documentContextMock).toHaveBeenCalledTimes(1);
+    expect(documentContextMock.mock.calls[0]?.[0]).toEqual({});
+    for (const separateRead of [
+      currentSessionMock,
+      shellCompositionMock,
+      availableTenantsMock,
+      availableLegalEntitiesMock,
+      canManageDemoAccountsMock,
+      issueDocumentGatewayContextsMock,
+      resolveModuleTargetMock,
+    ]) {
+      expect(separateRead).not.toHaveBeenCalled();
+    }
   }),
 );
 
-it.effect('server rendering answers an anonymous session as before, whatever the started reads say', () =>
-  Effect.gen(function* serverAnonymous() {
-    currentSessionMock.mockReturnValueOnce(Effect.succeed({ state: 'anonymous' }));
-    shellCompositionMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellAuthenticationRequiredProblem' }));
-    expect(yield* asServerRender(loadModel({ request: serverRequest() }))).toEqual({ state: 'anonymous' });
+it.effect('server rendering maps each document-context part to the same models as the separate reads', () =>
+  Effect.gen(function* serverPartOutcomes() {
+    documentContextMock.mockReturnValueOnce(Effect.succeed({ session: { state: 'anonymous' } }));
+    expect(yield* serverModel()).toEqual({ state: 'anonymous' });
+    documentContextMock.mockReturnValueOnce(
+      Effect.succeed(documentContextOf({ composition: { state: 'reload_required' } })),
+    );
+    expect(yield* serverModel()).toEqual({ state: 'reload_required' });
+    documentContextMock.mockReturnValueOnce(
+      Effect.succeed(documentContextOf({ composition: { state: 'unavailable' } })),
+    );
+    expect(yield* serverModel()).toEqual({ state: 'unavailable' });
+    documentContextMock.mockReturnValueOnce(
+      Effect.succeed(documentContextOf({ tenants: { state: 'authentication_required' } })),
+    );
+    expect(yield* serverModel()).toEqual({ reason: 'session_ended', state: 'anonymous' });
+    documentContextMock.mockReturnValueOnce(
+      Effect.succeed(withoutLegalEntities(documentContextOf({ tenants: { state: 'unavailable' } }))),
+    );
+    expect(yield* serverModel()).toMatchObject({
+      legalEntities: { items: [], state: 'unavailable' },
+      tenants: { items: [{ name: 'tenant-1', tenantId: 'tenant-1' }], state: 'unavailable' },
+    });
+    documentContextMock.mockReturnValueOnce(Effect.fail({ _tag: 'OntosIdentityForbiddenProblem' }));
+    expect(yield* serverModel()).toEqual({ reason: 'account_forbidden', state: 'anonymous' });
+  }),
+);
+
+it.effect('server rendering keeps a context without a selected legal entity free of composition data', () =>
+  Effect.gen(function* serverSelectionRequired() {
+    documentContextMock.mockReturnValueOnce(
+      Effect.succeed({
+        composition: { navigation: [], state: 'selection_required' },
+        legalEntities: { legalEntities: [], state: 'selection_required' },
+        session: {
+          availableLegalEntities: [{ legalEntityId: 'legal-2', legalName: 'Beta company' }],
+          identity: {
+            displayName: 'Ada Lovelace',
+            email: 'ada@example.test',
+            principalId: 'principal-1',
+            tenantId: 'tenant-1',
+          },
+          state: 'selection_required',
+        },
+        tenants: { state: 'available', tenants: [{ name: 'Alpha tenant', tenantId: 'tenant-1' }] },
+      }),
+    );
+    const model = yield* serverModel();
+    expect(model).toMatchObject({
+      contextState: 'selection_required',
+      legalEntities: { items: [{ legalEntityId: 'legal-2', legalName: 'Beta company' }], state: 'available' },
+      navigation: { items: [], state: 'available' },
+    });
+    expect(model).not.toHaveProperty('compositionRevision');
+  }),
+);
+
+it.effect('server rendering offers people administration from the context capability', () =>
+  Effect.gen(function* serverPeopleCapability() {
+    const peopleNavigation = [
+      { ...navigation[0], href: '/fixture/people', requiresCapability: 'people_administration' },
+      { ...navigation[0], href: '/fixture/clients' },
+    ];
+    for (const canManagePeople of [false, true]) {
+      documentContextMock.mockReturnValueOnce(
+        Effect.succeed(
+          documentContextOf({ canManagePeople, composition: availableComposition({ navigation: peopleNavigation }) }),
+        ),
+      );
+      const model = yield* serverModel();
+      expect(model).toMatchObject({
+        navigation: {
+          items: canManagePeople
+            ? [
+                expect.objectContaining({ href: '/fixture/people' }),
+                expect.objectContaining({ href: '/fixture/clients' }),
+                expect.objectContaining({ href: '/sprava/ke-schvaleni' }),
+                expect.objectContaining({ href: '/sprava/aktivita-agentu' }),
+                expect.objectContaining({ href: '/sprava/pripojene-aplikace' }),
+              ]
+            : [expect.objectContaining({ href: '/fixture/clients' })],
+        },
+      });
+    }
   }),
 );
 
@@ -531,26 +650,22 @@ it.effect('server rendering leaves the Home component to the browser and keeps i
         requiresModules: ['fixture.dashboard'],
       },
     ];
-    shellCompositionMock.mockReturnValue(
-      Effect.succeed({
-        compositionRevision,
-        deniedAppIds: [],
-        gatewayAudiences: [],
-        homeComponents,
-        navigation: [{ ...navigation[0], moduleId: 'fixture.dashboard' }],
-        state: 'available',
-        unavailableDeployments: [],
-      }),
+    documentContextMock.mockReturnValue(
+      Effect.succeed(
+        documentContextOf({
+          composition: availableComposition({
+            homeComponents,
+            navigation: [{ ...navigation[0], moduleId: 'fixture.dashboard' }],
+          }),
+        }),
+      ),
     );
-    const model = yield* asServerRender(loadModel({ request: serverRequest() }));
+    const model = yield* serverModel();
     expect(model).toMatchObject({ homeCandidates: [homeComponents[1]], state: 'authenticated' });
     expect(model).not.toHaveProperty('homeContribution');
     expect(resolveModuleTargetMock).not.toHaveBeenCalled();
     expect(executeLegalEntityDetailMock).not.toHaveBeenCalled();
-    const elsewhere = yield* asServerRender(
-      loadModel({ request: serverRequest('https://shell.example.test/en/ukoly') }),
-    );
-    expect(elsewhere).not.toHaveProperty('homeCandidates');
+    expect(yield* serverModel('https://shell.example.test/en/ukoly')).not.toHaveProperty('homeCandidates');
   }),
 );
 
@@ -563,24 +678,20 @@ const gatewayAssertion = {
 };
 
 const withGatewayAudiences = () =>
-  shellCompositionMock.mockReturnValue(
-    Effect.succeed({
-      compositionRevision,
-      deniedAppIds: [],
-      gatewayAudiences: ['future-generated'],
-      homeComponents: [],
-      navigation,
-      state: 'available',
-      unavailableDeployments: [],
-    }),
+  documentContextMock.mockReturnValue(
+    Effect.succeed(
+      documentContextOf({ composition: availableComposition({ gatewayAudiences: ['future-generated'] }) }),
+    ),
   );
 
-it.effect('server rendering embeds the document gateway assertions from one batch', () =>
+it.effect('server rendering embeds the document gateway assertions from one batch after the context', () =>
   Effect.gen(function* serverEmbedsAssertions() {
     withGatewayAudiences();
     issueDocumentGatewayContextsMock.mockReturnValue(Effect.succeed({ assertions: [gatewayAssertion] }));
-    const model = yield* asServerRender(loadModel({ request: serverRequest('https://shell.example.test/en/ukoly') }));
-    expect(model).toMatchObject({ gatewayAssertions: [gatewayAssertion], gatewayAudiences: ['future-generated'] });
+    expect(yield* serverModel('https://shell.example.test/en/ukoly')).toMatchObject({
+      gatewayAssertions: [gatewayAssertion],
+      gatewayAudiences: ['future-generated'],
+    });
     expect(issueDocumentGatewayContextsMock).toHaveBeenCalledTimes(1);
     expect(issueDocumentGatewayContextsMock.mock.calls[0]?.[0]).toEqual({
       audiences: ['future-generated'],
@@ -589,16 +700,18 @@ it.effect('server rendering embeds the document gateway assertions from one batc
   }),
 );
 
-it.effect('server rendering does not hold the document for a slow batch; the browser obtains it instead', () =>
-  Effect.gen(function* serverSkipsSlowAssertions() {
-    withGatewayAudiences();
-    issueDocumentGatewayContextsMock.mockReturnValue(Effect.never);
-    const loading = yield* asServerRender(
-      loadModel({ request: serverRequest('https://shell.example.test/en/ukoly') }),
-    ).pipe(Effect.forkChild);
-    yield* TestClock.adjust('1 second');
-    const model = yield* Fiber.join(loading);
-    expect(model).toMatchObject({ gatewayAudiences: ['future-generated'], state: 'authenticated' });
-    expect(model).not.toHaveProperty('gatewayAssertions');
-  }),
+it.effect(
+  'server rendering does not hold the document for a slow or failed batch; the browser obtains it instead',
+  () =>
+    Effect.gen(function* serverSkipsSlowAssertions() {
+      withGatewayAudiences();
+      issueDocumentGatewayContextsMock.mockReturnValueOnce(Effect.never);
+      const loading = yield* serverModel('https://shell.example.test/en/ukoly').pipe(Effect.forkChild);
+      yield* TestClock.adjust('1 second');
+      const slow = yield* Fiber.join(loading);
+      expect(slow).toMatchObject({ gatewayAudiences: ['future-generated'], state: 'authenticated' });
+      expect(slow).not.toHaveProperty('gatewayAssertions');
+      issueDocumentGatewayContextsMock.mockReturnValueOnce(Effect.fail({ _tag: 'GatewayUnavailableProblem' }));
+      expect(yield* serverModel('https://shell.example.test/en/ukoly')).not.toHaveProperty('gatewayAssertions');
+    }),
 );

@@ -520,6 +520,33 @@ export const ShellCompositionRequestSchema = Schema.Struct({
   compositionRevision: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u))),
 });
 
+/** A Shell document's tenant choices; when they cannot be read, only the current tenant is shown. */
+export const ShellDocumentTenantsSchema = Schema.Union([
+  Schema.Struct({ state: Schema.Literal('available'), tenants: Schema.Array(AvailableTenantSchema) }),
+  Schema.Struct({ state: Schema.Literals(['authentication_required', 'unavailable']) }),
+]);
+
+/** A Shell document's composition, or why the document cannot show one. */
+export const ShellDocumentCompositionSchema = Schema.Union([
+  ShellCompositionSchema,
+  Schema.Struct({ state: Schema.Literals(['reload_required', 'unavailable']) }),
+]);
+
+/**
+ * What server rendering of a Shell document reads, from one resolution of the session's context: the session, its
+ * legal entities and tenants, the composition and the people-administration navigation hint. Each part carries its
+ * own outcome, so a failing part degrades only itself. Signed-out sessions get the session only; sessions without a
+ * selected legal entity get no composition data or capability.
+ */
+export const ShellDocumentContextSchema = Schema.Struct({
+  canManagePeople: Schema.optionalKey(Schema.Boolean),
+  composition: Schema.optionalKey(ShellDocumentCompositionSchema),
+  legalEntities: Schema.optionalKey(AvailableLegalEntitiesResponseSchema),
+  session: CurrentSessionSchema,
+  tenants: Schema.optionalKey(ShellDocumentTenantsSchema),
+});
+export type ShellDocumentContext = typeof ShellDocumentContextSchema.Type;
+
 export const ResolveModuleTargetPayloadSchema = Schema.Struct({
   canonicalPath: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(40_000))),
   /** The document's pinned release; without it the current release answers and the caller compares its revision. */
@@ -889,6 +916,18 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
   )
   .add(
     HttpApiGroup.make('composition')
+      .add(
+        HttpApiEndpoint.get('documentContext', '/shell/document-context', {
+          error: [
+            InvalidCredentialsProblemSchema,
+            OntosIdentityForbiddenProblemSchema,
+            AuthenticationUnavailableProblemSchema,
+            AuthenticationInternalProblemSchema,
+          ],
+          query: ShellCompositionRequestSchema,
+          success: ShellDocumentContextSchema,
+        }),
+      )
       .add(
         HttpApiEndpoint.get('shellComposition', '/shell/composition', {
           error: [
