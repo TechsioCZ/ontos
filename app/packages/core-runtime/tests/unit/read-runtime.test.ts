@@ -103,6 +103,8 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly compositionAuthority?: ReadAuthorityFixture | 'missing';
     readonly compositionIsolation?: 'read committed' | 'repeatable read';
     readonly contextPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
+    /** Completed when the entrypoint context permission check starts. */
+    readonly contextPermissionStarted?: Deferred.Deferred<boolean>;
     readonly failEvidence?: boolean;
     readonly failTransactionTimestamp?: boolean;
     readonly modulePermissionDecision?: 'allowed' | 'denied' | 'unavailable';
@@ -125,6 +127,8 @@ const makeHarness = Effect.fn(function* makeHarness(
       readonly legalEntityId?: string;
       readonly trustedStorefrontId?: string;
     };
+    /** The resource permission check answers only after this completes. */
+    readonly resourcePermissionAwaits?: Deferred.Deferred<boolean>;
     readonly resourcePermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly resultPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly resultTenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
@@ -274,11 +278,17 @@ const makeHarness = Effect.fn(function* makeHarness(
         if (target !== undefined) {
           options.onContextPermissionTarget?.(target);
         }
-        return Effect.succeed(
-          targets.map(({ moduleId, permission }) => ({
-            decision: options.contextPermissionDecision ?? ('unavailable' as const),
-            key: `${moduleId}:${permission}`,
-          })),
+        return (
+          options.contextPermissionStarted === undefined
+            ? Effect.void
+            : Deferred.succeed(options.contextPermissionStarted, true)
+        ).pipe(
+          Effect.as(
+            targets.map(({ moduleId, permission }) => ({
+              decision: options.contextPermissionDecision ?? ('unavailable' as const),
+              key: `${moduleId}:${permission}`,
+            })),
+          ),
         );
       },
       legalEntities: ({ legalEntityIds, permission, tenantId }) => {
@@ -307,15 +317,21 @@ const makeHarness = Effect.fn(function* makeHarness(
         if (target !== undefined) {
           options.onResourceTarget?.(target);
         }
-        return Effect.succeed(
-          resources.map((resource) => ({
-            decision:
-              options.resultPermissionDecision ??
-              options.resourcePermissionDecision ??
-              options.permissionDecision ??
-              ('unavailable' as const),
-            key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
-          })),
+        return (
+          options.resourcePermissionAwaits === undefined
+            ? Effect.void
+            : Deferred.await(options.resourcePermissionAwaits)
+        ).pipe(
+          Effect.as(
+            resources.map((resource) => ({
+              decision:
+                options.resultPermissionDecision ??
+                options.resourcePermissionDecision ??
+                options.permissionDecision ??
+                ('unavailable' as const),
+              key: `${resource.moduleId}:${resource.resourceType}:${resource.resourceId}`,
+            })),
+          ),
         );
       },
       tenants: ({ permission, tenantIds }) => {
@@ -2925,6 +2941,50 @@ it.effect('enforces named entrypoint context permission before services and hand
     expect(unavailable.evidence()).toBe(0);
     expect(serviceCalls).toBe(1);
     expect(handlerCalls).toBe(1);
+  }),
+);
+
+it.effect('asks the primary and entrypoint permissions together, in one authorization round trip', () =>
+  Effect.gen(function* asksPermissionsTogether() {
+    const legalEntityId = '00000000-0000-4000-8000-000000000004';
+    const historyRead = defineRead(
+      {
+        ...registration().descriptor,
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'historical_read',
+          authorization: { kind: 'context_permission', permission: 'customer.group.history.read' },
+          entrypointKey: 'commerce.customer-context.customer-group-history',
+          moduleKey: 'commerce.customer-context',
+          role: 'api',
+        }),
+        legalEntityScope: 'required',
+        owningModuleKey: 'commerce.customer-context',
+        permissionTarget: 'resource',
+      },
+      { load: () => Effect.succeed({ evidence: { resultCount: 0 }, result: [] }) },
+      () => Effect.succeed({}),
+      () => ({
+        kind: 'resource',
+        resource: { moduleId: 'commerce.customer-context', resourceId: 'group-1', resourceType: 'customer-group' },
+      }),
+    );
+    // The resource decision answers only once the entrypoint check has started: run one after the other, the Read
+    // would never finish and the test would time out.
+    const entrypointStarted = yield* Deferred.make<boolean>();
+    const harness = yield* makeHarness({
+      contextPermissionDecision: 'allowed',
+      contextPermissionStarted: entrypointStarted,
+      permissionDecision: 'allowed',
+      resolvedScope: { ...scope, legalEntityId },
+      resourcePermissionAwaits: entrypointStarted,
+    });
+    const result = yield* harness.runtime.runRead({
+      input: {},
+      principal: counterpartyReadPrincipal(legalEntityId),
+      registration: historyRead,
+      transport: { correlationId: scope.correlationId },
+    });
+    expect(result).toEqual([]);
   }),
 );
 

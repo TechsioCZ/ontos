@@ -26,6 +26,7 @@ import {
   selfApiKeyBindingsRead,
   SupportRecoveryPrincipalContextResolverLive,
   TenantModuleStateServiceLive,
+  withRequestPermissionDecisions,
 } from '@app/core-runtime';
 import {
   ActionPermissionLive,
@@ -1242,8 +1243,9 @@ const documentContextHandler = Effect.fn('shell.composition.documentContext')(fu
 
 const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'composition', (handlers) =>
   handlers
+    // Session, legal-entity and composition checks of one document share their SpiceDB decisions.
     .handle('documentContext', ({ query, request }) =>
-      documentContextHandler(request, query.compositionRevision).pipe(
+      withRequestPermissionDecisions(documentContextHandler(request, query.compositionRevision)).pipe(
         Effect.flatMap((response) =>
           decodeResponse(ShellDocumentContextSchema, response, authenticationInternalProblem),
         ),
@@ -1284,6 +1286,7 @@ const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'compo
           );
         return yield* decodeResponse(ShellCompositionSchema, response, shellInternalProblem);
       }).pipe(
+        withRequestPermissionDecisions,
         recoverUnexpectedDefect(request, 'Unexpected Shell composition defect', () =>
           failShellProblem(shellInternalProblem()),
         ),
@@ -1310,6 +1313,7 @@ const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'compo
           );
         return yield* decodeResponse(ResolvedModuleTargetSchema, response, shellInternalProblem);
       }).pipe(
+        withRequestPermissionDecisions,
         recoverUnexpectedDefect(request, 'Unexpected module target defect', () =>
           failShellProblem(shellInternalProblem()),
         ),

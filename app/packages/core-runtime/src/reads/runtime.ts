@@ -760,11 +760,10 @@ const checkEntrypointContextPermission = <AccessValue extends (typeof ContextAcc
     unknown
   >['descriptor']['entrypoint'],
   permissionTarget: AtomicResolvedReadPermissionTarget,
-  primaryDecision: PermissionDecision,
-): Effect.Effect<PermissionDecision> => {
+): Effect.Effect<Option.Option<PermissionDecision>> => {
   const { authorization } = entrypoint;
   if (authorization.kind !== 'context_permission') {
-    return Effect.succeed('allowed');
+    return Effect.succeedSome('allowed');
   }
   if (
     (authorization.permission === 'module.access' &&
@@ -775,7 +774,8 @@ const checkEntrypointContextPermission = <AccessValue extends (typeof ContextAcc
     (permissionTarget.kind === 'assortment_permission' &&
       permissionTarget.assortmentPermission.permission === authorization.permission)
   ) {
-    return Effect.succeed(primaryDecision);
+    // The primary permission target already decides the entrypoint's permission.
+    return Effect.succeedNone;
   }
   if (authorization.permission === 'module.access') {
     return checkAtomicPermissionTarget(
@@ -783,10 +783,10 @@ const checkEntrypointContextPermission = <AccessValue extends (typeof ContextAcc
       scope,
       { kind: 'module', moduleId: entrypoint.moduleKey },
       entrypoint.scope === 'system',
-    );
+    ).pipe(Effect.asSome);
   }
   if (contextAccess.contextPermissions === undefined) {
-    return Effect.succeed('unavailable');
+    return Effect.succeedSome('unavailable');
   }
   const target = {
     moduleId: entrypoint.moduleKey,
@@ -807,7 +807,7 @@ const checkEntrypointContextPermission = <AccessValue extends (typeof ContextAcc
         };
   return contextAccess
     .contextPermissions(request)
-    .pipe(Effect.map((decisions) => decisionFor(decisions, toContextPermissionAccessKey(target))));
+    .pipe(Effect.map((decisions) => Option.some(decisionFor(decisions, toContextPermissionAccessKey(target)))));
 };
 
 const sanitizeReadHandlerFailure = <DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>>(
@@ -1348,35 +1348,42 @@ const readRuntimeFromDependencies = <
     yield* gateway.check(snapshot, input.registration.descriptor.entrypoint);
     stage('module_state_checked');
 
-    const permissionDecision = yield* checkPermissionTarget(
-      contextAccess,
-      scope,
-      permissionTarget,
-      input.registration.descriptor.legalEntityScope === 'forbidden',
-    );
-    const resourcePermissionDecision = Option.isNone(resourcePermissionTarget)
-      ? 'allowed'
-      : yield* checkAtomicPermissionTarget(
-          contextAccess,
-          scope,
-          {
-            kind: 'resource',
-            resource: resourcePermissionTarget.value.resource,
-          },
-          false,
-        );
-    const conditionalAdditionalDecisions = yield* Effect.forEach(
-      conditionalAdditionalTargets,
-      (target) => checkAtomicPermissionTarget(contextAccess, scope, target, false),
-      { concurrency: 3 },
-    );
-    const entrypointPermissionDecision = yield* checkEntrypointContextPermission(
-      contextAccess,
-      scope,
-      input.registration.descriptor.entrypoint,
-      canonicalPermissionTarget(permissionTarget),
-      permissionDecision,
-    );
+    // Every decision is independent of the others, so they share one SpiceDB round trip instead of one each.
+    const [permissionDecision, resourcePermissionDecision, conditionalAdditionalDecisions, entrypointDecision] =
+      yield* Effect.all(
+        [
+          checkPermissionTarget(
+            contextAccess,
+            scope,
+            permissionTarget,
+            input.registration.descriptor.legalEntityScope === 'forbidden',
+          ),
+          Option.isNone(resourcePermissionTarget)
+            ? Effect.succeed<PermissionDecision>('allowed')
+            : checkAtomicPermissionTarget(
+                contextAccess,
+                scope,
+                {
+                  kind: 'resource',
+                  resource: resourcePermissionTarget.value.resource,
+                },
+                false,
+              ),
+          Effect.forEach(
+            conditionalAdditionalTargets,
+            (target) => checkAtomicPermissionTarget(contextAccess, scope, target, false),
+            { concurrency: 3 },
+          ),
+          checkEntrypointContextPermission(
+            contextAccess,
+            scope,
+            input.registration.descriptor.entrypoint,
+            canonicalPermissionTarget(permissionTarget),
+          ),
+        ],
+        { concurrency: 4 },
+      );
+    const entrypointPermissionDecision = Option.getOrElse(entrypointDecision, () => permissionDecision);
     const authorizationDecisions = [
       permissionDecision,
       resourcePermissionDecision,

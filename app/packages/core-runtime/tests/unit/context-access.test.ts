@@ -1,11 +1,13 @@
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Schema } from 'effect';
+import { Deferred, Effect, Fiber, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { spiceDbPermissionClientError } from '../../src/permissions/client.ts';
+import { insideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
 import type { SpiceDbPermissionClient } from '../../src/permissions/client.ts';
 import {
   makeContextAccess,
+  withRequestPermissionDecisions,
   toAssortmentPermissionAccessKey,
   toAssortmentPermissionAccessObjectId,
   toBusinessPermissionAccessKey,
@@ -1010,5 +1012,129 @@ it.effect('classifies client, partial, duplicate, malformed, and conditional res
       { decision: 'unavailable', key: legalEntityId },
       { decision: 'unavailable', key: legalEntityId },
     ]);
+  }),
+);
+
+const moduleDecisions = {
+  'core.shell': v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+  crm: v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+  'denied.billing': v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
+  'missing.crm': v1.CheckPermissionResponse_Permissionship.UNSPECIFIED,
+} as const satisfies Readonly<Record<string, v1.CheckPermissionResponse_Permissionship>>;
+const permissionshipByObjectId = new Map(
+  Object.entries(moduleDecisions).map(([moduleId, permissionship]) => [
+    toModuleAccessObjectId(tenantId, legalEntityId, moduleId),
+    permissionship,
+  ]),
+);
+
+/** Answers module checks from `moduleDecisions` and every other check as allowed. */
+const decidingByModule = (requests: v1.CheckBulkPermissionsRequest[]) =>
+  makeContextAccess(
+    makeClient((request) =>
+      Effect.sync(() => {
+        requests.push(request);
+        return responseFor(
+          request,
+          request.items.map(
+            ({ resource }) =>
+              permissionshipByObjectId.get(resource?.objectId) ??
+              v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+          ),
+        );
+      }),
+    ),
+  );
+
+const checkModules = (access: ReturnType<typeof makeContextAccess>, moduleIds: readonly string[]) =>
+  access.modules({ legalEntityId, moduleIds, principalId, tenantId });
+
+it.effect('asks SpiceDB again for every check of work that shares no request decisions', () =>
+  Effect.gen(function* checksWithoutRequestDecisions() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = decidingByModule(requests);
+    yield* checkModules(access, ['core.shell']);
+    yield* checkModules(access, ['core.shell']);
+    expect(requests.length).toBe(2);
+  }),
+);
+
+it.effect('reuses a request decision by exact check and asks only for the checks it has not asked yet', () =>
+  Effect.gen(function* reusesRequestDecisions() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = decidingByModule(requests);
+    const [first, second, other] = yield* withRequestPermissionDecisions(
+      Effect.all(
+        [
+          checkModules(access, ['core.shell', 'denied.billing', 'crm']),
+          checkModules(access, ['denied.billing', 'core.shell']),
+          access.legalEntities({ legalEntityIds: [legalEntityId], principalId, tenantId }),
+        ],
+        { concurrency: 1 },
+      ),
+    );
+    expect(first).toEqual([
+      { decision: 'allowed', key: 'core.shell' },
+      { decision: 'denied', key: 'denied.billing' },
+      { decision: 'allowed', key: 'crm' },
+    ]);
+    expect(second).toEqual([
+      { decision: 'denied', key: 'denied.billing' },
+      { decision: 'allowed', key: 'core.shell' },
+    ]);
+    expect(other).toEqual([{ decision: 'allowed', key: legalEntityId }]);
+    // The second module check was answered from the request; the legal-entity check is a different check.
+    expect(requests.map(({ items }) => items.length)).toEqual([3, 1]);
+  }),
+);
+
+it.effect('joins a check still in flight instead of asking SpiceDB for it twice', () =>
+  Effect.gen(function* joinsInFlightDecisions() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const release = yield* Deferred.make<boolean>();
+    const access = makeContextAccess(
+      makeClient((request) =>
+        Effect.sync(() => requests.push(request)).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as(
+            responseFor(
+              request,
+              request.items.map(() => v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+            ),
+          ),
+        ),
+      ),
+    );
+    const [first, second] = yield* withRequestPermissionDecisions(
+      Effect.gen(function* overlappingChecks() {
+        const prefetch = yield* Effect.forkChild(checkModules(access, ['core.shell', 'crm']), {
+          startImmediately: true,
+        });
+        const read = yield* Effect.forkChild(checkModules(access, ['crm']), { startImmediately: true });
+        yield* Deferred.succeed(release, true);
+        return [yield* Fiber.join(prefetch), yield* Fiber.join(read)] as const;
+      }),
+    );
+    expect(first.map(({ decision }) => decision)).toEqual(['allowed', 'allowed']);
+    expect(second).toEqual([{ decision: 'allowed', key: 'crm' }]);
+    expect(requests.length).toBe(1);
+  }),
+);
+
+it.effect('never reuses an unavailable decision and bypasses request decisions inside a governed transaction', () =>
+  Effect.gen(function* forgetsUnavailableDecisions() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = decidingByModule(requests);
+    yield* withRequestPermissionDecisions(
+      Effect.gen(function* checks() {
+        expect(yield* checkModules(access, ['missing.crm'])).toEqual([{ decision: 'unavailable', key: 'missing.crm' }]);
+        yield* checkModules(access, ['missing.crm']);
+        yield* checkModules(access, ['crm']);
+        yield* checkModules(access, ['crm']).pipe(insideDatabaseTransaction('test.read'));
+      }),
+    ).pipe(Effect.exit);
+    // Unavailable asked twice; `crm` once outside, and the call inside the transaction went to the client (whose
+    // guard refuses it in production) instead of being answered from the request.
+    expect(requests.length).toBe(4);
   }),
 );
