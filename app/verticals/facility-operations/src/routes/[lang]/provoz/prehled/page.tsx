@@ -41,7 +41,7 @@ const readKpiParam = (): KpiId | undefined => {
 const OverviewView = () => {
   const { language, t } = useModernI18n();
   const lang = langOf(language);
-  const { names, reload, sources } = useRentalOverviewSources({ search: true });
+  const { loadSearch, names, reload, sources } = useRentalOverviewSources();
   const [today] = useState(() => pragueToday());
   const [selected, setSelected] = useState<KpiId | undefined>(undefined);
   const [query, setQuery] = useState('');
@@ -50,6 +50,13 @@ const OverviewView = () => {
   useEffect(() => {
     setSelected(readKpiParam());
   }, []);
+
+  // Search rows of the provoz records are fetched only when someone actually searches.
+  useEffect(() => {
+    if (query.trim() !== '') {
+      void loadSearch();
+    }
+  }, [query, loadSearch]);
 
   const deadlines = useMemo(() => buildDeadlines(sources, names), [sources, names]);
   const kpis = useMemo(() => buildKpis(sources, names, deadlines, today), [sources, names, deadlines, today]);

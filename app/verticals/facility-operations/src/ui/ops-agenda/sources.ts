@@ -30,7 +30,7 @@ const transientOverviewFailure = (error: { readonly _tag: string }) =>
     error._tag,
   );
 
-/** `search`: Přehled also needs the search rows of the provoz records; Moje agenda does not. */
+/** `search`: also load the search rows of the provoz records (only once someone searches on Přehled). */
 const loadEffect = (search: boolean) => ({
   agreements: executeAgreements({}, 'ops-agenda.agreements'),
   finance: readFinance('ops-agenda.finance'),
@@ -98,10 +98,14 @@ const settle = <A, E>(effect: Effect.Effect<A, E>): Promise<SourceState<A>> =>
     ),
   );
 
-/** Loads all sources in parallel; each settles independently so a slow or forbidden one never blocks the rest. */
-export const useRentalOverviewSources = ({ search }: { readonly search: boolean }) => {
+/**
+ * Loads all sources in parallel; each settles independently so a slow or forbidden one never blocks the rest.
+ * Search rows of the provoz records are loaded only after `loadSearch()` (the first search on Přehled).
+ */
+export const useRentalOverviewSources = () => {
   const [sources, setSources] = useState<RentalOverviewSources>(initial);
   const ticket = useRef(0);
+  const search = useRef(false);
 
   const reload = useCallback(async () => {
     ticket.current += 1;
@@ -111,7 +115,7 @@ export const useRentalOverviewSources = ({ search }: { readonly search: boolean 
         setSources((current) => ({ ...current, [key]: value }));
       }
     };
-    const loaders = loadEffect(search);
+    const loaders = loadEffect(search.current);
     await Promise.all([
       settle(loaders.ops).then((value) => update('ops', value)),
       settle(loaders.property).then((value) => update('property', value)),
@@ -122,14 +126,27 @@ export const useRentalOverviewSources = ({ search }: { readonly search: boolean 
       settle(loaders.parties).then((value) => update('parties', value)),
       settle(loaders.sales).then((value) => update('sales', value)),
     ]);
-  }, [search]);
+  }, []);
 
   useEffect(() => {
     void reload();
   }, [reload]);
 
+  /** Re-reads the provoz source with its search rows, once. */
+  const loadSearch = useCallback(async () => {
+    if (search.current) {
+      return;
+    }
+    search.current = true;
+    const mine = ticket.current;
+    const value = await settle(loadEffect(true).ops);
+    if (mine === ticket.current) {
+      setSources((current) => ({ ...current, ops: value }));
+    }
+  }, []);
+
   const names = useMemo(() => nameLookup(sources), [sources]);
-  return { names, reload, sources };
+  return { loadSearch, names, reload, sources };
 };
 
 /** Display names of properties, units (`Budova › Jednotka`) and counterparties, keyed by resource id. */

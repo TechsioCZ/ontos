@@ -32,7 +32,7 @@ const params = () => (typeof window === 'undefined' ? new URLSearchParams() : ne
 const AgendaView = () => {
   const { t } = useModernI18n();
   const toast = useToast();
-  const { names, reload, sources } = useRentalOverviewSources({ search: false });
+  const { names, reload, sources } = useRentalOverviewSources();
   const commands = useAgendaCommands(sources, reload);
   const [today] = useState(() => pragueToday());
   const [tab, setTab] = useState<Tab>('kalendar');
