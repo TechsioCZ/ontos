@@ -78,7 +78,6 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit)
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
-  // The action reads Core's legal entity (export issuer) through the governed Read runtime.
   applyCommandActionApiLive,
   recordsReadApiLive,
   // </generated-governed-http-handler-layers>
