@@ -6,6 +6,17 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
   approvals: true,
   approvalsPage: { label: { cs: 'Otevřít v Prodeji', en: 'Open in Sales' }, path: '/prodej/schvalovani-ai' },
   ownProposalEngine: true,
+  commandFieldLabels: {
+    category: 'Kategorie',
+    description: 'Popis',
+    lines: 'Položky',
+    name: 'Název',
+    note: 'Poznámka',
+    partyId: 'Zákazník',
+    priceMinor: 'Cena bez DPH',
+    reason: 'Důvod',
+    status: 'Stav',
+  },
   commands: {
     AiDecideChanges: 'hidden',
     AiProposeChanges: 'hidden',
