@@ -1,0 +1,435 @@
+name: Stage Demo Deploy
+
+# Deploys the sales demo branch to stage (Cloudflare Workers + the Zerops outbox host): every served unit
+# builds on its own runner in parallel, then one job holding the stage lock uploads the release Workers,
+# publishes the Application Composition, activates the Shell ingress and deploys the AKROS storefront.
+# Pushes run only while the repository variable STAGE_DEMO_CI_DEPLOY is 'true'; a dispatch deploys when its
+# deploy input is on and otherwise only builds.
+on:
+  push:
+    branches:
+      - demo/sales-crm
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy and publish after building (off = build every unit only, stage untouched).
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+# One run deploys at a time; a newer push replaces a run that is still waiting.
+concurrency:
+  group: stage-demo-deploy
+  cancel-in-progress: false
+
+env:
+  WORKERS_DEV_SUBDOMAIN: edution
+  STAGE_SHELL_URL: https://ontos-stage.bleeding.dev
+  STAGE_COMPOSITION_KV_ID: d51f044c49bc4757a5613c61b19b46d8
+
+jobs:
+  plan:
+    name: Plan the served units
+    if: github.event_name == 'workflow_dispatch' || vars.STAGE_DEMO_CI_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      units: ${{ steps.units.outputs.units }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          sparse-checkout: app/topology
+          sparse-checkout-cone-mode: false
+
+      # The served set is the Shell plus every module of the release intent (what the composition publishes).
+      - name: List the Shell and every released module
+        id: units
+        working-directory: app
+        run: |
+          units="$(jq -c --slurpfile intent topology/application-release-intent.json '
+            ([.shell] + .verticals) as $all
+            | (["shell-super-app"] + [$intent[0].modules[].appId])
+            | map(. as $id | $all[] | select(.id == $id) | {id, package, path})' topology/reference-topology.json)"
+          echo "units=$units" >>"$GITHUB_OUTPUT"
+          jq -r '"\(length) units: \(map(.id) | join(" "))"' <<<"$units"
+
+  # Saves the pnpm store for this lockfile on this branch, so later runs' build jobs restore it.
+  warm-store:
+    name: Save the pnpm store for the branch
+    needs: [plan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Locate the pnpm store
+        id: store
+        working-directory: app
+        run: echo "path=$(mise exec -- pnpm store path)" >>"$GITHUB_OUTPUT"
+
+      - name: Save the pnpm store under the install key
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        continue-on-error: true
+        with:
+          path: ${{ steps.store.outputs.path }}
+          key: pnpm-store-${{ runner.os }}-${{ hashFiles('app/.mise.toml', 'app/pnpm-lock.yaml') }}
+
+  # Building runs dependency code, so build jobs get no environment and no deploy credentials.
+  build:
+    name: Build ${{ matrix.unit.id }}
+    needs: [plan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 30
+      matrix:
+        unit: ${{ fromJSON(needs.plan.outputs.units) }}
+    env:
+      UNIT_ID: ${{ matrix.unit.id }}
+      UNIT_PACKAGE: ${{ matrix.unit.package }}
+      UNIT_PATH: ${{ matrix.unit.path }}
+      ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+      DEMO_DISABLE_TS_CHECKER: '1'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Plan the immutable release origin
+        working-directory: app
+        run: |
+          mkdir -p ".codex/reports/releases/$UNIT_ID"
+          if [[ "$UNIT_ID" == shell-super-app ]]; then
+            mise exec -- pnpm exec node scripts/immutable-shell-release.mts plan \
+              --workers-dev-subdomain "$WORKERS_DEV_SUBDOMAIN" \
+              --plan-file ".codex/reports/releases/$UNIT_ID/plan.json"
+          else
+            mise exec -- pnpm exec node scripts/immutable-application-release.mts plan \
+              --vertical "$UNIT_ID" --workers-dev-subdomain "$WORKERS_DEV_SUBDOMAIN" \
+              --plan-file ".codex/reports/releases/$UNIT_ID/plan.json"
+          fi
+
+      - name: Build and verify the unit for Cloudflare
+        working-directory: app
+        env:
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+        run: |
+          while IFS=$'\t' read -r key value; do
+            export "$key=$value"
+          done < <(jq -r '.buildEnvironment | to_entries[] | [.key, .value] | @tsv' topology/cloudflare-placement.json)
+          while IFS=$'\t' read -r key value; do
+            export "$key=$value"
+          done < <(jq -r '.buildEnvironment | to_entries[] | [.key, .value] | @tsv' ".codex/reports/releases/$UNIT_ID/plan.json")
+          mise exec -- pnpm --filter "$UNIT_PACKAGE" run cloudflare:build
+          mise exec -- pnpm --filter "$UNIT_PACKAGE" exec ultramodern-create ultramodern cloudflare-output-verify --app "$UNIT_ID" --require-public-urls
+
+      - name: Pack the unit's build output
+        working-directory: app
+        run: |
+          files="$RUNNER_TEMP/edge-unit-files"
+          git ls-files --others --ignored --exclude-standard --directory -z -- "$UNIT_PATH" \
+            | grep -zv '/node_modules/$' >"$files"
+          test -f ".codex/reports/releases/$UNIT_ID/plan.json"
+          printf '%s\0' ".codex/reports/releases/$UNIT_ID" >>"$files"
+          tar --null --files-from="$files" --create --zstd --file "$RUNNER_TEMP/edge-unit.tar.zst"
+          ls -lh "$RUNNER_TEMP/edge-unit.tar.zst"
+
+      - name: Upload the unit's build output
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: edge-unit-${{ matrix.unit.id }}
+          path: ${{ runner.temp }}/edge-unit.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
+
+  build-storefront:
+    name: Build akros-storefront
+    needs: [plan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup mise
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          working_directory: app
+
+      - name: Build the storefront Worker
+        working-directory: app/akros-storefront
+        env:
+          ONTOS_SHELL_URL: ${{ env.STAGE_SHELL_URL }}
+          ONTOS_SHELL_WORKER_NAME: app-shell-super-app
+          ONTOS_ACTIVE_APPLICATION_COMPOSITION_KV_ID: ${{ env.STAGE_COMPOSITION_KV_ID }}
+          STOREFRONT_IMAGE_HOSTS: ''
+        run: |
+          mise exec -- npm ci --no-audit --no-fund
+          mise exec -- npm run cloudflare:build
+          tar --create --zstd --file "$RUNNER_TEMP/storefront.tar.zst" .open-next .wrangler.generated.json
+          ls -lh "$RUNNER_TEMP/storefront.tar.zst"
+
+      - name: Upload the storefront build output
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: akros-storefront
+          path: ${{ runner.temp }}/storefront.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 3
+
+  # Uploads, publication, ingress and the storefront deploy hold the stage lock shared with the
+  # composition refresh. The job records the stage-edge deployment, so the refresh re-publishes this revision.
+  release:
+    name: Deploy, publish and activate stage
+    needs: [plan, build, build-storefront]
+    if: github.event_name == 'push' || inputs.deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: stage-edge
+    concurrency:
+      group: zerops-stage
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+      DEPLOY_TARGET: cloudflare
+      OUTBOX_WORKER_MODE: ${{ vars.OUTBOX_WORKER_MODE }}
+      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+      ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
+      ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE: topology/initial-composition-execution.stage.json
+      ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE: ${{ github.workspace }}/app/.initial-composition-cutover/initial-composition-cutover-receipt.json
+      CANDIDATE_FILE: ${{ github.workspace }}/app/.composition-candidate/active-application-composition-candidate.json
+      RECEIPTS: ${{ github.workspace }}/app/.release-receipts
+      UNITS_JSON: ${{ needs.plan.outputs.units }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Download every unit's build output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: edge-unit-*
+          path: ${{ runner.temp }}/edge-units
+
+      - name: Unpack the build outputs
+        working-directory: app
+        run: |
+          while IFS=$'\t' read -r id package; do
+            tar --extract --zstd --file "$RUNNER_TEMP/edge-units/edge-unit-$id/edge-unit.tar.zst"
+            mise exec -- pnpm --filter "$package" exec test -f .output/wrangler.json
+            test -f ".codex/reports/releases/$id/plan.json"
+          done < <(jq -r '.[] | [.id, .package] | @tsv' <<<"$UNITS_JSON")
+
+      # Deploys only upload immutable release Workers; nothing serves them until publication.
+      - name: Upload every immutable release Worker
+        working-directory: app
+        env:
+          ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+        run: |
+          mkdir -p "$RECEIPTS"
+          while IFS=$'\t' read -r id unit_path; do
+            export ONTOS_IMMUTABLE_RELEASE_SECRETS
+            ONTOS_IMMUTABLE_RELEASE_SECRETS="$(jq -cer --arg app "$id" '.[$app] | select(type == "object")' <<<"$ALL_RELEASE_SECRETS")"
+            script=scripts/immutable-application-release.mts
+            [[ "$id" == shell-super-app ]] && script=scripts/immutable-shell-release.mts
+            started=$SECONDS
+            for attempt in 1 2 3; do
+              if mise exec -- pnpm exec node "$script" deploy \
+                --app-directory "$unit_path" \
+                --plan-file ".codex/reports/releases/$id/plan.json" \
+                --receipt-file "$RECEIPTS/$id.json"; then
+                break
+              fi
+              if [[ $attempt == 3 ]]; then
+                echo "::error title=Deploy failed::$id failed three times" >&2
+                exit 1
+              fi
+              echo "::warning title=Deploy retry::$id attempt $attempt failed; retrying"
+              sleep 15
+            done
+            echo "deployed $id in $((SECONDS - started)) s"
+          done < <(jq -r '.[] | [.id, .path] | @tsv' <<<"$UNITS_JSON")
+
+      - name: Assemble the composition candidate
+        working-directory: app
+        run: |
+          receipts=()
+          while IFS= read -r id; do
+            receipts+=(--receipt-file "$RECEIPTS/$id.json")
+          done < <(jq -r '.modules[].appId' topology/application-release-intent.json)
+          mkdir -p "$(dirname "$CANDIDATE_FILE")"
+          mise exec -- pnpm exec node scripts/immutable-application-release.mts candidate \
+            --intent-file topology/application-release-intent.json "${receipts[@]}" \
+            --shell-receipt-file "$RECEIPTS/shell-super-app.json" \
+            --candidate-file "$CANDIDATE_FILE"
+
+      - name: Archive the candidate and receipts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stage-demo-release
+          path: |
+            app/.composition-candidate
+            app/.release-receipts
+          retention-days: 14
+
+      # The stage provider quiescence was proven when stage first cut over (operator receipt, 2026-10-22).
+      - name: Write the initial cutover receipt
+        working-directory: app
+        run: |
+          mkdir -p "$(dirname "$ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE")"
+          printf '%s' '{"environment":"stage","inventorySha256":"40ec38189570c5e41abcfb1852b47e9d167902d2490c89a28bac432adbac6ae0","schemaVersion":"2","verifiedAt":"2026-10-22T01:51:15.913Z"}' \
+            >"$ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE"
+
+      - name: Connect the runner to the private Zerops database network
+        id: composition-vpn
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: connect
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          database-url: ${{ secrets.DATABASE_URL }}
+          database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
+
+      - name: Publish the Application Composition
+        timeout-minutes: 20
+        working-directory: app
+        env:
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: mise exec -- pnpm active-composition:publish publish --environment stage --candidate-file "$CANDIDATE_FILE"
+
+      - name: Activate the Shell ingress
+        timeout-minutes: 20
+        working-directory: app
+        env:
+          ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
+        run: |
+          export ONTOS_IMMUTABLE_RELEASE_SECRETS
+          ONTOS_IMMUTABLE_RELEASE_SECRETS="$(jq -cer '.["shell-super-app"] | select(type == "object")' <<<"$ALL_RELEASE_SECRETS")"
+          mise exec -- pnpm exec node scripts/immutable-shell-release.mts ingress-deploy \
+            --app-directory apps/shell-super-app \
+            --receipt-file "$RECEIPTS/shell-super-app.json"
+
+      - name: Clear the runner-owned Zerops VPN
+        if: always() && steps.composition-vpn.outputs.state-directory != ''
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: clear
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
+          cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
+
+      - name: Download the storefront build output
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: akros-storefront
+          path: ${{ runner.temp }}/storefront
+
+      - name: Deploy the AKROS storefront
+        timeout-minutes: 15
+        working-directory: app/akros-storefront
+        env:
+          ONTOS_SHELL_URL: ${{ env.STAGE_SHELL_URL }}
+          ONTOS_SHELL_WORKER_NAME: app-shell-super-app
+          ONTOS_ACTIVE_APPLICATION_COMPOSITION_KV_ID: ${{ env.STAGE_COMPOSITION_KV_ID }}
+          STOREFRONT_IMAGE_HOSTS: ''
+        run: |
+          tar --extract --zstd --file "$RUNNER_TEMP/storefront/storefront.tar.zst"
+          mise exec -- npm ci --no-audit --no-fund
+          mise exec -- npm run cloudflare:deploy
+
+      # One short check, no load: the stage Workers CPU budget is capped.
+      - name: Smoke the Shell login and OAuth metadata
+        run: |
+          check() {
+            local url="$1" status
+            for _ in 1 2 3 4 5; do
+              status="$(curl -sS -o /dev/null -w '%{http_code} %{time_total}s' --max-time 30 "$url" || true)"
+              echo "$url -> $status"
+              [[ "$status" == 200\ * ]] && return 0
+              sleep 10
+            done
+            echo "::error title=Smoke failed::$url did not answer 200" >&2
+            return 1
+          }
+          check "$STAGE_SHELL_URL/cs/login"
+          check "$STAGE_SHELL_URL/.well-known/oauth-authorization-server"
+
+  # The outbox worker host must run the published revision. A Zerops push builds remotely (about 10 min).
+  outbox-host:
+    name: Push the outbox worker host
+    needs: [release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment:
+      name: stage-edge
+      deployment: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Install Zerops CLI
+        run: |
+          npm install --global @zerops/zcli@1.1.0
+          mise reshim
+
+      - name: Materialize the stage zerops.yaml
+        working-directory: app
+        env:
+          ZEROPS_YAML_PATH: ${{ runner.temp }}/zerops.yaml
+        run: |
+          mise exec -- pnpm --silent zerops:materialize-environment --environment stage --input zerops.yaml --output "$ZEROPS_YAML_PATH"
+          echo "ZEROPS_YAML_PATH=$ZEROPS_YAML_PATH" >>"$GITHUB_ENV"
+
+      - name: Push the outbox worker host
+        env:
+          UNITS_JSON: '["outbox-worker-host"]'
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: app/scripts/push-zerops-units.sh
