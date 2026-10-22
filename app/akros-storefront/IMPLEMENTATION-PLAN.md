@@ -47,7 +47,10 @@ Ověřeny cenové plochy, našeptávač i košík na desktopu a mobilu.
 přehledem před variantami, doprava pod akcemi. Opravené zpracování popisu zachovává
 důležité materiálové informace, stránka/modal/tisk používají stejný postup.
 Ověřeno na desktopu, tabletu, mobilu a hranicích breakpointu, včetně hmotnosti z TASK 07.
-Další v původním pořadí je TASK 09 – odkazy v horní navigační liště.
+[TASK 09](plans/akros-task-09-review.md) je dokončený: horní lišta a mobilní informace
+obsahují jen šest schválených textových odkazů. Úvod je dostupný přes logo,
+přihlášení samostatně a katalog přes boční/mobilní navigaci. Ověřeno na 12 šířkách,
+včetně klávesnice, aktivních odkazů a zavírání menu. Další je TASK 10 – zarovnání kategorií.
 
 ## Zadání a porovnání s GitHubem
 
@@ -162,7 +165,7 @@ udržovat jako druhý nezávislý seznam hotových položek.
 | D3  | Kg pro zobrazení vlastní hmotnosti varianty doloženo 22. 10. 2026. Pro TASK 16 zbývá ověřit přepočet kus/metr/balení; neúplné či nejednoznačné údaje nenahrazovat odhadem.                                                           | 07 vyřešené zobrazení; 16 přepočet zbývá   |
 | D4  | Zda mají být profil a adresy nadále lokální demo, nebo připojené k zákaznickému účtu; zda „uložené adresy“ znamenají dvě současná pole, nebo více adres.                                                                             | 14, návaznost 17                           |
 | D5  | Cílová autentizační služba a veřejný kontrakt změny hesla včetně ověření uživatele. Bez něj TASK 15 není implementačně připravený.                                                                                                   | 15                                         |
-| D6  | Konečný seznam textových odkazů v horní liště, zejména ponechání „Domů“ a oddělené přihlašovací akce. Katalogové odkazy do tohoto seznamu nepatří.                                                                                   | 09                                         |
+| D6  | Schváleno: podmínky, o nás, blog, partnerský program, reklamace a kontakty. Domů přes logo, přihlášení samostatně, katalog v bočním/mobilním menu.                                                                                   | 09 vyřešené                                |
 | D7  | Potvrdit odklad TASK 11 a případný Meilisearch kontrakt; samotný komentář neurčuje index, API ani způsob nasazení.                                                                                                                   | 11                                         |
 | D8  | Dostupný publikovaný kontrakt vlastní adresní databáze versus FoxEntry; pokrytí, autentizace, data, provoz a chování při nedostupnosti.                                                                                              | 17                                         |
 

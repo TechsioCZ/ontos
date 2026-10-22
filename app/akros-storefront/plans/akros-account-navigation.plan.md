@@ -4,7 +4,7 @@ overview: Upravit textovou horní navigaci, zarovnání kategorií a skutečné 
 todos:
   - id: task-09-text-navigation
     content: TASK 09 – po upřesnění D6 ponechat v horním seznamu jen odkazy na textové stránky a zachovat dostupnost katalogu jinde.
-    status: pending
+    status: completed
   - id: task-10-category-alignment
     content: TASK 10 – sjednotit středové zarovnání názvů a doprovodných textů kategorií.
     status: pending
@@ -22,6 +22,9 @@ Tato část může postupovat nezávisle na přestavbě variant. Odkazy na issue
 rozhodnutí D4/D6 jsou v [hlavním plánu](../IMPLEMENTATION-PLAN.md).
 
 ### TASK 09 – horní navigace · #1307
+
+Uživatel schválil [konkrétní seznam a ověření](akros-task-09-review.md) 22. 10. 2026.
+D6 je vyjasněné: šest textových odkazů, domů přes logo, oddělené přihlášení.
 
 - Inventarizovat `utilityLinks` v `site-header.tsx`. Odstranit z horního seznamu
   odkazy na katalogové kategorie včetně „Spojovací materiál“, „Hutní materiál“

@@ -69,6 +69,8 @@ keyboard slider changes and preservation of the search query when paging through
 widths from 320 to 1920px, search keyboard/all-results navigation, mobile menu close/focus and
 internal footer links. Utility navigation uses Button tokens, with a line-height utility for
 the Button API gap. Footer columns use the shared component's `layout="col"` and `--footer-cols`.
+It also checks the six informational links, keyboard navigation to each page, active links,
+home via the logo and preserved desktop/mobile access to the catalog.
 
 With the storefront running, `npm run test:home` checks homepage overflow, product stock rows
 and reachable carousel controls at 34 widths from 320 to 2560 px, including breakpoint edges.

@@ -205,7 +205,7 @@ describe("SiteHeader search", () => {
     expect(screen.queryByText(/^od \d/)).toBeNull();
   });
 
-  it("marks the current page in both desktop and mobile navigation", async () => {
+  it("marks only the active information page and keeps home on the logo", async () => {
     const user = userEvent.setup();
     const { rerender } = render(
       <CartProvider storage={null}>
@@ -213,13 +213,18 @@ describe("SiteHeader search", () => {
       </CartProvider>,
     );
 
+    expect(
+      screen.getByRole("link", { name: "AKROS – domovská stránka" }).getAttribute("href"),
+    ).toBe("/");
+
     for (const name of ["Pomocná navigace", "Mobilní navigace"]) {
       if (name === "Mobilní navigace")
         await user.click(screen.getByRole("button", { name: "Otevřít navigaci" }));
       const navigation = within(screen.getByRole("navigation", { name }));
-      expect(navigation.getByRole("link", { name: "Domů" }).getAttribute("aria-current")).toBe(
-        "page",
-      );
+      expect(navigation.queryByRole("link", { name: "Domů" })).toBeNull();
+      expect(
+        navigation.getAllByRole("link").some((link) => link.hasAttribute("aria-current")),
+      ).toBe(false);
       expect(navigation.getByRole("link", { name: "Blog" }).hasAttribute("aria-current")).toBe(
         false,
       );
@@ -242,9 +247,9 @@ describe("SiteHeader search", () => {
       expect(navigation.getByRole("link", { name: "Blog" }).getAttribute("aria-current")).toBe(
         "page",
       );
-      expect(navigation.getByRole("link", { name: "Domů" }).hasAttribute("aria-current")).toBe(
-        false,
-      );
+      expect(
+        navigation.getByRole("link", { name: "Obchodní podmínky" }).hasAttribute("aria-current"),
+      ).toBe(false);
     }
   });
 
