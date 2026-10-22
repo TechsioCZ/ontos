@@ -1560,7 +1560,6 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       revision: number,
       featuredIds: readonly string[],
     ) {
-      const canWrite = yield* contextGrant('write_all');
       const catalogQuery = view.storefrontCatalog;
       const page =
         catalogQuery === undefined
@@ -1580,7 +1579,8 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         canCleanupDemo: false,
         canEditOrders: false,
         canManageCatalog: false,
-        canWrite,
+        // The public storefront view never writes: no per-read permission check (a SpiceDB round trip) for it.
+        canWrite: false,
         indicators: {
           lowStockCount: pageProducts.filter((record) => record.lowStock).length,
           openOrderValueMinor: 0,
