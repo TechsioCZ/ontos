@@ -121,6 +121,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     createNonHumanPrincipal: '/auth/identity/principals',
     currentSession: '/auth/session',
     demoAccountCapability: '/auth/identity/demo-accounts/capability',
+    documentContext: '/shell/document-context',
     executeLegalEntityDetail: '/core/reads/legal-entity-detail',
     issueApiKeyGatewayContext: '/auth/api-key/gateway-context',
     issueDocumentGatewayContexts: '/auth/gateway-contexts',

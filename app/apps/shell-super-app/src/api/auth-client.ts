@@ -46,6 +46,7 @@ import type {
   ShellCapabilityUnavailableProblem,
   ShellComposition,
   ShellCompositionRequest,
+  ShellDocumentContext,
   ShellReloadRequiredProblem,
   ShellInternalProblem,
   IdentityProblem,
@@ -233,6 +234,13 @@ export const shellComposition = (
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ShellComposition, ShellCompositionClientError> =>
   invokeShellAuthenticationClient(options, (client) => client.composition.shellComposition({ query: payload }));
+
+/** Server rendering's one read of a document's session, legal entities, tenants, composition, capability and assertions. */
+export const documentContext = (
+  payload: ShellCompositionRequest,
+  options: ShellAuthenticationClientOptions = {},
+): ShellAuthenticationClientEffect<ShellDocumentContext> =>
+  invokeShellAuthenticationClient(options, (client) => client.composition.documentContext({ query: payload }));
 
 export const resolveModuleTarget = (
   payload: ResolveModuleTargetPayload,

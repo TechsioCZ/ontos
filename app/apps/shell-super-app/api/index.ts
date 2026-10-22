@@ -42,6 +42,7 @@ import {
   Cause,
   Effect,
   Exit,
+  Fiber,
   Logger,
   Match,
   Option,
@@ -74,6 +75,7 @@ import {
   SelfApiKeyListResponseSchema,
   ShellAuthenticationApi,
   ShellCompositionSchema,
+  ShellDocumentContextSchema,
   ShellResourceResponseSchema,
   ShellSearchResponseSchema,
   SignInResponseSchema,
@@ -1134,8 +1136,122 @@ const captureShellRelease = Effect.fn('Shell.captureRelease')(function* captureS
   return catalog;
 });
 
+const PEOPLE_ADMINISTRATION = 'people_administration';
+
+/**
+ * Server rendering of a Shell document reads everything it needs here, from one resolution of the session's context:
+ * reading session, legal entities, tenants, composition and the people capability as separate requests resolved the
+ * same context (Better Auth session plus legal-entity checks) five times per document, each in its own invocation on
+ * the document's isolate. Each part keeps its own outcome; the browser keeps the separate, cached endpoints. It issues
+ * no gateway assertions: those come only from the classified issuer endpoints.
+ */
+const documentContextHandler = Effect.fn('shell.composition.documentContext')(function* documentContextHandlerEffect(
+  request: RequestWithHeaders,
+  requestedRevision: string | undefined,
+) {
+  yield* noStore;
+  const authentication = yield* AuthenticationService;
+  const headers = requestHeaders(request.headers);
+  const context = yield* authentication.resolveShellContext(headers).pipe(Effect.mapError(problem));
+  yield* forwardSetCookieHeaders(context.setCookieHeaders);
+  const session = yield* decodeResponse(
+    CurrentSessionSchema,
+    Match.value(context).pipe(
+      Match.discriminators('state')({
+        access_blocked: currentAccessBlockedResponse,
+        anonymous: currentAnonymousResponse,
+        authenticated: currentAuthenticatedResponse,
+        selection_required: currentSelectionRequiredResponse,
+      }),
+      Match.exhaustive,
+    ),
+    authenticationInternalProblem,
+  );
+  if (context.state === 'anonymous') {
+    return { session };
+  }
+  const legalEntities = withOptionalProperty(
+    { legalEntities: context.availableLegalEntities },
+    context.state === 'authenticated',
+    'selectedLegalEntityId',
+    context.state === 'authenticated' ? context.identity.legalEntityId : undefined,
+    { state: context.state },
+  );
+  const tenants = authentication.availableTenants(headers).pipe(
+    Effect.map(({ tenants: available }) => ({ state: 'available' as const, tenants: available })),
+    Effect.catch((error) =>
+      Effect.succeed({
+        state: Predicate.isTagged(tenantAuthenticationProblem(error), 'TenantAuthenticationRequiredProblem')
+          ? ('authentication_required' as const)
+          : ('unavailable' as const),
+      }),
+    ),
+  );
+  if (context.state !== 'authenticated') {
+    return {
+      composition: { navigation: [] as const, state: context.state },
+      legalEntities,
+      session,
+      tenants: yield* tenants,
+    };
+  }
+  const { legalEntityId } = context.identity;
+  const capability = yield* Effect.forkChild(
+    demoAccountCapability({
+      legalName:
+        context.availableLegalEntities.find((entry) => entry.legalEntityId === legalEntityId)?.legalName ??
+        legalEntityId,
+      principal: { ...context.principal, legalEntityId },
+    }).pipe(
+      Effect.map(({ canManage }) => canManage),
+      Effect.orElseSucceed(() => false),
+    ),
+    { startImmediately: true },
+  );
+  const composition = captureShellRelease(requestedRevision).pipe(
+    Effect.flatMap((catalog) =>
+      ShellGovernedReads.pipe(
+        Effect.flatMap((governedReads) =>
+          governedReads.composition({ correlationId: correlationFromRequest(request), principal: context.principal }),
+        ),
+        Effect.provideService(CapturedShellCompositionCatalog, catalog),
+        Effect.tapError((error) => logShellReadFailure('composition', request, error)),
+      ),
+    ),
+    Effect.flatMap((response) => decodeResponse(ShellCompositionSchema, response, shellInternalProblem)),
+    Effect.catch((error) =>
+      Effect.succeed({
+        state: Predicate.isTagged(error, 'ShellReloadRequiredProblem')
+          ? ('reload_required' as const)
+          : ('unavailable' as const),
+      }),
+    ),
+  );
+  const [documentComposition, documentTenants] = yield* Effect.all([composition, tenants], { concurrency: 2 });
+  const base = { composition: documentComposition, legalEntities, session, tenants: documentTenants };
+  if (documentComposition.state !== 'available') {
+    return base;
+  }
+  const canManagePeople = documentComposition.navigation.some(
+    ({ requiresCapability }) => requiresCapability === PEOPLE_ADMINISTRATION,
+  )
+    ? yield* Fiber.join(capability)
+    : false;
+  return { ...base, canManagePeople };
+});
+
 const compositionGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'composition', (handlers) =>
   handlers
+    .handle('documentContext', ({ query, request }) =>
+      documentContextHandler(request, query.compositionRevision).pipe(
+        Effect.flatMap((response) =>
+          decodeResponse(ShellDocumentContextSchema, response, authenticationInternalProblem),
+        ),
+        recoverUnexpectedDefect(request, 'Unexpected Shell document context defect', () =>
+          Effect.fail(authenticationInternalProblem()),
+        ),
+      ),
+    )
     .handle('shellComposition', ({ query, request }) =>
       Effect.gen(function* shellCompositionHandler() {
         const session = yield* requireShellSession(request.headers);
