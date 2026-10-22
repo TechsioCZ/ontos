@@ -74,7 +74,7 @@ const requestContext = async (audience: string, revision: string): Promise<Respo
       "x-correlation-id": randomUUID(),
     },
     method: "POST",
-    signal: AbortSignal.timeout(4000),
+    signal: AbortSignal.timeout(15_000),
   });
 };
 
@@ -162,7 +162,7 @@ const post = async (
       ...headers,
     },
     method: "POST",
-    signal: AbortSignal.timeout(6000),
+    signal: AbortSignal.timeout(20_000),
   });
   const text = await response.text();
   if (!response.ok) {

@@ -20,7 +20,7 @@ export const readActiveRevision = async (): Promise<string | undefined> => {
   }
   const snapshot = binding
     ? await binding.get("active", "json")
-    : await fetch(getConfig().compositionUrl, { signal: AbortSignal.timeout(4000) }).then(
+    : await fetch(getConfig().compositionUrl, { signal: AbortSignal.timeout(10_000) }).then(
         (response) => (response.ok ? response.json() : undefined),
       );
   const revision = (snapshot as { composition?: { revision?: unknown } } | undefined)?.composition
