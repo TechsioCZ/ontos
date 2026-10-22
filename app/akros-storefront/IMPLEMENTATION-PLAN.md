@@ -34,7 +34,10 @@ Neověřená jednotka hmotnosti zůstává otevřená a neblokuje ostatní čás
 
 [TASK 04](plans/akros-task-04-review.md) je implementovaný a ověřený: výpis obsahuje
 všechny odpovídající varianty bez opakování kontejneru a bez stránkování. Ověřeno
-i na 386 variantách a mobilních šířkách; další rozbor podle původního pořadí je TASK 05.
+i na 386 variantách a mobilních šířkách.
+[TASK 05](plans/akros-task-05-review.md) přidává bezpečně rozpoznané rozměry a živou
+filtraci s resetem, odstraňuje cenu a materiál. Ověřeno včetně 386 variant a obou
+desetinných oddělovačů. Další podle původního pořadí je TASK 06.
 
 ## Zadání a porovnání s GitHubem
 

@@ -1,15 +1,15 @@
 "use client";
 
-import { useCallback, useId, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
-import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
-import { Slider } from "@techsio/ui-kit/molecules/slider";
 import { DataTable, type ColumnDef } from "@techsio/ui-kit/organisms/data-table";
 import { ProductVariantLink } from "@/components/product-variant-link";
 
 import { useCart } from "@/features/cart/cart-provider";
 import { cs } from "@/i18n/cs";
+import { getVariantRangeFilters, type NumericRange } from "@/lib/product-variant-filters";
+import { VariantRangeFilter } from "./variant-range-filter";
 import { formatPrice } from "@/lib/format";
 import {
   matchesProductVariantSearch,
@@ -35,169 +35,6 @@ const variantCollator = new Intl.Collator("cs-CZ", {
   numeric: true,
   sensitivity: "base",
 });
-const measurementFormatter = new Intl.NumberFormat("cs-CZ", {
-  maximumFractionDigits: 2,
-});
-const priceInputFormatter = new Intl.NumberFormat("cs-CZ", {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-});
-
-type NumericRange = [number, number];
-
-interface VariantDimensions {
-  diameter: number;
-  length: number;
-}
-
-const parseVariantDimensions = (label: string): VariantDimensions | null => {
-  const match = label.match(/(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)/i);
-  if (!match?.[1] || !match[2]) return null;
-
-  const diameter = Number(match[1].replace(",", "."));
-  const length = Number(match[2].replace(",", "."));
-
-  return Number.isFinite(diameter) && Number.isFinite(length) ? { diameter, length } : null;
-};
-
-const getRange = (values: number[]): NumericRange | null => {
-  if (values.length === 0) return null;
-
-  return [Math.min(...values), Math.max(...values)];
-};
-
-const isWithinRange = (value: number, [minimum, maximum]: NumericRange) =>
-  value >= minimum && value <= maximum;
-
-const filterGroupClassName =
-  "min-w-0 border-base-dark border-b-(length:--border-sm) py-(--dimension-12) md:border-b-0 md:border-r-(length:--border-sm) md:px-(--dimension-12) md:py-0";
-
-interface VariantRangeFilterProps {
-  bounds: NumericRange;
-  label: string;
-  onChange: (value: NumericRange) => void;
-  price?: boolean;
-  step: number;
-  value: NumericRange;
-}
-
-function VariantRangeFilter({
-  bounds,
-  label,
-  onChange,
-  price = false,
-  step,
-  value,
-}: VariantRangeFilterProps) {
-  const scale = price ? 100 : 1;
-  const priceInputStyle: CSSProperties & {
-    "--akros-variant-filter-price-characters"?: number;
-  } = price
-    ? {
-        "--akros-variant-filter-price-characters": Math.max(
-          ...bounds.map((bound) => priceInputFormatter.format(bound / scale).length),
-        ),
-      }
-    : {};
-  // Keep the NumericInput editing buffer (empty text and decimal separators).
-  // Slider changes replace that buffer with the newly selected range.
-  const [sliderRevision, setSliderRevision] = useState(0);
-  const updateEndpoint = (index: 0 | 1, nextValue: number) => {
-    if (!Number.isFinite(nextValue)) return;
-    const next = price ? Math.round(nextValue * scale) : nextValue;
-    if (next < bounds[0] || next > bounds[1]) return;
-    if (index === 0 && next > value[1]) return;
-    if (index === 1 && next < value[0]) return;
-    onChange(index === 0 ? [next, value[1]] : [value[0], next]);
-  };
-
-  return (
-    <div
-      style={priceInputStyle}
-      className={`akros-variant-filter-range ${filterGroupClassName} w-full md:shrink-0 md:@max-akros-variant-table/akros-variants:grow ${price ? "akros-variant-filter-range--price md:w-(--akros-variant-filter-price-width)" : "md:w-(--akros-variant-filter-measurement-width)"}`}
-    >
-      <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-end gap-(--dimension-8)">
-        <NumericInput
-          key={`minimum-${sliderRevision}`}
-          className="w-(--akros-variant-filter-input-width)"
-          locale="cs-CZ"
-          min={bounds[0] / scale}
-          max={value[1] / scale}
-          precision={2}
-          step={step / scale}
-          defaultValue={value[0] / scale}
-          onChange={(next) => updateEndpoint(0, next)}
-          size="sm"
-        >
-          <NumericInput.Control>
-            <NumericInput.Input aria-label={`Minimum – ${label}`} />
-          </NumericInput.Control>
-        </NumericInput>
-        <Slider
-          className="[&>div:first-child]:justify-center [&_label]:whitespace-nowrap [&_label]:text-(length:--akros-variant-filter-label-font-size) [&_label]:leading-(--akros-variant-filter-label-line-height) [&_[data-part=control]]:min-h-(--height-form-control-sm)"
-          formatValue={price ? formatPrice : (next) => measurementFormatter.format(next)}
-          label={label}
-          max={bounds[1]}
-          min={bounds[0]}
-          minStepsBetweenThumbs={0}
-          onChange={(next) => {
-            if (next[0] !== undefined && next[1] !== undefined) {
-              onChange([next[0], next[1]]);
-              setSliderRevision((revision) => revision + 1);
-            }
-          }}
-          size="sm"
-          step={step}
-          value={value}
-        />
-        <NumericInput
-          key={`maximum-${sliderRevision}`}
-          className="w-(--akros-variant-filter-input-width)"
-          locale="cs-CZ"
-          min={value[0] / scale}
-          max={bounds[1] / scale}
-          precision={2}
-          step={step / scale}
-          defaultValue={value[1] / scale}
-          onChange={(next) => updateEndpoint(1, next)}
-          size="sm"
-        >
-          <NumericInput.Control>
-            <NumericInput.Input aria-label={`Maximum – ${label}`} />
-          </NumericInput.Control>
-        </NumericInput>
-      </div>
-    </div>
-  );
-}
-
-const materialPattern =
-  /\b(?:A[124](?:\s*-\s*\d+)?|AL(?:\/AL)?|1\.\d{4}|chrom|nerez|ocel|pozink|zinek)\b/i;
-
-const normalizeMaterial = (material: string) => {
-  const normalized = material.trim().replace(/\s+/g, " ");
-  const commonMaterial = normalized.toLocaleLowerCase("cs-CZ");
-
-  if (["chrom", "nerez", "ocel", "pozink", "zinek"].includes(commonMaterial)) {
-    return commonMaterial.charAt(0).toLocaleUpperCase("cs-CZ") + commonMaterial.slice(1);
-  }
-
-  return normalized.toLocaleUpperCase("cs-CZ");
-};
-
-const getVariantMaterial = (product: CatalogProduct, variant: CatalogProductVariant) => {
-  const materialParameter = variant.parameters.find((parameter) =>
-    parameter.label.toLocaleLowerCase("cs-CZ").includes("material"),
-  );
-  if (materialParameter?.value.trim()) return normalizeMaterial(materialParameter.value);
-
-  const variantMaterial = variant.label.match(materialPattern)?.[0];
-  if (variantMaterial) return normalizeMaterial(variantMaterial);
-
-  const productMaterial = product.name.match(materialPattern)?.[0];
-  return productMaterial ? normalizeMaterial(productMaterial) : null;
-};
-
 const formatVariantLabel = (variant: CatalogProductVariant) => {
   const dimension = variant.label.match(/\bM\s*(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)/i);
   if (!dimension) return variant.label;
@@ -315,97 +152,30 @@ export function ProductPurchaseForm({
 }: ProductPurchaseFormProps) {
   const { dispatch } = useCart();
   const sourceVariants = variants ?? noVariants;
-  const variantDimensions = useMemo(
-    () => new Map(sourceVariants.map((item) => [item.id, parseVariantDimensions(item.label)])),
-    [sourceVariants],
-  );
-  const dimensionBounds = useMemo(() => {
-    const dimensions = [...variantDimensions.values()];
-    if (dimensions.length < 2 || dimensions.some((item) => item === null)) return null;
-
-    const parsedDimensions = dimensions.filter((item): item is VariantDimensions => item !== null);
-    const diameter = getRange(parsedDimensions.map((item) => item.diameter));
-    const length = getRange(parsedDimensions.map((item) => item.length));
-
-    return diameter && length
-      ? {
-          diameter,
-          diameterStep: parsedDimensions.every((item) => Number.isInteger(item.diameter)) ? 1 : 0.1,
-          length,
-          lengthStep: parsedDimensions.every((item) => Number.isInteger(item.length)) ? 1 : 0.1,
-        }
-      : null;
-  }, [variantDimensions]);
-  const priceBounds = useMemo(
-    () => getRange(sourceVariants.map((item) => item.priceMinor)),
-    [sourceVariants],
-  );
-  const variantMaterials = useMemo(
-    () => new Map(sourceVariants.map((item) => [item.id, getVariantMaterial(product, item)])),
+  const filters = useMemo(
+    () => getVariantRangeFilters(product, sourceVariants),
     [product, sourceVariants],
   );
-  const materialOptions = useMemo(() => {
-    const materials = [...variantMaterials.values()];
-    if (materials.length === 0 || materials.some((material) => material === null)) return [];
-
-    return [...new Set(materials.filter((material): material is string => material !== null))].sort(
-      (left, right) => variantCollator.compare(left, right),
-    );
-  }, [variantMaterials]);
-  const initialDiameterRange: NumericRange = dimensionBounds?.diameter ?? [0, 0];
-  const initialLengthRange: NumericRange = dimensionBounds?.length ?? [0, 0];
-  const initialPriceRange: NumericRange = priceBounds ?? [0, 0];
+  const [ranges, setRanges] = useState<Record<string, NumericRange>>({});
+  const [filterRevision, setFilterRevision] = useState(0);
   const [quantity, setQuantity] = useState(variant?.minimumQuantity ?? product.minimumQuantity);
-  const [selectedMaterials, setSelectedMaterials] = useState(materialOptions);
-  const [appliedMaterials, setAppliedMaterials] = useState(materialOptions);
-  const [diameterRange, setDiameterRange] = useState<NumericRange>(initialDiameterRange);
-  const [appliedDiameterRange, setAppliedDiameterRange] =
-    useState<NumericRange>(initialDiameterRange);
-  const [lengthRange, setLengthRange] = useState<NumericRange>(initialLengthRange);
-  const [appliedLengthRange, setAppliedLengthRange] = useState<NumericRange>(initialLengthRange);
-  const [priceRange, setPriceRange] = useState<NumericRange>(initialPriceRange);
-  const [appliedPriceRange, setAppliedPriceRange] = useState<NumericRange>(initialPriceRange);
   const normalizedSearchTerm = normalizeCatalogSearchTerm(initialVariantSearch ?? "");
   const visibleVariants = useMemo(
     () =>
       sourceVariants
-        .filter((item) => {
-          const matchesSearch = normalizedSearchTerm
-            ? matchesProductVariantSearch(item, normalizedSearchTerm)
-            : true;
-          const dimensions = variantDimensions.get(item.id);
-          const matchesDiameter =
-            !dimensionBounds ||
-            (dimensions != null && isWithinRange(dimensions.diameter, appliedDiameterRange));
-          const matchesLength =
-            !dimensionBounds ||
-            (dimensions != null && isWithinRange(dimensions.length, appliedLengthRange));
-          const matchesPrice = !priceBounds || isWithinRange(item.priceMinor, appliedPriceRange);
-          const material = variantMaterials.get(item.id);
-          const matchesMaterial =
-            materialOptions.length === 0 ||
-            (material !== null && material !== undefined && appliedMaterials.includes(material));
-
-          return (
-            matchesSearch && matchesDiameter && matchesLength && matchesPrice && matchesMaterial
-          );
-        })
+        .filter(
+          (item) =>
+            (!normalizedSearchTerm || matchesProductVariantSearch(item, normalizedSearchTerm)) &&
+            filters.every((filter) => {
+              const range = ranges[filter.id];
+              const value = filter.values.get(item.id);
+              return !range || (value !== undefined && value >= range[0] && value <= range[1]);
+            }),
+        )
         .sort((left, right) =>
           variantCollator.compare(formatVariantLabel(left), formatVariantLabel(right)),
         ),
-    [
-      appliedDiameterRange,
-      appliedLengthRange,
-      appliedMaterials,
-      appliedPriceRange,
-      dimensionBounds,
-      materialOptions.length,
-      normalizedSearchTerm,
-      priceBounds,
-      sourceVariants,
-      variantDimensions,
-      variantMaterials,
-    ],
+    [sourceVariants, normalizedSearchTerm, filters, ranges],
   );
   const addVariant = useCallback(
     (variant: CatalogProductVariant, selectedQuantity: number) => {
@@ -623,96 +393,48 @@ export function ProductPurchaseForm({
     );
   }
 
-  const applyFilters = () => {
-    setAppliedMaterials(selectedMaterials);
-    setAppliedDiameterRange(diameterRange);
-    setAppliedLengthRange(lengthRange);
-    setAppliedPriceRange(priceRange);
-  };
-
   return (
     <div className="akros-variant-purchase @container/akros-variants">
-      <section className="w-full max-w-full rounded-sm border-(length:--border-sm) border-base-dark bg-base p-(--akros-variant-filter-padding) md:w-fit md:@max-akros-variant-table/akros-variants:w-full">
-        <form
-          aria-label="Filtrování variant"
-          className="akros-variant-purchase__filter-bar flex flex-col gap-y-(--dimension-12) md:flex-row md:flex-wrap md:items-center"
-          onSubmit={(event) => {
-            event.preventDefault();
-            applyFilters();
-          }}
-        >
-          {dimensionBounds && dimensionBounds.diameter[0] < dimensionBounds.diameter[1] && (
-            <VariantRangeFilter
-              bounds={dimensionBounds.diameter}
-              label="Průměr (mm)"
-              onChange={setDiameterRange}
-              step={dimensionBounds.diameterStep}
-              value={diameterRange}
-            />
-          )}
-
-          {dimensionBounds && dimensionBounds.length[0] < dimensionBounds.length[1] && (
-            <VariantRangeFilter
-              bounds={dimensionBounds.length}
-              label="Délka (mm)"
-              onChange={setLengthRange}
-              step={dimensionBounds.lengthStep}
-              value={lengthRange}
-            />
-          )}
-
-          {materialOptions.length > 0 && (
-            <fieldset className={`${filterGroupClassName} m-0 min-w-0`}>
-              <legend className="mx-auto mb-(--dimension-6) text-(length:--akros-variant-filter-label-font-size) leading-(--akros-variant-filter-label-line-height) font-medium">
-                Materiál
-              </legend>
-              <div
-                className={`grid gap-x-(--dimension-12) gap-y-(--dimension-4) ${materialOptions.length > 1 ? "grid-cols-2" : "grid-cols-1"}`}
-              >
-                {materialOptions.map((material) => (
-                  <FormCheckbox
-                    className="[&_[data-part=indicator][data-state=checked]]:token-icon-akros-checkbox-selected"
-                    checked={selectedMaterials.includes(material)}
-                    key={material}
-                    label={material}
-                    onCheckedChange={(checked) =>
-                      setSelectedMaterials((current) =>
-                        checked
-                          ? [...current, material]
-                          : current.filter((item) => item !== material),
-                      )
-                    }
-                    size="sm"
-                  />
-                ))}
-              </div>
-            </fieldset>
-          )}
-
-          <div className="flex min-w-0 flex-col gap-y-(--dimension-12) md:flex-row md:items-center md:gap-x-(--dimension-12) md:@max-akros-variant-table/akros-variants:grow">
-            {priceBounds && priceBounds[0] < priceBounds[1] && (
+      {filters.length > 0 && (
+        <section className="w-full max-w-full rounded-sm border-(length:--border-sm) border-base-dark bg-base p-(--akros-variant-filter-padding) md:w-fit md:@max-akros-variant-table/akros-variants:w-full">
+          <form
+            aria-label="Filtrování variant"
+            className="akros-variant-purchase__filter-bar flex flex-col gap-y-(--dimension-12) md:flex-row md:flex-wrap md:items-center"
+            onSubmit={(event) => event.preventDefault()}
+          >
+            {filters.map((filter) => (
               <VariantRangeFilter
-                bounds={priceBounds}
-                label={`Cena (Kč/${product.unit})`}
-                onChange={setPriceRange}
-                price
-                step={1}
-                value={priceRange}
+                key={filter.id + filterRevision}
+                filter={filter}
+                value={ranges[filter.id] ?? filter.bounds}
+                onChange={(value) =>
+                  setRanges((current) => {
+                    const previous = current[filter.id] ?? filter.bounds;
+                    return previous[0] === value[0] && previous[1] === value[1]
+                      ? current
+                      : { ...current, [filter.id]: value };
+                  })
+                }
               />
-            )}
-
+            ))}
             <Button
-              className="akros-variant-filter-submit w-full md:ml-auto md:w-(--akros-variant-filter-submit-width)"
+              type="button"
               size="sm"
-              type="submit"
-              uppercase
-              variant="primary"
+              theme="outlined"
+              variant="secondary"
+              onClick={() => {
+                setRanges({});
+                setFilterRevision((revision) => revision + 1);
+              }}
             >
-              Filtruj
+              Obnovit filtry
             </Button>
-          </div>
-        </form>
-      </section>
+          </form>
+        </section>
+      )}
+      <output className="block m-0 text-sm text-fg-secondary">
+        Zobrazeno {visibleVariants.length} z {sourceVariants.length} variant
+      </output>
 
       <>
         <DataTable

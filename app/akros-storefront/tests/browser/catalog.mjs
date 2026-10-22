@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { chromium } from "playwright-core";
+import { checkVariantFilterRecovery } from "./variant-filter-checks.mjs";
 
 const baseUrl = process.env.AKROS_TEST_BASE_URL ?? "http://localhost:3000";
 const slug = "vruty-se-zapustnou-hlavou-s-krizovou-drazkou-din-7997-a2";
@@ -45,9 +46,9 @@ try {
     await page.goto(new URL(`/produkt/${slug}`, baseUrl).href, { waitUntil: "networkidle" });
     const table = page.locator(".akros-variant-data-table__table");
     const form = page.getByRole("form", { name: "Filtrování variant" });
-    const submit = form.getByRole("button", { name: "Filtruj" });
-    await probe(submit, { "--font-weight-button": "600" }, async () => {
-      assert.equal(await style(submit, "fontWeight"), "600");
+    const reset = form.getByRole("button", { name: "Obnovit filtry" });
+    await probe(reset, { "--font-weight-button": "600" }, async () => {
+      assert.equal(await style(reset, "fontWeight"), "600");
     });
     const quantity = table.locator(".akros-variant-table__quantity-control").first();
     await probe(
@@ -118,27 +119,13 @@ try {
       false,
     );
 
-    // Selecting no materials must show the empty state; restoring them brings rows back.
-    const checkboxes = form.getByRole("checkbox");
-    const count = await checkboxes.count();
-    assert.ok(count > 0);
-    for (let index = 0; index < count; index++) {
-      const checkbox = checkboxes.nth(index);
-      if (await checkbox.isChecked()) await checkbox.locator("..").click();
-    }
-    await submit.click();
-    await page.locator(".akros-variant-purchase__empty").waitFor();
-    for (let index = 0; index < count; index++) await checkboxes.nth(index).locator("..").click();
-    await submit.click();
-    await table.locator("tbody tr").first().waitFor();
-    assert.equal(await table.locator("tbody tr").count(), product.detail.variants.length);
+    await checkVariantFilterRecovery(page, product);
 
     const slider = form.getByRole("slider").first();
     const before = Number(await slider.getAttribute("aria-valuenow"));
     await slider.focus();
     await slider.press("ArrowRight");
     assert.ok(Number(await slider.getAttribute("aria-valuenow")) > before);
-    await submit.click();
     await table.locator("tbody tr").first().waitFor();
 
     for (const route of ["/kategorie/vruty", "/vyhledavani?q=DIN"]) {

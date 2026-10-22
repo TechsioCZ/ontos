@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { chromium } from "playwright-core";
+import { checkVariantFilterRecovery } from "./variant-filter-checks.mjs";
 
 const base = process.env.AKROS_TEST_BASE_URL ?? "http://localhost:3000";
 const { products } = JSON.parse(
@@ -151,20 +152,7 @@ try {
     );
     assert.equal(await rows.count(), ids.length);
 
-    const filter = page.getByRole("form", { name: "Filtrování variant" });
-    const checkboxes = filter.getByRole("checkbox");
-    assert.ok(await checkboxes.count());
-    for (const checkbox of await checkboxes.all()) await checkbox.locator("..").click();
-    const filtering = performance.now();
-    await filter.getByRole("button", { name: "Filtruj" }).click();
-    await page.locator(".akros-variant-purchase__empty").waitFor();
-    measurement.emptyFilterMs = Math.round(performance.now() - filtering);
-    for (const checkbox of await checkboxes.all()) await checkbox.locator("..").click();
-    const restore = performance.now();
-    await filter.getByRole("button", { name: "Filtruj" }).click();
-    await links.last().waitFor();
-    assert.equal(await rows.count(), ids.length);
-    measurement.restoreFilterMs = Math.round(performance.now() - restore);
+    Object.assign(measurement, await checkVariantFilterRecovery(page, product));
 
     await page.setViewportSize({ width: 390, height: 1000 });
     const mobileStart = performance.now();

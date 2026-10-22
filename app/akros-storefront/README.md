@@ -43,6 +43,13 @@ desktop/mobile widths, the last variant and its modal/focus, purchase identity,
 filter recovery and exact shared/SKU links. Screenshots and local interaction timings
 are saved under `test-results/variant-list/`.
 
+`npm run test:variant-filters` checks live dimension filters for fasteners, sheets
+and round/rectangular tubes at four desktop/mobile widths. It verifies empty and
+decimal editing with both separators, focus, keyboard/pointer sliders and recovery
+from empty results on 386 variants. Screenshots and timings are in
+`test-results/variant-filters/`. Unknown or conflicting dimensions are omitted;
+price and material filters are removed.
+
 `npm run test:catalog` checks catalog/variant token consumption and purchase/filter/pagination
 flows at 1920, 1024 and 390px. It covers minimum quantities, whole packages, empty filter results,
 keyboard slider changes and preservation of the search query when paging through results.
@@ -60,7 +67,7 @@ the banner so their 44 px targets do not overlap the arrows.
 
 `npm run test:responsive` includes this homepage check, then checks variant-table text and controls
 at 22 widths and cart/review rows at 23 widths from 320 to 1920 px. Variant checks also cover
-filter overflow, readable price endpoints and the price/submit group across four products.
+filter overflow and readable dimension endpoints across four products.
 Cart fixtures include long
 product names, six-decimal quantities and large totals, and use an isolated browser context.
 The checkout-section check also covers navigation/sidebar geometry, named-cart creation,

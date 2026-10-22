@@ -99,42 +99,32 @@ try {
         [],
         `${slug} at ${width}px: ${JSON.stringify(result.failures)}`,
       );
-      const filterFailures = await page
-        .getByRole("form", { name: "Filtrování variant" })
-        .evaluate((form) => {
+      const forms = page.getByRole("form", { name: "Filtrování variant" });
+      if (await forms.count()) {
+        const filterFailures = await forms.evaluate((form) => {
           const errors = [];
           const bounds = form.getBoundingClientRect();
-          const submit = form.querySelector('button[type="submit"]').getBoundingClientRect();
-          if (
-            form.scrollWidth > form.clientWidth + 1 ||
-            submit.right > bounds.right + 1 ||
-            submit.left < bounds.left - 1
-          )
-            errors.push("Filter/submit overflow");
-          const price = form.querySelector(".akros-variant-filter-range--price");
-          if (
-            price &&
-            innerWidth >= 768 &&
-            Math.abs(price.getBoundingClientRect().top - submit.top) > 16
-          )
-            errors.push("Price and submit are on different lines");
+          for (const element of form.querySelectorAll("button, input")) {
+            const rect = element.getBoundingClientRect();
+            if (!rect.width || !rect.height) continue;
+            if (rect.left < bounds.left - 1 || rect.right > bounds.right + 1)
+              errors.push("Filter control overflow");
+          }
+          if (form.scrollWidth > form.clientWidth + 1) errors.push("Filter overflow");
           const context = document.createElement("canvas").getContext("2d");
-          if (price && price.querySelectorAll("input[role=spinbutton]").length !== 2)
-            errors.push("Price filter must have two editable endpoints");
-          for (const input of form.querySelectorAll(
-            ".akros-variant-filter-range--price input[role=spinbutton]",
-          )) {
+          for (const input of form.querySelectorAll("input[role=spinbutton]")) {
             const style = getComputedStyle(input);
-            context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+            context.font = style.fontWeight + " " + style.fontSize + " " + style.fontFamily;
             if (
               context.measureText(input.value).width >
               input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) + 1
             )
-              errors.push(`Price input clipped: ${input.value}`);
+              errors.push("Dimension input clipped: " + input.value);
           }
           return errors;
         });
-      assert.deepEqual(filterFailures, [], `${slug} at ${width}px: filter layout`);
+        assert.deepEqual(filterFailures, [], slug + " at " + width + "px: filter layout");
+      }
       const controlFailures = await page
         .locator(".akros-variant-purchase")
         .evaluate(inspectVariantControls);

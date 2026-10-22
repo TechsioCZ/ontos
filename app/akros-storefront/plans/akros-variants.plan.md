@@ -7,7 +7,7 @@ todos:
     status: completed
   - id: task-05-relevant-filters
     content: TASK 05 – odstranit cenu a materiál z filtrace a ověřit automatické použití relevantních parametrů.
-    status: pending
+    status: completed
   - id: task-01-figma-layout
     content: TASK 01 – po ověření D1 upravit variantní výpis podle Figmy, zmenšit správné tlačítko a zachovat čitelné SKU.
     status: completed
@@ -40,6 +40,8 @@ Dokončeno: žádné varianty se neztrácejí, kontejner se neopakuje a zvolený
 zobrazení splňuje dohodnutou dostupnost všech výsledků i naměřenou odezvu ovládání.
 
 ### TASK 05 – filtrace · #1303
+
+Rozbor a výsledky vlastní [TASK 05](akros-task-05-review.md).
 
 - Odstranit ovládání ceny a materiálu i jejich vliv na výsledky. Starý stav nesmí
   po reloadu nebo příchodu z odkazu dál neviditelně omezovat výpis.
