@@ -1,15 +1,20 @@
 /**
  * Derives the serialized MCP contribution (`manifest.publicSurface.mcp`) of one vertical from its authored
  * contribution and its own executable values: `/reads/<slug>` endpoints of its public HttpApis and its Action
- * registrations. JSON Schemas come from the vertical's Effect Schemas; repeated subtrees are shared through
- * `definitions` so large modules stay well inside the contract size limit.
+ * registrations. The tools go to a separate tool catalog artifact the contribution pins by digest; JSON Schemas
+ * come from the vertical's Effect Schemas, and repeated subtrees are shared through `definitions`.
  */
 import { createHash } from 'node:crypto';
 
 import { Predicate, Schema } from 'effect';
 import { HttpApi } from 'effect/unstable/httpapi';
 
-import { OntosMcpContributionSchema, OntosMcpHidden } from '../packages/core-runtime/src/modules/mcp-contribution.ts';
+import {
+  ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
+  OntosMcpContributionSchema,
+  OntosMcpHidden,
+  OntosMcpToolCatalogJsonSchema,
+} from '../packages/core-runtime/src/modules/mcp-contribution.ts';
 import type {
   OntosMcpContribution,
   OntosMcpContributionInput,
@@ -301,10 +306,17 @@ export interface DeriveOntosMcpContributionInput {
   readonly moduleId: string;
 }
 
+export interface DerivedOntosMcpContribution {
+  /** `manifest.publicSurface.mcp` of the deployment contract. */
+  readonly contribution: OntosMcpContribution;
+  /** Exact text of the tool catalog artifact the contribution pins (served at its `toolCatalog.path`). */
+  readonly toolCatalog: string;
+}
+
 /** Undefined when the vertical contributes no MCP tools. */
 export const deriveOntosMcpContribution = (
   input: DeriveOntosMcpContributionInput,
-): OntosMcpContribution | undefined => {
+): DerivedOntosMcpContribution | undefined => {
   const { appId, authored, moduleId } = input;
   if (authored === undefined) {
     return undefined;
@@ -390,6 +402,10 @@ export const deriveOntosMcpContribution = (
     }
   }
   const schemas = shareRepeatedSubtrees(drafts, definitions);
+  const toolCatalog = Schema.encodeUnknownSync(OntosMcpToolCatalogJsonSchema)({
+    definitions,
+    tools: drafts.map(({ tool }, index) => ({ ...tool, inputSchema: schemas[index] ?? {} })),
+  });
   const revision = authored.revision;
   const contribution = {
     ...(authored.approvalReview === undefined
@@ -409,10 +425,7 @@ export const deriveOntosMcpContribution = (
             path: authored.approvalsPage.path,
           },
         }),
-    ...(authored.commandFieldLabels === undefined
-      ? {}
-      : { commandFieldLabels: { ...authored.commandFieldLabels } }),
-    definitions,
+    ...(authored.commandFieldLabels === undefined ? {} : { commandFieldLabels: { ...authored.commandFieldLabels } }),
     description: authored.description,
     keywords: authored.keywords,
     label: authored.label,
@@ -434,7 +447,14 @@ export const deriveOntosMcpContribution = (
             query: { ...(revision.query ?? {}) },
           },
         }),
-    tools: drafts.map(({ tool }, index) => ({ ...tool, inputSchema: schemas[index] ?? {} })),
+    toolCatalog: {
+      path: ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
+      sha256: createHash('sha256').update(toolCatalog).digest('hex'),
+      toolCount: drafts.length,
+    },
   };
-  return Schema.decodeUnknownSync(OntosMcpContributionSchema, { onExcessProperty: 'error' })(contribution);
+  return {
+    contribution: Schema.decodeUnknownSync(OntosMcpContributionSchema, { onExcessProperty: 'error' })(contribution),
+    toolCatalog,
+  };
 };

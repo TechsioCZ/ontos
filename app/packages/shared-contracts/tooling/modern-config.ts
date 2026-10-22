@@ -214,16 +214,21 @@ interface DevelopmentMiddlewareSetup {
   ) => void;
 }
 
-/** Serves the unit's prepared development module contract ahead of locale redirects. */
+const DEVELOPMENT_CONTRACT_ARTIFACTS: ReadonlySet<string> = new Set([
+  '/.well-known/ontos-module-manifest.json',
+  '/.well-known/ontos-module-mcp-tools.json',
+]);
+
+/** Serves the unit's prepared development module contract and its MCP tool catalog ahead of locale redirects. */
 export const createDevelopmentContractMiddleware = (moduleUrl: string) => {
-  const contractPath = fileURLToPath(new URL('.dev-public/.well-known/ontos-module-manifest.json', moduleUrl));
   return ({ unshift }: DevelopmentMiddlewareSetup) => {
     unshift((request, response, next) => {
-      if (request.url?.split('?', 1)[0] !== '/.well-known/ontos-module-manifest.json') {
+      const requestPath = request.url?.split('?', 1)[0];
+      if (requestPath === undefined || !DEVELOPMENT_CONTRACT_ARTIFACTS.has(requestPath)) {
         next();
         return;
       }
-      const contract = readFileSync(contractPath);
+      const contract = readFileSync(fileURLToPath(new URL(`.dev-public${requestPath}`, moduleUrl)));
       response.setHeader('Cache-Control', 'no-cache');
       response.setHeader('Content-Type', 'application/json');
       response.setHeader('Content-Length', String(contract.byteLength));
@@ -303,7 +308,8 @@ export const createCloudflareDataPlaneBindings = (envValue: ModernBuildContext['
 export const createCloudflareEmailBindings = (envValue: ModernBuildContext['envValue']) => {
   const sender = envValue('ULTRAMODERN_EMAIL_SENDER')?.trim();
   if (sender === undefined || sender === '') return {};
-  if (!/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/u.test(sender)) throw new Error('ULTRAMODERN_EMAIL_SENDER must be a bare email address');
+  if (!/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/u.test(sender))
+    throw new Error('ULTRAMODERN_EMAIL_SENDER must be a bare email address');
   return { send_email: [{ name: 'EMAIL', allowed_sender_addresses: [sender] }] };
 };
 

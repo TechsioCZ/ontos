@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -11,6 +12,7 @@ import {
   ONTOS_MODULE_CONTRACT_PATH,
   OntosDeploymentAppIdSchema,
   OntosModuleDeploymentContractSchema,
+  OntosMcpToolCatalogJsonSchema,
   OntosModuleIdSchema,
   buildInstalledModuleCatalog,
 } from '../packages/core-runtime/src/index.ts';
@@ -239,6 +241,23 @@ const validateEmittedContract = (verticalDirectory: string, target: string, expe
     }
     if (/sourcePath|importPath|exportPath|registrationPath|handlerPath|migrationPath/u.test(serialized)) {
       yield* failure(`${contractPath} contains forbidden private path metadata`);
+    }
+    const toolCatalogReference = contract.manifest.publicSurface.mcp?.toolCatalog;
+    if (toolCatalogReference !== undefined) {
+      const toolCatalogPath = path.join(publicDirectory, toolCatalogReference.path.slice(1));
+      if (!(yield* fileSystem.exists(toolCatalogPath))) {
+        yield* failure(`${target} output is missing ${toolCatalogReference.path}`);
+      }
+      const toolCatalog = yield* fileSystem.readFile(toolCatalogPath);
+      if (createHash('sha256').update(toolCatalog).digest('hex') !== toolCatalogReference.sha256) {
+        yield* failure(`${toolCatalogPath} does not match the digest its contract pins`);
+      }
+      const tools = yield* Schema.decodeUnknownEffect(OntosMcpToolCatalogJsonSchema, { onExcessProperty: 'error' })(
+        new TextDecoder().decode(toolCatalog),
+      );
+      if (tools.tools.length !== toolCatalogReference.toolCount) {
+        yield* failure(`${toolCatalogPath} does not hold the tool count its contract declares`);
+      }
     }
     const validateResponseHeaders = Effect.gen(function* validateResponseHeadersEffect() {
       const headersPath = path.join(publicDirectory, '_headers');

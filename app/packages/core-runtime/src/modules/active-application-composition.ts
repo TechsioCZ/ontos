@@ -57,12 +57,15 @@ const decodeSnapshot = Schema.decodeEffect(Schema.toType(ActiveApplicationCompos
   onExcessProperty: 'error',
 });
 
-const checkLease = (snapshot: ActiveApplicationCompositionSnapshot) =>
-  Effect.flatMap(Clock.currentTimeMillis, (now) =>
-    DateTime.toEpochMillis(snapshot.observedAt) > now || DateTime.toEpochMillis(snapshot.validUntil) <= now
-      ? Effect.fail(unavailableActiveApplicationComposition('Application Composition authority is expired or not yet valid'))
-      : Effect.succeed(snapshot),
-  );
+const checkLease = Effect.fnUntraced(function* checkLease(snapshot: ActiveApplicationCompositionSnapshot) {
+  const now = yield* Clock.currentTimeMillis;
+  if (DateTime.toEpochMillis(snapshot.observedAt) > now || DateTime.toEpochMillis(snapshot.validUntil) <= now) {
+    return yield* unavailableActiveApplicationComposition(
+      'Application Composition authority is expired or not yet valid',
+    );
+  }
+  return snapshot;
+});
 
 /**
  * Admits one decoded snapshot: lease, then the complete catalog of the frozen composition. Building the catalog

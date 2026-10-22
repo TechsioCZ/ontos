@@ -2,13 +2,12 @@
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { describe, expect, it } from '@rstest/core';
 
-import { buildMcpCatalog } from '../../../api/mcp/catalog.ts';
 import { createMcpFetch, createMcpMetadataFetch } from '../../../api/mcp/http.ts';
 import type { McpEndpointConfig } from '../../../api/mcp/http.ts';
 import { buildConnectionTools } from '../../../api/mcp/tools.ts';
 import type { McpBackend, ModuleAnswer } from '../../../api/mcp/types.ts';
 import { rootRouteTarget } from '../../../shared/mcp-resource.ts';
-import { FIXTURE_APP_ID, FIXTURE_MODULE_ID, connectionDescription, fixtureComposition } from './fixture-vertical.ts';
+import { FIXTURE_APP_ID, FIXTURE_MODULE_ID, connectionDescription, fixtureCatalog } from './fixture-vertical.ts';
 
 const CONFIG: McpEndpointConfig = {
   issuer: 'http://localhost:3020/shell-super-app-api/oauth',
@@ -59,7 +58,7 @@ const endpoint = (options: {
             tools: () =>
               buildConnectionTools({
                 backend: options.backend,
-                catalog: buildMcpCatalog(fixtureComposition),
+                catalog: fixtureCatalog(),
                 description: options.description,
                 prmUrl: CONFIG.prmUrl,
                 publicOrigin: CONFIG.publicOrigin,

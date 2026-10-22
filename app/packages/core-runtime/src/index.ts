@@ -734,10 +734,14 @@ export {
   defineOntosModuleManifest,
 } from './modules/manifest.ts';
 export {
+  ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
   OntosMcpContributionSchema,
   OntosMcpHidden,
   OntosMcpRevisionSchema,
   OntosMcpTextSchema,
+  OntosMcpToolCatalogJsonSchema,
+  OntosMcpToolCatalogReferenceSchema,
+  OntosMcpToolCatalogSchema,
   OntosMcpToolSchema,
   defineOntosMcpContribution,
 } from './modules/mcp-contribution.ts';

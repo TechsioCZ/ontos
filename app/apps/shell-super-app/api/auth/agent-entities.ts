@@ -29,7 +29,7 @@ import { Effect, Schema } from 'effect';
 
 import { composedModulesOf } from '../agent-platform/composed-modules.ts';
 import { withdrawPendingOfAgent } from '../agent-platform/proposal-store.ts';
-import { mcpCatalogOf } from '../mcp/catalog.ts';
+import { mcpModulesOf } from '../mcp/catalog.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 
 import {
@@ -110,7 +110,7 @@ const companyCatalog = (tenantId: string, legalEntityId: string, grants: DemoAcc
     ).pipe(Effect.mapError(unavailable));
     const union = templates.flatMap(({ relationships }) => relationships);
     const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(unavailable));
-    const labelOf = composedModulesOf(mcpCatalogOf(installed.composition)).labelOf;
+    const labelOf = composedModulesOf(mcpModulesOf(installed.composition)).labelOf;
     return {
       labelOf,
       legalEntityWriteRelations: legalEntityWriteRelationsOf(installed.composition),

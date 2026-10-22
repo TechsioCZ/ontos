@@ -14,6 +14,7 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
   ONTOS_MODULE_CONTRACT_PATH,
+  ONTOS_MODULE_MCP_TOOL_CATALOG_PATH,
   ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
   OntosDeploymentAppIdSchema,
   OntosModuleDeploymentContractSchema,
@@ -110,9 +111,9 @@ const decodeLoadedOwnerModule = Schema.decodeUnknownPromise(LoadedOwnerModuleSch
 
 const PackageJsonTextSchema = Schema.fromJsonString(ModulePackageSchema);
 const ReferenceTopologyTextSchema = Schema.fromJsonString(ReferenceTopologySchema);
-const ContractJsonTextSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema, {
-  space: 2,
-});
+// Compact text: the Application Composition embeds every contract as a JSON string, so indentation doubled the
+// snapshot every runtime reads.
+const ContractJsonTextSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
 const JsonDocumentTextSchema = Schema.fromJsonString(Schema.Unknown, {
   space: 2,
 });
@@ -463,7 +464,7 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
           ...(owner.manifest.publicSurface.externalIdentityProviders === undefined
             ? {}
             : { externalIdentityProviders: owner.manifest.publicSurface.externalIdentityProviders }),
-          ...(mcp === undefined ? {} : { mcp }),
+          ...(mcp === undefined ? {} : { mcp: mcp.contribution }),
           reports: owner.manifest.publicSurface.reports,
           resourceTypes: owner.manifest.publicSurface.resourceTypes,
           search: owner.manifest.publicSurface.search,
@@ -473,13 +474,15 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
       runtime: { outboxSubscriptions: safeRuntime.outboxSubscriptions },
       schemaVersion: ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
     } as const;
-    return yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema, {
+    const decoded = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema, {
       onExcessProperty: 'error',
     })(contract).pipe(Effect.mapError((cause) => failure('derived OntOS module contract is invalid', cause)));
+    return { contract: decoded, mcpToolCatalog: mcp?.toolCatalog };
   });
 
-export const deriveOntosModuleDeploymentContract = (input: DeriveOntosModuleContractInput) =>
-  Effect.gen(function* deriveDeploymentContractProgram() {
+/** The contract plus the exact text of the MCP tool catalog artifact it pins (when the module offers tools). */
+const deriveOntosModuleRelease = (input: DeriveOntosModuleContractInput) =>
+  Effect.gen(function* deriveModuleReleaseProgram() {
     const platformPath = yield* Path.Path;
     const workspaceRoot = platformPath.resolve(input.workspaceRoot ?? platformPath.join(import.meta.dirname, '..'));
     const vertical = yield* assertPlainTarget(input.vertical, 'vertical', canonicalSlugPattern);
@@ -488,6 +491,9 @@ export const deriveOntosModuleDeploymentContract = (input: DeriveOntosModuleCont
     const owner = yield* loadOwnerValues(workspaceRoot, verticalDirectory, vertical);
     return yield* deriveContract(workspaceRoot, vertical, owner);
   });
+
+export const deriveOntosModuleDeploymentContract = (input: DeriveOntosModuleContractInput) =>
+  deriveOntosModuleRelease(input).pipe(Effect.map(({ contract }) => contract));
 
 /** Derives and validates one contract without writing deployment output. */
 
@@ -501,10 +507,7 @@ export const generateOntosModuleContract = (input: GenerateInput) =>
       Effect.mapError(() => failure('target must be dist or cloudflare-dist')),
     );
     const verticalDirectory = platformPath.join(workspaceRoot, 'verticals', vertical);
-    const contract = yield* deriveOntosModuleDeploymentContract({
-      vertical,
-      workspaceRoot,
-    });
+    const { contract, mcpToolCatalog } = yield* deriveOntosModuleRelease({ vertical, workspaceRoot });
     const encodedContract = yield* Schema.encodeEffect(ContractJsonTextSchema)(contract).pipe(
       Effect.mapError((cause) => failure('unable to encode the OntOS module contract', cause)),
     );
@@ -513,29 +516,38 @@ export const generateOntosModuleContract = (input: GenerateInput) =>
     if (bytes > ONTOS_MODULE_CONTRACT_MAX_BYTES) {
       return yield* failure('generated OntOS module contract exceeds the 1 MiB deployment limit');
     }
-    const outputPath = platformPath.join(
-      verticalDirectory,
-      outputRootByTarget[target],
-      'public',
-      ONTOS_MODULE_CONTRACT_PATH.slice(1),
-    );
-    yield* fileSystem
-      .makeDirectory(platformPath.dirname(outputPath), { recursive: true })
-      .pipe(Effect.mapError((cause) => failure('unable to create the module contract output directory', cause)));
-    const temporaryPath = `${outputPath}.tmp-${randomUUID()}`;
-    yield* fileSystem
-      .writeFileString(temporaryPath, content)
-      .pipe(Effect.mapError((cause) => failure('unable to write the temporary module contract', cause)));
-    yield* fileSystem
-      .rename(temporaryPath, outputPath)
-      .pipe(Effect.mapError((cause) => failure('unable to publish the generated module contract', cause)));
+    const publicDirectory = platformPath.join(verticalDirectory, outputRootByTarget[target], 'public');
+    // The tool catalog is written before the contract that pins it, so a served contract never names a missing one.
+    const artifacts = [
+      ...(mcpToolCatalog === undefined
+        ? []
+        : [{ content: mcpToolCatalog, path: ONTOS_MODULE_MCP_TOOL_CATALOG_PATH, what: 'MCP tool catalog' }]),
+      { content, path: ONTOS_MODULE_CONTRACT_PATH, what: 'module contract' },
+    ];
+    for (const artifact of artifacts) {
+      const outputPath = platformPath.join(publicDirectory, artifact.path.slice(1));
+      yield* fileSystem
+        .makeDirectory(platformPath.dirname(outputPath), { recursive: true })
+        .pipe(Effect.mapError((cause) => failure(`unable to create the ${artifact.what} output directory`, cause)));
+      const temporaryPath = `${outputPath}.tmp-${randomUUID()}`;
+      yield* fileSystem
+        .writeFileString(temporaryPath, artifact.content)
+        .pipe(Effect.mapError((cause) => failure(`unable to write the temporary ${artifact.what}`, cause)));
+      yield* fileSystem
+        .rename(temporaryPath, outputPath)
+        .pipe(Effect.mapError((cause) => failure(`unable to publish the generated ${artifact.what}`, cause)));
+    }
     const etag = `"${sha256(content)}"`;
-    const headersPath = platformPath.join(verticalDirectory, outputRootByTarget[target], 'public', '_headers');
-    const headers = `${ONTOS_MODULE_CONTRACT_PATH}\n  Cache-Control: no-cache\n  Content-Type: application/json\n  ETag: ${etag}\n`;
+    const headers = artifacts
+      .map(
+        (artifact) =>
+          `${artifact.path}\n  Cache-Control: no-cache\n  Content-Type: application/json\n  ETag: "${sha256(artifact.content)}"\n`,
+      )
+      .join('');
     yield* fileSystem
-      .writeFileString(headersPath, headers)
+      .writeFileString(platformPath.join(publicDirectory, '_headers'), headers)
       .pipe(Effect.mapError((cause) => failure('unable to write the module contract response headers', cause)));
-    return { bytes, etag, path: outputPath };
+    return { bytes, etag, path: platformPath.join(publicDirectory, ONTOS_MODULE_CONTRACT_PATH.slice(1)) };
   });
 
 const verticalFlag = Flag.String('vertical');

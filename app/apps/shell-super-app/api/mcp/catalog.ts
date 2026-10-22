@@ -1,17 +1,21 @@
 /**
- * MCP tool catalog of the active Application Composition: the `publicSurface.mcp` contribution of every admitted
- * MicroVertical's deployment contract. The Shell knows no vertical, tool or schema; everything here comes from the
- * contracts, so a module that is not composed contributes nothing.
+ * MCP catalog of the active Application Composition. Each admitted MicroVertical's deployment contract carries its
+ * `publicSurface.mcp` contribution (module texts, approvals, revision read) and pins its tools as a separate artifact
+ * of the same release by SHA-256. Every runtime reads only the small contribution; the Shell loads a module's tools
+ * from its release when the MCP endpoint needs them, verifies the digest and keeps them per isolate by digest. The
+ * Shell knows no vertical, tool or schema; a module that is not composed contributes nothing.
  */
 import type { ApplicationComposition } from '@app/core-runtime';
-import { OntosMcpContributionSchema } from '@app/core-runtime/modules/mcp-contribution';
+import { OntosMcpContributionSchema, OntosMcpToolCatalogJsonSchema } from '@app/core-runtime/modules/mcp-contribution';
 import type {
   OntosMcpCommandFieldLabels,
   OntosMcpContribution,
   OntosMcpText,
   OntosMcpTool,
+  OntosMcpToolCatalog,
 } from '@app/core-runtime/modules/mcp-contribution';
-import { Option, Schema } from 'effect';
+import { Data, Duration, Effect, Option, Ref, Schema } from 'effect';
+import { FetchHttpClient } from 'effect/unstable/http';
 
 export type JsonObject = { readonly [key: string]: Schema.Json };
 
@@ -22,7 +26,8 @@ export interface McpCatalogTool extends Omit<OntosMcpTool, 'inputSchema'> {
   readonly moduleId: string;
 }
 
-export interface McpCatalogModule {
+/** A module's MCP contribution as its contract states it: everything but the tools. */
+export interface McpModule {
   readonly appId: string;
   /** The module's agent review read the approval platform asks (undefined: generic handling). */
   readonly approvalReview: OntosMcpContribution['approvalReview'];
@@ -39,13 +44,25 @@ export interface McpCatalogModule {
   readonly ownProposalEngine: boolean;
   readonly page: string | undefined;
   readonly revision: OntosMcpContribution['revision'];
+  /** Where the module's release serves its tools and the digest the contract pins. */
+  readonly toolCatalog: { readonly sha256: string; readonly toolCount: number; readonly url: string };
+}
+
+export interface McpCatalogModule extends McpModule {
   readonly tools: readonly McpCatalogTool[];
+}
+
+export interface McpModules {
+  readonly compositionRevision: string;
+  readonly modules: readonly McpModule[];
+  /** Contracts whose MCP contribution could not be read (module id and reason). */
+  readonly warnings: readonly string[];
 }
 
 export interface McpCatalog {
   readonly compositionRevision: string;
   readonly modules: readonly McpCatalogModule[];
-  /** Contracts whose MCP contribution could not be read (module id and reason). */
+  /** Contracts whose MCP contribution or tools could not be read (module id and reason). */
   readonly warnings: readonly string[];
 }
 
@@ -105,15 +122,20 @@ const uniqueNames = (modules: readonly McpCatalogModule[]): McpCatalogModule[] =
   }));
 };
 
-type ComposedModule = Pick<ApplicationComposition['modules'][number], 'contractDocument' | 'deployment' | 'moduleId'>;
-
-export const buildMcpCatalog = (composition: {
+type ComposedModule = Pick<
+  ApplicationComposition['modules'][number],
+  'contract' | 'contractDocument' | 'deployment' | 'moduleId'
+>;
+interface ComposedRevision {
   readonly modules: readonly ComposedModule[];
   readonly revision: string;
-}): McpCatalog => {
+}
+
+/** The MCP contributions of a composition, from the contracts alone (no tool is loaded). */
+export const buildMcpModules = (composition: ComposedRevision): McpModules => {
   const warnings: string[] = [];
   const modules = composition.modules
-    .flatMap((module): McpCatalogModule[] => {
+    .flatMap((module): McpModule[] => {
       const decoded = decodeContractMcp(module.contractDocument);
       if (Option.isNone(decoded)) {
         warnings.push(`${module.moduleId}: MCP contribution is invalid`);
@@ -123,10 +145,9 @@ export const buildMcpCatalog = (composition: {
       if (contribution === undefined) {
         return [];
       }
-      const { appId } = module.deployment;
       return [
         {
-          appId,
+          appId: module.deployment.appId,
           approvalReview: contribution.approvalReview,
           approvals: contribution.approvals,
           approvalsPage: contribution.approvalsPage,
@@ -138,28 +159,144 @@ export const buildMcpCatalog = (composition: {
           ownProposalEngine: contribution.ownProposalEngine === true,
           page: contribution.page,
           revision: contribution.revision,
-          tools: contribution.tools.map((tool) => ({
-            ...tool,
-            appId,
-            inputSchema: selfContainedSchema(tool.inputSchema, contribution.definitions),
-            moduleId: module.moduleId,
-          })),
+          toolCatalog: {
+            sha256: contribution.toolCatalog.sha256,
+            toolCount: contribution.toolCatalog.toolCount,
+            url: new URL(contribution.toolCatalog.path, module.contract.url).href,
+          },
         },
       ];
     })
-    .sort((left, right) => left.moduleId.localeCompare(right.moduleId));
-  return { compositionRevision: composition.revision, modules: uniqueNames(modules), warnings };
+    .toSorted((left, right) => left.moduleId.localeCompare(right.moduleId));
+  return { compositionRevision: composition.revision, modules, warnings };
 };
 
-let cached: McpCatalog | undefined;
+const directories = new WeakMap<ComposedRevision, McpModules>();
 
-/** One catalog per composition revision (contracts of a revision never change). */
-export const mcpCatalogOf = (composition: Parameters<typeof buildMcpCatalog>[0]): McpCatalog => {
-  if (cached?.compositionRevision !== composition.revision) {
-    cached = buildMcpCatalog(composition);
+/** One module directory per admitted composition value (contracts of a revision never change). */
+export const mcpModulesOf = (composition: ComposedRevision): McpModules => {
+  const known = directories.get(composition);
+  if (known !== undefined) {
+    return known;
   }
-  return cached;
+  const directory = buildMcpModules(composition);
+  directories.set(composition, directory);
+  return directory;
 };
+
+/** The complete catalog from the contributions and the tool catalogs loaded for them (by module id). */
+export const buildMcpCatalog = (
+  directory: McpModules,
+  toolCatalogs: ReadonlyMap<string, OntosMcpToolCatalog>,
+): McpCatalog => {
+  const warnings = [...directory.warnings];
+  const modules = directory.modules.flatMap((module): McpCatalogModule[] => {
+    const toolCatalog = toolCatalogs.get(module.moduleId);
+    if (toolCatalog === undefined) {
+      warnings.push(`${module.moduleId}: MCP tools are unavailable`);
+      return [];
+    }
+    return [
+      {
+        ...module,
+        tools: toolCatalog.tools.map((tool) => ({
+          ...tool,
+          appId: module.appId,
+          inputSchema: selfContainedSchema(tool.inputSchema, toolCatalog.definitions),
+          moduleId: module.moduleId,
+        })),
+      },
+    ];
+  });
+  return { compositionRevision: directory.compositionRevision, modules: uniqueNames(modules), warnings };
+};
+
+class McpToolCatalogUnavailable extends Data.TaggedError('McpToolCatalogUnavailable')<{
+  readonly cause?: unknown;
+  readonly reason: string;
+}> {}
+
+const TOOL_CATALOG_TIMEOUT = Duration.seconds(10);
+const hex = (digest: ArrayBuffer) =>
+  [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+
+/** Reads one module's tool catalog from its release and admits it only with the digest its contract pins. */
+const fetchToolCatalog = Effect.fn('Mcp.fetchToolCatalog')(
+  function* fetchToolCatalog(module: McpModule) {
+    const fetch = yield* FetchHttpClient.Fetch;
+    const response = yield* Effect.tryPromise({
+      catch: (cause) => new McpToolCatalogUnavailable({ cause, reason: 'release did not answer' }),
+      try: (signal): PromiseLike<Response> => fetch(module.toolCatalog.url, { redirect: 'error', signal }),
+    });
+    if (!response.ok) {
+      return yield* new McpToolCatalogUnavailable({ reason: `release answered ${response.status}` });
+    }
+    const text = yield* Effect.tryPromise({
+      catch: (cause) => new McpToolCatalogUnavailable({ cause, reason: 'release answer could not be read' }),
+      try: (): PromiseLike<string> => response.text(),
+    });
+    const digest = yield* Effect.tryPromise({
+      catch: (cause) => new McpToolCatalogUnavailable({ cause, reason: 'digest could not be computed' }),
+      try: (): PromiseLike<ArrayBuffer> => globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)),
+    });
+    if (hex(digest) !== module.toolCatalog.sha256) {
+      return yield* new McpToolCatalogUnavailable({ reason: 'artifact does not match the pinned digest' });
+    }
+    return yield* Schema.decodeEffect(OntosMcpToolCatalogJsonSchema, { onExcessProperty: 'error' })(text).pipe(
+      Effect.mapError((cause) => new McpToolCatalogUnavailable({ cause, reason: 'artifact is invalid' })),
+    );
+  },
+  Effect.timeoutOrElse({
+    duration: TOOL_CATALOG_TIMEOUT,
+    orElse: () => Effect.fail(new McpToolCatalogUnavailable({ reason: 'release timed out' })),
+  }),
+);
+
+// Verified tool catalogs by digest and the last complete catalog: immutable values only, never request-owned I/O
+// or failures (a Worker builds a new scoped runtime for each request).
+const toolCatalogsByDigest = Ref.makeUnsafe<ReadonlyMap<string, OntosMcpToolCatalog>>(new Map());
+const completeCatalog = Ref.makeUnsafe<McpCatalog | null>(null);
+
+/**
+ * The complete MCP catalog of a composition revision. Tools are loaded once per digest per isolate; a module whose
+ * tools cannot be loaded is left out with a warning and asked again on the next request.
+ */
+export const loadMcpCatalog = Effect.fn('Mcp.loadCatalog')(function* loadMcpCatalog(composition: ComposedRevision) {
+  const cached = yield* Ref.get(completeCatalog);
+  if (cached?.compositionRevision === composition.revision) {
+    return cached;
+  }
+  const directory = mcpModulesOf(composition);
+  const known = yield* Ref.get(toolCatalogsByDigest);
+  const loaded = yield* Effect.forEach(
+    directory.modules,
+    (module) => {
+      const verified = known.get(module.toolCatalog.sha256);
+      return (verified === undefined ? fetchToolCatalog(module) : Effect.succeed(verified)).pipe(
+        Effect.map((toolCatalog) => [module, toolCatalog] as const),
+        Effect.tapError((error) =>
+          Effect.logWarning(`MCP tools of ${module.moduleId} are unavailable: ${error.reason}`),
+        ),
+        Effect.option,
+      );
+    },
+    { concurrency: 8 },
+  );
+  const available = loaded.flatMap((entry) => (Option.isSome(entry) ? [entry.value] : []));
+  // Keep only the digests of this revision, so retired releases do not accumulate in a long-lived isolate.
+  yield* Ref.set(
+    toolCatalogsByDigest,
+    new Map(available.map(([module, toolCatalog]) => [module.toolCatalog.sha256, toolCatalog])),
+  );
+  const catalog = buildMcpCatalog(
+    directory,
+    new Map(available.map(([module, toolCatalog]) => [module.moduleId, toolCatalog])),
+  );
+  if (available.length === directory.modules.length) {
+    yield* Ref.set(completeCatalog, catalog);
+  }
+  return catalog;
+});
 
 export const findTool = (catalog: McpCatalog, idOrName: string): McpCatalogTool | undefined => {
   for (const module of catalog.modules) {

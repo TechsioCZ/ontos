@@ -2,11 +2,11 @@
 declare module 'cloudflare:workers' {
   /** What a KV namespace text read resolves: the stored text, or null for a missing key. */
   type WorkersKvTextRead = string | null;
-  type WorkersKvStreamRead = ReadableStream<Uint8Array> | null;
+  type WorkersKvBufferRead = ArrayBuffer | null;
 
   interface WorkersKvRead {
     (key: string, type: 'text'): Promise<WorkersKvTextRead>;
-    (key: string, type: 'stream'): Promise<WorkersKvStreamRead>;
+    (key: string, type: 'arrayBuffer'): Promise<WorkersKvBufferRead>;
   }
 
   /** A binding as core-runtime sees it: service and VPC bindings fetch, KV namespaces get; others are decoded where read. */

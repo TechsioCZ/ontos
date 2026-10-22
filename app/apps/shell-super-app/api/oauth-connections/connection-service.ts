@@ -23,7 +23,7 @@ import { moduleAccessSets } from '../agent-platform/approval-logic.ts';
 import { loadAgentProfiles } from '../auth/agent-store.ts';
 import { DEFAULT_AGENT_PROFILE } from '../auth/agent-store-model.ts';
 import { composedModulesOf } from '../agent-platform/composed-modules.ts';
-import { mcpCatalogOf } from '../mcp/catalog.ts';
+import { mcpModulesOf } from '../mcp/catalog.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import {
   ConnectionForbidden,
@@ -138,7 +138,7 @@ export const loadActingAuthority = Effect.fn('OAuthConnectionService.loadActingA
   // SpiceDB can still hold rights on modules that are no longer installed; a connection only offers live modules.
   const catalog = yield* (yield* ShellInstalledModuleCatalog).load;
   const installed = new Set<string>(catalog.moduleIds);
-  const labelOf = composedModulesOf(mcpCatalogOf(catalog.composition)).labelOf;
+  const labelOf = composedModulesOf(mcpModulesOf(catalog.composition)).labelOf;
   const spice: LiveRights = {
     read: new Set([...sets.access].filter((moduleId) => installed.has(moduleId))),
     write: new Set([...sets.write].filter((moduleId) => installed.has(moduleId))),
@@ -400,7 +400,7 @@ const summariesOf = Effect.fn('OAuthConnectionService.summariesOf')(function* (
   ]);
   const legalNames = yield* loadLegalNames(tenantId, [...new Set(rows.map((row) => row.legalEntityId))]);
   const catalog = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(toUnavailable));
-  const labelOf = composedModulesOf(mcpCatalogOf(catalog.composition)).labelOf;
+  const labelOf = composedModulesOf(mcpModulesOf(catalog.composition)).labelOf;
   return yield* Effect.forEach(
     rows,
     (row) =>

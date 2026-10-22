@@ -13,7 +13,7 @@ import { callModuleAs } from '../agent-platform/module-call.ts';
 import { listOwnAgentBatches, submitAgentProposals } from '../agent-platform/service-queue.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import { loadOAuthServerConfig } from '../oauth-connections/server-config.ts';
-import { mcpCatalogOf } from './catalog.ts';
+import { loadMcpCatalog } from './catalog.ts';
 import { authenticateMcpRequest, connectionPrincipalContext } from './connection.ts';
 import { createMcpFetch, createMcpMetadataFetch } from './http.ts';
 import type { McpAuthentication, McpEndpointConfig } from './http.ts';
@@ -25,7 +25,7 @@ const describeConnection = (token: string) =>
   Effect.gen(function* describeConnectionEffect() {
     const live = yield* authenticateMcpRequest(token);
     const installed = yield* (yield* ShellInstalledModuleCatalog).load;
-    return { catalog: mcpCatalogOf(installed.composition), live };
+    return { catalog: yield* loadMcpCatalog(installed.composition), live };
   });
 
 type McpServices =

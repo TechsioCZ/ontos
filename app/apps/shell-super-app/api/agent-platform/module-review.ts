@@ -13,7 +13,7 @@ import type {
 } from '@app/shared-contracts/agent-review';
 import { Effect, Schema } from 'effect';
 
-import type { McpCatalogModule } from '../mcp/catalog.ts';
+import type { McpModule } from '../mcp/catalog.ts';
 import { callModuleAs } from './module-call.ts';
 
 /**
@@ -45,7 +45,7 @@ const CHUNK = 300;
 /** One review of `subjects` (any number, sent in chunks) by `module`, read as `principal`. */
 export const reviewInModule = Effect.fn('AgentPlatform.reviewInModule')(function* reviewInModule(
   principal: TrustedPrincipalContext,
-  module: Pick<McpCatalogModule, 'appId' | 'approvalReview'>,
+  module: Pick<McpModule, 'appId' | 'approvalReview'>,
   subjects: readonly ReviewSubject[],
 ) {
   const review = module.approvalReview;
@@ -94,7 +94,7 @@ export const reviewInModule = Effect.fn('AgentPlatform.reviewInModule')(function
 /** Reviews of subjects grouped by module app id (one call per module, at most three modules at once). */
 export const reviewByModule = Effect.fn('AgentPlatform.reviewByModule')(function* reviewByModule(
   principal: TrustedPrincipalContext,
-  modules: (appId: string) => Pick<McpCatalogModule, 'appId' | 'approvalReview'> | undefined,
+  modules: (appId: string) => Pick<McpModule, 'appId' | 'approvalReview'> | undefined,
   subjects: readonly (ReviewSubject & { readonly appId: string })[],
 ) {
   const grouped = new Map<string, ReviewSubject[]>();

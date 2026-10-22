@@ -1,22 +1,21 @@
 /**
- * A MicroVertical that exists only in this test composition. It contributes MCP tools through its contract exactly
- * like a real vertical; the Shell has no code for it.
+ * A MicroVertical that exists only in this test composition. It contributes MCP tools through its contract and the
+ * tool catalog artifact the contract pins, exactly like a real vertical; the Shell has no code for it.
  */
+import { createHash } from 'node:crypto';
+
 import type { ConnectionDescription } from '@app/shared-contracts/oauth-connections';
+
+import { buildMcpCatalog, buildMcpModules } from '../../../api/mcp/catalog.ts';
 
 export const FIXTURE_MODULE_ID = 'fixture.notes';
 export const FIXTURE_APP_ID = 'fixture-notes';
 
-const contribution = {
-  approvals: true,
+/** The tool catalog artifact of the fixture release. */
+export const fixtureToolCatalog = {
   definitions: {
     NoteText: { maxLength: 200, minLength: 1, type: 'string' },
   },
-  description: { cs: 'Testovací poznámky.', en: 'Test notes.' },
-  keywords: 'poznámka note',
-  label: { cs: 'Poznámky', en: 'Notes' },
-  page: '/poznamky',
-  revision: { field: 'revision', fieldsByCommandPrefix: [], path: '/reads/records', query: {} },
   tools: [
     {
       access: 'read',
@@ -57,12 +56,31 @@ const contribution = {
       title: { cs: 'Smazat všechny poznámky', en: 'Wipe all notes' },
     },
   ],
+} as const;
+
+export const FIXTURE_TOOL_CATALOG_TEXT = JSON.stringify(fixtureToolCatalog);
+export const FIXTURE_RELEASE_ORIGIN = 'https://assets-fixture-notes.example';
+export const FIXTURE_TOOL_CATALOG_URL = `${FIXTURE_RELEASE_ORIGIN}/.well-known/ontos-module-mcp-tools.json`;
+
+const contribution = {
+  approvals: true,
+  description: { cs: 'Testovací poznámky.', en: 'Test notes.' },
+  keywords: 'poznámka note',
+  label: { cs: 'Poznámky', en: 'Notes' },
+  page: '/poznamky',
+  revision: { field: 'revision', fieldsByCommandPrefix: [], path: '/reads/records', query: {} },
+  toolCatalog: {
+    path: '/.well-known/ontos-module-mcp-tools.json',
+    sha256: createHash('sha256').update(FIXTURE_TOOL_CATALOG_TEXT).digest('hex'),
+    toolCount: fixtureToolCatalog.tools.length,
+  },
 };
 
 /** The test composition: one fixture module whose deployment contract carries the contribution. */
 export const fixtureComposition = {
   modules: [
     {
+      contract: { sha256: '0'.repeat(64), url: `${FIXTURE_RELEASE_ORIGIN}/.well-known/ontos-module-manifest.json` },
       contractDocument: JSON.stringify({
         deployment: { appId: FIXTURE_APP_ID, buildMarker: 'fixture' },
         manifest: { publicSurface: { mcp: contribution } },
@@ -72,6 +90,10 @@ export const fixtureComposition = {
     },
     {
       // A composed module without an MCP contribution offers nothing.
+      contract: {
+        sha256: '0'.repeat(64),
+        url: 'https://assets-fixture-silent.example/.well-known/ontos-module-manifest.json',
+      },
       contractDocument: JSON.stringify({ manifest: { publicSurface: {} } }),
       deployment: { appId: 'fixture-silent', buildMarker: 'fixture' },
       moduleId: 'fixture.silent',
@@ -80,11 +102,19 @@ export const fixtureComposition = {
   revision: 'f'.repeat(64),
 };
 
-export const connectionDescription = (
-  overrides: Partial<ConnectionDescription> = {},
-): ConnectionDescription => ({
+/** The fixture composition's catalog with its tools already loaded. */
+export const fixtureCatalog = () =>
+  buildMcpCatalog(buildMcpModules(fixtureComposition), new Map([[FIXTURE_MODULE_ID, fixtureToolCatalog]]));
+
+export const connectionDescription = (overrides: Partial<ConnectionDescription> = {}): ConnectionDescription => ({
   acting: { displayName: 'Jana Testerová', kind: 'human', principalId: 'principal-1' },
-  client: { clientId: 'https://claude.ai/oauth/client', host: 'claude.ai', kind: 'cimd', logoUri: null, name: 'Claude' },
+  client: {
+    clientId: 'https://claude.ai/oauth/client',
+    host: 'claude.ai',
+    kind: 'cimd',
+    logoUri: null,
+    name: 'Claude',
+  },
   compositionRevision: 'f'.repeat(64),
   delegatedBy: null,
   grantId: 'grant-1',

@@ -25,7 +25,7 @@ const load = Effect.gen(function* readEdgeSnapshot() {
   const snapshot = yield* Effect.tryPromise({
     catch: (cause) =>
       new ActiveApplicationCompositionSourceReadError({ cause, reason: 'The Workers KV snapshot read failed' }),
-    try: () => binding.get(ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY, 'arrayBuffer'),
+    try: (): ReturnType<typeof binding.get> => binding.get(ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY, 'arrayBuffer'),
   });
   if (snapshot === null) {
     return yield* new ActiveApplicationCompositionSourceReadError({

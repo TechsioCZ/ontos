@@ -1,15 +1,15 @@
 import { expect, it } from 'effect-rstest';
 
 import { commandRevisionFrom, composedModulesOf, revisionQueryOf } from '../../../api/agent-platform/composed-modules.ts';
-import { buildMcpCatalog } from '../../../api/mcp/catalog.ts';
+import { buildMcpModules } from '../../../api/mcp/catalog.ts';
 import { FIXTURE_APP_ID, FIXTURE_MODULE_ID, fixtureComposition } from '../mcp/fixture-vertical.ts';
-import type { McpCatalogModule } from '../../../api/mcp/catalog.ts';
+import type { McpModule } from '../../../api/mcp/catalog.ts';
 
-const modules = composedModulesOf(buildMcpCatalog(fixtureComposition));
+const modules = composedModulesOf(buildMcpModules(fixtureComposition));
 
 /** A module with one revision per part, declared in its contribution (prefix -> field). */
-const partitioned: McpCatalogModule = {
-  ...(modules.byAppId(FIXTURE_APP_ID) as McpCatalogModule),
+const partitioned: McpModule = {
+  ...(modules.byAppId(FIXTURE_APP_ID) as McpModule),
   revision: {
     field: 'revision',
     fieldsByCommandPrefix: [

@@ -5,20 +5,20 @@
  */
 import { Effect } from 'effect';
 
-import { mcpCatalogOf } from '../mcp/catalog.ts';
-import type { McpCatalog, McpCatalogModule } from '../mcp/catalog.ts';
+import { mcpModulesOf } from '../mcp/catalog.ts';
+import type { McpModule, McpModules } from '../mcp/catalog.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import { AgentStoreUnavailable } from './proposal-store.ts';
 
 export interface ComposedModules {
-  readonly all: readonly McpCatalogModule[];
-  readonly byAppId: (appId: string) => McpCatalogModule | undefined;
-  readonly byModuleId: (moduleId: string) => McpCatalogModule | undefined;
+  readonly all: readonly McpModule[];
+  readonly byAppId: (appId: string) => McpModule | undefined;
+  readonly byModuleId: (moduleId: string) => McpModule | undefined;
   /** Czech label of a module key; the key itself when the module is not composed; `Platforma` for none. */
   readonly labelOf: (moduleKey: string | null | undefined) => string;
 }
 
-export const composedModulesOf = (catalog: McpCatalog): ComposedModules => ({
+export const composedModulesOf = (catalog: McpModules): ComposedModules => ({
   all: catalog.modules,
   byAppId: (appId) => catalog.modules.find((module) => module.appId === appId),
   byModuleId: (moduleId) => catalog.modules.find((module) => module.moduleId === moduleId),
@@ -32,11 +32,11 @@ export const loadComposedModules = Effect.gen(function* loadComposedModulesEffec
   const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(
     Effect.mapError((cause) => new AgentStoreUnavailable({ cause })),
   );
-  return composedModulesOf(mcpCatalogOf(installed.composition));
+  return composedModulesOf(mcpModulesOf(installed.composition));
 });
 
 /** Query of the module's revision read, `{}` when the module declares none. */
-export const revisionQueryOf = (module: McpCatalogModule | undefined): Readonly<Record<string, unknown>> =>
+export const revisionQueryOf = (module: McpModule | undefined): Readonly<Record<string, unknown>> =>
   module?.revision?.query ?? {};
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -44,7 +44,7 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 
 /** The revision a command must carry, read from the module's revision read answer as its contribution says. */
 export const commandRevisionFrom = (
-  module: McpCatalogModule | undefined,
+  module: McpModule | undefined,
   body: unknown,
   command: Readonly<Record<string, unknown>>,
 ): number | undefined => {

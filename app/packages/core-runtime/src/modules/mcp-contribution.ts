@@ -3,9 +3,11 @@
  *
  * A vertical authors {@link OntosMcpContributionInput} next to its manifest: module texts, which reads, commands
  * and named Actions agents may use, and their Czech/English titles. The module contract generator turns it into the
- * serialized {@link OntosMcpContribution}, adding JSON Schemas derived from the vertical's own Effect Schemas and
- * the HTTP path of each handler on the vertical's BFF. The Shell aggregates the contributions of the active
- * composition at runtime; Core and the Shell never name a vertical, a tool or a schema.
+ * serialized {@link OntosMcpContribution} in the contract and a separate {@link OntosMcpToolCatalog} artifact: the
+ * tools with JSON Schemas derived from the vertical's own Effect Schemas and the HTTP path of each handler on the
+ * vertical's BFF. The contract pins that artifact by digest, so every runtime that reads the active composition
+ * carries only the module texts; the Shell loads a module's tools when its MCP endpoint needs them. Core and the
+ * Shell never name a vertical, a tool or a schema.
  */
 import { Predicate, Schema } from 'effect';
 
@@ -95,14 +97,36 @@ export const OntosMcpCommandFieldLabelsSchema = Schema.Record(
 );
 export type OntosMcpCommandFieldLabels = typeof OntosMcpCommandFieldLabelsSchema.Type;
 
+/** Where the module's release serves its tool catalog, next to its deployment contract. */
+export const ONTOS_MODULE_MCP_TOOL_CATALOG_PATH = '/.well-known/ontos-module-mcp-tools.json' as const;
+
+/** The tools of one module's MCP contribution: an artifact of the module release, pinned by its contract. */
+export const OntosMcpToolCatalogSchema = Schema.Struct({
+  /** Shared JSON Schema definitions of the tools (`#/$defs/<key>`). */
+  definitions: Schema.Record(Schema.String, Schema.Json),
+  tools: Schema.Array(OntosMcpToolSchema),
+});
+export type OntosMcpToolCatalog = typeof OntosMcpToolCatalogSchema.Type;
+
+/** Exact text codec of the tool catalog artifact; its SHA-256 is the digest the contract pins. */
+export const OntosMcpToolCatalogJsonSchema = Schema.fromJsonString(OntosMcpToolCatalogSchema);
+
+export const OntosMcpToolCatalogReferenceSchema = Schema.Struct({
+  /** Path of the artifact on the module release's public origin (the origin of its contract URL). */
+  path: Schema.Literal(ONTOS_MODULE_MCP_TOOL_CATALOG_PATH),
+  /** Lowercase hex SHA-256 of the exact artifact text. */
+  sha256: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)),
+  /** Number of tools in the artifact, so listings can count them without loading it. */
+  toolCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type OntosMcpToolCatalogReference = typeof OntosMcpToolCatalogReferenceSchema.Type;
+
 export const OntosMcpContributionSchema = Schema.Struct({
   approvalReview: Schema.optionalKey(OntosMcpApprovalReviewSchema),
   approvalsPage: Schema.optionalKey(OntosMcpApprovalsPageSchema),
   /** Proposals for this module may go to the platform approval queue („Ke schválení“). */
   approvals: Schema.Boolean,
   commandFieldLabels: Schema.optionalKey(OntosMcpCommandFieldLabelsSchema),
-  /** Shared JSON Schema definitions of the tools (`#/$defs/<key>`). */
-  definitions: Schema.Record(Schema.String, Schema.Json),
   description: OntosMcpTextSchema,
   /** Search words (Czech and English) for capability search. */
   keywords: Schema.String.check(Schema.isMaxLength(2000)),
@@ -119,7 +143,8 @@ export const OntosMcpContributionSchema = Schema.Struct({
   /** Shell page of the module below `/<lang>`, e.g. `/ukoly`. */
   page: Schema.optionalKey(shellPagePath),
   revision: Schema.optionalKey(OntosMcpRevisionSchema),
-  tools: Schema.Array(OntosMcpToolSchema),
+  /** The module's tools, served as a separate digest-pinned artifact of the same release. */
+  toolCatalog: OntosMcpToolCatalogReferenceSchema,
 });
 export type OntosMcpContribution = typeof OntosMcpContributionSchema.Type;
 
