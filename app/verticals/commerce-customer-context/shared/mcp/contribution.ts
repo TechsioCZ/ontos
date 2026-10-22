@@ -373,6 +373,15 @@ export const commerceCustomerContextMcpContribution = defineOntosMcpContribution
     },
   },
   approvals: true,
+  commandFieldLabels: {
+    description: 'Popis',
+    groupRef: 'Skupina',
+    handoff: 'Požadavek',
+    membershipCriteria: 'Kritéria členství',
+    name: 'Název',
+    purpose: 'Účel',
+    reason: 'Důvod',
+  },
   description: {
     cs: 'Zákaznické profily, skupiny, přístupy, adresy, nákupní pravidla a schvalování nákupů.',
     en: 'Customer profiles, groups, access, addresses, purchasing policies and purchase approvals.',

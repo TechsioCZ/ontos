@@ -3,6 +3,10 @@ import { defineOntosMcpContribution } from '@app/core-runtime';
 
 export const taggingMcpContribution = defineOntosMcpContribution({
   approvals: true,
+  commandFieldLabels: {
+    description: 'Popis',
+    name: 'Název',
+  },
   commands: {
     AssignTag: { title: { cs: 'Přiřadit štítek', en: 'Assign a tag' } },
     CreateTag: { title: { cs: 'Vytvořit štítek', en: 'Create a tag' } },

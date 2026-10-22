@@ -2,6 +2,17 @@ import { defineOntosMcpContribution } from '@app/core-runtime';
 
 export const propertyPortfolioMcpContribution = defineOntosMcpContribution({
   approvals: true,
+  commandFieldLabels: {
+    address: 'Adresa',
+    category: 'Kategorie',
+    lifecycleState: 'Stav',
+    name: 'Název',
+    note: 'Poznámka',
+    propertyRef: 'Nemovitost',
+    reason: 'Důvod',
+    serialNumber: 'Výrobní číslo',
+    unitRef: 'Jednotka',
+  },
   commands: {
     ArchiveProperty: { title: { cs: 'Archivovat nemovitost', en: 'Archive a property' } },
     ArchiveUnit: { title: { cs: 'Archivovat jednotku', en: 'Archive a unit' } },

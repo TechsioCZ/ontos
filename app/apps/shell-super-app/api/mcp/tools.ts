@@ -3,6 +3,7 @@
  * filtered by the connection (live rights ∩ grant ∩ write policy). Failures are Czech tool results, never throws.
  * Writes under the `approval` policy never change data: they go to the platform approval queue („Ke schválení“).
  */
+import { agentCommandOf } from '@app/shared-contracts/agent-proposals';
 import type { AgentProposalInput } from '@app/shared-contracts/agent-proposals';
 
 import type { JsonObject, McpCatalogModule, McpCatalogTool } from './catalog.ts';
@@ -392,7 +393,7 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
       (item): AgentProposalInput => ({
         actionSlug: actionSlugOf(item.tool),
         appId: item.tool.appId,
-        command: commandOf(item.tool, item.input),
+        command: agentCommandOf(commandOf(item.tool, item.input)),
         diff: [],
         reason: item.reason,
         ...(item.tool.referenceAudiences.length === 0 ? {} : { referenceAudiences: item.tool.referenceAudiences }),

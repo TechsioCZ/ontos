@@ -5,6 +5,16 @@ export const salesPipelineMcpContribution = defineOntosMcpContribution({
   approvals: true,
   approvalsPage: { label: { cs: 'Otevřít v Prodeji', en: 'Open in Sales' }, path: '/prodej/schvalovani-ai' },
   ownProposalEngine: true,
+  commandFieldLabels: {
+    expectedCloseDate: 'Předpokládané uzavření',
+    lines: 'Položky',
+    note: 'Poznámka',
+    partyId: 'Zákazník',
+    probability: 'Pravděpodobnost',
+    stage: 'Fáze',
+    title: 'Název',
+    toStage: 'Nová fáze',
+  },
   commands: {
     AiDecideChanges: 'hidden',
     AiProposeChanges: 'hidden',

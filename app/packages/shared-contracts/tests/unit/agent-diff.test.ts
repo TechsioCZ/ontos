@@ -33,15 +33,18 @@ it('a record still holds a change when every set value is unchanged', () => {
   expect(agentRecordHolds(null, undefined)).toBe(true);
 });
 
-it('lists the stored command fields for modules without their own diff', () => {
+it('lists the stored command fields for modules without their own diff, labelled by the module', () => {
   expect(
-    agentCommandDiff({
-      _tag: 'MeterCreate',
-      expectedRevision: 3,
-      name: 'Elektroměr hala A',
-      note: '',
-      readingDate: '2026-10-21',
-    }),
+    agentCommandDiff(
+      {
+        _tag: 'MeterCreate',
+        expectedRevision: 3,
+        name: 'Elektroměr hala A',
+        note: '',
+        readingDate: '2026-10-21',
+      },
+      { name: 'Název' },
+    ),
   ).toEqual([
     { after: 'Elektroměr hala A', field: 'name', label: 'Název' },
     { after: '21. 10. 2026', field: 'readingDate', label: 'readingDate' },
@@ -49,14 +52,18 @@ it('lists the stored command fields for modules without their own diff', () => {
 });
 
 it('command-built lines list patch fields one by one and skip the record id', () => {
-  expect(agentCommandDiff({ _tag: 'UpdateParty', id: 'p-1', patch: { email: 'a@b.cz', unitPriceMinor: 1000 } })).toEqual([
+  expect(
+    agentCommandDiff({ _tag: 'UpdateParty', id: 'p-1', patch: { email: 'a@b.cz', unitPriceMinor: 1000 } }, { email: 'E-mail' }),
+  ).toEqual([
     { after: 'a@b.cz', field: 'email', label: 'E-mail' },
     { after: '10,00\u00A0Kč', field: 'unitPriceMinor', label: 'unitPriceMinor' },
   ]);
 });
 
 it('command-built lines show a bare reference id as a short record reference', () => {
-  expect(agentCommandDiff({ _tag: 'UpdateAgendaEvent', eventId: '73130000-0000-4000-8000-000000000101' })).toEqual([
+  expect(
+    agentCommandDiff({ _tag: 'UpdateAgendaEvent', eventId: '73130000-0000-4000-8000-000000000101' }, { eventId: 'Událost' }),
+  ).toEqual([
     { after: 'záznam 73130000…', field: 'eventId', label: 'Událost' },
   ]);
 });

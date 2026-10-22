@@ -91,6 +91,12 @@ export const partyRegistryMcpContribution = defineOntosMcpContribution({
     'update-party-relationship': { title: { cs: 'Upravit vztah mezi subjekty', en: 'Update a party relationship' } },
   },
   approvals: true,
+  commandFieldLabels: {
+    handoff: 'Požadavek',
+    partyId: 'Zákazník',
+    reason: 'Důvod',
+    value: 'Hodnota',
+  },
   description: {
     cs: 'Zákazníci a partneři (firmy i osoby), kontakty, identifikátory a vztahy.',
     en: 'Customers and partners, organizations and people, contacts, identifiers and relationships.',

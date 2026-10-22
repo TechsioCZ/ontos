@@ -2,6 +2,9 @@ import { defineOntosMcpContribution } from '@app/core-runtime';
 
 export const legalAgreementsMcpContribution = defineOntosMcpContribution({
   approvals: true,
+  commandFieldLabels: {
+    contractRef: 'Smlouva',
+  },
   commands: {
     ActivateContract: { title: { cs: 'Aktivovat smlouvu', en: 'Activate a contract' } },
     ArchiveDocument: { title: { cs: 'Archivovat dokument', en: 'Archive a document' } },

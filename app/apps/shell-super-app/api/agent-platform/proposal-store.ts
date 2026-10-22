@@ -4,6 +4,7 @@
  */
 import type {
   AgentActivityRequest,
+  AgentCommand,
   AgentDiffLine,
   AgentItemStatus,
   AgentRevertPlan,
@@ -38,7 +39,7 @@ const coreAgentProposals = core.table('agent_proposals', {
   batchRevertNote: text('batch_revert_note'),
   batchRevertedAt: timestamp('batch_reverted_at', { withTimezone: true }),
   batchRevertedByPrincipalId: uuid('batch_reverted_by_principal_id'),
-  commandJson: jsonb('command_json').$type<Readonly<Record<string, unknown>>>().notNull(),
+  commandJson: jsonb('command_json').$type<AgentCommand>().notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull(),
   decidedAt: timestamp('decided_at', { withTimezone: true }),
   decidedByPrincipalId: uuid('decided_by_principal_id'),
@@ -122,7 +123,7 @@ export interface NewAgentProposal {
   readonly appId: string;
   readonly moduleKey: string;
   readonly actionSlug: string;
-  readonly command: Readonly<Record<string, unknown>>;
+  readonly command: AgentCommand;
   readonly referenceAudiences: readonly string[];
   readonly summary: string;
   readonly targetLabel: string;

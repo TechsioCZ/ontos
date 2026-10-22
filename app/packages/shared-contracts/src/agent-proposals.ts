@@ -30,6 +30,31 @@ const AgentCommandValueSchema: Schema.Codec<Schema.Json> = Schema.suspend(() =>
 export const AgentCommandSchema = Schema.Record(Schema.String, AgentCommandValueSchema);
 export type AgentCommand = typeof AgentCommandSchema.Type;
 
+const agentJsonOf = (value: unknown): Schema.Json | undefined => {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item: unknown) => agentJsonOf(item) ?? null);
+  }
+  return typeof value === 'object' ? agentCommandOf(value) : undefined;
+};
+
+/**
+ * A command a module builds from its own records (e.g. an undo command from the record read before), as the JSON it
+ * is stored and sent as: entries without a JSON value (undefined) are left out, as `JSON.stringify` would.
+ */
+export const agentCommandOf = (record: object): AgentCommand =>
+  Object.fromEntries(
+    Object.entries(record).flatMap(([key, item]) => {
+      const json = agentJsonOf(item);
+      return json === undefined ? [] : [[key, json] as const];
+    }),
+  );
+
 export const AgentRiskSchema = Schema.Literals(['low', 'medium', 'high']);
 export type AgentRisk = typeof AgentRiskSchema.Type;
 

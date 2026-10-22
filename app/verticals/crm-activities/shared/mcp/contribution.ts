@@ -3,6 +3,9 @@ import { defineOntosMcpContribution } from '@app/core-runtime';
 
 export const crmActivitiesMcpContribution = defineOntosMcpContribution({
   approvals: true,
+  commandFieldLabels: {
+    kind: 'Druh',
+  },
   commands: {
     RecordActivity: { title: { cs: 'Zaznamenat aktivitu', en: 'Record an activity' } },
   },

@@ -85,11 +85,22 @@ export const OntosMcpApprovalsPageSchema = Schema.Struct({
 });
 export type OntosMcpApprovalsPage = typeof OntosMcpApprovalsPageSchema.Type;
 
+/**
+ * Czech names of the fields of the module's commands and Action payloads, by wire key, e.g. `{ dueDate: 'Termín' }`.
+ * The approval queue labels the lines of a stored command with them when the module gives no lines of its own.
+ */
+export const OntosMcpCommandFieldLabelsSchema = Schema.Record(
+  Schema.String.check(Schema.isPattern(/^[A-Za-z][A-Za-z0-9_]{0,99}$/u)),
+  nonEmpty.check(Schema.isMaxLength(300)),
+);
+export type OntosMcpCommandFieldLabels = typeof OntosMcpCommandFieldLabelsSchema.Type;
+
 export const OntosMcpContributionSchema = Schema.Struct({
   approvalReview: Schema.optionalKey(OntosMcpApprovalReviewSchema),
   approvalsPage: Schema.optionalKey(OntosMcpApprovalsPageSchema),
   /** Proposals for this module may go to the platform approval queue („Ke schválení“). */
   approvals: Schema.Boolean,
+  commandFieldLabels: Schema.optionalKey(OntosMcpCommandFieldLabelsSchema),
   /** Shared JSON Schema definitions of the tools (`#/$defs/<key>`). */
   definitions: Schema.Record(Schema.String, Schema.Json),
   description: OntosMcpTextSchema,
@@ -142,6 +153,8 @@ export interface OntosMcpContributionInput {
   readonly approvals: boolean;
   /** See {@link OntosMcpApprovalsPageSchema}; needs `ownProposalEngine`. */
   readonly approvalsPage?: OntosMcpApprovalsPage;
+  /** See {@link OntosMcpCommandFieldLabelsSchema}; needs `approvals`. */
+  readonly commandFieldLabels?: OntosMcpCommandFieldLabels;
   readonly commands?: Readonly<Record<string, OntosMcpWriteInput | OntosMcpHidden>>;
   readonly description: OntosMcpText;
   readonly keywords: string;
@@ -201,6 +214,9 @@ export const defineOntosMcpContribution = <const Input extends OntosMcpContribut
   }
   if (input.approvalReview !== undefined && !input.approvals) {
     fail('MCP approval review needs approvals');
+  }
+  if (input.commandFieldLabels !== undefined && !input.approvals) {
+    fail('MCP command field labels need approvals');
   }
   if (input.revision !== undefined && !(input.revision.read in input.reads)) {
     fail(`MCP revision read ${input.revision.read} is not one of the module's reads`);

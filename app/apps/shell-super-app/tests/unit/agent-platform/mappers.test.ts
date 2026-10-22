@@ -18,7 +18,12 @@ const BATCH = '55555555-5555-4555-8555-555555555555';
 const names = new Map<string, string>([[JANA, 'Jana Nováková']]);
 /** Composed modules as their contributions describe them (CRM keeps its own AI change engine). */
 const LABELS: Readonly<Record<string, string>> = { 'demo.crm': 'CRM', 'demo.sales-pipeline': 'Obchodní případy' };
+/** Command field names a module declares in its contribution. */
+const FIELD_LABELS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  'facility-operations': { name: 'Název měřidla' },
+};
 const modules: ModuleTexts = {
+  commandFieldLabelsOf: (appId) => FIELD_LABELS[appId] ?? {},
   hasOwnProposalEngine: (moduleKey) => moduleKey in LABELS,
   labelOf: (moduleKey) => (moduleKey === null || moduleKey === undefined ? 'Platforma' : (LABELS[moduleKey] ?? moduleKey)),
 };
@@ -299,7 +304,7 @@ it('labels a successful legacy write of an approval-only agent as a proposal', (
   expect(entry.detail).toBe('Návrh do schvalovací fronty modulu Obchodní případy');
 });
 
-it('lists the stored command for modules without their own diff, never the agent text', () => {
+it('lists the stored command for modules without their own diff with the module field names, never the agent text', () => {
   const row: AgentProposalRow = {
     ...baseRow,
     appId: 'facility-operations',
@@ -310,6 +315,6 @@ it('lists the stored command for modules without their own diff, never the agent
   };
   const [batch] = rowsToQueueBatches([row], { canDecide: canDecideAll, modules, names });
   expect(batch?.items[0]?.diffSource).toBe('command');
-  expect(batch?.items[0]?.diff).toEqual([{ after: 'Elektroměr hala A', field: 'name', label: 'Název' }]);
+  expect(batch?.items[0]?.diff).toEqual([{ after: 'Elektroměr hala A', field: 'name', label: 'Název měřidla' }]);
   expect(batch?.items[0]?.revertUnavailableReason).toBe('Tuto změnu nelze automaticky vrátit.');
 });

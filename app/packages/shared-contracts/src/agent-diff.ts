@@ -1,7 +1,7 @@
 // Generic "before -> after" lines for agent commands. A module builds the lines of its own commands with these
 // helpers in its agent review read (see agent-review.ts); the platform only uses `agentCommandDiff` for modules
-// that do not describe their commands themselves.
-import type { AgentCommand, AgentDiffLine } from './agent-proposals.ts';
+// that do not describe their commands themselves, with the field names from the module's MCP contribution.
+import type { AgentDiffLine } from './agent-proposals.ts';
 
 type Rec = Readonly<Record<string, unknown>>;
 
@@ -115,63 +115,6 @@ export const agentRecordHolds = (expected: unknown, actual: unknown): boolean =>
 const COMMAND_SKIP: ReadonlySet<string> = new Set(['_tag', 'expectedRevision', 'id', 'idempotencyKey']);
 /** Nested objects whose fields are the change itself (`UpdateX { id, patch: {...} }`), listed field by field. */
 const COMMAND_FLATTEN: ReadonlySet<string> = new Set(['changes', 'fields', 'patch']);
-/** Czech names of common command fields. */
-const COMMAND_LABELS: Readonly<Record<string, string>> = {
-  address: 'Adresa',
-  amountMinor: 'Částka',
-  assetId: 'Majetek',
-  assignee: 'Řešitel',
-  budgetCategory: 'Rozpočtová kategorie',
-  category: 'Kategorie',
-  city: 'Město',
-  contractRef: 'Smlouva',
-  costCenter: 'Nákladové středisko',
-  currency: 'Měna',
-  date: 'Datum',
-  description: 'Popis',
-  documentKind: 'Druh dokladu',
-  documentRef: 'Dokument',
-  dueDate: 'Termín',
-  email: 'E-mail',
-  endDate: 'Konec',
-  eventId: 'Událost',
-  expectedCloseDate: 'Předpokládané uzavření',
-  groupRef: 'Skupina',
-  handoff: 'Požadavek',
-  invoiceRef: 'Faktura',
-  issueDate: 'Datum vystavení',
-  kind: 'Druh',
-  lifecycleState: 'Stav',
-  lines: 'Položky',
-  membershipCriteria: 'Kritéria členství',
-  meterId: 'Měřidlo',
-  name: 'Název',
-  note: 'Poznámka',
-  partyId: 'Zákazník',
-  phone: 'Telefon',
-  priceMinor: 'Cena bez DPH',
-  regNo: 'IČO',
-  segment: 'Segment',
-  vatNo: 'DIČ',
-  website: 'Web',
-  probability: 'Pravděpodobnost',
-  propertyRef: 'Nemovitost',
-  purpose: 'Účel',
-  reason: 'Důvod',
-  record: 'Záznam',
-  responsible: 'Odpovědná osoba',
-  serialNumber: 'Výrobní číslo',
-  stage: 'Fáze',
-  startDate: 'Začátek',
-  state: 'Stav',
-  status: 'Stav',
-  street: 'Ulice',
-  taskRef: 'Úkol',
-  title: 'Název',
-  toStage: 'Nová fáze',
-  unitRef: 'Jednotka',
-  value: 'Hodnota',
-};
 const isMoneyField = (key: string): boolean => key === 'priceMinor' || key.endsWith('PriceMinor');
 const MAX_COMMAND_TEXT = 200;
 const isEmptyValue = (value: unknown): boolean =>
@@ -179,9 +122,13 @@ const isEmptyValue = (value: unknown): boolean =>
 
 /**
  * Lines for modules that do not describe their commands: one line per filled field of the stored command, `after`
- * only. The platform does not read these records, so there is no `before`. Empty when the command has no plain fields.
+ * only, labelled with the module's own field names (`labels`, from its MCP contribution). The platform does not read
+ * these records, so there is no `before`. Empty when the command has no plain fields.
  */
-export const agentCommandDiff = (command: AgentCommand): readonly AgentDiffLine[] =>
+export const agentCommandDiff = (
+  command: Readonly<Record<string, unknown>>,
+  labels: Readonly<Record<string, string>>,
+): readonly AgentDiffLine[] =>
   Object.entries(command)
     .flatMap(([key, value]): (readonly [string, unknown])[] =>
       COMMAND_FLATTEN.has(key) && isRecord(value) ? Object.entries(value) : [[key, value]],
@@ -193,6 +140,6 @@ export const agentCommandDiff = (command: AgentCommand): readonly AgentDiffLine[
       return {
         after: text.length > MAX_COMMAND_TEXT ? `${text.slice(0, MAX_COMMAND_TEXT - 1)}…` : text,
         field: key.slice(0, 300),
-        label: (COMMAND_LABELS[key] ?? key).slice(0, 300),
+        label: (labels[key] ?? key).slice(0, 300),
       };
     });

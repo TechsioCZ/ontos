@@ -46,6 +46,7 @@ const REVIEW_PATH = `/cs${AGENT_APPROVALS_PATH}`;
 const NO_DECIDER = 'Návrhy agentů schvalují jen lidé s oprávněním k zápisu v některém modulu firmy.';
 
 const moduleTextsOf = (composed: ComposedModules) => ({
+  commandFieldLabelsOf: (appId: string) => composed.byAppId(appId)?.commandFieldLabels ?? {},
   hasOwnProposalEngine: (moduleKey: string) => composed.byModuleId(moduleKey)?.ownProposalEngine === true,
   labelOf: composed.labelOf,
 });
@@ -166,7 +167,7 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
       });
     }
     const platformDiff = reviewed?.diff;
-    const commandDiff = agentCommandDiff(proposal.command);
+    const commandDiff = agentCommandDiff(proposal.command, composedModule.commandFieldLabels);
     rows.push({
       actionSlug,
       agentLabel: request.agentLabel ?? names.get(principalId) ?? 'AI agent',

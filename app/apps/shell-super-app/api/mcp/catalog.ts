@@ -5,7 +5,12 @@
  */
 import type { ApplicationComposition } from '@app/core-runtime';
 import { OntosMcpContributionSchema } from '@app/core-runtime/modules/mcp-contribution';
-import type { OntosMcpContribution, OntosMcpText, OntosMcpTool } from '@app/core-runtime/modules/mcp-contribution';
+import type {
+  OntosMcpCommandFieldLabels,
+  OntosMcpContribution,
+  OntosMcpText,
+  OntosMcpTool,
+} from '@app/core-runtime/modules/mcp-contribution';
 import { Option, Schema } from 'effect';
 
 export type JsonObject = { readonly [key: string]: Schema.Json };
@@ -24,6 +29,8 @@ export interface McpCatalogModule {
   readonly approvals: boolean;
   /** Shell page where people review the module's own AI changes (undefined: none). */
   readonly approvalsPage: OntosMcpContribution['approvalsPage'];
+  /** Czech names of the module's command fields, by wire key (empty: the module names none). */
+  readonly commandFieldLabels: OntosMcpCommandFieldLabels;
   readonly description: OntosMcpText;
   readonly keywords: string;
   readonly label: OntosMcpText;
@@ -123,6 +130,7 @@ export const buildMcpCatalog = (composition: {
           approvalReview: contribution.approvalReview,
           approvals: contribution.approvals,
           approvalsPage: contribution.approvalsPage,
+          commandFieldLabels: contribution.commandFieldLabels ?? {},
           description: contribution.description,
           keywords: contribution.keywords,
           label: contribution.label,

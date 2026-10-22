@@ -2,7 +2,7 @@
 // review read (see agent-review.ts); the platform stores it at approval, fills in the id of a record the approved
 // command created and runs the plan as the reverting person through the module's own command handler.
 import type { AgentCommand, AgentRevertPlan } from './agent-proposals.ts';
-import { AGENT_CREATED_ID_PLACEHOLDER, AGENT_REVERT_UNAVAILABLE } from './agent-proposals.ts';
+import { AGENT_CREATED_ID_PLACEHOLDER, AGENT_REVERT_UNAVAILABLE, agentCommandOf } from './agent-proposals.ts';
 
 export const AGENT_REVERT_MISSING_BEFORE = 'Chybí původní hodnoty, změnu nelze automaticky vrátit.';
 const CREATED_UNKNOWN = 'Nepodařilo se zjistit nově založený záznam, změnu nelze automaticky vrátit.';
@@ -15,8 +15,9 @@ export const agentRevertNone = (reason: string = AGENT_REVERT_UNAVAILABLE): Agen
   reason,
 });
 
-export const agentRevertCommands = (list: readonly AgentCommand[], createdIdPath?: string): AgentRevertPlan => ({
-  commands: [...list],
+/** Undo commands a module builds from its records; stored as their JSON (see `agentCommandOf`). */
+export const agentRevertCommands = (list: readonly object[], createdIdPath?: string): AgentRevertPlan => ({
+  commands: list.map(agentCommandOf),
   kind: 'commands',
   ...(createdIdPath === undefined ? {} : { createdIdPath }),
 });

@@ -7,6 +7,14 @@ const withWorkforce = ['workforce'] as const;
 export const workTasksMcpContribution = defineOntosMcpContribution({
   approvalReview: { read: 'agent-review' },
   approvals: true,
+  commandFieldLabels: {
+    description: 'Popis',
+    dueDate: 'Termín',
+    partyId: 'Zákazník',
+    state: 'Stav',
+    taskRef: 'Úkol',
+    title: 'Název',
+  },
   commands: {
     AddTaskComment: { title: { cs: 'Přidat komentář k úkolu', en: 'Add a task comment' } },
     AssignTask: { referenceAudiences: withWorkforce, title: { cs: 'Přiřadit úkol', en: 'Assign a task' } },

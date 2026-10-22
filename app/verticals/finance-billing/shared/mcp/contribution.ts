@@ -2,6 +2,28 @@ import { defineOntosMcpContribution } from '@app/core-runtime';
 
 export const financeBillingMcpContribution = defineOntosMcpContribution({
   approvals: true,
+  commandFieldLabels: {
+    amountMinor: 'Částka',
+    budgetCategory: 'Rozpočtová kategorie',
+    category: 'Kategorie',
+    contractRef: 'Smlouva',
+    costCenter: 'Nákladové středisko',
+    currency: 'Měna',
+    documentKind: 'Druh dokladu',
+    dueDate: 'Termín',
+    invoiceRef: 'Faktura',
+    issueDate: 'Datum vystavení',
+    kind: 'Druh',
+    lines: 'Položky',
+    name: 'Název',
+    note: 'Poznámka',
+    partyId: 'Zákazník',
+    propertyRef: 'Nemovitost',
+    reason: 'Důvod',
+    taskRef: 'Úkol',
+    title: 'Název',
+    unitRef: 'Jednotka',
+  },
   commands: {
     ApplyAccountingObservation: 'hidden',
     ApplyPaymentObservation: 'hidden',

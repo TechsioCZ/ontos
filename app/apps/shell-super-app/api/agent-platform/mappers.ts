@@ -8,6 +8,7 @@ import {
   type AgentActivityKind,
   type AgentActivityRequest,
   type AgentActivityResponse,
+  type AgentCommand,
   type AgentDiffLine,
   type AgentItemStatus,
   type AgentQueueBatch,
@@ -34,7 +35,7 @@ export interface AgentProposalRow {
   readonly appId: string;
   readonly moduleKey: string;
   readonly actionSlug: string;
-  readonly command: Readonly<Record<string, unknown>>;
+  readonly command: AgentCommand;
   readonly referenceAudiences: readonly string[];
   readonly summary: string;
   readonly targetLabel: string;
@@ -87,6 +88,8 @@ export type QueueItemDecision = { readonly allowed: true } | { readonly allowed:
 
 /** What the mappers need to know about composed modules (from their contributions). */
 export interface ModuleTexts {
+  /** Czech names of the module's command fields, from its MCP contribution (by deployment app id). */
+  readonly commandFieldLabelsOf: (appId: string) => Readonly<Record<string, string>>;
   /** The module keeps its own AI change engine: its apply-command writes by proposal-only agents are proposals. */
   readonly hasOwnProposalEngine: (moduleKey: string) => boolean;
   readonly labelOf: (moduleKey: string | null | undefined) => string;
@@ -117,11 +120,12 @@ const withStoredBefore = (
 export const itemDiff = (
   row: AgentProposalRow,
   review: AgentReviewItem | undefined,
+  commandFieldLabels: Readonly<Record<string, string>>,
 ): { readonly diff: readonly AgentDiffLine[]; readonly diffSource: 'agent' | 'command' | 'platform' } => {
   const lines = review?.diff;
   if (lines === undefined) {
     // Modules without their own lines: the platform lists the stored command itself (never the agent's text).
-    const fromCommand = agentCommandDiff(row.command);
+    const fromCommand = agentCommandDiff(row.command, commandFieldLabels);
     return fromCommand.length > 0
       ? { diff: fromCommand, diffSource: 'command' }
       : { diff: row.diff, diffSource: 'agent' };
@@ -149,7 +153,7 @@ const toItem = (row: AgentProposalRow, options: QueueItemOptions): AgentQueueIte
         : row.revert.kind === 'none'
           ? row.revert.reason
           : undefined;
-  const { diff, diffSource } = itemDiff(row, review);
+  const { diff, diffSource } = itemDiff(row, review, options.modules.commandFieldLabelsOf(row.appId));
   // A pending row with decided_at is only claimed by an approval in progress; it has no decision yet.
   const decided = row.status !== 'pending';
   const decision = options.canDecide(row);

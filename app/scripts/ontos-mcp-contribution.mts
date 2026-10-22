@@ -409,6 +409,9 @@ export const deriveOntosMcpContribution = (
             path: authored.approvalsPage.path,
           },
         }),
+    ...(authored.commandFieldLabels === undefined
+      ? {}
+      : { commandFieldLabels: { ...authored.commandFieldLabels } }),
     definitions,
     description: authored.description,
     keywords: authored.keywords,
