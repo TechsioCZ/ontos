@@ -82,7 +82,7 @@ export const finalizeOrderTaxAction = defineAction(
     resultSchema: FinalizeOrderTaxResultSchema,
     schemaVersion: '1',
   },
-  handleFinalizeOrderTax,
+  { write: handleFinalizeOrderTax },
   orderTaxFinalizationServiceFactory,
 );
 

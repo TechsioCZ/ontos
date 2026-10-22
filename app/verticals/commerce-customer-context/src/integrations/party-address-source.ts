@@ -6,7 +6,7 @@ import {
   PartyContactPointDetailPolicyProblemSchema,
   executePartyContactPointDetail,
 } from '@app/party-registry/api/client';
-import { Effect, Schema } from 'effect';
+import { Context, Effect, Schema } from 'effect';
 
 import type { AddSavedAddressPayload, UpdateSavedAddressPayload } from '../../shared/domain/address-actions.ts';
 import type { PostalAddress, SavedAddress } from '../../shared/domain/address-book.ts';
@@ -141,6 +141,13 @@ export const partyBackedAddressSourceValidator =
       Effect.flatMap((contactPoint) => validateCurrentPostalSource(payload, contactPoint)),
     );
   };
+
+/** The deployed Party Registry validator, replaceable as an operation-scoped capability in tests. */
+export const PartyAddressSourceValidator = Context.Reference<
+  (requestCorrelation: string) => (payload: PartyBackedAddressPayload) => Effect.Effect<void, AddressBookDomainError>
+>('@app/commerce-customer-context/PartyAddressSourceValidator', {
+  defaultValue: () => partyBackedAddressSourceValidator,
+});
 
 const postalAddressFromContactPoint = (contactPoint: PartyContactPointDetailResponse): PostalAddress | undefined => {
   if (contactPoint.value.type !== 'ADDRESS') {

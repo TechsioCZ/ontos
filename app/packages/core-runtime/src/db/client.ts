@@ -3,6 +3,7 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import type { Scope } from 'effect';
 import { Context, Effect, Layer, Redacted } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
+import type { SqlError } from 'effect/unstable/sql/SqlError';
 
 import type { DatabaseConfigValue } from './config.ts';
 import { DatabaseConfig } from './config.ts';
@@ -23,6 +24,15 @@ export class CoreDatabase extends Context.Service<
   }
 >()('@app/core-runtime/db/client/CoreDatabase') {}
 
+/**
+ * Every runtime PostgreSQL pool, Core's and each owner's: inside a marked database transaction, a statement or
+ * transaction that would check out one of its connections dies (`IoInsideDatabaseTransaction`, pool-acquisition).
+ */
+export const makeGuardedPgClient = (
+  options: Parameters<typeof PgClient.make>[0],
+): Effect.Effect<PgClient.PgClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
+  PgClient.make(options).pipe(Effect.map(guardPoolAcquisition));
+
 export const makeCoreDatabase = Effect.fn('Client.makeCoreDatabase')(function* makeDatabase(
   configuration: DatabaseConfigValue & {
     readonly maxConnections?: number;
@@ -34,16 +44,18 @@ export const makeCoreDatabase = Effect.fn('Client.makeCoreDatabase')(function* m
     configuration.poolDeadlines,
   );
   const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.make({ ...poolConfiguration, maxConnections: configuration.maxConnections }).pipe(
+  const client = yield* makeGuardedPgClient({
+    ...poolConfiguration,
+    maxConnections: configuration.maxConnections,
+  }).pipe(
     Effect.provideService(Reactivity.Reactivity, reactivity),
     Effect.mapError(
       (cause) => new DatabaseConnectionError({ cause, reason: 'Unable to initialize the native PostgreSQL client' }),
     ),
   );
   return {
-    // A marked transaction body that would check out a second pooled connection dies instead.
     executor: yield* makeWithDefaults({ relations: coreRelations }).pipe(
-      Effect.provideService(PgClient.PgClient, guardPoolAcquisition(client)),
+      Effect.provideService(PgClient.PgClient, client),
     ),
   };
 });

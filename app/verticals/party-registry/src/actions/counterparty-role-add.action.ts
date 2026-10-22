@@ -171,7 +171,7 @@ export const counterpartyRoleAddAction = defineAction(
     resultSchema: CounterpartyRoleAddResultSchema,
     schemaVersion: '1',
   },
-  handleCounterpartyRoleAdd,
+  { write: handleCounterpartyRoleAdd },
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(

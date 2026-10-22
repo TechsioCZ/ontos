@@ -71,7 +71,7 @@ export const assignSkuAction = defineAction(
     resultSchema: AssignSkuResultSchema,
     schemaVersion: '1',
   },
-  handleAssignSku,
+  { write: handleAssignSku },
   (transaction, scope) =>
     skuServicesForScope(transaction, scope).pipe(
       Effect.map((services): AssignSkuServices => ({

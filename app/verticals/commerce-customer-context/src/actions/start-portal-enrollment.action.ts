@@ -87,7 +87,7 @@ export const startPortalEnrollmentAction = defineAction(
     resultSchema: StartPortalEnrollmentResultSchema,
     schemaVersion: '1',
   },
-  handleStartPortalEnrollment,
+  { write: handleStartPortalEnrollment },
   commerceEnrollmentAttemptActionServicesForTransaction,
 );
 

@@ -114,7 +114,7 @@ export const updatePartyRelationshipAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_party_relationships',
   },
-  handleUpdatePartyRelationship,
+  { write: handleUpdatePartyRelationship },
   (transaction, scope) =>
     Effect.succeed({
       update: (payload, principalId, actionInvocationId) =>

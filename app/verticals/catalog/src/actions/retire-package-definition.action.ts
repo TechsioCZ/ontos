@@ -74,7 +74,7 @@ export const retirePackageDefinitionAction = defineAction(
     resultSchema: RetirePackageDefinitionResultSchema,
     schemaVersion: '1',
   },
-  handleRetirePackageDefinition,
+  { write: handleRetirePackageDefinition },
   (transaction, scope) =>
     packageDefinitionPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map(

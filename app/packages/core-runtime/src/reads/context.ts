@@ -1,11 +1,9 @@
 import { Effect, Predicate, Schema } from 'effect';
 
-import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
+import type { OwnerTransaction } from '../db/owner-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import type { OperationContextUnavailable } from '../operations/errors.ts';
 import type { ReadEvidenceCaptureMode } from './definition.ts';
 import { ReadEvidenceValidationError } from './errors.ts';
-import type { ReadHandlerExecutionError, ReadHandlerUnavailable } from './errors.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -31,20 +29,6 @@ export interface ReadPrepareContext {
 }
 
 /**
- * A short owner transaction after commit: admitted by the same composition revision, with the same operational
- * scope installed, and guarded like the Read's own transaction. It is for evaluations that interleave remote owner
- * calls with owner-state reads: each owner-state read gets its own short transaction, and no remote call ever runs
- * while one is open.
- */
-export type ReadOwnerTransaction = <Value, Failure, Requirements>(
-  use: (transaction: ScopedTransactionExecutor) => Effect.Effect<Value, Failure, Requirements>,
-) => Effect.Effect<
-  Value,
-  Failure | OperationContextUnavailable | ReadHandlerExecutionError | ReadHandlerUnavailable,
-  Requirements
->;
-
-/**
  * The owner transaction step: scoped database services and whatever `prepare` established. A pipeline without
  * `prepare` has nothing prepared, so its load step may be called without it.
  */
@@ -56,7 +40,8 @@ export type ReadLoadContext<Services, Prepared = undefined> = ReadPrepareContext
 export interface ReadFinishContext<Prepared, Loaded> extends ReadPrepareContext {
   readonly loaded: Loaded;
   readonly prepared: Prepared;
-  readonly transaction: ReadOwnerTransaction;
+  /** Short owner transactions after commit, for owner-state reads between remote owner calls. */
+  readonly transaction: OwnerTransaction;
 }
 
 export interface ReadHandlerResult<Result> {

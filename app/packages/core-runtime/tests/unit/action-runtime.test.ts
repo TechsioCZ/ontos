@@ -6,7 +6,7 @@ import {
   defineActionAssortmentPermissions,
   defineActionBusinessPermission,
   defineActionResourcePermission,
-  getActionHandler,
+  getActionStages,
 } from '../../src/actions/definition.ts';
 import { commitActionThenReject } from '../../src/actions/context.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
@@ -542,10 +542,18 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     onStage: (stage) => {
       stages.push(stage);
     },
-    resolveHandler: (action) => {
-      handlerResolutionCount += 1;
-      return getActionHandler(action);
-    },
+    // Counts owner write steps entered: the stages resolve before the transaction, the write step only inside it.
+    resolveStages: (action) => (payload, context) =>
+      getActionStages(action)(payload, context).pipe(
+        Effect.map((steps) => ({
+          ...steps,
+          // oxlint-disable-next-line sonarjs/no-nested-functions -- Test seam: counts owner write steps entered inside the transaction.
+          write: (writeContext: Parameters<typeof steps.write>[0]) => {
+            handlerResolutionCount += 1;
+            return steps.write(writeContext);
+          },
+        })),
+      ),
   };
   if (options.omitCompositionRevisionResolver !== true) {
     runtimeOptions = {
@@ -733,33 +741,35 @@ const registration = () =>
       resultSchema: Schema.Struct({ total: Schema.Finite }),
       schemaVersion: '1',
     },
-    Effect.fn(function* changeCounter(payload, context) {
-      expect(context.actionInvocationId).toBe('invocation-1');
-      expect(context.compositionRevision).toBe(approvedCompositionRevision);
-      expect(Object.isFrozen(context)).toBe(true);
-      expect('transaction' in context).toBe(false);
-      expect(context.services).toEqual({});
-      yield* context.recordDataAccess({
-        accessKind: 'read',
-        queryHash: `counter-${payload.amount}`,
-        resultCount: 1,
-        servingModuleKey: 'core.shell',
-      });
-      const domainEvent = yield* context.addDomainEvent({
-        eventType: 'counter.changed',
-        payloadJson: { amount: payload.amount },
-        producerModuleKey: 'core.shell',
-        subjectModuleKey: 'core.shell',
-        subjectResourceId: 'primary',
-        subjectResourceType: 'counter',
-      });
-      yield* context.addOutboxMessage(domainEvent, {
-        payloadJson: { amount: payload.amount },
-        producerModuleKey: 'core.shell',
-        topic: 'counter.project',
-      });
-      return { total: payload.amount };
-    }),
+    {
+      write: Effect.fn(function* changeCounter(payload, context) {
+        expect(context.actionInvocationId).toBe('invocation-1');
+        expect(context.compositionRevision).toBe(approvedCompositionRevision);
+        expect(Object.isFrozen(context)).toBe(true);
+        expect('transaction' in context).toBe(false);
+        expect(context.services).toEqual({});
+        yield* context.recordDataAccess({
+          accessKind: 'read',
+          queryHash: `counter-${payload.amount}`,
+          resultCount: 1,
+          servingModuleKey: 'core.shell',
+        });
+        const domainEvent = yield* context.addDomainEvent({
+          eventType: 'counter.changed',
+          payloadJson: { amount: payload.amount },
+          producerModuleKey: 'core.shell',
+          subjectModuleKey: 'core.shell',
+          subjectResourceId: 'primary',
+          subjectResourceType: 'counter',
+        });
+        yield* context.addOutboxMessage(domainEvent, {
+          payloadJson: { amount: payload.amount },
+          producerModuleKey: 'core.shell',
+          topic: 'counter.project',
+        });
+        return { total: payload.amount };
+      }),
+    },
   );
 
 it.effect('runs the decoded-success hook before evidence flush and rolls back its typed failure', () =>
@@ -789,7 +799,7 @@ it.effect('runs the decoded-success hook before evidence flush and rolls back it
     const action = (fail: boolean) =>
       defineAction(
         descriptor,
-        ({ amount }) => Effect.succeed({ total: amount }),
+        { write: ({ amount }) => Effect.succeed({ total: amount }) },
         () => Effect.succeed({ marker: 'scoped-service' }),
         ({ actionInvocationId, result, scope, services }) =>
           Effect.gen(function* persistSnapshot() {
@@ -853,7 +863,7 @@ it.effect('runs the decoded-success hook before evidence flush and rolls back it
     const invalid = yield* makeHarness();
     const invalidAction = defineAction(
       descriptor,
-      () => Effect.succeed({ total: Number.NaN }),
+      { write: () => Effect.succeed({ total: Number.NaN }) },
       () => Effect.succeed({ marker: 'scoped-service' }),
       () =>
         Effect.sync(() => {
@@ -878,7 +888,7 @@ it.effect('runs the decoded-success hook before evidence flush and rolls back it
     });
     const rejectionAction = defineAction(
       { ...descriptor, domainErrorSchema: SnapshotRejected },
-      () => Effect.succeed(commitActionThenReject(new SnapshotRejected({ reason: 'stale' }))),
+      { write: () => Effect.succeed(commitActionThenReject(new SnapshotRejected({ reason: 'stale' }))) },
       () => Effect.succeed({ marker: 'scoped-service' }),
       () =>
         Effect.sync(() => {
@@ -1208,10 +1218,12 @@ it.effect(
         resultSchema: payloadSchema,
         schemaVersion: '1',
       },
-      (payload) => {
-        expect(DateTime.formatIso(payload.occurredAt)).toBe(occurredAt);
-        expect(Option.isNone(payload.note)).toBe(true);
-        return Effect.succeed(payload);
+      {
+        write: (payload) => {
+          expect(DateTime.formatIso(payload.occurredAt)).toBe(occurredAt);
+          expect(Option.isNone(payload.note)).toBe(true);
+          return Effect.succeed(payload);
+        },
       },
     );
     const harness = yield* makeHarness();
@@ -1385,10 +1397,12 @@ it.effect(
             resultSchema: Schema.Void,
             schemaVersion: '1',
           },
-          () =>
-            Effect.sync(() => {
-              handlerCalls += 1;
-            }),
+          {
+            write: () =>
+              Effect.sync(() => {
+                handlerCalls += 1;
+              }),
+          },
         );
         const failure = yield* Effect.flip(
           harness.runtime.runAction({
@@ -1453,7 +1467,7 @@ it.effect(
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => Effect.void,
+      { write: () => Effect.void },
     );
 
     const unavailable = yield* makeHarness({ moduleState: 'unavailable' });
@@ -1544,7 +1558,7 @@ it.effect(
         schemaVersion: '1',
         tenantPermission: () => 'manage_identity',
       },
-      () => Effect.void,
+      { write: () => Effect.void },
     );
 
     yield* forEachSequential(
@@ -1627,7 +1641,7 @@ it.effect(
             schemaVersion: '1',
             tenantPermission: () => permission,
           },
-          () => Effect.void,
+          { write: () => Effect.void },
         );
         const harness = yield* makeHarness();
         yield* harness.runtime.runAction({
@@ -1684,7 +1698,7 @@ it.effect(
         schemaVersion: '1',
         tenantPermission: () => 'manage_identity',
       },
-      () => Effect.void,
+      { write: () => Effect.void },
     );
     const first = yield* makeHarness();
     const second = yield* makeHarness();
@@ -1763,9 +1777,11 @@ it.effect(
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => {
-        handlerCalls += 1;
-        return Effect.void;
+      {
+        write: () => {
+          handlerCalls += 1;
+          return Effect.void;
+        },
       },
     );
     const forgedTransport = {
@@ -1901,9 +1917,11 @@ it.effect(
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => {
-        handlerCalls += 1;
-        return Effect.void;
+      {
+        write: () => {
+          handlerCalls += 1;
+          return Effect.void;
+        },
       },
     );
 
@@ -2035,10 +2053,12 @@ it.effect(
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => {
-        observed.push('handler');
-        handlerCalls += 1;
-        return Effect.void;
+      {
+        write: () => {
+          observed.push('handler');
+          handlerCalls += 1;
+          return Effect.void;
+        },
       },
     );
     const run = (harness: Effect.Success<ReturnType<typeof makeHarness>>, idempotencyKey: string) =>
@@ -2150,9 +2170,11 @@ it.effect(
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => {
-        handlerCalls += 1;
-        return Effect.void;
+      {
+        write: () => {
+          handlerCalls += 1;
+          return Effect.void;
+        },
       },
     );
     const payload = {
@@ -2288,9 +2310,11 @@ it.effect(
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => {
-        handlerCalls += 1;
-        return Effect.void;
+      {
+        write: () => {
+          handlerCalls += 1;
+          return Effect.void;
+        },
       },
     );
     const resourceId = '70000000-0000-4000-8000-000000000001';
@@ -2387,9 +2411,11 @@ it.effect(
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => {
-        handlerCalls += 1;
-        return Effect.void;
+      {
+        write: () => {
+          handlerCalls += 1;
+          return Effect.void;
+        },
       },
     );
     const payload = { sellerLegalEntityId: principalLegalEntityId };
@@ -2481,9 +2507,11 @@ it.effect(
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => {
-        handlerCalls += 1;
-        return Effect.void;
+      {
+        write: () => {
+          handlerCalls += 1;
+          return Effect.void;
+        },
       },
     );
     const harness = yield* makeHarness({ businessPermissionDecision: 'allowed' });
@@ -2556,9 +2584,11 @@ it.effect(
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => {
-        handlerCalls += 1;
-        return Effect.void;
+      {
+        write: () => {
+          handlerCalls += 1;
+          return Effect.void;
+        },
       },
     );
     const run = (storefrontPrincipal: typeof principal, storefrontId: string, key: string) =>
@@ -2671,9 +2701,11 @@ it.effect('checks every plural Assortment target conjunctively before the handle
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => {
-        handlerCalls += 1;
-        return Effect.void;
+      {
+        write: () => {
+          handlerCalls += 1;
+          return Effect.void;
+        },
       },
       () => {
         serviceFactoryCalls += 1;
@@ -2760,9 +2792,11 @@ it.effect('fails closed for a configuration resource type outside its module nam
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => {
-        handlerCalls += 1;
-        return Effect.void;
+      {
+        write: () => {
+          handlerCalls += 1;
+          return Effect.void;
+        },
       },
       () => {
         serviceFactoryCalls += 1;
@@ -2840,9 +2874,11 @@ it.effect(
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => {
-        handlerCount += 1;
-        return Effect.void;
+      {
+        write: () => {
+          handlerCount += 1;
+          return Effect.void;
+        },
       },
       () => {
         serviceFactoryCount += 1;
@@ -3013,9 +3049,11 @@ it.effect(
         resultSchema: Schema.Finite,
         schemaVersion: '1',
       },
-      (payload) => {
-        observed.push('handler');
-        return Effect.succeed(payload.amount);
+      {
+        write: (payload) => {
+          observed.push('handler');
+          return Effect.succeed(payload.amount);
+        },
       },
     );
     const harness = yield* makeHarness();
@@ -3096,9 +3134,11 @@ it.effect(
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => {
-        handlerExecutions += 1;
-        return Effect.void;
+      {
+        write: () => {
+          handlerExecutions += 1;
+          return Effect.void;
+        },
       },
     );
     const harness = yield* makeHarness();
@@ -3189,9 +3229,11 @@ it.effect(
             resultSchema: Schema.Void,
             schemaVersion: '1',
           },
-          () => {
-            handlerExecutions += 1;
-            return Effect.void;
+          {
+            write: () => {
+              handlerExecutions += 1;
+              return Effect.void;
+            },
           },
         );
         const harness = yield* makeHarness();
@@ -3256,9 +3298,11 @@ it.effect(
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => {
-        handlerExecutions += 1;
-        return Effect.void;
+      {
+        write: () => {
+          handlerExecutions += 1;
+          return Effect.void;
+        },
       },
     );
     const harness = yield* makeHarness({ policyFinalizationFailure: true });
@@ -3344,7 +3388,7 @@ it.effect(
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => Effect.void,
+      { write: () => Effect.void },
     );
     yield* forEachSequential(
       ['fresh-first', 'fresh-second'],
@@ -3471,17 +3515,19 @@ it.effect(
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      Effect.fn(function* rejectCounter(_payload, context) {
-        yield* context.addDomainEvent({
-          eventType: 'counter.considered',
-          payloadJson: {},
-          producerModuleKey: 'core.shell',
-          subjectModuleKey: 'core.shell',
-          subjectResourceId: 'primary',
-          subjectResourceType: 'counter',
-        });
-        return yield* new DomainRejected({ reason: 'counter_locked' });
-      }),
+      {
+        write: Effect.fn(function* rejectCounter(_payload, context) {
+          yield* context.addDomainEvent({
+            eventType: 'counter.considered',
+            payloadJson: {},
+            producerModuleKey: 'core.shell',
+            subjectModuleKey: 'core.shell',
+            subjectResourceId: 'primary',
+            subjectResourceType: 'counter',
+          });
+          return yield* new DomainRejected({ reason: 'counter_locked' });
+        }),
+      },
     );
 
     const error = yield* Effect.flip(
@@ -3540,24 +3586,26 @@ it.effect(
         resultSchema: Schema.Struct({ total: Schema.Finite }),
         schemaVersion: '1',
       },
-      Effect.fn(function* commitThenReject(payload, context) {
-        yield* context.services.write(payload.amount);
-        yield* context.recordDataAccess({
-          accessKind: 'read',
-          queryHash: 'counter-rejection-check',
-          resultCount: 1,
-          servingModuleKey: 'core.shell',
-        });
-        yield* context.addDomainEvent({
-          eventType: 'counter.rejection-recorded',
-          payloadJson: { amount: payload.amount },
-          producerModuleKey: 'core.shell',
-          subjectModuleKey: 'core.shell',
-          subjectResourceId: 'primary',
-          subjectResourceType: 'counter',
-        });
-        return commitActionThenReject(new CommittedDomainRejected({ reason: 'proof_expired' }));
-      }),
+      {
+        write: Effect.fn(function* commitThenReject(payload, context) {
+          yield* context.services.write(payload.amount);
+          yield* context.recordDataAccess({
+            accessKind: 'read',
+            queryHash: 'counter-rejection-check',
+            resultCount: 1,
+            servingModuleKey: 'core.shell',
+          });
+          yield* context.addDomainEvent({
+            eventType: 'counter.rejection-recorded',
+            payloadJson: { amount: payload.amount },
+            producerModuleKey: 'core.shell',
+            subjectModuleKey: 'core.shell',
+            subjectResourceId: 'primary',
+            subjectResourceType: 'counter',
+          });
+          return commitActionThenReject(new CommittedDomainRejected({ reason: 'proof_expired' }));
+        }),
+      },
       () =>
         Effect.succeed({
           write: (amount: number) =>
@@ -3641,17 +3689,19 @@ it.effect(
           resultSchema: Schema.Void,
           schemaVersion: '1',
         },
-        Effect.fn(function* invalidCommitThenReject(_payload, context) {
-          yield* context.addDomainEvent({
-            eventType: 'counter.rejection-considered',
-            payloadJson: {},
-            producerModuleKey: 'core.shell',
-            subjectModuleKey: 'core.shell',
-            subjectResourceId: 'primary',
-            subjectResourceType: 'counter',
-          });
-          return commitActionThenReject(rejection);
-        }),
+        {
+          write: Effect.fn(function* invalidCommitThenReject(_payload, context) {
+            yield* context.addDomainEvent({
+              eventType: 'counter.rejection-considered',
+              payloadJson: {},
+              producerModuleKey: 'core.shell',
+              subjectModuleKey: 'core.shell',
+              subjectResourceId: 'primary',
+              subjectResourceType: 'counter',
+            });
+            return commitActionThenReject(rejection);
+          }),
+        },
       );
 
       const error = yield* Effect.flip(
@@ -3705,7 +3755,7 @@ it.effect(
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => Effect.die('secret database detail'),
+      { write: () => Effect.die('secret database detail') },
     );
     const defect = yield* Effect.flip(
       defectHarness.runtime.runAction({
@@ -3745,10 +3795,12 @@ it.effect(
         resultSchema: Schema.Struct({ total: Schema.Finite }),
         schemaVersion: '1',
       },
-      () => {
-        const result = { total: 0 };
-        Object.defineProperty(result, 'total', { value: 'invalid' });
-        return Effect.succeed(result);
+      {
+        write: () => {
+          const result = { total: 0 };
+          Object.defineProperty(result, 'total', { value: 'invalid' });
+          return Effect.succeed(result);
+        },
       },
     );
     const resultError = yield* Effect.flip(
@@ -3815,7 +3867,7 @@ it.effect(
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => Effect.fail(undeclaredDomainError),
+      { write: () => Effect.fail(undeclaredDomainError) },
     );
     const error = yield* Effect.flip(
       harness.runtime.runAction({
@@ -4130,7 +4182,7 @@ it.effect(
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => Effect.void,
+      { write: () => Effect.void },
     );
     const harness = yield* makeHarness({ recordedByConcurrentRequest: { stage: 'authz' } });
     const error = yield* Effect.flip(
@@ -4203,7 +4255,7 @@ it.effect(
         resultSchema: Schema.Struct({ reserved: Schema.Boolean }),
         schemaVersion: '1',
       },
-      () => Effect.succeed({ reserved: true }),
+      { write: () => Effect.succeed({ reserved: true }) },
     );
 
     const shellResult = yield* shell.runtime.runAction({

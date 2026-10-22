@@ -142,7 +142,7 @@ export const endContactPointAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_party_identity',
   },
-  handleEndContactPoint,
+  { write: handleEndContactPoint },
   (transaction, scope) =>
     Effect.succeed({
       end: (command: EndContactPointCommand) => endContactPointRecord(transaction, scope, command),

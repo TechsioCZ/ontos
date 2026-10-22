@@ -1,10 +1,5 @@
-import {
-  OperationContextUnavailable,
-  PersistenceFailure,
-  ReadHandlerExecutionError,
-  ReadHandlerUnavailable,
-} from '@app/core-runtime';
-import type { OperationalScope, ReadOwnerTransaction, ScopedTransactionExecutor } from '@app/core-runtime';
+import { OperationContextUnavailable, OwnerTransactionUnavailable, PersistenceFailure } from '@app/core-runtime';
+import type { OperationalScope, OwnerTransaction, ScopedTransactionExecutor } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 import type { CurrencySupportPersistence } from '../persistence/currency-support-persistence.ts';
@@ -48,32 +43,10 @@ export interface CurrentPricingDecisionOwnerState {
   readonly tier: Pick<QuantityTierPersistence, 'readCurrentSet'>;
 }
 
-/** Owner state bound to one open transaction: an Action, whose whole handler runs inside its transaction. */
-export const currentPricingDecisionOwnerStateInTransaction = (
-  transaction: ScopedTransactionExecutor,
-  scope: OperationalScope,
-  compositionRevision: string,
-): Effect.Effect<CurrentPricingDecisionOwnerState, OperationContextUnavailable> =>
-  Effect.all(
-    {
-      currency: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
-      discount: contractualDiscountPersistenceForScope(transaction, scope),
-      fee: commercialFeePersistenceForScope(transaction, scope),
-      floor: zeroFloorAuthorizationPersistenceForScope(transaction, scope),
-      price: pricePersistenceForScope(transaction, scope),
-      tier: quantityTierPersistenceForScope(transaction, scope),
-    },
-    { concurrency: 6 },
-  );
-
 const shortTransactionReason = 'The short Pricing owner transaction could not be completed';
 
 /** What Core's short owner transaction itself can fail with, apart from the owner port's own failures. */
-const ShortTransactionFailureSchema = Schema.Union([
-  OperationContextUnavailable,
-  ReadHandlerExecutionError,
-  ReadHandlerUnavailable,
-]);
+const ShortTransactionFailureSchema = Schema.Union([OperationContextUnavailable, OwnerTransactionUnavailable]);
 type ShortTransactionFailure = typeof ShortTransactionFailureSchema.Type;
 const isShortTransactionFailure = Schema.is(ShortTransactionFailureSchema);
 
@@ -92,8 +65,8 @@ const withCause = <Failure extends object>(failure: Failure, cause: ShortTransac
  * owner calls between reads never hold a pooled connection. A failed short transaction is the reading port's own
  * unavailability.
  */
-export const currentPricingDecisionOwnerStatePerRead = (
-  ownerTransaction: ReadOwnerTransaction,
+export const currentPricingDecisionOwnerStatePerOwnerTransaction = (
+  ownerTransaction: OwnerTransaction,
   scope: OperationalScope,
   compositionRevision: string,
 ): CurrentPricingDecisionOwnerState => {

@@ -142,7 +142,7 @@ export const administerMarketBootstrapPolicyAction = defineAction(
     resultSchema: AdministerMarketBootstrapPolicyResultSchema,
     schemaVersion: '1',
   },
-  handleAdministerMarketBootstrapPolicy,
+  { write: handleAdministerMarketBootstrapPolicy },
   customerCommercePolicyAdministrationServiceFactory,
 );
 

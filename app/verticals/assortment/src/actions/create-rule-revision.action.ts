@@ -132,7 +132,7 @@ export const createRuleRevisionAction = defineAction(
     resultSchema: CreateRuleRevisionResultSchema,
     schemaVersion: '1',
   },
-  handleCreateRuleRevision,
+  { write: handleCreateRuleRevision },
   assortmentPolicyServiceFactory,
 );
 

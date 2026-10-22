@@ -155,7 +155,7 @@ export const confirmVariantCombinationAction = defineAction(
     resultSchema: ConfirmVariantCombinationResultSchema,
     schemaVersion: '1',
   },
-  handleConfirmVariantCombination,
+  { write: handleConfirmVariantCombination },
   (transaction, scope) =>
     variantPersistenceForScope(transaction, scope).pipe(
       Effect.map((services): ConfirmVariantCombinationServices => ({

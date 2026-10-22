@@ -59,7 +59,7 @@ export const recordPrivacyRepresentationAction = defineAction(
     resultSchema: RecordPrivacyRepresentationResultSchema,
     schemaVersion: '1',
   },
-  handleRecordPrivacyRepresentation,
+  { write: handleRecordPrivacyRepresentation },
   privacyOperationRepositoryForScope,
 );
 // <generated-outbox-message-exports>

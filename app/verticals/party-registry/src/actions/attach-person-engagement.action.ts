@@ -47,7 +47,7 @@ export const attachPersonEngagementAction = defineAction(
     resultSchema: PersonEngagementProfileSchema,
     schemaVersion: '1',
   },
-  handleAttachEngagement<AttachPersonEngagementInput, PersonEngagementProfile>,
+  { write: handleAttachEngagement<AttachPersonEngagementInput, PersonEngagementProfile> },
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(

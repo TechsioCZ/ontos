@@ -141,7 +141,7 @@ export const administerPurchaseCurrencyPolicyAction = defineAction(
     resultSchema: AdministerPurchaseCurrencyPolicyResultSchema,
     schemaVersion: '1',
   },
-  handleAdministerPurchaseCurrencyPolicy,
+  { write: handleAdministerPurchaseCurrencyPolicy },
   customerCommercePolicyAdministrationServiceFactory,
 );
 

@@ -1,12 +1,16 @@
-import { Effect, Schema, Predicate } from 'effect';
+import { Effect, Exit, Schema, Predicate } from 'effect';
 import type { ActionHandlerContext, CommittedActionDomainRejection } from './context.ts';
+import { CommittedActionDomainRejectionSchema } from './context.ts';
 import { ActionPayloadValidationError, ActionResultValidationError } from './errors.ts';
 import type { ActionCollectorError, ActionCoreError } from './errors.ts';
 import type { ActionAccessEvidencePolicy, DomainEventContractMap } from './events.ts';
 import { isActionPolicy } from './policy.ts';
 import type { ActionPolicy } from './policy.ts';
 import type { ModuleEntrypointDescriptor } from '../modules/module-entrypoint.ts';
+import type { OwnerTransaction } from '../db/owner-transaction.ts';
+import type { OwnerTransactionUnavailable } from '../db/owner-transaction-unavailable.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
+import { insideDatabaseTransaction } from '../db/transaction-io-guard.ts';
 import type { OperationalScope } from '../operations/context.ts';
 import { LEGAL_ENTITY_SCOPES } from '../operations/legal-entity-scope.ts';
 import type { LegalEntityScope } from '../operations/legal-entity-scope.ts';
@@ -235,19 +239,187 @@ export interface ActionDescriptor<
   readonly tenantPermission?: (payload: PayloadSchema['Type']) => ActionTenantPermission | undefined;
 }
 
-export type ActionHandler<
+/**
+ * What every owner step of an Action knows. The invocation exists and authorization has passed, but no transaction
+ * is open: `transaction` opens short owner transactions for owner-state reads between remote owner calls.
+ */
+export interface ActionPrepareContext {
+  readonly actionInvocationId: string;
+  /** The exact approved release Core admitted for this Action. */
+  readonly compositionRevision: string;
+  readonly scope: OperationalScope;
+  readonly transaction: OwnerTransaction;
+}
+
+/**
+ * Owner work before the Action's transaction opens: SpiceDB grants, remote owner calls, and evaluations over them.
+ * A slow round trip never holds a pooled connection.
+ */
+export type ActionPrepare<Payload, Prepared, DomainError, Requirements = never> = (
+  payload: Payload,
+  context: ActionPrepareContext,
+) => Effect.Effect<Prepared, DomainError | OperationContextUnavailable | OwnerTransactionUnavailable, Requirements>;
+
+/** The transaction step's context: scoped owner services, the collectors, and whatever `prepare` established. */
+export interface ActionWriteContext<
+  DomainEvents extends DomainEventContractMap,
+  Services = Readonly<Record<string, never>>,
+  Prepared = undefined,
+> extends ActionHandlerContext<DomainEvents, Services> {
+  readonly prepared: Prepared;
+}
+
+/**
+ * Owner work inside the Action's transaction: owner database reads and writes, domain events, the outbox, and audit
+ * evidence. Remote I/O and a second pooled connection die here (`IoInsideDatabaseTransaction`).
+ */
+export type ActionWrite<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  Context,
+  Requirements = never,
+> = (
+  payload: PayloadSchema['Type'],
+  context: Context,
+) => Effect.Effect<
+  ResultSchema['Type'] | CommittedActionDomainRejection<DomainErrorSchema['Type']>,
+  ActionCollectorError | DomainErrorSchema['Type'],
+  Requirements
+>;
+
+/** The step after commit: what `prepare` established and the committed result. */
+export interface ActionFinishContext<Prepared, Result> extends ActionPrepareContext {
+  readonly prepared: Prepared;
+  readonly result: Result;
+}
+
+/**
+ * Owner work after a successful commit, such as remote notifications. The Action has committed, so `finish` cannot
+ * fail it: it handles its own failures, and Core logs a defect without changing the caller's result.
+ */
+export type ActionFinish<Payload, Prepared, Result, Requirements = never> = (
+  payload: Payload,
+  context: ActionFinishContext<Prepared, Result>,
+) => Effect.Effect<void, never, Requirements>;
+
+/**
+ * Owner compensation when the Action did not commit a success after `prepare` ran: the transaction failed or rolled
+ * back, or the write step committed a domain rejection. It releases what `prepare` reserved in another owner. It
+ * never runs when the commit outcome is indeterminate. Like `finish`, it handles its own failures.
+ */
+export type ActionAbandon<Payload, Prepared, Requirements = never> = (
+  payload: Payload,
+  context: ActionPrepareContext & { readonly prepared: Prepared },
+) => Effect.Effect<void, never, Requirements>;
+
+/** An Action without owner work before its transaction: `write`, then optionally `finish`. */
+export interface ActionWritePipeline<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
   DomainEvents extends DomainEventContractMap,
   Services,
   Requirements = never,
+  FinishRequirements = never,
+> {
+  readonly abandon?: undefined;
+  readonly finish?: ActionFinish<PayloadSchema['Type'], undefined, ResultSchema['Type'], FinishRequirements>;
+  readonly prepare?: undefined;
+  readonly write: ActionWrite<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    ActionHandlerContext<DomainEvents, Services>,
+    Requirements
+  >;
+}
+
+/** An Action that prepares remote inputs before its transaction: `prepare`, `write`, then optionally `finish`. */
+export interface ActionPreparedPipeline<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Services,
+  Prepared,
+  Requirements = never,
+  PrepareRequirements = never,
+  FinishRequirements = never,
+> {
+  readonly abandon?: ActionAbandon<PayloadSchema['Type'], Prepared, FinishRequirements>;
+  readonly finish?: ActionFinish<PayloadSchema['Type'], Prepared, ResultSchema['Type'], FinishRequirements>;
+  readonly prepare: ActionPrepare<PayloadSchema['Type'], Prepared, DomainErrorSchema['Type'], PrepareRequirements>;
+  readonly write: ActionWrite<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    // `Prepared` is inferred from `prepare` only.
+    ActionWriteContext<DomainEvents, Services, Prepared>,
+    Requirements
+  >;
+}
+
+/** An Action's owner pipeline around its one transaction. Write the steps in execution order. */
+export type ActionPipeline<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Services,
+  Prepared = undefined,
+  Requirements = never,
+  PrepareRequirements = never,
+  FinishRequirements = never,
+> =
+  | ActionPreparedPipeline<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Services,
+      Prepared,
+      Requirements,
+      PrepareRequirements,
+      FinishRequirements
+    >
+  | ActionWritePipeline<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Services,
+      Requirements,
+      FinishRequirements
+    >;
+
+/**
+ * The owner pipeline as Core runs it, with `Prepared` closed over: `prepare` runs before the transaction and yields
+ * the transaction step and the after-commit step.
+ */
+export type ActionOwnerStages<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Services,
+  Requirements,
 > = (
   payload: PayloadSchema['Type'],
-  context: ActionHandlerContext<DomainEvents, Services>,
+  context: ActionPrepareContext,
 ) => Effect.Effect<
-  ResultSchema['Type'] | CommittedActionDomainRejection<DomainErrorSchema['Type']>,
-  ActionCollectorError | DomainErrorSchema['Type'],
+  Readonly<{
+    readonly abandon: Effect.Effect<void, never, Requirements>;
+    readonly finish: (result: ResultSchema['Type']) => Effect.Effect<void, never, Requirements>;
+    readonly write: (
+      context: ActionHandlerContext<DomainEvents, Services>,
+    ) => Effect.Effect<
+      ResultSchema['Type'] | CommittedActionDomainRejection<DomainErrorSchema['Type']>,
+      ActionCollectorError | DomainErrorSchema['Type'],
+      Requirements
+    >;
+  }>,
+  DomainErrorSchema['Type'] | OperationContextUnavailable | OwnerTransactionUnavailable,
   Requirements
 >;
 
@@ -279,7 +451,14 @@ type ActionRegistrationPrivateValue<
   Services = Readonly<Record<string, never>>,
   HandlerRequirements = never,
 > = readonly [
-  handler: ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
+  stages: ActionOwnerStages<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Services,
+    HandlerRequirements
+  >,
   serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
   onDecodedSuccess?: ActionDecodedSuccessHook<
     ResultSchema['Type'],
@@ -426,6 +605,148 @@ export const validateActionDescriptorInput = <Policy>(descriptor: ActionDescript
   validateActionPolicies(descriptor, descriptor.policies);
 };
 
+/** One channel (requirements) of all three owner steps. */
+type StepChannels<Write, Prepare, Finish> = Finish | Prepare | Write;
+
+type AnyActionPipeline<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Services,
+  Prepared,
+  Requirements,
+  PrepareRequirements,
+  FinishRequirements,
+> = Omit<
+  ActionPreparedPipeline<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Services,
+    Prepared,
+    Requirements,
+    PrepareRequirements,
+    FinishRequirements
+  >,
+  'prepare'
+> & {
+  readonly prepare?: ActionPrepare<PayloadSchema['Type'], Prepared, DomainErrorSchema['Type'], PrepareRequirements>;
+};
+
+/** The transaction step and the after-commit step over what `prepare` established. */
+const ownerStepsAfterPrepare = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Services,
+  Prepared,
+  Requirements,
+  PrepareRequirements,
+  FinishRequirements,
+>(
+  pipeline: AnyActionPipeline<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Services,
+    Prepared,
+    Requirements,
+    PrepareRequirements,
+    FinishRequirements
+  >,
+  payload: PayloadSchema['Type'],
+  context: ActionPrepareContext,
+  prepared: Prepared,
+) => {
+  const { abandon, finish, write } = pipeline;
+  return Object.freeze({
+    abandon:
+      abandon === undefined ? Effect.void : Effect.suspend(() => abandon(payload, { ...context, prepared })),
+    finish: (result: ResultSchema['Type']) =>
+      finish === undefined ? Effect.void : Effect.suspend(() => finish(payload, { ...context, prepared, result })),
+    write: (writeContext: ActionHandlerContext<DomainEvents, Services>) =>
+      Effect.suspend(() => write(payload, Object.freeze({ ...writeContext, prepared }))),
+  });
+};
+
+const stagesOf =
+  <
+    PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+    ResultSchema extends Schema.ConstraintDecoder<unknown>,
+    DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+    DomainEvents extends DomainEventContractMap,
+    Services,
+    Prepared,
+    Requirements,
+    PrepareRequirements,
+    FinishRequirements,
+  >(
+    pipeline: AnyActionPipeline<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Services,
+      Prepared,
+      Requirements,
+      PrepareRequirements,
+      FinishRequirements
+    >,
+  ): ActionOwnerStages<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Services,
+    StepChannels<Requirements, PrepareRequirements, FinishRequirements>
+  > =>
+  (payload, context) => {
+    const { prepare } = pipeline;
+    // SAFETY: a pipeline without `prepare` is the write-only shape, whose overloads fix `Prepared = undefined`.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: see above; `undefined` is that `Prepared`.
+    const withoutPrepare = Effect.succeed(undefined as Prepared);
+    const prepared = prepare === undefined ? withoutPrepare : Effect.suspend(() => prepare(payload, context));
+    return prepared.pipe(Effect.map((value) => ownerStepsAfterPrepare(pipeline, payload, context, value)));
+  };
+
+/**
+ * Defines a governed Action. Its owner pipeline runs in three steps around one short transaction: `prepare`
+ * (SpiceDB and remote owner calls, before BEGIN), `write` (owner database work, domain events, outbox, and audit
+ * evidence, inside the transaction), and `finish` (after a successful commit). Only `write` is required.
+ * Write the steps in that order: TypeScript infers each step's context from the step before it.
+ */
+export function defineAction<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  const Owner extends string,
+  HandlerRequirements,
+  FinishRequirements = never,
+>(
+  descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
+  pipeline: ActionWritePipeline<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    EmptyActionServices,
+    HandlerRequirements,
+    FinishRequirements
+  >,
+): ActionRegistration<
+  PayloadSchema,
+  ResultSchema,
+  DomainErrorSchema,
+  DomainEvents,
+  Owner,
+  EmptyActionServices,
+  FinishRequirements | HandlerRequirements
+>;
 export function defineAction<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
@@ -434,10 +755,51 @@ export function defineAction<
   const Owner extends string,
   Services,
   HandlerRequirements,
+  FinishRequirements = never,
 >(
   descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
   ...definition: readonly [
-    handler: ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
+    pipeline: ActionWritePipeline<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Services,
+      HandlerRequirements,
+      FinishRequirements
+    >,
+    serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
+  ]
+): ActionRegistration<
+  PayloadSchema,
+  ResultSchema,
+  DomainErrorSchema,
+  DomainEvents,
+  Owner,
+  Services,
+  FinishRequirements | HandlerRequirements
+>;
+export function defineAction<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  const Owner extends string,
+  Services,
+  HandlerRequirements,
+  FinishRequirements = never,
+>(
+  descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
+  ...definition: readonly [
+    pipeline: ActionWritePipeline<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Services,
+      HandlerRequirements,
+      FinishRequirements
+    >,
     serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
     onDecodedSuccess: ActionDecodedSuccessHook<
       ResultSchema['Type'],
@@ -453,7 +815,7 @@ export function defineAction<
   DomainEvents,
   Owner,
   Services,
-  HandlerRequirements
+  FinishRequirements | HandlerRequirements
 >;
 export function defineAction<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -462,15 +824,21 @@ export function defineAction<
   DomainEvents extends DomainEventContractMap,
   const Owner extends string,
   HandlerRequirements,
+  Prepared,
+  PrepareRequirements = never,
+  FinishRequirements = never,
 >(
   descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
-  handler: ActionHandler<
+  pipeline: ActionPreparedPipeline<
     PayloadSchema,
     ResultSchema,
     DomainErrorSchema,
     DomainEvents,
     EmptyActionServices,
-    HandlerRequirements
+    Prepared,
+    HandlerRequirements,
+    PrepareRequirements,
+    FinishRequirements
   >,
 ): ActionRegistration<
   PayloadSchema,
@@ -479,7 +847,7 @@ export function defineAction<
   DomainEvents,
   Owner,
   EmptyActionServices,
-  HandlerRequirements
+  StepChannels<HandlerRequirements, PrepareRequirements, FinishRequirements>
 >;
 export function defineAction<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -489,10 +857,23 @@ export function defineAction<
   const Owner extends string,
   Services,
   HandlerRequirements,
+  Prepared,
+  PrepareRequirements = never,
+  FinishRequirements = never,
 >(
   descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
   ...definition: readonly [
-    handler: ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
+    pipeline: ActionPreparedPipeline<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Services,
+      Prepared,
+      HandlerRequirements,
+      PrepareRequirements,
+      FinishRequirements
+    >,
     serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
   ]
 ): ActionRegistration<
@@ -502,7 +883,7 @@ export function defineAction<
   DomainEvents,
   Owner,
   Services,
-  HandlerRequirements
+  StepChannels<HandlerRequirements, PrepareRequirements, FinishRequirements>
 >;
 export function defineAction<
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -512,25 +893,93 @@ export function defineAction<
   const Owner extends string,
   Services,
   HandlerRequirements,
+  Prepared,
+  PrepareRequirements = never,
+  FinishRequirements = never,
+>(
+  descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
+  ...definition: readonly [
+    pipeline: ActionPreparedPipeline<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Services,
+      Prepared,
+      HandlerRequirements,
+      PrepareRequirements,
+      FinishRequirements
+    >,
+    serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
+    onDecodedSuccess: ActionDecodedSuccessHook<
+      ResultSchema['Type'],
+      Services,
+      DomainErrorSchema['Type'],
+      HandlerRequirements
+    >,
+  ]
+): ActionRegistration<
+  PayloadSchema,
+  ResultSchema,
+  DomainErrorSchema,
+  DomainEvents,
+  Owner,
+  Services,
+  StepChannels<HandlerRequirements, PrepareRequirements, FinishRequirements>
+>;
+export function defineAction<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  const Owner extends string,
+  Services,
+  HandlerRequirements,
+  Prepared,
+  PrepareRequirements,
+  FinishRequirements,
 >(
   descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
   ...definition:
     | readonly [
-        ActionHandler<
+        ActionPipeline<
           PayloadSchema,
           ResultSchema,
           DomainErrorSchema,
           DomainEvents,
           EmptyActionServices,
-          HandlerRequirements
+          Prepared,
+          HandlerRequirements,
+          PrepareRequirements,
+          FinishRequirements
         >,
       ]
     | readonly [
-        ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
+        ActionPipeline<
+          PayloadSchema,
+          ResultSchema,
+          DomainErrorSchema,
+          DomainEvents,
+          Services,
+          Prepared,
+          HandlerRequirements,
+          PrepareRequirements,
+          FinishRequirements
+        >,
         ActionServiceFactory<Services, HandlerRequirements>,
       ]
     | readonly [
-        ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
+        ActionPipeline<
+          PayloadSchema,
+          ResultSchema,
+          DomainErrorSchema,
+          DomainEvents,
+          Services,
+          Prepared,
+          HandlerRequirements,
+          PrepareRequirements,
+          FinishRequirements
+        >,
         ActionServiceFactory<Services, HandlerRequirements>,
         ActionDecodedSuccessHook<ResultSchema['Type'], Services, DomainErrorSchema['Type'], HandlerRequirements>,
       ]
@@ -542,7 +991,7 @@ export function defineAction<
       DomainEvents,
       Owner,
       EmptyActionServices,
-      HandlerRequirements
+      StepChannels<HandlerRequirements, PrepareRequirements, FinishRequirements>
     >
   | ActionRegistration<
       PayloadSchema,
@@ -551,9 +1000,29 @@ export function defineAction<
       DomainEvents,
       Owner,
       Services,
-      HandlerRequirements
+      StepChannels<HandlerRequirements, PrepareRequirements, FinishRequirements>
     > {
   validateActionDescriptorInput(descriptor);
+  // SAFETY: a write-only pipeline is the prepared shape with `Prepared = undefined`; its overloads fix exactly that.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: see above; the overloads fix `Prepared`.
+  const pipeline = definition[0] as AnyActionPipeline<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Services | EmptyActionServices,
+    Prepared,
+    HandlerRequirements,
+    PrepareRequirements,
+    FinishRequirements
+  >;
+  if (
+    !Predicate.isFunction(pipeline.write) ||
+    !(pipeline.prepare === undefined || Predicate.isFunction(pipeline.prepare)) ||
+    !(pipeline.finish === undefined || Predicate.isFunction(pipeline.finish))
+  ) {
+    return failActionDefinition('Action pipeline steps must be functions');
+  }
 
   const frozenDescriptor = Object.freeze({
     ...descriptor,
@@ -563,23 +1032,23 @@ export function defineAction<
     policies: Object.freeze([...descriptor.policies]),
   });
   if (definition.length === 1) {
-    const [handler] = definition;
-    return ActionPrivateStorage.create([handler, emptyActionServiceFactory] as const, {
+    return ActionPrivateStorage.create([stagesOf(pipeline), emptyActionServiceFactory] as const, {
       [actionRegistration]: true as const,
       descriptor: frozenDescriptor,
     });
   }
-  const [handler, serviceFactory, onDecodedSuccess] = definition;
+  const [, serviceFactory, onDecodedSuccess] = definition;
+  const stages = stagesOf(pipeline);
   if (definition.length === 3 && !Predicate.isFunction(onDecodedSuccess)) {
     return failActionDefinition('Action decoded-success hook must be a function');
   }
   if (onDecodedSuccess === undefined) {
-    return ActionPrivateStorage.create([handler, serviceFactory] as const, {
+    return ActionPrivateStorage.create([stages, serviceFactory] as const, {
       [actionRegistration]: true as const,
       descriptor: frozenDescriptor,
     });
   }
-  return ActionPrivateStorage.create([handler, serviceFactory, onDecodedSuccess] as const, {
+  return ActionPrivateStorage.create([stages, serviceFactory, onDecodedSuccess] as const, {
     [actionRegistration]: true as const,
     descriptor: frozenDescriptor,
   });
@@ -597,8 +1066,8 @@ const AnyActionRegistrationSchema = Schema.instanceOf(ActionPrivateStorage).chec
 export const isActionRegistration = <Value>(value: Value): value is Value & AnyActionRegistration =>
   Schema.is(AnyActionRegistrationSchema)(value);
 
-/** Internal Core runtime seam. Action handlers are intentionally absent from the public registration. */
-export const getActionHandler = <
+/** Internal Core runtime seam. Action owner steps are intentionally absent from the public registration. */
+export const getActionStages = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,
   ResultSchema extends Schema.ConstraintDecoder<unknown>,
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
@@ -616,8 +1085,53 @@ export const getActionHandler = <
     Services,
     HandlerRequirements
   >,
-): ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements> =>
+): ActionOwnerStages<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements> =>
   ActionPrivateStorage.getValue(registration)[0];
+
+const noOwnerTransaction: OwnerTransaction = () =>
+  Effect.die('These owner steps run without Core; pass `transaction` to give prepare its owner transaction');
+
+/**
+ * Runs an Action's owner steps in order (prepare, write, finish) without Core's runtime: unit tests of owner code.
+ * The write step runs under Core's transaction mark, so remote I/O inside it dies as it would in production.
+ */
+export const runActionOwnerSteps = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Owner extends string,
+  Services,
+  HandlerRequirements,
+>(
+  registration: ActionRegistration<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
+    Services,
+    HandlerRequirements
+  >,
+  payload: PayloadSchema['Type'],
+  context: ActionHandlerContext<DomainEvents, Services> & { readonly transaction?: OwnerTransaction },
+) =>
+  getActionStages(registration)(payload, {
+    actionInvocationId: context.actionInvocationId,
+    compositionRevision: context.compositionRevision,
+    scope: context.scope,
+    transaction: context.transaction ?? noOwnerTransaction,
+  }).pipe(
+    Effect.flatMap((steps) =>
+      steps.write(context).pipe(
+        insideDatabaseTransaction(registration.descriptor.actionKey),
+        Effect.onExit((exit) => (Exit.isFailure(exit) ? steps.abandon : Effect.void)),
+        Effect.tap((value) =>
+          Schema.is(CommittedActionDomainRejectionSchema)(value) ? steps.abandon : steps.finish(value),
+        ),
+      ),
+    ),
+  );
 
 export const getActionServiceFactory = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,

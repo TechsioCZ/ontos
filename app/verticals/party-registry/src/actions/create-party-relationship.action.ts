@@ -98,7 +98,7 @@ export const createPartyRelationshipAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_party_relationships',
   },
-  handleCreatePartyRelationship,
+  { write: handleCreatePartyRelationship },
   (transaction, scope) =>
     Effect.succeed({
       create: (payload, principalId, actionInvocationId) =>

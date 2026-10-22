@@ -134,7 +134,7 @@ export const releaseInventoryReservationAction = defineAction(
     resultSchema: ReleaseInventoryReservationResultSchema,
     schemaVersion: '1',
   },
-  handleReleaseInventoryReservation,
+  { write: handleReleaseInventoryReservation },
   (transaction, scope) => {
     const obligationPersistence = inventoryObligationPersistenceForScope(transaction, scope);
     return Effect.succeed(

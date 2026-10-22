@@ -333,7 +333,7 @@ export const correctCatalogToStockBindingAction = defineAction(
     resultSchema: CorrectCatalogToStockBindingResultSchema,
     schemaVersion: '1',
   },
-  handleCorrectCatalogToStockBinding,
+  { write: handleCorrectCatalogToStockBinding },
   makeCorrectCatalogToStockBindingServices,
 );
 

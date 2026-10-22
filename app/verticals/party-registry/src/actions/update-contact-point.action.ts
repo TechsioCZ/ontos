@@ -258,7 +258,7 @@ export const updateContactPointAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_party_identity',
   },
-  handleUpdateContactPoint,
+  { write: handleUpdateContactPoint },
   (transaction, scope) =>
     Effect.succeed({
       update: (command: UpdateContactPointCommand) =>

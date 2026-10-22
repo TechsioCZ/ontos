@@ -76,7 +76,7 @@ export const applyCommandAction = defineAction(
     resultSchema: ApplyCommandResultSchema,
     schemaVersion: '1',
   },
-  handleApplyCommand,
+  { write: handleApplyCommand },
   persistenceService,
 );
 

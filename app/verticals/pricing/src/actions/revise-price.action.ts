@@ -443,7 +443,7 @@ export const revisePriceAction = defineAction(
     resultSchema: RevisePriceResultSchema,
     schemaVersion: '2',
   },
-  handleRevisePrice,
+  { write: handleRevisePrice },
   Effect.fn('RevisePriceAction.makeServices')(function* makeRevisePriceServices(transaction, scope) {
     const externalPriceInputBoundaryFactory = yield* ExternalPriceInputBoundaryFactory;
     const { authority, persistence } = yield* Effect.all(

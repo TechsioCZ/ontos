@@ -5,7 +5,7 @@ import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { runActionOwnerSteps } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
   PrincipalIdSchema,
   TenantIdSchema,
@@ -389,9 +389,7 @@ it.layer(
           'party.registry',
           createPartyAction.descriptor.accessEvidencePolicy,
         );
-        const result = yield* getActionHandler(createPartyAction)(
-          { candidate: candidate() },
-          {
+        const result = yield* runActionOwnerSteps(createPartyAction, { candidate: candidate() }, {
             ...collector,
             actionInvocationId,
             compositionRevision: 'a'.repeat(64),
@@ -405,8 +403,7 @@ it.layer(
                   tenantId,
                 }),
             },
-          },
-        );
+          });
         if (!('outcome' in result)) {
           throw new Error('create-party matching did not return its committed result');
         }
@@ -464,16 +461,14 @@ it.layer(
         'party.registry',
         createPartyAction.descriptor.accessEvidencePolicy,
       );
-      const result = yield* getActionHandler(createPartyAction)(
-        {
+      const result = yield* runActionOwnerSteps(createPartyAction, {
           candidate: candidate({
             officialIdentifiers: [
               { identifierType: 'ICO', value: '27074358', verification: 'VERIFIED' },
               { identifierType: 'CZ_DIC', value: 'CZ27074358', verification: 'VERIFIED' },
             ],
           }),
-        },
-        {
+        }, {
           ...collector,
           actionInvocationId,
           compositionRevision: 'a'.repeat(64),
@@ -487,8 +482,7 @@ it.layer(
                 tenantId,
               }),
           },
-        },
-      );
+        });
       if (!('outcome' in result)) {
         throw new Error('create matching did not return its committed result');
       }
@@ -603,14 +597,12 @@ it.layer(
         'party.registry',
         resolveDuplicateCandidateMatchAction.descriptor.accessEvidencePolicy,
       );
-      const result = yield* getActionHandler(resolveDuplicateCandidateMatchAction)(
-        {
+      const result = yield* runActionOwnerSteps(resolveDuplicateCandidateMatchAction, {
           caseRef: makeDuplicateCandidateCaseRef(tenantId, candidateCaseId),
           expectedRevision: 1,
           reason: resolutionInput.reason,
           selectedPartyRef: makePartyRef(tenantId, partyC),
-        },
-        {
+        }, {
           ...collector,
           actionInvocationId,
           compositionRevision: 'a'.repeat(64),
@@ -618,8 +610,7 @@ it.layer(
           services: {
             resolve: () => resolveDuplicateCandidateMatch(subject.transaction, resolutionInput),
           },
-        },
-      );
+        });
       return { collector, result };
     });
 
@@ -725,8 +716,7 @@ it.layer(
         'party.registry',
         createPartyAction.descriptor.accessEvidencePolicy,
       );
-      const result = yield* getActionHandler(createPartyAction)(
-        {
+      const result = yield* runActionOwnerSteps(createPartyAction, {
           candidate: candidate({
             officialIdentifiers: [
               {
@@ -741,8 +731,7 @@ it.layer(
               },
             ],
           }),
-        },
-        {
+        }, {
           ...collector,
           actionInvocationId,
           compositionRevision: 'a'.repeat(64),
@@ -756,8 +745,7 @@ it.layer(
                 tenantId,
               }),
           },
-        },
-      );
+        });
       if (!('outcome' in result)) {
         throw new Error('create-party matching did not return its committed result');
       }
@@ -799,8 +787,7 @@ it.layer(
         'party.registry',
         createPartyAction.descriptor.accessEvidencePolicy,
       );
-      yield* getActionHandler(createPartyAction)(
-        {
+      yield* runActionOwnerSteps(createPartyAction, {
           candidate: candidate({
             officialIdentifiers: [
               {
@@ -812,8 +799,7 @@ it.layer(
               identifier,
             ],
           }),
-        },
-        {
+        }, {
           ...collector,
           actionInvocationId,
           compositionRevision: 'a'.repeat(64),
@@ -827,8 +813,7 @@ it.layer(
                 tenantId,
               }),
           },
-        },
-      );
+        });
       expect(subject.inserts.filter(({ table }) => table === partyOfficialIdentifiers).length).toBe(1);
       expect(collector.snapshot().domainEvents.length).toBe(1);
       expect(collector.snapshot().outboxMessages.length).toBe(1);

@@ -110,7 +110,7 @@ export const stockReceiptAction = defineAction(
     resultSchema: StockReceiptResultSchema,
     schemaVersion: '1',
   },
-  handleStockReceipt,
+  { write: handleStockReceipt },
   (transaction, scope) =>
     Effect.succeed(
       makePhysicalStockEffectRequestService({

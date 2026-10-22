@@ -77,7 +77,7 @@ export const setProductUnitTargetDivisibilityAction = defineAction(
     resultSchema: SetProductUnitTargetDivisibilityResultSchema,
     schemaVersion: '1',
   },
-  handleSetProductUnitTargetDivisibility,
+  { write: handleSetProductUnitTargetDivisibility },
   (transaction, scope) =>
     productUnitPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map(

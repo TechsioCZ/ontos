@@ -1188,9 +1188,6 @@ export const deliveryDestinationPortsForTransaction = (
 export const addressActionPersistenceForTransaction = (
   transaction: CustomerContextAddressRoutineInvoker,
   scope: OperationalScope,
-  validatePartySource: (
-    payload: AddSavedAddressPayload | UpdateSavedAddressPayload,
-  ) => Effect.Effect<void, typeof AddressBookDomainErrorSchema.Type> = () => Effect.fail(unavailable('party-registry')),
 ) => ({
   add: (payload: AddSavedAddressPayload, attribution: AddressPersistenceAttribution) =>
     validateTenant(scope, payload.profile) && validateOriginTenant(scope, payload.origin)
@@ -1221,7 +1218,6 @@ export const addressActionPersistenceForTransaction = (
     validateOriginTenant(scope, payload.origin)
       ? updateSavedAddress(transaction, payload, attribution)
       : Effect.fail(notFoundError(profileAnotherTenantReason)),
-  validatePartySource,
 });
 
 export const addressRoutineAllowlist = Object.freeze([

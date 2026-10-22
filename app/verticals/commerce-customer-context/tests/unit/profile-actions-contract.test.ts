@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
+import { PartyRegistryGuestResolverFactory } from '../../src/integrations/party-registry-guest-resolver.ts';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { runActionOwnerSteps } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { archiveCustomerProfileAction } from '../../src/actions/archive-customer-profile.action.ts';
 import { attributeGuestRetailCustomerAction } from '../../src/actions/attribute-guest-retail-customer.action.ts';
 import { bindRetailPortalProfileAction } from '../../src/actions/bind-retail-portal-profile.action.ts';
@@ -141,7 +142,7 @@ describe('customer profile Actions', () => {
         attributeGuestRetailCustomerAction.descriptor.auditEvidenceSchema,
       );
       let dependencyCalled = false;
-      const failure = yield* getActionHandler(attributeGuestRetailCustomerAction)(payload, {
+      const failure = yield* runActionOwnerSteps(attributeGuestRetailCustomerAction, payload, {
         actionInvocationId: '30000000-0000-4000-8000-000000000003',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
@@ -191,7 +192,7 @@ describe('customer profile Actions', () => {
         attributeGuestRetailCustomerAction.descriptor.accessEvidencePolicy,
         attributeGuestRetailCustomerAction.descriptor.auditEvidenceSchema,
       );
-      yield* getActionHandler(attributeGuestRetailCustomerAction)(payload, {
+      yield* runActionOwnerSteps(attributeGuestRetailCustomerAction, payload, {
         actionInvocationId: '30000000-0000-4000-8000-000000000004',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
@@ -233,6 +234,10 @@ describe('customer profile Actions', () => {
       ]);
       expect(snapshot.domainEvents).toHaveLength(1);
       expect(snapshot.outboxMessages).toHaveLength(1);
-    }),
+    }).pipe(
+      Effect.provideService(PartyRegistryGuestResolverFactory, {
+        make: () => () => Effect.succeed({ outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const }),
+      }),
+    ),
   );
 });

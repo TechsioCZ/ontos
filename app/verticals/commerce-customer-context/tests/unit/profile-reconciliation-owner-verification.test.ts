@@ -1,7 +1,7 @@
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { runActionOwnerSteps } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
   ProfileReconciliationOwnerVerifier,
   profileReconciliationOwnerVerifierUnavailable,
@@ -67,7 +67,7 @@ it.effect('accepts evidence only from trusted owner verifiers and preserves conf
       resolveProfileReconciliationAction.descriptor.auditEvidenceSchema,
     );
     const recordedOwners: string[] = [];
-    const result = yield* getActionHandler(resolveProfileReconciliationAction)(payload, {
+    const result = yield* runActionOwnerSteps(resolveProfileReconciliationAction, payload, {
       actionInvocationId: '44444444-4444-4444-8444-444444444444',
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
@@ -167,7 +167,7 @@ it.effect('resumes from durable terminal outcomes without replacing their attrib
           }
         : outcome,
     );
-    const result = yield* getActionHandler(resolveProfileReconciliationAction)(payload, {
+    const result = yield* runActionOwnerSteps(resolveProfileReconciliationAction, payload, {
       actionInvocationId: '55555555-5555-4555-8555-555555555555',
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,

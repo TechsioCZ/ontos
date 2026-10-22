@@ -116,7 +116,7 @@ export const acceptPaymentTermSourceStatementAction = defineAction(
     resultSchema: AcceptPaymentTermSourceStatementResultSchema,
     schemaVersion: '1',
   },
-  handleAcceptPaymentTermSourceStatement,
+  { write: handleAcceptPaymentTermSourceStatement },
   paymentTermSourcePersistenceForScope,
 );
 // <generated-outbox-message-exports>

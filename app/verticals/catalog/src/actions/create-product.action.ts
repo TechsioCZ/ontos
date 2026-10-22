@@ -177,7 +177,7 @@ export const createProductAction = defineAction(
     resultSchema: CreateProductResultSchema,
     schemaVersion: '2',
   },
-  handleCreateProduct,
+  { write: handleCreateProduct },
   createProductServiceFactory,
   recordCreateProductResultSnapshot,
 );

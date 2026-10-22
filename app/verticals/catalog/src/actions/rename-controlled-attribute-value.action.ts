@@ -111,7 +111,7 @@ export const renameControlledAttributeValueAction = defineAction(
     resultSchema: RenameControlledAttributeValueResultSchema,
     schemaVersion: '1',
   },
-  handleRenameControlledAttributeValue,
+  { write: handleRenameControlledAttributeValue },
   (transaction, scope) =>
     attributePersistenceForScope(transaction, scope).pipe(
       Effect.map(

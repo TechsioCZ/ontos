@@ -99,7 +99,7 @@ export const assignLegalBasisAction = defineAction(
     resultSchema: AssignLegalBasisResultSchema,
     schemaVersion: '1',
   },
-  handleAssignLegalBasis,
+  { write: handleAssignLegalBasis },
   (transaction, scope) =>
     privacyOperationRepositoryForScope(transaction, scope).pipe(
       Effect.map(({ assignLegalBasis, listApplicabilityDecisions }) => ({

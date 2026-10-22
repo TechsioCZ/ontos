@@ -192,7 +192,7 @@ export const correctStockPositionAction = defineAction(
     resultSchema: CorrectStockPositionResultSchema,
     schemaVersion: '1',
   },
-  handleCorrectStockPosition,
+  { write: handleCorrectStockPosition },
   (transaction, scope) =>
     Effect.succeed(
       makeStockCorrectionService({

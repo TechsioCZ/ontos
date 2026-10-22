@@ -9,7 +9,6 @@ import type {
 } from '@app/customer-market-retirement-contracts';
 import { Clock, DateTime, Effect, Match, Schema } from 'effect';
 
-import { marketAffectedUseAssessmentServicesForTransaction } from '../api/market-affected-use-assessment.read.ts';
 import type { MarketAffectedUseAssessmentServices } from '../api/market-affected-use-assessment.read.ts';
 import { marketRetirementReservationForTransaction } from '../persistence/market-retirement-persistence.ts';
 import type { MarketRetirementReservationFailure } from '../persistence/market-retirement-persistence.ts';
@@ -140,57 +139,36 @@ const validateVerifiedAssessment = (
   );
 };
 
-const validateReserve = Effect.fn('MarketRetirementReservationService.validateReserve')(function* validate(
-  payload: ReservePayload,
-  assessmentServices: MarketAffectedUseAssessmentServices,
-  currentTimeMillis: Effect.Effect<number>,
-) {
-  const assessment = yield* assessmentServices
-    .assess({
-      evaluatedAt: payload.evaluatedAt,
-      marketRef: payload.marketRef,
-      marketRevision: payload.marketRevision,
-      tenantId: payload.tenantId,
-    })
-    .pipe(
-      Effect.mapError((cause) => assessmentUnavailable('Current Market affected-use evidence is unavailable', cause)),
-    );
-  yield* Match.value(assessment).pipe(
-    Match.when({ outcome: 'UNAVAILABLE' }, ({ reason }) => Effect.fail(assessmentUnavailable(reason))),
-    Match.when({ outcome: 'STALE' }, ({ reason }) => stale(reason)),
-    Match.when({ outcome: 'REJECTED' }, ({ reason }) =>
-      Effect.fail(new MarketRetirementLiveReferenceConflictError({ reason })),
-    ),
-    Match.when({ outcome: 'VERIFIED' }, (verified) =>
-      currentTimeMillis.pipe(Effect.flatMap((nowMillis) => validateVerifiedAssessment(verified, payload, nowMillis))),
-    ),
-    Match.exhaustive,
-  );
-});
-
-export const marketRetirementReservationServiceFromAuthorities = (
-  assessmentServices: MarketAffectedUseAssessmentServices,
-  reservation: ReservationOperations,
-  currentTimeMillis: Effect.Effect<number> = Clock.currentTimeMillis,
-): MarketRetirementReservationService => ({
-  execute: (payload, attribution) => {
-    if (payload.operation !== 'RESERVE') {
-      return reservation.execute(payload, attribution);
-    }
-    return validateReserve(payload, assessmentServices, currentTimeMillis).pipe(
-      Effect.flatMap(() => reservation.execute(payload, attribution)),
+export const prepareMarketRetirementReservation = Effect.fn('MarketRetirementReservationService.validateReserve')(
+  function* validate(
+    payload: ReservePayload,
+    assessmentServices: MarketAffectedUseAssessmentServices,
+    currentTimeMillis: Effect.Effect<number> = Clock.currentTimeMillis,
+  ) {
+    const assessment = yield* assessmentServices
+      .assess({
+        evaluatedAt: payload.evaluatedAt,
+        marketRef: payload.marketRef,
+        marketRevision: payload.marketRevision,
+        tenantId: payload.tenantId,
+      })
+      .pipe(
+        Effect.mapError((cause) => assessmentUnavailable('Current Market affected-use evidence is unavailable', cause)),
+      );
+    yield* Match.value(assessment).pipe(
+      Match.when({ outcome: 'UNAVAILABLE' }, ({ reason }) => Effect.fail(assessmentUnavailable(reason))),
+      Match.when({ outcome: 'STALE' }, ({ reason }) => stale(reason)),
+      Match.when({ outcome: 'REJECTED' }, ({ reason }) =>
+        Effect.fail(new MarketRetirementLiveReferenceConflictError({ reason })),
+      ),
+      Match.when({ outcome: 'VERIFIED' }, (verified) =>
+        currentTimeMillis.pipe(Effect.flatMap((nowMillis) => validateVerifiedAssessment(verified, payload, nowMillis))),
+      ),
+      Match.exhaustive,
     );
   },
-});
+);
 
 export const marketRetirementReservationServiceFactory: ReadServiceFactory<MarketRetirementReservationService> = (
   transaction,
-) =>
-  marketAffectedUseAssessmentServicesForTransaction(transaction).pipe(
-    Effect.map((assessmentServices) =>
-      marketRetirementReservationServiceFromAuthorities(
-        assessmentServices,
-        marketRetirementReservationForTransaction(transaction),
-      ),
-    ),
-  );
+) => Effect.succeed(marketRetirementReservationForTransaction(transaction));

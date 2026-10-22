@@ -84,7 +84,7 @@ export const createPackageDefinitionAction = defineAction(
     resultSchema: CreatePackageDefinitionResultSchema,
     schemaVersion: '1',
   },
-  handleCreatePackageDefinition,
+  { write: handleCreatePackageDefinition },
   (transaction, scope) =>
     packageDefinitionPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map(

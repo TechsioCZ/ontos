@@ -87,7 +87,7 @@ export const importSellerVatRegimeDeclarationsAction = defineAction(
     resultSchema: ImportSellerVatRegimeDeclarationsResultSchema,
     schemaVersion: '1',
   },
-  handleImportSellerVatRegimeDeclarations,
+  { write: handleImportSellerVatRegimeDeclarations },
   sellerVatRegimeDeclarationServiceFactory,
 );
 

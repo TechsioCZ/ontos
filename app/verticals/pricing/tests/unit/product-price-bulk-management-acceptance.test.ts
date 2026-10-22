@@ -1,3 +1,7 @@
+import {
+  ExternalPriceInputBoundaryFactory,
+  makeExternalPriceInputBoundary,
+} from '../../src/services/external-price-input-boundary.service.ts';
 import { PriceProductTargetSnapshotSchema } from '@app/pricing-contracts/domain/catalog-price-target';
 import { getVerticalRuntimeActions } from '@app/core-runtime';
 import { PriceSourceProvenanceSchema } from '@app/pricing-contracts/domain/price-source-provenance';
@@ -12,7 +16,7 @@ import {
 } from '../../shared/actions/manage-product-prices-bulk.ts';
 import type { ManageProductPricesBulkTargetIntent } from '../../shared/actions/manage-product-prices-bulk.ts';
 import {
-  handleManageProductPricesBulk,
+  prepareManageProductPricesBulk,
   manageProductPricesBulkAction,
 } from '../../src/actions/manage-product-prices-bulk.action.ts';
 import {
@@ -406,23 +410,9 @@ describe('Product Price bulk management acceptance', () => {
   it.effect('rejects a Selling Legal Entity substitution before owner reconciliation or execution', () =>
     Effect.gen(function* trustedSellerScope() {
       let portCalls = 0;
-      const service = makeProductPriceBulkService<ManageProductPricesBulkTargetIntent['operation']>({
-        executeAuthorizedExactPriceAction: () => {
-          portCalls += 1;
-          return Effect.succeed({ outcome: 'REJECTED', reasonCode: 'must-not-run' });
-        },
-        reconcileAuthorizedExactPriceAction: () => {
-          portCalls += 1;
-          return Effect.succeed({ status: 'ABSENT' });
-        },
-      });
-      const failure = yield* handleManageProductPricesBulk(payload, {
+      const failure = yield* prepareManageProductPricesBulk(payload, {
         actionInvocationId: 'ffffffff-ffff-4fff-8fff-fffffffffff1',
-        addDomainEvent: () => Effect.die('must not add an event'),
-        addOutboxMessage: () => Effect.die('must not add an outbox message'),
         compositionRevision: trusted.compositionRevision,
-        recordAuditEvidence: () => Effect.die('must not record successful evidence'),
-        recordDataAccess: () => Effect.die('must not record data access'),
         scope: {
           authBindingId: 'ffffffff-ffff-4fff-8fff-fffffffffff2',
           authContextRef: 'session:bulk-scope-mismatch',
@@ -432,8 +422,14 @@ describe('Product Price bulk management acceptance', () => {
           principalId: trusted.principalContext.principalId,
           tenantId,
         },
-        services: service,
-      }).pipe(Effect.flip);
+        transaction: () => {
+          portCalls += 1;
+          return Effect.die('must not read owner state');
+        },
+      }).pipe(
+        Effect.provideService(ExternalPriceInputBoundaryFactory, { make: makeExternalPriceInputBoundary }),
+        Effect.flip,
+      );
 
       expect(failure).toBeInstanceOf(ProductPriceBulkRejected);
       expect(failure).toMatchObject({ code: 'BULK_SCOPE_MISMATCH' });

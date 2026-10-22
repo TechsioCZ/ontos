@@ -1,11 +1,18 @@
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import {
+  insideDatabaseTransaction,
+  refuseInsideDatabaseTransaction,
+} from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
+import { prepareRetailProfileParty } from '../../src/profile-service-factory.ts';
+import { PartyRegistryRetailPartyResolverFactory } from '../../src/integrations/party-registry-retail-party-resolver.ts';
 
 import {
   EnsureRetailCustomerProfilePayloadSchema,
   EnsureRetailCustomerProfileRejected,
 } from '../../shared/actions/ensure-retail-customer-profile.ts';
 import type {
+  ProfilePersistenceDependencies,
   ProfilePersistenceScope,
   ProfileScopedRoutineInvoker,
 } from '../../src/persistence/profile-persistence.ts';
@@ -85,19 +92,19 @@ it.effect('requires exact current Party owner evidence before invoking Retail en
       observedValues = values;
     }),
     scope,
-    {
-      resolveRetailParty: (input) => {
-        observedParty = input;
-        return Effect.succeed({
-          outcome: 'CURRENT_PARTY_RESOLVED' as const,
-          partyResourceId: partyId,
-          partyResourceRevision: '7',
-        });
-      },
-    },
   );
+  const prepared: ProfilePersistenceDependencies = {
+    resolveRetailParty: (input) => {
+      observedParty = input;
+      return Effect.succeed({
+        outcome: 'CURRENT_PARTY_RESOLVED' as const,
+        partyResourceId: partyId,
+        partyResourceRevision: '7',
+      });
+    },
+  };
 
-  return services.ensureRetailCustomerProfile.ensure(payload, context).pipe(
+  return services.ensureRetailCustomerProfile.ensure(payload, { ...context, prepared }).pipe(
     Effect.tap((result) =>
       Effect.sync(() => {
         expect(observedParty).toEqual({ partyResourceId: partyId, tenantId });
@@ -123,12 +130,12 @@ it.effect('does not mutate persistence when Party Registry returns an alias or n
       invoked = true;
     }),
     scope,
-    {
-      resolveRetailParty: () => Effect.succeed({ outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const }),
-    },
   );
+  const prepared: ProfilePersistenceDependencies = {
+    resolveRetailParty: () => Effect.succeed({ outcome: 'INVALID_OR_INSUFFICIENT_EVIDENCE' as const }),
+  };
 
-  return Effect.flip(services.ensureRetailCustomerProfile.ensure(payload, context)).pipe(
+  return Effect.flip(services.ensureRetailCustomerProfile.ensure(payload, { ...context, prepared })).pipe(
     Effect.tap((failure) =>
       Effect.sync(() => {
         expect(failure).toBeInstanceOf(EnsureRetailCustomerProfileRejected);
@@ -143,17 +150,17 @@ it.effect('maps owner unavailability to a retryable dependency rejection', () =>
   const services = profilePersistenceServicesForTransaction(
     transactionWith(() => {}),
     scope,
-    {
-      resolveRetailParty: () =>
-        Effect.fail(
-          new ProfilePersistenceDependencyFailure({
-            reason: 'Party Registry unavailable',
-          }),
-        ),
-    },
   );
+  const prepared: ProfilePersistenceDependencies = {
+    resolveRetailParty: () =>
+      Effect.fail(
+        new ProfilePersistenceDependencyFailure({
+          reason: 'Party Registry unavailable',
+        }),
+      ),
+  };
 
-  return Effect.flip(services.ensureRetailCustomerProfile.ensure(payload, context)).pipe(
+  return Effect.flip(services.ensureRetailCustomerProfile.ensure(payload, { ...context, prepared })).pipe(
     Effect.tap((failure) =>
       Effect.sync(() => {
         expect(failure.code).toBe('DEPENDENCY_UNAVAILABLE');
@@ -162,3 +169,39 @@ it.effect('maps owner unavailability to a retryable dependency rejection', () =>
     ),
   );
 });
+
+it.effect('reads Party Registry before the marked owner mutation and replays local evidence inside it', () =>
+  Effect.gen(function* retailPreparationBoundary() {
+    let remoteReads = 0;
+    const prepared = yield* prepareRetailProfileParty(payload, {
+      ...context,
+      compositionRevision: 'a'.repeat(64),
+      transaction: () => Effect.die('Retail Party preparation must not open an owner transaction'),
+    }).pipe(
+      Effect.provideService(PartyRegistryRetailPartyResolverFactory, {
+        make: () => () =>
+          refuseInsideDatabaseTransaction('module-transport', 'test.party-registry').pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                remoteReads += 1;
+              }),
+            ),
+            Effect.as({
+              outcome: 'CURRENT_PARTY_RESOLVED' as const,
+              partyResourceId: partyId,
+              partyResourceRevision: '7',
+            }),
+          ),
+      }),
+    );
+    const services = profilePersistenceServicesForTransaction(
+      transactionWith(() => {}),
+      scope,
+    );
+    const result = yield* services.ensureRetailCustomerProfile
+      .ensure(payload, { ...context, prepared })
+      .pipe(insideDatabaseTransaction('test.retail-profile-ensure'));
+    expect(result.profileRef.resourceId).toBe(profileId);
+    expect(remoteReads).toBe(1);
+  }),
+);

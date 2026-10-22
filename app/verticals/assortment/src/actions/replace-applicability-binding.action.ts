@@ -151,7 +151,7 @@ export const replaceApplicabilityBindingAction = defineAction(
     resultSchema: ReplaceApplicabilityBindingResultSchema,
     schemaVersion: '1',
   },
-  handleReplaceApplicabilityBinding,
+  { write: handleReplaceApplicabilityBinding },
   assortmentPolicyServiceFactory,
 );
 

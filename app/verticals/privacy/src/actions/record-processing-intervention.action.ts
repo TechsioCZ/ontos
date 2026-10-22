@@ -73,7 +73,7 @@ export const recordProcessingInterventionAction = defineAction(
     resultSchema: RecordProcessingInterventionResultSchema,
     schemaVersion: '1',
   },
-  handleRecordProcessingIntervention,
+  { write: handleRecordProcessingIntervention },
   (transaction, scope) =>
     Effect.all(
       {

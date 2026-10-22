@@ -80,7 +80,7 @@ export const reactivateBrandAction = defineAction(
     resultSchema: BrandMutationResultSchema,
     schemaVersion: '1',
   },
-  handleReactivateBrand,
+  { write: handleReactivateBrand },
   (transaction, scope) =>
     brandPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map((services): CapturingBrandPersistence => ({

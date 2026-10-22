@@ -48,7 +48,7 @@ export interface PurchaseApprovalCurrentnessTrustedScope {
 }
 
 export interface PurchaseApprovalCurrentnessService {
-  /** Bind all reads to the same scoped transaction as the Action mutation. */
+  /** Bind owner reads to the scoped routine capability supplied for this evaluation. */
   readonly forTransaction?: <Transaction>(
     transaction: Transaction,
     scope: PurchaseApprovalCurrentnessTrustedScope,

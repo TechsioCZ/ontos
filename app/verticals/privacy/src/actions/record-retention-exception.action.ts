@@ -77,7 +77,7 @@ export const recordRetentionExceptionAction = defineAction(
     resultSchema: RecordRetentionExceptionResultSchema,
     schemaVersion: '1',
   },
-  handleRecordRetentionException,
+  { write: handleRecordRetentionException },
   privacyOperationRepositoryForScope,
 );
 

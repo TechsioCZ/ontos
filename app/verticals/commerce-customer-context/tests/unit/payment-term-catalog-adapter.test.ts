@@ -72,9 +72,9 @@ it('attaches production Payment Terms factories to persistence and the public ca
   const resolutionFactory = getReadServiceFactory(paymentTermsResolutionRead).toString();
 
   expect(changeFactory).toContain('paymentTermsPersistenceForTransaction');
-  expect(changeFactory).toContain('paymentTermCatalogPort');
+  expect(changeFactory).not.toContain('paymentTermCatalogPort');
   expect(retailFactory).toContain('paymentTermsPersistenceForTransaction');
-  expect(retailFactory).toContain('paymentTermCatalogPort');
+  expect(retailFactory).not.toContain('paymentTermCatalogPort');
   expect(resolutionFactory).toContain('paymentTermsPersistenceForTransaction');
   expect(resolutionFactory).toContain('paymentTermCatalogPort');
   expect(getReadServiceFactory(guestPaymentTermsResolutionRead)).toBe(makeGuestPaymentTermsResolutionServices);

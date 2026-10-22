@@ -378,7 +378,7 @@ const generatedBindingAction = defineAction(
     resultSchema: GeneratedBindingResultSchema,
     schemaVersion: '1',
   },
-  () => Effect.succeed({ accepted: true as const }),
+  { write: () => Effect.succeed({ accepted: true as const }) },
 );
 
 const FixtureTsconfigSchema = Schema.Struct({

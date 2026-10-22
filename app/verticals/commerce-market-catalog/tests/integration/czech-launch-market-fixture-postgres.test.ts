@@ -6,7 +6,7 @@ import { expect, it } from 'effect-rstest';
 
 import { CZECH_LAUNCH_COMMERCE_FIXTURE } from '../../../../scripts/czech-launch-commerce-fixture.mts';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler, getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { runActionOwnerSteps, getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import {
@@ -136,7 +136,7 @@ it.live('persists and reads the Czech Launch Market fixture through owner Action
               scope,
               compositionRevision,
             );
-            const result = yield* getActionHandler(createMarketAction)(createPayload, {
+            const result = yield* runActionOwnerSteps(createMarketAction, createPayload, {
               actionInvocationId: createActionInvocationId,
               addDomainEvent: collector.addDomainEvent,
               addOutboxMessage: collector.addOutboxMessage,
@@ -193,7 +193,7 @@ it.live('persists and reads the Czech Launch Market fixture through owner Action
               compositionRevision,
             );
             const services = { ...productionServices, ...storefrontAuthority };
-            const result = yield* getActionHandler(associateStorefrontAction)(associatePayload, {
+            const result = yield* runActionOwnerSteps(associateStorefrontAction, associatePayload, {
               actionInvocationId: associateActionInvocationId,
               addDomainEvent: collector.addDomainEvent,
               addOutboxMessage: collector.addOutboxMessage,

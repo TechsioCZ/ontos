@@ -136,7 +136,7 @@ export const governVariantAllowedValuesAction = defineAction(
     resultSchema: GovernVariantAllowedValuesResultSchema,
     schemaVersion: '1',
   },
-  handleGovernVariantAllowedValues,
+  { write: handleGovernVariantAllowedValues },
   (transaction, scope) =>
     Effect.succeed({
       ...variantAxisPersistenceForScope(transaction, scope),

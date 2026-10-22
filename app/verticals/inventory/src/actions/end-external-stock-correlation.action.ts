@@ -176,7 +176,7 @@ export const endExternalStockCorrelationAction = defineAction(
     resultSchema: EndExternalStockCorrelationResultSchema,
     schemaVersion: '1',
   },
-  handleEndExternalStockCorrelation,
+  { write: handleEndExternalStockCorrelation },
   (transaction, scope) => Effect.succeed(externalStockCorrelationPersistenceForScope(transaction, scope)),
 );
 

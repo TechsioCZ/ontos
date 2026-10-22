@@ -10,7 +10,10 @@ import {
 import { isDatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
 import { findPostgresFailure } from '../database/postgres-failure.ts';
 import { CoreDatabase as CoreDatabaseService } from '../db/client.ts';
+import { ownerTransactionFor } from '../db/owner-transaction.ts';
+import { OwnerTransactionUnavailable } from '../db/owner-transaction-unavailable.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
+import { insideDatabaseTransaction } from '../db/transaction-io-guard.ts';
 import { trustedTransactionTime } from '../operations/transaction-time.ts';
 import type { CoreTransaction } from '../db/types.ts';
 import {
@@ -77,7 +80,7 @@ import {
   getActionDecodedSuccessHook,
   getActionBusinessPermissionTargetResolver,
   getActionAssortmentPermissionTargetResolver,
-  getActionHandler,
+  getActionStages,
   getActionResourcePermissionTargetResolver,
   getActionServiceFactory,
 } from './definition.ts';
@@ -301,8 +304,8 @@ export interface ActionRuntimeOptions {
   readonly resolveCompositionRevision?: (
     principal: TrustedPrincipalContext,
   ) => Effect.Effect<string, ActionTransactionError>;
-  readonly resolveHandler?: typeof getActionHandler;
   readonly resolveServiceFactory?: typeof getActionServiceFactory;
+  readonly resolveStages?: typeof getActionStages;
 }
 
 const logInvocationPersistenceFailure = (
@@ -984,7 +987,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     moduleStateGate,
     ownerAuthorizationOverlay = failClosedOwnerAuthorizationOverlay,
   } = options;
-  const resolveHandler = options.resolveHandler ?? getActionHandler;
+  const resolveStages = options.resolveStages ?? getActionStages;
   const resolveServiceFactory = options.resolveServiceFactory ?? getActionServiceFactory;
   const installScope = options.installScope ?? installOperationalScope;
   const lockCompositionAuthority = options.lockCompositionAuthority ?? lockApplicationCompositionAuthority;
@@ -1766,7 +1769,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       // MCP OAuth connections: the grant's write scope is a policy every Action must pass (ONTOS-MCP-AUTH-DESIGN.md §4.3).
       const connectionPolicies: readonly ActionPolicy<typeof payload, Owner>[] =
         principal.authMethod === 'oauth_connection'
-          ? [connectionScopePolicy as ActionPolicy<typeof payload, Owner>]
+          ? [connectionScopePolicy]
           : [];
       const allowedPolicies = yield* Effect.forEach(
         [...connectionPolicies, ...input.registration.descriptor.policies],
@@ -1788,18 +1791,69 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     );
     const allowedPolicies = yield* authorizeAndEvaluatePolicies();
     const admittedCompositionRevision = yield* resolveCompositionRevision(principal);
-    // The owner adapter's remote inputs (SpiceDB) are fetched before the transaction opens, and only after
-    // Core admitted the composition revision.
-    // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Authorization stays ordered after composition admission.
-    const ownerAuthorizationCheck = yield* ownerAuthorizationOverlay.prepare(
-      Object.freeze({
-        operation: 'action' as const,
-        operationKey: input.registration.descriptor.actionKey,
-        owningModuleKey: input.registration.descriptor.owningModuleKey,
-        scope,
-        targets: frozenOwnerAuthorizationTargets,
-      }),
+
+    /** The owner `prepare` step failed before any transaction: a declared domain error passes, the rest is Core's. */
+    const classifyPrepareFailure = Effect.fn('ActionRuntime.classifyPrepareFailure')(function* classifyPrepareFailure(
+      cause: Cause.Cause<unknown>,
+    ) {
+      const failureReasons = cause.reasons.filter(Cause.isFailReason);
+      const [failureReason] = failureReasons;
+      if (failureReasons.length === cause.reasons.length && failureReason !== undefined) {
+        const decodedDomainError = yield* Effect.option(
+          Schema.decodeUnknownEffect(input.registration.descriptor.domainErrorSchema)(failureReason.error),
+        );
+        if (Option.isSome(decodedDomainError)) {
+          return yield* Effect.fail(decodedDomainError.value);
+        }
+        if (Schema.is(OperationContextUnavailable)(failureReason.error)) {
+          return yield* failureReason.error;
+        }
+        if (Schema.is(OwnerTransactionUnavailable)(failureReason.error)) {
+          yield* Effect.logError('Action prepare owner transaction failed', cause);
+          return yield* transactionFailure();
+        }
+      }
+      if (cause.reasons.some(Cause.isInterruptReason)) {
+        return yield* Effect.interrupt;
+      }
+      yield* Effect.logError('Unexpected Action prepare defect', cause);
+      return yield* makeHandlerExecutionError();
+    });
+    // Before BEGIN: the owner adapter's remote inputs (SpiceDB) and the owner `prepare` step (SpiceDB, remote owner
+    // calls, and short owner transactions), both only after Core admitted the composition revision.
+    const [ownerAuthorizationCheck, preparedExit] = yield* Effect.all(
+      [
+        ownerAuthorizationOverlay.prepare(
+          Object.freeze({
+            operation: 'action' as const,
+            operationKey: input.registration.descriptor.actionKey,
+            owningModuleKey: input.registration.descriptor.owningModuleKey,
+            scope,
+            targets: frozenOwnerAuthorizationTargets,
+          }),
+        ),
+        Effect.suspend(() =>
+          resolveStages(input.registration)(
+            payload,
+            Object.freeze({
+              actionInvocationId: invocation.actionInvocationId,
+              compositionRevision: admittedCompositionRevision,
+              scope,
+              transaction: ownerTransactionFor({
+                admit: (transaction) => lockCompositionAuthority(transaction, admittedCompositionRevision, 'read'),
+                executor: database.executor,
+                operationKey: input.registration.descriptor.actionKey,
+                scope,
+              }),
+            }),
+          ),
+        ).pipe(Effect.exit),
+      ],
+      { concurrency: 2 },
     );
+    const ownerSteps = Exit.isSuccess(preparedExit)
+      ? preparedExit.value
+      : yield* classifyPrepareFailure(preparedExit.cause);
 
     const executeTransactionAndHandleExit = Effect.fn('ActionRuntime.executeTransactionAndHandleExit')(
       function* executeTransactionAndHandleExitEffect() {
@@ -1877,7 +1931,6 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           );
           const serviceFactory = resolveServiceFactory(input.registration);
           const services = yield* serviceFactory(scopedTransaction, scope, admittedCompositionRevision);
-          const handler = resolveHandler(input.registration);
 
           const collector = createActionCollector(
             input.registration.descriptor.domainEvents,
@@ -1896,7 +1949,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             services,
           });
 
-          const handlerExit = yield* Effect.exit(Effect.suspend(() => handler(payload, handlerContext)));
+          const handlerExit = yield* Effect.exit(ownerSteps.write(handlerContext));
 
           if (Exit.isFailure(handlerExit)) {
             const failureReasons = handlerExit.cause.reasons.filter(Cause.isFailReason);
@@ -2028,7 +2081,12 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               const transactionExit = yield* Effect.exit(
                 restore(
                   database.executor.transaction((transaction) =>
-                    transactionProgram(transaction).pipe(Effect.onExit((exit) => Ref.set(transactionBodyExit, exit))),
+                    transactionProgram(transaction).pipe(
+                      // Between BEGIN and COMMIT nothing reaches SpiceDB, a module, the network, or a second
+                      // pooled connection: owner remote work belongs in `prepare` or `finish`.
+                      insideDatabaseTransaction(input.registration.descriptor.actionKey),
+                      Effect.onExit((exit) => Ref.set(transactionBodyExit, exit)),
+                    ),
                   ),
                 ),
               );
@@ -2071,7 +2129,21 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             }),
           ),
         );
+        /** Owner compensation for what `prepare` reserved; it never fails the caller's outcome. */
+        const abandonOwnerWork = Effect.fn('ActionRuntime.abandonOwnerWork')(function* abandonOwnerWork() {
+          const abandonExit = yield* Effect.exit(ownerSteps.abandon);
+          if (Exit.isFailure(abandonExit)) {
+            yield* Effect.logError('Action abandon step failed after the transaction did not commit', abandonExit.cause);
+          }
+        });
         if (Exit.isFailure(transactionOutcomeExit)) {
+          // An indeterminate commit may have committed: compensating could contradict committed owner state.
+          const indeterminate = transactionOutcomeExit.cause.reasons.some(
+            (reason) => Cause.isFailReason(reason) && Schema.is(ActionCommitIndeterminate)(reason.error),
+          );
+          if (!indeterminate) {
+            yield* abandonOwnerWork();
+          }
           const ownerDenied = transactionOutcomeExit.cause.reasons.some(
             (reason) => Cause.isFailReason(reason) && Schema.is(ActionPermissionDenied)(reason.error),
           );
@@ -2082,7 +2154,13 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         }
         const transactionResult = transactionOutcomeExit.value;
         if (Schema.is(CommittedActionDomainRejectionSchema)(transactionResult)) {
+          yield* abandonOwnerWork();
           return yield* Effect.fail(getCommittedActionDomainError<DomainErrorSchema['Type']>(transactionResult));
+        }
+        // After COMMIT: the owner `finish` step. The Action has committed, so its failure is logged, never raised.
+        const finishExit = yield* Effect.exit(ownerSteps.finish(transactionResult));
+        if (Exit.isFailure(finishExit)) {
+          yield* Effect.logError('Action finish step failed after commit', finishExit.cause);
         }
         return transactionResult;
       },

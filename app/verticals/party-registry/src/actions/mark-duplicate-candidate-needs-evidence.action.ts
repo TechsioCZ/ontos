@@ -42,7 +42,7 @@ export const markDuplicateCandidateNeedsEvidenceAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'review_party_identity',
   },
-  handleDuplicateCaseResolution,
+  { write: handleDuplicateCaseResolution },
   (transaction, scope) => duplicateCaseResolutionService(transaction, scope.tenantId, 'NEEDS_EVIDENCE'),
 );
 // <generated-outbox-message-exports>

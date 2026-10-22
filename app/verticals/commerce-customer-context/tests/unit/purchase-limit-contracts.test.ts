@@ -1,8 +1,11 @@
-import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { PrincipalEligibility, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
-import { Predicate, Schema } from 'effect';
-import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { Effect, Option, Predicate, Schema } from 'effect';
+import {
+  getActionBusinessPermissionTargetResolver,
+  runActionOwnerSteps,
+} from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { getReadPermissionTargetResolver } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { PurchaseLimitEvaluationRequestSchema } from '../../shared/apis/purchase-limit-evaluation.ts';
 import { PurchaseLimitPolicyReadRequestSchema } from '../../shared/apis/purchase-limit-policy-read.ts';
@@ -16,8 +19,14 @@ import {
   ChangePrincipalPurchaseLimitOverridePayloadSchema,
   changePrincipalPurchaseLimitOverrideAction,
 } from '../../src/actions/change-principal-purchase-limit-override.action.ts';
+import { PurchaseLimitPolicyServiceFactory } from '../../shared/domain/purchase-limit-policy.ts';
 import { purchaseLimitEvaluationRead } from '../../src/api/purchase-limit-evaluation.read.ts';
 import { purchaseLimitPolicyReadRead } from '../../src/api/purchase-limit-policy-read.read.ts';
+import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
+import {
+  OpenDatabaseTransaction,
+  refuseInsideDatabaseTransaction,
+} from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
@@ -237,3 +246,81 @@ it('publishes only exact safe Purchase Limit invalidation facts', () => {
     expect(message.producerModuleKey).toBe('commerce.customer-context');
   }
 });
+
+it.effect('resolves Principal eligibility before BEGIN and retains fail-closed override errors', () =>
+  Effect.gen(function* principalEligibilityPreparation() {
+    const payload = Schema.decodeUnknownSync(ChangePrincipalPurchaseLimitOverridePayloadSchema)({
+      change: { _tag: 'CLEAR' },
+      counterpartyRef,
+      expectedRevision: null,
+      principalRef,
+      reason: 'Remove individual override',
+    });
+    for (const decision of ['eligible', 'ineligible', 'unavailable'] as const) {
+      let eligibilityCalls = 0;
+      let mutationCalls = 0;
+      const collector = createActionCollector(
+        changePrincipalPurchaseLimitOverrideAction.descriptor.domainEvents,
+        'commerce.customer-context',
+        changePrincipalPurchaseLimitOverrideAction.descriptor.accessEvidencePolicy,
+        changePrincipalPurchaseLimitOverrideAction.descriptor.auditEvidenceSchema,
+      );
+      const result = yield* runActionOwnerSteps(changePrincipalPurchaseLimitOverrideAction, payload, {
+        actionInvocationId: 'principal-override-action',
+        addDomainEvent: collector.addDomainEvent,
+        addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision: 'a'.repeat(64),
+        recordAuditEvidence: collector.recordAuditEvidence,
+        recordDataAccess: collector.recordDataAccess,
+        scope,
+        services: {
+          policy: {
+            changeCounterpartyPolicy: () => Effect.die('Unexpected default mutation'),
+            changePrincipalOverride: (command) =>
+              Effect.gen(function* mutateOverride() {
+                expect(Option.isSome(yield* Effect.service(OpenDatabaseTransaction))).toBe(true);
+                expect(eligibilityCalls).toBe(1);
+                expect(command.actionInvocationId).toBe('principal-override-action');
+                expect(command.actorPrincipalId).toBe(scope.principalId);
+                mutationCalls += 1;
+                return { currentPolicy: null, previousPolicy: null, status: 'UNCHANGED' as const };
+              }),
+            readCurrent: () => Effect.die('Unexpected policy read'),
+          },
+        },
+      }).pipe(
+        Effect.provideService(PurchaseLimitPolicyServiceFactory, {
+          make: () => Effect.die('Write services are supplied explicitly'),
+        }),
+        Effect.provideService(PrincipalEligibility, {
+          resolve: (target) =>
+            refuseInsideDatabaseTransaction('pool-acquisition', 'Principal eligibility pool').pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  eligibilityCalls += 1;
+                  return { decision, principal: target, reason: 'indeterminate' as const };
+                }),
+              ),
+            ),
+        }),
+        Effect.result,
+      );
+      expect(eligibilityCalls).toBe(1);
+      if (decision === 'eligible') {
+        expect(result).toMatchObject({ _tag: 'Success', success: { status: 'UNCHANGED' } });
+        expect(mutationCalls).toBe(1);
+        expect(collector.snapshot().dataAccessEvents).toHaveLength(1);
+      } else {
+        expect(result).toMatchObject({
+          _tag: 'Failure',
+          failure: {
+            _tag: decision === 'ineligible' ? 'PurchaseLimitPrincipalIneligible' : 'PurchaseLimitDependencyUnavailable',
+          },
+        });
+        expect(mutationCalls).toBe(0);
+        expect(collector.snapshot().dataAccessEvents).toHaveLength(0);
+        expect(collector.snapshot().auditEvidence).toEqual({});
+      }
+    }
+  }),
+);

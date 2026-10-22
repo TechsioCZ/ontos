@@ -10,8 +10,8 @@ import { describe, expect, it } from 'effect-rstest';
 
 import {
   buildCurrentPricingDiscountNonSelection,
-  currentPricingDecisionWholeEvaluationAdaptersForScope,
-  currentPricingDecisionWholeEvaluationForScope,
+  currentPricingDecisionWholeEvaluationAdaptersPerOwnerTransaction,
+  currentPricingDecisionWholeEvaluationPerOwnerTransaction,
   makeCurrentPricingDecisionAttemptSource,
   makeCurrentPricingDecisionZeroFloorSetReader,
 } from '../../src/integrations/current-pricing-decision-whole-evaluation-adapters.ts';
@@ -67,12 +67,14 @@ const transaction = scopedRoutineInvokerFromTransaction(() => Effect.succeed([])
 const externalOwnerEvidenceValidation = makePricingExternalOwnerEvidenceValidationService();
 
 const adaptersForScope = () =>
-  currentPricingDecisionWholeEvaluationAdaptersForScope(transaction, scope, 'a'.repeat(64)).pipe(
-    Effect.provideService(PricingExternalOwnerEvidenceValidation, externalOwnerEvidenceValidation),
-  );
+  currentPricingDecisionWholeEvaluationAdaptersPerOwnerTransaction(
+    (use) => use(transaction),
+    scope,
+    'a'.repeat(64),
+  ).pipe(Effect.provideService(PricingExternalOwnerEvidenceValidation, externalOwnerEvidenceValidation));
 
 const evaluationForScope = () =>
-  currentPricingDecisionWholeEvaluationForScope(transaction, scope, 'a'.repeat(64)).pipe(
+  currentPricingDecisionWholeEvaluationPerOwnerTransaction((use) => use(transaction), scope, 'a'.repeat(64)).pipe(
     Effect.provideService(PricingExternalOwnerEvidenceValidation, externalOwnerEvidenceValidation),
   );
 
@@ -487,7 +489,7 @@ describe('Current Pricing Decision whole-evaluation production adapters #790', (
       // SAFETY: This focused reader test invokes only readCurrentSet; every unrelated persistence method is unreachable.
       const reader = makeCurrentPricingDecisionZeroFloorSetReader({
         readCurrentSet,
-      } as ZeroFloorAuthorizationPersistence);
+      });
       const { loaded } = yield* attemptSourceScenario('RESOLVED');
       const { attempt } = loaded;
       const reads = yield* reader.loadCurrent(request, attempt, composition);

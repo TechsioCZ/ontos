@@ -149,6 +149,6 @@ export const reviseStorefrontApplicationAction = defineAction(
     resultSchema: ReviseStorefrontApplicationResultSchema,
     schemaVersion: '1',
   },
-  handleReviseStorefrontApplication,
+  { write: handleReviseStorefrontApplication },
   storefrontAdministrationService,
 );

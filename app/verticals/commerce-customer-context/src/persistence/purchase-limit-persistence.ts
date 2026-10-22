@@ -1,5 +1,5 @@
 import { defineScopedRoutine } from '@app/core-runtime';
-import type { OperationalScope, ScopedRoutineInvocationError, ScopedTransactionExecutor } from '@app/core-runtime';
+import type { OperationalScope, ScopedRoutineInvocationError, ScopedRoutineInvoker } from '@app/core-runtime';
 import { DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
 
 import { PurchaseApprovalTriggerEvidenceSourceFactory } from '../actions/trigger-purchase-approval.action.ts';
@@ -346,7 +346,7 @@ const policySourceRevision = (
 };
 
 export const readCurrentPurchaseLimitPolicyState = (
-  transaction: ScopedTransactionExecutor,
+  transaction: ScopedRoutineInvoker,
   input: ReadCurrentPurchaseLimitPolicyInput,
 ): Effect.Effect<CurrentPurchaseLimitPolicyState, PurchaseLimitDependencyUnavailable> => {
   if (input.counterpartyRef.tenantId !== input.tenantId || input.principalRef.tenantId !== input.tenantId) {
@@ -411,7 +411,7 @@ export const readCurrentPurchaseLimitPolicyState = (
 };
 
 export const readCurrentPurchaseLimitPolicy = (
-  transaction: ScopedTransactionExecutor,
+  transaction: ScopedRoutineInvoker,
   input: ReadCurrentPurchaseLimitPolicyInput,
 ): Effect.Effect<EffectivePurchaseLimitPolicyResult, PurchaseLimitDependencyUnavailable> =>
   readCurrentPurchaseLimitPolicyState(transaction, input).pipe(Effect.map(({ result }) => result));
@@ -435,7 +435,7 @@ type PurchaseLimitPolicyPersistenceError =
   | PurchaseLimitSubjectScopeMismatch;
 
 const changePurchaseLimitPolicy = (
-  transaction: ScopedTransactionExecutor,
+  transaction: ScopedRoutineInvoker,
   input: ChangeCounterpartyPurchaseLimitInput,
   principalId: null | string,
 ): Effect.Effect<PurchaseLimitPolicyMutationResult, PurchaseLimitPolicyPersistenceError> => {
@@ -499,13 +499,13 @@ const changePurchaseLimitPolicy = (
 };
 
 export const changeCounterpartyPurchaseLimit = (
-  transaction: ScopedTransactionExecutor,
+  transaction: ScopedRoutineInvoker,
   input: ChangeCounterpartyPurchaseLimitInput,
 ): Effect.Effect<PurchaseLimitPolicyMutationResult, PurchaseLimitPolicyPersistenceError> =>
   changePurchaseLimitPolicy(transaction, input, null);
 
 export const changePrincipalPurchaseLimitOverride = (
-  transaction: ScopedTransactionExecutor,
+  transaction: ScopedRoutineInvoker,
   input: ChangePrincipalPurchaseLimitOverrideInput,
 ): Effect.Effect<PurchaseLimitPolicyMutationResult, PurchaseLimitPolicyPersistenceError> => {
   if (input.principalRef.tenantId !== input.counterpartyRef.tenantId) {
@@ -515,7 +515,7 @@ export const changePrincipalPurchaseLimitOverride = (
 };
 
 const purchaseLimitPolicyServiceForTransaction = (
-  transaction: ScopedTransactionExecutor,
+  transaction: ScopedRoutineInvoker,
   scope: OperationalScope & { readonly legalEntityId: string },
 ): PurchaseLimitPolicyService => ({
   changeCounterpartyPolicy: (input) => {
@@ -549,8 +549,8 @@ const policyFactory: PurchaseLimitPolicyServiceFactoryContract = {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(dependencyUnavailable('commerce.customer-context.purchase-limit-operational-scope'));
     }
-    // eslint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Core invokes owner factories only with its branded, scope-installed transaction; expires: 2027-03-31.
-    const scopedTransaction = transaction as ScopedTransactionExecutor;
+    // eslint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Owner factories receive the scoped routine capability, either from Core or the short owner-transaction preparation adapter; expires: 2027-03-31.
+    const scopedTransaction = transaction as ScopedRoutineInvoker;
     return Effect.succeed(
       purchaseLimitPolicyServiceForTransaction(scopedTransaction, {
         ...scope,
@@ -730,7 +730,7 @@ const comparableForPolicy = (
   );
 
 export const purchaseLimitEvaluationSourceForTransaction = (
-  transaction: ScopedTransactionExecutor,
+  transaction: ScopedRoutineInvoker,
   scope: OperationalScope & {
     readonly legalEntityId: string;
     readonly trustedStorefrontId: string;
@@ -869,7 +869,7 @@ const sameProfileRef = (
  * promoted from an unverified payload.
  */
 export const purchaseApprovalTriggerEvidenceSourceForTransaction = (
-  transaction: ScopedTransactionExecutor,
+  transaction: ScopedRoutineInvoker,
   scope: OperationalScope & {
     readonly legalEntityId: string;
     readonly trustedStorefrontId: string;
@@ -1169,8 +1169,8 @@ const evaluationSourceFactoryForCurrentness = (
         ),
       );
     }
-    // eslint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Core invokes owner factories only with its branded, scope-installed transaction; expires: 2027-03-31.
-    const scopedTransaction = transaction as ScopedTransactionExecutor;
+    // eslint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Owner factories receive the scoped routine capability, either from Core or the short owner-transaction preparation adapter; expires: 2027-03-31.
+    const scopedTransaction = transaction as ScopedRoutineInvoker;
     return Effect.succeed(
       purchaseLimitEvaluationSourceForTransaction(
         scopedTransaction,
@@ -1199,8 +1199,8 @@ const approvalEvidenceFactoryForCurrentness = (
         ),
       );
     }
-    // eslint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Core invokes owner factories only with its branded, scope-installed transaction; expires: 2027-03-31.
-    const scopedTransaction = transaction as ScopedTransactionExecutor;
+    // eslint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Owner factories receive the scoped routine capability, either from Core or the short owner-transaction preparation adapter; expires: 2027-03-31.
+    const scopedTransaction = transaction as ScopedRoutineInvoker;
     const resolveCounterpartyRole = roleResolverFactory.make({
       legalEntityId: scope.legalEntityId,
       requestCorrelation: scope.correlationId,

@@ -76,7 +76,7 @@ export const createConfigurationUnitAction = defineAction(
     resultSchema: CreateConfigurationUnitResultSchema,
     schemaVersion: '1',
   },
-  handleCreateConfigurationUnit,
+  { write: handleCreateConfigurationUnit },
   (transaction, scope) =>
     configurationUnitPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map((services): CreateConfigurationUnitServices => ({

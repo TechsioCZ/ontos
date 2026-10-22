@@ -122,7 +122,7 @@ export const updatePartyAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_party_identity',
   },
-  handle,
+  { write: handle },
   (transaction, scope) =>
     Effect.succeed({
       update: (payload: UpdatePartyPayload, actionInvocationId: string) =>

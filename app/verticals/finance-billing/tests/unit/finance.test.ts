@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'effect-rstest';
-import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { runActionOwnerSteps } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { insideDatabaseTransaction } from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
+import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
+import type { ScopedTransactionExecutor } from '@app/core-runtime';
 import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
 import { ActionPermissionCheckError, OperationContextUnavailable, ReadRuntime } from '@app/core-runtime';
 import { ActionPermission } from '@app/core-runtime/actions/runtime-wiring';
@@ -455,41 +458,36 @@ const paymentTestDependencies = Layer.mergeAll(
 
 it.layer(paymentTestDependencies)('Finance Action lifecycle', (suite) => {
   suite.effect(
-    'payment Action commits through the real Core collector and response codec, then rejects stale revision',
+    'payment Action prepares outside BEGIN, writes through the response codec, then rejects stale revision',
     () =>
       Effect.gen(function* paymentActionCollectorRegression() {
         let storedState = state;
         let revision = 0;
-        const harness = yield* makeActionTestHarness({
-          actionPermission: 'allowed',
-          services: [
-            bindActionTestServices(applyCommandAction, {
-              // @effect-diagnostics-next-line syncToSucceed:off
-              loadDocument: () => Effect.sync((): undefined => undefined),
-              loadStateRow: () => Effect.succeed(undefined),
-              writeDocument: () => Effect.void,
-              load: () => Effect.succeed({ revision, state: storedState }),
-              save: (nextState, expectedRevision) =>
-                requireFinanceRevision(revision, expectedRevision).pipe(
-                  Effect.flatMap(() => Schema.encodeEffect(FinanceStateSchema)(nextState)),
-                  Effect.flatMap(Schema.decodeEffect(FinanceStateSchema)),
-                  Effect.mapError(
-                    () =>
-                      new FinancePersistenceUnavailable({
-                        code: 'finance_persistence_unavailable',
-                        reason: 'Test persistence codec failed',
-                      }),
-                  ),
-                  Effect.map((decoded) => {
-                    storedState = decoded;
-                    revision += 1;
-                    return revision;
+        const services = {
+          // @effect-diagnostics-next-line effectSucceedWithVoid:off -- This port returns an absent document, not void.
+          loadDocument: () => Effect.succeed(undefined),
+          // @effect-diagnostics-next-line effectSucceedWithVoid:off -- This port returns an absent state row, not void.
+          loadStateRow: () => Effect.succeed(undefined),
+          writeDocument: () => Effect.void,
+          load: () => Effect.succeed({ revision, state: storedState }),
+          save: (nextState: FinanceState, expectedRevision: number) =>
+            requireFinanceRevision(revision, expectedRevision).pipe(
+              Effect.flatMap(() => Schema.encodeEffect(FinanceStateSchema)(nextState)),
+              Effect.flatMap(Schema.decodeEffect(FinanceStateSchema)),
+              Effect.mapError(
+                () =>
+                  new FinancePersistenceUnavailable({
+                    code: 'finance_persistence_unavailable',
+                    reason: 'Test persistence codec failed',
                   }),
-                ),
-              validators,
-            }),
-          ],
-        });
+              ),
+              Effect.map((decoded) => {
+                storedState = decoded;
+                revision += 1;
+                return revision;
+              }),
+            ),
+        };
         const principal = {
           authBindingId: 'a0000000-0000-4000-8000-000000000003',
           authContextRef: 'better-auth-session:finance-collector-test',
@@ -509,26 +507,57 @@ it.layer(paymentTestDependencies)('Finance Action lifecycle', (suite) => {
           },
           expectedRevision: 0,
         };
-        const result = yield* harness.runtime.runAction({
-          payload,
-          principal,
-          registration: applyCommandAction,
-          transport: { correlationId: 'finance-payment-action', idempotencyKey: 'finance-payment-action-1' },
-        });
+        const scope = {
+          ...(yield* Schema.decodeEffect(TrustedPrincipalContextSchema)(principal)),
+          correlationId: 'finance-payment-action',
+        };
+        // SAFETY: Only prepare's state read uses this executor; the typed services above implement every write.
+        // oxlint-disable-next-line anti-slop/no-chained-type-assertions, typescript/no-unsafe-type-assertion -- This local fixture intentionally implements only the owner state read.
+        const transaction = {
+          scope,
+          select: () => ({
+            from: () => ({
+              where: () => ({
+                limit: () =>
+                  Schema.encodeEffect(FinanceStateSchema)(storedState).pipe(
+                    Effect.map((encoded) => [{ revision, state: encoded }]),
+                    Effect.orDie,
+                  ),
+              }),
+            }),
+          }),
+        } as unknown as ScopedTransactionExecutor;
+        let dataAccessEvents = 0;
+        const context = {
+          actionInvocationId: '50000000-0000-4000-8000-000000000001',
+          compositionRevision: 'finance-test-composition',
+          scope,
+          services,
+          transaction: <Value, Failure, Requirements>(
+            step: (transaction: ScopedTransactionExecutor) => Effect.Effect<Value, Failure, Requirements>,
+          ) => step(transaction).pipe(insideDatabaseTransaction('finance-short-read')),
+          addDomainEvent: () => Effect.die('Payment observations declare no Domain Events'),
+          addOutboxMessage: () => Effect.void,
+          recordAuditEvidence: () => Effect.void,
+          recordDataAccess: () =>
+            Effect.sync(() => {
+              dataAccessEvents += 1;
+            }),
+        };
+        const decodedPayload = yield* Schema.decodeUnknownEffect(applyCommandAction.descriptor.payloadSchema)(payload);
+        const written = yield* runActionOwnerSteps(applyCommandAction, decodedPayload, context);
+        const encoded = yield* Schema.encodeUnknownEffect(applyCommandAction.descriptor.resultSchema)(written);
+        const result = yield* Schema.decodeEffect(applyCommandAction.descriptor.resultSchema)(encoded);
         expect(result.invoice!.paymentState).toBe('PAID');
         expect(result.invoice!.accountingSyncState).toBe('FAILED');
         expect(storedState.paymentObservations).toHaveLength(1);
-        expect(harness.snapshot().committed).toHaveLength(1);
-        expect(harness.snapshot().committed[0]?.evidence.dataAccessEvents).toHaveLength(1);
+        expect(dataAccessEvents).toBe(1);
         expect(revision).toBe(1);
-        const stale = yield* harness.runtime
-          .runAction({
-            payload: { ...payload, command: { ...payload.command, resultId: 'another-payment' } },
-            principal,
-            registration: applyCommandAction,
-            transport: { correlationId: 'finance-stale-action', idempotencyKey: 'finance-payment-action-2' },
-          })
-          .pipe(Effect.flip);
+        const stalePayload = yield* Schema.decodeUnknownEffect(applyCommandAction.descriptor.payloadSchema)({
+          ...payload,
+          command: { ...payload.command, resultId: 'another-payment' },
+        });
+        const stale = yield* runActionOwnerSteps(applyCommandAction, stalePayload, context).pipe(Effect.flip);
         expect(Schema.is(FinanceConflict)(stale)).toBe(true);
         expect(storedState.paymentObservations).toHaveLength(1);
         expect(revision).toBe(1);

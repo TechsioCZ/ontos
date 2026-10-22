@@ -106,7 +106,7 @@ export const createDsrCaseAction = defineAction(
     resultSchema: CreateDsrCaseResultSchema,
     schemaVersion: '1',
   },
-  handleCreateDsrCase,
+  { write: handleCreateDsrCase },
   (transaction, scope) =>
     Effect.all(
       {

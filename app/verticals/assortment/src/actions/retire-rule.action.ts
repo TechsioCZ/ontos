@@ -114,7 +114,7 @@ export const retireRuleAction = defineAction(
     resultSchema: RetireRuleResultSchema,
     schemaVersion: '1',
   },
-  handleRetireRule,
+  { write: handleRetireRule },
   assortmentPolicyServiceFactory,
 );
 

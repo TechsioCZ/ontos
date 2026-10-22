@@ -818,7 +818,7 @@ it.live('advances past a hash in a regular expression without skipping boundary 
     const validSource = 'export const isHex = (value: string) => /^#[0-9a-fA-F]{6}$/u.test(value);';
     yield* write(root, file, validSource);
     yield* checkModuleEntrypointBoundaries(root);
-    yield* write(root, file, `${validSource}\ngetActionHandler(registration);`);
+    yield* write(root, file, `${validSource}\ngetActionStages(registration);`);
     expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toMatch(
       /private handler accessors.*module-state gate/u,
     );
@@ -2405,7 +2405,7 @@ const violations = [
   {
     expected: /private handler accessors.*module-state gate/u,
     file: 'apps/shell-super-app/src/direct-handler.ts',
-    source: `getActionHandler /* bypass attempt */ (registration);`,
+    source: `getActionStages /* bypass attempt */ (registration);`,
   },
   {
     expected: /module APIs require an approved Codesmith generator.*ModuleEntrypointGateway/u,

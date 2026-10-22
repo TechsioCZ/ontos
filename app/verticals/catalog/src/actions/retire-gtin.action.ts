@@ -76,7 +76,7 @@ export const retireGtinAction: ActionRegistration<
     resultSchema: RetireGtinResultSchema,
     schemaVersion: '1',
   },
-  handleRetireGtin,
+  { write: handleRetireGtin },
   (transaction, scope) =>
     gtinServicesForScope(transaction, scope).pipe(
       Effect.map((services): RetireGtinServices => ({

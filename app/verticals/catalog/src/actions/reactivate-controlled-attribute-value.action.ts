@@ -109,7 +109,7 @@ export const reactivateControlledAttributeValueAction = defineAction(
     resultSchema: ReactivateControlledAttributeValueResultSchema,
     schemaVersion: '1',
   },
-  handleReactivateControlledAttributeValue,
+  { write: handleReactivateControlledAttributeValue },
   (transaction, scope) =>
     attributePersistenceForScope(transaction, scope).pipe(
       Effect.map(

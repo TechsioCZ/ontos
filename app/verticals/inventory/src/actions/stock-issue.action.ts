@@ -110,7 +110,7 @@ export const stockIssueAction = defineAction(
     resultSchema: StockIssueResultSchema,
     schemaVersion: '1',
   },
-  handleStockIssue,
+  { write: handleStockIssue },
   (transaction, scope) =>
     Effect.succeed(
       makePhysicalStockEffectRequestService({

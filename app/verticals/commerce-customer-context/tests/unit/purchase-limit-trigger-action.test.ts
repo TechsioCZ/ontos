@@ -4,7 +4,7 @@ import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import {
   getActionBusinessPermissionTargetResolver,
-  getActionHandler,
+  runActionOwnerSteps,
 } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
   TriggerPurchaseApprovalPayloadSchema,
@@ -26,6 +26,7 @@ import {
   PurchaseApprovalTriggerEvidenceSourceFactory,
   triggerPurchaseApprovalAction,
 } from '../../src/actions/trigger-purchase-approval.action.ts';
+import { refuseInsideDatabaseTransaction } from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
@@ -171,7 +172,6 @@ it.effect('collects audit/read evidence and publishes the owner-returned approva
     let submissionCalls = 0;
     let boundInvocationId: string | undefined;
     let publishedRequestRef: string | undefined;
-    const handler = getActionHandler(triggerPurchaseApprovalAction);
     const boundSubmission = {
       submit: ({ idempotencyKey }: { readonly idempotencyKey: string }) =>
         Effect.sync(() => {
@@ -187,7 +187,7 @@ it.effect('collects audit/read evidence and publishes the owner-returned approva
         return boundSubmission;
       },
     };
-    const result = yield* handler(payload, {
+    const result = yield* runActionOwnerSteps(triggerPurchaseApprovalAction, payload, {
       actionInvocationId: 'purchase-approval-trigger:1',
       addDomainEvent: ({ payloadJson, subjectResourceId }) =>
         Effect.sync(() => {
@@ -213,24 +213,33 @@ it.effect('collects audit/read evidence and publishes the owner-returned approva
         }),
       scope,
       services: {
-        evaluationSource: { loadCurrent: () => Effect.succeed(evaluationInput) },
-        evidence: {
-          loadCurrent: () =>
-            Effect.succeed({
-              currentSourceRevisions: sourceRevisions,
-              profileEvidence,
-              proposalEvidence,
-            }),
-        },
         submission,
       },
     }).pipe(
       Effect.provideService(PurchaseApprovalSubmission, submission),
       Effect.provideService(PurchaseApprovalTriggerEvidenceSourceFactory, {
-        make: () => Effect.die('Factory requirements are not used by the extracted handler'),
+        make: () =>
+          refuseInsideDatabaseTransaction('module-transport', 'trigger evidence factory').pipe(
+            Effect.as({
+              loadCurrent: () =>
+                Effect.succeed({
+                  currentSourceRevisions: sourceRevisions,
+                  profileEvidence,
+                  proposalEvidence,
+                }),
+            }),
+          ),
       }),
       Effect.provideService(PurchaseLimitEvaluationSourceFactory, {
-        make: () => Effect.die('Factory requirements are not used by the extracted handler'),
+        make: () =>
+          refuseInsideDatabaseTransaction('module-transport', 'trigger evaluation factory').pipe(
+            Effect.as({
+              loadCurrent: () =>
+                refuseInsideDatabaseTransaction('module-transport', 'current purchase evaluation').pipe(
+                  Effect.as(evaluationInput),
+                ),
+            }),
+          ),
       }),
     );
 
@@ -249,7 +258,6 @@ it.effect('collects audit/read evidence and publishes the owner-returned approva
 it.effect('fails closed when a source changes between evaluation and final evidence load', () =>
   Effect.gen(function* rejectsCurrentnessRace() {
     let submissionCalls = 0;
-    const handler = getActionHandler(triggerPurchaseApprovalAction);
     const submission = {
       submit: () =>
         Effect.sync(() => {
@@ -257,7 +265,7 @@ it.effect('fails closed when a source changes between evaluation and final evide
           return { _tag: 'APPROVAL_SUBMITTED' as const, approvalRequestRef: 'approval:race' };
         }),
     };
-    const result = yield* handler(payload, {
+    const result = yield* runActionOwnerSteps(triggerPurchaseApprovalAction, payload, {
       actionInvocationId: 'purchase-approval-trigger:race',
       addDomainEvent: () => Effect.die('No event should be emitted after a failed currentness check'),
       addOutboxMessage: () => Effect.die('No outbox message should be emitted after a failed currentness check'),
@@ -266,26 +274,35 @@ it.effect('fails closed when a source changes between evaluation and final evide
       recordDataAccess: () => Effect.void,
       scope,
       services: {
-        evaluationSource: { loadCurrent: () => Effect.succeed(evaluationInput) },
-        evidence: {
-          loadCurrent: () =>
-            Effect.succeed({
-              currentSourceRevisions: sourceRevisions.map((candidate) =>
-                candidate.source === 'storefront-context' ? { ...candidate, revision: 'storefront:2' } : candidate,
-              ),
-              profileEvidence,
-              proposalEvidence,
-            }),
-        },
         submission,
       },
     }).pipe(
       Effect.provideService(PurchaseApprovalSubmission, submission),
       Effect.provideService(PurchaseApprovalTriggerEvidenceSourceFactory, {
-        make: () => Effect.die('Factory requirements are not used by the extracted handler'),
+        make: () =>
+          refuseInsideDatabaseTransaction('module-transport', 'trigger evidence factory').pipe(
+            Effect.as({
+              loadCurrent: () =>
+                Effect.succeed({
+                  currentSourceRevisions: sourceRevisions.map((candidate) =>
+                    candidate.source === 'storefront-context' ? { ...candidate, revision: 'storefront:2' } : candidate,
+                  ),
+                  profileEvidence,
+                  proposalEvidence,
+                }),
+            }),
+          ),
       }),
       Effect.provideService(PurchaseLimitEvaluationSourceFactory, {
-        make: () => Effect.die('Factory requirements are not used by the extracted handler'),
+        make: () =>
+          refuseInsideDatabaseTransaction('module-transport', 'trigger evaluation factory').pipe(
+            Effect.as({
+              loadCurrent: () =>
+                refuseInsideDatabaseTransaction('module-transport', 'current purchase evaluation').pipe(
+                  Effect.as(evaluationInput),
+                ),
+            }),
+          ),
       }),
     );
 

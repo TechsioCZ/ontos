@@ -199,6 +199,6 @@ export const correctPaymentTermAction = defineAction(
     resultSchema: CorrectPaymentTermResultSchema,
     schemaVersion: '1',
   },
-  handleCorrectPaymentTerm,
+  { write: handleCorrectPaymentTerm },
   paymentTermCatalogPersistenceForScope,
 );

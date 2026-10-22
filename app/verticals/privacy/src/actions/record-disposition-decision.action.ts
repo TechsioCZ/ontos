@@ -112,7 +112,7 @@ export const recordDispositionDecisionAction = defineAction(
     resultSchema: RecordDispositionDecisionResultSchema,
     schemaVersion: '1',
   },
-  handleRecordDispositionDecision,
+  { write: handleRecordDispositionDecision },
   (transaction, scope) =>
     Effect.all(
       {

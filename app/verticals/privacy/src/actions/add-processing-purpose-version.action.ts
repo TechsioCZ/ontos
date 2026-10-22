@@ -98,7 +98,7 @@ export const addProcessingPurposeVersionAction = defineAction(
     resultSchema: AddProcessingPurposeVersionResultSchema,
     schemaVersion: '1',
   },
-  handleAddProcessingPurposeVersion,
+  { write: handleAddProcessingPurposeVersion },
   (transaction, scope) =>
     processingPurposeRepositoryForScope(transaction, scope).pipe(Effect.map(({ addVersion }) => ({ addVersion }))),
 );

@@ -1,4 +1,8 @@
 import {
+  insideDatabaseTransaction,
+  refuseInsideDatabaseTransaction,
+} from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
+import {
   PricingCommercialFeeCatalogTargetEvidenceSchema,
   PricingCommercialFeeIdentityKeySchema,
   PricingCommercialFeeScheduleAcknowledgementSchema,
@@ -16,6 +20,7 @@ import {
   DefineCommercialFeePayloadSchema,
   DefineCommercialFeeRejected,
   applyCommercialFeeDefinition,
+  prepareCommercialFeeDefinition,
   defineCommercialFeeAction,
 } from '../../src/actions/define-commercial-fee.action.ts';
 import type { DefineCommercialFeeActionServices } from '../../src/actions/define-commercial-fee.action.ts';
@@ -24,6 +29,7 @@ import {
   ReviseCommercialFeePayloadSchema,
   ReviseCommercialFeeRejected,
   applyCommercialFeeRevision,
+  prepareCommercialFeeRevision,
   reviseCommercialFeeAction,
 } from '../../src/actions/revise-commercial-fee.action.ts';
 import type { ReviseCommercialFeeActionServices } from '../../src/actions/revise-commercial-fee.action.ts';
@@ -35,6 +41,7 @@ import {
 } from '../../shared/domain/catalog-selection-gateway-credential.ts';
 import { commercialFeeCatalogTargetAssessmentPortFromEnvironment } from '../../src/integrations/commercial-fee-catalog-target-evidence.ts';
 import { CurrencySupportPersistenceUnavailable } from '../../src/actions/currency-support-persistence-unavailable.ts';
+import { CommercialFeePersistenceUnavailable } from '../../src/services/commercial-fee-persistence.service.ts';
 import { ProductCommercialFeeBulkUnavailable } from '../../src/services/product-commercial-fee-bulk-rejected.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -400,6 +407,33 @@ describe('Commercial Fee management Actions issue #797', () => {
       }),
     ).toThrow();
   });
+
+  it.effect('prepares exact Catalog evidence without writes and defers both fee mutations to guarded write', () =>
+    Effect.gen(function* feePhases() {
+      const calls: string[] = [];
+      const validateCatalogTarget: DefineCommercialFeeActionServices['validateCatalogTarget'] = () =>
+        refuseInsideDatabaseTransaction('module-transport', 'Commercial Fee Catalog target').pipe(
+          Effect.andThen(() => Effect.sync(() => calls.push('catalog'))),
+          Effect.as(true),
+        );
+      const preparationServices = {
+        loadCurrencySupport: revisionServices(() => Effect.die('not used')).loadCurrencySupport,
+        validateCatalogTarget,
+      };
+      const define = yield* prepareCommercialFeeDefinition(definePayload, trusted, preparationServices);
+      const revise = yield* prepareCommercialFeeRevision(valuePayload, trusted, preparationServices);
+      expect(calls).toEqual(['catalog', 'catalog']);
+      // A failed owner write is enough to prove neither command re-enters remote validation.
+      const failure = new CommercialFeePersistenceUnavailable({ reason: 'scripted owner write failure' });
+      yield* define({
+        define: () => Effect.sync(() => calls.push('define')).pipe(Effect.andThen(Effect.fail(failure))),
+      }).pipe(insideDatabaseTransaction('test.define-fee.write'), Effect.flip);
+      yield* revise({
+        revise: () => Effect.sync(() => calls.push('revise')).pipe(Effect.andThen(Effect.fail(failure))),
+      }).pipe(insideDatabaseTransaction('test.revise-fee.write'), Effect.flip);
+      expect(calls).toEqual(['catalog', 'catalog', 'define', 'revise']);
+    }),
+  );
 
   it.effect('rejects untrusted Tenant/SLE/currency or stale Catalog evidence before persistence', () =>
     Effect.gen(function* exactDefinitionGuards() {

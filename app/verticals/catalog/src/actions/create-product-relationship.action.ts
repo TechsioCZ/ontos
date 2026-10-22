@@ -158,7 +158,7 @@ export const createProductRelationshipAction = defineAction(
     resultSchema: CreateProductRelationshipResultSchema,
     schemaVersion: '1',
   },
-  handleCreateProductRelationship,
+  { write: handleCreateProductRelationship },
   createProductRelationshipResultServiceFactory,
   ({ actionInvocationId, result, services }) => services.captureResult(actionInvocationId, result),
 );

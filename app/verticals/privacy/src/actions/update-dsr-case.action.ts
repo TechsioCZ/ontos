@@ -87,7 +87,7 @@ export const updateDsrCaseAction = defineAction(
     resultSchema: UpdateDsrCaseResultSchema,
     schemaVersion: '1',
   },
-  handleUpdateDsrCase,
+  { write: handleUpdateDsrCase },
   (transaction, scope) =>
     Effect.all(
       {

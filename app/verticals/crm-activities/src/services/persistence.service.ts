@@ -6,7 +6,7 @@ import {
   executePartyDetailWithAuthorization,
 } from '@app/party-registry/api/client';
 import { executeRecordsWithAuthorization as executeWorkRecords } from '@app/work-tasks/clients/records';
-import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import type { ActionPrepareContext, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import type { PartyRef } from '@app/party-registry/resources/party';
 import { and, eq } from 'drizzle-orm';
 import { Context, DateTime, Effect, Match, Option, Schema, Struct } from 'effect';
@@ -309,9 +309,6 @@ const contextGrants = Effect.fn('Relationships.contextGrants')(function* context
   return (permission: ContextGrant) => decisions[permissions.indexOf(permission)]?.decision === 'allowed';
 });
 
-const contextGrant = (scope: OperationalScope, permission: ContextGrant) =>
-  contextGrants(scope, [permission]).pipe(Effect.map((granted) => granted(permission)));
-
 /** What a records read knows before its transaction opens: both grants in one bulk check. */
 export const crmActivitiesRecordsGrants = Effect.fn('Relationships.recordsGrants')(function* recordsGrants(
   scope: OperationalScope,
@@ -393,6 +390,11 @@ export const finishCrmActivitiesRecords = Effect.fn('Relationships.finishRecords
   };
 });
 
+export interface PreparedCommand {
+  readonly canonical: { readonly partyRef: PartyRef };
+  readonly grants: RecordsGrants;
+}
+
 export const persistenceService = Effect.fn('Relationships.persistenceService')(
   function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
     const { legalEntityId } = scope;
@@ -407,9 +409,6 @@ export const persistenceService = Effect.fn('Relationships.persistenceService')(
       });
     }
     const principalEligibility = principalEligibilityForTransaction(transaction);
-    const injectedVerifier = yield* Effect.serviceOption(ActivityReferenceVerifier);
-    const source = yield* makeReferenceGatewayCredentialSource(scope).pipe(Effect.mapError(referenceUnavailable));
-    const verifier = Option.getOrElse(injectedVerifier, () => makeActivityReferenceVerifier(source));
     const whereScope = and(
       eq(relationshipsStates.tenantId, scope.tenantId),
       eq(relationshipsStates.legalEntityId, legalEntityId),
@@ -434,8 +433,9 @@ export const persistenceService = Effect.fn('Relationships.persistenceService')(
       command: ActivityCommand,
       expectedRevision: number,
       resourceId: string,
+      prepared: PreparedCommand,
     ) {
-      if (!(yield* contextGrant(scope, 'write_all'))) {
+      if (!prepared.grants.writeAll) {
         return yield* new ActivityPermissionDenied({
           code: 'activity_permission_denied',
           reason: 'Recording Activity requires Relationships write permission',
@@ -464,7 +464,7 @@ export const persistenceService = Effect.fn('Relationships.persistenceService')(
           reason: 'Activities changed; refresh before another operation',
         });
       }
-      const canonical = yield* verifier.verify(command, scope);
+      const canonical = prepared.canonical;
       const now = yield* DateTime.now;
       const change = yield* evolveRelationshipsState(snapshot.state, command, {
         now,
@@ -500,7 +500,7 @@ export const persistenceService = Effect.fn('Relationships.persistenceService')(
           Effect.map(([row]): LoadedRecords => row),
           Effect.mapError(unavailable),
         );
-    return { apply, loadRecords };
+    return { apply, loadCommand: load, loadRecords };
   },
   Effect.mapError((cause) =>
     Object.defineProperty(
@@ -513,3 +513,46 @@ export const persistenceService = Effect.fn('Relationships.persistenceService')(
     ),
   ),
 );
+
+/** Before BEGIN: grants, short owner checks, then canonical public reference reads. */
+export const prepareCommand = Effect.fn('Relationships.prepareCommand')(function* prepareCommand(
+  command: ActivityCommand,
+  expectedRevision: number,
+  context: ActionPrepareContext,
+) {
+  const { scope } = context;
+  const grants = yield* crmActivitiesRecordsGrants(scope);
+  if (!grants.writeAll)
+    return yield* new ActivityPermissionDenied({
+      code: 'activity_permission_denied',
+      reason: 'Recording Activity requires Relationships write permission',
+    });
+  if (command.ownerPrincipalRef.tenantId !== scope.tenantId)
+    return yield* new ActivityScopeMismatch({
+      code: 'activity_scope_mismatch',
+      reason: 'Principal must belong to the trusted tenant',
+    });
+  yield* context.transaction(
+    Effect.fn('Relationships.prepareOwner')(function* checkOwner(transaction: ScopedTransactionExecutor) {
+      const principal = yield* principalEligibilityForTransaction(transaction).resolve(command.ownerPrincipalRef);
+      if (principal.decision === 'unavailable') return yield* referenceUnavailable();
+      if (principal.decision !== 'eligible')
+        return yield* new ActivityReferenceIneligible({
+          code: 'activity_reference_ineligible',
+          reason: 'Activity owner must be an active Principal in the trusted tenant',
+        });
+      const services = yield* persistenceService(transaction, scope);
+      const snapshot = yield* services.loadCommand();
+      if (snapshot.revision !== expectedRevision)
+        return yield* new ActivityRevisionConflict({
+          code: 'activity_revision_conflict',
+          reason: 'Activities changed; refresh before another operation',
+        });
+    }),
+  );
+  const injectedVerifier = yield* Effect.serviceOption(ActivityReferenceVerifier);
+  const source = yield* makeReferenceGatewayCredentialSource(scope).pipe(Effect.mapError(referenceUnavailable));
+  const verifier = Option.getOrElse(injectedVerifier, () => makeActivityReferenceVerifier(source));
+  const canonical = yield* verifier.verify(command, scope);
+  return { canonical, grants };
+});

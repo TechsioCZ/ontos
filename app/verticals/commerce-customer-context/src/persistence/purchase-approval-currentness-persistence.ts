@@ -3,7 +3,6 @@ import type {
   ContextAccessService,
   OperationalScope,
   ScopedRoutineInvoker,
-  ScopedTransactionExecutor,
 } from '@app/core-runtime';
 import { TenantIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { Effect, DateTime, Layer, Predicate, Schema } from 'effect';
@@ -121,7 +120,7 @@ const sameSourceVector = (
 };
 
 const invokeCurrentnessSnapshot = (
-  transaction: ScopedTransactionExecutor,
+  transaction: ScopedRoutineInvoker,
   requestRef: string,
 ): Effect.Effect<Snapshot, PurchasingApprovalRejected> =>
   transaction.invoke(readCurrentPurchaseApprovalRevalidationRoutine, [{ requestRef }]).pipe(
@@ -225,7 +224,7 @@ const assertClaimedSubmissionTarget = (
 };
 
 const currentProfile = Effect.fn('PurchaseApprovalCurrentnessPersistence.currentProfile')((
-  transaction: ScopedTransactionExecutor,
+  transaction: ScopedRoutineInvoker,
   snapshot: CurrentApprovalFacts,
   scope: PurchaseApprovalCurrentnessTrustedScope,
 ) => {
@@ -274,7 +273,7 @@ const currentProfile = Effect.fn('PurchaseApprovalCurrentnessPersistence.current
 
 const buyerPermission = Effect.fn('PurchaseApprovalCurrentnessPersistence.buyerPermission')(
   (
-    transaction: ScopedTransactionExecutor,
+    transaction: ScopedRoutineInvoker,
     snapshot: CurrentApprovalFacts,
     scope: PurchaseApprovalCurrentnessTrustedScope,
     // eslint-disable-next-line effect-native/no-dependency-parameters -- This owner-local helper receives the already-yielded Core access service while remaining directly testable; expires: 2027-09-10.
@@ -327,7 +326,7 @@ const currentExternalFacts = (
   currentness: PurchaseLimitEvaluationCurrentnessPortService,
   snapshot: CurrentApprovalFacts,
   scope: PurchaseApprovalCurrentnessTrustedScope,
-  transaction: ScopedTransactionExecutor,
+  transaction: ScopedRoutineInvoker,
   observedAt: DateTime.Utc,
 ) => {
   const currentnessForTransaction = currentness.forTransaction?.(transaction, scope) ?? currentness;
@@ -511,7 +510,7 @@ const verifyCurrentApprovalEvaluation = (
 
 const loadCurrentApprovalFacts = Effect.fn('PurchaseApprovalCurrentnessPersistence.loadCurrentApprovalFacts')(
   function* loadFacts(
-    transaction: ScopedTransactionExecutor,
+    transaction: ScopedRoutineInvoker,
     snapshot: CurrentApprovalFacts,
     scope: PurchaseApprovalCurrentnessTrustedScope,
     // eslint-disable-next-line effect-native/no-dependency-parameters -- This helper receives already-yielded services before resolving the shared owner-current evidence bundle; expires: 2027-09-10.
@@ -547,7 +546,7 @@ const loadCurrentApprovalFacts = Effect.fn('PurchaseApprovalCurrentnessPersisten
 );
 
 const purchaseApprovalCurrentnessForTransaction = (
-  transaction: ScopedTransactionExecutor,
+  transaction: ScopedRoutineInvoker,
   scope: OperationalScope & {
     readonly legalEntityId: string;
     readonly trustedStorefrontId: string;
@@ -651,8 +650,8 @@ export const purchaseApprovalCurrentnessFactoryLive = Layer.succeed(PurchaseAppr
     evaluationSource: PurchaseLimitEvaluationSourceService,
   ) =>
     purchaseApprovalCurrentnessForTransaction(
-      // eslint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Core invokes owner factories only with its branded, scope-installed transaction; expires: 2027-03-31.
-      transaction as ScopedTransactionExecutor,
+      // eslint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: Owner factories receive the scoped routine capability, either from Core or the short owner-transaction preparation adapter; expires: 2027-03-31.
+      transaction as ScopedRoutineInvoker,
       scope,
       contextAccess,
       purchaseLimitCurrentness,

@@ -5,7 +5,7 @@ import {
   TrustedPrincipalContextSchema,
   defineRead,
 } from '@app/core-runtime';
-import type { OperationalScope, ReadOwnerTransaction } from '@app/core-runtime';
+import type { OperationalScope, OwnerTransaction } from '@app/core-runtime';
 import { PricingPurchaseContextVerificationEvidenceSchema } from '@app/commerce-customer-context/api/pricing-purchase-context-verification';
 import {
   CurrentPricingDecisionRequestSchema,
@@ -52,7 +52,7 @@ import {
 } from './support/unit-price-calculation.fixture.ts';
 
 /** The wiring test observes the owner-state adapters, so no short owner transaction is ever opened. */
-const unusedOwnerTransaction: ReadOwnerTransaction = () =>
+const unusedOwnerTransaction: OwnerTransaction = () =>
   Effect.die('The wiring test evaluates nothing, so it opens no owner transaction');
 
 /** The decision the governed Read makes: subject verification in `prepare`, then the evaluation in `finish`. */
@@ -508,8 +508,8 @@ describe('Current Pricing Decision governed read', () => {
           confirmObservedGenerationsThrough: () => Effect.die('This test stops before owner verification'),
           verifyOpaqueProofsAgainstCurrentState: () => Effect.die('This test stops before owner verification'),
         } satisfies PricingOwnerMaterialEvidenceFenceGateway;
-        let observedTransaction: ReadOwnerTransaction | undefined;
-        let observedFenceTransaction: ReadOwnerTransaction | undefined;
+        let observedTransaction: OwnerTransaction | undefined;
+        let observedFenceTransaction: OwnerTransaction | undefined;
         let observedScope: OperationalScope | undefined;
         let observedSource: CurrentPricingDecisionWholeEvaluationPort | undefined;
         let observedGateway: PricingOwnerMaterialEvidenceFenceGateway | undefined;

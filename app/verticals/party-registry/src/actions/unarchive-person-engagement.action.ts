@@ -22,7 +22,7 @@ export const unarchivePersonEngagementAction = defineAction(
     payloadSchema: PersonEngagementLifecyclePayloadSchema,
     resultSchema: PersonEngagementProfileSchema,
   },
-  handleEngagementLifecycle<PersonEngagementLifecyclePayload, PersonEngagementProfile>('active'),
+  { write: handleEngagementLifecycle<PersonEngagementLifecyclePayload, PersonEngagementProfile>('active') },
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(

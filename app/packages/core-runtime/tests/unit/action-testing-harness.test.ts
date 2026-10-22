@@ -46,7 +46,7 @@ const lifecycleAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_party_identity',
   },
-  Effect.fn(function* lifecycleHandler(payload, context) {
+  { write: Effect.fn(function* lifecycleHandler(payload, context) {
     const event = yield* context.addDomainEvent({
       eventType: 'test.counter.incremented.v1',
       payloadJson: { amount: payload.amount },
@@ -61,7 +61,7 @@ const lifecycleAction = defineAction(
       topic: 'test.counter.incremented.v1',
     });
     return { total: payload.amount };
-  }),
+  }) },
 );
 
 const request = {
@@ -151,7 +151,7 @@ it.effect(
         resultSchema: Schema.Finite,
         schemaVersion: '1',
       },
-      (payload, context) => context.services.increment(payload.amount),
+      { write: (payload, context) => context.services.increment(payload.amount) },
       (): Effect.Effect<CounterServices> => Effect.die('production owner services must not run in this test'),
     );
     let calls = 0;
@@ -218,7 +218,7 @@ it.effect('persists policy denials separately from permission denials before han
           }),
         ],
       },
-      () => Effect.die('A denied policy must not execute the handler'),
+      { write: () => Effect.die('A denied policy must not execute the handler') },
     );
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',

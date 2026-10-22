@@ -155,7 +155,7 @@ export const decidePurchaseApprovalRequestAction = defineAction(
     resultSchema: DecidePurchaseApprovalRequestResultSchema,
     schemaVersion: '1',
   },
-  handleDecidePurchaseApprovalRequest,
+  { write: handleDecidePurchaseApprovalRequest },
   (transaction, scope) =>
     purchasingApprovalWorkflowForScope(transaction, scope).pipe(Effect.map((workflow) => ({ workflow }))),
 );

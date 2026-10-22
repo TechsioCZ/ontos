@@ -160,6 +160,7 @@ export interface ProfilePersistenceScope {
 }
 
 interface ProfileActionContext {
+  readonly prepared?: ProfilePersistenceDependencies;
   readonly actionInvocationId: string;
   readonly scope: {
     readonly legalEntityId?: string;
@@ -167,10 +168,14 @@ interface ProfileActionContext {
   };
 }
 
+interface PreparedProfileActionContext extends ProfileActionContext {
+  readonly prepared: ProfilePersistenceDependencies;
+}
+
 interface AttributeGuestRetailCustomerServices {
   readonly attribute: (
     payload: AttributeGuestRetailCustomerPayload,
-    context: ProfileActionContext,
+    context: PreparedProfileActionContext,
   ) => Effect.Effect<AttributeGuestRetailCustomerResult, AttributeGuestRetailCustomerRejected>;
 }
 
@@ -196,14 +201,14 @@ interface RevokeRetailPortalProfileBindingServices {
 interface CreateCounterpartyPurchasingProfileServices {
   readonly create: (
     payload: CreateCounterpartyPurchasingProfilePayload,
-    context: ProfileActionContext,
+    context: PreparedProfileActionContext,
   ) => Effect.Effect<CreateCounterpartyPurchasingProfileResult, CreateCounterpartyPurchasingProfileRejected>;
 }
 
 interface EnsureRetailCustomerProfileServices {
   readonly ensure: (
     payload: EnsureRetailCustomerProfilePayload,
-    context: ProfileActionContext,
+    context: PreparedProfileActionContext,
   ) => Effect.Effect<EnsureRetailCustomerProfileResult, EnsureRetailCustomerProfileRejected>;
 }
 
@@ -1270,7 +1275,6 @@ export interface ProfilePersistenceDependencies {
 const ensureServices = (
   transaction: ProfileScopedRoutineInvoker,
   scope: ProfilePersistenceScope,
-  dependencies: ProfilePersistenceDependencies,
 ): EnsureRetailCustomerProfileServices => ({
   ensure: (payload, context) => {
     if (
@@ -1287,7 +1291,7 @@ const ensureServices = (
         }),
       );
     }
-    const resolveParty = dependencies.resolveRetailParty;
+    const resolveParty = context.prepared.resolveRetailParty;
     if (resolveParty === undefined) {
       return Effect.fail(
         new EnsureRetailCustomerProfileRejected({
@@ -1379,7 +1383,6 @@ const ensureServices = (
 const counterpartyServices = (
   transaction: ProfileScopedRoutineInvoker,
   scope: ProfilePersistenceScope,
-  dependencies: ProfilePersistenceDependencies,
 ): CreateCounterpartyPurchasingProfileServices => ({
   create: (payload, context) => {
     if (
@@ -1395,7 +1398,7 @@ const counterpartyServices = (
         }),
       );
     }
-    const resolveRole = dependencies.resolveCounterpartyRole;
+    const resolveRole = context.prepared.resolveCounterpartyRole;
     if (resolveRole === undefined) {
       return Effect.fail(
         new CreateCounterpartyPurchasingProfileRejected({
@@ -1490,7 +1493,6 @@ const lifecycleServices = (
   transaction: ProfileScopedRoutineInvoker,
   scope: ProfilePersistenceScope,
   operation: ProfileLifecycleOperation,
-  dependencies: ProfilePersistenceDependencies,
 ): ProfileLifecycleServices => ({
   transition: (payload, context) => {
     if (
@@ -1511,7 +1513,7 @@ const lifecycleServices = (
       ProfilePersistenceDependencyFailure
     >;
     if (operation === 'REACTIVATE') {
-      const { evaluateReactivation } = dependencies;
+      const evaluateReactivation = context.prepared?.evaluateReactivation;
       if (evaluateReactivation === undefined) {
         return Effect.fail(
           new ProfileLifecycleActionRejected({
@@ -1929,7 +1931,6 @@ const reconciliationServices = (
 const guestServices = (
   transaction: ProfileScopedRoutineInvoker,
   scope: ProfilePersistenceScope,
-  dependencies: ProfilePersistenceDependencies,
 ): AttributeGuestRetailCustomerServices => ({
   attribute: (payload, context) => {
     if (payload.sellingLegalEntityRef.resourceId !== scope.legalEntityId) {
@@ -1941,7 +1942,7 @@ const guestServices = (
         }),
       );
     }
-    const resolver = dependencies.resolveGuestParty;
+    const resolver = context.prepared.resolveGuestParty;
     if (resolver === undefined) {
       return Effect.fail(
         new AttributeGuestRetailCustomerRejected({
@@ -3024,25 +3025,25 @@ export const profilePersistenceServicesForTransaction = (
   const reconciliation = reconciliationServices(transaction, scope, dependencies);
   const reads = readServices(transaction, scope, dependencies);
   return {
-    archiveCustomerProfile: lifecycleServices(transaction, scope, 'ARCHIVE', dependencies),
-    attributeGuestRetailCustomer: guestServices(transaction, scope, dependencies),
+    archiveCustomerProfile: lifecycleServices(transaction, scope, 'ARCHIVE'),
+    attributeGuestRetailCustomer: guestServices(transaction, scope),
     bindRetailPortalProfile: bindingServices(transaction, scope, 'BIND'),
-    createCounterpartyPurchasingProfile: counterpartyServices(transaction, scope, dependencies),
+    createCounterpartyPurchasingProfile: counterpartyServices(transaction, scope),
     customerProfileRead: reads.customerProfileRead,
     customerProfileTradingGate: reads.customerProfileTradingGate,
-    ensureRetailCustomerProfile: ensureServices(transaction, scope, dependencies),
+    ensureRetailCustomerProfile: ensureServices(transaction, scope),
     guestAttributionStatus: reads.guestAttributionStatus,
     marketSubjectRestrictionsCurrent: reads.marketSubjectRestrictionsCurrent,
     openProfileReconciliation: reconciliation.open,
     profileReconciliationRead: reads.profileReconciliationRead,
-    reactivateCustomerProfile: lifecycleServices(transaction, scope, 'REACTIVATE', dependencies),
+    reactivateCustomerProfile: lifecycleServices(transaction, scope, 'REACTIVATE'),
     recoverRetailPortalProfileBinding: bindingServices(transaction, scope, 'RECOVER'),
     resolveProfileReconciliation: reconciliation.resolve,
     retailAccessDecision: reads.retailAccessDecision,
     retailPortalProfileBindingRead: reads.retailPortalProfileBindingRead,
     retailPrincipalResolution: reads.retailPrincipalResolution,
     revokeRetailPortalProfileBinding: bindingServices(transaction, scope, 'REVOKE'),
-    suspendCustomerProfile: lifecycleServices(transaction, scope, 'SUSPEND', dependencies),
+    suspendCustomerProfile: lifecycleServices(transaction, scope, 'SUSPEND'),
   };
 };
 

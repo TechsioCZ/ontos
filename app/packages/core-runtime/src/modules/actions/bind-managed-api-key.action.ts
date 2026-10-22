@@ -81,7 +81,7 @@ export const bindManagedApiKeyAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_identity',
   },
-  handle,
+  { write: handle },
   (transaction, scope) => {
     const repository = principalManagementRepositoryFromTransaction(transaction, scope.authenticationNamespaceId);
     return Effect.succeed({ bind: repository.bindApiKey });

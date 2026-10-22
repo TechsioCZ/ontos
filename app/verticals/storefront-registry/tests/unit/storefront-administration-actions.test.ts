@@ -2,7 +2,7 @@ import { PersistenceFailure, ScopedRoutineInvocationError } from '@app/core-runt
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Option, Predicate, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { runActionOwnerSteps } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
   RegisterStorefrontApplicationPayloadSchema,
   registerStorefrontApplicationAction,
@@ -58,7 +58,7 @@ const collectRegister = (changed: boolean) =>
       registerStorefrontApplicationAction.descriptor.accessEvidencePolicy,
       registerStorefrontApplicationAction.descriptor.auditEvidenceSchema,
     );
-    const result = yield* getActionHandler(registerStorefrontApplicationAction)(registerPayload, {
+    const result = yield* runActionOwnerSteps(registerStorefrontApplicationAction, registerPayload, {
       actionInvocationId,
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
@@ -153,7 +153,7 @@ describe('Storefront Registry administration Actions', () => {
         reviseStorefrontApplicationAction.descriptor.accessEvidencePolicy,
         reviseStorefrontApplicationAction.descriptor.auditEvidenceSchema,
       );
-      const conflict = yield* getActionHandler(reviseStorefrontApplicationAction)(revisePayload, {
+      const conflict = yield* runActionOwnerSteps(reviseStorefrontApplicationAction, revisePayload, {
         actionInvocationId,
         addDomainEvent: conflictCollector.addDomainEvent,
         addOutboxMessage: conflictCollector.addOutboxMessage,
@@ -176,7 +176,7 @@ describe('Storefront Registry administration Actions', () => {
         reviseStorefrontApplicationAction.descriptor.accessEvidencePolicy,
         reviseStorefrontApplicationAction.descriptor.auditEvidenceSchema,
       );
-      const revised = yield* getActionHandler(reviseStorefrontApplicationAction)(revisePayload, {
+      const revised = yield* runActionOwnerSteps(reviseStorefrontApplicationAction, revisePayload, {
         actionInvocationId,
         addDomainEvent: successCollector.addDomainEvent,
         addOutboxMessage: successCollector.addOutboxMessage,
@@ -232,7 +232,7 @@ describe('Storefront Registry administration Actions', () => {
         registerStorefrontApplicationAction.descriptor.accessEvidencePolicy,
         registerStorefrontApplicationAction.descriptor.auditEvidenceSchema,
       );
-      const contractFailure = yield* getActionHandler(registerStorefrontApplicationAction)(registerPayload, {
+      const contractFailure = yield* runActionOwnerSteps(registerStorefrontApplicationAction, registerPayload, {
         actionInvocationId,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,

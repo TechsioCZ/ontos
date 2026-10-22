@@ -99,7 +99,7 @@ export const createProductCategoryAction = defineAction(
     resultSchema: CreateProductCategoryResultSchema,
     schemaVersion: '1',
   },
-  handleCreateProductCategory,
+  { write: handleCreateProductCategory },
   (transaction, scope) =>
     categoryPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map(

@@ -135,7 +135,7 @@ export const assignCommerceQuantityRuleAction = defineAction(
     resultSchema: AssignCommerceQuantityRuleResultSchema,
     schemaVersion: '2',
   },
-  handleAssignCommerceQuantityRule,
+  { write: handleAssignCommerceQuantityRule },
   customerCommercePolicyAdministrationServiceFactory,
 );
 

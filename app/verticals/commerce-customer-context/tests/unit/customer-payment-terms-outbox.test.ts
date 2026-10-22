@@ -3,7 +3,7 @@ import { Effect, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import {
   CustomerPaymentTermsChangedEventSchema,
-  handleChangeCustomerPaymentTerms,
+  handleChangeCustomerPaymentTerms as writeChangeCustomerPaymentTerms,
   changeCustomerPaymentTermsAction,
 } from '../../src/actions/change-customer-payment-terms.action.ts';
 import {
@@ -250,3 +250,8 @@ it.effect('does not publish a Counterparty event or outbox message for an unchan
     expect(collector.snapshot().outboxMessages).toHaveLength(0);
   }),
 );
+
+const handleChangeCustomerPaymentTerms = (
+  payload: Parameters<typeof writeChangeCustomerPaymentTerms>[0],
+  context: Omit<Parameters<typeof writeChangeCustomerPaymentTerms>[1], 'prepared'>,
+) => writeChangeCustomerPaymentTerms(payload, { ...context, prepared: [] });

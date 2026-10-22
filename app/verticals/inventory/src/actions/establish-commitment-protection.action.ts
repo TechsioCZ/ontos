@@ -148,7 +148,7 @@ export const establishCommitmentProtectionAction = defineAction(
     resultSchema: EstablishCommitmentProtectionResultSchema,
     schemaVersion: '1',
   },
-  handleEstablishCommitmentProtection,
+  { write: handleEstablishCommitmentProtection },
   (transaction, scope) =>
     Effect.succeed(
       makeCommitmentProtectionService({

@@ -3,8 +3,8 @@
 // @ontos-action-slug apply-command
 import { randomUUID } from 'node:crypto';
 import { DateTime, Effect } from 'effect';
-import { OperationContextUnavailable, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { ActionHandlerContext, ActionServiceFactory } from '@app/core-runtime';
+import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import type { ActionPrepareContext, ActionServiceFactory, ActionWriteContext } from '@app/core-runtime';
 import {
   ApplyCommandPayloadSchema,
   ApplyCommandResultSchema,
@@ -15,39 +15,58 @@ import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts'
 import { withCommandGuard } from '../../shared/actions/command-guard.ts';
 import { persistenceService } from '../services/finance-state-repository.ts';
 import { requireFinanceRevision, transitionFinance } from '../services/persistence.service.ts';
-import type { FinanceValidators } from '../services/persistence.service.ts';
 import { makeFinanceValidators } from '../services/reference-validation.ts';
-import type { FinanceValidatorRequirements } from '../services/reference-validation.ts';
 
 const financeModuleKey = 'finance.billing';
 
 export { ApplyCommandPayloadSchema, ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts';
-type Services = Effect.Success<ReturnType<typeof persistenceService>> & { readonly validators: FinanceValidators };
+type Services = Effect.Success<ReturnType<typeof persistenceService>>;
+const makeServices: ActionServiceFactory<Services> = persistenceService;
+
+/** Before BEGIN: short owner-state read, then all reference validation and document computation. */
+const prepareApplyCommand = withCommandGuard(
+  Effect.fn('Finance.prepareApplyCommand')(function* prepareApplyCommand(
+    payload: ApplyCommandPayload,
+    context: ActionPrepareContext,
+  ) {
+    const current = yield* context.transaction((transaction) =>
+      makeServices(transaction, context.scope, context.compositionRevision).pipe(
+        Effect.flatMap((services) => services.load()),
+      ),
+    );
+    yield* requireFinanceRevision(current.revision, payload.expectedRevision);
+    if (context.scope.legalEntityId === undefined) {
+      return yield* new FinanceRejected({ code: 'finance_rejected', reason: 'legal_entity_required' });
+    }
+    const validators = yield* makeFinanceValidators(context.scope);
+    const now = yield* DateTime.now;
+    const resourceId = yield* Effect.sync(randomUUID);
+    const attemptId = yield* Effect.sync(randomUUID);
+    return yield* transitionFinance(
+      current.state,
+      payload.command,
+      { legalEntityId: context.scope.legalEntityId, tenantId: context.scope.tenantId },
+      validators,
+      { attemptId, now, principalId: context.scope.principalId, resourceId },
+    );
+  }),
+);
+type PreparedCommand = Effect.Success<ReturnType<typeof prepareApplyCommand>>;
+
+/** Inside BEGIN: revision recheck, owner-state/document writes and data-access evidence only. */
 const handleApplyCommand = Effect.fn('Finance.applyCommand')(function* handleApplyCommand(
   payload: ApplyCommandPayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
+  context: ActionWriteContext<Readonly<Record<string, never>>, Services, PreparedCommand>,
 ) {
   const current = yield* context.services.load();
   yield* requireFinanceRevision(current.revision, payload.expectedRevision);
-  if (context.scope.legalEntityId === undefined) {
-    return yield* new FinanceRejected({ code: 'finance_rejected', reason: 'legal_entity_required' });
-  }
   yield* context.recordDataAccess({
     accessKind: 'read',
     queryHash: 'finance.billing.state.v1',
     resultCount: 1,
     servingModuleKey: financeModuleKey,
   });
-  const now = yield* DateTime.now;
-  const resourceId = yield* Effect.sync(randomUUID);
-  const attemptId = yield* Effect.sync(randomUUID);
-  const result = yield* transitionFinance(
-    current.state,
-    payload.command,
-    { legalEntityId: context.scope.legalEntityId, tenantId: context.scope.tenantId },
-    context.services.validators,
-    { attemptId, now, principalId: context.scope.principalId, resourceId },
-  );
+  const result = context.prepared;
   const revision = result.changed ? yield* context.services.save(result.state, current.revision) : current.revision;
   if (result.changed) {
     for (const write of result.documentWrites ?? []) {
@@ -61,23 +80,6 @@ const handleApplyCommand = Effect.fn('Finance.applyCommand')(function* handleApp
   return result.invoice === undefined
     ? { changed: result.changed, revision }
     : { changed: result.changed, invoice: result.invoice, revision };
-});
-
-const makeActionServices: ActionServiceFactory<Services, FinanceValidatorRequirements> = Effect.fn(
-  'Finance.makeActionServices',
-)(function* makeServices(transaction, scope) {
-  const result = yield* Effect.all(
-    {
-      persistence: persistenceService(transaction, scope),
-      validators: makeFinanceValidators(scope),
-    },
-    { concurrency: 1 },
-  ).pipe(
-    Effect.mapError(
-      (failure) => new OperationContextUnavailable({ code: 'operation_context_unavailable', reason: failure.reason }),
-    ),
-  );
-  return { ...result.persistence, validators: result.validators };
 });
 
 export const applyCommandAction = defineAction(
@@ -105,8 +107,11 @@ export const applyCommandAction = defineAction(
     resultSchema: ApplyCommandResultSchema,
     schemaVersion: '1',
   },
-  withCommandGuard(handleApplyCommand),
-  makeActionServices,
+  {
+    prepare: prepareApplyCommand,
+    write: handleApplyCommand,
+  },
+  makeServices,
 );
 
 // <generated-outbox-message-exports>

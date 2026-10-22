@@ -436,9 +436,6 @@ const contextGrants = Effect.fn('SalesPipeline.contextGrants')(function* context
   return (permission: SalesPipelineGrant) => decisions[permissions.indexOf(permission)]?.decision === 'allowed';
 });
 
-const contextGrant = (scope: OperationalScope, permission: SalesPipelineGrant) =>
-  contextGrants(scope, [permission]).pipe(Effect.map((granted) => granted(permission)));
-
 /** What a records read knows before its transaction opens. */
 export const salesPipelineRecordsGrants = Effect.fn('SalesPipeline.recordsGrants')(function* recordsGrants(
   scope: OperationalScope,
@@ -556,6 +553,49 @@ export const salesPipelineStateRepository = (persistence: PipelineStatePersisten
   }),
 });
 
+/** Before BEGIN: context grants and any per-resource write fallback. */
+export const prepareCommand = Effect.fn('SalesPipeline.prepareCommand')(function* prepareCommand(
+  command: SalesPipelineCommand,
+  scope: OperationalScope,
+) {
+  const grants = yield* salesPipelineRecordsGrants(scope);
+  if (scope.legalEntityId === undefined) return yield* referenceUnavailable();
+  const access = yield* ContextAccess;
+  if (isSalesPipelineAiCommand(command)) return grants;
+  const targetIds = targetIdsOf(command);
+  if (!grants.writeAll) {
+    if (targetIds.length === 0) {
+      return yield* new SalesPipelinePermissionDenied({
+        code: 'sales_pipeline_permission_denied',
+        reason: 'Creating Opportunities requires SalesPipeline write permission',
+      });
+    }
+    const targets = targetIds.map(opportunityTarget);
+    const keys = targets.map(targetKey);
+    const decisions = yield* access.resources({
+      legalEntityId: scope.legalEntityId,
+      permission: 'write',
+      principalId: scope.principalId,
+      resources: targets,
+      tenantId: scope.tenantId,
+    });
+    if (
+      decisions.length !== targetIds.length ||
+      decisions.some((decision, index) => decision.decision === 'unavailable' || decision.key !== keys[index])
+    ) {
+      return yield* referenceUnavailable();
+    }
+    if (decisions.some((decision) => decision.decision !== 'allowed')) {
+      return yield* new SalesPipelinePermissionDenied({
+        code: 'sales_pipeline_permission_denied',
+        reason: 'Opportunity mutation is forbidden',
+      });
+    }
+  }
+  return grants;
+});
+export type PreparedCommand = Effect.Success<ReturnType<typeof prepareCommand>>;
+
 export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
   function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
     const { legalEntityId } = scope;
@@ -569,7 +609,6 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
         reason: 'A scoped company transaction is required',
       });
     }
-    const access = yield* ContextAccess;
     const whereScope = and(
       eq(salesPipelineStates.tenantId, scope.tenantId),
       eq(salesPipelineStates.legalEntityId, legalEntityId),
@@ -624,9 +663,10 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
       >,
       expectedRevision: number,
       invocationId: string,
+      grants: PreparedCommand,
     ) {
       const permission = command._tag === 'AiProposeChanges' ? 'read_all' : 'write_all';
-      if (!(yield* contextGrant(scope, permission))) {
+      if (!(permission === 'read_all' ? grants.readAll : grants.writeAll)) {
         return yield* new SalesPipelinePermissionDenied({
           code: 'sales_pipeline_permission_denied',
           reason:
@@ -686,39 +726,10 @@ export const persistenceService = Effect.fn('SalesPipeline.persistenceService')(
       command: SalesPipelineCommand,
       expectedRevision: number,
       invocationId: string,
+      grants: PreparedCommand,
     ) {
       if (isSalesPipelineAiCommand(command)) {
-        return yield* applyAi(command, expectedRevision, invocationId);
-      }
-      const targetIds = targetIdsOf(command);
-      if (!(yield* contextGrant(scope, 'write_all'))) {
-        if (targetIds.length === 0) {
-          return yield* new SalesPipelinePermissionDenied({
-            code: 'sales_pipeline_permission_denied',
-            reason: 'Creating Opportunities requires SalesPipeline write permission',
-          });
-        }
-        const targets = targetIds.map(opportunityTarget);
-        const keys = targets.map(targetKey);
-        const decisions = yield* access.resources({
-          legalEntityId,
-          permission: 'write',
-          principalId: scope.principalId,
-          resources: targets,
-          tenantId: scope.tenantId,
-        });
-        if (
-          decisions.length !== targetIds.length ||
-          decisions.some((decision, index) => decision.decision === 'unavailable' || decision.key !== keys[index])
-        ) {
-          return yield* referenceUnavailable();
-        }
-        if (decisions.some((decision) => decision.decision !== 'allowed')) {
-          return yield* new SalesPipelinePermissionDenied({
-            code: 'sales_pipeline_permission_denied',
-            reason: 'Opportunity mutation is forbidden',
-          });
-        }
+        return yield* applyAi(command, expectedRevision, invocationId, grants);
       }
       const snapshot = yield* load();
       if (snapshot.revision !== expectedRevision) {

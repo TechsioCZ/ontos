@@ -128,6 +128,6 @@ export const reviseMarketDefinitionAction = defineAction(
     resultSchema: ReviseMarketDefinitionResultSchema,
     schemaVersion: '1',
   },
-  handleReviseMarketDefinition,
+  { write: handleReviseMarketDefinition },
   marketAdministrationService,
 );

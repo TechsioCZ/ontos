@@ -149,7 +149,7 @@ export const correctExternalStockCorrelationAction = defineAction(
     resultSchema: CorrectExternalStockCorrelationResultSchema,
     schemaVersion: '1',
   },
-  handleCorrectExternalStockCorrelation,
+  { write: handleCorrectExternalStockCorrelation },
   (transaction, scope) => Effect.succeed(externalStockCorrelationPersistenceForScope(transaction, scope)),
 );
 

@@ -48,11 +48,11 @@ it.effect(
           resultSchema: Schema.Struct({ total: Schema.Finite }),
           schemaVersion: '1',
         },
-        (payload) =>
+        { write: (payload) =>
           Effect.sync(() => {
             executions += 1;
             return { total: payload.amount * executions };
-          }),
+          }) },
       );
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
@@ -143,11 +143,11 @@ it.effect('lost commit acknowledgement recovers the committed invocation and fau
         resultSchema: Schema.Finite,
         schemaVersion: '1',
       },
-      () =>
+      { write: () =>
         Effect.sync(() => {
           executions += 1;
           return executions;
-        }),
+        }) },
     );
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',

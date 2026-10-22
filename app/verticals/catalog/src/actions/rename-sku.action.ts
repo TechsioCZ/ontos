@@ -71,7 +71,7 @@ export const renameSkuAction = defineAction(
     resultSchema: RenameSkuResultSchema,
     schemaVersion: '1',
   },
-  handleRenameSku,
+  { write: handleRenameSku },
   (transaction, scope) =>
     skuServicesForScope(transaction, scope).pipe(
       Effect.map((services): RenameSkuServices => ({

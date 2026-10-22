@@ -137,7 +137,7 @@ export const transitionProcessingActivityAction = defineAction(
     resultSchema: TransitionProcessingActivityResultSchema,
     schemaVersion: '1',
   },
-  handleTransitionProcessingActivity,
+  { write: handleTransitionProcessingActivity },
   (transaction, scope) =>
     Effect.all(
       {

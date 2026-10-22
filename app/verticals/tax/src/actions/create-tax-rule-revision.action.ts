@@ -90,7 +90,7 @@ export const createTaxRuleRevisionAction = defineAction(
     resultSchema: CreateTaxRuleRevisionResultSchema,
     schemaVersion: '1',
   },
-  handleCreateTaxRuleRevision,
+  { write: handleCreateTaxRuleRevision },
   taxRuleGovernanceServiceFactory,
 );
 

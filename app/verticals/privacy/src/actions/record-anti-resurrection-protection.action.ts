@@ -90,7 +90,7 @@ export const recordAntiResurrectionProtectionAction = defineAction(
     resultSchema: RecordAntiResurrectionProtectionResultSchema,
     schemaVersion: '1',
   },
-  handleRecordAntiResurrectionProtection,
+  { write: handleRecordAntiResurrectionProtection },
   (transaction, scope) =>
     Effect.all(
       {

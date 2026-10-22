@@ -81,25 +81,27 @@ describe('Product Configuration publication Action', () => {
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
         services: [
-          bindActionTestServices(publishProductConfigurationAction, {
-            captureResult: () =>
-              Effect.fail(
-                Object.assign(
-                  new ActionTransactionError({
-                    code: 'action_transaction_failed',
-                    reason: 'Catalog result capture failed',
-                  }),
-                  {
-                    cause: new CatalogPersistenceUnavailable({
-                      code: 'catalog_persistence_unavailable',
-                      reason: 'snapshot storage unavailable',
+          bindActionTestServices(publishProductConfigurationAction, () =>
+            Effect.succeed({
+              captureResult: () =>
+                Effect.fail(
+                  Object.assign(
+                    new ActionTransactionError({
+                      code: 'action_transaction_failed',
+                      reason: 'Catalog result capture failed',
                     }),
-                  },
+                    {
+                      cause: new CatalogPersistenceUnavailable({
+                        code: 'catalog_persistence_unavailable',
+                        reason: 'snapshot storage unavailable',
+                      }),
+                    },
+                  ),
                 ),
-              ),
-            publish: () => Effect.succeed({ _tag: 'published' as const, revision: 1 }),
-            readCurrent: () => Effect.die('unexpected read'),
-          }),
+              publish: () => Effect.succeed({ _tag: 'published' as const, revision: 1 }),
+              readCurrent: () => Effect.die('unexpected read'),
+            }),
+          ),
         ],
       });
       const failure = yield* harness.runtime

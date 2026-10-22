@@ -1,7 +1,7 @@
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { runActionOwnerSteps } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
   CommerceCustomerGroupMembershipSchema,
   CommerceCustomerGroupSchema,
@@ -259,7 +259,7 @@ it.effect('records bounded audit evidence for a maximum-size valid group definit
       createCustomerGroupAction.descriptor.accessEvidencePolicy,
       createCustomerGroupAction.descriptor.auditEvidenceSchema,
     );
-    yield* getActionHandler(createCustomerGroupAction)(payload, {
+    yield* runActionOwnerSteps(createCustomerGroupAction, payload, {
       actionInvocationId: '60000000-0000-4000-8000-000000000002',
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
@@ -295,15 +295,13 @@ const collectRemoval = (membership: typeof CommerceCustomerGroupMembershipSchema
       removeCustomerGroupAction.descriptor.accessEvidencePolicy,
       removeCustomerGroupAction.descriptor.auditEvidenceSchema,
     );
-    yield* getActionHandler(removeCustomerGroupAction)(
-      {
+    yield* runActionOwnerSteps(removeCustomerGroupAction, {
         effectiveAt: membership.removal?.effectiveAt ?? endedAt,
         groupRef: membership.groupRef,
         membershipRef: membership.membershipRef,
         profile: membership.profile,
         reason: 'End exact customer-group membership',
-      },
-      {
+      }, {
         actionInvocationId: '60000000-0000-4000-8000-000000000001',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
@@ -321,8 +319,7 @@ const collectRemoval = (membership: typeof CommerceCustomerGroupMembershipSchema
           ...unavailablePersistence,
           remove: () => Effect.succeed({ _tag: 'removed', changed, membership }),
         },
-      },
-    );
+      });
     return collector.snapshot();
   });
 

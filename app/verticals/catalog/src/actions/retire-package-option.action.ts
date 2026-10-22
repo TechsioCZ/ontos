@@ -54,10 +54,10 @@ export const retirePackageOptionAction = defineAction(
     resultSchema: RetirePackageOptionResultSchema,
     schemaVersion: '1',
   },
-  (
+  { write: (
     payload: RetirePackageOptionPayload,
     context: ActionHandlerContext<Readonly<Record<string, never>>, RetirePackageOptionServices>,
-  ) => runPackageOptionTransition('RETIRE', payload, context),
+  ) => runPackageOptionTransition('RETIRE', payload, context) },
   (transaction, scope) =>
     packageOptionActionPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map((services): RetirePackageOptionServices => ({

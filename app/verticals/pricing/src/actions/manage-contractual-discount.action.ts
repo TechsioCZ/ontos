@@ -329,7 +329,7 @@ export const manageContractualDiscountAction = defineAction(
     resultSchema: ManageContractualDiscountResultSchema,
     schemaVersion: '1',
   },
-  handleManageContractualDiscount,
+  { write: handleManageContractualDiscount },
   (transaction, scope, compositionRevision) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(

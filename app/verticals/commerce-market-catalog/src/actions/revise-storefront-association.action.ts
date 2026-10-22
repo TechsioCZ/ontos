@@ -193,6 +193,6 @@ export const reviseStorefrontAssociationAction = defineAction(
     resultSchema: ReviseStorefrontAssociationResultSchema,
     schemaVersion: '1',
   },
-  handleReviseStorefrontAssociation,
+  { write: handleReviseStorefrontAssociation },
   makeReviseStorefrontAssociationServices,
 );

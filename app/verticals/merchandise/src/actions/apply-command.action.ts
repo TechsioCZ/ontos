@@ -2,7 +2,7 @@
 // @ontos-action-owner demo.merchandise
 // @ontos-action-slug apply-command
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { ActionHandlerContext } from '@app/core-runtime';
+import type { ActionPrepareContext, ActionWriteContext } from '@app/core-runtime';
 import type { Effect } from 'effect';
 import {
   ApplyCommandPayloadSchema,
@@ -11,17 +11,21 @@ import {
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
 import { withCommandGuard } from '../../shared/actions/command-guard.ts';
-import { persistenceService } from '../services/persistence.service.ts';
+import { merchandiseCommandGrants, persistenceService } from '../services/persistence.service.ts';
+import type { MerchandiseRecordsGrants } from '../services/persistence.service.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
-const handleApplyCommand = (
+
+/** Before BEGIN: the command guard, then the SpiceDB grants the command decides with. */
+const prepareApplyCommand = withCommandGuard((_payload: ApplyCommandPayload, context: ActionPrepareContext) =>
+  merchandiseCommandGrants(context.scope),
+);
+
+/** Inside the transaction: the locked company state and its write, deciding with the prepared grants. */
+const writeApplyCommand = (
   payload: ApplyCommandPayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
-): Effect.Effect<
-  Effect.Success<ReturnType<Services['apply']>>,
-  Effect.Error<ReturnType<Services['apply']>>,
-  Effect.Services<ReturnType<typeof persistenceService>>
-> => context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId);
+  context: ActionWriteContext<Readonly<Record<string, never>>, Services, MerchandiseRecordsGrants>,
+) => context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId, context.prepared);
 
 export const applyCommandAction = defineAction(
   {
@@ -48,7 +52,10 @@ export const applyCommandAction = defineAction(
     resultSchema: ApplyCommandResultSchema,
     schemaVersion: '1',
   },
-  withCommandGuard(handleApplyCommand),
+  {
+    prepare: prepareApplyCommand,
+    write: writeApplyCommand,
+  },
   persistenceService,
 );
 

@@ -58,7 +58,7 @@ export const recordOwnerContributionAction = defineAction(
     resultSchema: RecordOwnerContributionResultSchema,
     schemaVersion: '1',
   },
-  handleRecordOwnerContribution,
+  { write: handleRecordOwnerContribution },
   privacyOperationRepositoryForScope,
 );
 // <generated-outbox-message-exports>

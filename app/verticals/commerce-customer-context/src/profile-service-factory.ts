@@ -1,6 +1,11 @@
 import { OperationContextUnavailable } from '@app/core-runtime';
-import type { OperationalScope } from '@app/core-runtime';
+import type { ActionPrepareContext, OperationalScope } from '@app/core-runtime';
+import type { EnsureRetailCustomerProfilePayload } from '../shared/actions/ensure-retail-customer-profile.ts';
+import type { CreateCounterpartyPurchasingProfilePayload } from '../shared/actions/create-counterparty-purchasing-profile.ts';
+import type { AttributeGuestRetailCustomerPayload } from '../shared/actions/attribute-guest-retail-customer.ts';
+import type { ProfileLifecyclePayload } from '../shared/actions/suspend-customer-profile.ts';
 import { Effect } from 'effect';
+import { ownerRoutinePreparation } from './persistence/owner-routine-preparation.ts';
 
 import { ProfileReactivationEligibilityEvaluatorFactory } from './integrations/profile-reactivation-eligibility.ts';
 import {
@@ -10,6 +15,7 @@ import {
 import { addressBookReconciliationOwnerVerifierForTransaction } from './persistence/address-persistence.ts';
 import { paymentTermsReconciliationOwnerEvidenceVerifierForTransaction } from './persistence/payment-term-persistence.ts';
 import type {
+  ProfilePersistenceDependencies,
   ProfilePersistenceServices,
   ProfilePersistenceScope,
   ProfileScopedRoutineInvoker,
@@ -147,5 +153,107 @@ export const prepareRetailPermissions = Effect.fn('ProfileServiceFactory.prepare
       tenantId: scope.tenantId,
     };
     return yield* prefetchRetailPermissions(readerFactory.make(readerScope), readerScope, [profileId]);
+  },
+);
+
+/** Prepare only the remote evidence; the existing writer retains its domain-error mapping and scope checks. */
+export const prepareRetailProfileParty = Effect.fn('ProfileServiceFactory.prepareRetailProfileParty')(
+  function* prepareRetailProfileParty(
+    payload: EnsureRetailCustomerProfilePayload,
+    context: ActionPrepareContext,
+  ): Effect.fn.Return<ProfilePersistenceDependencies, never, PartyRegistryRetailPartyResolverFactory> {
+    const { scope } = context;
+    if (
+      payload.subject.partyRef.tenantId !== scope.tenantId ||
+      payload.subject.sellingLegalEntityRef.tenantId !== scope.tenantId ||
+      payload.subject.sellingLegalEntityRef.resourceId !== scope.legalEntityId
+    ) {
+      return {};
+    }
+    const factory = yield* PartyRegistryRetailPartyResolverFactory;
+    const result = yield* factory
+      .make({ requestCorrelation: scope.correlationId, tenantId: scope.tenantId })({
+        partyResourceId: payload.subject.partyRef.resourceId,
+        tenantId: scope.tenantId,
+      })
+      .pipe(Effect.result);
+    return { resolveRetailParty: () => Effect.fromResult(result) };
+  },
+);
+
+export const prepareCounterpartyProfileRole = Effect.fn('ProfileServiceFactory.prepareCounterpartyProfileRole')(
+  function* prepareCounterpartyProfileRole(
+    payload: CreateCounterpartyPurchasingProfilePayload,
+    context: ActionPrepareContext,
+  ): Effect.fn.Return<ProfilePersistenceDependencies, never, ProfileCounterpartyRoleEligibilityResolverFactory> {
+    const { scope } = context;
+    if (scope.legalEntityId === undefined || payload.subject.counterpartyRef.tenantId !== scope.tenantId) {
+      return {};
+    }
+    const factory = yield* ProfileCounterpartyRoleEligibilityResolverFactory;
+    const result = yield* factory
+      .make({ legalEntityId: scope.legalEntityId, requestCorrelation: scope.correlationId, tenantId: scope.tenantId })({
+        counterpartyResourceId: payload.subject.counterpartyRef.resourceId,
+        tenantId: scope.tenantId,
+      })
+      .pipe(Effect.result);
+    return { resolveCounterpartyRole: () => Effect.fromResult(result) };
+  },
+);
+
+export const prepareGuestProfileParty = Effect.fn('ProfileServiceFactory.prepareGuestProfileParty')(
+  function* prepareGuestProfileParty(
+    payload: AttributeGuestRetailCustomerPayload,
+    context: ActionPrepareContext,
+  ): Effect.fn.Return<ProfilePersistenceDependencies, never, PartyRegistryGuestResolverFactory> {
+    const { scope } = context;
+    if (
+      scope.legalEntityId === undefined ||
+      payload.sellingLegalEntityRef.tenantId !== scope.tenantId ||
+      payload.sellingLegalEntityRef.resourceId !== scope.legalEntityId
+    ) {
+      return {};
+    }
+    const factory = yield* PartyRegistryGuestResolverFactory;
+    // Party Registry only observes previously committed evidence; UNRESOLVED_PARTY_CREATED names an existing owner outcome, not a remote write.
+    const result = yield* factory
+      .make({ legalEntityId: scope.legalEntityId, requestCorrelation: scope.correlationId, tenantId: scope.tenantId })({
+        correlationRoot: payload.correlationRoot,
+        guestEvidenceRef: payload.guestEvidenceRef,
+        legalEntityId: scope.legalEntityId,
+        requestedAt: payload.requestedAt,
+        tenantId: scope.tenantId,
+      })
+      .pipe(Effect.result);
+    return { resolveGuestParty: () => Effect.fromResult(result) };
+  },
+);
+
+export const prepareProfileReactivation = Effect.fn('ProfileServiceFactory.prepareProfileReactivation')(
+  function* prepareProfileReactivation(
+    payload: ProfileLifecyclePayload,
+    context: ActionPrepareContext,
+  ): Effect.fn.Return<
+    ProfilePersistenceDependencies,
+    never,
+    ProfileCounterpartyRoleEligibilityResolverFactory | ProfileReactivationEligibilityEvaluatorFactory
+  > {
+    const { scope } = context;
+    if (scope.legalEntityId === undefined || payload.profileRef.tenantId !== scope.tenantId) {
+      return {};
+    }
+    const roleFactory = yield* ProfileCounterpartyRoleEligibilityResolverFactory;
+    const factory = yield* ProfileReactivationEligibilityEvaluatorFactory;
+    const evaluate = factory.make({
+      resolveCounterpartyRole: roleFactory.make({
+        legalEntityId: scope.legalEntityId,
+        requestCorrelation: scope.correlationId,
+        tenantId: scope.tenantId,
+      }),
+      scope: { legalEntityId: scope.legalEntityId, principalId: scope.principalId, tenantId: scope.tenantId },
+      transaction: ownerRoutinePreparation(context.transaction),
+    });
+    const result = yield* evaluate(payload).pipe(Effect.result);
+    return { evaluateReactivation: () => Effect.fromResult(result) };
   },
 );

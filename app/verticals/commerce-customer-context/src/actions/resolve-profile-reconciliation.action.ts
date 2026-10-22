@@ -525,7 +525,7 @@ export const resolveProfileReconciliationAction = defineAction(
     resultSchema: ResolveProfileReconciliationResultSchema,
     schemaVersion: '1',
   },
-  handleResolveProfileReconciliation,
+  { write: handleResolveProfileReconciliation },
   (transaction, scope) =>
     Effect.all(
       {

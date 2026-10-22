@@ -3,16 +3,16 @@
 // @ontos-action-slug change-principal-binding-status
 import { DateTime, Effect, Option, Schema } from 'effect';
 
-import type { ActionHandlerContext } from '../../actions/context.ts';
+import type { ActionPrepareContext, ActionWriteContext } from '../../actions/definition.ts';
+import type { AuthenticationNamespaceRegistration } from '../../auth/external-identity-contracts.ts';
+import { prepareExternalIdentityActivationNamespace,externalIdentityRepositoryFromTransaction } from '../../auth/external-identity/repository.ts';
 import { defineAction } from '../../actions/definition.ts';
 import { ExternalIdentityActionAuditEvidenceSchema } from '../../auth/external-identity/audit.ts';
-import { externalIdentityRepositoryFromTransaction } from '../../auth/external-identity/repository.ts';
 import { ExternalIdentityAdmission } from '../../auth/external-identity/resolve.ts';
 import type {
   ChangeExternalIdentityStatusInput,
   ChangeExternalIdentityStatusResult,
   ExternalIdentityAdmissionContext,
-  ExternalIdentityRepositoryDependencies,
   ExternalIdentityRepositoryService,
 } from '../../auth/external-identity/repository.ts';
 import { AuthenticationNamespaceRegistry } from '../../auth/external-identity/verifier.ts';
@@ -35,7 +35,10 @@ export type ChangePrincipalBindingStatusPayload = Schema.Schema.Type<typeof Chan
 
 type Services = Readonly<{
   readonly admission: Option.Option<ExternalIdentityAdmissionContext>;
-  readonly changeStatus: ExternalIdentityRepositoryService['changeStatus'];
+  readonly changeStatus: (
+    input: Parameters<ExternalIdentityRepositoryService['changeStatus']>[0],
+    namespace: AuthenticationNamespaceRegistration,
+  ) => ReturnType<ExternalIdentityRepositoryService['changeStatus']>;
 }>;
 
 const malformedResult = (cause: unknown): ExternalIdentityError =>
@@ -43,7 +46,11 @@ const malformedResult = (cause: unknown): ExternalIdentityError =>
 
 const handleChangePrincipalBindingStatus = Effect.fn('ChangePrincipalBindingStatusAction.handle')(function* handle(
   payload: ChangePrincipalBindingStatusPayload,
-  context: ActionHandlerContext<typeof principalBindingLifecycleDomainEvents, Services>,
+  context: ActionWriteContext<
+    typeof principalBindingLifecycleDomainEvents,
+    Services,
+    AuthenticationNamespaceRegistration
+  >,
 ) {
   const changeStatusInput: ChangeExternalIdentityStatusInput = {
     authBindingId: payload.authBindingId,
@@ -58,7 +65,7 @@ const handleChangePrincipalBindingStatus = Effect.fn('ChangePrincipalBindingStat
     ...(payload.reconciliationRef === undefined ? {} : { reconciliationRef: payload.reconciliationRef }),
   };
   const result: ChangeExternalIdentityStatusResult = yield* context.services
-    .changeStatus(changeStatusInput)
+    .changeStatus(changeStatusInput, context.prepared)
     .pipe(Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })));
   const decodedResult = yield* Schema.decodeEffect(ChangePrincipalBindingStatusResultSchema)({
     authBindingId: result.authBindingId,
@@ -126,6 +133,30 @@ const handleChangePrincipalBindingStatus = Effect.fn('ChangePrincipalBindingStat
   return decodedResult;
 });
 
+const prepareNamespace = Effect.fn('ChangePrincipalBindingStatusAction.prepare')(function* prepareNamespace(
+  payload: ChangePrincipalBindingStatusPayload,
+  context: ActionPrepareContext,
+) {
+  const registry = yield* Effect.serviceOption(AuthenticationNamespaceRegistry);
+  const binding = yield* context
+    .transaction((transaction) =>
+      externalIdentityRepositoryFromTransaction(transaction).loadForRead({
+        authBindingId: payload.authBindingId,
+        lookup: 'binding',
+        tenantId: context.scope.tenantId,
+      }),
+    )
+    .pipe(
+      Effect.catchTag('ExternalIdentityFailure', (failure) =>
+        Effect.fail(new ExternalIdentityError({ code: failure.code })),
+      ),
+    );
+  return yield* prepareExternalIdentityActivationNamespace(
+    binding,
+    Option.isSome(registry) ? { registry: registry.value } : {},
+  ).pipe(Effect.mapError((failure) => new ExternalIdentityError({ code: failure.code })));
+});
+
 export const changePrincipalBindingStatusAction = defineAction(
   {
     accessEvidencePolicy: {
@@ -153,16 +184,15 @@ export const changePrincipalBindingStatusAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_identity',
   },
-  handleChangePrincipalBindingStatus,
+  {
+    prepare: prepareNamespace,
+    write: handleChangePrincipalBindingStatus,
+  },
   Effect.fn('ChangePrincipalBindingStatusAction.services')(function* makeServices(transaction) {
-    const registry = yield* Effect.serviceOption(AuthenticationNamespaceRegistry);
-    const dependencies: ExternalIdentityRepositoryDependencies = Option.isSome(registry)
-      ? { registry: registry.value }
-      : {};
-    const repository = externalIdentityRepositoryFromTransaction(transaction, dependencies);
     return {
       admission: yield* Effect.serviceOption(ExternalIdentityAdmission),
-      changeStatus: repository.changeStatus,
-    };
+      changeStatus: (input, preparedNamespace) =>
+        externalIdentityRepositoryFromTransaction(transaction, { preparedNamespace }).changeStatus(input),
+    } satisfies Services;
   }),
 );

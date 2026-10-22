@@ -24,7 +24,7 @@ export const archiveOrganizationEngagementAction = defineAction(
     payloadSchema: OrganizationEngagementLifecyclePayloadSchema,
     resultSchema: OrganizationEngagementProfileSchema,
   },
-  handleEngagementLifecycle<OrganizationEngagementLifecyclePayload, OrganizationEngagementProfile>('archived'),
+  { write: handleEngagementLifecycle<OrganizationEngagementLifecyclePayload, OrganizationEngagementProfile>('archived') },
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(

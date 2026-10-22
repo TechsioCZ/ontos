@@ -240,7 +240,7 @@ export const setSupportedCurrenciesAction = defineAction(
     resultSchema: SetSupportedCurrenciesResultSchema,
     schemaVersion: '2',
   },
-  handleSetSupportedCurrencies,
+  { write: handleSetSupportedCurrencies },
   currencySupportPersistenceForScope,
 );
 

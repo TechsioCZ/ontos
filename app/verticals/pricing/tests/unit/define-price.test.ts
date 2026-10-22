@@ -1,3 +1,7 @@
+import {
+  insideDatabaseTransaction,
+  refuseInsideDatabaseTransaction,
+} from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
 import { CatalogSelectionOwnerAssessmentResultSchema } from '@app/catalog/domain/catalog-selection-owner-contract';
 import type { CatalogSelectionOwnerAssessmentResult } from '@app/catalog/domain/catalog-selection-owner-contract';
 import { PriceSourceProvenanceSchema } from '@app/pricing-contracts/domain/price-source-provenance';
@@ -8,6 +12,7 @@ import {
   DefinePricePayloadSchema,
   DefinePriceRejected,
   applyPriceDefinition,
+  preparePriceDefinition,
 } from '../../src/actions/define-price.action.ts';
 import type { DefinePriceActionServices } from '../../src/actions/define-price.action.ts';
 import type { CommercialContextAssessment } from '../../src/integrations/commercial-context-evidence.ts';
@@ -215,6 +220,37 @@ const servicesFor = (
 });
 
 describe('Define Price Action', () => {
+  it.effect('prepares remote evidence before BEGIN and persists only in the guarded write', () =>
+    Effect.gen(function* pricePhases() {
+      const calls: string[] = [];
+      const services = servicesFor(() =>
+        Effect.sync(() => {
+          calls.push('write');
+          return persistenceSuccess('CREATED');
+        }),
+      );
+      const prepare = yield* preparePriceDefinition(payload, trusted, {
+        ...services,
+        assessCatalogSelection: (selection) =>
+          refuseInsideDatabaseTransaction('module-transport', 'Catalog').pipe(
+            Effect.andThen(() => Effect.sync(() => calls.push('catalog'))),
+            Effect.andThen(() => services.assessCatalogSelection(selection)),
+          ),
+        assessCommercialContext: (scope) =>
+          refuseInsideDatabaseTransaction('module-transport', 'commercial context').pipe(
+            Effect.andThen(() => Effect.sync(() => calls.push('commercial context'))),
+            Effect.andThen(() => services.assessCommercialContext(scope)),
+          ),
+      });
+      expect(calls).toEqual(['catalog', 'commercial context']);
+      const result = yield* prepare({ define: services.define }).pipe(
+        insideDatabaseTransaction('test.define-price.write'),
+      );
+      expect(calls).toEqual(['catalog', 'commercial context', 'write']);
+      expect(result.outcome).toBe('PRICE_SOURCE_ASSERTION_CANONICAL_ACCEPTED');
+    }),
+  );
+
   it.effect('creates and idempotently reuses one explicit zero Price fact', () =>
     Effect.gen(function* defineZeroPrice() {
       const created = yield* applyPriceDefinition(

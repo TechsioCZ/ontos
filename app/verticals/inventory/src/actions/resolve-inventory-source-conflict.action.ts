@@ -98,7 +98,7 @@ export const resolveInventorySourceConflictAction = defineAction(
     resultSchema: ResolveInventorySourceConflictResultSchema,
     schemaVersion: '1',
   },
-  handleResolveInventorySourceConflict,
+  { write: handleResolveInventorySourceConflict },
   (transaction, scope) =>
     Effect.succeed(
       makeInventorySourceConflictService({

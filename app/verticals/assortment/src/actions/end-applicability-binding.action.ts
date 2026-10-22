@@ -142,7 +142,7 @@ export const endApplicabilityBindingAction = defineAction(
     resultSchema: EndApplicabilityBindingResultSchema,
     schemaVersion: '1',
   },
-  handleEndApplicabilityBinding,
+  { write: handleEndApplicabilityBinding },
   assortmentPolicyServiceFactory,
 );
 

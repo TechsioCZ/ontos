@@ -1,9 +1,9 @@
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
+import { refuseInsideDatabaseTransaction } from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
 import {
   getActionBusinessPermissionTargetResolver,
-  getActionHandler,
   getActionResourcePermissionTargetResolver,
 } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { repeatCounterpartyOrderAction } from '../../src/actions/repeat-counterparty-order.action.ts';
@@ -19,7 +19,23 @@ import type { HistoryActionOwnerPorts } from '../../shared/domain/history-action
 import type { CustomerHistoryPorts, HistoricalOrderCandidate } from '../../shared/domain/history-ports.ts';
 import type { CustomerHistorySubject } from '../../shared/domain/record-visibility-contracts.ts';
 import type { RepeatOrderCartLineResult } from '../../shared/domain/history-action-contracts.ts';
-import { handleRepeatRetailOrder } from '../../src/actions/history-action-support.ts';
+import type { ActionHandlerContext } from '@app/core-runtime';
+import {
+  prepareRepeatRetailOrder,
+  prepareRepeatCounterpartyOrder,
+  writeRepeatOrder,
+} from '../../src/actions/history-action-support.ts';
+import type { HistoryActionServices } from '../../src/actions/history-action-support.ts';
+import { runPreparedAction } from '../support/prepared-action.ts';
+
+const handleRepeatRetailOrder = (
+  payload: RepeatRetailOrderPayload,
+  context: ActionHandlerContext<Readonly<Record<string, never>>, HistoryActionServices>,
+) => runPreparedAction(prepareRepeatRetailOrder, writeRepeatOrder('REPEAT_RETAIL_ORDER'), payload, context);
+const handleRepeatCounterpartyOrder = (
+  payload: RepeatCounterpartyOrderPayload,
+  context: ActionHandlerContext<Readonly<Record<string, never>>, HistoryActionServices>,
+) => runPreparedAction(prepareRepeatCounterpartyOrder, writeRepeatOrder('REPEAT_COUNTERPARTY_ORDER'), payload, context);
 
 const originalCompositionRevision = 'a'.repeat(64);
 const tenantId = '11111111-1111-4111-8111-111111111111';
@@ -157,7 +173,10 @@ const makePorts = (subject: CustomerHistorySubject): CustomerHistoryPorts => {
     orders: {
       getCustomerFacingDetail: () => Effect.succeed({ outcome: 'NOT_FOUND' as const }),
       getForHistoryDetailAuthorization: () => Effect.succeed({ outcome: 'FOUND' as const, value: order }),
-      getForRepeat: () => Effect.succeed({ outcome: 'FOUND' as const, value: order }),
+      getForRepeat: () =>
+        refuseInsideDatabaseTransaction('module-transport', 'commerce.order.getForRepeat').pipe(
+          Effect.as({ outcome: 'FOUND' as const, value: order }),
+        ),
       listCounterparty: () => Effect.succeed([order]),
       listRetail: () => Effect.succeed([order]),
     },
@@ -267,14 +286,16 @@ it.effect('creates a new Cart from only current repeatable intent and preserves 
       carts: {
         createFromHistoricalIntent: (input) => {
           ownerInput = input;
-          return Effect.succeed({
-            cartRef,
-            lines: cartLines,
-            outcome: 'CREATED',
-            repeatPurchaseIntentId: input.repeatPurchaseIntentId,
-            sourceOrderRef: input.sourceOrderRef,
-            subject: input.subject,
-          });
+          return refuseInsideDatabaseTransaction('module-transport', 'commerce.cart.createFromHistoricalIntent').pipe(
+            Effect.as({
+              cartRef,
+              lines: cartLines,
+              outcome: 'CREATED' as const,
+              repeatPurchaseIntentId: input.repeatPurchaseIntentId,
+              sourceOrderRef: input.sourceOrderRef,
+              subject: input.subject,
+            }),
+          );
         },
       },
     };
@@ -573,7 +594,7 @@ it.effect('returns typed repeat failures for conflict, empty intent, and owner o
     };
     const run = (history: CustomerHistoryPorts, carts: HistoryActionOwnerPorts['carts']) => {
       const collector = collectors(repeatRetailOrderAction);
-      return getActionHandler(repeatRetailOrderAction)(payload, {
+      return handleRepeatRetailOrder(payload, {
         actionInvocationId: 'repeat-failure-invocation',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
@@ -668,7 +689,7 @@ it.effect('rejects untrusted Storefront and mismatched Counterparty profile befo
       },
     };
     const run = (trustedStorefrontId?: string) =>
-      getActionHandler(repeatCounterpartyOrderAction)(payload, {
+      handleRepeatCounterpartyOrder(payload, {
         actionInvocationId: 'counterparty-trust-invocation',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,

@@ -341,7 +341,7 @@ export const manageQuantityTierAction = defineAction(
     resultSchema: ManageQuantityTierResultSchema,
     schemaVersion: '1',
   },
-  handleManageQuantityTier,
+  { write: handleManageQuantityTier },
   (transaction, scope, compositionRevision) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(

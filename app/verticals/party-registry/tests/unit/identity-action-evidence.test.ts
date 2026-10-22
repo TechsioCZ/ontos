@@ -3,7 +3,7 @@ import { DateTime, Effect, Option, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { runActionOwnerSteps } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
   PrincipalIdSchema,
   TenantIdSchema,
@@ -62,16 +62,14 @@ it.effect('Update Party records metadata-only invariant evidence with its event 
       'party.registry',
       updatePartyAction.descriptor.accessEvidencePolicy,
     );
-    yield* getActionHandler(updatePartyAction)(
-      {
+    yield* runActionOwnerSteps(updatePartyAction, {
         displayName: 'Example organization',
         expectedRevision: 1,
         partyRef: party.partyRef,
         provenanceMethod: 'MANUAL',
         provenanceSource: 'test',
         validFrom: DateTime.makeUnsafe('2026-01-01T00:00:00.000Z'),
-      },
-      {
+      }, {
         ...collector,
         actionInvocationId,
         compositionRevision: 'a'.repeat(64),
@@ -79,8 +77,7 @@ it.effect('Update Party records metadata-only invariant evidence with its event 
         services: {
           update: () => Effect.succeed({ _tag: 'found', value: party }),
         },
-      },
-    );
+      });
     assertInvariantEvidence(collector.snapshot());
   }),
 );
@@ -92,13 +89,11 @@ it.effect('Archive Party records metadata-only invariant evidence with its event
       'party.registry',
       archivePartyAction.descriptor.accessEvidencePolicy,
     );
-    yield* getActionHandler(archivePartyAction)(
-      {
+    yield* runActionOwnerSteps(archivePartyAction, {
         expectedRevision: 1,
         partyRef: party.partyRef,
         reason: 'No longer active',
-      },
-      {
+      }, {
         ...collector,
         actionInvocationId,
         compositionRevision: 'a'.repeat(64),
@@ -106,8 +101,7 @@ it.effect('Archive Party records metadata-only invariant evidence with its event
         services: {
           transition: () => Effect.succeed({ _tag: 'found', value: party }),
         },
-      },
-    );
+      });
     assertInvariantEvidence(collector.snapshot());
   }),
 );
@@ -119,13 +113,11 @@ it.effect('Unarchive Party records metadata-only invariant evidence with its eve
       'party.registry',
       unarchivePartyAction.descriptor.accessEvidencePolicy,
     );
-    yield* getActionHandler(unarchivePartyAction)(
-      {
+    yield* runActionOwnerSteps(unarchivePartyAction, {
         expectedRevision: 1,
         partyRef: party.partyRef,
         reason: 'Active again',
-      },
-      {
+      }, {
         ...collector,
         actionInvocationId,
         compositionRevision: 'a'.repeat(64),
@@ -133,8 +125,7 @@ it.effect('Unarchive Party records metadata-only invariant evidence with its eve
         services: {
           unarchive: () => Effect.succeed({ _tag: 'found', value: party }),
         },
-      },
-    );
+      });
     assertInvariantEvidence(collector.snapshot());
   }),
 );

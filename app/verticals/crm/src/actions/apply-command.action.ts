@@ -2,7 +2,7 @@
 // @ontos-action-owner demo.crm
 // @ontos-action-slug apply-command
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { ActionHandlerContext } from '@app/core-runtime';
+import type { ActionWriteContext, ActionPrepareContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   ApplyCommandPayloadSchema,
@@ -12,19 +12,22 @@ import {
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
 import { principalKindOf, withCommandGuard } from '../../shared/actions/command-guard.ts';
 import { isCrmIntakePrincipal } from '../services/party-intake.ts';
-import { persistenceService } from '../services/persistence.service.ts';
+import { persistenceService, prepareCommand } from '../services/persistence.service.ts';
+import type { PreparedCommand } from '../services/persistence.service.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 const handleApplyCommand = (
   payload: ApplyCommandPayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
+  context: ActionWriteContext<Readonly<Record<string, never>>, Services, PreparedCommand>,
 ): Effect.Effect<
   Effect.Success<ReturnType<Services['apply']>>,
   Effect.Error<ReturnType<Services['apply']>>,
   Effect.Services<ReturnType<typeof persistenceService>>
-> => context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId);
+> => context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId, context.prepared);
 
-const guardedApplyCommand = withCommandGuard(handleApplyCommand);
+const prepareApplyCommand = (payload: ApplyCommandPayload, context: ActionPrepareContext) =>
+  prepareCommand(payload.command, payload.expectedRevision, context);
+const guardedApplyCommand = withCommandGuard(prepareApplyCommand);
 
 export const applyCommandAction = defineAction(
   {
@@ -53,16 +56,19 @@ export const applyCommandAction = defineAction(
   },
   // CRM.md §3: the Party Registry intake principal (an API key) may store the identity links it verified; every
   // other non-human principal stays restricted by the command guard.
-  (payload, context) =>
-    payload.command._tag === 'LinkClientParty' &&
-    principalKindOf(context.scope.authMethod, context.scope.delegatedByPrincipalId, payload.command._tag) ===
-      'non_human'
-      ? isCrmIntakePrincipal(context.scope.principalId).pipe(
-          Effect.flatMap((intake) =>
-            intake ? handleApplyCommand(payload, context) : guardedApplyCommand(payload, context),
-          ),
-        )
-      : guardedApplyCommand(payload, context),
+  {
+    prepare: (payload, context) =>
+      payload.command._tag === 'LinkClientParty' &&
+      principalKindOf(context.scope.authMethod, context.scope.delegatedByPrincipalId, payload.command._tag) ===
+        'non_human'
+        ? isCrmIntakePrincipal(context.scope.principalId).pipe(
+            Effect.flatMap((intake) =>
+              intake ? prepareApplyCommand(payload, context) : guardedApplyCommand(payload, context),
+            ),
+          )
+        : guardedApplyCommand(payload, context),
+    write: handleApplyCommand,
+  },
   persistenceService,
 );
 

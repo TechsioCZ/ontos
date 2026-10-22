@@ -72,7 +72,7 @@ export const recordLegalHoldAction = defineAction(
     resultSchema: RecordLegalHoldResultSchema,
     schemaVersion: '1',
   },
-  handleRecordLegalHold,
+  { write: handleRecordLegalHold },
   privacyOperationRepositoryForScope,
 );
 

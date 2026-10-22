@@ -77,7 +77,7 @@ export const assignPrivacyResponsibilityAction = defineAction(
     resultSchema: AssignPrivacyResponsibilityResultSchema,
     schemaVersion: '1',
   },
-  handleAssignPrivacyResponsibility,
+  { write: handleAssignPrivacyResponsibility },
   privacyOperationRepositoryForScope,
 );
 

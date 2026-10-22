@@ -89,7 +89,7 @@ export const createProcessingPurposeAction = defineAction(
     resultSchema: CreateProcessingPurposeResultSchema,
     schemaVersion: '1',
   },
-  handleCreateProcessingPurpose,
+  { write: handleCreateProcessingPurpose },
   (transaction, scope) =>
     processingPurposeRepositoryForScope(transaction, scope).pipe(Effect.map(({ create }) => ({ create }))),
 );

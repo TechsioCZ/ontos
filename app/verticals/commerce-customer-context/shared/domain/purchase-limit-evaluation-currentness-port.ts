@@ -35,10 +35,9 @@ export type PurchaseLimitEvaluationCurrentFacts = typeof PurchaseLimitEvaluation
 
 export interface PurchaseLimitEvaluationCurrentnessPortService {
   /**
-   * Close the owner-currentness resolver over the Action transaction. A
-   * resolver may omit this when it is already transaction-bound; production
-   * adapters should implement it so current facts are read in the same scoped
-   * transaction as the evaluation and proposal mutation.
+   * Close the owner-currentness resolver over its scoped owner-read capability. During
+   * Action preparation each routine invocation opens a short owner transaction, leaving
+   * remote currentness calls outside BEGIN. A resolver may omit this when already bound.
    */
   readonly forTransaction?: <Transaction>(
     transaction: Transaction,

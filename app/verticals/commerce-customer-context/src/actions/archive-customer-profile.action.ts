@@ -103,7 +103,7 @@ export const archiveCustomerProfileAction = defineAction(
     resultSchema: ArchiveCustomerProfileResultSchema,
     schemaVersion: '1',
   },
-  handle,
+  { write: handle },
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(({ archiveCustomerProfile }): ArchiveCustomerProfileServices => archiveCustomerProfile),

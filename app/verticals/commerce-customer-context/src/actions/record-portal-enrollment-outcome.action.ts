@@ -105,7 +105,7 @@ export const recordPortalEnrollmentOutcomeAction = defineAction(
     resultSchema: RecordPortalEnrollmentOutcomeResultSchema,
     schemaVersion: '1',
   },
-  handleRecordPortalEnrollmentOutcome,
+  { write: handleRecordPortalEnrollmentOutcome },
   commerceEnrollmentPreparedAttemptActionServicesForTransaction,
 );
 

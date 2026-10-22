@@ -2,7 +2,7 @@
 // @ontos-action-owner demo.sales-pipeline
 // @ontos-action-slug apply-command
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { ActionHandlerContext } from '@app/core-runtime';
+import type { ActionWriteContext, ActionPrepareContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   ApplyCommandPayloadSchema,
@@ -11,7 +11,8 @@ import {
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
 import { withCommandGuard } from '../../shared/actions/command-guard.ts';
-import { persistenceService } from '../services/persistence.service.ts';
+import { persistenceService, prepareCommand } from '../services/persistence.service.ts';
+import type { PreparedCommand } from '../services/persistence.service.ts';
 import {
   opportunityStageChangedDomainEvents,
   opportunityStageChangedPayloads,
@@ -23,9 +24,14 @@ type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 /** Applies the command, then publishes one stage-changed Outbox Message per transition in the same transaction. */
 const handleApplyCommand = Effect.fn('SalesPipeline.applyCommandAction')(function* handleApplyCommand(
   payload: ApplyCommandPayload,
-  context: ActionHandlerContext<typeof opportunityStageChangedDomainEvents, Services>,
+  context: ActionWriteContext<typeof opportunityStageChangedDomainEvents, Services, PreparedCommand>,
 ) {
-  const applied = yield* context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId);
+  const applied = yield* context.services.apply(
+    payload.command,
+    payload.expectedRevision,
+    context.actionInvocationId,
+    context.prepared,
+  );
   const messages = opportunityStageChangedPayloads({
     changedAt: applied.changedAt,
     revision: applied.result.revision,
@@ -37,6 +43,10 @@ const handleApplyCommand = Effect.fn('SalesPipeline.applyCommandAction')(functio
   });
   return applied.result;
 });
+
+const prepareApplyCommand = withCommandGuard((payload: ApplyCommandPayload, context: ActionPrepareContext) =>
+  prepareCommand(payload.command, context.scope),
+);
 
 export const applyCommandAction = defineAction(
   {
@@ -63,7 +73,10 @@ export const applyCommandAction = defineAction(
     resultSchema: ApplyCommandResultSchema,
     schemaVersion: '1',
   },
-  withCommandGuard(handleApplyCommand),
+  {
+    prepare: prepareApplyCommand,
+    write: handleApplyCommand,
+  },
   persistenceService,
 );
 

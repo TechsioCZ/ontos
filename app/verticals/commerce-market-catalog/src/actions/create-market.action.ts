@@ -159,6 +159,6 @@ export const createMarketAction = defineAction(
     resultSchema: CreateMarketResultSchema,
     schemaVersion: '1',
   },
-  handleCreateMarket,
+  { write: handleCreateMarket },
   marketAdministrationService,
 );

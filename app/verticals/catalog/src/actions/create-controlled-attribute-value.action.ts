@@ -114,7 +114,7 @@ export const createControlledAttributeValueAction = defineAction(
     resultSchema: CreateControlledAttributeValueResultSchema,
     schemaVersion: '1',
   },
-  handleCreateControlledAttributeValue,
+  { write: handleCreateControlledAttributeValue },
   (transaction, scope) =>
     attributePersistenceForScope(transaction, scope).pipe(
       Effect.map(

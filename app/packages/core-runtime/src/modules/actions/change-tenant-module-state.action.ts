@@ -148,7 +148,7 @@ export const changeTenantModuleStateAction = defineAction(
     resultSchema: ChangeTenantModuleStateResultSchema,
     schemaVersion: '1',
   },
-  handleChangeTenantModuleState,
+  { write: handleChangeTenantModuleState },
   (transaction) =>
     Effect.succeed({
       persist: (input) => persistTenantModuleStateChange(transaction, input),

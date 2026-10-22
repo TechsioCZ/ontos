@@ -251,9 +251,6 @@ const contextGrants = Effect.fn('SalesInsights.contextGrants')(function* context
   return (permission: ContextGrant) => decisions[permissions.indexOf(permission)]?.decision === 'allowed';
 });
 
-const contextGrant = (scope: OperationalScope, permission: ContextGrant) =>
-  contextGrants(scope, [permission]).pipe(Effect.map((granted) => granted(permission)));
-
 /** What a records read knows before its transaction opens: both grants in one bulk check. */
 export const salesInsightsRecordsGrants = Effect.fn('SalesInsights.recordsGrants')(function* recordsGrants(
   scope: OperationalScope,
@@ -356,6 +353,42 @@ export const finishSalesInsightsRecords = Effect.fn('SalesInsights.finishRecords
   };
 });
 
+/** Before BEGIN: context grants and any per-resource write fallback. */
+export const prepareCommand = Effect.fn('SalesInsights.prepareCommand')(function* prepareCommand(
+  command: SalesInsightsCommand,
+  scope: OperationalScope,
+) {
+  const grants = yield* salesInsightsRecordsGrants(scope);
+  if (scope.legalEntityId === undefined) return yield* referenceUnavailable();
+  const access = yield* ContextAccess;
+  if (!grants.writeAll) {
+    if (Predicate.isTagged('CreateMetric')(command)) {
+      return yield* new SalesInsightsPermissionDenied({
+        code: 'sales_insights_permission_denied',
+        reason: 'Creating Metrics requires SalesInsights write permission',
+      });
+    }
+    const decisions = yield* access.resources({
+      legalEntityId: scope.legalEntityId,
+      permission: 'write',
+      principalId: scope.principalId,
+      resources: [command.metricRef],
+      tenantId: scope.tenantId,
+    });
+    if (!validWriteDecision(decisions, command.metricRef)) {
+      return yield* referenceUnavailable();
+    }
+    if (decisions[0]?.decision !== 'allowed') {
+      return yield* new SalesInsightsPermissionDenied({
+        code: 'sales_insights_permission_denied',
+        reason: 'Metric mutation is forbidden',
+      });
+    }
+  }
+  return grants;
+});
+export type PreparedCommand = Effect.Success<ReturnType<typeof prepareCommand>>;
+
 export const persistenceService = Effect.fn('SalesInsights.persistenceService')(
   function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
     const { legalEntityId } = scope;
@@ -369,7 +402,6 @@ export const persistenceService = Effect.fn('SalesInsights.persistenceService')(
         reason: 'A scoped company transaction is required',
       });
     }
-    const access = yield* ContextAccess;
     const principalEligibility = principalEligibilityForTransaction(transaction);
     const injectedVerifier = yield* Effect.serviceOption(SalesInsightsReferenceVerifier);
     const verifier = Option.getOrElse(injectedVerifier, () => makeWorkReferenceVerifier());
@@ -433,31 +465,8 @@ export const persistenceService = Effect.fn('SalesInsights.persistenceService')(
       command: SalesInsightsCommand,
       expectedRevision: number,
       resourceId: string,
+      _grants: PreparedCommand,
     ) {
-      if (!(yield* contextGrant(scope, 'write_all'))) {
-        if (Predicate.isTagged('CreateMetric')(command)) {
-          return yield* new SalesInsightsPermissionDenied({
-            code: 'sales_insights_permission_denied',
-            reason: 'Creating Metrics requires SalesInsights write permission',
-          });
-        }
-        const decisions = yield* access.resources({
-          legalEntityId,
-          permission: 'write',
-          principalId: scope.principalId,
-          resources: [command.metricRef],
-          tenantId: scope.tenantId,
-        });
-        if (!validWriteDecision(decisions, command.metricRef)) {
-          return yield* referenceUnavailable();
-        }
-        if (decisions[0]?.decision !== 'allowed') {
-          return yield* new SalesInsightsPermissionDenied({
-            code: 'sales_insights_permission_denied',
-            reason: 'Metric mutation is forbidden',
-          });
-        }
-      }
       const snapshot = yield* load();
       if (snapshot.revision !== expectedRevision) {
         return yield* new SalesInsightsRevisionConflict({

@@ -104,7 +104,7 @@ export const setDefaultBillingAddressAction = defineAction(
     resultSchema: SetDefaultBillingAddressResultSchema,
     schemaVersion: '1',
   },
-  handle,
+  { write: handle },
   (transaction, scope) => Effect.succeed<Services>(addressActionPersistenceForTransaction(transaction, scope)),
 );
 

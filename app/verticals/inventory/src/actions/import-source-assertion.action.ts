@@ -123,7 +123,7 @@ export const importSourceAssertionAction = defineAction(
     resultSchema: ImportSourceAssertionResultSchema,
     schemaVersion: '1',
   },
-  handleImportSourceAssertion,
+  { write: handleImportSourceAssertion },
   (transaction, scope) => Effect.succeed(inventorySourceImportService(transaction, scope)),
 );
 

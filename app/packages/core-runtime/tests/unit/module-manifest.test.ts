@@ -50,7 +50,7 @@ const createAction = (owner = 'property.registry') =>
       resultSchema: Schema.Struct({ id: Schema.String }),
       schemaVersion: '1',
     },
-    ({ name }) => Effect.succeed({ id: name }),
+    { write: ({ name }) => Effect.succeed({ id: name }) },
   );
 
 const emptyManifestInput = () => ({

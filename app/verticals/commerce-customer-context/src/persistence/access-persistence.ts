@@ -1630,6 +1630,42 @@ export const counterpartyAccessPortForTransaction = (
  * Transaction-scoped production binding. It closes over Core's verified owner capability and
  * exposes only the public access port to handlers.
  */
+export interface CounterpartyAccessRemoteServices {
+  readonly contextAccess: Pick<ContextAccessService, 'businessPermissions'>;
+  readonly eligibility: PrincipalEligibilityService;
+  readonly proofDelivery: (typeof CounterpartyInvitationProofDelivery)['Service'];
+}
+
+/** Captures only local capabilities; the Action supplies remote observations from prepare. */
+export const counterpartyAccessPortBuilderForScopedTransaction = Effect.fn(
+  'AccessPersistence.counterpartyAccessPortBuilderForScopedTransaction',
+)(function* bindCounterpartyAccessPortBuilder(
+  transaction: CounterpartyAccessScopedRoutineInvoker,
+  scope: OperationalScope & { readonly legalEntityId: string },
+) {
+  const crypto = yield* Crypto.Crypto;
+  const currentOwnerAccess = lockingCurrentOwnerAccessForTransaction(transaction, scope);
+  return (remotes: CounterpartyAccessRemoteServices) => {
+    const { claimAuthority, proofLifecycle } = counterpartyInvitationClaimServicesForTransaction(
+      transaction,
+      remotes.contextAccess,
+      crypto,
+      remotes.proofDelivery,
+      currentOwnerAccess,
+    );
+    return counterpartyAccessPortForTransaction({
+      claimAuthority,
+      contextAccess: remotes.contextAccess,
+      currentOwnerAccess,
+      eligibility: remotes.eligibility,
+      proofLifecycle,
+      scope,
+      transaction,
+      ...(scope.trustedStorefrontId === undefined ? {} : { trustedStorefrontId: scope.trustedStorefrontId }),
+    });
+  };
+});
+
 export const counterpartyAccessPortForScopedTransaction = Effect.fn(
   'AccessPersistence.counterpartyAccessPortForScopedTransaction',
 )(function* bindCounterpartyAccessPort(
@@ -1637,27 +1673,10 @@ export const counterpartyAccessPortForScopedTransaction = Effect.fn(
   scope: OperationalScope & { readonly legalEntityId: string },
 ) {
   const contextAccess = yield* ContextAccess;
-  const crypto = yield* Crypto.Crypto;
   const eligibility = yield* PrincipalEligibility;
   const proofDelivery = yield* CounterpartyInvitationProofDelivery;
-  const currentOwnerAccess = lockingCurrentOwnerAccessForTransaction(transaction, scope);
-  const { claimAuthority, proofLifecycle } = counterpartyInvitationClaimServicesForTransaction(
-    transaction,
-    contextAccess,
-    crypto,
-    proofDelivery,
-    currentOwnerAccess,
-  );
-  return counterpartyAccessPortForTransaction({
-    claimAuthority,
-    contextAccess,
-    currentOwnerAccess,
-    eligibility,
-    proofLifecycle,
-    scope,
-    transaction,
-    ...(scope.trustedStorefrontId === undefined ? {} : { trustedStorefrontId: scope.trustedStorefrontId }),
-  });
+  const build = yield* counterpartyAccessPortBuilderForScopedTransaction(transaction, scope);
+  return build({ contextAccess, eligibility, proofDelivery });
 });
 
 const reconciliationEntry = (

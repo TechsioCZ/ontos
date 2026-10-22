@@ -165,7 +165,7 @@ export const removeCustomerPaymentTermAction = defineAction(
     resultSchema: RemoveCustomerPaymentTermResultSchema,
     schemaVersion: '1',
   },
-  handleRemoveCustomerPaymentTerm,
+  { write: handleRemoveCustomerPaymentTerm },
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(

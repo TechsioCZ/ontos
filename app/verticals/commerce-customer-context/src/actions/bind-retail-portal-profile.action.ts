@@ -174,7 +174,7 @@ export const bindRetailPortalProfileAction = defineAction(
     resultSchema: RetailPortalBindingResultSchema,
     schemaVersion: '1',
   },
-  handle,
+  { write: handle },
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(({ bindRetailPortalProfile }): BindRetailPortalProfileServices => bindRetailPortalProfile),

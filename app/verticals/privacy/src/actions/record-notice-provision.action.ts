@@ -162,7 +162,7 @@ export const recordNoticeProvisionAction = defineAction(
     resultSchema: RecordNoticeProvisionResultSchema,
     schemaVersion: '1',
   },
-  handleRecordNoticeProvision,
+  { write: handleRecordNoticeProvision },
   (transaction, scope) =>
     Effect.all(
       {

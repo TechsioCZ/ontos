@@ -58,7 +58,7 @@ export const upsertTemporaryDsrExportAction = defineAction(
     resultSchema: UpsertTemporaryDsrExportResultSchema,
     schemaVersion: '1',
   },
-  handleUpsertTemporaryDsrExport,
+  { write: handleUpsertTemporaryDsrExport },
   privacyOperationRepositoryForScope,
 );
 // <generated-outbox-message-exports>

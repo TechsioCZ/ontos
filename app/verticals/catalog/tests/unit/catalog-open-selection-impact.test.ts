@@ -1,8 +1,17 @@
+import {
+  insideDatabaseTransaction,
+  refuseInsideDatabaseTransaction,
+} from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
+import { prepareCatalogActionOpenSelections } from '../../src/actions/catalog-action-open-selections.ts';
+import { SetProductAttributeValuesPayloadSchema } from '../../shared/actions/attribute-value-mutations.ts';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
-import { getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import {
+  getActionServiceFactory,
+  runActionOwnerSteps,
+} from '../../../../packages/core-runtime/src/actions/definition.ts';
 
 import {
   CartOpenSelectionPopulationEvidenceSchema,
@@ -94,17 +103,146 @@ describe('Catalog open-selection impact', () => {
     }),
   );
 
-  it.effect('injects the public Cart service into an affected Attribute Action factory', () =>
+  it.effect('reads Cart before BEGIN and binds only its prepared snapshot to the Attribute Action services', () =>
     Effect.gen(function* actionFactoryBinding() {
-      const port = population([]);
+      let reads = 0;
+      const port = {
+        read: () =>
+          refuseInsideDatabaseTransaction('module-transport', 'cart-open-selection-population').pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                reads += 1;
+              }),
+            ),
+            Effect.andThen(population([]).read()),
+          ),
+      };
       const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
-      const services = yield* getActionServiceFactory(setProductAttributeValuesAction)(
+      const prepared = yield* prepareCatalogActionOpenSelections(
+        {},
+        {
+          actionInvocationId: '66666666-6666-4666-8666-666666666666',
+          compositionRevision: snapshot.composition.revision,
+          scope,
+          transaction: () => Effect.die('Cart preparation must not open an owner transaction'),
+        },
+      ).pipe(Effect.provideService(CartOpenSelectionPopulationService, port));
+      const bindServices = yield* getActionServiceFactory(setProductAttributeValuesAction)(
         // @ts-expect-error The impact check over an empty population never reads Catalog persistence.
         untouchedTransaction,
         scope,
         snapshot.composition.revision,
-      ).pipe(Effect.provideService(CartOpenSelectionPopulationService, port));
-      expect(yield* services.assessOpenSelectionImpact(productRef)).toBeUndefined();
+      ).pipe(insideDatabaseTransaction('catalog-factory'));
+      const services = yield* bindServices(prepared).pipe(insideDatabaseTransaction('catalog-bind'));
+      expect(
+        yield* services.assessOpenSelectionImpact(productRef).pipe(insideDatabaseTransaction('catalog-write')),
+      ).toBeUndefined();
+      expect(
+        yield* services.assessOpenSelectionImpact(productRef).pipe(insideDatabaseTransaction('catalog-write-again')),
+      ).toBeUndefined();
+      expect(reads).toBe(1);
+      expect(prepared).toBeDefined();
+      if (prepared !== undefined) {
+        const failure = yield* prepared.read({ tenantId: foreignTenantId }).pipe(Effect.flip);
+        expect(failure.reason).toContain('different Tenant');
+      }
+    }),
+  );
+
+  it.effect('preserves an absent Cart binding without reading owner persistence', () =>
+    Effect.gen(function* absentPreparedPopulation() {
+      const prepared = yield* prepareCatalogActionOpenSelections(
+        {},
+        {
+          actionInvocationId: '66666666-6666-4666-8666-666666666666',
+          compositionRevision: 'catalog-test',
+          scope,
+          transaction: () => Effect.die('Absent Cart binding must not read owner persistence'),
+        },
+      );
+      expect(prepared).toBeUndefined();
+    }),
+  );
+
+  it.effect('replays a prepared Cart failure as the existing Action domain error under the transaction mark', () =>
+    Effect.gen(function* actionPipelineOwnerUnavailable() {
+      let reads = 0;
+      const port = {
+        read: () =>
+          refuseInsideDatabaseTransaction('module-transport', 'cart-open-selection-population').pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                reads += 1;
+              }),
+            ),
+            Effect.andThen(
+              Effect.fail(
+                new CartOpenSelectionPopulationUnavailable({
+                  code: 'cart_open_selection_population_unavailable',
+                  reason: 'Cart is unavailable',
+                }),
+              ),
+            ),
+          ),
+      };
+      const bindServices = yield* getActionServiceFactory(setProductAttributeValuesAction)(
+        // @ts-expect-error Cart failure must prevent any use of owner persistence.
+        untouchedTransaction,
+        scope,
+        'catalog-test',
+      );
+      const payload = Schema.decodeUnknownSync(SetProductAttributeValuesPayloadSchema)({
+        attributeDefinitionRef: {
+          moduleId: 'commerce.catalog',
+          resourceId: '77777777-7777-4777-8777-777777777777',
+          resourceType: 'commerce.catalog.attribute-definition',
+          tenantId,
+        },
+        classification: {
+          evidenceRefs: ['catalog-review-1'],
+          kind: 'EVIDENCED_CORRECTION',
+          reason: 'Correct the documented fact',
+        },
+        expectedRevision: null,
+        productRef,
+        reason: 'Correct the documented fact',
+        values: [{ kind: 'SPECIAL', state: 'UNKNOWN' }],
+      });
+      const context = {
+        actionInvocationId: '66666666-6666-4666-8666-666666666666',
+        addDomainEvent: () => Effect.die('Unavailable population must prevent domain events'),
+        addOutboxMessage: () => Effect.die('Unavailable population must prevent outbox writes'),
+        compositionRevision: 'catalog-test',
+        recordAuditEvidence: () => Effect.die('Unavailable population must prevent audit writes'),
+        recordDataAccess: () => Effect.die('Unavailable population must prevent data access writes'),
+        scope,
+        services: bindServices,
+      };
+      const failure = yield* runActionOwnerSteps(setProductAttributeValuesAction, payload, context).pipe(
+        Effect.provideService(CartOpenSelectionPopulationService, port),
+        Effect.flip,
+      );
+      expect(failure).toMatchObject({
+        code: 'catalog_open_selection_impact_unavailable',
+        reason: 'Cart is unavailable',
+      });
+      expect(reads).toBe(1);
+      const invalidPayload = Schema.decodeUnknownSync(SetProductAttributeValuesPayloadSchema)({
+        ...payload,
+        classification: {
+          evidenceRefs: ['catalog-review-1'],
+          kind: 'NEW_REALIZATION' as const,
+          newVariantRef: selection.variantRef,
+          previousVariantRef: selection.variantRef,
+          reason: 'New realization',
+        },
+      });
+      const invalid = yield* runActionOwnerSteps(setProductAttributeValuesAction, invalidPayload, context).pipe(
+        Effect.provideService(CartOpenSelectionPopulationService, port),
+        Effect.flip,
+      );
+      expect(invalid).toMatchObject({ code: 'product_attribute_change_conflict' });
+      expect(reads).toBe(2);
     }),
   );
 

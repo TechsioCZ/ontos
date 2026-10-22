@@ -42,7 +42,7 @@ export const dismissDuplicateCandidateAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'review_party_identity',
   },
-  handleDuplicateCaseResolution,
+  { write: handleDuplicateCaseResolution },
   (transaction, scope) => duplicateCaseResolutionService(transaction, scope.tenantId, 'DISMISSED_AS_NON_SUBJECT'),
 );
 // <generated-outbox-message-exports>

@@ -262,7 +262,7 @@ const registration = (actionKey: string, moduleStateKey: string, onExecute: () =
       resultSchema: Schema.Void,
       schemaVersion: '1',
     },
-    Effect.fn(function* permissionIntegrationHandler(_payload, context: PermissionActionContext) {
+    { write: Effect.fn(function* permissionIntegrationHandler(_payload, context: PermissionActionContext) {
       onExecute();
       yield* context.services.transaction
         .insert(tenantModuleStates)
@@ -272,7 +272,7 @@ const registration = (actionKey: string, moduleStateKey: string, onExecute: () =
           tenantId: context.scope.tenantId,
         })
         .pipe(Effect.mapError(() => new TestWriteError({ reason: 'test business write failed' })));
-    }),
+    }) },
     (transaction) => Effect.succeed({ transaction }),
   );
 

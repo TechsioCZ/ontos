@@ -235,9 +235,6 @@ const contextGrants = Effect.fn('Workforce.contextGrants')(function* contextGran
   return (permission: ContextGrant) => decisions[permissions.indexOf(permission)]?.decision === 'allowed';
 });
 
-const contextGrant = (scope: OperationalScope, permission: ContextGrant) =>
-  contextGrants(scope, [permission]).pipe(Effect.map((granted) => granted(permission)));
-
 /** What a records read knows before its transaction opens: both grants in one bulk check. */
 export const workforceRecordsGrants = Effect.fn('Workforce.recordsGrants')(function* recordsGrants(
   scope: OperationalScope,
@@ -349,6 +346,46 @@ export const finishWorkforceRecords = Effect.fn('Workforce.finishRecords')(funct
   };
 });
 
+/** Before BEGIN: context grants and any per-resource write fallback. */
+export const prepareCommand = Effect.fn('Workforce.prepareCommand')(function* prepareCommand(
+  command: WorkforceCommand,
+  scope: OperationalScope,
+) {
+  const grants = yield* workforceRecordsGrants(scope);
+  if (scope.legalEntityId === undefined) return yield* referenceUnavailable();
+  const access = yield* ContextAccess;
+  const tenantId = yield* Schema.decodeEffect(TenantIdSchema)(scope.tenantId).pipe(
+    Effect.mapError(referenceUnavailable),
+  );
+  if (!grants.writeAll) {
+    if (Predicate.isTagged('CreateEmployee')(command)) {
+      return yield* new WorkforcePermissionDenied({
+        code: 'workforce_permission_denied',
+        reason: 'Creating Employees requires Workforce write permission',
+      });
+    }
+    const refs = targetIds(command).map((id) => employeeRefFor(id, tenantId));
+    const decisions = yield* access.resources({
+      legalEntityId: scope.legalEntityId,
+      permission: 'write',
+      principalId: scope.principalId,
+      resources: refs,
+      tenantId: scope.tenantId,
+    });
+    if (!decisionsMatch(decisions, refs)) {
+      return yield* referenceUnavailable();
+    }
+    if (decisions.some((decision) => decision.decision !== 'allowed')) {
+      return yield* new WorkforcePermissionDenied({
+        code: 'workforce_permission_denied',
+        reason: 'Employee mutation is forbidden',
+      });
+    }
+  }
+  return grants;
+});
+export type PreparedCommand = Effect.Success<ReturnType<typeof prepareCommand>>;
+
 export const persistenceService = Effect.fn('Workforce.persistenceService')(
   function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
     const { legalEntityId } = scope;
@@ -362,7 +399,7 @@ export const persistenceService = Effect.fn('Workforce.persistenceService')(
         reason: 'A scoped company transaction is required',
       });
     }
-    const tenantId = yield* Schema.decodeEffect(TenantIdSchema)(scope.tenantId).pipe(
+    yield* Schema.decodeEffect(TenantIdSchema)(scope.tenantId).pipe(
       Effect.mapError((cause) =>
         Object.defineProperty(
           new WorkforceScopeMismatch({
@@ -374,7 +411,6 @@ export const persistenceService = Effect.fn('Workforce.persistenceService')(
         ),
       ),
     );
-    const access = yield* ContextAccess;
     const principalEligibility = principalEligibilityForTransaction(transaction);
     const whereScope = and(
       eq(workforceStates.tenantId, scope.tenantId),
@@ -423,32 +459,11 @@ export const persistenceService = Effect.fn('Workforce.persistenceService')(
       }
       return expectedRevision + 1;
     });
-    const apply = Effect.fn('Workforce.apply')(function* apply(command: WorkforceCommand, expectedRevision: number) {
-      if (!(yield* contextGrant(scope, 'write_all'))) {
-        if (Predicate.isTagged('CreateEmployee')(command)) {
-          return yield* new WorkforcePermissionDenied({
-            code: 'workforce_permission_denied',
-            reason: 'Creating Employees requires Workforce write permission',
-          });
-        }
-        const refs = targetIds(command).map((id) => employeeRefFor(id, tenantId));
-        const decisions = yield* access.resources({
-          legalEntityId,
-          permission: 'write',
-          principalId: scope.principalId,
-          resources: refs,
-          tenantId: scope.tenantId,
-        });
-        if (!decisionsMatch(decisions, refs)) {
-          return yield* referenceUnavailable();
-        }
-        if (decisions.some((decision) => decision.decision !== 'allowed')) {
-          return yield* new WorkforcePermissionDenied({
-            code: 'workforce_permission_denied',
-            reason: 'Employee mutation is forbidden',
-          });
-        }
-      }
+    const apply = Effect.fn('Workforce.apply')(function* apply(
+      command: WorkforceCommand,
+      expectedRevision: number,
+      _grants: PreparedCommand,
+    ) {
       const snapshot = yield* load();
       if (snapshot.revision !== expectedRevision) {
         return yield* new WorkforceRevisionConflict({
@@ -534,7 +549,10 @@ export const persistenceService = Effect.fn('Workforce.persistenceService')(
       // The activity feed is best-effort: an unreadable audit table never breaks the employee list.
       const activity =
         request.includeAiActivity === true
-          ? yield* aiActivity().pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+          ? yield* aiActivity().pipe(
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off -- The feed distinguishes absent data from an empty array; preserve undefined in its result type.
+              Effect.catchCause(() => Effect.succeed(undefined)),
+            )
           : undefined;
       return { aiActivity: activity, row } satisfies LoadedRecords;
     });

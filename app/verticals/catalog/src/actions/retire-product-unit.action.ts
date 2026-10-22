@@ -73,7 +73,7 @@ export const retireProductUnitAction = defineAction(
     resultSchema: RetireProductUnitResultSchema,
     schemaVersion: '1',
   },
-  handleRetireProductUnit,
+  { write: handleRetireProductUnit },
   (transaction, scope) =>
     productUnitPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map(

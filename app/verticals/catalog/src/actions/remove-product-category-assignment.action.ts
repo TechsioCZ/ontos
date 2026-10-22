@@ -103,7 +103,7 @@ export const removeProductCategoryAssignmentAction = defineAction(
     resultSchema: RemoveProductCategoryAssignmentResultSchema,
     schemaVersion: '1',
   },
-  handleRemoveProductCategoryAssignment,
+  { write: handleRemoveProductCategoryAssignment },
   (transaction, scope) =>
     categoryPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map(

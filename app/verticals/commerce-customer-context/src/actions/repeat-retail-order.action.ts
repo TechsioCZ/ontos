@@ -8,7 +8,7 @@ import {
   defineActionResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import {
   RepeatRetailOrderPayloadSchema,
   RepeatRetailOrderResultSchema,
@@ -21,7 +21,7 @@ import {
   RepeatOrderNoRepeatableLines,
 } from '../../shared/domain/history-action-errors.ts';
 import { HistoryAccessDenied, HistoryRecordNotFound } from '../../shared/domain/history-errors.ts';
-import { handleRepeatRetailOrder, loadHistoryActionServices } from './history-action-support.ts';
+import { prepareRepeatRetailOrder, loadHistoryActionServices, writeRepeatOrder } from './history-action-support.ts';
 
 const RepeatRetailOrderErrorSchema = Schema.Union([
   HistoryAccessDenied,
@@ -78,8 +78,13 @@ export const repeatRetailOrderAction = defineAction(
     resultSchema: RepeatRetailOrderResultSchema,
     schemaVersion: '1',
   },
-  handleRepeatRetailOrder,
-  (transaction, scope) => loadHistoryActionServices(transaction, scope),
+  {
+    prepare: (payload, context) =>
+      loadHistoryActionServices(context).pipe(
+        Effect.flatMap((services) => prepareRepeatRetailOrder(payload, { ...context, services })),
+      ),
+    write: writeRepeatOrder('REPEAT_RETAIL_ORDER'),
+  },
 );
 
 export type { RepeatRetailOrderPayload } from '../../shared/actions/repeat-retail-order.ts';

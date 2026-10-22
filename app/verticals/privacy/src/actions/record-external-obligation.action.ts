@@ -73,7 +73,7 @@ export const recordExternalObligationAction = defineAction(
     resultSchema: RecordExternalObligationResultSchema,
     schemaVersion: '1',
   },
-  handleRecordExternalObligation,
+  { write: handleRecordExternalObligation },
   privacyOperationRepositoryForScope,
 );
 

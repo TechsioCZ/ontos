@@ -55,7 +55,7 @@ export const assignDsrResolverAction = defineAction(
     resultSchema: AssignDsrResolverResultSchema,
     schemaVersion: '1',
   },
-  handleAssignDsrResolver,
+  { write: handleAssignDsrResolver },
   privacyOperationRepositoryForScope,
 );
 // <generated-outbox-message-exports>

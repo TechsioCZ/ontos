@@ -144,7 +144,7 @@ export const addPartyOfficialIdentifierAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_party_identity',
   },
-  handle,
+  { write: handle },
   (transaction, scope) =>
     Effect.succeed({
       add: Effect.fn('addPartyOfficialIdentifierAction.add')(function* add(

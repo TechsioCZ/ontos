@@ -93,7 +93,7 @@ export const correctPartyFactAction = defineAction(
     tenantPermission: (payload) =>
       payload.factKind === 'RELATIONSHIP' ? 'manage_party_relationships' : 'manage_party_identity',
   },
-  handle,
+  { write: handle },
   (transaction, scope) =>
     Effect.succeed({
       correct: (payload: PartyCorrectionCommand, actionInvocationId: string) =>

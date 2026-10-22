@@ -1,5 +1,5 @@
 import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/server';
-import { DatabaseConfig, configureDatabasePool } from '@app/core-runtime';
+import { DatabaseConfig, configureDatabasePool, makeGuardedPgClient } from '@app/core-runtime';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Context, Effect, Layer, Redacted } from 'effect';
@@ -35,7 +35,7 @@ export const makeAuthDatabase = Effect.fn('AuthDatabase.make')(function* makeDat
     Effect.mapError(mapPoolConfigurationError),
   );
   const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.make(poolConfiguration).pipe(
+  const client = yield* makeGuardedPgClient(poolConfiguration).pipe(
     Effect.provideService(Reactivity.Reactivity, reactivity),
     Effect.mapError(connectionFailure),
   );

@@ -396,6 +396,6 @@ export const manageDemoAccountAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_identity',
   },
-  handleManageDemoAccount,
+  { write: handleManageDemoAccount },
   (transaction) => Effect.succeed({ transaction }),
 );

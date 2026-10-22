@@ -2,8 +2,10 @@
 // @ontos-action-owner commerce.catalog
 // @ontos-action-slug set-product-manufacturer
 import { Effect, Match, Schema } from 'effect';
-import type { ActionHandlerContext } from '@app/core-runtime';
-import { ActionTransactionError, ReadRuntime, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import type { ActionWriteContext } from '@app/core-runtime';
+import type { ResolvedManufacturerTarget } from '../persistence/manufacturer-target-resolver.ts';
+import { prepareManufacturerActionTarget } from './manufacturer-action-prepare.ts';
+import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { ProductAuditEvidenceSchema } from '../../shared/domain/product.ts';
 import {
   SetProductManufacturerPayloadSchema,
@@ -18,7 +20,6 @@ import {
 import type { ManufacturerPersistence } from '../persistence/manufacturer-persistence.ts';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
 import { ManufacturerTargetForbidden } from '../persistence/manufacturer-target-forbidden.ts';
-import { manufacturerTargetResolverForCoreRead } from '../persistence/manufacturer-target-resolver.ts';
 
 export type { SetProductManufacturerPayload } from '../../shared/actions/manufacturer-mutations.ts';
 
@@ -37,7 +38,7 @@ interface CapturingManufacturerPersistence extends ManufacturerPersistence {
 export const handleSetProductManufacturer = Effect.fn('SetProductManufacturerAction.handle')(
   function* handleSetProductManufacturer(
     payload: SetProductManufacturerPayload,
-    context: ActionHandlerContext<Readonly<Record<string, never>>, ManufacturerPersistence>,
+    context: ActionWriteContext<Readonly<Record<string, never>>, ManufacturerPersistence, ResolvedManufacturerTarget>,
   ) {
     if (payload.subject.tenantId !== context.scope.tenantId) {
       return yield* new ManufacturerActionError({
@@ -45,11 +46,14 @@ export const handleSetProductManufacturer = Effect.fn('SetProductManufacturerAct
         reason: 'Manufacturer relation subject must belong to the trusted Tenant',
       });
     }
-    const outcome = yield* context.services.set({
-      actionInvocationId: context.actionInvocationId,
-      payload,
-      principalId: context.scope.principalId,
-    });
+    const outcome = yield* context.services.set(
+      {
+        actionInvocationId: context.actionInvocationId,
+        payload,
+        principalId: context.scope.principalId,
+      },
+      context.prepared,
+    );
     const applied = yield* Match.value(outcome).pipe(
       Match.tag('applied', (value) => Effect.succeed(value)),
       Match.tag('not_found', () =>
@@ -110,12 +114,12 @@ export const setProductManufacturerAction = defineAction(
     resultSchema: SetProductManufacturerResultSchema,
     schemaVersion: '1',
   },
-  handleSetProductManufacturer,
-  Effect.fn('SetProductManufacturerAction.services')(function* manufacturerServices(transaction, scope) {
-    const readRuntime = yield* ReadRuntime;
-    const services = manufacturerPersistenceForScope(transaction, scope, {
-      targetResolver: manufacturerTargetResolverForCoreRead(readRuntime, scope),
-    });
+  {
+    prepare: prepareManufacturerActionTarget,
+    write: handleSetProductManufacturer,
+  },
+  Effect.fn('SetProductManufacturerAction.services')((transaction, scope) => {
+    const services = manufacturerPersistenceForScope(transaction, scope);
     const capturingServices: CapturingManufacturerPersistence = {
       ...services,
       captureResult: (actionInvocationId: string, result: typeof ProductManufacturerMutationResultSchema.Type) =>
@@ -140,7 +144,7 @@ export const setProductManufacturerAction = defineAction(
           ),
         ),
     };
-    return capturingServices;
+    return Effect.succeed(capturingServices);
   }),
   ({ actionInvocationId, result, services }) => services.captureResult(actionInvocationId, result),
 );

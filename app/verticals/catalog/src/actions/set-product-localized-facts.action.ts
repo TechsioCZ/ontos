@@ -164,7 +164,7 @@ export const setProductLocalizedFactsAction = defineAction(
     resultSchema: LocalizedFactsChangeResultSchema,
     schemaVersion: '1',
   },
-  handleSetProductLocalizedFacts,
+  { write: handleSetProductLocalizedFacts },
   setProductLocalizedFactsSnapshotServiceFactory,
   captureSetProductLocalizedFactsResult,
 );

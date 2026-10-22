@@ -1,6 +1,10 @@
+import { refuseInsideDatabaseTransaction } from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
+import { prepareManufacturerActionTarget } from '../../src/actions/manufacturer-action-prepare.ts';
+import type { ResolvedManufacturerTarget } from '../../src/persistence/manufacturer-target-resolver.ts';
+import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
-import type { ActionHandlerContext } from '@app/core-runtime';
+import type { ActionWriteContext } from '@app/core-runtime';
 import { ActionTransactionError, ReadRuntime, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { describe, expect, it } from 'effect-rstest';
@@ -70,6 +74,32 @@ const scope = {
   }),
   correlationId: 'manufacturer-action-test',
 };
+const confirmedPartyTarget = { kind: 'PARTY' as const, partyRef: Schema.decodeUnknownSync(PartyRefSchema)(partyRef) };
+const preparedTarget: ResolvedManufacturerTarget = {
+  canonicalTarget: confirmedPartyTarget,
+  kind: 'PARTY',
+  ownerRevision: 1,
+  requestedTarget: confirmedPartyTarget,
+  state: 'CURRENT',
+};
+const managedTarget = {
+  kind: 'LEGAL_ENTITY' as const,
+  legalEntityRef: {
+    moduleId: 'core.identity',
+    resourceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    resourceType: 'core.identity.legal-entity',
+    tenantId,
+  },
+};
+const managedSetPayload = Schema.decodeUnknownSync(SetProductManufacturerPayloadSchema)({
+  ...basis,
+  target: managedTarget,
+});
+const managedChangePayload = Schema.decodeUnknownSync(ChangeProductManufacturerPayloadSchema)({
+  ...basis,
+  expectedRevision: 1,
+  target: managedTarget,
+});
 const unavailable = () =>
   Effect.fail(
     new ManufacturerPersistenceUnavailable({
@@ -80,11 +110,12 @@ const unavailable = () =>
 const context = (
   compositionRevision: string,
   overrides: Partial<ManufacturerPersistence> = {},
-): ActionHandlerContext<Readonly<Record<string, never>>, ManufacturerPersistence> => ({
+): ActionWriteContext<Readonly<Record<string, never>>, ManufacturerPersistence, ResolvedManufacturerTarget> => ({
   actionInvocationId: '88888888-8888-4888-8888-888888888888',
   addDomainEvent: () => Effect.succeed(Object.create(null)),
   addOutboxMessage: () => Effect.void,
   compositionRevision,
+  prepared: preparedTarget,
   recordAuditEvidence: () => Effect.void,
   recordDataAccess: () => Effect.void,
   scope,
@@ -135,11 +166,12 @@ describe('manufacturer Action contracts', () => {
         principalId: scope.principalId,
         tenantId,
       };
+      let ownerReads = 0;
       const failures = yield* Effect.all(
         [
           harness.runtime
             .runAction({
-              payload: setPayload,
+              payload: managedSetPayload,
               principal,
               registration: setProductManufacturerAction,
               transport: captureTransport('manufacturer-set-capture'),
@@ -147,7 +179,7 @@ describe('manufacturer Action contracts', () => {
             .pipe(Effect.flip),
           harness.runtime
             .runAction({
-              payload: changePayload,
+              payload: managedChangePayload,
               principal,
               registration: changeProductManufacturerAction,
               transport: captureTransport('manufacturer-change-capture'),
@@ -163,12 +195,65 @@ describe('manufacturer Action contracts', () => {
             .pipe(Effect.flip),
         ],
         { concurrency: 1 },
-      ).pipe(Effect.provideService(ReadRuntime, { runRead: () => Effect.die('Unexpected governed read') }));
+      ).pipe(
+        Effect.provideService(ReadRuntime, {
+          runRead: () =>
+            refuseInsideDatabaseTransaction('pool-acquisition', 'legal-entity-detail').pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  ownerReads += 1;
+                }),
+              ),
+              Effect.as({ legalEntityRef: managedTarget.legalEntityRef, status: 'active' as const }),
+            ),
+        }),
+      );
       for (const failure of failures) {
         expect(failure).toMatchObject({ code: 'action_transaction_failed' });
       }
       expect(captured).toHaveLength(3);
+      expect(ownerReads).toBe(2);
       expect(harness.snapshot().committed).toHaveLength(0);
+    }),
+  );
+  it.effect('preserves absent, invalid, denied and unavailable owner failures before any Catalog transaction', () =>
+    Effect.gen(function* manufacturerPrepareFailures() {
+      const prepareContext = {
+        actionInvocationId: '88888888-8888-4888-8888-888888888888',
+        compositionRevision: 'manufacturer-test',
+        scope,
+        transaction: () => Effect.die('Owner resolution must not open a Catalog transaction'),
+      };
+      for (const [tag, code] of [
+        ['ReadHandlerNotFound', 'manufacturer_not_found'],
+        ['ReadPermissionDenied', 'manufacturer_target_forbidden'],
+        ['ReadHandlerExecutionError', 'manufacturer_persistence_unavailable'],
+      ] as const) {
+        const failure = yield* prepareManufacturerActionTarget(managedSetPayload, prepareContext).pipe(
+          Effect.provideService(ReadRuntime, {
+            runRead: () =>
+              refuseInsideDatabaseTransaction('pool-acquisition', 'legal-entity-detail').pipe(
+                Effect.andThen(Effect.fail({ _tag: tag })),
+              ),
+          }),
+          Effect.flip,
+        );
+        if (tag === 'ReadPermissionDenied') {
+          expect(Schema.is(ManufacturerTargetForbidden)(failure)).toBe(true);
+        } else {
+          expect(failure).toMatchObject({ code });
+        }
+      }
+      const invalid = yield* prepareManufacturerActionTarget(managedSetPayload, {
+        ...prepareContext,
+        scope: { ...scope, correlationId: '' },
+      }).pipe(
+        Effect.provideService(ReadRuntime, {
+          runRead: () => Effect.die('Invalid request identity must not call the owner'),
+        }),
+        Effect.flip,
+      );
+      expect(invalid).toMatchObject({ code: 'manufacturer_invalid', reason: 'invalid_change' });
     }),
   );
   it('requires typed identity, exact subject, reason and evidence', () => {

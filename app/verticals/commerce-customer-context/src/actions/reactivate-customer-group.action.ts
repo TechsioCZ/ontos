@@ -120,7 +120,7 @@ export const reactivateCustomerGroupAction = defineAction(
     resultSchema: ReactivateCustomerGroupResultSchema,
     schemaVersion: '1',
   },
-  handleReactivateCustomerGroup,
+  { write: handleReactivateCustomerGroup },
   customerGroupServiceFactory,
 );
 

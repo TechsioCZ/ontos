@@ -191,7 +191,7 @@ export const updatePartyOfficialIdentifierAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_party_identity',
   },
-  handleUpdatePartyOfficialIdentifier,
+  { write: handleUpdatePartyOfficialIdentifier },
   (transaction, scope) =>
     Effect.succeed({
       update: Effect.fn('updatePartyOfficialIdentifierAction.update')(function* update(

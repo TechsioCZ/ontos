@@ -92,7 +92,7 @@ export const recordDsrSubstantiveDecisionAction = defineAction(
     resultSchema: RecordDsrSubstantiveDecisionResultSchema,
     schemaVersion: '1',
   },
-  handleRecordDsrSubstantiveDecision,
+  { write: handleRecordDsrSubstantiveDecision },
   (transaction, scope) =>
     Effect.all(
       {

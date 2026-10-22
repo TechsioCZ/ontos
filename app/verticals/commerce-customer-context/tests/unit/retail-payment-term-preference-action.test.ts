@@ -1,11 +1,11 @@
 import { expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
+import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
-  getActionBusinessPermissionTargetResolver,
-  getActionHandler,
-} from '../../../../packages/core-runtime/src/actions/definition.ts';
-import { changeRetailPaymentTermPreferenceAction } from '../../src/actions/change-retail-payment-term-preference.action.ts';
+  changeRetailPaymentTermPreferenceAction,
+  handleChangeRetailPaymentTermPreference,
+} from '../../src/actions/change-retail-payment-term-preference.action.ts';
 import { ChangeRetailPaymentTermPreferencePayloadSchema } from '../../shared/actions/change-retail-payment-term-preference.ts';
 import type { CustomerPaymentTermsState } from '../../shared/domain/payment-term-contracts.ts';
 
@@ -115,7 +115,8 @@ it.effect('delegates entitlement validation atomically and records a changed pre
       changeRetailPaymentTermPreferenceAction.descriptor.auditEvidenceSchema,
     );
     let delegatedPayload: unknown;
-    const result = yield* getActionHandler(changeRetailPaymentTermPreferenceAction)(payload, {
+    const result = yield* handleChangeRetailPaymentTermPreference(payload, {
+      prepared: [],
       actionInvocationId: '77777777-7777-4777-8777-777777777777',
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,

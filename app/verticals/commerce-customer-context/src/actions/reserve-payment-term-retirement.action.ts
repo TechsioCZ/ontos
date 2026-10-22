@@ -135,7 +135,7 @@ export const reservePaymentTermRetirementAction = defineAction(
     resultSchema: ReservePaymentTermRetirementResultSchema,
     schemaVersion: '1',
   },
-  handleReservePaymentTermRetirement,
+  { write: handleReservePaymentTermRetirement },
   (transaction, scope) => {
     const { legalEntityId } = scope;
     if (legalEntityId === undefined) {

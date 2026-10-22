@@ -3,7 +3,7 @@ import { expect, it } from 'effect-rstest';
 
 import type { OperationalScope } from '@app/core-runtime';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { runActionOwnerSteps } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import type {
   ActionAccessEvidencePolicy,
   DomainEventContractMap,
@@ -220,10 +220,7 @@ it.effect('start derives Actor, Tenant and Action invocation from trusted Core c
       },
     };
     const collector = collectorFor(startPortalEnrollmentAction);
-    const result = yield* getActionHandler(startPortalEnrollmentAction)(
-      startPayload,
-      handlerContext(collector, services),
-    );
+    const result = yield* runActionOwnerSteps(startPortalEnrollmentAction, startPayload, handlerContext(collector, services));
     if (!('attempt' in result)) {
       throw new Error('start action did not return a committed Attempt result');
     }
@@ -262,10 +259,7 @@ it.effect('claim authorizes the exact prepared binding before durable transition
       reconcilePrepared: () => Effect.die('unused reconcilePrepared'),
     };
     const collector = collectorFor(claimPortalEnrollmentTransitionAction);
-    const result = yield* getActionHandler(claimPortalEnrollmentTransitionAction)(
-      claimPayload,
-      handlerContext(collector, services),
-    );
+    const result = yield* runActionOwnerSteps(claimPortalEnrollmentTransitionAction, claimPayload, handlerContext(collector, services));
     if (!('operation' in result)) {
       throw new Error('claim action did not return a committed owner operation');
     }
@@ -297,7 +291,7 @@ it.effect('claim refuses a transition the Attempt journey does not declare', () 
     });
     const collector = collectorFor(claimPortalEnrollmentTransitionAction);
     const failure = yield* Effect.flip(
-      getActionHandler(claimPortalEnrollmentTransitionAction)(undeclared, handlerContext(collector, services)),
+      runActionOwnerSteps(claimPortalEnrollmentTransitionAction, undeclared, handlerContext(collector, services)),
     );
     expect(failure.code).toBe('attempt_invalid');
   }),
@@ -327,10 +321,7 @@ it.effect('record consumes prepared owner evidence and carries only trusted reco
         }),
     };
     const collector = collectorFor(recordPortalEnrollmentOutcomeAction);
-    const result = yield* getActionHandler(recordPortalEnrollmentOutcomeAction)(
-      recordPayload,
-      handlerContext(collector, services),
-    );
+    const result = yield* runActionOwnerSteps(recordPortalEnrollmentOutcomeAction, recordPayload, handlerContext(collector, services));
     if (!('operation' in result)) {
       throw new Error('record action did not return a committed owner outcome');
     }
@@ -363,10 +354,7 @@ it.effect('terminate derives the trusted Actor, Tenant and invocation for the te
       },
     };
     const collector = collectorFor(terminatePortalEnrollmentAction);
-    const result = yield* getActionHandler(terminatePortalEnrollmentAction)(
-      terminatePayload,
-      handlerContext(collector, services),
-    );
+    const result = yield* runActionOwnerSteps(terminatePortalEnrollmentAction, terminatePayload, handlerContext(collector, services));
     if (!('attempt' in result)) {
       throw new Error('terminate action did not return a committed terminal Attempt result');
     }

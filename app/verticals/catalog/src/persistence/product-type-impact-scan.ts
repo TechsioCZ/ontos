@@ -7,10 +7,7 @@ import type {
   CartOpenSelectionPopulationPort,
   CatalogSelectionEvidenceReader,
 } from '../../shared/domain/catalog-open-selection-population.ts';
-import {
-  cartOpenSelectionPopulationFromEnvironment,
-  readCartOpenSelectionPopulation,
-} from '../../shared/domain/catalog-open-selection-population.ts';
+import { readCartOpenSelectionPopulation } from '../../shared/domain/catalog-open-selection-population.ts';
 import type { ProductTypeImpactRule } from '../../shared/domain/product-type-impact.ts';
 import { previewProductTypeImpact } from '../../shared/domain/product-type-impact.ts';
 import type { AttributeValueSetValidityBasis } from './effective-attribute-value-reads.ts';
@@ -336,7 +333,7 @@ export const productTypeImpactScanForScope = (
     readonly expectedCurrentRevision: number;
     readonly productTypeId: string;
   }) {
-    const openSelections = authoritativeBasis.openSelections ?? (yield* cartOpenSelectionPopulationFromEnvironment);
+    const { openSelections } = authoritativeBasis;
     if (openSelections === undefined) {
       return yield* incomplete('Authoritative open-selection reader is required');
     }

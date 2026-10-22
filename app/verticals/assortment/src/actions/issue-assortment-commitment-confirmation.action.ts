@@ -53,7 +53,7 @@ export const issueAssortmentCommitmentConfirmationAction = defineAction(
     resultSchema: AssortmentCommitmentConfirmationResultSchema,
     schemaVersion: '1',
   },
-  handleIssueAssortmentCommitmentConfirmation,
+  { write: handleIssueAssortmentCommitmentConfirmation },
   (transaction, scope) =>
     Effect.succeed({ issuer: assortmentCommitmentConfirmationServiceForScope(transaction, scope) }),
 );

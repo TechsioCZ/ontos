@@ -58,7 +58,7 @@ export const createNoticeVersionAction = defineAction(
     resultSchema: CreateNoticeVersionResultSchema,
     schemaVersion: '1',
   },
-  handleCreateNoticeVersion,
+  { write: handleCreateNoticeVersion },
   privacyOperationRepositoryForScope,
 );
 

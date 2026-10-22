@@ -106,7 +106,7 @@ export const setDefaultDeliveryDestinationAction = defineAction(
     resultSchema: SetDefaultDeliveryDestinationResultSchema,
     schemaVersion: '1',
   },
-  handle,
+  { write: handle },
   (transaction, scope) => Effect.succeed<Services>(addressActionPersistenceForTransaction(transaction, scope)),
 );
 

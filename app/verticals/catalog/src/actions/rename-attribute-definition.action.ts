@@ -110,7 +110,7 @@ export const renameAttributeDefinitionAction = defineAction(
     resultSchema: RenameAttributeDefinitionResultSchema,
     schemaVersion: '1',
   },
-  handleRenameAttributeDefinition,
+  { write: handleRenameAttributeDefinition },
   (transaction, scope) =>
     attributePersistenceForScope(transaction, scope).pipe(
       Effect.map(

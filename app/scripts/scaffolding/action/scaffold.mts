@@ -99,7 +99,7 @@ export const ${actionValue} = defineAction(
     resultSchema: ${actionType}ResultSchema,
     schemaVersion: '1',
   },
-  ${handler},
+  { write: ${handler} },
 );
 
 ${OUTBOX_SLOT_START}
@@ -168,7 +168,7 @@ export const ${actionValue} = defineAction(
     resultSchema: ${actionType}ResultSchema,
     schemaVersion: '1',
   },
-  ${handler},
+  { write: ${handler} },
 );
 `;
 };

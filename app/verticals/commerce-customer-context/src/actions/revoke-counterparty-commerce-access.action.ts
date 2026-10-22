@@ -129,7 +129,7 @@ export const revokeCounterpartyCommerceAccessAction = defineAction(
     resultSchema: RevokeCounterpartyCommerceAccessResultSchema,
     schemaVersion: '1',
   },
-  handle,
+  { write: handle },
   (transaction, scope) =>
     counterpartyAccessServicesForTransaction(transaction, scope).pipe(Effect.map((port) => ({ revoke: port.revoke }))),
 );

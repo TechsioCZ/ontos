@@ -54,10 +54,10 @@ export const activatePackageOptionAction = defineAction(
     resultSchema: ActivatePackageOptionResultSchema,
     schemaVersion: '1',
   },
-  (
+  { write: (
     payload: ActivatePackageOptionPayload,
     context: ActionHandlerContext<Readonly<Record<string, never>>, ActivatePackageOptionServices>,
-  ) => runPackageOptionTransition('ACTIVATE', payload, context),
+  ) => runPackageOptionTransition('ACTIVATE', payload, context) },
   (transaction, scope) =>
     packageOptionActionPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map((services): ActivatePackageOptionServices => ({

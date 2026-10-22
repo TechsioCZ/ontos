@@ -195,7 +195,7 @@ export const correctProductAction = defineAction(
     resultSchema: CorrectProductResultSchema,
     schemaVersion: '1',
   },
-  handleCorrectProduct,
+  { write: handleCorrectProduct },
   (transaction, scope) =>
     catalogPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map((services): CorrectProductServices => ({

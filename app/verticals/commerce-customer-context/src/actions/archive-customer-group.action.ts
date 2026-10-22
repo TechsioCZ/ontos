@@ -124,6 +124,6 @@ export const archiveCustomerGroupAction = defineAction(
     resultSchema: ArchiveCustomerGroupResultSchema,
     schemaVersion: '1',
   },
-  handleArchiveCustomerGroup,
+  { write: handleArchiveCustomerGroup },
   customerGroupServiceFactory,
 );

@@ -79,7 +79,7 @@ export const assertSizeEquivalenceAction = defineAction(
     resultSchema: AssertSizeEquivalenceResultSchema,
     schemaVersion: '1',
   },
-  handleAssertSizeEquivalence,
+  { write: handleAssertSizeEquivalence },
   (transaction, scope) =>
     Effect.succeed<
       SizeUsagePersistence & {

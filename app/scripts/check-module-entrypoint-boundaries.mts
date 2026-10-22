@@ -988,7 +988,7 @@ const validateVerticalSource = (
 const validatePrivateHandlerAccess = (file: string, source: string) =>
   Effect.gen(function* validatePrivateHandlerAccessEffect() {
     const unauthorizedActionHandler =
-      callsIdentifier(source, 'getActionHandler') &&
+      callsIdentifier(source, 'getActionStages') &&
       file !== 'packages/core-runtime/src/actions/runtime.ts' &&
       file !== 'packages/core-runtime/src/actions/definition.ts';
     const unauthorizedWorkerHandler =

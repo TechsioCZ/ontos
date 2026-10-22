@@ -143,7 +143,7 @@ export const recordDsrDeadlineAction = defineAction(
     resultSchema: RecordDsrDeadlineResultSchema,
     schemaVersion: '1',
   },
-  handleRecordDsrDeadline,
+  { write: handleRecordDsrDeadline },
   (transaction, scope) =>
     Effect.all(
       {

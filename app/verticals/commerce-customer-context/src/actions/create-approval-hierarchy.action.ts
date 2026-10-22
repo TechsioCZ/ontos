@@ -140,7 +140,7 @@ export const createApprovalHierarchyAction = defineAction(
     resultSchema: CreateApprovalHierarchyResultSchema,
     schemaVersion: '1',
   },
-  handleCreateApprovalHierarchy,
+  { write: handleCreateApprovalHierarchy },
   (transaction, scope) =>
     purchasingApprovalWorkflowForScope(transaction, scope).pipe(Effect.map((workflow) => ({ workflow }))),
 );

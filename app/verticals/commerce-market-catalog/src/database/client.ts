@@ -1,6 +1,6 @@
 /* oxlint-disable effect-native/no-effect-provide-in-library -- Native Drizzle executor construction is this owner database factory boundary; expires: 2027-03-31. */
 import type { DatabasePoolDeadlines } from '@app/core-runtime';
-import { DatabaseConfig, configureDatabasePool } from '@app/core-runtime';
+import { DatabaseConfig, configureDatabasePool, makeGuardedPgClient } from '@app/core-runtime';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import type { Scope } from 'effect';
@@ -38,7 +38,7 @@ const makeCommerceMarketCatalogDatabase = Effect.fn('CommerceMarketCatalogDataba
     configuration.poolDeadlines,
   ).pipe(Effect.mapError((error) => new CommerceMarketCatalogDatabaseConnectionError({ reason: error.reason })));
   const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.make(poolConfiguration).pipe(
+  const client = yield* makeGuardedPgClient(poolConfiguration).pipe(
     Effect.provideService(Reactivity.Reactivity, reactivity),
     Effect.mapError(connectionFailure),
   );

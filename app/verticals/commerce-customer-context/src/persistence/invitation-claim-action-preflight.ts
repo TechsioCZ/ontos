@@ -6,17 +6,18 @@ import {
   makeActionAuthorizationPreflightPermit,
   PrincipalEligibility,
   scopedRoutineInvokerFromTransaction,
+  ScopedRoutineInvocationError,
 } from '@app/core-runtime';
 import type {
   ActionAuthorizationPreflightDatabaseService,
   ActionAuthorizationPreflightInput,
   ActionAuthorizationPreflightService,
-  ActionAuthorizationPreflightTransaction,
   ActionTransactionError,
 } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
-import { Effect, Layer, Result, Schema } from 'effect';
+import { Effect, Layer, Option, Result, Schema } from 'effect';
+import type { InvitationClaimScopedRoutineInvoker } from './invitation-claim-authority-persistence.ts';
 
 import { ClaimCounterpartyAccessInvitationPayloadSchema } from '../../shared/actions/claim-counterparty-access-invitation.ts';
 import { CounterpartyAccessContractViolation } from '../../shared/domain/access-error.ts';
@@ -105,37 +106,52 @@ const runInvitationClaimPreflight = Effect.fn('InvitationClaimActionPreflight.ru
       });
     }
 
-    const verifyInScopedTransaction = Effect.fn('InvitationClaimActionPreflight.verifyInScopedTransaction')(
-      function* verifyInScopedTransaction(transaction: ActionAuthorizationPreflightTransaction) {
-        yield* transaction.execute(
-          sql`select set_config('ontos.tenant_id', ${input.scope.tenantId}, true), set_config('ontos.legal_entity_id', ${input.scope.legalEntityId}, true)`,
-          'objects',
-        );
-        const execute = (statement: Parameters<typeof transaction.execute>[0]) =>
-          transaction.execute(statement, 'objects');
-        const invoker = scopedRoutineInvokerFromTransaction(execute, input.scope);
-        const currentOwnerAccess = currentOwnerAccessForTransaction(invoker, {
-          legalEntityId,
-          tenantId: input.scope.tenantId,
-        });
-        return yield* verifyCounterpartyInvitationClaimAuthorityForOwnerScope(
-          {
-            contextAccess,
-            currentOwnerAccess,
-            transaction: invoker,
-          },
-          {
-            claimant: payload.claimant,
-            claimProofReference: payload.claimProofReference,
-            counterpartyRef: payload.counterpartyRef,
-            invitationRef: payload.invitationRef,
-            legalEntityId,
-            scope: payload.scope,
-          },
-        );
+    // A capability invocation owns one short transaction. Inviter relationship checks execute
+    // only after it closes, never under the preflight database connection.
+    const invoker: InvitationClaimScopedRoutineInvoker = {
+      invoke: (routine, values) =>
+        database
+          .transaction((transaction) =>
+            Effect.gen(function* invokePreflightOwnerRoutine() {
+              yield* transaction.execute(
+                sql`select set_config('ontos.tenant_id', ${input.scope.tenantId}, true), set_config('ontos.legal_entity_id', ${legalEntityId}, true)`,
+                'objects',
+              );
+              const execute = (statement: Parameters<typeof transaction.execute>[0]) =>
+                transaction.execute(statement, 'objects');
+              return yield* scopedRoutineInvokerFromTransaction(execute, input.scope).invoke(routine, values);
+            }),
+          )
+          .pipe(
+            Effect.mapError((failure) =>
+              failure._tag === 'ScopedRoutineInvocationError'
+                ? failure
+                : new ScopedRoutineInvocationError({
+                    code: 'scoped_routine_invocation_failed',
+                    constraint: Option.none(),
+                    ownerModuleKey: routine.ownerModuleKey,
+                    postgresCode: Option.none(),
+                    reason: 'Invitation preflight owner state is unavailable',
+                    routineKey: routine.routineKey,
+                  }),
+            ),
+          ),
+    };
+    const currentOwnerAccess = currentOwnerAccessForTransaction(invoker, {
+      legalEntityId,
+      tenantId: input.scope.tenantId,
+    });
+    return yield* verifyCounterpartyInvitationClaimAuthorityForOwnerScope(
+      { contextAccess, currentOwnerAccess, transaction: invoker },
+      {
+        claimant: payload.claimant,
+        claimProofReference: payload.claimProofReference,
+        counterpartyRef: payload.counterpartyRef,
+        invitationRef: payload.invitationRef,
+        legalEntityId,
+        scope: payload.scope,
       },
     );
-    return yield* database.transaction(verifyInScopedTransaction);
   },
 );
 

@@ -23,8 +23,8 @@ import {
 } from '../../shared/apis/current-pricing-decision.ts';
 import type { CurrentPricingDecisionRequest } from '../../shared/apis/current-pricing-decision.ts';
 import { currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironment } from '../integrations/customer-context-subject-authority.ts';
-import { pricingCurrentDecisionPricingOwnerFinalFenceGatewayPerRead } from '../integrations/current-pricing-decision-owner-final-fence.ts';
-import { currentPricingDecisionWholeEvaluationPerRead } from '../integrations/current-pricing-decision-whole-evaluation-adapters.ts';
+import { pricingCurrentDecisionPricingOwnerFinalFenceGatewayPerOwnerTransaction } from '../integrations/current-pricing-decision-owner-final-fence.ts';
+import { currentPricingDecisionWholeEvaluationPerOwnerTransaction } from '../integrations/current-pricing-decision-whole-evaluation-adapters.ts';
 import { CurrentPricingDecisionEvaluationFactory } from '../services/current-pricing-decision-evaluation.service.ts';
 import type { CurrentPricingDecisionEvaluationService } from '../services/current-pricing-decision-evaluation.service.ts';
 import { CurrentPricingDecisionSubjectAuthority } from '../services/current-pricing-decision-subject-authority.service.ts';
@@ -236,8 +236,8 @@ export const prepareCurrentPricingDecision = Effect.fn('CurrentPricingDecisionRe
  * owner transaction, and no connection is held across a remote call.
  */
 export const makeFinishCurrentPricingDecision = (
-  wholeEvaluationPerRead: typeof currentPricingDecisionWholeEvaluationPerRead = currentPricingDecisionWholeEvaluationPerRead,
-  pricingOwnerFinalFencePerRead: typeof pricingCurrentDecisionPricingOwnerFinalFenceGatewayPerRead = pricingCurrentDecisionPricingOwnerFinalFenceGatewayPerRead,
+  wholeEvaluationPerOwnerTransaction: typeof currentPricingDecisionWholeEvaluationPerOwnerTransaction = currentPricingDecisionWholeEvaluationPerOwnerTransaction,
+  pricingOwnerFinalFencePerOwnerTransaction: typeof pricingCurrentDecisionPricingOwnerFinalFenceGatewayPerOwnerTransaction = pricingCurrentDecisionPricingOwnerFinalFenceGatewayPerOwnerTransaction,
 ) =>
   Effect.fn('CurrentPricingDecisionRead.finish')(function* finishCurrentPricingDecision(
     input: CurrentPricingDecisionRequest,
@@ -247,14 +247,14 @@ export const makeFinishCurrentPricingDecision = (
     const verifiedScope = { ...context.scope, legalEntityId: trustedScope.legalEntityId };
     const [source, evaluationFactory] = yield* Effect.all(
       [
-        wholeEvaluationPerRead(context.transaction, verifiedScope, compositionRevision),
+        wholeEvaluationPerOwnerTransaction(context.transaction, verifiedScope, compositionRevision),
         CurrentPricingDecisionEvaluationFactory,
       ],
       { concurrency: 2 },
     );
     const evaluation = evaluationFactory.make(
       source,
-      pricingOwnerFinalFencePerRead(context.transaction, verifiedScope, compositionRevision),
+      pricingOwnerFinalFencePerOwnerTransaction(context.transaction, verifiedScope, compositionRevision),
       compositionRevision,
     );
     const result = yield* evaluateCurrentPricingDecision(input, trustedScope, verifiedAuthority, evaluation.evaluate);

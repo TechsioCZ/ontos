@@ -226,7 +226,7 @@ export const consumePurchaseApprovalAction = defineAction(
     resultSchema: ConsumePurchaseApprovalResultSchema,
     schemaVersion: '1',
   },
-  handleConsumePurchaseApproval,
+  { write: handleConsumePurchaseApproval },
   (transaction, scope) =>
     purchasingApprovalOrderCommitmentForScope(transaction, scope).pipe(Effect.map((commitment) => ({ commitment }))),
 );

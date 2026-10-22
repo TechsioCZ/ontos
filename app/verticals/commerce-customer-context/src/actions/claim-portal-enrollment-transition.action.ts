@@ -133,7 +133,7 @@ export const claimPortalEnrollmentTransitionAction = defineAction(
     resultSchema: ClaimPortalEnrollmentTransitionResultSchema,
     schemaVersion: '1',
   },
-  handleClaimPortalEnrollmentTransition,
+  { write: handleClaimPortalEnrollmentTransition },
   commerceEnrollmentPreparedAttemptActionServicesForTransaction,
 );
 

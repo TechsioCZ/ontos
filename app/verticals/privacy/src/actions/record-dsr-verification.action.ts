@@ -122,7 +122,7 @@ export const recordDsrVerificationAction = defineAction(
     resultSchema: RecordDsrVerificationResultSchema,
     schemaVersion: '1',
   },
-  handleRecordDsrVerification,
+  { write: handleRecordDsrVerification },
   (transaction, scope) =>
     Effect.all(
       {

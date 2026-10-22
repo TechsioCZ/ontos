@@ -76,7 +76,7 @@ export const enqueueRetentionEvaluationAction = defineAction(
     resultSchema: EnqueueRetentionEvaluationResultSchema,
     schemaVersion: '1',
   },
-  handleEnqueueRetentionEvaluation,
+  { write: handleEnqueueRetentionEvaluation },
   privacyOperationRepositoryForScope,
 );
 

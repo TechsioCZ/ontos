@@ -28,9 +28,8 @@ import { PricingContractualDiscountSetPredicateSchema } from '@app/pricing-contr
 import type {
   OperationContextUnavailable,
   OperationalScope,
-  ReadHandlerExecutionError,
-  ReadHandlerUnavailable,
-  ReadOwnerTransaction,
+  OwnerTransaction,
+  OwnerTransactionUnavailable,
   ReadServiceFactory,
 } from '@app/core-runtime';
 
@@ -1272,29 +1271,27 @@ export const pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope = (
  * The same Pricing owner fence for a Read's `finish`: each verification runs in its own short owner transaction,
  * after the Read's transaction has committed and between the evaluation's remote owner calls.
  */
-export const pricingCurrentDecisionPricingOwnerFinalFenceGatewayPerRead = (
-  ownerTransaction: ReadOwnerTransaction,
+export const pricingCurrentDecisionPricingOwnerFinalFenceGatewayPerOwnerTransaction = (
+  ownerTransaction: OwnerTransaction,
   scope: OperationalScope,
   compositionRevision: string,
 ): PricingOwnerMaterialEvidenceFenceGateway => {
   const unavailableShortTransaction = (cause: unknown) =>
     Effect.fail(pricingOwnerUnavailable('The short Pricing owner transaction could not be completed', cause));
-  const fenceIn = (transaction: Parameters<Parameters<ReadOwnerTransaction>[0]>[0]) =>
+  const fenceIn = (transaction: Parameters<Parameters<OwnerTransaction>[0]>[0]) =>
     pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope(transaction, scope, compositionRevision);
   const shortTransactionUnavailable = <Value>(
     effect: Effect.Effect<
       Value,
       | OperationContextUnavailable
+      | OwnerTransactionUnavailable
       | PricingOwnerMaterialEvidenceFenceGatewayUnavailable
-      | ReadHandlerExecutionError
-      | ReadHandlerUnavailable
     >,
   ) =>
     effect.pipe(
       Effect.catchTags({
         OperationContextUnavailable: unavailableShortTransaction,
-        ReadHandlerExecutionError: unavailableShortTransaction,
-        ReadHandlerUnavailable: unavailableShortTransaction,
+        OwnerTransactionUnavailable: unavailableShortTransaction,
       }),
     );
   return {

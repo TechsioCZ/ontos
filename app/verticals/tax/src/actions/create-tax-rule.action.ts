@@ -86,7 +86,7 @@ export const createTaxRuleAction = defineAction(
     resultSchema: CreateTaxRuleResultSchema,
     schemaVersion: '1',
   },
-  handleCreateTaxRule,
+  { write: handleCreateTaxRule },
   taxRuleGovernanceServiceFactory,
 );
 

@@ -184,7 +184,7 @@ export const recoverRetailPortalProfileBindingAction = defineAction(
     resultSchema: RecoverRetailPortalProfileBindingResultSchema,
     schemaVersion: '1',
   },
-  handle,
+  { write: handle },
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(

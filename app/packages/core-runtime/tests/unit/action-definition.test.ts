@@ -50,7 +50,7 @@ it.effect('defines an immutable typed descriptor and decodes typed payloads and 
         resultSchema: Schema.Struct({ total: Schema.Finite }),
         schemaVersion: '1',
       },
-      (payload) => Effect.succeed({ total: payload.amount }),
+      { write: (payload) => Effect.succeed({ total: payload.amount }) },
     );
 
     const payload = yield* decodeActionPayload(registration.descriptor.payloadSchema, {
@@ -228,7 +228,7 @@ it.effect('uses Schema.Void for a no-payload Action', () =>
         resultSchema: Schema.Void,
         schemaVersion: '1',
       },
-      () => Effect.void,
+      { write: () => Effect.void },
     );
 
     const payload = yield* decodeActionPayload(
@@ -249,7 +249,7 @@ it('keeps the private handler outside the public Action registration', () => {
       resultSchema: Schema.Finite,
       schemaVersion: '1',
     },
-    (payload) => Effect.succeed(payload.amount),
+    { write: (payload) => Effect.succeed(payload.amount) },
   );
 
   expect('handler' in registration).toBe(false);
@@ -321,7 +321,7 @@ it('accepts global and same-owner Policy references and copies the collection', 
       resultSchema: Schema.Void,
       schemaVersion: '1',
     },
-    () => Effect.void,
+    { write: () => Effect.void },
   );
 
   policies.pop();
@@ -376,7 +376,7 @@ it('rejects cross-owner, string, copied, and missing Policy references at defini
         // @ts-expect-error Policy payload input must accept the decoded Action payload.
         policies: [incompatiblePayloadPolicy],
       },
-      () => Effect.void,
+      { write: () => Effect.void },
     );
     defineAction(
       {
@@ -384,7 +384,7 @@ it('rejects cross-owner, string, copied, and missing Policy references at defini
         // @ts-expect-error Raw Policy keys are not Policy object references.
         policies: ['inventory.stock.available.v1'],
       },
-      () => Effect.void,
+      { write: () => Effect.void },
     );
   };
 
@@ -395,7 +395,7 @@ it('rejects cross-owner, string, copied, and missing Policy references at defini
         // @ts-expect-error A foreign MicroVertical Policy is rejected by the owner contract.
         policies: [foreignPolicy],
       },
-      () => Effect.void,
+      { write: () => Effect.void },
     ),
   ).toThrow();
   expect(Predicate.isFunction(compileOnlyInvalidReferences)).toBe(true);
@@ -443,7 +443,7 @@ it('rejects Action entrypoint owner, scope, role/access, and forged immutability
       resultSchema: Schema.Void,
       schemaVersion: '1',
     },
-    () => Effect.void,
+    { write: () => Effect.void },
   );
   expect(() =>
     validateActionDescriptorInput({

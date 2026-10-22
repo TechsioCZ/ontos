@@ -79,7 +79,7 @@ export const markGtinUnresolvedAction: ActionRegistration<
     resultSchema: MarkGtinUnresolvedResultSchema,
     schemaVersion: '1',
   },
-  handleMarkGtinUnresolved,
+  { write: handleMarkGtinUnresolved },
   (transaction, scope) =>
     gtinServicesForScope(transaction, scope).pipe(
       Effect.map((services): MarkGtinUnresolvedServices => ({

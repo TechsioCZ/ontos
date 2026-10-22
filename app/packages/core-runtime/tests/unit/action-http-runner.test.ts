@@ -57,7 +57,7 @@ const registration = defineAction(
     resultSchema: BusinessResultSchema,
     schemaVersion: '1',
   },
-  () => Effect.succeed(BusinessResultSchema.make({})),
+  { write: () => Effect.succeed(BusinessResultSchema.make({})) },
 );
 
 const unusedRuntime = (onRun: () => void): ActionRuntimeService => ({

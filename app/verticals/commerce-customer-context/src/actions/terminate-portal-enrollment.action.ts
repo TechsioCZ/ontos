@@ -77,7 +77,7 @@ export const terminatePortalEnrollmentAction = defineAction(
     resultSchema: TerminatePortalEnrollmentResultSchema,
     schemaVersion: '1',
   },
-  handleTerminatePortalEnrollment,
+  { write: handleTerminatePortalEnrollment },
   commerceEnrollmentAttemptActionServicesForTransaction,
 );
 

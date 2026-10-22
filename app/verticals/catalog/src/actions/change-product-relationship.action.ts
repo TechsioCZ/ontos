@@ -160,7 +160,7 @@ export const changeProductRelationshipAction = defineAction(
     resultSchema: ChangeProductRelationshipResultSchema,
     schemaVersion: '1',
   },
-  handleChangeProductRelationship,
+  { write: handleChangeProductRelationship },
   changeProductRelationshipResultServiceFactory,
   ({ actionInvocationId, result, services }) => services.captureResult(actionInvocationId, result),
 );

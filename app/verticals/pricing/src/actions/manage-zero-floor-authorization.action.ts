@@ -415,7 +415,7 @@ export const manageZeroFloorAuthorizationAction = defineAction(
     resultSchema: ManageZeroFloorAuthorizationResultSchema,
     schemaVersion: '1',
   },
-  handleManageZeroFloorAuthorization,
+  { write: handleManageZeroFloorAuthorization },
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(

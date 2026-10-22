@@ -73,5 +73,5 @@ export const requestSearchRebuildAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_party_identity',
   },
-  handleRequestSearchRebuild,
+  { write: handleRequestSearchRebuild },
 );

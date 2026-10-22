@@ -1,4 +1,8 @@
 import { ActionPermissionCheckError } from '@app/core-runtime';
+import {
+  insideDatabaseTransaction,
+  refuseInsideDatabaseTransaction,
+} from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -55,7 +59,10 @@ const input = {
 } as const;
 
 const contextAccess: Pick<ContextAccessService, 'businessPermissions'> = {
-  businessPermissions: () => Effect.succeed([]),
+  businessPermissions: ({ targets }) =>
+    refuseInsideDatabaseTransaction('spicedb', 'test.inviter-authority').pipe(
+      Effect.as(targets.map(({ permission }) => ({ decision: 'allowed' as const, key: permission }))),
+    ),
 };
 
 const eligible = {
@@ -67,9 +74,48 @@ const eligible = {
     }),
 };
 
+const ownerRows = [
+  [
+    {
+      counterparty_resource_id: counterpartyId,
+      intended_permission_codes: ['counterparty.access.read'],
+      inviter_principal_id: otherClaimantId,
+      operation_outcome: 'VERIFIED',
+      storefront_resource_id: storefrontId,
+    },
+  ],
+  [
+    {
+      counterparty_resource_id: counterpartyId,
+      grant_id: 'grant-one',
+      granted_at: '2026-09-09T10:00:00.000Z',
+      granted_by: otherClaimantId,
+      permission_code: 'counterparty.access.manage',
+      principal_id: otherClaimantId,
+      reason: null,
+      revision: 1,
+      revoked_at: null,
+      revoked_by: null,
+      state: 'ACTIVE',
+      storefront_resource_id: storefrontId,
+    },
+  ],
+];
+let ownerReadCount = 0;
 const noReadDatabase: ActionAuthorizationPreflightDatabaseService = {
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- SAFETY: This success stub's generic transaction value is discarded by the preflight; no caller observes the placeholder.
-  transaction: <Value, Failure>(): Effect.Effect<Value, Failure> => Effect.succeed(undefined as Value),
+  transaction: (body) => {
+    let queryCount = 0;
+    return body({
+      execute: () =>
+        Effect.sync(() => {
+          queryCount += 1;
+          if (queryCount === 1) return [];
+          const rows = ownerRows[ownerReadCount];
+          ownerReadCount += 1;
+          return rows ?? [];
+        }),
+    }).pipe(insideDatabaseTransaction('test.invitation-preflight'));
+  },
 };
 
 const failedDatabase = new ActionPermissionCheckError({
@@ -125,6 +171,7 @@ it.effect('binds a permit to one invocation and consumes it once', () =>
   Effect.gen(function* oneShotPermit() {
     const decision = yield* preflight.prepare(input);
     expect(decision.outcome).toBe('allowed');
+    expect(ownerReadCount).toBe(2);
     if (decision.outcome !== 'allowed') {
       return;
     }

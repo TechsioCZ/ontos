@@ -121,7 +121,7 @@ export const establishCatalogToStockBindingAction = defineAction(
     resultSchema: EstablishCatalogToStockBindingResultSchema,
     schemaVersion: '1',
   },
-  handleEstablishCatalogToStockBinding,
+  { write: handleEstablishCatalogToStockBinding },
   (transaction) =>
     Effect.succeed(
       serializeCatalogToStockBindingPersistence(transaction, makeDrizzleCatalogToStockBindingPersistence(transaction)),

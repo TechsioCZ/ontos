@@ -88,7 +88,7 @@ export const createProcessingActivityAction = defineAction(
     resultSchema: CreateProcessingActivityResultSchema,
     schemaVersion: '1',
   },
-  handleCreateProcessingActivity,
+  { write: handleCreateProcessingActivity },
   (transaction, scope) =>
     processingActivityRepositoryForScope(transaction, scope).pipe(Effect.map(({ create }) => ({ create }))),
 );

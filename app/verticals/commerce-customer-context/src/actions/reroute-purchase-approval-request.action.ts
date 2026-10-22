@@ -151,7 +151,7 @@ export const reroutePurchaseApprovalRequestAction = defineAction(
     resultSchema: ReroutePurchaseApprovalRequestResultSchema,
     schemaVersion: '1',
   },
-  handleReroutePurchaseApprovalRequest,
+  { write: handleReroutePurchaseApprovalRequest },
   (transaction, scope) =>
     purchasingApprovalWorkflowForScope(transaction, scope).pipe(Effect.map((workflow) => ({ workflow }))),
 );

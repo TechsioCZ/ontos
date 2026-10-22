@@ -152,7 +152,7 @@ export const removeProductRelationshipAction = defineAction(
     resultSchema: RemoveProductRelationshipResultSchema,
     schemaVersion: '1',
   },
-  handleRemoveProductRelationship,
+  { write: handleRemoveProductRelationship },
   removeProductRelationshipResultServiceFactory,
   ({ actionInvocationId, result, services }) => services.captureResult(actionInvocationId, result),
 );

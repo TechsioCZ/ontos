@@ -112,7 +112,7 @@ export const clearDefaultBillingAddressAction = defineAction(
     resultSchema: ClearDefaultBillingAddressResultSchema,
     schemaVersion: '1',
   },
-  handle,
+  { write: handle },
   (transaction, scope) => Effect.succeed<Services>(addressActionPersistenceForTransaction(transaction, scope)),
 );
 

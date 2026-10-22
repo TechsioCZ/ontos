@@ -127,7 +127,7 @@ export const reactivateProductAction = defineAction(
     resultSchema: ReactivateProductResultSchema,
     schemaVersion: '1',
   },
-  handleReactivateProduct,
+  { write: handleReactivateProduct },
   (transaction, scope) =>
     catalogPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map((services): ReactivateProductServices => ({

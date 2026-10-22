@@ -135,7 +135,7 @@ export const setVariantLocalizedFactsAction = defineAction(
     resultSchema: LocalizedFactsChangeResultSchema,
     schemaVersion: '1',
   },
-  handleSetVariantLocalizedFacts,
+  { write: handleSetVariantLocalizedFacts },
   setVariantLocalizedFactsSnapshotServiceFactory,
   captureSetVariantLocalizedFactsResult,
 );

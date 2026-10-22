@@ -132,7 +132,7 @@ export const createAttributeDefinitionAction = defineAction(
     resultSchema: CreateAttributeDefinitionResultSchema,
     schemaVersion: '1',
   },
-  handleCreateAttributeDefinition,
+  { write: handleCreateAttributeDefinition },
   (transaction, scope) =>
     attributePersistenceForScope(transaction, scope).pipe(
       Effect.map(

@@ -121,7 +121,7 @@ export const removeCatalogMediaAction = defineAction(
     resultSchema: CatalogMediaChangeResultSchema,
     schemaVersion: '1',
   },
-  handleRemoveCatalogMedia,
+  { write: handleRemoveCatalogMedia },
   removeCatalogMediaSnapshotServiceFactory,
   captureRemoveCatalogMediaResult,
 );

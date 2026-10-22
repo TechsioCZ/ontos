@@ -108,7 +108,7 @@ export const retireControlledAttributeValueAction = defineAction(
     resultSchema: RetireControlledAttributeValueResultSchema,
     schemaVersion: '1',
   },
-  handleRetireControlledAttributeValue,
+  { write: handleRetireControlledAttributeValue },
   (transaction, scope) =>
     attributePersistenceForScope(transaction, scope).pipe(
       Effect.map(

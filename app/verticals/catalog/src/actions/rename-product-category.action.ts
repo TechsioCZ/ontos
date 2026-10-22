@@ -97,7 +97,7 @@ export const renameProductCategoryAction = defineAction(
     resultSchema: RenameProductCategoryResultSchema,
     schemaVersion: '1',
   },
-  handleRenameProductCategory,
+  { write: handleRenameProductCategory },
   (transaction, scope) =>
     categoryPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map(

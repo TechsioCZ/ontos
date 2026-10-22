@@ -14,7 +14,7 @@ import { FetchHttpClient } from 'effect/unstable/http';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import type { ActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler, getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { runActionOwnerSteps, getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { RetireMarketPayloadSchema, retireMarketAction } from '../../src/actions/retire-market.action.ts';
 import { MarketRetirementImpactAuthorityLive } from '../../src/integrations/market-retirement-impact.ts';
 import type { MarketAdministrationService } from '../../src/services/market-administration.service.ts';
@@ -173,7 +173,7 @@ const productionRetirementProgram = (transaction: ProductionRetirementTransactio
   Effect.gen(function* productionRetirement() {
     // @ts-expect-error Focused transaction mock implements only the Market lifecycle routine.
     const services = yield* getActionServiceFactory(retireMarketAction)(transaction, scope, compositionRevision);
-    return yield* getActionHandler(retireMarketAction)(payload, {
+    return yield* runActionOwnerSteps(retireMarketAction, payload, {
       actionInvocationId,
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,

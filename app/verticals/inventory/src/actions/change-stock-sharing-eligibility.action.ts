@@ -111,7 +111,7 @@ export const changeStockSharingEligibilityAction = defineAction(
     resultSchema: ChangeStockSharingEligibilityResultSchema,
     schemaVersion: '1',
   },
-  handleChangeStockSharingEligibility,
+  { write: handleChangeStockSharingEligibility },
   (transaction, scope) => stockSharingEligibilityActionServiceForScope(transaction, scope, randomUUID),
 );
 

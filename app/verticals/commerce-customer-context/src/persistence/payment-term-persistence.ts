@@ -157,6 +157,7 @@ export interface ChangeCustomerPaymentTermsServices {
   readonly change: (
     payload: ChangeCustomerPaymentTermsPayload,
     context: PaymentTermsActionContext,
+    definitions: CurrentPaymentTermsResponse['current'],
   ) => Effect.Effect<ChangeCustomerPaymentTermsResult, CustomerPaymentTermsActionRejectedError>;
 }
 
@@ -230,6 +231,7 @@ export interface RetailPaymentTermPreferenceActionServices {
       readonly principalId: string;
       readonly tenantId: string;
     },
+    definitions: CurrentPaymentTermsResponse['current'],
   ) => Effect.Effect<ChangeRetailPaymentTermPreferenceResult, RetailPaymentTermPreferenceRejectedError>;
 }
 
@@ -1014,18 +1016,20 @@ export const paymentTermsReconciliationOwnerEvidenceVerifierForTransaction = (
     }),
 });
 
-export const makeChangeCustomerPaymentTermsServices = (
-  persistence: PaymentTermsPersistenceContext,
-  catalog: PaymentTermCatalogPort = unavailablePaymentTermCatalogPort,
-): ChangeCustomerPaymentTermsServices => ({
-  change: Effect.fn('CustomerPaymentTermsPersistence.change')(function* changePaymentTerms(payload, context) {
+export const prepareCustomerPaymentTermsChange = Effect.fn('CustomerPaymentTermsPersistence.prepareChange')(
+  function* prepare(
+    persistence: PaymentTermsPersistenceContext,
+    catalog: PaymentTermCatalogPort,
+    payload: Parameters<ChangeCustomerPaymentTermsServices['change']>[0],
+    context: Pick<Parameters<ChangeCustomerPaymentTermsServices['change']>[1], 'scope'>,
+  ) {
     if (!operationScopesMatch(persistence.scope, context.scope)) {
       return yield* actionFailure(
         'SCOPE_MISMATCH',
         'The Action scope does not match the scoped Payment Terms persistence capability',
       );
     }
-    const state = yield* readState(
+    yield* readState(
       persistence.invoker,
       persistence.scope,
       payload.profileRef,
@@ -1052,26 +1056,48 @@ export const makeChangeCustomerPaymentTermsServices = (
         'The requested Payment Term is not current in the canonical catalog',
       );
     }
-    const outcome = yield* mapChangeOutcome(
-      changeCustomerPaymentTerms({
-        catalogDefinitions: definitions,
-        changes: payload.changes,
+    return definitions;
+  },
+);
+
+export const makeChangeCustomerPaymentTermsServices = (
+  persistence: PaymentTermsPersistenceContext,
+): ChangeCustomerPaymentTermsServices => ({
+  change: Effect.fn('CustomerPaymentTermsPersistence.change')(
+    function* changePaymentTerms(payload, context, definitions) {
+      if (!operationScopesMatch(persistence.scope, context.scope)) {
+        return yield* actionFailure(
+          'SCOPE_MISMATCH',
+          'The Action scope does not match the scoped Payment Terms persistence capability',
+        );
+      }
+      const state = yield* readState(
+        persistence.invoker,
+        persistence.scope,
+        payload.profileRef,
+        payload.counterpartyRef.resourceId,
+      ).pipe(Effect.mapError(mapReadFailureToAction));
+      const outcome = yield* mapChangeOutcome(
+        changeCustomerPaymentTerms({
+          catalogDefinitions: definitions,
+          changes: payload.changes,
+          expectedRevision: payload.expectedRevision,
+          state,
+        }),
+      );
+      return yield* persistActionResult(persistence.invoker, {
+        actionInvocationId: context.actionInvocationId,
+        changed: outcome.changed,
+        counterpartyResourceId: payload.counterpartyRef.resourceId,
         expectedRevision: payload.expectedRevision,
-        state,
-      }),
-    );
-    return yield* persistActionResult(persistence.invoker, {
-      actionInvocationId: context.actionInvocationId,
-      changed: outcome.changed,
-      counterpartyResourceId: payload.counterpartyRef.resourceId,
-      expectedRevision: payload.expectedRevision,
-      principalId: context.scope.principalId,
-      profileKind: 'COUNTERPARTY',
-      profileResourceId: payload.profileRef.resourceId,
-      reason: payload.reason,
-      state: outcome.state,
-    });
-  }),
+        principalId: context.scope.principalId,
+        profileKind: 'COUNTERPARTY',
+        profileResourceId: payload.profileRef.resourceId,
+        reason: payload.reason,
+        state: outcome.state,
+      });
+    },
+  ),
 });
 
 const makeRemoveCustomerPaymentTermServices = (
@@ -1218,29 +1244,43 @@ const validateRetailPreferenceScope = (
   return Effect.void;
 };
 
+export const prepareRetailPaymentTermPreference = Effect.fn('CustomerPaymentTermsPersistence.prepareRetailPreference')(
+  function* prepare(
+    persistence: PaymentTermsPersistenceContext,
+    catalog: PaymentTermCatalogPort,
+    payload: Parameters<RetailPaymentTermPreferenceActionServices['changePreference']>[0],
+    attribution: Parameters<RetailPaymentTermPreferenceActionServices['changePreference']>[1],
+  ) {
+    yield* validateRetailPreferenceScope(persistence.scope, attribution);
+    yield* readState(persistence.invoker, persistence.scope, payload.profileRef, null).pipe(
+      Effect.mapError(mapRetailReadStateFailure),
+    );
+    const requests = retailDefinitionRequests(payload.change);
+    const definitions =
+      requests.length === 0
+        ? []
+        : yield* catalog
+            .resolveDefinitions(requests)
+            .pipe(Effect.mapError((failure) => retailFailure('PERSISTENCE_UNAVAILABLE', failure.reason, true)));
+    if (!catalogResolvedEveryRequest(requests, definitions)) {
+      return yield* retailFailure(
+        'PAYMENT_TERM_NOT_CURRENT',
+        'The selected Payment Term is not currently available from its owner',
+      );
+    }
+    return definitions;
+  },
+);
+
 const makeRetailPaymentTermPreferenceServices = (
   persistence: PaymentTermsPersistenceContext,
-  catalog: PaymentTermCatalogPort = unavailablePaymentTermCatalogPort,
 ): RetailPaymentTermPreferenceActionServices => ({
   changePreference: Effect.fn('CustomerPaymentTermsPersistence.changeRetailPreference')(
-    function* changeRetailPreference(payload, attribution) {
+    function* changeRetailPreference(payload, attribution, definitions) {
       yield* validateRetailPreferenceScope(persistence.scope, attribution);
       const state = yield* readState(persistence.invoker, persistence.scope, payload.profileRef, null).pipe(
         Effect.mapError(mapRetailReadStateFailure),
       );
-      const requests = retailDefinitionRequests(payload.change);
-      const definitions =
-        requests.length === 0
-          ? []
-          : yield* catalog
-              .resolveDefinitions(requests)
-              .pipe(Effect.mapError((failure) => retailFailure('PERSISTENCE_UNAVAILABLE', failure.reason, true)));
-      if (!catalogResolvedEveryRequest(requests, definitions)) {
-        return yield* retailFailure(
-          'PAYMENT_TERM_NOT_CURRENT',
-          'The selected Payment Term is not currently available from its owner',
-        );
-      }
       const outcome = yield* mapRetailChangeOutcome(
         changeCustomerPaymentTerms({
           catalogDefinitions: definitions,
@@ -1444,13 +1484,10 @@ export const paymentTermsPersistenceForTransaction = (
   ports: CustomerPaymentTermsPersistencePorts = {},
 ) => ({
   affectedUseAssessment: makePaymentTermAffectedUseAssessmentServices(persistence),
-  change: makeChangeCustomerPaymentTermsServices(persistence, ports.catalog ?? unavailablePaymentTermCatalogPort),
+  change: makeChangeCustomerPaymentTermsServices(persistence),
   entitlementRead: makeCustomerPaymentTermEntitlementReadServices(persistence),
   remove: makeRemoveCustomerPaymentTermServices(persistence),
   resolution: makePaymentTermsResolutionServices(persistence, ports),
-  retailPreference: makeRetailPaymentTermPreferenceServices(
-    persistence,
-    ports.catalog ?? unavailablePaymentTermCatalogPort,
-  ),
+  retailPreference: makeRetailPaymentTermPreferenceServices(persistence),
   retirementReservation: makePaymentTermRetirementReservationServices(persistence),
 });

@@ -128,7 +128,7 @@ export const createApplicabilityBindingAction = defineAction(
     resultSchema: CreateApplicabilityBindingResultSchema,
     schemaVersion: '1',
   },
-  handleCreateApplicabilityBinding,
+  { write: handleCreateApplicabilityBinding },
   assortmentPolicyServiceFactory,
 );
 

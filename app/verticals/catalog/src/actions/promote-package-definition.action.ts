@@ -144,7 +144,7 @@ export const promotePackageDefinitionAction = defineAction(
     resultSchema: PromotePackageDefinitionResultSchema,
     schemaVersion: '1',
   },
-  handlePromotePackageDefinition,
+  { write: handlePromotePackageDefinition },
   (transaction, scope) =>
     promotePackageDefinitionPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map(

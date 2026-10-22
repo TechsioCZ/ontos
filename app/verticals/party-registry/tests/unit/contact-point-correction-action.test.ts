@@ -6,7 +6,7 @@ import {
   TenantIdSchema,
 } from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { runActionOwnerSteps } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import type { PartyContactPoint } from '../../shared/domain/contact-point.ts';
 import { updateContactPointAction } from '../../src/actions/update-contact-point.action.ts';
 import { endContactPointAction } from '../../src/actions/end-contact-point.action.ts';
@@ -61,8 +61,8 @@ it.effect('correction publishes the corrected stable ref while returning the val
       'party.registry',
       updateContactPointAction.descriptor.accessEvidencePolicy,
     );
-    const handler = getActionHandler(updateContactPointAction);
-    const result = yield* handler(
+    const result = yield* runActionOwnerSteps(
+      updateContactPointAction,
       {
         change: {
           evidenceReferences: ['evidence:party-confirmation:42'],
@@ -155,15 +155,13 @@ it.effect('ending a contact publishes a JSON timestamp accepted by the real Acti
       'party.registry',
       endContactPointAction.descriptor.accessEvidencePolicy,
     );
-    const result = yield* getActionHandler(endContactPointAction)(
-      {
+    const result = yield* runActionOwnerSteps(endContactPointAction, {
         contactPointRef: ended.contactPointRef,
         effectiveEnd,
         provenance: replacement.provenance,
         reason,
         target: { type: 'WHOLE_CONTACT_POINT' },
-      },
-      {
+      }, {
         actionInvocationId,
         compositionRevision: 'a'.repeat(64),
         addDomainEvent: collector.addDomainEvent,
@@ -182,8 +180,7 @@ it.effect('ending a contact publishes a JSON timestamp accepted by the real Acti
             return Effect.succeed({ changed: true, contactPoint: ended });
           },
         },
-      },
-    );
+      });
     expect(result).toEqual(ended);
     const snapshot = collector.snapshot();
     expect(snapshot.domainEvents).toHaveLength(1);

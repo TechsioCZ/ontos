@@ -12,9 +12,14 @@ import { ManageQuotationPayloadSchema } from '../../shared/actions/manage-quotat
 import {
   ManageQuotationRejected,
   ManageQuotationUnavailable,
-  applyQuotationManagement,
+  prepareQuotationManagement,
+  writeQuotationManagement,
 } from '../../src/actions/manage-quotation.action.ts';
-import type { ManageQuotationActionServices } from '../../src/actions/manage-quotation.action.ts';
+import type {
+  ManageQuotationActionServices,
+  ManageQuotationPreparePorts,
+  ManageQuotationTrustedContext,
+} from '../../src/actions/manage-quotation.action.ts';
 import { readQuotationResult } from '../../src/api/quotation-result-lookup.read.ts';
 import { calculatePricingCommercialTotals } from '../../src/services/commercial-totals.service.ts';
 import { publishPricingLineValues } from '../../src/services/line-value-publication.service.ts';
@@ -50,6 +55,18 @@ const trusted = {
   tenantId: payload.currentDecision.decision.tenantId,
   trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe('2026-09-28T10:00:00.000Z')),
 };
+
+type QuotationPorts = ManageQuotationActionServices & ManageQuotationPreparePorts;
+
+/** The Action's owner steps in order: `prepare` before the transaction, then `write` inside it. */
+const applyQuotationManagement = (
+  request: typeof payload,
+  trustedContext: ManageQuotationTrustedContext,
+  ports: QuotationPorts,
+) =>
+  prepareQuotationManagement(request, trustedContext, ports).pipe(
+    Effect.flatMap((prepared) => writeQuotationManagement(request, trustedContext.actionInvocationId, prepared, ports)),
+  );
 
 const unavailable = new ManageQuotationUnavailable({
   code: 'manage_quotation_current_authority_unavailable',
@@ -177,7 +194,7 @@ describe('Quotation management Action', () => {
   it.effect('rejects Tenant or Selling Legal Entity mismatch before owner lookup or issuance', () =>
     Effect.gen(function* rejectsUntrustedScope() {
       let called = false;
-      const services: ManageQuotationActionServices = {
+      const services: QuotationPorts = {
         lookupInvocation: () => {
           called = true;
           return Effect.succeedNone;
@@ -204,7 +221,7 @@ describe('Quotation management Action', () => {
   it.effect('fails closed when fresh Current authority is absent and performs no write', () =>
     Effect.gen(function* requiresFreshOwnerAuthority() {
       let stored = false;
-      const services: ManageQuotationActionServices = {
+      const services: QuotationPorts = {
         lookupInvocation: () => Effect.succeedNone,
         resolveFresh: () => Effect.fail(unavailable),
         store: () => {
@@ -244,7 +261,7 @@ describe('Quotation management Action', () => {
           }
         | undefined;
       let freshCalls = 0;
-      const services: ManageQuotationActionServices = {
+      const services: QuotationPorts = {
         lookupInvocation: () => Effect.succeed(Option.fromNullishOr(stored)),
         resolveFresh: ({ candidateRef: requestedCandidate, currentDecision, trusted: receivedTrusted }) => {
           freshCalls += 1;
@@ -298,7 +315,7 @@ describe('Quotation management Action', () => {
           },
         } satisfies typeof issuanceRequest;
         let stored = false;
-        const services: ManageQuotationActionServices = {
+        const services: QuotationPorts = {
           lookupInvocation: () => Effect.succeedNone,
           resolveFresh: () => Effect.succeed(substitutedIssuanceRequest),
           store: () => {

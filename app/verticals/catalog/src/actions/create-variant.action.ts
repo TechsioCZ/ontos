@@ -96,7 +96,7 @@ export const createVariantAction = defineAction(
     resultSchema: CreateVariantResultSchema,
     schemaVersion: '2',
   },
-  handleCreateVariant,
+  { write: handleCreateVariant },
   (transaction, scope) =>
     variantPersistenceForScope(transaction, scope).pipe(
       Effect.map((services): CreateVariantServices => ({

@@ -78,7 +78,7 @@ export const bindSelfApiKeyAction = defineAction(
     resultSchema: BindSelfApiKeyResultSchema,
     schemaVersion: '1',
   },
-  handle,
+  { write: handle },
   (transaction, scope) => {
     const repository = principalManagementRepositoryFromTransaction(transaction, scope.authenticationNamespaceId);
     return Effect.succeed({ bind: repository.bindApiKey });

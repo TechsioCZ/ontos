@@ -259,7 +259,7 @@ export const recoverInventoryEffectAction: ActionRegistration<
     resultSchema: RecoverInventoryEffectResultSchema,
     schemaVersion: '1',
   },
-  handleRecoverInventoryEffect,
+  { write: handleRecoverInventoryEffect },
   (transaction, scope) => {
     const records = inventoryEffectLedgerPersistenceForScope(transaction, scope);
     return InventoryEffectRecoveryAuthorityPort.pipe(

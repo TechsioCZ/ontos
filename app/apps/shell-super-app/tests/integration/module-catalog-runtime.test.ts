@@ -107,7 +107,7 @@ const PropertyAction = defineAction(
     resultSchema: Schema.Struct({ renamed: Schema.Boolean }),
     schemaVersion: '1',
   },
-  () => Effect.succeed({ renamed: true }),
+  { write: () => Effect.succeed({ renamed: true }) },
 );
 const PropertyOutboxWorker = defineOutboxWorker(
   {

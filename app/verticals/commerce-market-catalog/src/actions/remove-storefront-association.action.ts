@@ -134,6 +134,6 @@ export const removeStorefrontAssociationAction = defineAction(
     resultSchema: RemoveStorefrontAssociationResultSchema,
     schemaVersion: '1',
   },
-  handleRemoveStorefrontAssociation,
+  { write: handleRemoveStorefrontAssociation },
   marketAdministrationService,
 );

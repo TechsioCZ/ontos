@@ -100,7 +100,7 @@ export const suspendCustomerProfileAction = defineAction(
     resultSchema: ProfileLifecycleResultSchema,
     schemaVersion: '1',
   },
-  handle,
+  { write: handle },
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(({ suspendCustomerProfile }): SuspendCustomerProfileServices => suspendCustomerProfile),

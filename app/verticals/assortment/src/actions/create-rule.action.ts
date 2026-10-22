@@ -125,7 +125,7 @@ export const createRuleAction = defineAction(
     resultSchema: CreateRuleResultSchema,
     schemaVersion: '1',
   },
-  handleCreateRule,
+  { write: handleCreateRule },
   assortmentPolicyServiceFactory,
 );
 

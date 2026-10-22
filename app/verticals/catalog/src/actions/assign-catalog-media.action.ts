@@ -121,7 +121,7 @@ export const assignCatalogMediaAction = defineAction(
     resultSchema: CatalogMediaChangeResultSchema,
     schemaVersion: '1',
   },
-  handleAssignCatalogMedia,
+  { write: handleAssignCatalogMedia },
   assignCatalogMediaSnapshotServiceFactory,
   captureAssignCatalogMediaResult,
 );

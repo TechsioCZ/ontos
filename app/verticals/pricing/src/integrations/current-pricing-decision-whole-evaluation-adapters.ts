@@ -1,4 +1,4 @@
-import type { OperationalScope, ReadOwnerTransaction, ReadServiceFactory } from '@app/core-runtime';
+import type { OperationalScope, OwnerTransaction } from '@app/core-runtime';
 import { OperationContextUnavailable } from '@app/core-runtime';
 import type { CurrentSupportedCurrenciesSuccess } from '@app/pricing-contracts/current-supported-currencies';
 import { CurrentSupportedCurrenciesSuccessSchema } from '@app/pricing-contracts/current-supported-currencies';
@@ -112,13 +112,8 @@ import { catalogPricingPurposeEquivalencePortFromEnvironment } from './catalog-p
 import { commercePriceGroupResolutionPortFromEnvironment } from './commerce-price-group-resolution.ts';
 import { currentPricingDecisionExternalOwnerEvidencePortFromEnvironment } from './current-pricing-decision-external-owner-evidence-live.ts';
 import type { CurrentPricingDecisionOwnerState } from './current-pricing-decision-owner-state.ts';
-import {
-  currentPricingDecisionOwnerStateInTransaction,
-  currentPricingDecisionOwnerStatePerRead,
-} from './current-pricing-decision-owner-state.ts';
+import { currentPricingDecisionOwnerStatePerOwnerTransaction } from './current-pricing-decision-owner-state.ts';
 import { priceGroupCompatibilityPortFromEnvironment } from './price-group-compatibility.ts';
-
-type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 
 const EXACT_PRICE_OWNER_REF = 'pricing-price:exact-current-set';
 const CURRENCY_SUPPORT_OWNER_REF = 'pricing-currency-support:current-set';
@@ -2469,11 +2464,6 @@ const adaptersFor = (
   );
 };
 
-const scopedAdapters = (transaction: ScopedTransaction, scope: OperationalScope, compositionRevision: string) =>
-  currentPricingDecisionOwnerStateInTransaction(transaction, scope, compositionRevision).pipe(
-    Effect.flatMap((ownerState) => adaptersFor(ownerState, scope, compositionRevision)),
-  );
-
 const wholeEvaluationFrom = (adapters: Effect.Success<ReturnType<typeof adaptersFor>>) =>
   makeCurrentPricingDecisionWholeEvaluationService({
     attemptSource: adapters.attemptSource,
@@ -2486,12 +2476,18 @@ const wholeEvaluationFrom = (adapters: Effect.Success<ReturnType<typeof adapters
     tierReader: adapters.tierReader,
   });
 
-export const currentPricingDecisionWholeEvaluationAdaptersForScope = (
-  transaction: ScopedTransaction,
+export const currentPricingDecisionWholeEvaluationAdaptersPerOwnerTransaction = (
+  ownerTransaction: OwnerTransaction,
   scope: OperationalScope,
   compositionRevision: string,
 ) =>
-  scopedAdapters(transaction, scope, compositionRevision).pipe(
+  Effect.gen(function* prepareAdapters() {
+    return yield* adaptersFor(
+      currentPricingDecisionOwnerStatePerOwnerTransaction(ownerTransaction, scope, compositionRevision),
+      scope,
+      compositionRevision,
+    );
+  }).pipe(
     Effect.map((adapters) =>
       Layer.mergeAll(
         Layer.succeed(CurrentPricingDecisionAttemptSource, adapters.attemptSource),
@@ -2507,21 +2503,14 @@ export const currentPricingDecisionWholeEvaluationAdaptersForScope = (
     ),
   );
 
-/** In an Action: every owner-state read runs in the Action's own transaction. */
-export const currentPricingDecisionWholeEvaluationForScope = (
-  transaction: ScopedTransaction,
-  scope: OperationalScope,
-  compositionRevision: string,
-) => scopedAdapters(transaction, scope, compositionRevision).pipe(Effect.map(wholeEvaluationFrom));
-
 /** In a Read's `finish`: every owner-state read opens its own short owner transaction, between the remote calls. */
-export const currentPricingDecisionWholeEvaluationPerRead = (
-  ownerTransaction: ReadOwnerTransaction,
+export const currentPricingDecisionWholeEvaluationPerOwnerTransaction = (
+  ownerTransaction: OwnerTransaction,
   scope: OperationalScope,
   compositionRevision: string,
 ) =>
   adaptersFor(
-    currentPricingDecisionOwnerStatePerRead(ownerTransaction, scope, compositionRevision),
+    currentPricingDecisionOwnerStatePerOwnerTransaction(ownerTransaction, scope, compositionRevision),
     scope,
     compositionRevision,
   ).pipe(Effect.map(wholeEvaluationFrom));

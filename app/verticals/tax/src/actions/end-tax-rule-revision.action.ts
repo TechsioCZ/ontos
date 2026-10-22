@@ -84,7 +84,7 @@ export const endTaxRuleRevisionAction = defineAction(
     resultSchema: EndTaxRuleRevisionResultSchema,
     schemaVersion: '1',
   },
-  handleEndTaxRuleRevision,
+  { write: handleEndTaxRuleRevision },
   taxRuleGovernanceServiceFactory,
 );
 

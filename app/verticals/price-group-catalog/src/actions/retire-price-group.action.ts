@@ -129,7 +129,7 @@ export const retirePriceGroupAction = defineAction(
     resultSchema: RetirePriceGroupResultSchema,
     schemaVersion: '1',
   },
-  handleRetirePriceGroup,
+  { write: handleRetirePriceGroup },
   priceGroupCatalogPersistenceForScope,
 );
 

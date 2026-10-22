@@ -42,7 +42,7 @@ export const confirmDuplicatePartiesAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'review_party_identity',
   },
-  handleDuplicateCaseResolution,
+  { write: handleDuplicateCaseResolution },
   (transaction, scope) => duplicateCaseResolutionService(transaction, scope.tenantId, 'CONFIRMED_DUPLICATE_PARTIES'),
 );
 // Production merge remains deliberately absent: this Action records reviewed readiness only.

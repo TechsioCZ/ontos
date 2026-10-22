@@ -182,6 +182,6 @@ export const assignCustomerGroupAction = defineAction(
     resultSchema: AssignCustomerGroupResultSchema,
     schemaVersion: '1',
   },
-  handleAssignCustomerGroup,
+  { write: handleAssignCustomerGroup },
   customerGroupServiceFactory,
 );

@@ -98,7 +98,7 @@ export const removeSavedAddressAction = defineAction(
     resultSchema: RemoveSavedAddressResultSchema,
     schemaVersion: '1',
   },
-  handle,
+  { write: handle },
   (transaction, scope) => Effect.succeed<Services>(addressActionPersistenceForTransaction(transaction, scope)),
 );
 

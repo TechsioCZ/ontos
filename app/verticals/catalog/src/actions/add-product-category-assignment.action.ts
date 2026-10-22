@@ -104,7 +104,7 @@ export const addProductCategoryAssignmentAction = defineAction(
     resultSchema: AddProductCategoryAssignmentResultSchema,
     schemaVersion: '1',
   },
-  handleAddProductCategoryAssignment,
+  { write: handleAddProductCategoryAssignment },
   (transaction, scope) =>
     categoryPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map(

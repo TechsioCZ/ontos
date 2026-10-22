@@ -2,17 +2,11 @@ import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import {
-  ChangeProductManufacturerPayloadSchema,
-  SetProductManufacturerPayloadSchema,
-} from '../../shared/actions/manufacturer-mutations.ts';
+import { SetProductManufacturerPayloadSchema } from '../../shared/actions/manufacturer-mutations.ts';
 import {
   ManufacturerPersistenceUnavailable,
   manufacturerPersistenceForScope,
 } from '../../src/persistence/manufacturer-persistence.ts';
-import { ManufacturerTargetAbsent } from '../../src/persistence/manufacturer-target-absent.ts';
-import { ManufacturerTargetForbidden } from '../../src/persistence/manufacturer-target-forbidden.ts';
-import { ManufacturerTargetInvalid } from '../../src/persistence/manufacturer-target-invalid.ts';
 import { manufacturerRelationRevisions, manufacturerRelations, products } from '../../src/database/schema.ts';
 import type { productVariants } from '../../src/database/schema.ts';
 
@@ -66,10 +60,6 @@ const partyPayload = Schema.decodeUnknownSync(SetProductManufacturerPayloadSchem
     partyRef,
   },
 });
-const changePayload = Schema.decodeUnknownSync(ChangeProductManufacturerPayloadSchema)({
-  ...payload,
-  expectedRevision: 1,
-});
 const query = <A>(rows: readonly A[]) => {
   const builder = {
     for: () => builder,
@@ -98,29 +88,6 @@ type TestTable =
   | typeof products
   | typeof productVariants;
 describe('Manufacturer persistence owner verification', () => {
-  it.effect('fails managed Legal Entity assignment before database access until Core read exists', () =>
-    Effect.gen(function* testUnavailableManufacturerPersistence() {
-      const transaction = {
-        insert: () => {
-          throw new Error('must not write');
-        },
-        select: () => {
-          throw new Error('must not query');
-        },
-        update: () => {
-          throw new Error('must not write');
-        },
-      };
-      // @ts-expect-error Incomplete transaction proves no Drizzle method is touched.
-      const service = manufacturerPersistenceForScope(transaction, scope);
-      const setFailure = yield* Effect.flip(service.set({ ...evidence, payload: setPayload }));
-      const changeFailure = yield* Effect.flip(service.change({ ...evidence, payload: changePayload }));
-      for (const failure of [setFailure, changeFailure]) {
-        expect(Schema.is(ManufacturerPersistenceUnavailable)(failure)).toBe(true);
-      }
-    }),
-  );
-
   it.effect('stores only the owner-confirmed canonical opaque Party identity', () =>
     Effect.gen(function* testCanonicalPartyPersistence() {
       const writes: { table: TestTable; targetId: string | undefined }[] = [];
@@ -163,8 +130,8 @@ describe('Manufacturer persistence owner verification', () => {
           }),
       };
       // @ts-expect-error Minimal database double exercises only the persistence query surface.
-      const service = manufacturerPersistenceForScope(transaction, scope, { targetResolver: resolver });
-      const outcome = yield* service.set({ ...evidence, payload: partyPayload });
+      const service = manufacturerPersistenceForScope(transaction, scope);
+      const outcome = yield* service.set({ ...evidence, payload: partyPayload }, yield* resolver.resolve());
       expect(outcome).toMatchObject({ relationId, revision: 1 });
       expect(writes).toEqual([
         { table: manufacturerRelations, targetId: 'canonical-maker-id' },
@@ -214,8 +181,8 @@ describe('Manufacturer persistence owner verification', () => {
           }),
       };
       // @ts-expect-error Minimal transaction double proves the scoped write shape.
-      const service = manufacturerPersistenceForScope(transaction, scope, { targetResolver: resolver });
-      const outcome = yield* service.set({ ...evidence, payload: setPayload });
+      const service = manufacturerPersistenceForScope(transaction, scope);
+      const outcome = yield* service.set({ ...evidence, payload: setPayload }, yield* resolver.resolve());
       expect(outcome).toMatchObject({ relationId, revision: 1 });
       expect(writes).toEqual([
         {
@@ -257,37 +224,9 @@ describe('Manufacturer persistence owner verification', () => {
           }),
       };
       // @ts-expect-error Incomplete transaction proves a rejected target never reaches storage.
-      const service = manufacturerPersistenceForScope(transaction, scope, { targetResolver: resolver });
-      const outcome = yield* service.set({ ...evidence, payload: setPayload });
+      const service = manufacturerPersistenceForScope(transaction, scope);
+      const outcome = yield* service.set({ ...evidence, payload: setPayload }, yield* resolver.resolve());
       expect(Schema.is(Schema.TaggedStruct('invalid_change', {}))(outcome)).toBe(true);
-    }),
-  );
-
-  it.effect('keeps definite absent, invalid and forbidden owner results distinct', () =>
-    Effect.gen(function* testOwnerFailureDistinctions() {
-      const transaction = {
-        insert: () => {
-          throw new Error('must not write');
-        },
-        select: () => {
-          throw new Error('must not query');
-        },
-      };
-      const absent = { resolve: () => Effect.fail(new ManufacturerTargetAbsent()) };
-      const invalid = { resolve: () => Effect.fail(new ManufacturerTargetInvalid({ reason: 'bad target' })) };
-      const forbidden = { resolve: () => Effect.fail(new ManufacturerTargetForbidden()) };
-      // @ts-expect-error No database operation is permitted before owner resolution.
-      const absentService = manufacturerPersistenceForScope(transaction, scope, { targetResolver: absent });
-      // @ts-expect-error No database operation is permitted before owner resolution.
-      const invalidService = manufacturerPersistenceForScope(transaction, scope, { targetResolver: invalid });
-      // @ts-expect-error No database operation is permitted before owner resolution.
-      const forbiddenService = manufacturerPersistenceForScope(transaction, scope, { targetResolver: forbidden });
-      const absentOutcome = yield* absentService.set({ ...evidence, payload: partyPayload });
-      const invalidOutcome = yield* invalidService.set({ ...evidence, payload: partyPayload });
-      expect(Schema.is(Schema.TaggedStruct('not_found', {}))(absentOutcome)).toBe(true);
-      expect(Schema.is(Schema.TaggedStruct('invalid_change', {}))(invalidOutcome)).toBe(true);
-      const denial = yield* Effect.flip(forbiddenService.set({ ...evidence, payload: partyPayload }));
-      expect(Schema.is(ManufacturerTargetForbidden)(denial)).toBe(true);
     }),
   );
 

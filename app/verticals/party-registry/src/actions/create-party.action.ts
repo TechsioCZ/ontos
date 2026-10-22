@@ -120,7 +120,7 @@ export const createPartyAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_party_identity',
   },
-  handleCreateParty,
+  { write: handleCreateParty },
   (transaction, scope) =>
     Effect.succeed({
       createOrMatch: (candidate: PartyCandidate, actionInvocationId: string) =>

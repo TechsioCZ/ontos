@@ -1,3 +1,20 @@
+import {
+  prepareMigrateCounterpartyPriceGroup,
+  handleMigrateCounterpartyPriceGroup as writeMigrateCounterpartyPriceGroup,
+} from '../../src/actions/migrate-counterparty-price-group.action.ts';
+import {
+  prepareMigrateCustomerPriceGroup,
+  handleMigrateCustomerPriceGroup as writeMigrateCustomerPriceGroup,
+} from '../../src/actions/migrate-customer-price-group.action.ts';
+import {
+  prepareAssignCounterpartyPriceGroup,
+  handleAssignCounterpartyPriceGroup as writeAssignCounterpartyPriceGroup,
+} from '../../src/actions/assign-counterparty-price-group.action.ts';
+import {
+  prepareAssignCustomerPriceGroup,
+  handleAssignCustomerPriceGroup as writeAssignCustomerPriceGroup,
+} from '../../src/actions/assign-customer-price-group.action.ts';
+import { runPreparedAction } from '../support/prepared-action.ts';
 import type { ActionAccessEvidencePolicy } from '@app/core-runtime';
 import type { DomainEventContractMap } from '../../../../packages/core-runtime/src/actions/events.ts';
 import { PriceGroupCompatibilityDecisionSchema } from '@app/price-group-catalog-contracts';
@@ -6,7 +23,6 @@ import { Effect, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import type {
   CustomerPriceGroupAssignment,
   PriceGroupCompatibilityEvidence,
@@ -285,19 +301,16 @@ const migrationPayload = {
 it.effect('B2 validates all four scheduled assignment and migration Actions at the server operation time', () =>
   Effect.gen(function* separateOperationAndEffectiveTimes() {
     const { requests, services, stored } = scheduleServices();
-    yield* getActionHandler(assignCustomerPriceGroupAction)(
-      assignPayload,
-      contextFor(assignCustomerPriceGroupAction.descriptor, services),
-    );
-    yield* getActionHandler(assignCounterpartyPriceGroupAction)(
+    yield* runAssignCustomerPriceGroup(assignPayload, contextFor(assignCustomerPriceGroupAction.descriptor, services));
+    yield* runAssignCounterpartyPriceGroup(
       { ...assignPayload, counterpartyRef, profile: counterpartyProfile },
       contextFor(assignCounterpartyPriceGroupAction.descriptor, services),
     );
-    yield* getActionHandler(migrateCustomerPriceGroupAction)(
+    yield* runMigrateCustomerPriceGroup(
       migrationPayload,
       contextFor(migrateCustomerPriceGroupAction.descriptor, services),
     );
-    yield* getActionHandler(migrateCounterpartyPriceGroupAction)(
+    yield* runMigrateCounterpartyPriceGroup(
       {
         ...migrationPayload,
         counterpartyRef,
@@ -317,3 +330,23 @@ it.effect('B2 validates all four scheduled assignment and migration Actions at t
     ).toBe(true);
   }),
 );
+
+const runAssignCustomerPriceGroup = (
+  payload: Parameters<typeof prepareAssignCustomerPriceGroup>[0],
+  context: Omit<Parameters<typeof writeAssignCustomerPriceGroup>[1], 'prepared'>,
+) => runPreparedAction(prepareAssignCustomerPriceGroup, writeAssignCustomerPriceGroup, payload, context);
+
+const runAssignCounterpartyPriceGroup = (
+  payload: Parameters<typeof prepareAssignCounterpartyPriceGroup>[0],
+  context: Omit<Parameters<typeof writeAssignCounterpartyPriceGroup>[1], 'prepared'>,
+) => runPreparedAction(prepareAssignCounterpartyPriceGroup, writeAssignCounterpartyPriceGroup, payload, context);
+
+const runMigrateCustomerPriceGroup = (
+  payload: Parameters<typeof prepareMigrateCustomerPriceGroup>[0],
+  context: Omit<Parameters<typeof writeMigrateCustomerPriceGroup>[1], 'prepared'>,
+) => runPreparedAction(prepareMigrateCustomerPriceGroup, writeMigrateCustomerPriceGroup, payload, context);
+
+const runMigrateCounterpartyPriceGroup = (
+  payload: Parameters<typeof prepareMigrateCounterpartyPriceGroup>[0],
+  context: Omit<Parameters<typeof writeMigrateCounterpartyPriceGroup>[1], 'prepared'>,
+) => runPreparedAction(prepareMigrateCounterpartyPriceGroup, writeMigrateCounterpartyPriceGroup, payload, context);

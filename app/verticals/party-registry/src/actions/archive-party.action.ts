@@ -99,7 +99,7 @@ export const archivePartyAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_party_identity',
   },
-  handle,
+  { write: handle },
   (transaction, scope) =>
     Effect.succeed({
       transition: (payload: ArchivePartyPayload) =>

@@ -109,7 +109,7 @@ export const endPartyRelationshipAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_party_relationships',
   },
-  handleEndPartyRelationship,
+  { write: handleEndPartyRelationship },
   (transaction, scope) =>
     Effect.succeed({
       end: (payload, principalId, actionInvocationId) =>

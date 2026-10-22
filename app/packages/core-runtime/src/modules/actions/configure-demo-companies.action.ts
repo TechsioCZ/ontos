@@ -80,7 +80,7 @@ export const configureDemoCompaniesAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_identity',
   },
-  handleConfigureDemoCompanies,
+  { write: handleConfigureDemoCompanies },
   (transaction, scope) =>
     Effect.succeed({
       configure: () => configureDemoCompaniesFromTransaction(transaction, scope.tenantId),

@@ -71,7 +71,7 @@ export const correctSkuAction = defineAction(
     resultSchema: CorrectSkuResultSchema,
     schemaVersion: '1',
   },
-  handleCorrectSku,
+  { write: handleCorrectSku },
   (transaction, scope) =>
     skuServicesForScope(transaction, scope).pipe(
       Effect.map((services): CorrectSkuServices => ({

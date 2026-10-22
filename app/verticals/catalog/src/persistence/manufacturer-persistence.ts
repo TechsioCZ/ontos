@@ -14,7 +14,6 @@ import type {
   ManufacturerTarget,
 } from '../../shared/domain/manufacturer-relation.ts';
 import { manufacturerRelationRevisions, manufacturerRelations, productVariants, products } from '../database/schema.ts';
-import { manufacturerTargetResolver } from './manufacturer-target-resolver.ts';
 import type { ResolvedManufacturerTarget } from './manufacturer-target-resolver.ts';
 import type { ManufacturerTargetForbidden } from './manufacturer-target-forbidden.ts';
 
@@ -30,7 +29,6 @@ interface EffectivePeriodSnapshot {
   effectiveTo?: string;
 }
 type MutationInput<Payload> = MutationEvidence & { readonly payload: Payload };
-type TargetResolver = typeof manufacturerTargetResolver;
 
 const ManufacturerMutationOutcomeSchema = Schema.Union([
   Schema.TaggedStruct('applied', {
@@ -52,6 +50,7 @@ export class ManufacturerPersistenceUnavailable extends Schema.TaggedError<Manuf
 export interface ManufacturerPersistence {
   readonly change: (
     input: MutationInput<ChangeProductManufacturerPayload>,
+    resolution: ResolvedManufacturerTarget,
   ) => Effect.Effect<ManufacturerMutationOutcome, ManufacturerPersistenceUnavailable | ManufacturerTargetForbidden>;
   readonly history: (
     relationId: string,
@@ -62,6 +61,7 @@ export interface ManufacturerPersistence {
   ) => Effect.Effect<ManufacturerMutationOutcome, ManufacturerPersistenceUnavailable>;
   readonly set: (
     input: MutationInput<SetProductManufacturerPayload>,
+    resolution: ResolvedManufacturerTarget,
   ) => Effect.Effect<ManufacturerMutationOutcome, ManufacturerPersistenceUnavailable | ManufacturerTargetForbidden>;
 }
 
@@ -132,11 +132,8 @@ const canonicalAssignment = (owner: ResolvedManufacturerTarget, tenantId: string
 export const manufacturerPersistenceForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
-  // oxlint-disable-next-line effect-native/no-dependency-parameters -- Owner-read test seam, pending #445 governed Core target read. expires: 2027-03-31.
-  configured?: { readonly targetResolver: TargetResolver },
 ): ManufacturerPersistence => {
   const { tenantId } = scope;
-  const resolver = configured?.targetResolver ?? manufacturerTargetResolver;
   const get = (id: string) =>
     transaction
       .select()
@@ -203,14 +200,6 @@ export const manufacturerPersistenceForScope = (
       .pipe(Effect.mapError(unavailable));
     return hasConflict(rows, except, DateTime.toDateUtc(yield* DateTime.now));
   });
-  const resolve = (target: ManufacturerTarget) =>
-    resolver.resolve(target, { requestId: scope.correlationId, tenantId }).pipe(
-      Effect.catchTags({
-        ManufacturerTargetAbsent: () => Effect.succeed({ _tag: 'not_found' as const }),
-        ManufacturerTargetInvalid: () => Effect.succeed({ _tag: 'invalid_change' as const }),
-        ManufacturerTargetUnavailable: (failure) => Effect.fail(unavailable(failure)),
-      }),
-    );
   const append = (row: RelationRow, evidence: MutationEvidence) =>
     transaction
       .insert(manufacturerRelationRevisions)
@@ -232,58 +221,52 @@ export const manufacturerPersistenceForScope = (
       })
       .pipe(Effect.mapError(unavailable));
 
-  const set: ManufacturerPersistence['set'] = Effect.fn('ManufacturerPersistence.set')(function* set(input) {
-    const { payload } = input;
-    if (!validSubject(payload.subject, tenantId)) {
-      return { _tag: 'invalid_change' };
-    }
-    const resolution = yield* resolve(payload.target);
-    if (Schema.is(ManufacturerMutationOutcomeSchema)(resolution)) {
-      return resolution;
-    }
-    const canonical = canonicalAssignment(resolution, tenantId);
-    if (Option.isNone(canonical)) {
-      return { _tag: 'invalid_change' };
-    }
-    const lockedProductId = yield* lock(payload.subject);
-    if (Option.isNone(lockedProductId)) {
-      return { _tag: 'not_found' };
-    }
-    if (yield* conflicts(payload.subject, lockedProductId.value)) {
-      return { _tag: 'identity_conflict' };
-    }
-    const [row] = yield* transaction
-      .insert(manufacturerRelations)
-      .values({
-        ...columns(payload.subject),
-        currentRevision: 1,
-        disposition: 'CONFIRMED',
-        effectiveFrom: asDate(payload.effectivePeriod.effectiveFrom),
-        effectiveTo: asDate(payload.effectivePeriod.effectiveTo),
-        evidenceRefs: [...payload.evidenceRefs],
-        reason: payload.reason,
-        relationId: payload.relationId,
-        targetId: canonical.value.targetId,
-        targetKind: canonical.value.targetKind,
-        tenantId,
-      })
-      .returning()
-      .pipe(Effect.mapError(unavailable));
-    if (row === undefined) {
-      return yield* unavailable();
-    }
-    yield* append(row, input);
-    return applied(row, payload.relationId);
-  });
-  const change: ManufacturerPersistence['change'] = Effect.fn('ManufacturerPersistence.change')(
-    function* change(input) {
+  const set: ManufacturerPersistence['set'] = Effect.fn('ManufacturerPersistence.set')(
+    function* set(input, resolution) {
       const { payload } = input;
       if (!validSubject(payload.subject, tenantId)) {
         return { _tag: 'invalid_change' };
       }
-      const resolution = yield* resolve(payload.target);
-      if (Schema.is(ManufacturerMutationOutcomeSchema)(resolution)) {
-        return resolution;
+      const canonical = canonicalAssignment(resolution, tenantId);
+      if (Option.isNone(canonical)) {
+        return { _tag: 'invalid_change' };
+      }
+      const lockedProductId = yield* lock(payload.subject);
+      if (Option.isNone(lockedProductId)) {
+        return { _tag: 'not_found' };
+      }
+      if (yield* conflicts(payload.subject, lockedProductId.value)) {
+        return { _tag: 'identity_conflict' };
+      }
+      const [row] = yield* transaction
+        .insert(manufacturerRelations)
+        .values({
+          ...columns(payload.subject),
+          currentRevision: 1,
+          disposition: 'CONFIRMED',
+          effectiveFrom: asDate(payload.effectivePeriod.effectiveFrom),
+          effectiveTo: asDate(payload.effectivePeriod.effectiveTo),
+          evidenceRefs: [...payload.evidenceRefs],
+          reason: payload.reason,
+          relationId: payload.relationId,
+          targetId: canonical.value.targetId,
+          targetKind: canonical.value.targetKind,
+          tenantId,
+        })
+        .returning()
+        .pipe(Effect.mapError(unavailable));
+      if (row === undefined) {
+        return yield* unavailable();
+      }
+      yield* append(row, input);
+      return applied(row, payload.relationId);
+    },
+  );
+  const change: ManufacturerPersistence['change'] = Effect.fn('ManufacturerPersistence.change')(
+    function* change(input, resolution) {
+      const { payload } = input;
+      if (!validSubject(payload.subject, tenantId)) {
+        return { _tag: 'invalid_change' };
       }
       const canonical = canonicalAssignment(resolution, tenantId);
       if (Option.isNone(canonical)) {

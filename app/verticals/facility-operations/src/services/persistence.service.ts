@@ -181,7 +181,10 @@ const visibleAgendas = Effect.fn('FacilityOperations.visibleAgendas')(function* 
   const assignedOnly = isAssignedOnly(granted);
   const actorRef = { principalId: scope.principalId, tenantId: scope.tenantId } as RecordsResponse['actorPrincipalRef'];
   let ownEventIds: ReadonlySet<string> | undefined;
-  const envelopes = new Map<AgendaId, Readonly<Record<string, unknown>> & { readonly revision: number; readonly state: unknown }>();
+  const envelopes = new Map<
+    AgendaId,
+    Readonly<Record<string, unknown>> & { readonly revision: number; readonly state: unknown }
+  >();
   for (const entry of recordsAccessList(granted)) {
     if (!entry.canRead || !requested.includes(entry.agenda)) {
       continue;
@@ -303,9 +306,6 @@ export const persistenceService = Effect.fn('FacilityOperations.persistenceServi
     }
     const actor = { principalId: scope.principalId, tenantId: scope.tenantId };
 
-    const access = yield* ContextAccess;
-    const grants = () => facilityOperationsGrants(scope).pipe(Effect.provideService(ContextAccess, access));
-
     const whereAgenda = (agenda: AgendaId) =>
       and(
         eq(agendaStates.tenantId, scope.tenantId),
@@ -372,8 +372,8 @@ export const persistenceService = Effect.fn('FacilityOperations.persistenceServi
     const uploadFile = Effect.fn('FacilityOperations.uploadFile')(function* uploadFile(
       command: FileUploadCommand,
       resourceId: string,
+      granted: Grants,
     ) {
-      const granted = yield* grants();
       if (!canWriteAgenda(granted, agendaDefinitions.documents.sensitivity)) {
         return yield* permissionDenied('File upload requires write access to documents');
       }
@@ -488,16 +488,16 @@ export const persistenceService = Effect.fn('FacilityOperations.persistenceServi
       command: OpsCommand,
       expectedRevision: number,
       resourceId: string,
+      granted: Grants,
       baseUpdatedAt?: string,
     ) {
       if (command._tag === 'FileUpload') {
-        return yield* uploadFile(command, resourceId);
+        return yield* uploadFile(command, resourceId, granted);
       }
       const definition = agendaOfCommand(command);
       if (definition === undefined) {
         return yield* opsConflict(`No agenda handles command ${command._tag}`);
       }
-      const granted = yield* grants();
       const meterCommand =
         command._tag === 'MeterCreate' ||
         command._tag === 'MeterUpdate' ||

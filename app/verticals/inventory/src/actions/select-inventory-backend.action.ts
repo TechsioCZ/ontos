@@ -78,7 +78,7 @@ export const selectInventoryBackendAction = defineAction(
     resultSchema: SelectInventoryBackendResultSchema,
     schemaVersion: '1',
   },
-  handleSelectInventoryBackend,
+  { write: handleSelectInventoryBackend },
   (transaction, scope) =>
     Effect.sync(() => {
       const backendConfigurations = inventoryBackendConfigurationPersistenceForScope(transaction, scope);

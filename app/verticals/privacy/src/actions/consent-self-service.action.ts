@@ -182,7 +182,7 @@ export const consentSelfServiceAction = defineAction(
     resultSchema: ConsentSelfServiceResultSchema,
     schemaVersion: '1',
   },
-  handleConsentSelfService,
+  { write: handleConsentSelfService },
   Effect.fn('ConsentSelfServiceAction.services')(function* makeConsentSelfServiceServices(transaction, scope) {
     const authority = yield* ConsentSelfServiceAuthority;
     const [operations, purposes] = yield* Effect.all(

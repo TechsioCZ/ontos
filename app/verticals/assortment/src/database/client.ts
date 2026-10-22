@@ -1,4 +1,4 @@
-import { DatabaseConfig, configureDatabasePool } from '@app/core-runtime';
+import { DatabaseConfig, configureDatabasePool, makeGuardedPgClient } from '@app/core-runtime';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Context, Effect, Layer, Redacted } from 'effect';
@@ -24,7 +24,7 @@ export const AssortmentPgClientLive = Layer.effect(
     const poolConfiguration = yield* configureDatabasePool(Redacted.make(configuration.connectionString)).pipe(
       Effect.mapError((error) => new AssortmentDatabaseConnectionError({ reason: error.reason })),
     );
-    return yield* PgClient.make(poolConfiguration).pipe(Effect.mapError(connectionFailure));
+    return yield* makeGuardedPgClient(poolConfiguration).pipe(Effect.mapError(connectionFailure));
   }),
 );
 

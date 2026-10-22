@@ -126,7 +126,7 @@ export const reorderCatalogMediaAction = defineAction(
     resultSchema: CatalogMediaChangeResultSchema,
     schemaVersion: '1',
   },
-  handleReorderCatalogMedia,
+  { write: handleReorderCatalogMedia },
   reorderCatalogMediaSnapshotServiceFactory,
   captureReorderCatalogMediaResult,
 );

@@ -74,7 +74,7 @@ export const recordOwnerExecutionOutcomeAction = defineAction(
     resultSchema: RecordOwnerExecutionOutcomeResultSchema,
     schemaVersion: '1',
   },
-  handleRecordOwnerExecutionOutcome,
+  { write: handleRecordOwnerExecutionOutcome },
   (transaction, scope) =>
     Effect.all(
       {

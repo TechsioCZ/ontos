@@ -1,10 +1,4 @@
-import {
-  DatabaseConfig,
-  configureDatabasePool,
-  GatewayAssertionRedemptionService,
-  GatewayAssertionRedemptionUnavailableError,
-  GatewayAssertionReplayError,
-} from '@app/core-runtime';
+import { DatabaseConfig, configureDatabasePool, GatewayAssertionRedemptionService, GatewayAssertionRedemptionUnavailableError, GatewayAssertionReplayError, makeGuardedPgClient } from '@app/core-runtime';
 import type { GatewayAssertionRedemptionInput } from '@app/core-runtime';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
 import { PgClient } from '@effect/sql-pg';
@@ -35,7 +29,7 @@ export const GatewayAssertionRedemptionDatabaseLive = PgClient.layerFrom(
     const pool = yield* configureDatabasePool(Redacted.make(config.connectionString)).pipe(
       Effect.mapError(unavailable),
     );
-    return yield* PgClient.make(pool).pipe(Effect.mapError(unavailable));
+    return yield* makeGuardedPgClient(pool).pipe(Effect.mapError(unavailable));
   }),
 );
 

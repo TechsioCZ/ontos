@@ -3,7 +3,7 @@
 // @ontos-action-slug remove-product-manufacturer
 import { Effect, Match, Schema } from 'effect';
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { ActionTransactionError, ReadRuntime, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { ActionTransactionError, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { ProductAuditEvidenceSchema } from '../../shared/domain/product.ts';
 import {
   RemoveProductManufacturerPayloadSchema,
@@ -18,7 +18,6 @@ import {
 import type { ManufacturerPersistence } from '../persistence/manufacturer-persistence.ts';
 import { captureCatalogActionResult } from '../persistence/catalog-action-result-snapshot.ts';
 import { ManufacturerTargetForbidden } from '../persistence/manufacturer-target-forbidden.ts';
-import { manufacturerTargetResolverForCoreRead } from '../persistence/manufacturer-target-resolver.ts';
 
 export type { RemoveProductManufacturerPayload } from '../../shared/actions/manufacturer-mutations.ts';
 
@@ -110,12 +109,9 @@ export const removeProductManufacturerAction = defineAction(
     resultSchema: RemoveProductManufacturerResultSchema,
     schemaVersion: '1',
   },
-  handleRemoveProductManufacturer,
-  Effect.fn('RemoveProductManufacturerAction.services')(function* manufacturerServices(transaction, scope) {
-    const readRuntime = yield* ReadRuntime;
-    const services = manufacturerPersistenceForScope(transaction, scope, {
-      targetResolver: manufacturerTargetResolverForCoreRead(readRuntime, scope),
-    });
+  { write: handleRemoveProductManufacturer },
+  Effect.fn('RemoveProductManufacturerAction.services')((transaction, scope) => {
+    const services = manufacturerPersistenceForScope(transaction, scope);
     const capturingServices: CapturingManufacturerPersistence = {
       ...services,
       captureResult: (actionInvocationId: string, result: typeof ProductManufacturerMutationResultSchema.Type) =>
@@ -140,7 +136,7 @@ export const removeProductManufacturerAction = defineAction(
           ),
         ),
     };
-    return capturingServices;
+    return Effect.succeed(capturingServices);
   }),
   ({ actionInvocationId, result, services }) => services.captureResult(actionInvocationId, result),
 );

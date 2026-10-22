@@ -1,8 +1,14 @@
 import { expect, it } from 'effect-rstest';
-import { Crypto, Effect, Layer, Schema } from 'effect';
+import { Crypto, Effect, Layer, Redacted, Schema } from 'effect';
+import {
+  insideDatabaseTransaction,
+  refuseInsideDatabaseTransaction,
+} from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
+import { prepareAccessRecipient } from '../../src/access-services.ts';
+import type { CounterpartyAccessRemoteServices } from '../../src/persistence/access-persistence.ts';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import type { ActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { runActionOwnerSteps } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import type { DomainEventContractMap } from '../../../../packages/core-runtime/src/actions/events.ts';
 import {
   BusinessPermissionRelationshipMutation,
@@ -13,6 +19,7 @@ import {
 } from '../../../../packages/core-runtime/src/index.ts';
 import {
   CounterpartyAccessContractViolation,
+  CounterpartyAccessUnavailable,
   CounterpartyInvitationClaimAuthority,
   CounterpartyInvitationProofDelivery,
   CounterpartyInvitationProofLifecycle,
@@ -361,7 +368,8 @@ it.effect('attaches a grant trigger only for a newly staged authorization mutati
         grantCounterpartyCommerceAccessAction.descriptor.accessEvidencePolicy,
         grantCounterpartyCommerceAccessAction.descriptor.auditEvidenceSchema,
       );
-      return getActionHandler(grantCounterpartyCommerceAccessAction)(
+      return runActionOwnerSteps(
+        grantCounterpartyCommerceAccessAction,
         payload,
         actionContext(collector, {
           grant: () =>
@@ -412,7 +420,8 @@ it.effect('attaches bootstrap trigger only for a newly staged authorization muta
         bootstrapCounterpartyAccessAdministratorAction.descriptor.accessEvidencePolicy,
         bootstrapCounterpartyAccessAdministratorAction.descriptor.auditEvidenceSchema,
       );
-      return getActionHandler(bootstrapCounterpartyAccessAdministratorAction)(
+      return runActionOwnerSteps(
+        bootstrapCounterpartyAccessAdministratorAction,
         payload,
         actionContext(collector, {
           bootstrap: () =>
@@ -453,7 +462,8 @@ it.effect('rejects bootstrap from an authMethod-shaped context without trusted p
       },
     });
     const failure = yield* Effect.flip(
-      getActionHandler(bootstrapCounterpartyAccessAdministratorAction)(
+      runActionOwnerSteps(
+        bootstrapCounterpartyAccessAdministratorAction,
         { counterpartyRef, reason: 'Initial administrator', recipient },
         { ...context, scope: { ...context.scope } },
       ),
@@ -489,7 +499,8 @@ it.effect('attaches revoke trigger only for a newly staged authorization mutatio
         revokeCounterpartyCommerceAccessAction.descriptor.accessEvidencePolicy,
         revokeCounterpartyCommerceAccessAction.descriptor.auditEvidenceSchema,
       );
-      return getActionHandler(revokeCounterpartyCommerceAccessAction)(
+      return runActionOwnerSteps(
+        revokeCounterpartyCommerceAccessAction,
         payload,
         actionContext(collector, {
           revoke: () =>
@@ -532,7 +543,8 @@ it.effect('attaches invitation-created outbox only for a new invitation', () =>
         createCounterpartyAccessInvitationAction.descriptor.accessEvidencePolicy,
         createCounterpartyAccessInvitationAction.descriptor.auditEvidenceSchema,
       );
-      return getActionHandler(createCounterpartyAccessInvitationAction)(
+      return runActionOwnerSteps(
+        createCounterpartyAccessInvitationAction,
         payload,
         actionContext(collector, {
           create: () => Effect.succeed({ invitation, outcome }),
@@ -564,7 +576,8 @@ it.effect('attaches invitation-resent outbox only for an actual resend', () =>
         resendCounterpartyAccessInvitationAction.descriptor.accessEvidencePolicy,
         resendCounterpartyAccessInvitationAction.descriptor.auditEvidenceSchema,
       );
-      return getActionHandler(resendCounterpartyAccessInvitationAction)(
+      return runActionOwnerSteps(
+        resendCounterpartyAccessInvitationAction,
         payload,
         actionContext(collector, {
           resend: () => Effect.succeed({ invitation, outcome }),
@@ -603,7 +616,8 @@ it.effect('attaches invitation-revoked outbox only for an actual revocation', ()
         revokeCounterpartyAccessInvitationAction.descriptor.accessEvidencePolicy,
         revokeCounterpartyAccessInvitationAction.descriptor.auditEvidenceSchema,
       );
-      return getActionHandler(revokeCounterpartyAccessInvitationAction)(
+      return runActionOwnerSteps(
+        revokeCounterpartyAccessInvitationAction,
         payload,
         actionContext(collector, {
           revoke: () => Effect.succeed({ invitation: revokedInvitation, outcome }),
@@ -670,7 +684,8 @@ it.effect('attaches claim trigger only for a newly staged aggregate mutation', (
         claimCounterpartyAccessInvitationAction.descriptor.accessEvidencePolicy,
         claimCounterpartyAccessInvitationAction.descriptor.auditEvidenceSchema,
       );
-      return getActionHandler(claimCounterpartyAccessInvitationAction)(
+      return runActionOwnerSteps(
+        claimCounterpartyAccessInvitationAction,
         payload,
         actionContext(
           collector,
@@ -724,7 +739,8 @@ it.effect('defers durable proof rejection until after the Action transaction com
       claimCounterpartyAccessInvitationAction.descriptor.accessEvidencePolicy,
       claimCounterpartyAccessInvitationAction.descriptor.auditEvidenceSchema,
     );
-    const committedRejection = yield* getActionHandler(claimCounterpartyAccessInvitationAction)(
+    const committedRejection = yield* runActionOwnerSteps(
+      claimCounterpartyAccessInvitationAction,
       {
         claimant: recipient,
         claimProofReference: 'proof-ref-1',
@@ -754,4 +770,124 @@ it.effect('defers durable proof rejection until after the Action transaction com
     expect(snapshot.domainEvents).toHaveLength(0);
     expect(snapshot.outboxMessages).toHaveLength(0);
   }).pipe(provideUnusedAccessPort),
+);
+
+it.effect('stages invitation proofs only after the marked create and resend writes', () =>
+  Effect.gen(function* postcommitInvitationDelivery() {
+    const delivered: string[] = [];
+    const envelope = {
+      actionInvocationId,
+      counterpartyRef,
+      deliveryMethod: invitation.deliveryMethod,
+      deliveryReference: invitation.deliveryReference,
+      expiresAt,
+      invitationRef,
+      legalEntityId,
+      proofReference: 'prepared-proof-reference',
+      rawProof: Redacted.make('test-only-proof'),
+      scope,
+    };
+    const createCollector = createActionCollector(
+      createCounterpartyAccessInvitationAction.descriptor.domainEvents,
+      'commerce.customer-context',
+      createCounterpartyAccessInvitationAction.descriptor.accessEvidencePolicy,
+      createCounterpartyAccessInvitationAction.descriptor.auditEvidenceSchema,
+    );
+    yield* runActionOwnerSteps(
+      createCounterpartyAccessInvitationAction,
+      {
+        counterpartyRef,
+        deliveryMethod: invitation.deliveryMethod,
+        deliveryReference: invitation.deliveryReference,
+        expiresAt,
+        intendedPermissions: invitation.intendedPermissions,
+        reason: invitation.reason,
+        scope,
+      },
+      actionContext(createCollector, {
+        create: (_input, prepared: CounterpartyAccessRemoteServices) =>
+          prepared.proofDelivery.stage(envelope).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                expect(delivered).toEqual([]);
+              }),
+            ),
+            Effect.as({ invitation, outcome: 'CREATED' as const }),
+          ),
+      }),
+    ).pipe(
+      Effect.provideService(CounterpartyInvitationProofDelivery, {
+        stage: (input) =>
+          refuseInsideDatabaseTransaction('outbound-fetch', 'test.secure-queue').pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                delivered.push(input.actionInvocationId);
+              }),
+            ),
+          ),
+      }),
+    );
+    expect(delivered).toEqual([actionInvocationId]);
+    const resendCollector = createActionCollector(
+      resendCounterpartyAccessInvitationAction.descriptor.domainEvents,
+      'commerce.customer-context',
+      resendCounterpartyAccessInvitationAction.descriptor.accessEvidencePolicy,
+      resendCounterpartyAccessInvitationAction.descriptor.auditEvidenceSchema,
+    );
+    const result = yield* runActionOwnerSteps(
+      resendCounterpartyAccessInvitationAction,
+      {
+        counterpartyRef,
+        expectedRevision: 1,
+        invitationRef,
+        scope,
+      },
+      actionContext(resendCollector, {
+        resend: (_input, prepared: CounterpartyAccessRemoteServices) =>
+          prepared.proofDelivery.stage(envelope).pipe(Effect.as({ invitation, outcome: 'RESENT' as const })),
+      }),
+    ).pipe(
+      Effect.provideService(CounterpartyInvitationProofDelivery, {
+        stage: () =>
+          refuseInsideDatabaseTransaction('outbound-fetch', 'test.failing-secure-queue').pipe(
+            Effect.andThen(
+              Effect.fail(
+                new CounterpartyAccessUnavailable({
+                  code: 'counterparty_access_unavailable',
+                  reason: 'queue unavailable',
+                }),
+              ),
+            ),
+          ),
+      }),
+    );
+    expect(result.outcome).toBe('RESENT');
+    expect(JSON.stringify(createCollector.snapshot())).not.toContain('test-only-proof');
+  }).pipe(provideUnusedAccessPort),
+);
+
+it.effect('replays prepared Principal eligibility without remote identity I/O in write', () =>
+  Effect.gen(function* preparedEligibilityBoundary() {
+    let reads = 0;
+    const prepared = yield* prepareAccessRecipient(recipient).pipe(
+      Effect.provideService(PrincipalEligibility, {
+        resolve: (principal) =>
+          refuseInsideDatabaseTransaction('pool-acquisition', 'test.principal-eligibility').pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                reads += 1;
+              }),
+            ),
+            Effect.as({ decision: 'eligible' as const, principal, reason: 'active' as const }),
+          ),
+      }),
+    );
+    const observed = yield* prepared.eligibility
+      .resolve(recipient)
+      .pipe(insideDatabaseTransaction('test.prepared-grant'));
+    expect(observed.decision).toBe('eligible');
+    expect(reads).toBe(1);
+    const other = yield* prepared.eligibility.resolve(actor);
+    expect(other.decision).toBe('unavailable');
+  }),
 );

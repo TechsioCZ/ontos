@@ -96,7 +96,7 @@ export const retireProductCategoryAction = defineAction(
     resultSchema: RetireProductCategoryResultSchema,
     schemaVersion: '1',
   },
-  handleRetireProductCategory,
+  { write: handleRetireProductCategory },
   (transaction, scope) =>
     categoryPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map(

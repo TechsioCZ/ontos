@@ -285,9 +285,6 @@ const contextGrants = Effect.fn('Tagging.contextGrants')(function* contextGrants
   return (permission: ContextGrant) => decisions[permissions.indexOf(permission)]?.decision === 'allowed';
 });
 
-const contextGrant = (scope: OperationalScope, permission: ContextGrant) =>
-  contextGrants(scope, [permission]).pipe(Effect.map((granted) => granted(permission)));
-
 /** What a records read knows before its transaction opens: both grants in one bulk check. */
 export const taggingRecordsGrants = Effect.fn('Tagging.recordsGrants')(function* recordsGrants(
   scope: OperationalScope,
@@ -397,6 +394,54 @@ export const finishTaggingRecords = Effect.fn('Tagging.finishRecords')(function*
   } satisfies RecordsResponse;
 });
 
+/** Before BEGIN: context grants and any per-resource write fallback. */
+export const prepareCommand = Effect.fn('Tagging.prepareCommand')(function* prepareCommand(
+  command: TaggingCommand,
+  scope: OperationalScope,
+) {
+  const grants = yield* taggingRecordsGrants(scope);
+  if (scope.legalEntityId === undefined) return yield* referenceUnavailable();
+  const access = yield* ContextAccess;
+  const legalEntityId = scope.legalEntityId;
+  /** CreateTag needs module write_all. Other commands also pass with per-tag write access. */
+  const requireWrite = Effect.fn('Tagging.requireWrite')(function* requireWrite(command: TaggingCommand) {
+    if (Predicate.isTagged('CreateTag')(command)) {
+      return yield* new TaggingPermissionDenied({
+        code: 'tagging_permission_denied',
+        reason: 'Creating Tags requires Tagging write permission',
+      });
+    }
+    const refs = yield* Effect.forEach(touchedTagIds(command), (tagId) => tagRefFor(tagId, scope.tenantId), {
+      concurrency: 1,
+    });
+    const decisions = yield* access.resources({
+      legalEntityId,
+      permission: 'write',
+      principalId: scope.principalId,
+      resources: refs,
+      tenantId: scope.tenantId,
+    });
+    if (
+      decisions.length !== refs.length ||
+      refs.some((ref, index) => decisions[index]?.decision === 'unavailable' || decisions[index]?.key !== refKey(ref))
+    ) {
+      return yield* referenceUnavailable();
+    }
+    if (decisions.some((decision) => decision.decision !== 'allowed')) {
+      return yield* new TaggingPermissionDenied({
+        code: 'tagging_permission_denied',
+        reason: 'Tag mutation is forbidden',
+      });
+    }
+    return yield* Effect.void;
+  });
+  if (!grants.writeAll) {
+    yield* requireWrite(command);
+  }
+  return grants;
+});
+export type PreparedCommand = Effect.Success<ReturnType<typeof prepareCommand>>;
+
 export const persistenceService = Effect.fn('Tagging.persistenceService')(
   function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
     const { legalEntityId } = scope;
@@ -410,7 +455,6 @@ export const persistenceService = Effect.fn('Tagging.persistenceService')(
         reason: 'A scoped company transaction is required',
       });
     }
-    const access = yield* ContextAccess;
     const whereScope = and(eq(taggingStates.tenantId, scope.tenantId), eq(taggingStates.legalEntityId, legalEntityId));
     const actor: PrincipalRef = { principalId: scope.principalId, tenantId: scope.tenantId };
     const load = Effect.fn('Tagging.load')(function* load() {
@@ -458,46 +502,12 @@ export const persistenceService = Effect.fn('Tagging.persistenceService')(
       }
       return expectedRevision + 1;
     });
-    /** CreateTag needs module write_all. Other commands also pass with per-tag write access. */
-    const requireWrite = Effect.fn('Tagging.requireWrite')(function* requireWrite(command: TaggingCommand) {
-      if (Predicate.isTagged('CreateTag')(command)) {
-        return yield* new TaggingPermissionDenied({
-          code: 'tagging_permission_denied',
-          reason: 'Creating Tags requires Tagging write permission',
-        });
-      }
-      const refs = yield* Effect.forEach(touchedTagIds(command), (tagId) => tagRefFor(tagId, scope.tenantId), {
-        concurrency: 1,
-      });
-      const decisions = yield* access.resources({
-        legalEntityId,
-        permission: 'write',
-        principalId: scope.principalId,
-        resources: refs,
-        tenantId: scope.tenantId,
-      });
-      if (
-        decisions.length !== refs.length ||
-        refs.some((ref, index) => decisions[index]?.decision === 'unavailable' || decisions[index]?.key !== refKey(ref))
-      ) {
-        return yield* referenceUnavailable();
-      }
-      if (decisions.some((decision) => decision.decision !== 'allowed')) {
-        return yield* new TaggingPermissionDenied({
-          code: 'tagging_permission_denied',
-          reason: 'Tag mutation is forbidden',
-        });
-      }
-      return yield* Effect.void;
-    });
     const apply = Effect.fn('Tagging.apply')(function* apply(
       command: TaggingCommand,
       expectedRevision: number,
       resourceId: string,
+      _grants: PreparedCommand,
     ) {
-      if (!(yield* contextGrant(scope, 'write_all'))) {
-        yield* requireWrite(command);
-      }
       const snapshot = yield* load();
       if (snapshot.revision !== expectedRevision) {
         return yield* new TaggingRevisionConflict({

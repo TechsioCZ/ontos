@@ -1,4 +1,4 @@
-import { ActionAlreadyCommitted, ActionCommitIndeterminate } from '@app/core-runtime';
+import { ActionAlreadyCommitted, ActionCommitIndeterminate, defineAction } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { CatalogSelectionOwnerAssessmentResultSchema } from '@app/catalog/domain/catalog-selection-owner-contract';
 import { ScheduledPriceRevisionSchema } from '@app/pricing-contracts/domain/price-schedule';
@@ -13,7 +13,12 @@ import { FetchHttpClient } from 'effect/unstable/http';
 import { PriceResultLookupRequestSchema } from '../../shared/apis/price-result-lookup.ts';
 import { mapDefinePriceActionProblem } from '../../api/define-price-action-problems.ts';
 import { mapRevisePriceActionProblem } from '../../api/revise-price-action-problems.ts';
-import { DefinePricePayloadSchema, definePriceAction } from '../../src/actions/define-price.action.ts';
+import {
+  DefinePricePayloadSchema,
+  definePriceAction,
+  handleDefinePrice,
+  preparePriceDefinition,
+} from '../../src/actions/define-price.action.ts';
 import type { DefinePriceActionServices } from '../../src/actions/define-price.action.ts';
 import {
   RevisePriceAcknowledgementRequired,
@@ -679,48 +684,65 @@ describe('Pricing management Actions acceptance', () => {
     Effect.gen(function* reconcilePriceUnknownWrites() {
       let defineOwnerResult: DefinePricePersistenceOutcome | undefined;
       let defineWrites = 0;
+      const preparedDefineServices = defineServices((command) => {
+        defineWrites += 1;
+        const definition = {
+          identityKey: command.identityKey,
+          priceRef: command.priceRef,
+          revision: {
+            effectiveFrom: command.effectiveFrom,
+            monetaryAmount: command.monetaryAmount,
+            monetaryBoundary: 'PRE_TAX' as const,
+            revision: 1,
+            revisionId: 'adadadad-adad-4dad-8dad-adadadadadad',
+          },
+        };
+        const provenance = Schema.decodeSync(PriceSourceProvenanceSchema)({
+          canonicalLink: {
+            effectiveFrom: definition.revision.effectiveFrom,
+            identityKey: definition.identityKey,
+            monetaryAmount: definition.revision.monetaryAmount,
+            monetaryBoundary: definition.revision.monetaryBoundary,
+            priceRef: definition.priceRef,
+            revision: definition.revision.revision,
+            revisionId: definition.revision.revisionId,
+          },
+          evidence: command.sourceEvidence,
+          provenanceRef: 'aeaeaeae-aeae-4eae-8eae-aeaeaeaeaeae',
+        });
+        defineOwnerResult = { definition, outcome: 'CREATED', provenance };
+        return Effect.succeed(defineOwnerResult);
+      });
+      // Exercise Core commit reconciliation with the real owner pipeline and explicit preparation ports.
+      // The generic runtime harness intentionally has no owner SQL implementation.
+      const defineRegistration = defineAction(
+        definePriceAction.descriptor,
+        {
+          prepare: (payload, context) =>
+            preparePriceDefinition(
+              payload,
+              {
+                actingPrincipalId: context.scope.principalId,
+                actionInvocationId: context.actionInvocationId,
+                legalEntityId: context.scope.legalEntityId,
+                requestCorrelationId: context.scope.correlationId,
+                tenantId: context.scope.tenantId,
+                trustedOperationAt: DateTime.toDateUtc(DateTime.makeUnsafe(operationAt)),
+              },
+              preparedDefineServices,
+            ),
+          write: handleDefinePrice,
+        },
+        () => Effect.succeed({ define: preparedDefineServices.define }),
+      );
       const defineHarness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
         commitAcknowledgement: 'indeterminate-once',
-        services: [
-          bindActionTestServices(
-            definePriceAction,
-            defineServices((command) => {
-              defineWrites += 1;
-              const definition = {
-                identityKey: command.identityKey,
-                priceRef: command.priceRef,
-                revision: {
-                  effectiveFrom: command.effectiveFrom,
-                  monetaryAmount: command.monetaryAmount,
-                  monetaryBoundary: 'PRE_TAX' as const,
-                  revision: 1,
-                  revisionId: 'adadadad-adad-4dad-8dad-adadadadadad',
-                },
-              };
-              const provenance = Schema.decodeSync(PriceSourceProvenanceSchema)({
-                canonicalLink: {
-                  effectiveFrom: definition.revision.effectiveFrom,
-                  identityKey: definition.identityKey,
-                  monetaryAmount: definition.revision.monetaryAmount,
-                  monetaryBoundary: definition.revision.monetaryBoundary,
-                  priceRef: definition.priceRef,
-                  revision: definition.revision.revision,
-                  revisionId: definition.revision.revisionId,
-                },
-                evidence: command.sourceEvidence,
-                provenanceRef: 'aeaeaeae-aeae-4eae-8eae-aeaeaeaeaeae',
-              });
-              defineOwnerResult = { definition, outcome: 'CREATED', provenance };
-              return Effect.succeed(defineOwnerResult);
-            }),
-          ),
-        ],
       });
       const defineRequest = {
         payload: definePayload,
         principal: priceActionPrincipal,
-        registration: definePriceAction,
+        registration: defineRegistration,
         transport: { correlationId: 'define-price-lost-response', idempotencyKey: 'define-price:lost' },
       } as const;
       const defineFailure = yield* defineHarness.runtime.runAction(defineRequest).pipe(Effect.flip);

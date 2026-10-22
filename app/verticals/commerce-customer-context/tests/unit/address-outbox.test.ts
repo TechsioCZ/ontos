@@ -1,7 +1,12 @@
 import { expect, it } from 'effect-rstest';
+import { refuseInsideDatabaseTransaction } from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
+import { PartyAddressSourceValidator } from '../../src/integrations/party-address-source.ts';
 import { Effect, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler, getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import {
+  runActionOwnerSteps,
+  getActionServiceFactory,
+} from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { getReadServiceFactory } from '../../../../packages/core-runtime/src/reads/definition.ts';
 import { OutboxPayloadSchema as AddedSchema } from '../../shared/outbox/commerce-customer-context-saved-address-added-v1.ts';
 import {
@@ -107,9 +112,9 @@ it('attaches every address Action and Read registration to its production persis
   const addFactory = getActionServiceFactory(addSavedAddressAction).toString();
   const updateFactory = getActionServiceFactory(updateSavedAddressAction).toString();
   expect(addFactory).toContain('addressActionPersistenceForTransaction');
-  expect(addFactory).toContain('partyBackedAddressSourceValidator');
+  expect(addFactory).not.toContain('partyBackedAddressSourceValidator');
   expect(updateFactory).toContain('addressActionPersistenceForTransaction');
-  expect(updateFactory).toContain('partyBackedAddressSourceValidator');
+  expect(updateFactory).not.toContain('partyBackedAddressSourceValidator');
   expect(getActionServiceFactory(removeSavedAddressAction).toString()).toContain(
     'addressActionPersistenceForTransaction',
   );
@@ -150,7 +155,7 @@ it.effect('forwards trusted attribution and attaches outbox only for a material 
       reason: 'Buyer corrected the delivery label',
       savedAddressRef,
     };
-    const result = yield* getActionHandler(updateSavedAddressAction)(payload, {
+    const result = yield* runActionOwnerSteps(updateSavedAddressAction, payload, {
       actionInvocationId: '20000000-0000-4000-8000-000000000002',
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
@@ -169,7 +174,6 @@ it.effect('forwards trusted attribution and attaches outbox only for a material 
           forwardedAttribution = attribution;
           return Effect.succeed({ address, clearedDefaults: [], outcome: 'UPDATED' });
         },
-        validatePartySource: () => Effect.void,
       },
     });
     expect('outcome' in result).toBe(true);
@@ -193,7 +197,7 @@ it.effect('forwards trusted attribution and attaches outbox only for a material 
       updateSavedAddressAction.descriptor.accessEvidencePolicy,
       updateSavedAddressAction.descriptor.auditEvidenceSchema,
     );
-    yield* getActionHandler(updateSavedAddressAction)(payload, {
+    yield* runActionOwnerSteps(updateSavedAddressAction, payload, {
       actionInvocationId: '50000000-0000-4000-8000-000000000005',
       addDomainEvent: unchangedCollector.addDomainEvent,
       addOutboxMessage: unchangedCollector.addOutboxMessage,
@@ -209,7 +213,6 @@ it.effect('forwards trusted attribution and attaches outbox only for a material 
       },
       services: {
         update: () => Effect.succeed({ address, clearedDefaults: [], outcome: 'UNCHANGED' }),
-        validatePartySource: () => Effect.void,
       },
     });
     expect(unchangedCollector.snapshot().domainEvents).toHaveLength(0);
@@ -232,7 +235,7 @@ it.effect('does not attach a duplicate add event when an exact business replay i
       purposes: address.purposes,
       reason: 'Save checkout billing address',
     };
-    const result = yield* getActionHandler(addSavedAddressAction)(payload, {
+    const result = yield* runActionOwnerSteps(addSavedAddressAction, payload, {
       actionInvocationId: '60000000-0000-4000-8000-000000000006',
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
@@ -251,7 +254,6 @@ it.effect('does not attach a duplicate add event when an exact business replay i
           forwardedAttribution = attribution;
           return Effect.succeed({ address, outcome: 'REUSED' });
         },
-        validatePartySource: () => Effect.void,
       },
     });
     expect('outcome' in result).toBe(true);
@@ -277,7 +279,8 @@ it.effect('records the contributing Party Contact Point read for add and update'
       addSavedAddressAction.descriptor.accessEvidencePolicy,
       addSavedAddressAction.descriptor.auditEvidenceSchema,
     );
-    yield* getActionHandler(addSavedAddressAction)(
+    yield* runActionOwnerSteps(
+      addSavedAddressAction,
       {
         origin: partyOrigin,
         profile,
@@ -300,7 +303,6 @@ it.effect('records the contributing Party Contact Point read for add and update'
         },
         services: {
           add: () => Effect.succeed({ address: partyAddress, outcome: 'REUSED' }),
-          validatePartySource: () => Effect.void,
         },
       },
     );
@@ -311,7 +313,8 @@ it.effect('records the contributing Party Contact Point read for add and update'
       updateSavedAddressAction.descriptor.accessEvidencePolicy,
       updateSavedAddressAction.descriptor.auditEvidenceSchema,
     );
-    yield* getActionHandler(updateSavedAddressAction)(
+    yield* runActionOwnerSteps(
+      updateSavedAddressAction,
       {
         expectedRevision: 2,
         origin: partyOrigin,
@@ -335,7 +338,6 @@ it.effect('records the contributing Party Contact Point read for add and update'
         },
         services: {
           update: () => Effect.succeed({ address: partyAddress, clearedDefaults: [], outcome: 'UNCHANGED' }),
-          validatePartySource: () => Effect.void,
         },
       },
     );
@@ -351,5 +353,10 @@ it.effect('records the contributing Party Contact Point read for add and update'
         }),
       );
     }
-  }),
+  }).pipe(
+    Effect.provideService(
+      PartyAddressSourceValidator,
+      () => () => refuseInsideDatabaseTransaction('module-transport', 'test.party-address-source'),
+    ),
+  ),
 );

@@ -147,6 +147,6 @@ export const updateCustomerGroupAction = defineAction(
     resultSchema: UpdateCustomerGroupResultSchema,
     schemaVersion: '1',
   },
-  handleUpdateCustomerGroup,
+  { write: handleUpdateCustomerGroup },
   customerGroupServiceFactory,
 );

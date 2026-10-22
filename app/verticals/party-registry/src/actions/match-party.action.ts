@@ -71,7 +71,7 @@ export const matchPartyAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'manage_party_identity',
   },
-  handleMatchParty,
+  { write: handleMatchParty },
   (transaction, scope) =>
     Effect.succeed({
       match: (payload: MatchPartyPayload, invocationId: string) => {

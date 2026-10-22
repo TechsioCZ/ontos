@@ -125,7 +125,7 @@ export const retireProductAction = defineAction(
     resultSchema: RetireProductResultSchema,
     schemaVersion: '1',
   },
-  handleRetireProduct,
+  { write: handleRetireProduct },
   (transaction, scope) =>
     catalogPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map((services): RetireProductServices => ({

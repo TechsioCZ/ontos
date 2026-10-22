@@ -154,7 +154,7 @@ export const compensateInventoryPreCommitAction = defineAction(
     resultSchema: CompensateInventoryPreCommitResultSchema,
     schemaVersion: '1',
   },
-  handleCompensateInventoryPreCommit,
+  { write: handleCompensateInventoryPreCommit },
   (transaction, scope) =>
     Effect.all(
       {

@@ -122,7 +122,7 @@ export const endCatalogToStockBindingAction = defineAction(
     resultSchema: EndCatalogToStockBindingResultSchema,
     schemaVersion: '1',
   },
-  handleEndCatalogToStockBinding,
+  { write: handleEndCatalogToStockBinding },
   (transaction) =>
     Effect.succeed(
       serializeCatalogToStockBindingPersistence(transaction, makeDrizzleCatalogToStockBindingPersistence(transaction)),

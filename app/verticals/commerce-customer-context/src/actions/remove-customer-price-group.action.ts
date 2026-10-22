@@ -161,7 +161,7 @@ export const removeCustomerPriceGroupAction = defineAction(
     resultSchema: RemoveCustomerPriceGroupResultSchema,
     schemaVersion: '1',
   },
-  handleRemoveCustomerPriceGroup,
+  { write: handleRemoveCustomerPriceGroup },
   (transaction, scope, compositionRevision) =>
     priceGroupActionServicesForTransaction(transaction, scope, compositionRevision).pipe(
       Effect.map(({ now, store }) => ({ now, store })),

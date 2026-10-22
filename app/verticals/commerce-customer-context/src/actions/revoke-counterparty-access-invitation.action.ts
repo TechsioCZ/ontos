@@ -140,7 +140,7 @@ export const revokeCounterpartyAccessInvitationAction = defineAction(
     resultSchema: RevokeCounterpartyAccessInvitationResultSchema,
     schemaVersion: '1',
   },
-  handle,
+  { write: handle },
   (transaction, scope) =>
     counterpartyAccessServicesForTransaction(transaction, scope).pipe(
       Effect.map((port) => ({ revoke: port.revokeInvitation })),

@@ -82,7 +82,7 @@ export const declareSellerVatRegimeAction = defineAction(
     resultSchema: DeclareSellerVatRegimeResultSchema,
     schemaVersion: '1',
   },
-  handleDeclareSellerVatRegime,
+  { write: handleDeclareSellerVatRegime },
   sellerVatRegimeDeclarationServiceFactory,
 );
 

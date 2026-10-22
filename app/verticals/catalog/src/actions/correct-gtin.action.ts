@@ -73,7 +73,7 @@ export const correctGtinAction: ActionRegistration<
     resultSchema: CorrectGtinResultSchema,
     schemaVersion: '1',
   },
-  handleCorrectGtin,
+  { write: handleCorrectGtin },
   (transaction, scope) =>
     gtinServicesForScope(transaction, scope).pipe(
       Effect.map((services): CorrectGtinServices => ({

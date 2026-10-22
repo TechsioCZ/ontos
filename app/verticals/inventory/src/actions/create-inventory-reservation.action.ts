@@ -140,7 +140,7 @@ export const createInventoryReservationAction = defineAction(
     resultSchema: CreateInventoryReservationResultSchema,
     schemaVersion: '1',
   },
-  handleCreateInventoryReservation,
+  { write: handleCreateInventoryReservation },
   (transaction, scope) =>
     InventoryReservationCommerceContextAuthorityPort.pipe(
       Effect.map((commerceContexts) =>

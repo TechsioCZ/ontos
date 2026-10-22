@@ -1,10 +1,4 @@
-import {
-  DatabaseConfig,
-  GatewayAssertionRedemptionService,
-  GatewayAssertionRedemptionUnavailableError,
-  GatewayAssertionReplayError,
-  configureDatabasePool,
-} from '@app/core-runtime';
+import { DatabaseConfig, GatewayAssertionRedemptionService, GatewayAssertionRedemptionUnavailableError, GatewayAssertionReplayError, configureDatabasePool, makeGuardedPgClient } from '@app/core-runtime';
 import type {
   DatabasePoolDeadlines,
   GatewayAssertionRedemption,
@@ -132,7 +126,7 @@ const makeGatewayAssertionRedemptionDatabase = Effect.fn('PricingGatewayAssertio
       configuration.poolDeadlines,
     ).pipe(Effect.mapError((error) => unavailableError(error)));
     const reactivity = yield* Reactivity.make;
-    const client = yield* PgClient.make({ ...poolConfiguration, maxConnections: configuration.maxConnections }).pipe(
+    const client = yield* makeGuardedPgClient({ ...poolConfiguration, maxConnections: configuration.maxConnections }).pipe(
       Effect.provideService(Reactivity.Reactivity, reactivity),
       Effect.mapError(unavailableError),
     );

@@ -110,7 +110,7 @@ export const reviseProductUnitAction = defineAction(
     resultSchema: ReviseProductUnitResultSchema,
     schemaVersion: '1',
   },
-  handleReviseProductUnit,
+  { write: handleReviseProductUnit },
   (transaction, scope) =>
     productUnitPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map(

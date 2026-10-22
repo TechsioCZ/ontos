@@ -1,4 +1,4 @@
-import type { OperationalScope } from '@app/core-runtime';
+import type { OperationalScope, OwnerTransaction } from '@app/core-runtime';
 import { ContextAccess, ReadHandlerNotFound } from '@app/core-runtime';
 import { Effect, Match, Option, Schema } from 'effect';
 import type { Exit } from 'effect';
@@ -148,21 +148,26 @@ export const customerHistoryPortsAfterCommit = Effect.fn('CustomerHistoryProduct
   },
 );
 
-/** For Actions, whose whole handler runs in the Action transaction: the association is read live from it. */
-export const customerHistoryPortsForOperation = Effect.fn('CustomerHistoryProduction.customerHistoryPortsForOperation')(
-  function* actionPorts(base: CustomerHistoryPorts, transaction: ProfileScopedRoutineInvoker, scope: OperationalScope) {
-    if (scope.legalEntityId === undefined) {
-      return base;
-    }
-    const trustedScope = { ...scope, legalEntityId: scope.legalEntityId };
-    const contextAccess = yield* Effect.serviceOption(ContextAccess);
-    return {
-      ...base,
-      counterpartyProfiles: { current: counterpartyAssociationReader(transaction, trustedScope) },
-      resources: Option.match(contextAccess, {
-        onNone: () => base.resources,
-        onSome: (service) => currentResourceAccess(trustedScope, service),
-      }),
-    } satisfies CustomerHistoryPorts;
-  },
-);
+/** Before an Action transaction: external ports and SpiceDB run without holding an owner connection. */
+export const customerHistoryPortsForPreparation = Effect.fn(
+  'CustomerHistoryProduction.customerHistoryPortsForPreparation',
+)(function* actionPorts(base: CustomerHistoryPorts, transaction: OwnerTransaction, scope: OperationalScope) {
+  if (scope.legalEntityId === undefined) {
+    return base;
+  }
+  const trustedScope = { ...scope, legalEntityId: scope.legalEntityId };
+  const contextAccess = yield* Effect.serviceOption(ContextAccess);
+  return {
+    ...base,
+    counterpartyProfiles: {
+      current: (input) =>
+        transaction((owner) => counterpartyAssociationReader(owner, trustedScope)(input)).pipe(
+          Effect.mapError(() => unavailable('commerce.customer-context')),
+        ),
+    },
+    resources: Option.match(contextAccess, {
+      onNone: () => base.resources,
+      onSome: (service) => currentResourceAccess(trustedScope, service),
+    }),
+  } satisfies CustomerHistoryPorts;
+});

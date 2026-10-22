@@ -109,7 +109,7 @@ export const endStockSharingEligibilityAction = defineAction(
     resultSchema: EndStockSharingEligibilityResultSchema,
     schemaVersion: '1',
   },
-  handleEndStockSharingEligibility,
+  { write: handleEndStockSharingEligibility },
   (transaction, scope) => stockSharingEligibilityActionServiceForScope(transaction, scope, randomUUID),
 );
 

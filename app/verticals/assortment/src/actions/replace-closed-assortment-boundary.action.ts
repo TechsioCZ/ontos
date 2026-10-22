@@ -139,7 +139,7 @@ export const replaceClosedAssortmentBoundaryAction = defineAction(
     resultSchema: ReplaceClosedAssortmentBoundaryResultSchema,
     schemaVersion: '1',
   },
-  handleReplaceClosedAssortmentBoundary,
+  { write: handleReplaceClosedAssortmentBoundary },
   boundaryAdministrationService,
 );
 

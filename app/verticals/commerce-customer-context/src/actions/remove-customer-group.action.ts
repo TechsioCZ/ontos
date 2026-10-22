@@ -174,6 +174,6 @@ export const removeCustomerGroupAction = defineAction(
     resultSchema: RemoveCustomerGroupResultSchema,
     schemaVersion: '1',
   },
-  handleRemoveCustomerGroup,
+  { write: handleRemoveCustomerGroup },
   customerGroupServiceFactory,
 );

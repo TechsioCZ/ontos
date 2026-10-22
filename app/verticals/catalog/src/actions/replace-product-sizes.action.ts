@@ -85,7 +85,7 @@ export const replaceProductSizesAction = defineAction(
     resultSchema: ReplaceProductSizesResultSchema,
     schemaVersion: '1',
   },
-  handleReplaceProductSizes,
+  { write: handleReplaceProductSizes },
   (transaction, scope) =>
     Effect.succeed<
       SizeUsagePersistence & {

@@ -44,8 +44,12 @@ const productLine = {
   vatRate: 21 as const,
 };
 const freeTextLine = { productName: 'Montáž na místě', quantity: 1, unitPriceMinor: 120_000, vatRate: 21 as const };
-// The substituted owner services never reach ContextAccess; the requirement only comes from the production factory.
+// Prepare resolves real context grants before the substituted owner write runs.
 const unusedContextAccessLayer = Layer.succeed(ContextAccess, {
+  contextPermissions: ({ targets }) =>
+    Effect.succeed(
+      targets.map((target) => ({ key: `${target.moduleId}:${target.permission}`, decision: 'allowed' as const })),
+    ),
   businessPermissions: () => Effect.succeed([]),
   legalEntities: () => Effect.succeed([]),
   modules: () => Effect.succeed([]),

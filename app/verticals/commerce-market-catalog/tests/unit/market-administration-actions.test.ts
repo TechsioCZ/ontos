@@ -3,7 +3,7 @@ import { describe, expect, it } from 'effect-rstest';
 import { Effect, Layer, Predicate, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import {
-  getActionHandler,
+  runActionOwnerSteps,
   getActionResourcePermissionTargetResolver,
 } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { activateMarketAction } from '../../src/actions/activate-market.action.ts';
@@ -16,11 +16,12 @@ import {
   RetireMarketPayloadSchema,
   retireMarketAction,
 } from '../../src/actions/retire-market.action.ts';
-import type { RetireMarketServices } from '../../src/actions/retire-market.action.ts';
 import type { MarketRetirementImpactAssessment } from '../../shared/domain/market-retirement-impact.ts';
 import { reviseMarketDefinitionAction } from '../../src/actions/revise-market-definition.action.ts';
 import { reviseStorefrontAssociationAction } from '../../src/actions/revise-storefront-association.action.ts';
 import { MarketRetirementImpactAuthorityService } from '../../src/services/market-retirement-impact-authority.ts';
+import type { MarketRetirementImpactAuthority } from '../../src/services/market-retirement-impact-authority.ts';
+import type { ActionHandlerContext } from '../../../../packages/core-runtime/src/actions/context.ts';
 import { suspendMarketAction } from '../../src/actions/suspend-market.action.ts';
 import type { MarketAdministrationService } from '../../src/services/market-administration.service.ts';
 
@@ -118,7 +119,9 @@ const reservedRetirementImpactAssessment = () => ({
 });
 
 const unexpected = () => Effect.die('unexpected Market administration service call');
-const unavailableServices: RetireMarketServices = {
+/** The Market store plus the owner impact authority, which retire-market reaches before and after its transaction. */
+type RetireTestServices = MarketAdministrationService & MarketRetirementImpactAuthority;
+const unavailableServices: RetireTestServices = {
   assessRetirementImpact: unexpected,
   associateStorefront: unexpected,
   commitRetirementImpact: unexpected,
@@ -137,6 +140,28 @@ const retirementImpactAuthorityTestLayer = Layer.succeed(MarketRetirementImpactA
   reserveRetirementImpact: unexpected,
 });
 
+/** Runs retire-market's owner steps with the test's impact authority provided where prepare, finish and abandon read it. */
+const runRetire = (
+  payload: typeof retireMarketAction.descriptor.payloadSchema.Type,
+  context: ActionHandlerContext<typeof retireMarketAction.descriptor.domainEvents, RetireTestServices>,
+) => {
+  const {
+    assessRetirementImpact,
+    commitRetirementImpact,
+    releaseRetirementImpact,
+    reserveRetirementImpact,
+    ...services
+  } = context.services;
+  return runActionOwnerSteps(retireMarketAction, payload, { ...context, services }).pipe(
+    Effect.provideService(MarketRetirementImpactAuthorityService, {
+      assessRetirementImpact,
+      commitRetirementImpact,
+      releaseRetirementImpact,
+      reserveRetirementImpact,
+    }),
+  );
+};
+
 const collectCreate = (changed: boolean) =>
   Effect.gen(function* collectCreateEvidence() {
     const collector = createActionCollector(
@@ -145,7 +170,7 @@ const collectCreate = (changed: boolean) =>
       createMarketAction.descriptor.accessEvidencePolicy,
       createMarketAction.descriptor.auditEvidenceSchema,
     );
-    const result = yield* getActionHandler(createMarketAction)(createPayload, {
+    const result = yield* runActionOwnerSteps(createMarketAction, createPayload, {
       actionInvocationId,
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
@@ -246,7 +271,7 @@ describe('Market administration Actions', () => {
         retireMarketAction.descriptor.accessEvidencePolicy,
         retireMarketAction.descriptor.auditEvidenceSchema,
       );
-      const failure = yield* getActionHandler(retireMarketAction)(payload, {
+      const failure = yield* runRetire(payload, {
         actionInvocationId,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
@@ -285,7 +310,7 @@ describe('Market administration Actions', () => {
         retireMarketAction.descriptor.accessEvidencePolicy,
         retireMarketAction.descriptor.auditEvidenceSchema,
       );
-      const failure = yield* getActionHandler(retireMarketAction)(payload, {
+      const failure = yield* runRetire(payload, {
         actionInvocationId,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
@@ -326,7 +351,7 @@ describe('Market administration Actions', () => {
         retireMarketAction.descriptor.accessEvidencePolicy,
         retireMarketAction.descriptor.auditEvidenceSchema,
       );
-      const failure = yield* getActionHandler(retireMarketAction)(payload, {
+      const failure = yield* runRetire(payload, {
         actionInvocationId,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
@@ -365,7 +390,7 @@ describe('Market administration Actions', () => {
         retireMarketAction.descriptor.accessEvidencePolicy,
         retireMarketAction.descriptor.auditEvidenceSchema,
       );
-      const failure = yield* getActionHandler(retireMarketAction)(payload, {
+      const failure = yield* runRetire(payload, {
         actionInvocationId,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
@@ -393,7 +418,7 @@ describe('Market administration Actions', () => {
         retireMarketAction.descriptor.accessEvidencePolicy,
         retireMarketAction.descriptor.auditEvidenceSchema,
       );
-      const failure = yield* getActionHandler(retireMarketAction)(payload, {
+      const failure = yield* runRetire(payload, {
         actionInvocationId,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
@@ -422,7 +447,7 @@ describe('Market administration Actions', () => {
         retireMarketAction.descriptor.accessEvidencePolicy,
         retireMarketAction.descriptor.auditEvidenceSchema,
       );
-      const failure = yield* getActionHandler(retireMarketAction)(payload, {
+      const failure = yield* runRetire(payload, {
         actionInvocationId,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
@@ -460,7 +485,7 @@ describe('Market administration Actions', () => {
         retireMarketAction.descriptor.accessEvidencePolicy,
         retireMarketAction.descriptor.auditEvidenceSchema,
       );
-      const result = yield* getActionHandler(retireMarketAction)(payload, {
+      const result = yield* runRetire(payload, {
         actionInvocationId,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
@@ -506,7 +531,7 @@ describe('Market administration Actions', () => {
     }).pipe(Effect.provide(retirementImpactAuthorityTestLayer)),
   );
 
-  it.effect('leaves the reservation fail-closed when COMMIT has an indeterminate failure', () =>
+  it.effect('commits the owner reservation only after the Market retired, and never releases it on a failed COMMIT', () =>
     Effect.gen(function* uncertainCommit() {
       const payload = retirementPayload();
       const reservationCalls: string[] = [];
@@ -516,7 +541,7 @@ describe('Market administration Actions', () => {
         retireMarketAction.descriptor.accessEvidencePolicy,
         retireMarketAction.descriptor.auditEvidenceSchema,
       );
-      const failure = yield* getActionHandler(retireMarketAction)(payload, {
+      const retired = yield* runRetire(payload, {
         actionInvocationId,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
@@ -551,11 +576,13 @@ describe('Market administration Actions', () => {
               revision: 4,
             } as const),
         },
-      }).pipe(Effect.flip);
+      });
 
-      expect(Predicate.isTagged(failure, 'MarketRetirementImpactAssessmentUnavailable')).toBe(true);
+      // The Market retirement committed first; the owner COMMIT runs after it, and its failure leaves the
+      // reservation in place (fail-closed) instead of failing a committed Action or releasing the reservation.
+      expect(retired).toMatchObject({ lifecycle: 'RETIRED', revision: 4 });
       expect(reservationCalls).toEqual(['commit']);
-      expect(collector.snapshot().domainEvents).toHaveLength(0);
+      expect(collector.snapshot().domainEvents).toHaveLength(1);
     }).pipe(Effect.provide(retirementImpactAuthorityTestLayer)),
   );
 
@@ -571,7 +598,7 @@ describe('Market administration Actions', () => {
         retireMarketAction.descriptor.accessEvidencePolicy,
         retireMarketAction.descriptor.auditEvidenceSchema,
       );
-      const failure = yield* getActionHandler(retireMarketAction)(payload, {
+      const failure = yield* runRetire(payload, {
         actionInvocationId,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,

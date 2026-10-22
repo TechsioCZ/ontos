@@ -2,13 +2,14 @@ import { Effect, Exit, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import type { ActionHandlerContext, OperationalScope } from '@app/core-runtime';
 import {
+  ContextAccess,
   CoreSearchResourceRefSchema,
   PrincipalRefSchema,
   trustVerifiedGatewayPrincipalContext,
 } from '@app/core-runtime';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import type { ActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { runActionOwnerSteps } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import type { DomainEventContractMap } from '../../../../packages/core-runtime/src/actions/events.ts';
 import type {
   CreatePurchaseProposalRevisionPayload,
@@ -48,8 +49,13 @@ import {
   OrderResourceRefSchema,
   PurchasingApprovalRejected,
 } from '../../shared/domain/purchasing-approval.ts';
+import { PurchaseApprovalCurrentnessFactory } from '../../shared/domain/purchase-approval-currentness-port.ts';
 import type { PurchaseApprovalCurrentnessService } from '../../shared/domain/purchase-approval-currentness-port.ts';
-import { PurchaseLimitEvaluationCurrentFactsSchema } from '../../shared/domain/purchase-limit-evaluation-currentness-port.ts';
+import { PurchaseLimitEvaluationSourceFactory } from '../../shared/domain/purchase-limit-evaluation.ts';
+import {
+  PurchaseLimitEvaluationCurrentnessPort,
+  PurchaseLimitEvaluationCurrentFactsSchema,
+} from '../../shared/domain/purchase-limit-evaluation-currentness-port.ts';
 import {
   PurchaseApprovalProfileEvidenceSchema,
   PurchaseApprovalProposalEvidenceSchema,
@@ -63,7 +69,9 @@ import { reroutePurchaseApprovalRequestAction } from '../../src/actions/reroute-
 import { revalidatePurchaseApprovalAction } from '../../src/actions/revalidate-purchase-approval.action.ts';
 import { submitPurchaseApprovalRequestAction } from '../../src/actions/submit-purchase-approval-request.action.ts';
 import { consumePurchaseApprovalAction } from '../../src/actions/consume-purchase-approval.action.ts';
+import { PurchaseApprovalTriggerEvidenceSourceFactory } from '../../src/actions/trigger-purchase-approval.action.ts';
 import type { PurchaseApprovalTriggerEvidenceSource } from '../../src/actions/trigger-purchase-approval.action.ts';
+import { refuseInsideDatabaseTransaction } from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
 import { purchasingApprovalCommercialFixture } from './purchasing-approval-fixtures.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -374,11 +382,66 @@ const currentness: TestCurrentness = {
         purchaseValue: input.claimedPurchaseValue,
       }),
     ),
-  // These two methods model the transaction-bound owner adapter used by submit/revalidate.
+  // These two methods model the owner-preparation adapter used by submit/revalidate.
   // The action evidence test intentionally supplies already validated fixtures; production
   // composition never installs this test adapter.
   resolveRevalidation: ({ claimed }) => Effect.succeed(claimed),
   resolveSubmission: ({ claimed }) => Effect.succeed(claimed),
+};
+
+/** Production prepare dependencies use the same explicit fixtures as the write-side workflow. */
+const withCurrentness = (source: TestCurrentness) => {
+  const { loadCandidateCurrent, resolveSubmission } = source;
+  return <Value, Failure, Requirements>(effect: Effect.Effect<Value, Failure, Requirements>) =>
+    effect.pipe(
+      Effect.provideService(PurchaseApprovalTriggerEvidenceSourceFactory, {
+        make: () =>
+          refuseInsideDatabaseTransaction('module-transport', 'candidate factory').pipe(
+            Effect.as({
+              ...source,
+              loadCandidateCurrent:
+                loadCandidateCurrent === undefined
+                  ? undefined
+                  : (input) =>
+                      refuseInsideDatabaseTransaction('module-transport', 'candidate currentness').pipe(
+                        Effect.andThen(loadCandidateCurrent(input)),
+                      ),
+            }),
+          ),
+      }),
+      Effect.provideService(PurchaseApprovalCurrentnessFactory, {
+        make: () => ({
+          ...source,
+          resolveRevalidation: (input) =>
+            refuseInsideDatabaseTransaction('spicedb', 'revalidation buyer grants').pipe(
+              Effect.andThen(source.resolveRevalidation(input)),
+            ),
+          resolveSubmission:
+            resolveSubmission === undefined
+              ? undefined
+              : (input) =>
+                  refuseInsideDatabaseTransaction('module-transport', 'submission currentness').pipe(
+                    Effect.andThen(resolveSubmission(input)),
+                  ),
+        }),
+      }),
+      Effect.provideService(PurchaseLimitEvaluationSourceFactory, {
+        make: () =>
+          refuseInsideDatabaseTransaction('module-transport', 'evaluation factory').pipe(
+            Effect.as({ loadCurrent: () => Effect.die('Unused evaluation source') }),
+          ),
+      }),
+      Effect.provideService(PurchaseLimitEvaluationCurrentnessPort, {
+        resolveCurrent: () => Effect.die('Unused external facts'),
+      }),
+      Effect.provideService(ContextAccess, {
+        businessPermissions: () => Effect.die('Unused ContextAccess'),
+        legalEntities: () => Effect.die('Unused ContextAccess'),
+        modules: () => Effect.die('Unused ContextAccess'),
+        resources: () => Effect.die('Unused ContextAccess'),
+        tenants: () => Effect.die('Unused ContextAccess'),
+      }),
+    );
 };
 
 const contextFor = <DomainEvents extends DomainEventContractMap>(
@@ -425,7 +488,6 @@ const expectCommittedEvidence = (
 };
 
 it.effect('successful Purchasing Approval Actions commit audit, metadata-only access, and events', () =>
-  // @ts-expect-error -- Direct-handler evidence tests intentionally omit production-only service Layers and supply explicit context doubles for each exercised path.
   Effect.gen(function* verifyApprovalActionEvidence() {
     const createProposalPayload: CreatePurchaseProposalRevisionPayload = {
       idempotencyKey: 'proposal-idempotency-1',
@@ -454,14 +516,15 @@ it.effect('successful Purchasing Approval Actions commit audit, metadata-only ac
       createPurchaseProposalRevisionAction.descriptor.accessEvidencePolicy,
       createPurchaseProposalRevisionAction.descriptor.auditEvidenceSchema,
     );
-    yield* getActionHandler(createPurchaseProposalRevisionAction)(
+    yield* runActionOwnerSteps(
+      createPurchaseProposalRevisionAction,
       createProposalPayload,
       contextFor(
         proposalCollector,
         makeWorkflow({ createProposal: () => Effect.succeed(proposalResult) }),
         'proposal-action-1',
       ),
-    );
+    ).pipe(withCurrentness(currentness));
     expectCommittedEvidence(proposalCollector.snapshot(), ['proposal-1', 'profile-1', 'counterparty-1']);
 
     const hierarchyPayload: CreateApprovalHierarchyPayload = {
@@ -478,7 +541,8 @@ it.effect('successful Purchasing Approval Actions commit audit, metadata-only ac
       createApprovalHierarchyAction.descriptor.accessEvidencePolicy,
       createApprovalHierarchyAction.descriptor.auditEvidenceSchema,
     );
-    yield* getActionHandler(createApprovalHierarchyAction)(
+    yield* runActionOwnerSteps(
+      createApprovalHierarchyAction,
       hierarchyPayload,
       contextFor(
         hierarchyCollector,
@@ -506,15 +570,15 @@ it.effect('successful Purchasing Approval Actions commit audit, metadata-only ac
       submitPurchaseApprovalRequestAction.descriptor.accessEvidencePolicy,
       submitPurchaseApprovalRequestAction.descriptor.auditEvidenceSchema,
     );
-    yield* getActionHandler(submitPurchaseApprovalRequestAction)(
+    yield* runActionOwnerSteps(
+      submitPurchaseApprovalRequestAction,
       submitPayload,
-      // @ts-expect-error -- The direct-handler test supplies the exact runtime doubles used by this path while the generic service map remains intentionally narrower.
       contextFor(
         submitCollector,
         makeWorkflow({ submitRequest: () => Effect.succeed(submitResult) }),
         'submit-action-1',
       ),
-    );
+    ).pipe(withCurrentness(currentness));
     expectCommittedEvidence(submitCollector.snapshot(), [
       'request-1',
       'proposal-1',
@@ -552,7 +616,8 @@ it.effect('successful Purchasing Approval Actions commit audit, metadata-only ac
       decidePurchaseApprovalRequestAction.descriptor.accessEvidencePolicy,
       decidePurchaseApprovalRequestAction.descriptor.auditEvidenceSchema,
     );
-    yield* getActionHandler(decidePurchaseApprovalRequestAction)(
+    yield* runActionOwnerSteps(
+      decidePurchaseApprovalRequestAction,
       decidePayload,
       contextFor(decideCollector, makeWorkflow({ decide: () => Effect.succeed(decideResult) }), 'decide-action-1'),
     );
@@ -586,7 +651,8 @@ it.effect('successful Purchasing Approval Actions commit audit, metadata-only ac
       reroutePurchaseApprovalRequestAction.descriptor.accessEvidencePolicy,
       reroutePurchaseApprovalRequestAction.descriptor.auditEvidenceSchema,
     );
-    yield* getActionHandler(reroutePurchaseApprovalRequestAction)(
+    yield* runActionOwnerSteps(
+      reroutePurchaseApprovalRequestAction,
       reroutePayload,
       contextFor(rerouteCollector, makeWorkflow({ reroute: () => Effect.succeed(rerouteResult) }), 'reroute-action-1'),
     );
@@ -629,15 +695,15 @@ it.effect('successful Purchasing Approval Actions commit audit, metadata-only ac
       revalidatePurchaseApprovalAction.descriptor.accessEvidencePolicy,
       revalidatePurchaseApprovalAction.descriptor.auditEvidenceSchema,
     );
-    yield* getActionHandler(revalidatePurchaseApprovalAction)(
+    yield* runActionOwnerSteps(
+      revalidatePurchaseApprovalAction,
       revalidatePayload,
-      // @ts-expect-error -- The direct-handler test supplies the exact runtime doubles used by this path while the generic service map remains intentionally narrower.
       contextFor(
         revalidateCollector,
         makeWorkflow({ revalidate: () => Effect.succeed(revalidateResult) }),
         'revalidate-action-1',
       ),
-    );
+    ).pipe(withCurrentness(currentness));
     expectCommittedEvidence(revalidateCollector.snapshot(), [
       'request-1',
       'proposal-1',
@@ -650,7 +716,6 @@ it.effect('successful Purchasing Approval Actions commit audit, metadata-only ac
 );
 
 it.effect('does not let forged favorable submission or revalidation evidence bypass owner currentness', () =>
-  // @ts-expect-error -- Direct-handler rejection tests intentionally omit production-only service Layers and supply rejecting context doubles.
   Effect.gen(function* rejectsForgedApprovalEvidence() {
     const submitPayload: SubmitPurchaseApprovalRequestPayload = {
       counterpartyRef,
@@ -708,9 +773,9 @@ it.effect('does not let forged favorable submission or revalidation evidence byp
       submitPurchaseApprovalRequestAction.descriptor.auditEvidenceSchema,
     );
     const submitExit = yield* Effect.exit(
-      getActionHandler(submitPurchaseApprovalRequestAction)(
+      runActionOwnerSteps(
+        submitPurchaseApprovalRequestAction,
         submitPayload,
-        // @ts-expect-error -- This fail-closed direct invocation intentionally uses the rejecting test service map rather than production composition.
         contextFor(
           submitCollector,
           makeWorkflow({
@@ -722,7 +787,7 @@ it.effect('does not let forged favorable submission or revalidation evidence byp
           'forged-submit-action',
           rejectingCurrentness,
         ),
-      ),
+      ).pipe(withCurrentness(rejectingCurrentness)),
     );
     const revalidateCollector = createActionCollector(
       revalidatePurchaseApprovalAction.descriptor.domainEvents,
@@ -731,9 +796,9 @@ it.effect('does not let forged favorable submission or revalidation evidence byp
       revalidatePurchaseApprovalAction.descriptor.auditEvidenceSchema,
     );
     const revalidateExit = yield* Effect.exit(
-      getActionHandler(revalidatePurchaseApprovalAction)(
+      runActionOwnerSteps(
+        revalidatePurchaseApprovalAction,
         revalidatePayload,
-        // @ts-expect-error -- This fail-closed direct invocation intentionally uses the rejecting test service map rather than production composition.
         contextFor(
           revalidateCollector,
           makeWorkflow({
@@ -745,7 +810,7 @@ it.effect('does not let forged favorable submission or revalidation evidence byp
           'forged-revalidate-action',
           rejectingCurrentness,
         ),
-      ),
+      ).pipe(withCurrentness(rejectingCurrentness)),
     );
     expect(Exit.isFailure(submitExit)).toBe(true);
     expect(Exit.isFailure(revalidateExit)).toBe(true);
@@ -755,7 +820,6 @@ it.effect('does not let forged favorable submission or revalidation evidence byp
 );
 
 it.effect('fails closed when proposal candidate currentness is not owner-configured', () =>
-  // @ts-expect-error -- This direct-handler failure test intentionally omits the production candidate-currentness Layer.
   Effect.gen(function* rejectsWithoutCandidateOwner() {
     const { loadCandidateCurrent: _loadCandidateCurrent, ...currentnessWithoutCandidate } = currentness;
     const payload: CreatePurchaseProposalRevisionPayload = {
@@ -783,7 +847,8 @@ it.effect('fails closed when proposal candidate currentness is not owner-configu
       createPurchaseProposalRevisionAction.descriptor.auditEvidenceSchema,
     );
     const failure = yield* Effect.flip(
-      getActionHandler(createPurchaseProposalRevisionAction)(
+      runActionOwnerSteps(
+        createPurchaseProposalRevisionAction,
         payload,
         contextFor(
           collector,
@@ -796,7 +861,7 @@ it.effect('fails closed when proposal candidate currentness is not owner-configu
           'candidate-owner-missing-action',
           currentnessWithoutCandidate,
         ),
-      ),
+      ).pipe(withCurrentness(currentnessWithoutCandidate)),
     );
     expect(Predicate.isTagged(failure, 'PurchasingApprovalRejected')).toBe(true);
     expect(failure).toMatchObject({
@@ -868,7 +933,8 @@ it.effect('consumes the exact Order commit once and keeps replay idempotent', ()
       consumePurchaseApprovalAction.descriptor.auditEvidenceSchema,
     );
     const workflow = makeWorkflow({ consume: () => Effect.succeed(result) });
-    yield* getActionHandler(consumePurchaseApprovalAction)(
+    yield* runActionOwnerSteps(
+      consumePurchaseApprovalAction,
       payload,
       contextFor(collector, workflow, 'consume-action-1'),
     );
@@ -899,7 +965,8 @@ it.effect('consumes the exact Order commit once and keeps replay idempotent', ()
       ...result,
       outcome: 'ALREADY_CONSUMED',
     };
-    yield* getActionHandler(consumePurchaseApprovalAction)(
+    yield* runActionOwnerSteps(
+      consumePurchaseApprovalAction,
       payload,
       contextFor(
         replayCollector,
@@ -922,7 +989,7 @@ it.effect('consumes the exact Order commit once and keeps replay idempotent', ()
       consumePurchaseApprovalAction.descriptor.auditEvidenceSchema,
     );
     const untrustedFailure = yield* Effect.flip(
-      getActionHandler(consumePurchaseApprovalAction)(payload, {
+      runActionOwnerSteps(consumePurchaseApprovalAction, payload, {
         ...contextFor(
           untrustedCollector,
           makeWorkflow({ consume: () => Effect.succeed(result) }),

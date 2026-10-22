@@ -78,7 +78,7 @@ export const upsertDsrOwnerTaskAction = defineAction(
     resultSchema: UpsertDsrOwnerTaskResultSchema,
     schemaVersion: '1',
   },
-  handleUpsertDsrOwnerTask,
+  { write: handleUpsertDsrOwnerTask },
   (transaction, scope) =>
     Effect.all(
       {

@@ -103,7 +103,7 @@ export const resolveDuplicateCandidateMatchAction = defineAction(
     schemaVersion: '1',
     tenantPermission: () => 'review_party_identity',
   },
-  handle,
+  { write: handle },
   (transaction, scope) =>
     Effect.succeed({
       resolve: (payload: ResolveDuplicateCandidateMatchPayload, invocationId: string) =>

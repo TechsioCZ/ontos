@@ -76,7 +76,7 @@ export const retireBrandAction = defineAction(
     resultSchema: BrandMutationResultSchema,
     schemaVersion: '1',
   },
-  handleRetireBrand,
+  { write: handleRetireBrand },
   (transaction, scope) =>
     brandPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map((services): CapturingBrandPersistence => ({

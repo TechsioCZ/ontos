@@ -68,7 +68,7 @@ export const createPrivacySubjectAction = defineAction(
     resultSchema: CreatePrivacySubjectResultSchema,
     schemaVersion: '1',
   },
-  handleCreatePrivacySubject,
+  { write: handleCreatePrivacySubject },
   privacyOperationRepositoryForScope,
 );
 

@@ -152,7 +152,7 @@ export const changeCounterpartyPurchaseLimitAction = defineAction(
     resultSchema: ChangeCounterpartyPurchaseLimitResultSchema,
     schemaVersion: '1',
   },
-  handleChangeCounterpartyPurchaseLimit,
+  { write: handleChangeCounterpartyPurchaseLimit },
   (transaction, scope) =>
     PurchaseLimitPolicyServiceFactory.pipe(
       Effect.flatMap((factory) => factory.make(transaction, scope)),

@@ -84,6 +84,8 @@ export interface ExternalIdentityBindingRecord {
 export interface ExternalIdentityRepositoryDependencies {
   /** Action-level exact Tenant/namespace provisioning check. */
   readonly authorizeNamespace?: (authenticationNamespaceId: string) => Effect.Effect<void, ExternalIdentityFailure>;
+  /** Exact deployment registration authorized before the Action transaction. */
+  readonly preparedNamespace?: AuthenticationNamespaceRegistration;
   /** Trusted deployment registration. It is never read from request payloads. */
   readonly registry?: AuthenticationNamespaceRegistryService;
 }
@@ -279,6 +281,11 @@ const registrationFrom = (
   dependencies: ExternalIdentityRepositoryDependencies,
   authenticationNamespaceId: string,
 ): Effect.Effect<AuthenticationNamespaceRegistration, ExternalIdentityFailure> => {
+  if (dependencies.preparedNamespace !== undefined) {
+    return dependencies.preparedNamespace.authenticationNamespaceId === authenticationNamespaceId
+      ? Effect.succeed(dependencies.preparedNamespace)
+      : Effect.fail(invalid('The prepared namespace does not match the binding'));
+  }
   const lookup = (
     registry: AuthenticationNamespaceRegistryService,
     decodedNamespaceId: Schema.Schema.Type<typeof AuthenticationNamespaceIdSchema>,
@@ -319,7 +326,7 @@ const authorizeNamespace = (
   dependencies: ExternalIdentityRepositoryDependencies,
   authenticationNamespaceId: string,
 ): Effect.Effect<void, ExternalIdentityFailure> =>
-  dependencies.authorizeNamespace === undefined
+  dependencies.preparedNamespace !== undefined || dependencies.authorizeNamespace === undefined
     ? Effect.void
     : dependencies.authorizeNamespace(authenticationNamespaceId);
 
@@ -475,6 +482,35 @@ const validateReactivation = (
     subjectType: binding.subjectType,
   }).pipe(Effect.flatMap((subject) => requireSubjectAdmission(input.admission, subject, binding.tenantId)));
 };
+
+/** Loads and authorizes deployment evidence without holding a transaction across the access RPC. */
+export const prepareExternalIdentityReservationNamespace = Effect.fn(
+  'ExternalIdentityRepository.prepareReservationNamespace',
+)(function* prepareNamespace(
+  input: PrepareExternalIdentityInput,
+  dependencies: ExternalIdentityRepositoryDependencies,
+) {
+  const subject = yield* decodeSubject(input.subject);
+  const registration = yield* registrationFrom(dependencies, subject.authenticationNamespaceId);
+  yield* ensureSubjectAllowed(subject, registration);
+  yield* authorizeNamespace(dependencies, subject.authenticationNamespaceId);
+  return registration;
+});
+
+export const prepareExternalIdentityActivationNamespace = Effect.fn(
+  'ExternalIdentityRepository.prepareActivationNamespace',
+)(function* prepareNamespace(
+  binding: Option.Option<ExternalIdentityBindingRecord>,
+  dependencies: ExternalIdentityRepositoryDependencies,
+) {
+  if (Option.isNone(binding)) {
+    return yield* notFound(bindingUnavailableReason);
+  }
+  const registration = yield* registrationFrom(dependencies, binding.value.authenticationNamespaceId);
+  yield* validateRegistration(binding.value, registration);
+  yield* authorizeNamespace(dependencies, binding.value.authenticationNamespaceId);
+  return registration;
+});
 
 const prepare = (
   transaction: ScopedTransactionExecutor,

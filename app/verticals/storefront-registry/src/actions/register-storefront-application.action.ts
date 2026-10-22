@@ -150,6 +150,6 @@ export const registerStorefrontApplicationAction = defineAction(
     resultSchema: RegisterStorefrontApplicationResultSchema,
     schemaVersion: '1',
   },
-  handleRegisterStorefrontApplication,
+  { write: handleRegisterStorefrontApplication },
   storefrontAdministrationService,
 );

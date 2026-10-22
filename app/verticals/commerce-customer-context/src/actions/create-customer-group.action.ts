@@ -149,7 +149,7 @@ export const createCustomerGroupAction = defineAction(
     resultSchema: CreateCustomerGroupResultSchema,
     schemaVersion: '1',
   },
-  handleCreateCustomerGroup,
+  { write: handleCreateCustomerGroup },
   customerGroupServiceFactory,
 );
 

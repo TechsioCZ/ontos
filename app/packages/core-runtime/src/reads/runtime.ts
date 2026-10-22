@@ -40,12 +40,13 @@ import {
 } from '../permissions/owner-authorization-overlay.ts';
 import type { OwnerAuthorizationTarget } from '../permissions/owner-authorization-overlay.ts';
 import { insideDatabaseTransaction } from '../db/transaction-io-guard.ts';
+import { ownerTransactionFor } from '../db/owner-transaction.ts';
+import { OwnerTransactionUnavailable } from '../db/owner-transaction-unavailable.ts';
 import type {
   AssortmentPermissionAccessTarget,
   AssortmentPermissionCommercialScope,
   AssortmentPermissionSubject,
 } from '../permissions/context-access.ts';
-import type { ReadOwnerTransaction } from './context.ts';
 import { validateReadEvidenceMetadata } from './context.ts';
 import type {
   AtomicResolvedReadPermissionTarget,
@@ -819,6 +820,15 @@ const sanitizeReadHandlerFailure = <DomainErrorSchema extends Schema.ConstraintD
   | ReadHandlerNotFound
   | ReadHandlerUnavailable
   | ReadPermissionDenied => {
+  if (Schema.is(OwnerTransactionUnavailable)(failure)) {
+    return preserveFailureCause(
+      new ReadHandlerUnavailable({
+        code: 'read_handler_unavailable',
+        reason: 'A short owner transaction of this Read is unavailable',
+      }),
+      failure,
+    );
+  }
   if (
     Schema.is(ReadHandlerUnavailable)(failure) ||
     Schema.is(ReadHandlerNotFound)(failure) ||
@@ -1479,8 +1489,15 @@ const readRuntimeFromDependencies = <
       sanitizeReadHandlerFailure(getReadDomainErrorSchema(input.registration), failure),
     );
     /** A short admitted, scoped, guarded owner transaction for `finish` (owner-state reads between remote calls). */
-    const ownerTransaction: ReadOwnerTransaction = (use) =>
-      admittedTransaction((transaction) => installOperationalScope(transaction, scope).pipe(Effect.flatMap(use)));
+    const ownerTransaction = ownerTransactionFor({
+      admit: (transaction) =>
+        compositionRevision === undefined
+          ? Effect.void
+          : lockApplicationCompositionAuthority(transaction, compositionRevision, 'read'),
+      executor: database.executor,
+      operationKey: input.registration.descriptor.readKey,
+      scope,
+    });
     const ownerContext = Object.freeze({
       compositionRevision,
       readKey: input.registration.descriptor.readKey,

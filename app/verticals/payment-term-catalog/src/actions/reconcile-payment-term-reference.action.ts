@@ -196,7 +196,7 @@ export const reconcilePaymentTermReferenceAction = defineAction(
     resultSchema: ReconcilePaymentTermReferenceResultSchema,
     schemaVersion: '1',
   },
-  handleReconcilePaymentTermReference,
+  { write: handleReconcilePaymentTermReference },
   paymentTermCatalogPersistenceForScope,
 );
 

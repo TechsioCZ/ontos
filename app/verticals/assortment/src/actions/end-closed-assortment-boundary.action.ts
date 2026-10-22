@@ -125,7 +125,7 @@ export const endClosedAssortmentBoundaryAction = defineAction(
     resultSchema: EndClosedAssortmentBoundaryResultSchema,
     schemaVersion: '1',
   },
-  handleEndClosedAssortmentBoundary,
+  { write: handleEndClosedAssortmentBoundary },
   boundaryAdministrationService,
 );
 

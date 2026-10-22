@@ -63,7 +63,7 @@ export const recordApplicabilityPolicyAction = defineAction(
     resultSchema: RecordApplicabilityPolicyResultSchema,
     schemaVersion: '1',
   },
-  handleRecordApplicabilityPolicy,
+  { write: handleRecordApplicabilityPolicy },
   privacyOperationRepositoryForScope,
 );
 // <generated-outbox-message-exports>

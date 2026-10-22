@@ -101,7 +101,7 @@ export const releaseLocalOverrideAction = defineAction(
     resultSchema: ReleaseLocalOverrideResultSchema,
     schemaVersion: '1',
   },
-  handleReleaseLocalOverride,
+  { write: handleReleaseLocalOverride },
   Effect.fn('ReleaseLocalOverrideAction.makeServices')(function* makeReleaseLocalOverrideServices(transaction, scope) {
     const persistenceFactory = yield* CatalogSourceActionPersistenceFactory;
     return {

@@ -81,7 +81,7 @@ export const recordDsrResponseAction = defineAction(
     resultSchema: RecordDsrResponseResultSchema,
     schemaVersion: '1',
   },
-  handleRecordDsrResponse,
+  { write: handleRecordDsrResponse },
   (transaction, scope) =>
     Effect.all(
       {

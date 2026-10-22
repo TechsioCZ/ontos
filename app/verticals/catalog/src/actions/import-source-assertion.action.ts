@@ -116,7 +116,7 @@ export const importSourceAssertionAction = defineAction(
     resultSchema: ImportSourceAssertionResultSchema,
     schemaVersion: '1',
   },
-  handleImportSourceAssertion,
+  { write: handleImportSourceAssertion },
   Effect.fn('ImportSourceAssertionAction.makeServices')(
     function* makeImportSourceAssertionServices(transaction, scope) {
       const persistenceFactory = yield* CatalogSourceActionPersistenceFactory;

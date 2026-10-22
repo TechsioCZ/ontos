@@ -138,7 +138,7 @@ export const compensateCurrencySupportRecoveryAction = defineAction(
     resultSchema: CompensateCurrencySupportRecoveryResultSchema,
     schemaVersion: '1',
   },
-  handleCompensateCurrencySupportRecovery,
+  { write: handleCompensateCurrencySupportRecovery },
   currencySupportRecoveryCompensationPersistenceForScope,
 );
 

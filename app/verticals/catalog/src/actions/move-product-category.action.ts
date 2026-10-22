@@ -103,7 +103,7 @@ export const moveProductCategoryAction = defineAction(
     resultSchema: MoveProductCategoryResultSchema,
     schemaVersion: '1',
   },
-  handleMoveProductCategory,
+  { write: handleMoveProductCategory },
   (transaction, scope) =>
     categoryPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map(

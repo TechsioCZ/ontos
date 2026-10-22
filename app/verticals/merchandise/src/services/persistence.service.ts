@@ -1399,13 +1399,10 @@ const storefrontCatalogView = (request: RecordsRequest) =>
  * Resolves a records read's rights before its transaction opens: one bulk check of both catalog permissions
  * and the tenant identity-administrator check, in parallel. The storefront catalog view skips both.
  */
-export const merchandiseRecordsGrants = Effect.fn('Merchandise.recordsGrants')(function* merchandiseRecordsGrants(
+const merchandiseGrants = Effect.fn('Merchandise.grants')(function* merchandiseGrants(
   scope: OperationalScope,
-  request: RecordsRequest,
+  includeAdministrator: boolean,
 ) {
-  if (storefrontCatalogView(request)) {
-    return { administrator: false, readAll: false, writeAll: false } satisfies MerchandiseRecordsGrants;
-  }
   const access = yield* ContextAccess;
   if (scope.legalEntityId === undefined || access.contextPermissions === undefined) {
     return yield* referenceUnavailable();
@@ -1422,7 +1419,7 @@ export const merchandiseRecordsGrants = Effect.fn('Merchandise.recordsGrants')(f
         })),
         tenantId: scope.tenantId,
       }),
-      request.view?.storefront === true
+      !includeAdministrator
         ? Effect.succeed([])
         : access.tenants({
             permission: 'manage_identity',
@@ -1453,6 +1450,17 @@ export const merchandiseRecordsGrants = Effect.fn('Merchandise.recordsGrants')(f
   } satisfies MerchandiseRecordsGrants;
 });
 
+export const merchandiseRecordsGrants = (scope: OperationalScope, request: RecordsRequest) =>
+  storefrontCatalogView(request)
+    ? Effect.succeed({ administrator: false, readAll: false, writeAll: false } satisfies MerchandiseRecordsGrants)
+    : merchandiseGrants(scope, request.view?.storefront !== true);
+
+/**
+ * The grants every apply-command decides with (read_all, write_all, identity administrator), from SpiceDB in the
+ * Action's `prepare` step, before its transaction opens.
+ */
+export const merchandiseCommandGrants = (scope: OperationalScope) => merchandiseGrants(scope, true);
+
 export const persistenceService = Effect.fn('Merchandise.persistenceService')(
   function* makePersistence(transaction: ScopedTransactionExecutor, scope: OperationalScope) {
     const { legalEntityId } = scope;
@@ -1467,37 +1475,6 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       });
     }
     const store: StoreScope = { legalEntityId, tenantId: scope.tenantId };
-    const access = yield* ContextAccess;
-    const contextGrant = Effect.fn('Merchandise.contextGrant')(function* contextGrant(
-      permission: 'read_all' | 'write_all',
-    ) {
-      if (access.contextPermissions === undefined) {
-        return yield* referenceUnavailable();
-      }
-      const decisions = yield* access.contextPermissions({
-        legalEntityId,
-        principalId: scope.principalId,
-        targets: [{ moduleId: 'demo.merchandise', permission: `demo.merchandise.${permission}` }],
-        tenantId: scope.tenantId,
-      });
-      if (
-        decisions.length !== 1 ||
-        decisions[0]?.key !== `demo.merchandise:demo.merchandise.${permission}` ||
-        decisions[0]?.decision === 'unavailable'
-      ) {
-        return yield* referenceUnavailable();
-      }
-      return decisions[0]?.decision === 'allowed';
-    });
-    // Existing trusted identity-administrator capability; no email, browser flag or principal-id allowlist.
-    const administrator = Effect.fn('Merchandise.administrator')(function* administrator() {
-      const decisions = yield* access.tenants({
-        permission: 'manage_identity',
-        principalId: scope.principalId,
-        tenantIds: [scope.tenantId],
-      });
-      return decisions.length === 1 && decisions[0]?.key === scope.tenantId && decisions[0]?.decision === 'allowed';
-    });
     const lockedHead = Effect.fn('Merchandise.lockedHead')(function* lockedHead(aiChanges: boolean) {
       const head = yield* loadHead(transaction, store, { aiChanges, lock: true }).pipe(Effect.mapError(unavailable));
       return head ?? (yield* unavailable());
@@ -1560,9 +1537,10 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       command: AiCommand,
       expectedRevision: number,
       resourceId: string,
+      grants: MerchandiseRecordsGrants,
     ) {
       const proposing = command._tag === 'AiProposeChanges';
-      if (!(yield* contextGrant(proposing ? 'read_all' : 'write_all'))) {
+      if (!(proposing ? grants.readAll : grants.writeAll)) {
         return yield* new MerchandisePermissionDenied({
           code: 'merchandise_permission_denied',
           reason: proposing
@@ -1570,7 +1548,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
             : 'Schvalovat a vracet změny AI může jen uživatel s právem zápisu do objednávek',
         });
       }
-      if (!proposing && !staffCommandAllowed(legalEntityId, yield* administrator(), 'EditOrder')) {
+      if (!proposing && !staffCommandAllowed(legalEntityId, grants.administrator, 'EditOrder')) {
         return yield* new MerchandisePermissionDenied({
           code: 'merchandise_permission_denied',
           reason: 'Schvalovat změny AI v objednávkách může jen správce',
@@ -1600,15 +1578,17 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       const entityIds = yield* Effect.forEach(outcome.entityIds, entityIdOf);
       return { entityIds, revision };
     });
+    /** `grants` come from the Action's `prepare` step: nothing here reaches SpiceDB inside the transaction. */
     const apply = Effect.fn('Merchandise.apply')(function* apply(
       command: MerchandiseCommand,
       expectedRevision: number,
       resourceId: string,
+      grants: MerchandiseRecordsGrants,
     ) {
       if (isMerchandiseAiCommand(command)) {
-        return yield* applyAi(command, expectedRevision, resourceId);
+        return yield* applyAi(command, expectedRevision, resourceId, grants);
       }
-      if (!(yield* contextGrant('write_all'))) {
+      if (!grants.writeAll) {
         return yield* new MerchandisePermissionDenied({
           code: 'merchandise_permission_denied',
           reason: 'Merchandise changes require write permission',
@@ -1620,7 +1600,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         scope.authMethod === 'support_impersonation' ||
         scope.authMethod === 'oauth_connection'
       ) {
-        if (!staffCommandAllowed(legalEntityId, yield* administrator(), command._tag)) {
+        if (!staffCommandAllowed(legalEntityId, grants.administrator, command._tag)) {
           return yield* new MerchandisePermissionDenied({
             code: 'merchandise_permission_denied',
             reason: 'Tato změna vyžaduje oprávnění správce; expedice může zpracovávat objednávky a skladové pohyby',

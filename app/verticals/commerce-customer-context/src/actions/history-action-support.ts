@@ -1,4 +1,4 @@
-import type { ActionHandlerContext, OperationalScope } from '@app/core-runtime';
+import type { ActionHandlerContext, ActionPrepareContext, ActionWriteContext } from '@app/core-runtime';
 import { DateTime, Effect, Option } from 'effect';
 import type {
   RepeatCounterpartyOrderPayload,
@@ -22,8 +22,7 @@ import type { RepeatOrderPreparationResult } from '../../shared/domain/history-c
 import type { CustomerHistoryPorts } from '../../shared/domain/history-ports.ts';
 import { CustomerHistoryPortsService, unavailableCustomerHistoryPorts } from '../../shared/domain/history-ports.ts';
 import type { CustomerHistorySubject, HistoricalRecordRef } from '../../shared/domain/record-visibility-contracts.ts';
-import { customerHistoryPortsForOperation } from '../history-production-services.ts';
-import type { ProfileScopedRoutineInvoker } from '../persistence/profile-persistence.ts';
+import { customerHistoryPortsForPreparation } from '../history-production-services.ts';
 
 type NoDomainEvents = Readonly<Record<never, never>>;
 const moduleKey = 'commerce.customer-context' as const;
@@ -41,17 +40,16 @@ type CreatedRepeatCart = Exclude<RepeatCartCreation, { readonly outcome: 'CONFLI
 
 /** Production service loader; the API host provides live or explicit fail-closed owner Layers. */
 export const loadHistoryActionServices = Effect.fn('HistoryActions.loadHistoryActionServices')(function* loadServices(
-  transaction: ProfileScopedRoutineInvoker,
-  scope: OperationalScope,
+  context: ActionPrepareContext,
 ) {
   const history = yield* Effect.serviceOption(CustomerHistoryPortsService);
   const carts = yield* Effect.serviceOption(RepeatCartOwner);
   const unavailableOwners = unavailableHistoryActionOwnerPorts();
   return {
-    history: yield* customerHistoryPortsForOperation(
+    history: yield* customerHistoryPortsForPreparation(
       Option.getOrElse(history, unavailableCustomerHistoryPorts),
-      transaction,
-      scope,
+      context.transaction,
+      context.scope,
     ),
     now: DateTime.now.pipe(Effect.map(DateTime.formatIso)),
     owners: {
@@ -77,8 +75,8 @@ const assertTrustedTenant = (tenantId: string, refs: readonly { readonly tenantI
   return Effect.void;
 };
 
-const recordRepeatEvidence = Effect.fn('HistoryActionSupport.recordRepeatEvidence')(function* recordEvidence(
-  context: ActionHandlerContext<NoDomainEvents, HistoryActionServices>,
+export const recordRepeatEvidence = Effect.fn('HistoryActionSupport.recordRepeatEvidence')(function* recordEvidence(
+  context: Pick<ActionHandlerContext<NoDomainEvents>, 'recordDataAccess' | 'recordAuditEvidence'>,
   input: {
     readonly actionKind: 'REPEAT_COUNTERPARTY_ORDER' | 'REPEAT_RETAIL_ORDER';
     readonly result: RepeatOrderActionResult;
@@ -170,7 +168,10 @@ const createRepeatCart = Effect.fn('HistoryActions.createRepeatCart')(function* 
   prepared: RepeatOrderPreparationResult,
   storefrontId: string | undefined,
   subject: CustomerHistorySubject,
-  context: ActionHandlerContext<NoDomainEvents, HistoryActionServices>,
+  context: Pick<
+    ActionHandlerContext<NoDomainEvents, HistoryActionServices>,
+    'actionInvocationId' | 'scope' | 'services'
+  >,
 ) {
   if (!hasRepeatableLines(prepared)) {
     return yield* new RepeatOrderNoRepeatableLines({
@@ -204,9 +205,12 @@ const createRepeatCart = Effect.fn('HistoryActions.createRepeatCart')(function* 
   return repeatCartResult(prepared.sourceOrderRef, created);
 });
 
-export const handleRepeatRetailOrder = Effect.fn('HistoryActions.handleRepeatRetailOrder')(function* repeatRetail(
+export const prepareRepeatRetailOrder = Effect.fn('HistoryActions.prepareRepeatRetailOrder')(function* repeatRetail(
   payload: RepeatRetailOrderPayload,
-  context: ActionHandlerContext<NoDomainEvents, HistoryActionServices>,
+  context: Pick<
+    ActionHandlerContext<NoDomainEvents, HistoryActionServices>,
+    'actionInvocationId' | 'scope' | 'services'
+  >,
 ) {
   yield* assertTrustedTenant(context.scope.tenantId, [payload.profileRef, payload.sourceOrderRef]);
   const now = yield* context.services.now;
@@ -222,14 +226,16 @@ export const handleRepeatRetailOrder = Effect.fn('HistoryActions.handleRepeatRet
     { kind: 'RETAIL_PROFILE', profileRef: payload.profileRef },
     context,
   );
-  yield* recordRepeatEvidence(context, { actionKind: 'REPEAT_RETAIL_ORDER', result });
   return result;
 });
 
-export const handleRepeatCounterpartyOrder = Effect.fn('HistoryActions.handleRepeatCounterpartyOrder')(
+export const prepareRepeatCounterpartyOrder = Effect.fn('HistoryActions.prepareRepeatCounterpartyOrder')(
   function* repeatCounterparty(
     payload: RepeatCounterpartyOrderPayload,
-    context: ActionHandlerContext<NoDomainEvents, HistoryActionServices>,
+    context: Pick<
+      ActionHandlerContext<NoDomainEvents, HistoryActionServices>,
+      'actionInvocationId' | 'scope' | 'services'
+    >,
   ) {
     yield* assertTrustedTenant(context.scope.tenantId, [
       payload.counterpartyRef,
@@ -275,7 +281,16 @@ export const handleRepeatCounterpartyOrder = Effect.fn('HistoryActions.handleRep
       { counterpartyRef: payload.counterpartyRef, kind: 'COUNTERPARTY', profileRef: payload.profileRef },
       context,
     );
-    yield* recordRepeatEvidence(context, { actionKind: 'REPEAT_COUNTERPARTY_ORDER', result });
     return result;
   },
 );
+
+/** Only evidence is persisted in the Action transaction; the Cart owner is idempotent on the invocation ID. */
+export const writeRepeatOrder = (actionKind: 'REPEAT_COUNTERPARTY_ORDER' | 'REPEAT_RETAIL_ORDER') =>
+  Effect.fn('HistoryActions.writeRepeatOrder')(function* write(
+    _payload: RepeatRetailOrderPayload | RepeatCounterpartyOrderPayload,
+    context: ActionWriteContext<NoDomainEvents, Readonly<Record<string, never>>, RepeatOrderActionResult>,
+  ) {
+    yield* recordRepeatEvidence(context, { actionKind, result: context.prepared });
+    return context.prepared;
+  });

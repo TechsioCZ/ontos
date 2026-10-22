@@ -131,7 +131,7 @@ export const recordSupportImpersonationAction = defineAction(
     schemaVersion: '1',
     tenantPermission: (payload) => (payload.checkpoint === 'stopped' ? undefined : 'impersonate'),
   },
-  handle,
+  { write: handle },
   (transaction, scope) => {
     const repository = principalManagementRepositoryFromTransaction(transaction, scope.authenticationNamespaceId);
     return Effect.succeed({

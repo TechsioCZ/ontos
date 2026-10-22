@@ -85,7 +85,7 @@ export const dispatchPrivacyMeasureAction = defineAction(
     resultSchema: DispatchPrivacyMeasureResultSchema,
     schemaVersion: '1',
   },
-  handleDispatchPrivacyMeasure,
+  { write: handleDispatchPrivacyMeasure },
   privacyOperationRepositoryForScope,
 );
 

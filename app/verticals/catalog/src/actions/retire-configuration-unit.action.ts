@@ -76,7 +76,7 @@ export const retireConfigurationUnitAction = defineAction(
     resultSchema: RetireConfigurationUnitResultSchema,
     schemaVersion: '1',
   },
-  handleRetireConfigurationUnit,
+  { write: handleRetireConfigurationUnit },
   (transaction, scope) =>
     configurationUnitPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map((services): RetireConfigurationUnitServices => ({

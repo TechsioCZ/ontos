@@ -122,7 +122,7 @@ export const recordDsrDeliveryEvidenceAction = defineAction(
     resultSchema: RecordDsrDeliveryEvidenceResultSchema,
     schemaVersion: '1',
   },
-  handleRecordDsrDeliveryEvidence,
+  { write: handleRecordDsrDeliveryEvidence },
   (transaction, scope) =>
     Effect.all(
       {

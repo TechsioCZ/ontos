@@ -1,8 +1,25 @@
+import {
+  prepareMigrateCounterpartyPriceGroup,
+  handleMigrateCounterpartyPriceGroup as writeMigrateCounterpartyPriceGroup,
+} from '../../src/actions/migrate-counterparty-price-group.action.ts';
+import {
+  prepareMigrateCustomerPriceGroup,
+  handleMigrateCustomerPriceGroup as writeMigrateCustomerPriceGroup,
+} from '../../src/actions/migrate-customer-price-group.action.ts';
+import {
+  prepareAssignCounterpartyPriceGroup,
+  handleAssignCounterpartyPriceGroup as writeAssignCounterpartyPriceGroup,
+} from '../../src/actions/assign-counterparty-price-group.action.ts';
+import {
+  prepareAssignCustomerPriceGroup,
+  handleAssignCustomerPriceGroup as writeAssignCustomerPriceGroup,
+} from '../../src/actions/assign-customer-price-group.action.ts';
+import { runPreparedAction } from '../support/prepared-action.ts';
 /* eslint-disable effect-native/no-manual-tag-comparison -- Contract assertions prove exact generated discriminant serialization; expires: 2027-03-01. */
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { runActionOwnerSteps } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
   AssignCounterpartyPriceGroupPayloadSchema,
   assignCounterpartyPriceGroupAction,
@@ -10,14 +27,10 @@ import {
 import {
   AssignCustomerPriceGroupPayloadSchema,
   assignCustomerPriceGroupAction,
-  handleAssignCustomerPriceGroup,
 } from '../../src/actions/assign-customer-price-group.action.ts';
 import { migrateCustomerPriceGroupAction } from '../../src/actions/migrate-customer-price-group.action.ts';
 import { MigrateCustomerPriceGroupResultSchema } from '../../shared/actions/migrate-customer-price-group.ts';
-import {
-  handleMigrateCounterpartyPriceGroup,
-  migrateCounterpartyPriceGroupAction,
-} from '../../src/actions/migrate-counterparty-price-group.action.ts';
+import { migrateCounterpartyPriceGroupAction } from '../../src/actions/migrate-counterparty-price-group.action.ts';
 import {
   RemoveCustomerPriceGroupPayloadSchema,
   removeCustomerPriceGroupAction,
@@ -282,7 +295,7 @@ describe('customer PriceGroup Actions', () => {
     Effect.gen(function* rejectsRetroactiveSchedules() {
       const now = Effect.succeed('2027-01-02T00:00:00.000Z');
       const assignCollector = collectorFor(assignCustomerPriceGroupAction);
-      const assignFailure = yield* handleAssignCustomerPriceGroup(
+      const assignFailure = yield* runAssignCustomerPriceGroup(
         {
           effectiveFrom: '2027-01-01T00:00:00.000Z',
           expectedProfileRevision: 2,
@@ -314,7 +327,8 @@ describe('customer PriceGroup Actions', () => {
         removeCustomerPriceGroupAction.descriptor.accessEvidencePolicy,
         removeCustomerPriceGroupAction.descriptor.auditEvidenceSchema,
       );
-      const removeFailure = yield* getActionHandler(removeCustomerPriceGroupAction)(
+      const removeFailure = yield* runActionOwnerSteps(
+        removeCustomerPriceGroupAction,
         {
           assignmentRef,
           effectiveAt: '2027-01-01T00:00:00.000Z',
@@ -341,7 +355,7 @@ describe('customer PriceGroup Actions', () => {
         migrateCustomerPriceGroupAction.descriptor.accessEvidencePolicy,
         migrateCustomerPriceGroupAction.descriptor.auditEvidenceSchema,
       );
-      const migrateFailure = yield* getActionHandler(migrateCustomerPriceGroupAction)(
+      const migrateFailure = yield* runMigrateCustomerPriceGroup(
         {
           effectiveFrom: '2027-01-01T00:00:00.000Z',
           reason: 'Retroactive migration',
@@ -382,7 +396,7 @@ describe('customer PriceGroup Actions', () => {
       const recordedAt = '2027-01-01T00:00:00.000Z';
       const observed: string[] = [];
       const collector = collectorFor(assignCustomerPriceGroupAction);
-      yield* handleAssignCustomerPriceGroup(
+      yield* runAssignCustomerPriceGroup(
         {
           effectiveFrom,
           expectedProfileRevision: 2,
@@ -480,7 +494,7 @@ describe('customer PriceGroup Actions', () => {
       const secondProfile = { ...counterpartyProfile, resourceId: 'counterparty-profile-2' };
       const secondAssignmentRef = { ...assignmentRef, resourceId: 'assignment-2' };
       const targetPriceGroupRef = { ...priceGroupRef, resourceId: 'contract-pricing-v2' };
-      const result = yield* handleMigrateCounterpartyPriceGroup(
+      const result = yield* runMigrateCounterpartyPriceGroup(
         {
           counterpartyRef,
           effectiveFrom: '2027-02-01T00:00:00.000Z',
@@ -565,3 +579,23 @@ describe('customer PriceGroup Actions', () => {
     }),
   );
 });
+
+const runAssignCustomerPriceGroup = (
+  payload: Parameters<typeof prepareAssignCustomerPriceGroup>[0],
+  context: Omit<Parameters<typeof writeAssignCustomerPriceGroup>[1], 'prepared'>,
+) => runPreparedAction(prepareAssignCustomerPriceGroup, writeAssignCustomerPriceGroup, payload, context);
+
+const runAssignCounterpartyPriceGroup = (
+  payload: Parameters<typeof prepareAssignCounterpartyPriceGroup>[0],
+  context: Omit<Parameters<typeof writeAssignCounterpartyPriceGroup>[1], 'prepared'>,
+) => runPreparedAction(prepareAssignCounterpartyPriceGroup, writeAssignCounterpartyPriceGroup, payload, context);
+
+const runMigrateCustomerPriceGroup = (
+  payload: Parameters<typeof prepareMigrateCustomerPriceGroup>[0],
+  context: Omit<Parameters<typeof writeMigrateCustomerPriceGroup>[1], 'prepared'>,
+) => runPreparedAction(prepareMigrateCustomerPriceGroup, writeMigrateCustomerPriceGroup, payload, context);
+
+const runMigrateCounterpartyPriceGroup = (
+  payload: Parameters<typeof prepareMigrateCounterpartyPriceGroup>[0],
+  context: Omit<Parameters<typeof writeMigrateCounterpartyPriceGroup>[1], 'prepared'>,
+) => runPreparedAction(prepareMigrateCounterpartyPriceGroup, writeMigrateCounterpartyPriceGroup, payload, context);

@@ -2,7 +2,7 @@
 // @ontos-action-owner facility.operations
 // @ontos-action-slug apply-command
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { ActionHandlerContext } from '@app/core-runtime';
+import type { ActionWriteContext, ActionPrepareContext } from '@app/core-runtime';
 import type { Effect } from 'effect';
 import {
   ApplyCommandPayloadSchema,
@@ -11,17 +11,29 @@ import {
 } from '../../shared/actions/apply-command.ts';
 import type { ApplyCommandPayload } from '../../shared/actions/apply-command.ts';
 import { withCommandGuard } from '../../shared/actions/command-guard.ts';
-import { persistenceService } from '../services/persistence.service.ts';
+import { persistenceService, facilityOperationsGrants } from '../services/persistence.service.ts';
+import type { Grants } from '../services/persistence.service.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 const handleApplyCommand = (
   payload: ApplyCommandPayload,
-  context: ActionHandlerContext<Readonly<Record<string, never>>, Services>,
+  context: ActionWriteContext<Readonly<Record<string, never>>, Services, Grants>,
 ): Effect.Effect<
   Effect.Success<ReturnType<Services['apply']>>,
   Effect.Error<ReturnType<Services['apply']>>,
   Effect.Services<ReturnType<typeof persistenceService>>
-> => context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId, payload.baseUpdatedAt);
+> =>
+  context.services.apply(
+    payload.command,
+    payload.expectedRevision,
+    context.actionInvocationId,
+    context.prepared,
+    payload.baseUpdatedAt,
+  );
+
+const prepareApplyCommand = withCommandGuard((_payload: ApplyCommandPayload, context: ActionPrepareContext) =>
+  facilityOperationsGrants(context.scope),
+);
 
 export const applyCommandAction = defineAction(
   {
@@ -48,7 +60,10 @@ export const applyCommandAction = defineAction(
     resultSchema: ApplyCommandResultSchema,
     schemaVersion: '1',
   },
-  withCommandGuard(handleApplyCommand),
+  {
+    prepare: prepareApplyCommand,
+    write: handleApplyCommand,
+  },
   persistenceService,
 );
 

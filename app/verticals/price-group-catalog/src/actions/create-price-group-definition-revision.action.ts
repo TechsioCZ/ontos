@@ -135,7 +135,7 @@ export const createPriceGroupDefinitionRevisionAction = defineAction(
     resultSchema: CreatePriceGroupDefinitionRevisionResultSchema,
     schemaVersion: '1',
   },
-  handleCreatePriceGroupDefinitionRevision,
+  { write: handleCreatePriceGroupDefinitionRevision },
   priceGroupCatalogPersistenceForScope,
 );
 

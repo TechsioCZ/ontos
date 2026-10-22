@@ -2,7 +2,7 @@ import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { runActionOwnerSteps } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
   PrincipalIdSchema,
   TenantIdSchema,
@@ -54,7 +54,6 @@ for (const change of changes) {
         'party.registry',
         updatePartyOfficialIdentifierAction.descriptor.accessEvidencePolicy,
       );
-      const handler = getActionHandler(updatePartyOfficialIdentifierAction);
       const encodedValidTo =
         change.type === 'END_VALIDITY'
           ? yield* Schema.encodeEffect(Schema.DateTimeUtcFromString)(change.validTo)
@@ -79,7 +78,8 @@ for (const change of changes) {
         validTo: change.type === 'END_VALIDITY' ? Option.some(change.validTo) : Option.none(),
         verification: after.verification,
       };
-      yield* handler(
+      yield* runActionOwnerSteps(
+        updatePartyOfficialIdentifierAction,
         {
           change,
           evidenceRefs: ['evidence:identifier-update'],
@@ -140,8 +140,7 @@ it.effect('rejected identifier updates publish neither Domain Event nor outbox m
       code: 'party_identifier_claim_conflict',
       reason: 'Already claimed by another Party',
     });
-    const error = yield* getActionHandler(updatePartyOfficialIdentifierAction)(
-      {
+    const error = yield* runActionOwnerSteps(updatePartyOfficialIdentifierAction, {
         change: {
           expectedVerification: 'UNVERIFIED',
           type: 'SET_VERIFICATION',
@@ -150,8 +149,7 @@ it.effect('rejected identifier updates publish neither Domain Event nor outbox m
         evidenceRefs: ['evidence:identifier-update'],
         officialIdentifierRef,
         reason: 'Accepted registry evidence',
-      },
-      {
+      }, {
         actionInvocationId: '50000000-0000-4000-8000-000000000001',
         compositionRevision: 'a'.repeat(64),
         addDomainEvent: collector.addDomainEvent,
@@ -165,8 +163,7 @@ it.effect('rejected identifier updates publish neither Domain Event nor outbox m
           tenantId,
         },
         services: { update: () => Effect.fail(failure) },
-      },
-    ).pipe(Effect.flip);
+      }).pipe(Effect.flip);
     expect(error).toBe(failure);
     expect(collector.snapshot().domainEvents.length).toBe(0);
     expect(collector.snapshot().outboxMessages.length).toBe(0);

@@ -1,6 +1,6 @@
 /* eslint-disable anti-slop/no-chained-type-assertions, typescript/no-unsafe-type-assertion -- The test harness decodes database-shaped fixture rows through each owner routine schema before exposing Core's private branded transaction capability; expires: 2027-03-31. */
 import { ScopedRoutineInvocationError, TrustedPrincipalContextSchema } from '@app/core-runtime';
-import type { ScopedRoutineDefinition, ScopedTransactionExecutor } from '@app/core-runtime';
+import type { OwnerTransaction, ScopedRoutineDefinition, ScopedTransactionExecutor } from '@app/core-runtime';
 import { Effect, Match, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -25,6 +25,11 @@ import {
   PurchaseLimitPolicyConflictSchema,
 } from '../../shared/domain/purchase-limit-policy.ts';
 import { ExactNonNegativeDecimalSchema } from '../../shared/domain/purchase-limit.ts';
+import { ownerRoutinePreparation } from '../../src/persistence/owner-routine-preparation.ts';
+import {
+  insideDatabaseTransaction,
+  refuseInsideDatabaseTransaction,
+} from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -374,20 +379,31 @@ it.effect('composes trusted Current facts with both owner-local policy revisions
       sourceRef: 'purchase-value-9',
       sourceRevision: 'purchase-value-revision-9',
     } as const;
+    const transaction = transactionReturning([
+      {
+        amount: '150.000000000',
+        currency_code: 'CZK',
+        outcome: 'PRESENT',
+        policy_id: '60000000-0000-4000-8000-000000000001',
+        policy_kind: 'MONETARY_LIMIT',
+        recorded_at: '2026-09-09T10:00:00.000Z',
+        revision: 1,
+        source: 'COUNTERPARTY_DEFAULT',
+        source_revision: 'counterparty-policy:1',
+      },
+    ]);
+    let ownerTransactions = 0;
+    const ownerTransaction: OwnerTransaction = (step) =>
+      refuseInsideDatabaseTransaction('pool-acquisition', 'short evaluation owner transaction').pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            ownerTransactions += 1;
+          }),
+        ),
+        Effect.andThen(step(transaction).pipe(insideDatabaseTransaction('evaluation-owner-read'))),
+      );
     const source = purchaseLimitEvaluationSourceForTransaction(
-      transactionReturning([
-        {
-          amount: '150.000000000',
-          currency_code: 'CZK',
-          outcome: 'PRESENT',
-          policy_id: '60000000-0000-4000-8000-000000000001',
-          policy_kind: 'MONETARY_LIMIT',
-          recorded_at: '2026-09-09T10:00:00.000Z',
-          revision: 1,
-          source: 'COUNTERPARTY_DEFAULT',
-          source_revision: 'counterparty-policy:1',
-        },
-      ]),
+      ownerRoutinePreparation(ownerTransaction),
       evaluationScope,
       {
         resolveCurrent: ({ scope }) => {
@@ -400,6 +416,8 @@ it.effect('composes trusted Current facts with both owner-local policy revisions
               marketId: evaluationContext.purchasingContext.marketId,
               purchaseValue: authoritativePurchaseValue,
             }),
+          ).pipe(
+            Effect.tap(() => refuseInsideDatabaseTransaction('module-transport', 'current Pricing/Catalog facts')),
           );
         },
       },
@@ -424,6 +442,7 @@ it.effect('composes trusted Current facts with both owner-local policy revisions
       principalId: targetPrincipalId,
       query,
     });
+    expect(ownerTransactions).toBe(1);
     expect(input.purchaseValue.monetaryAmount.amount).toBe('100');
     expect(input.currentSourceRevisions).toEqual([
       ...externalSourceRevisions,

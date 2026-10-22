@@ -5,7 +5,7 @@ import {
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Predicate, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { runActionOwnerSteps } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
   AssociateStorefrontPayloadSchema,
   associateStorefrontAction,
@@ -212,7 +212,7 @@ describe('Storefront association Current application validation', () => {
         associateStorefrontAction.descriptor.accessEvidencePolicy,
         associateStorefrontAction.descriptor.auditEvidenceSchema,
       );
-      const result = yield* getActionHandler(associateStorefrontAction)(associatePayload, {
+      const result = yield* runActionOwnerSteps(associateStorefrontAction, associatePayload, {
         actionInvocationId,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
@@ -269,7 +269,7 @@ describe('Storefront association Current application validation', () => {
           reviseStorefrontAssociationAction.descriptor.accessEvidencePolicy,
           reviseStorefrontAssociationAction.descriptor.auditEvidenceSchema,
         );
-        const failure = yield* getActionHandler(reviseStorefrontAssociationAction)(revisePayload, {
+        const failure = yield* runActionOwnerSteps(reviseStorefrontAssociationAction, revisePayload, {
           actionInvocationId,
           addDomainEvent: collector.addDomainEvent,
           addOutboxMessage: collector.addOutboxMessage,

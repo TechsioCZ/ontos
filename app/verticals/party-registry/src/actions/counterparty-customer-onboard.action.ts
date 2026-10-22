@@ -229,7 +229,7 @@ export const counterpartyCustomerOnboardAction = defineAction(
     resultSchema: CounterpartyCustomerOnboardResultSchema,
     schemaVersion: '1',
   },
-  handleCounterpartyCustomerOnboard,
+  { write: handleCounterpartyCustomerOnboard },
   (transaction, scope) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(

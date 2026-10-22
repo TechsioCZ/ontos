@@ -140,7 +140,7 @@ export const updateProductAction = defineAction(
     resultSchema: UpdateProductResultSchema,
     schemaVersion: '1',
   },
-  handleUpdateProduct,
+  { write: handleUpdateProduct },
   (transaction, scope) =>
     catalogPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map((services): UpdateProductServices => ({

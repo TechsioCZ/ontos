@@ -80,7 +80,7 @@ export const executePrivacyMeasureAction = defineAction(
     resultSchema: ExecutePrivacyMeasureResultSchema,
     schemaVersion: '1',
   },
-  handleExecutePrivacyMeasure,
+  { write: handleExecutePrivacyMeasure },
   privacyMeasureExecutionService,
 );
 

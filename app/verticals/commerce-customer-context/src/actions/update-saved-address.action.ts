@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.customer-context
 // @ontos-action-slug update-saved-address
 import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import type { ActionHandlerContext } from '@app/core-runtime';
+import type { ActionHandlerContext, ActionPrepareContext } from '@app/core-runtime';
 import { Effect } from 'effect';
 import {
   UpdateSavedAddressPayloadSchema,
@@ -11,7 +11,7 @@ import {
 import type { UpdateSavedAddressPayload } from '../../shared/actions/update-saved-address.ts';
 import { AddressBookDomainErrorSchema } from '../../shared/domain/address-errors.ts';
 import { manageAddressPermissionTarget } from './address-action-support.ts';
-import { partyBackedAddressSourceValidator } from '../integrations/party-address-source.ts';
+import { PartyAddressSourceValidator } from '../integrations/party-address-source.ts';
 import { addressActionPersistenceForTransaction } from '../persistence/address-persistence.ts';
 import {
   UpdateSavedAddressCommerceCustomerContextSavedAddressUpdatedV1OutboxPayloadSchema,
@@ -33,16 +33,12 @@ export interface Services {
       readonly principalId: string;
     },
   ) => Effect.Effect<typeof UpdateSavedAddressResultSchema.Type, typeof AddressBookDomainErrorSchema.Type>;
-  readonly validatePartySource: (
-    payload: UpdateSavedAddressPayload,
-  ) => Effect.Effect<void, typeof AddressBookDomainErrorSchema.Type>;
 }
 const handle = Effect.fn('UpdateSavedAddress.handle')(function* handleUpdateSavedAddress(
   payload: UpdateSavedAddressPayload,
   context: ActionHandlerContext<typeof domainEvents, Services>,
 ) {
   if (payload.origin?.kind === 'PARTY_BACKED') {
-    yield* context.services.validatePartySource(payload);
     yield* context.recordDataAccess({
       accessKind: 'read',
       queryHash: `party-address-source:${payload.origin.contactPointRef.resourceId}:${payload.origin.sourceRevision}`,
@@ -116,13 +112,15 @@ export const updateSavedAddressAction = defineAction(
     resultSchema: UpdateSavedAddressResultSchema,
     schemaVersion: '1',
   },
-  handle,
-  (transaction, scope) =>
-    Effect.succeed<Services>(
-      addressActionPersistenceForTransaction(
-        transaction,
-        scope,
-        partyBackedAddressSourceValidator(scope.correlationId),
-      ),
-    ),
+  {
+    prepare: Effect.fn('UpdateSavedAddressPayload.prepare')(function* prepareAddressSource(
+      payload: UpdateSavedAddressPayload,
+      context: ActionPrepareContext,
+    ) {
+      const validator = yield* Effect.service(PartyAddressSourceValidator);
+      yield* validator(context.scope.correlationId)(payload);
+    }),
+    write: handle,
+  },
+  (transaction, scope) => Effect.succeed<Services>(addressActionPersistenceForTransaction(transaction, scope)),
 );

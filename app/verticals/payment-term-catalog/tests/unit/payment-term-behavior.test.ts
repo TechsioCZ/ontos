@@ -1,3 +1,7 @@
+import {
+  insideDatabaseTransaction,
+  refuseInsideDatabaseTransaction,
+} from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
 import { expect, it } from 'effect-rstest';
 import { DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
@@ -18,7 +22,13 @@ import {
   handleReconcilePaymentTermReference,
   reconcilePaymentTermReferenceAction,
 } from '../../src/actions/reconcile-payment-term-reference.action.ts';
-import { handleRetirePaymentTerm, retirePaymentTermAction } from '../../src/actions/retire-payment-term.action.ts';
+import {
+  handleRetirePaymentTerm as writeRetirePaymentTerm,
+  abandonRetirePaymentTerm,
+  prepareRetirePaymentTerm,
+  finishRetirePaymentTerm,
+  retirePaymentTermAction,
+} from '../../src/actions/retire-payment-term.action.ts';
 import type { RetirePaymentTermServices } from '../../src/actions/retire-payment-term.action.ts';
 import { readCurrentPaymentTerms } from '../../src/api/current-payment-terms.read.ts';
 import { readPaymentTermHistory } from '../../src/api/payment-term-history.read.ts';
@@ -121,7 +131,7 @@ const scope = {
 const context = (
   catalog: RetirePaymentTermServices,
   counters: { audits: number; events: number; outboxes: number; reads: number },
-): Parameters<typeof handleRetirePaymentTerm>[1] => {
+): RetirementTestContext => {
   const collector = createActionCollector(
     retirePaymentTermAction.descriptor.domainEvents,
     'payment.term-catalog',
@@ -1104,6 +1114,101 @@ it.effect('unavailable authoritative affected-use evidence prevents every retire
     ).pipe(Effect.flip);
     expect(Schema.is(PaymentTermAffectedUseAssessmentUnavailable)(failure)).toBe(true);
     expect(retireCalls).toBe(0);
+    expect(counters).toEqual({ audits: 0, events: 0, outboxes: 0, reads: 0 });
+  }),
+);
+
+type RetirementTestContext = Omit<Parameters<typeof writeRetirePaymentTerm>[1], 'prepared' | 'services'> & {
+  readonly services: RetirePaymentTermServices;
+};
+const handleRetirePaymentTerm = (
+  payload: Parameters<typeof prepareRetirePaymentTerm>[0],
+  context: RetirementTestContext,
+) =>
+  prepareRetirePaymentTerm(payload, context).pipe(
+    Effect.flatMap((prepared) =>
+      writeRetirePaymentTerm(payload, { ...context, prepared }).pipe(
+        insideDatabaseTransaction('payment-term.retire'),
+        Effect.tapError(() =>
+          abandonRetirePaymentTerm(payload, {
+            ...context,
+            prepared,
+            transaction: () => Effect.die('abandon must not read owner state'),
+          }),
+        ),
+        Effect.tap((result) =>
+          finishRetirePaymentTerm(payload, {
+            ...context,
+            prepared,
+            result,
+            transaction: () => Effect.die('finish must not read owner state'),
+          }),
+        ),
+      ),
+    ),
+  );
+
+it.effect('reserves and verifies outside the transaction, writes locally, then commits the reservation', () =>
+  Effect.gen(function* retirementIoBoundary() {
+    const order: string[] = [];
+    const remote = (phase: string) =>
+      refuseInsideDatabaseTransaction('module-transport', phase).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            order.push(phase);
+          }),
+        ),
+      );
+    const counters = { audits: 0, events: 0, outboxes: 0, reads: 0 };
+    yield* handleRetirePaymentTerm(
+      retirementPayload,
+      context(
+        services({
+          reserveRetirement: () => remote('reserve').pipe(Effect.as({ reservationRef: 'reservation:1' })),
+          verifyRetirementGovernance: ({ claimedAssessment, claimedDisposition }) =>
+            remote('governance').pipe(Effect.as({ assessment: claimedAssessment, disposition: claimedDisposition })),
+          retire: () =>
+            Effect.sync(() => {
+              order.push('write');
+              return { _tag: 'retired' as const, definition: retired };
+            }),
+          commitRetirement: () => remote('commit').pipe(Effect.as({ reservationRef: 'reservation:1' })),
+        }),
+        counters,
+      ),
+    );
+    expect(order).toEqual(['reserve', 'governance', 'write', 'commit']);
+  }),
+);
+
+it.effect('releases the reservation outside the transaction when the owner write rejects', () =>
+  Effect.gen(function* abandonedRetirement() {
+    const order: string[] = [];
+    const remote = (phase: string) =>
+      refuseInsideDatabaseTransaction('module-transport', phase).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            order.push(phase);
+          }),
+        ),
+      );
+    const counters = { audits: 0, events: 0, outboxes: 0, reads: 0 };
+    const failure = yield* handleRetirePaymentTerm(
+      retirementPayload,
+      context(
+        services({
+          reserveRetirement: () => remote('reserve').pipe(Effect.as({ reservationRef: 'reservation:1' })),
+          verifyRetirementGovernance: ({ claimedAssessment, claimedDisposition }) =>
+            remote('governance').pipe(Effect.as({ assessment: claimedAssessment, disposition: claimedDisposition })),
+          retire: () => Effect.succeed({ _tag: 'revision_conflict' as const, actualMetadataRevision: 2 }),
+          releaseRetirement: () => remote('release').pipe(Effect.as({ reservationRef: 'reservation:1' })),
+          commitRetirement: () => remote('commit').pipe(Effect.as({ reservationRef: 'reservation:1' })),
+        }),
+        counters,
+      ),
+    ).pipe(Effect.flip);
+    expect(Schema.is(PaymentTermRevisionConflict)(failure)).toBe(true);
+    expect(order).toEqual(['reserve', 'governance', 'release']);
     expect(counters).toEqual({ audits: 0, events: 0, outboxes: 0, reads: 0 });
   }),
 );

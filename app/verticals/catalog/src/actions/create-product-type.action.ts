@@ -71,7 +71,7 @@ export const createProductTypeAction = defineAction(
     resultSchema: CreateProductTypeResultSchema,
     schemaVersion: '1',
   },
-  handleCreateProductType,
+  { write: handleCreateProductType },
   (transaction, scope) =>
     productTypeCreatePersistenceForScope(transaction, scope).pipe(
       Effect.map(

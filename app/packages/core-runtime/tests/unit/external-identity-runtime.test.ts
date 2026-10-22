@@ -1,3 +1,20 @@
+import { v1 } from '@authzed/authzed-node';
+import { runActionOwnerSteps } from '../../src/actions/definition.ts';
+import { createActionCollector } from '../../src/actions/collector.ts';
+import { principalBindingLifecycleDomainEvents } from '../../src/auth/external-identity/event.ts';
+import { ExternalIdentityActionAuditEvidenceSchema } from '../../src/auth/external-identity/audit.ts';
+import { AuthenticationNamespaceRegistry } from '../../src/auth/external-identity/verifier.ts';
+import { AuthenticationNamespaceRegistrationSchema,
+  ActivatePrincipalBindingPayloadSchema,
+  ReservePrincipalBindingPayloadSchema,
+  ChangePrincipalBindingStatusPayloadSchema,
+  ActivatePrincipalBindingResultSchema,
+  ChangePrincipalBindingStatusResultSchema,
+  ReadPrincipalBindingResultSchema,
+  ReservePrincipalBindingResultSchema } from '../../src/auth/external-identity-contracts.ts';
+import { ContextAccess, makeContextAccess } from '../../src/permissions/context-access.ts';
+import { insideDatabaseTransaction, refuseInsideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
+import type { ScopedTransactionExecutor } from '../../src/db/scoped-transaction.ts';
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -8,16 +25,9 @@ import type {
 } from '../../src/auth/external-identity/repository.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { trustResolvedSystemPrincipalContext } from '../../src/auth/system-principal-context-provenance.ts';
-import {
-  ActivatePrincipalBindingResultSchema,
-  ChangePrincipalBindingStatusResultSchema,
-  ReadPrincipalBindingResultSchema,
-  ReservePrincipalBindingResultSchema,
-} from '../../src/auth/external-identity-contracts.ts';
 import { activatePrincipalBindingAction } from '../../src/modules/actions/activate-principal-binding.action.ts';
 import { changePrincipalBindingStatusAction } from '../../src/modules/actions/change-principal-binding-status.action.ts';
 import { reservePrincipalBindingAction } from '../../src/modules/actions/reserve-principal-binding.action.ts';
-import { bindActionTestServices, makeActionTestHarness } from '../../src/testing/actions.ts';
 
 const tenantId = '30000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
@@ -40,6 +50,98 @@ const principal = trustResolvedSystemPrincipalContext(
 
 const noAdmission = Option.none<ExternalIdentityAdmissionContext>();
 
+const namespaceRegistration = Schema.decodeSync(AuthenticationNamespaceRegistrationSchema)({
+  allowedAudiences: ['test.reserve'],
+  authenticationNamespaceId: namespaceId,
+  provider: 'test-provider',
+  requiresOperationAdmission: false,
+  reservationPrincipalKind: 'human',
+  subjectTypes: ['user'],
+  trustedAttesterPrincipalIds: [],
+});
+const provideNamespaceAccess = <Value, Failure, Requirements>(effect: Effect.Effect<Value, Failure, Requirements>) =>
+  effect.pipe(
+    Effect.provideService(AuthenticationNamespaceRegistry, {
+      lookup: () =>
+        refuseInsideDatabaseTransaction('module-transport', 'deployment namespace registry').pipe(
+          Effect.as(Option.some(namespaceRegistration)),
+        ),
+    }),
+    Effect.provideService(
+      ContextAccess,
+      makeContextAccess({
+        checkBulkPermissions: (request) =>
+          refuseInsideDatabaseTransaction('spicedb', 'namespace permission').pipe(
+            Effect.as(
+              v1.CheckBulkPermissionsResponse.create({
+                pairs: request.items.map((item) =>
+                  v1.CheckBulkPermissionsPair.create({
+                    request: item,
+                    response: {
+                      item: v1.CheckBulkPermissionsResponseItem.create({
+                        permissionship: v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION,
+                      }),
+                      oneofKind: 'item',
+                    },
+                  }),
+                ),
+              }),
+            ),
+          ),
+        checkPermission: () => Effect.die('unexpected single permission RPC'),
+        close: () => {},
+      }),
+    ),
+  );
+const ownerContext = <Services>(services: Services) => {
+  const collector = createActionCollector(
+    principalBindingLifecycleDomainEvents,
+    'core.identity',
+    { captureMode: 'metadata_only', policyKey: 'test.identity.access.v1' },
+    ExternalIdentityActionAuditEvidenceSchema,
+  );
+  const rows = [
+    {
+      authBindingId,
+      authenticationNamespaceId: namespaceId,
+      bindingRevision: 1,
+      bindingStatus: 'pending',
+      createdByInvocationId: null,
+      lastTransitionRef: null,
+      principalId,
+      principalKind: 'human',
+      principalStatus: 'active',
+      provider: 'test-provider',
+      providerSubjectId: subject.providerSubjectId,
+      revokedAt: null,
+      subjectType: 'user',
+      tenantId,
+      tenantStatus: 'active',
+    },
+  ];
+  // SAFETY: This owner-read fake implements only the select/join/limit path reached by namespace preparation.
+  const transaction = {
+    select: () => ({
+      from: () => ({
+        innerJoin: () => ({ innerJoin: () => ({ where: () => ({ limit: () => Effect.succeed(rows) }) }) }),
+      }),
+    }),
+  } as unknown as ScopedTransactionExecutor;
+  return {
+    collector,
+    context: {
+      ...collector,
+      actionInvocationId: activationTransitionRef,
+      compositionRevision: 'a'.repeat(64),
+      scope: { ...principal, correlationId: 'external-identity-owner-steps' },
+      services,
+      transaction: <Value, Failure, Requirements>(
+        use: (owner: ScopedTransactionExecutor) => Effect.Effect<Value, Failure, Requirements>,
+      ) => use(transaction).pipe(insideDatabaseTransaction('test.identity-owner-read')),
+    },
+  };
+};
+
 it.effect('runs the neutral reservation Action and emits only a generated lifecycle event', () =>
   Effect.gen(function* reserveActionProgram() {
     const prepare: ExternalIdentityRepositoryService['prepare'] = (input) =>
@@ -54,26 +156,27 @@ it.effect('runs the neutral reservation Action and emits only a generated lifecy
           principalId,
         };
       });
-    const harness = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
-      services: [bindActionTestServices(reservePrincipalBindingAction, { admission: noAdmission, prepare })],
-    });
+    const { collector, context } = ownerContext({ admission: noAdmission, prepare });
 
-    const result = yield* harness.runtime.runAction({
-      payload: { ...subject, displayName: 'Reserved display name' },
-      principal,
-      registration: reservePrincipalBindingAction,
-      transport: { correlationId: 'external-identity-reserve', idempotencyKey: 'reserve-1' },
-    });
+    const result = yield* provideNamespaceAccess(
+      runActionOwnerSteps(
+        reservePrincipalBindingAction,
+        yield* Schema.decodeEffect(ReservePrincipalBindingPayloadSchema)({
+          ...subject,
+          displayName: 'Reserved display name',
+        }),
+        context,
+      ),
+    );
 
-    expect(yield* Schema.decodeEffect(ReservePrincipalBindingResultSchema)(result)).toEqual({
+    expect(yield* Schema.decodeUnknownEffect(ReservePrincipalBindingResultSchema)(result)).toEqual({
       authBindingId,
       bindingRevision: 1,
       bindingStatus: 'pending',
       outcome: 'RESERVED',
       principalId,
     });
-    const [committed] = harness.snapshot().committed;
+    const committed = { evidence: collector.snapshot() };
     expect(committed?.evidence.domainEvents).toHaveLength(1);
     expect(committed?.evidence.outboxMessages).toHaveLength(1);
     expect(committed?.evidence.auditEvidence['operation']).toBe('reserve');
@@ -90,26 +193,24 @@ it.effect('returns an existing reservation without fabricating another lifecycle
         outcome: 'EXISTING',
         principalId,
       });
-    const harness = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
-      services: [bindActionTestServices(reservePrincipalBindingAction, { admission: noAdmission, prepare })],
-    });
+    const { collector, context } = ownerContext({ admission: noAdmission, prepare });
 
-    const result = yield* harness.runtime.runAction({
-      payload: subject,
-      principal,
-      registration: reservePrincipalBindingAction,
-      transport: { correlationId: 'external-identity-existing', idempotencyKey: 'reserve-existing' },
-    });
+    const result = yield* provideNamespaceAccess(
+      runActionOwnerSteps(
+        reservePrincipalBindingAction,
+        yield* Schema.decodeEffect(ReservePrincipalBindingPayloadSchema)(subject),
+        context,
+      ),
+    );
 
-    expect(yield* Schema.decodeEffect(ReservePrincipalBindingResultSchema)(result)).toEqual({
+    expect(yield* Schema.decodeUnknownEffect(ReservePrincipalBindingResultSchema)(result)).toEqual({
       authBindingId,
       bindingRevision: 3,
       bindingStatus: 'disabled',
       outcome: 'EXISTING',
       principalId,
     });
-    const [committed] = harness.snapshot().committed;
+    const committed = { evidence: collector.snapshot() };
     expect(committed?.evidence.domainEvents).toHaveLength(0);
     expect(committed?.evidence.outboxMessages).toHaveLength(0);
   }),
@@ -129,26 +230,24 @@ it.effect('activates a pending binding through the neutral Action and publishes 
         tenantId,
         transitionRef: activationTransitionRef,
       });
-    const harness = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
-      services: [bindActionTestServices(activatePrincipalBindingAction, { activate, admission: noAdmission })],
-    });
+    const { collector, context } = ownerContext({ activate, admission: noAdmission });
 
-    const result = yield* harness.runtime.runAction({
-      payload: { authBindingId, expectedRevision: 1 },
-      principal,
-      registration: activatePrincipalBindingAction,
-      transport: { correlationId: 'external-identity-activate', idempotencyKey: 'activate-1' },
-    });
+    const result = yield* provideNamespaceAccess(
+      runActionOwnerSteps(
+        activatePrincipalBindingAction,
+        yield* Schema.decodeEffect(ActivatePrincipalBindingPayloadSchema)({ authBindingId, expectedRevision: 1 }),
+        context,
+      ),
+    );
 
-    expect(yield* Schema.decodeEffect(ActivatePrincipalBindingResultSchema)(result)).toEqual({
+    expect(yield* Schema.decodeUnknownEffect(ActivatePrincipalBindingResultSchema)(result)).toEqual({
       authBindingId,
       bindingRevision: 2,
       bindingStatus: 'active',
       outcome: 'ACTIVATED',
       principalId,
     });
-    const [committed] = harness.snapshot().committed;
+    const committed = { evidence: collector.snapshot() };
     expect(committed?.evidence.domainEvents).toHaveLength(1);
     expect(committed?.evidence.outboxMessages).toHaveLength(1);
   }),
@@ -168,26 +267,24 @@ it.effect('treats repeat activation of the current binding as an event-free no-o
         tenantId,
         transitionRef: activationTransitionRef,
       });
-    const harness = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
-      services: [bindActionTestServices(activatePrincipalBindingAction, { activate, admission: noAdmission })],
-    });
+    const { collector, context } = ownerContext({ activate, admission: noAdmission });
 
-    const result = yield* harness.runtime.runAction({
-      payload: { authBindingId, expectedRevision: 2 },
-      principal,
-      registration: activatePrincipalBindingAction,
-      transport: { correlationId: 'external-identity-activate-repeat', idempotencyKey: 'activate-repeat-1' },
-    });
+    const result = yield* provideNamespaceAccess(
+      runActionOwnerSteps(
+        activatePrincipalBindingAction,
+        yield* Schema.decodeEffect(ActivatePrincipalBindingPayloadSchema)({ authBindingId, expectedRevision: 2 }),
+        context,
+      ),
+    );
 
-    expect(yield* Schema.decodeEffect(ActivatePrincipalBindingResultSchema)(result)).toEqual({
+    expect(yield* Schema.decodeUnknownEffect(ActivatePrincipalBindingResultSchema)(result)).toEqual({
       authBindingId,
       bindingRevision: 2,
       bindingStatus: 'active',
       outcome: 'ACTIVATED',
       principalId,
     });
-    const [committed] = harness.snapshot().committed;
+    const committed = { evidence: collector.snapshot() };
     expect(committed?.evidence.domainEvents).toHaveLength(0);
     expect(committed?.evidence.outboxMessages).toHaveLength(0);
     expect(committed?.evidence.auditEvidence['previousStatus']).toBe('active');
@@ -245,32 +342,40 @@ it.effect('keeps an administrative same-state status no-op stable and event-free
               transitionRef: activationTransitionRef,
             };
       });
-    const harness = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
-      services: [bindActionTestServices(changePrincipalBindingStatusAction, { admission: noAdmission, changeStatus })],
-      tenantPermission: 'allowed',
-    });
+    const firstSteps = ownerContext({ admission: noAdmission, changeStatus });
+    const secondSteps = ownerContext({ admission: noAdmission, changeStatus });
+    const first = yield* provideNamespaceAccess(
+      runActionOwnerSteps(
+        changePrincipalBindingStatusAction,
+        yield* Schema.decodeEffect(ChangePrincipalBindingStatusPayloadSchema)({
+          authBindingId,
+          expectedRevision: 1,
+          reason: 'administrative disable',
+          requestedStatus: 'disabled',
+        }),
+        firstSteps.context,
+      ),
+    );
+    const second = yield* provideNamespaceAccess(
+      runActionOwnerSteps(
+        changePrincipalBindingStatusAction,
+        yield* Schema.decodeEffect(ChangePrincipalBindingStatusPayloadSchema)({
+          authBindingId,
+          expectedRevision: 2,
+          reason: 'repeat current state',
+          requestedStatus: 'disabled',
+        }),
+        secondSteps.context,
+      ),
+    );
 
-    const first = yield* harness.runtime.runAction({
-      payload: { authBindingId, expectedRevision: 1, reason: 'administrative disable', requestedStatus: 'disabled' },
-      principal,
-      registration: changePrincipalBindingStatusAction,
-      transport: { correlationId: 'external-identity-status-1', idempotencyKey: 'status-1' },
-    });
-    const second = yield* harness.runtime.runAction({
-      payload: { authBindingId, expectedRevision: 2, reason: 'repeat current state', requestedStatus: 'disabled' },
-      principal,
-      registration: changePrincipalBindingStatusAction,
-      transport: { correlationId: 'external-identity-status-2', idempotencyKey: 'status-2' },
-    });
-
-    expect((yield* Schema.decodeEffect(ChangePrincipalBindingStatusResultSchema)(first)).transitionRef).toBe(
+    expect((yield* Schema.decodeUnknownEffect(ChangePrincipalBindingStatusResultSchema)(first)).transitionRef).toBe(
       activationTransitionRef,
     );
-    expect((yield* Schema.decodeEffect(ChangePrincipalBindingStatusResultSchema)(second)).transitionRef).toBe(
+    expect((yield* Schema.decodeUnknownEffect(ChangePrincipalBindingStatusResultSchema)(second)).transitionRef).toBe(
       activationTransitionRef,
     );
-    const { committed } = harness.snapshot();
+    const committed = [firstSteps, secondSteps].map(({ collector }) => ({ evidence: collector.snapshot() }));
     expect(committed).toHaveLength(2);
     expect(committed[0]?.evidence.domainEvents).toHaveLength(1);
     expect(committed[0]?.evidence.outboxMessages).toHaveLength(1);

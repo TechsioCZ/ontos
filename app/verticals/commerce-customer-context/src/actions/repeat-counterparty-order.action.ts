@@ -8,7 +8,7 @@ import {
   defineActionResourcePermission,
   defineTenantModuleEntrypoint,
 } from '@app/core-runtime';
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import {
   RepeatCounterpartyOrderPayloadSchema,
   RepeatCounterpartyOrderResultSchema,
@@ -21,7 +21,11 @@ import {
   RepeatOrderNoRepeatableLines,
 } from '../../shared/domain/history-action-errors.ts';
 import { HistoryAccessDenied, HistoryRecordNotFound } from '../../shared/domain/history-errors.ts';
-import { handleRepeatCounterpartyOrder, loadHistoryActionServices } from './history-action-support.ts';
+import {
+  prepareRepeatCounterpartyOrder,
+  loadHistoryActionServices,
+  writeRepeatOrder,
+} from './history-action-support.ts';
 
 const RepeatCounterpartyOrderErrorSchema = Schema.Union([
   HistoryAccessDenied,
@@ -86,8 +90,13 @@ export const repeatCounterpartyOrderAction = defineAction(
     resultSchema: RepeatCounterpartyOrderResultSchema,
     schemaVersion: '1',
   },
-  handleRepeatCounterpartyOrder,
-  (transaction, scope) => loadHistoryActionServices(transaction, scope),
+  {
+    prepare: (payload, context) =>
+      loadHistoryActionServices(context).pipe(
+        Effect.flatMap((services) => prepareRepeatCounterpartyOrder(payload, { ...context, services })),
+      ),
+    write: writeRepeatOrder('REPEAT_COUNTERPARTY_ORDER'),
+  },
 );
 
 export type { RepeatCounterpartyOrderPayload } from '../../shared/actions/repeat-counterparty-order.ts';

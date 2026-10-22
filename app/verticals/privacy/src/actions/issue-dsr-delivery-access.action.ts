@@ -77,7 +77,7 @@ export const issueDsrDeliveryAccessAction = defineAction(
     resultSchema: IssueDsrDeliveryAccessResultSchema,
     schemaVersion: '1',
   },
-  handleIssueDsrDeliveryAccess,
+  { write: handleIssueDsrDeliveryAccess },
   (transaction, scope) =>
     Effect.all(
       {

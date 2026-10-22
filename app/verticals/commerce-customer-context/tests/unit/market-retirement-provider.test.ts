@@ -1,3 +1,5 @@
+import { defineAction } from '@app/core-runtime';
+import { insideDatabaseTransaction } from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
 import type { OperationalScope, ReadLoadContext } from '@app/core-runtime';
 import {
   ReadHandlerUnavailable,
@@ -18,7 +20,10 @@ import {
 import { DateTime, Effect, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { reserveMarketRetirementAction } from '../../src/actions/reserve-market-retirement.action.ts';
+import {
+  reserveMarketRetirementAction,
+  handleReserveMarketRetirement,
+} from '../../src/actions/reserve-market-retirement.action.ts';
 import {
   handleMarketAffectedUseAssessment,
   makeMarketAffectedUseAssessmentServices,
@@ -41,7 +46,7 @@ import {
   MarketRetirementAssessmentStaleError,
   MarketRetirementAssessmentUnavailableError,
   MarketRetirementLiveReferenceConflictError,
-  marketRetirementReservationServiceFromAuthorities,
+  prepareMarketRetirementReservation,
 } from '../../src/services/market-retirement-reservation.service.ts';
 import type { MarketRetirementReservationService } from '../../src/services/market-retirement-reservation.service.ts';
 import { commerceCustomerContextManifest } from '../../vertical.manifest.ts';
@@ -630,7 +635,7 @@ it.effect('maps reassessment failures to governed Action conflict and unavailabl
       };
       const harness = yield* makeActionTestHarness({
         actionPermission: 'allowed',
-        services: [bindActionTestServices(reserveMarketRetirementAction, service)],
+        services: [bindActionTestServices(reservationWriteAction, service)],
       });
       const failure = yield* harness.runtime
         .runAction({
@@ -639,7 +644,7 @@ it.effect('maps reassessment failures to governed Action conflict and unavailabl
             sourceEvidence: [sourceEvidence('commerce.customer-context.market-bootstrap-policy')],
           },
           principal: actionPrincipal,
-          registration: reserveMarketRetirementAction,
+          registration: reservationWriteAction,
           transport: {
             correlationId: `market-retirement-reassessment-${index}`,
             idempotencyKey: `market-retirement-reassessment-${index}`,
@@ -712,7 +717,7 @@ it.effect('runs RESERVE, COMMIT, and RELEASE through the governed owner Action r
     };
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
-      services: [bindActionTestServices(reserveMarketRetirementAction, service)],
+      services: [bindActionTestServices(reservationWriteAction, service)],
     });
     const actionPrincipal = {
       authBindingId: scope.authBindingId,
@@ -729,7 +734,7 @@ it.effect('runs RESERVE, COMMIT, and RELEASE through the governed owner Action r
         harness.runtime.runAction({
           payload,
           principal: actionPrincipal,
-          registration: reserveMarketRetirementAction,
+          registration: reservationWriteAction,
           transport: {
             correlationId: `market-retirement-${payload.operation.toLowerCase()}`,
             idempotencyKey: `market-retirement-${index + 1}`,
@@ -759,7 +764,7 @@ it.effect('rejects a cross-Tenant reservation before invoking owner persistence'
     };
     const harness = yield* makeActionTestHarness({
       actionPermission: 'allowed',
-      services: [bindActionTestServices(reserveMarketRetirementAction, service)],
+      services: [bindActionTestServices(reservationWriteAction, service)],
     });
     const failure = yield* harness.runtime
       .runAction({
@@ -781,7 +786,7 @@ it.effect('rejects a cross-Tenant reservation before invoking owner persistence'
           principalId,
           tenantId,
         },
-        registration: reserveMarketRetirementAction,
+        registration: reservationWriteAction,
         transport: {
           correlationId: 'market-retirement-cross-tenant',
           idempotencyKey: 'market-retirement-cross-tenant',
@@ -795,3 +800,20 @@ it.effect('rejects a cross-Tenant reservation before invoking owner persistence'
     expect(harness.snapshot().committed).toHaveLength(0);
   }),
 );
+
+// Runtime-mapping tests bind the database-only step; preparation is exercised independently above.
+const reservationWriteAction = defineAction(reserveMarketRetirementAction.descriptor, {
+  write: handleReserveMarketRetirement,
+});
+const marketRetirementReservationServiceFromAuthorities = (
+  assessment: Parameters<typeof prepareMarketRetirementReservation>[1],
+  reservation: MarketRetirementReservationService,
+  now: Effect.Effect<number>,
+): MarketRetirementReservationService => ({
+  execute: (payload, attribution) =>
+    (payload.operation === 'RESERVE' ? prepareMarketRetirementReservation(payload, assessment, now) : Effect.void).pipe(
+      Effect.andThen(
+        reservation.execute(payload, attribution).pipe(insideDatabaseTransaction('market-retirement.reserve')),
+      ),
+    ),
+});

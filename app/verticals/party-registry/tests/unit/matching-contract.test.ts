@@ -2,7 +2,7 @@ import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
-import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import { runActionOwnerSteps } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
   PrincipalIdSchema,
   TenantIdSchema,
@@ -38,7 +38,7 @@ it.effect('reviewed Create records metadata-only invariant evidence and commits 
       'party.registry',
       resolveDuplicateCandidateCreateAction.descriptor.accessEvidencePolicy,
     );
-    yield* getActionHandler(resolveDuplicateCandidateCreateAction)(evidencePayload, {
+    yield* runActionOwnerSteps(resolveDuplicateCandidateCreateAction, evidencePayload, {
       ...collector,
       actionInvocationId: '40000000-0000-4000-8000-000000000001',
       compositionRevision: 'a'.repeat(64),
@@ -67,7 +67,7 @@ it.effect('reviewed duplicate confirmation records safe invariant evidence witho
       'party.registry',
       confirmDuplicatePartiesAction.descriptor.accessEvidencePolicy,
     );
-    yield* getActionHandler(confirmDuplicatePartiesAction)(evidencePayload, {
+    yield* runActionOwnerSteps(confirmDuplicatePartiesAction, evidencePayload, {
       ...collector,
       actionInvocationId: '40000000-0000-4000-8000-000000000001',
       compositionRevision: 'a'.repeat(64),

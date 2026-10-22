@@ -89,7 +89,7 @@ export const recordConsentDecisionAction = defineAction(
     resultSchema: RecordConsentDecisionResultSchema,
     schemaVersion: '1',
   },
-  handleRecordConsentDecision,
+  { write: handleRecordConsentDecision },
   Effect.fn('RecordConsentDecisionAction.services')(function* makeRecordConsentDecisionServices(transaction, scope) {
     const [operations, purposes] = yield* Effect.all(
       [privacyOperationRepositoryForScope(transaction, scope), processingPurposeRepositoryForScope(transaction, scope)],

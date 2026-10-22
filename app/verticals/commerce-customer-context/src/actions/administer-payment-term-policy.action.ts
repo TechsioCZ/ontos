@@ -138,7 +138,7 @@ export const administerPaymentTermPolicyAction = defineAction(
     resultSchema: AdministerPaymentTermPolicyResultSchema,
     schemaVersion: '1',
   },
-  handleAdministerPaymentTermPolicy,
+  { write: handleAdministerPaymentTermPolicy },
   customerCommercePolicyAdministrationServiceFactory,
 );
 

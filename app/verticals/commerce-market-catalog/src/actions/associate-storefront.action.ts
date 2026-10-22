@@ -192,6 +192,6 @@ export const associateStorefrontAction = defineAction(
     resultSchema: AssociateStorefrontResultSchema,
     schemaVersion: '1',
   },
-  handleAssociateStorefront,
+  { write: handleAssociateStorefront },
   makeAssociateStorefrontServices,
 );

@@ -174,7 +174,7 @@ export const revokeRetailPortalProfileBindingAction = defineAction(
     resultSchema: RevokeRetailPortalProfileBindingResultSchema,
     schemaVersion: '1',
   },
-  handle,
+  { write: handle },
   (transaction, scope) =>
     profileServicesForVerifiedScope(transaction, scope).pipe(
       Effect.map(

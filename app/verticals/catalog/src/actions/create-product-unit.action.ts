@@ -73,7 +73,7 @@ export const createProductUnitAction = defineAction(
     resultSchema: CreateProductUnitResultSchema,
     schemaVersion: '1',
   },
-  handleCreateProductUnit,
+  { write: handleCreateProductUnit },
   (transaction, scope) =>
     productUnitPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map(

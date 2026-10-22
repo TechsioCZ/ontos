@@ -135,7 +135,7 @@ export const revisePackageDefinitionAction = defineAction(
     resultSchema: RevisePackageDefinitionResultSchema,
     schemaVersion: '1',
   },
-  handleRevisePackageDefinition,
+  { write: handleRevisePackageDefinition },
   (transaction, scope) =>
     packageDefinitionPersistenceServiceFactory(transaction, scope).pipe(
       Effect.map(

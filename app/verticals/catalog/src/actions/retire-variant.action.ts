@@ -89,7 +89,7 @@ export const retireVariantAction = defineAction(
     resultSchema: RetireVariantResultSchema,
     schemaVersion: '1',
   },
-  handleRetireVariant,
+  { write: handleRetireVariant },
   (transaction, scope) =>
     variantPersistenceForScope(transaction, scope).pipe(
       Effect.map((services): RetireVariantServices => ({

@@ -131,6 +131,6 @@ export const suspendMarketAction = defineAction(
     resultSchema: SuspendMarketResultSchema,
     schemaVersion: '1',
   },
-  handleSuspendMarket,
+  { write: handleSuspendMarket },
   marketAdministrationService,
 );

@@ -1,3 +1,8 @@
+import { PaymentTermsDependencyUnavailable } from '../../shared/domain/payment-term-errors.ts';
+import {
+  insideDatabaseTransaction,
+  refuseInsideDatabaseTransaction,
+} from '../../../../packages/core-runtime/src/db/transaction-io-guard.ts';
 import type { OperationalScope } from '@app/core-runtime';
 import { paymentTermCatalogPort } from '../../src/integrations/payment-term-catalog.ts';
 import { ReadHandlerUnavailable } from '@app/core-runtime';
@@ -8,9 +13,13 @@ import { expect, it } from 'effect-rstest';
 import type { CustomerPaymentTermsState } from '../../shared/domain/payment-term-contracts.ts';
 import { ProfileReconciliationOwnerVerificationRequestSchema } from '../../shared/actions/resolve-profile-reconciliation.ts';
 import type { ChangeCustomerPaymentTermsServices } from '../../src/actions/change-customer-payment-terms.action.ts';
-import type { CustomerPaymentTermsScopedRoutineInvoker } from '../../src/persistence/payment-term-persistence.ts';
+import type {
+  PaymentTermCatalogPort,
+  CustomerPaymentTermsScopedRoutineInvoker,
+} from '../../src/persistence/payment-term-persistence.ts';
 import {
-  makeChangeCustomerPaymentTermsServices,
+  makeChangeCustomerPaymentTermsServices as writeCustomerPaymentTermsServices,
+  prepareCustomerPaymentTermsChange,
   makeCustomerPaymentTermEntitlementReadServices,
   makePaymentTermAffectedUseAssessmentServices,
   makePaymentTermsResolutionServices,
@@ -119,10 +128,17 @@ const transactionReturning = (
   ...responses: readonly (readonly object[])[]
 ): CustomerPaymentTermsScopedRoutineInvoker => {
   let index = 0;
+  let previousRoutine = '';
+  let previous: readonly object[] = [];
   return {
     invoke: (routine) => {
-      const response = responses[index] ?? [];
-      index += 1;
+      const repeatedRead = routine.routineKey === previousRoutine && routine.routineKey === 'payment-terms.read-state';
+      const response = repeatedRead ? previous : (responses[index] ?? []);
+      if (!repeatedRead) {
+        index += 1;
+      }
+      previousRoutine = routine.routineKey;
+      previous = response;
       return Effect.forEach(response, (item) => Schema.decodeUnknownEffect(routine.resultSchema)(item), {
         concurrency: 1,
       }).pipe(Effect.orDie);
@@ -565,3 +581,40 @@ it.effect('maps explicit owner revision rejection to a nonretryable Action incom
     expect(failure).toMatchObject({ code: 'PAYMENT_TERM_INCOMPATIBLE', retryable: false });
   }),
 );
+
+/** These persistence tests exercise the same preparation/write separation as the registered Action. */
+const makeChangeCustomerPaymentTermsServices = (
+  persistence: Parameters<typeof writeCustomerPaymentTermsServices>[0],
+  catalog: PaymentTermCatalogPort = {
+    resolveDefinitions: () =>
+      Effect.fail(
+        new PaymentTermsDependencyUnavailable({
+          code: 'payment_terms_dependency_unavailable',
+          dependency: 'PAYMENT_TERM_CATALOG',
+          reason: 'Unavailable fixture',
+        }),
+      ),
+  },
+) => ({
+  change: (
+    payload: Parameters<ChangeCustomerPaymentTermsServices['change']>[0],
+    context: Parameters<ChangeCustomerPaymentTermsServices['change']>[1],
+  ) =>
+    prepareCustomerPaymentTermsChange(
+      persistence,
+      {
+        resolveDefinitions: (requests) =>
+          refuseInsideDatabaseTransaction('module-transport', 'payment.term-catalog').pipe(
+            Effect.andThen(catalog.resolveDefinitions(requests)),
+          ),
+      },
+      payload,
+      context,
+    ).pipe(
+      Effect.flatMap((definitions) =>
+        writeCustomerPaymentTermsServices(persistence)
+          .change(payload, context, definitions)
+          .pipe(insideDatabaseTransaction('payment-terms.change')),
+      ),
+    ),
+});

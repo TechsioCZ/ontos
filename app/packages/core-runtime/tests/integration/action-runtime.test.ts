@@ -406,7 +406,7 @@ const makeRegistration = ({
       }),
       schemaVersion: '1',
     },
-    Effect.fn(function* integrationHandler(payload, context: TestActionContext) {
+    { write: Effect.fn(function* integrationHandler(payload, context: TestActionContext) {
       onExecute?.(context);
       if (onExecuteEffect !== undefined) {
         yield* onExecuteEffect;
@@ -477,7 +477,7 @@ const makeRegistration = ({
         stateId: TestStateIdSchema.make(row.tenantModuleStateId),
         value: payload.value,
       };
-    }),
+    }) },
     (transaction) => Effect.succeed({ transaction }),
   );
 
@@ -533,10 +533,10 @@ const testProgram1 = () =>
           resultSchema: Schema.Void,
           schemaVersion: '1',
         },
-        () =>
+        { write: () =>
           Effect.sync(() => {
             handlerExecutions += 1;
-          }),
+          }) },
       );
       const runtime = makeActionRuntime(
         database,
@@ -822,13 +822,13 @@ const testProgram4 = Effect.fn(function* integrationProgram8() {
             }),
             schemaVersion: '1',
           },
-          (payload, _context: TestActionContext) => {
+          { write: (payload, _context: TestActionContext) => {
             handler();
             return Effect.succeed({
               stateId: TestStateIdSchema.make('unreachable'),
               value: payload.value,
             });
-          },
+          } },
           (transaction) => Effect.succeed({ transaction }),
         );
       },
@@ -1717,10 +1717,10 @@ const testProgram13 = () =>
           resultSchema: Schema.Void,
           schemaVersion: '1',
         },
-        () =>
+        { write: () =>
           Effect.sync(() => {
             handlerExecutions += 1;
-          }),
+          }) },
       );
       const runtime = makeActionRuntime(
         database,

@@ -205,7 +205,7 @@ export const recordPrivacyApplicabilityAction = defineAction(
     resultSchema: RecordPrivacyApplicabilityResultSchema,
     schemaVersion: '1',
   },
-  handleRecordPrivacyApplicability,
+  { write: handleRecordPrivacyApplicability },
   Effect.fn('RecordPrivacyApplicabilityAction.services')(function* makeServices(transaction, scope) {
     const authority = yield* PrivacyApplicabilityBusinessFactAuthority;
     const { operations, purposes } = yield* Effect.all(

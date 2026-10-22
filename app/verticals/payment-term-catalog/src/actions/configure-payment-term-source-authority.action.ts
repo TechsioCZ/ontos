@@ -99,7 +99,7 @@ export const configurePaymentTermSourceAuthorityAction = defineAction(
     resultSchema: ConfigurePaymentTermSourceAuthorityResultSchema,
     schemaVersion: '1',
   },
-  handleConfigurePaymentTermSourceAuthority,
+  { write: handleConfigurePaymentTermSourceAuthority },
   paymentTermSourcePersistenceForScope,
 );
 // <generated-outbox-message-exports>

@@ -78,7 +78,7 @@ export const decideProductTypeUnnecessaryAction = defineAction(
     resultSchema: DecideProductTypeUnnecessaryResultSchema,
     schemaVersion: '1',
   },
-  handleDecideProductTypeUnnecessary,
+  { write: handleDecideProductTypeUnnecessary },
   (transaction, scope) =>
     productTypeUntypedDecisionPersistenceForScope(transaction, scope).pipe(
       Effect.map(

@@ -110,7 +110,7 @@ export const evaluateProcessingEligibilityAction = defineAction(
     resultSchema: EvaluateProcessingEligibilityResultSchema,
     schemaVersion: '1',
   },
-  handleEvaluateProcessingEligibility,
+  { write: handleEvaluateProcessingEligibility },
   Effect.fn('EvaluateProcessingEligibilityAction.services')(function* makeServices(transaction, scope) {
     const authority = yield* PrivacyApplicabilityBusinessFactAuthority;
     const repository = yield* privacyOperationRepositoryForScope(transaction, scope);

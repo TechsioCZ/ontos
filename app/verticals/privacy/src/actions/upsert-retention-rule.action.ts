@@ -118,7 +118,7 @@ export const upsertRetentionRuleAction = defineAction(
     resultSchema: UpsertRetentionRuleResultSchema,
     schemaVersion: '1',
   },
-  handleUpsertRetentionRule,
+  { write: handleUpsertRetentionRule },
   Effect.fn('UpsertRetentionRuleAction.services')(function* makeUpsertRetentionRuleServices(transaction, scope) {
     const repository = yield* privacyOperationRepositoryForScope(transaction, scope);
     const governanceAuthority = yield* RetentionRuleGovernanceAuthority;

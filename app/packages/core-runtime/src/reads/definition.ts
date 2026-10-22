@@ -15,13 +15,9 @@ import type {
   ResourceAccessTarget,
 } from '../permissions/context-access.ts';
 import type { LegalEntityPermissionKey, TenantPermissionKey } from '../permissions/context-permissions.ts';
-import type {
-  ReadFinishContext,
-  ReadHandlerResult,
-  ReadLoadContext,
-  ReadOwnerTransaction,
-  ReadPrepareContext,
-} from './context.ts';
+import type { ReadFinishContext, ReadHandlerResult, ReadLoadContext, ReadPrepareContext } from './context.ts';
+import type { OwnerTransaction } from '../db/owner-transaction.ts';
+import { insideDatabaseTransaction } from '../db/transaction-io-guard.ts';
 
 const registrationMarker: unique symbol = Symbol('@app/core-runtime/reads/registration');
 const resourcePermissionDeclarationMarker: unique symbol = Symbol('@app/core-runtime/reads/resource-permission');
@@ -385,7 +381,7 @@ export interface ReadFinishPipeline<
 
 /** What Core hands the owner pipeline: the prepare context plus the after-commit owner transaction. */
 export interface ReadOwnerStepsContext extends ReadPrepareContext {
-  readonly transaction: ReadOwnerTransaction;
+  readonly transaction: OwnerTransaction;
 }
 
 /**
@@ -638,7 +634,7 @@ const afterCommitStep =
     readonly finish: ReadFinish<Input, Prepared, Loaded, Result, Error, Requirements>;
     readonly input: Input;
     readonly prepared: Prepared;
-    readonly transaction: ReadOwnerTransaction;
+    readonly transaction: OwnerTransaction;
   }) =>
   (loaded: Loaded) =>
     Effect.suspend(() =>
@@ -1014,7 +1010,7 @@ export const getReadStages = <
 ): ReadOwnerStages<InputSchema['Type'], ResultSchema['Type'], Services, Error, Requirements> =>
   ReadPrivateStorage.getValue(registration).stages;
 
-const noOwnerTransaction: ReadOwnerTransaction = () =>
+const noOwnerTransaction: OwnerTransaction = () =>
   Effect.die('These owner steps run without Core; pass `transaction` to give finish its owner transaction');
 
 /** Runs a Read's owner steps in order (prepare, load, finish) without Core's runtime: unit tests of owner code. */
@@ -1029,7 +1025,7 @@ export const runReadOwnerSteps = <
 >(
   registration: ReadRegistration<InputSchema, ResultSchema, Owner, Services, Error, Requirements, DomainErrorSchema>,
   input: InputSchema['Type'],
-  context: ReadPrepareContext & { readonly services: Services; readonly transaction?: ReadOwnerTransaction },
+  context: ReadPrepareContext & { readonly services: Services; readonly transaction?: OwnerTransaction },
 ) =>
   getReadStages(registration)(input, {
     compositionRevision: context.compositionRevision,
@@ -1037,7 +1033,8 @@ export const runReadOwnerSteps = <
     scope: context.scope,
     transaction: context.transaction ?? noOwnerTransaction,
   }).pipe(
-    Effect.flatMap((load) => load(context.services)),
+    // The load step runs under the same transaction mark as in Core: remote I/O inside it dies.
+    Effect.flatMap((load) => load(context.services).pipe(insideDatabaseTransaction(context.readKey))),
     Effect.flatten,
   );
 

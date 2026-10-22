@@ -1,5 +1,6 @@
 import type {
   ActionBusinessPermissionTarget,
+  ActionPrepareContext,
   ActionHandlerContext,
   CoreSearchResourceRef,
   OperationalScope,
@@ -11,8 +12,7 @@ import type { PurchaseApprovalCurrentnessService } from '../../shared/domain/pur
 import { PurchaseLimitEvaluationCurrentnessPort } from '../../shared/domain/purchase-limit-evaluation-currentness-port.ts';
 import { PurchaseLimitEvaluationSourceFactory } from '../../shared/domain/purchase-limit-evaluation.ts';
 import type { PurchaseApprovalRequest } from '../../shared/domain/purchasing-approval.ts';
-import { purchasingApprovalWorkflowForScope } from '../persistence/purchasing-approval-persistence.ts';
-import type { PurchasingApprovalWorkflowService } from '../persistence/purchasing-approval-persistence.ts';
+import { ownerRoutinePreparation } from '../persistence/owner-routine-preparation.ts';
 
 type PurchasingApprovalDataAccessContext = Pick<
   ActionHandlerContext<Readonly<Record<string, never>>, unknown>,
@@ -140,59 +140,40 @@ const purchaseApprovalEvaluationUnavailable = (cause?: unknown): OperationContex
   return failure;
 };
 
-interface PurchasingApprovalCurrentnessServices {
-  readonly currentness: PurchaseApprovalCurrentnessService;
-  readonly workflow: PurchasingApprovalWorkflowService;
-}
-
-type PurchasingApprovalTransaction = Parameters<typeof purchasingApprovalWorkflowForScope>[0];
-
-export const purchasingApprovalCurrentnessServicesForScope = (
-  transaction: PurchasingApprovalTransaction,
-  scope: OperationalScope,
-) => {
+/** Evaluate currentness outside BEGIN; each owner read uses its own admitted short transaction. */
+export const purchasingApprovalCurrentnessForPreparation = (context: ActionPrepareContext) => {
+  const { scope } = context;
+  const transaction = ownerRoutinePreparation(context.transaction);
   const { legalEntityId, trustedStorefrontId } = scope;
   return Effect.all(
     {
-      currentness: Effect.all(
-        {
-          contextAccess: ContextAccess,
-          currentnessFactory: PurchaseApprovalCurrentnessFactory,
-          evaluationSourceFactory: PurchaseLimitEvaluationSourceFactory,
-          purchaseLimitCurrentness: PurchaseLimitEvaluationCurrentnessPort,
-        },
-        { concurrency: 4 },
-      ).pipe(
-        Effect.flatMap(({ contextAccess, currentnessFactory, evaluationSourceFactory, purchaseLimitCurrentness }) =>
-          legalEntityId === undefined || trustedStorefrontId === undefined
-            ? Effect.void
-            : evaluationSourceFactory.make(transaction, scope).pipe(
-                Effect.mapError(purchaseApprovalEvaluationUnavailable),
-                Effect.map((evaluationSource) =>
-                  currentnessFactory.make(
-                    transaction,
-                    { ...scope, legalEntityId, trustedStorefrontId },
-                    contextAccess,
-                    purchaseLimitCurrentness,
-                    evaluationSource,
-                  ),
-                ),
-              ),
-        ),
-      ),
-      workflow: purchasingApprovalWorkflowForScope(transaction, scope),
+      contextAccess: ContextAccess,
+      currentnessFactory: PurchaseApprovalCurrentnessFactory,
+      evaluationSourceFactory: PurchaseLimitEvaluationSourceFactory,
+      purchaseLimitCurrentness: PurchaseLimitEvaluationCurrentnessPort,
     },
-    { concurrency: 2 },
+    { concurrency: 4 },
   ).pipe(
-    Effect.flatMap(({ currentness, workflow }) =>
-      currentness === undefined
+    Effect.flatMap(({ contextAccess, currentnessFactory, evaluationSourceFactory, purchaseLimitCurrentness }) =>
+      legalEntityId === undefined || trustedStorefrontId === undefined
         ? Effect.fail(
             new OperationContextUnavailable({
               code: 'operation_context_unavailable',
               reason: 'Current Purchasing Approval evidence requires trusted owner scope',
             }),
           )
-        : Effect.succeed({ currentness, workflow } satisfies PurchasingApprovalCurrentnessServices),
+        : evaluationSourceFactory.make(transaction, scope).pipe(
+            Effect.mapError(purchaseApprovalEvaluationUnavailable),
+            Effect.map((evaluationSource): PurchaseApprovalCurrentnessService =>
+              currentnessFactory.make(
+                transaction,
+                { ...scope, legalEntityId, trustedStorefrontId },
+                contextAccess,
+                purchaseLimitCurrentness,
+                evaluationSource,
+              ),
+            ),
+          ),
     ),
   );
 };

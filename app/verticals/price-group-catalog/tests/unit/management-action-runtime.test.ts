@@ -7,7 +7,11 @@ import {
   ActionCommitIndeterminate,
   TrustedPrincipalContextSchema,
 } from '../../../../packages/core-runtime/src/index.ts';
-import { defineAction, getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
+import {
+  defineAction,
+  getActionStages,
+  runActionOwnerSteps,
+} from '../../../../packages/core-runtime/src/actions/definition.ts';
 import type {
   ActionInvocationRecord,
   ActionRepositoryService,
@@ -425,19 +429,32 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     serviceResolutionCount += 1;
     return Effect.succeed(persistence);
   };
+  /** These Actions have no `prepare` step, so its Core-only failures cannot occur in their write steps. */
+  const noPrepareFailures = { OperationContextUnavailable: Effect.die, OwnerTransactionUnavailable: Effect.die };
   const createRegistration = defineAction(
     createPriceGroupAction.descriptor,
-    getActionHandler(createPriceGroupAction),
+    {
+      write: (payload, context) =>
+        runActionOwnerSteps(createPriceGroupAction, payload, context).pipe(Effect.catchTags(noPrepareFailures)),
+    },
     services,
   );
   const revisionRegistration = defineAction(
     createPriceGroupDefinitionRevisionAction.descriptor,
-    getActionHandler(createPriceGroupDefinitionRevisionAction),
+    {
+      write: (payload, context) =>
+        runActionOwnerSteps(createPriceGroupDefinitionRevisionAction, payload, context).pipe(
+          Effect.catchTags(noPrepareFailures),
+        ),
+    },
     services,
   );
   const retirementRegistration = defineAction(
     retirePriceGroupAction.descriptor,
-    getActionHandler(retirePriceGroupAction),
+    {
+      write: (payload, context) =>
+        runActionOwnerSteps(retirePriceGroupAction, payload, context).pipe(Effect.catchTags(noPrepareFailures)),
+    },
     services,
   );
   const runtime = makeActionRuntime(
@@ -454,10 +471,18 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         { load: Effect.succeed(approvedComposition) },
         ultramodernApiMarker,
       ),
-      resolveHandler: (registration) => {
-        handlerResolutionCount += 1;
-        return getActionHandler(registration);
-      },
+      // Counts owner write steps entered: the stages resolve before the transaction, the write step only inside it.
+      resolveStages: (registration) => (payload, context) =>
+        getActionStages(registration)(payload, context).pipe(
+          Effect.map((steps) => ({
+            ...steps,
+            // oxlint-disable-next-line sonarjs/no-nested-functions -- Test seam: counts owner write steps entered inside the transaction.
+            write: (writeContext: Parameters<typeof steps.write>[0]) => {
+              handlerResolutionCount += 1;
+              return steps.write(writeContext);
+            },
+          })),
+        ),
     },
   );
   const runCreate = (
