@@ -1,29 +1,33 @@
 // @effect-diagnostics *:off
-import { PgClient } from '@effect/sql-pg';
 import { Effect, Redacted } from 'effect';
 import { emailEnvironment, emailTransport } from '../transport.ts';
 import type { EmailEnvironment, EmailTransportRuntime } from '../transport-runtime.ts';
-import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID } from './contract.ts';
-import type { DeliveryOutcome, PlannedEmail } from './contract.ts';
+import type { DeliveryOutcome, EmailDeliverySource, PlannedEmail } from './contract.ts';
 import { claim, finish, readEnabledSince, recoverInterrupted } from './ledger.ts';
 import { deliveryOutcomeOf, planAgendaEmails, planAkrosOrderEmails, planRentReminderEmail } from './plan.ts';
-import { isUndeliverableRecipient } from './recipients.ts';
+import { isUndeliverableRecipient, undeliverableDomainsFor } from './recipients.ts';
+import { inDeliveryScope } from './scope.ts';
+import type { DeliveryScope } from './scope.ts';
 import { agendaSenderFor, senderFor } from './senders.ts';
-import { readAgendaRecipients, readAkrosOrders, readRentReminders } from './sources.ts';
+import type { PendingDelivery } from './sources.ts';
+import {
+  parseDeliveryId,
+  readAgendaRecipients,
+  readAkrosOrders,
+  readPendingDeliveries,
+  readRentReminders,
+} from './sources.ts';
 
 type OutgoingEmail = PlannedEmail & { readonly from: string };
 export const DISPATCH_BATCH_SIZE = 10;
 
-/** Called only after a ledger claim. Fake stage recipients settle visibly without touching the binding. */
+/** Called only after a ledger claim. Seeded fake recipients settle visibly as SKIPPED without touching the transport. */
 export const submitEmail = (
   planned: OutgoingEmail,
   transport: EmailTransportRuntime,
   environment: EmailEnvironment,
 ): Effect.Effect<DeliveryOutcome> => {
-  if (
-    transport.kind === 'cloudflare' &&
-    isUndeliverableRecipient(planned.recipient, environment['ONTOS_EMAIL_UNDELIVERABLE_DOMAINS'])
-  ) {
+  if (isUndeliverableRecipient(planned.recipient, undeliverableDomainsFor(transport.kind, environment))) {
     return Effect.succeed({ status: 'SKIPPED', errorTag: 'undeliverable_recipient' });
   }
   return transport
@@ -41,55 +45,128 @@ export const submitEmail = (
     );
 };
 
-/** Same dispatcher in Node and workerd. No runtime DDL, no retained DB sockets, no provider fallback. */
-export const dispatchEmailBatch = Effect.gen(function* () {
-  if (!emailTransport.provider.configured) return { configured: false, processed: 0 };
-  const enabledSince = yield* readEnabledSince;
-  // Never recover another request's live submission. A dead send remains ambiguous, never retried.
-  yield* recoverInterrupted;
-  const environment = emailEnvironment;
-  const akrosFrom = senderFor({ legalEntityId: AKROS_LEGAL_ENTITY_ID }, 'AKROS', environment, emailTransport.kind);
-  const orders = (yield* readAkrosOrders(enabledSince)).flatMap((order) =>
-    planAkrosOrderEmails(order, {
-      enabledSince,
-      legalEntityId: AKROS_LEGAL_ENTITY_ID,
-      tenantId: DEMO_TENANT_ID,
-      storefrontUrl: environment['AKROS_STOREFRONT_PUBLIC_URL'] ?? 'http://localhost:3070',
-    }).map((email) => ({ ...email, from: akrosFrom })),
-  );
-  const reminders: OutgoingEmail[] = [];
-  for (const reminder of yield* readRentReminders(enabledSince)) {
-    const email = planRentReminderEmail(reminder, enabledSince);
-    if (email !== null)
-      reminders.push({ ...email, from: senderFor(email, reminder.legalName, environment, emailTransport.kind) });
+/** Work of one tenant + legal entity this tick: due delivery ids grouped by source subject. */
+export interface ScopeWork {
+  readonly keys: ReadonlySet<string>;
+  readonly scope: DeliveryScope;
+  readonly subjects: Readonly<Record<EmailDeliverySource, readonly string[]>>;
+}
+
+/**
+ * Round-robin over sources (an order backlog cannot starve reminders or personal notifications), at most `limit`
+ * deliveries, grouped by scope. An interrupted SENDING row arrives under its own key: its scope's transaction settles
+ * it as UNKNOWN before planning, and the claim then refuses it.
+ */
+export const scheduleScopes = (pending: readonly PendingDelivery[], limit: number): readonly ScopeWork[] => {
+  const lanes = new Map<EmailDeliverySource, { readonly item: PendingDelivery; readonly subjectId: string }[]>();
+  for (const item of pending) {
+    const parsed = parseDeliveryId(item.deliveryId);
+    if (parsed === null) continue;
+    lanes.set(parsed.source, [...(lanes.get(parsed.source) ?? []), { item, subjectId: parsed.subjectId }]);
   }
-  const agenda = (yield* readAgendaRecipients(enabledSince)).flatMap((person) =>
-    planAgendaEmails(person, { appUrl: environment['ONTOS_PUBLIC_URL'] ?? 'http://localhost:3020', enabledSince }).map(
-      (email) => ({ ...email, from: agendaSenderFor(person, environment, emailTransport.kind) }),
-    ),
-  );
-  // Interleave sources so an order backlog cannot starve reminders or personal notifications.
-  const queue: OutgoingEmail[] = [];
-  for (let index = 0; index < Math.max(orders.length, reminders.length, agenda.length); index++) {
-    for (const lane of [orders, reminders, agenda]) {
-      const email = lane[index];
-      if (email !== undefined) queue.push(email);
+  const scopes = new Map<
+    string,
+    { keys: Set<string>; scope: DeliveryScope; subjects: Record<EmailDeliverySource, string[]> }
+  >();
+  let taken = 0;
+  for (let index = 0; taken < limit; index++) {
+    const round = [...lanes.entries()].flatMap(([source, lane]) => {
+      const entry = lane[index];
+      return entry === undefined ? [] : [{ ...entry, source }];
+    });
+    if (round.length === 0) break;
+    for (const { item, source, subjectId } of round) {
+      if (taken >= limit) break;
+      const id = `${item.tenantId}/${item.legalEntityId}`;
+      const work = scopes.get(id) ?? {
+        keys: new Set<string>(),
+        scope: { legalEntityId: item.legalEntityId, tenantId: item.tenantId },
+        subjects: { 'akros-order': [], 'facility-agenda': [], 'rent-reminder': [] },
+      };
+      scopes.set(id, work);
+      if (work.keys.has(item.deliveryId)) continue;
+      work.keys.add(item.deliveryId);
+      taken++;
+      if (!work.subjects[source].includes(subjectId)) work.subjects[source].push(subjectId);
     }
   }
-  if (queue.length === 0) return { configured: true, processed: 0 };
-  const sql = yield* PgClient.PgClient;
-  const due = yield* sql<{ readonly key: string }>`
-    select key from unnest(${queue.map((email) => email.dedupeKey)}::text[]) as key
-    where not exists (select 1 from demo_email.deliveries d where d.dedupe_key = key
-      and (d.status <> 'RETRY' or d.updated_at >= now() - make_interval(secs => least(60, 10 * power(2, least(d.attempts - 1, 3))))))`;
-  const dueKeys = new Set(due.map((row) => row.key));
-  let processed = 0;
-  for (const email of queue) {
-    if (processed >= DISPATCH_BATCH_SIZE) break;
-    if (!dueKeys.has(email.dedupeKey) || !(yield* claim(email))) continue;
-    const outcome = yield* submitEmail(email, emailTransport, environment);
-    yield* finish(email.dedupeKey, outcome);
-    processed++;
-  }
-  return { configured: true, processed };
-});
+  return [...scopes.values()];
+};
+
+/** Plans exactly the due e-mails of one scope. Must run inside inDeliveryScope(work.scope). */
+const planScope = (
+  work: ScopeWork,
+  enabledSince: string,
+  transport: EmailTransportRuntime,
+  environment: EmailEnvironment,
+) =>
+  Effect.gen(function* () {
+    const { scope } = work;
+    const planned: OutgoingEmail[] = [];
+    const orders = yield* readAkrosOrders(scope, work.subjects['akros-order']);
+    for (const order of orders) {
+      const from = senderFor(scope, 'AKROS', environment, transport.kind);
+      for (const email of planAkrosOrderEmails(order, {
+        enabledSince,
+        legalEntityId: scope.legalEntityId,
+        storefrontUrl: environment['AKROS_STOREFRONT_PUBLIC_URL'] ?? 'http://localhost:3070',
+        tenantId: scope.tenantId,
+      }))
+        planned.push({ ...email, from });
+    }
+    for (const reminder of yield* readRentReminders(scope, work.subjects['rent-reminder'])) {
+      const email = planRentReminderEmail(reminder, enabledSince);
+      if (email !== null)
+        planned.push({ ...email, from: senderFor(email, reminder.legalName, environment, transport.kind) });
+    }
+    for (const person of yield* readAgendaRecipients(scope, work.subjects['facility-agenda'])) {
+      const from = agendaSenderFor(person, environment, transport.kind);
+      for (const email of planAgendaEmails(person, {
+        appUrl: environment['ONTOS_PUBLIC_URL'] ?? 'http://localhost:3020',
+        enabledSince,
+      }))
+        planned.push({ ...email, from });
+    }
+    return planned.filter((email) => work.keys.has(email.dedupeKey));
+  });
+
+export interface DispatchResult {
+  readonly configured: boolean;
+  readonly processed: number;
+  readonly skipped: number;
+}
+
+/**
+ * Same dispatcher in Node and workerd, as the runtime role under RLS. One cross-tenant read lists due delivery ids;
+ * each scope then reads, claims (committed before its send, so a dead send is never repeated), sends and settles in
+ * transactions bound to its tenant + legal entity. No runtime DDL, no retained DB sockets, no provider fallback.
+ */
+export const dispatchEmailBatchWith = (transport: EmailTransportRuntime, environment: EmailEnvironment) =>
+  Effect.gen(function* () {
+    if (!transport.provider.configured) return { configured: false, processed: 0, skipped: 0 } as DispatchResult;
+    const enabledSince = yield* readEnabledSince;
+    const work = scheduleScopes(yield* readPendingDeliveries, DISPATCH_BATCH_SIZE);
+    let processed = 0;
+    let skipped = 0;
+    for (const scopeWork of work) {
+      const planned = yield* inDeliveryScope(
+        scopeWork.scope,
+        Effect.gen(function* () {
+          // Never recover another request's live submission. A dead send remains ambiguous, never retried.
+          yield* recoverInterrupted;
+          return yield* planScope(scopeWork, enabledSince, transport, environment);
+        }),
+      );
+      for (const email of planned) {
+        // Claim, send, settle one at a time: an interrupted request leaves at most one row ambiguous.
+        if (!(yield* inDeliveryScope(scopeWork.scope, claim(email)))) continue;
+        const outcome = yield* submitEmail(email, transport, environment);
+        yield* inDeliveryScope(scopeWork.scope, finish(email.dedupeKey, outcome));
+        processed++;
+        if (outcome.status === 'SKIPPED') skipped++;
+      }
+    }
+    return { configured: true, processed, skipped } as DispatchResult;
+  });
+
+export const dispatchEmailBatch = dispatchEmailBatchWith(emailTransport, emailEnvironment);

@@ -1,6 +1,6 @@
 // @effect-diagnostics *:off
-// Bounded committed-state readers. Settled/in-flight keys are excluded in PostgreSQL, so old
-// receipts cannot fill a page forever. RETRY is eligible only when its backoff has elapsed.
+// Committed-state readers. Which e-mails are due is decided once, by demo_email.pending_deliveries() (ids only, the
+// dispatcher's sole cross-tenant read). Content is read here, only inside inDeliveryScope (RLS) and only for those ids.
 import { PgClient } from '@effect/sql-pg';
 import { Effect } from 'effect';
 import type {
@@ -8,55 +8,73 @@ import type {
   AgendaPreferenceInput,
   AgendaRecipientInput,
   AkrosOrderInput,
+  EmailDeliverySource,
   RentReminderInput,
 } from './contract.ts';
-import {
-  AGENDA_MANDATORY_EMAIL_CATEGORIES,
-  AGENDA_OPTIONAL_EMAIL_CATEGORIES,
-  AKROS_LEGAL_ENTITY_ID,
-  DEMO_TENANT_ID,
-} from './contract.ts';
+import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID } from './contract.ts';
+import type { DeliveryScope } from './scope.ts';
 
 const json = <T>(value: unknown): T => (typeof value === 'string' ? JSON.parse(value) : value) as T;
-const SOURCE_PAGE_SIZE = 10;
+/** Per source and tick; the function caps it at 100. */
+export const PENDING_PAGE_SIZE = 10;
 
-/** AKROS orders are row-level secured: the read runs in the AKROS scope (tenant + legal entity) of the runtime role. */
-export const readAkrosOrders = (enabledSince: string) =>
+export interface PendingDelivery extends DeliveryScope {
+  /** The ledger dedupe key, e.g. `rent-reminder:<reminder id>`. */
+  readonly deliveryId: string;
+}
+
+export const readPendingDeliveries = Effect.gen(function* () {
+  const sql = yield* PgClient.PgClient;
+  return yield* sql<PendingDelivery>`
+    select tenant_id::text as "tenantId", legal_entity_id::text as "legalEntityId", delivery_id as "deliveryId"
+    from demo_email.pending_deliveries(${PENDING_PAGE_SIZE}, ${DEMO_TENANT_ID}::uuid, ${AKROS_LEGAL_ENTITY_ID}::uuid)`;
+});
+
+export interface ParsedDeliveryId {
+  readonly source: EmailDeliverySource;
+  /** Order id, reminder id or the agenda recipient's principal id. */
+  readonly subjectId: string;
+}
+
+/** `akros-order:<order id>:<event>`, `rent-reminder:<id>`, `facility-agenda:<principal id>:<batch instant>`. */
+export const parseDeliveryId = (deliveryId: string): ParsedDeliveryId | null => {
+  const separator = deliveryId.indexOf(':');
+  const source = deliveryId.slice(0, separator);
+  const rest = deliveryId.slice(separator + 1);
+  if (separator < 0 || rest === '') return null;
+  switch (source) {
+    case 'rent-reminder':
+      return { source, subjectId: rest };
+    case 'akros-order': {
+      const end = rest.lastIndexOf(':');
+      return end <= 0 ? null : { source, subjectId: rest.slice(0, end) };
+    }
+    case 'facility-agenda': {
+      const end = rest.indexOf(':');
+      return end <= 0 ? null : { source, subjectId: rest.slice(0, end) };
+    }
+    default:
+      return null;
+  }
+};
+
+/** Call inside inDeliveryScope(scope). The explicit predicates restate what RLS already enforces. */
+export const readAkrosOrders = (scope: DeliveryScope, orderIds: readonly string[]) =>
   Effect.gen(function* () {
+    if (orderIds.length === 0) return [] as readonly AkrosOrderInput[];
     const sql = yield* PgClient.PgClient;
-    const rows = yield* sql.withTransaction(
-      Effect.gen(function* () {
-        yield* sql`select set_config('ontos.tenant_id', ${DEMO_TENANT_ID}, true), set_config('ontos.legal_entity_id', ${AKROS_LEGAL_ENTITY_ID}, true)`;
-        return yield* sql<{ readonly order: unknown }>`
-      select r.document as "order" from demo_merchandise.orders r, lateral (select r.document as o) d
-      where r.tenant_id = ${DEMO_TENANT_ID}::uuid and r.legal_entity_id = ${AKROS_LEGAL_ENTITY_ID}::uuid
-        and r.channel = 'STOREFRONT' and r.created_at >= ${enabledSince}::timestamptz
-        and coalesce(trim(o->'contact'->>'email'), '') <> ''
-        and exists (
-          select 1 from (
-            select event, at from (values ('ORDER_CREATED', o->>'createdAt'),
-              (case when o->>'status' in ('CONFIRMED', 'SHIPPED', 'DELIVERED', 'CANCELLED') then o->>'status' end, o->>'updatedAt')) current_event(event, at)
-            union all
-            select case
-              when h->>'after' like 'Zpracovává se%' or h->>'after' like 'Potvrzen%' then 'CONFIRMED'
-              when h->>'after' like 'Předáno dopravci%' then 'SHIPPED'
-              when h->>'after' like 'Dokončen%' then 'DELIVERED'
-              when h->>'after' like 'Stornovan%' or h->>'after' like 'Zrušen%' then 'CANCELLED'
-            end, h->>'at' from jsonb_array_elements(coalesce(o->'history', '[]'::jsonb)) h where h->>'kind' = 'STATUS'
-          ) e where e.event is not null
-            and (o->'demoCleanup'->>'at' is null or e.at::timestamptz < (o->'demoCleanup'->>'at')::timestamptz)
-            and not exists (select 1 from demo_email.deliveries d
-              where d.dedupe_key = 'akros-order:' || r.id || ':' || e.event
-                and (d.status <> 'RETRY' or d.updated_at >= now() - make_interval(secs => least(60, 10 * power(2, least(d.attempts - 1, 3))))))
-        )
-      order by r.created_at, r.id limit ${SOURCE_PAGE_SIZE}`;
-      }),
-    );
+    const rows = yield* sql<{ readonly order: unknown }>`
+      select r.document as "order" from demo_merchandise.orders r
+      where r.tenant_id = ${scope.tenantId}::uuid and r.legal_entity_id = ${scope.legalEntityId}::uuid
+        and r.id in ${sql.in(orderIds)}
+      order by r.created_at, r.id`;
     return rows.map((row) => json<AkrosOrderInput>(row.order));
   });
 
-export const readRentReminders = (enabledSince: string) =>
+/** Call inside inDeliveryScope(scope). */
+export const readRentReminders = (scope: DeliveryScope, reminderIds: readonly string[]) =>
   Effect.gen(function* () {
+    if (reminderIds.length === 0) return [] as readonly RentReminderInput[];
     const sql = yield* PgClient.PgClient;
     const rows = yield* sql<{
       readonly invoiceNumber: string | null;
@@ -71,11 +89,9 @@ export const readRentReminders = (enabledSince: string) =>
         (select i->>'number' from jsonb_array_elements(coalesce(s.state->'invoices', '[]'::jsonb)) i
           where i->'ref'->>'resourceId' = r->>'invoiceResourceId' limit 1) as "invoiceNumber"
       from finance_billing.finance_states s, jsonb_array_elements(coalesce(s.state->'reminders', '[]'::jsonb)) r
-      where r->>'deliveryMode' = 'EMAIL' and (r->>'createdAt')::timestamptz >= ${enabledSince}::timestamptz
-        and coalesce(trim(r->>'recipient'), '') <> ''
-        and not exists (select 1 from demo_email.deliveries d where d.dedupe_key = 'rent-reminder:' || (r->>'id')
-          and (d.status <> 'RETRY' or d.updated_at >= now() - make_interval(secs => least(60, 10 * power(2, least(d.attempts - 1, 3))))))
-      order by r->>'createdAt', r->>'id' limit ${SOURCE_PAGE_SIZE}`;
+      where s.tenant_id = ${scope.tenantId}::uuid and s.legal_entity_id = ${scope.legalEntityId}::uuid
+        and r->>'id' in ${sql.in(reminderIds)}
+      order by r->>'createdAt', r->>'id'`;
     return rows.map((row): RentReminderInput => ({
       invoiceNumber: row.invoiceNumber,
       legalEntityId: row.legalEntityId,
@@ -85,9 +101,10 @@ export const readRentReminders = (enabledSince: string) =>
     }));
   });
 
-/** At most one eligible notification batch per person, only after opt-in and for chosen categories. */
-export const readAgendaRecipients = (enabledSince: string) =>
+/** Call inside inDeliveryScope(scope). All notifications of each person; the planner groups them into batches. */
+export const readAgendaRecipients = (scope: DeliveryScope, principalIds: readonly string[]) =>
   Effect.gen(function* () {
+    if (principalIds.length === 0) return [] as readonly AgendaRecipientInput[];
     const sql = yield* PgClient.PgClient;
     const rows = yield* sql<{
       readonly email: string | null;
@@ -99,33 +116,18 @@ export const readAgendaRecipients = (enabledSince: string) =>
       readonly tenantId: string;
     }>`
       select s.tenant_id::text as "tenantId", s.legal_entity_id::text as "legalEntityId", p as "preference",
-        p->'principal'->>'principalId' as "principalId", recipient.email,
+        p->'principal'->>'principalId' as "principalId",
+        (select u.email from core.principal_auth_bindings b join auth."user" u on u.id = b.provider_subject_id
+          where b.principal_id::text = p->'principal'->>'principalId' and b.tenant_id = s.tenant_id
+            and b.status = 'active' order by b.created_at limit 1) as email,
         (select le.legal_name from core.legal_entities le
           where le.legal_entity_id = s.legal_entity_id and le.tenant_id = s.tenant_id) as "legalName",
-        (select jsonb_agg(n) from jsonb_array_elements(coalesce(s.state->'notifications', '[]'::jsonb)) n
-          where n->'recipient'->>'principalId' = p->'principal'->>'principalId'
-            and n->>'createdAt' = batch.at) as "notifications"
+        (select coalesce(jsonb_agg(n), '[]'::jsonb) from jsonb_array_elements(coalesce(s.state->'notifications', '[]'::jsonb)) n
+          where n->'recipient'->>'principalId' = p->'principal'->>'principalId') as "notifications"
       from facility_operations.agenda_states s
       cross join lateral jsonb_array_elements(coalesce(s.state->'preferences', '[]'::jsonb)) p
-      cross join lateral (
-        select u.email from core.principal_auth_bindings b join auth."user" u on u.id = b.provider_subject_id
-          where b.principal_id::text = p->'principal'->>'principalId' and b.tenant_id = s.tenant_id
-            and b.status = 'active' order by b.created_at limit 1
-      ) recipient
-      cross join lateral (
-        select n->>'createdAt' as at from jsonb_array_elements(coalesce(s.state->'notifications', '[]'::jsonb)) n
-          where n->'recipient'->>'principalId' = p->'principal'->>'principalId'
-            and (n->>'createdAt')::timestamptz >= greatest(${enabledSince}::timestamptz,
-              coalesce(p->>'emailSince', p->>'updatedAt')::timestamptz)
-            and (${JSON.stringify(AGENDA_MANDATORY_EMAIL_CATEGORIES)}::jsonb ? (n->>'category')
-              or coalesce(p->'emailCategories', ${JSON.stringify(AGENDA_OPTIONAL_EMAIL_CATEGORIES)}::jsonb) ? (n->>'category'))
-            and not exists (select 1 from demo_email.deliveries d
-              where d.dedupe_key = 'facility-agenda:' || (p->'principal'->>'principalId') || ':' || (n->>'createdAt')
-                and (d.status <> 'RETRY' or d.updated_at >= now() - make_interval(secs => least(60, 10 * power(2, least(d.attempts - 1, 3))))))
-          group by n->>'createdAt' order by n->>'createdAt' limit 1
-      ) batch
-      where s.agenda = 'agenda' and (p->>'emailOptIn')::boolean is true and coalesce(trim(recipient.email), '') <> ''
-      order by batch.at, p->'principal'->>'principalId' limit ${SOURCE_PAGE_SIZE}`;
+      where s.tenant_id = ${scope.tenantId}::uuid and s.legal_entity_id = ${scope.legalEntityId}::uuid
+        and s.agenda = 'agenda' and p->'principal'->>'principalId' in ${sql.in(principalIds)}`;
     return rows.map((row): AgendaRecipientInput => ({
       email: row.email,
       legalEntityId: row.legalEntityId,

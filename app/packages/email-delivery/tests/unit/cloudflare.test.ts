@@ -122,6 +122,22 @@ describe('undeliverable recipients', () => {
       expect(outcome).toEqual({ status: 'SKIPPED', errorTag: 'undeliverable_recipient' });
     });
   }
+  it('skips seeded fake recipients on the local SMTP transport too', async () => {
+    const outcome = await Effect.runPromise(
+      submitEmail(
+        { ...planned, recipient: 'person@demo.ontos' },
+        {
+          kind: 'smtp',
+          provider: { configured: true, label: 'Mailpit' },
+          makeDelivery: () => {
+            throw new Error('must not submit fake recipients');
+          },
+        },
+        {},
+      ),
+    );
+    expect(outcome).toEqual({ status: 'SKIPPED', errorTag: 'undeliverable_recipient' });
+  });
   it('normalizes suffixes without matching lookalike real domains or local-part test markers', () => {
     expect(isUndeliverableRecipient('PERSON@AKROS.DEMO')).toBe(true);
     expect(isUndeliverableRecipient('tester@notdemo.cz')).toBe(false);
@@ -129,9 +145,9 @@ describe('undeliverable recipients', () => {
     expect(isUndeliverableRecipient('real@extra.company', '.extra.company')).toBe(true);
     expect(isUndeliverableRecipient('real@bleeding.dev', '.extra.company')).toBe(false);
   });
-  it('really sends fake local recipients to the SMTP adapter, and real stage recipients to the binding', async () => {
+  it('sends documentation-domain recipients to the local SMTP capture, and real stage recipients to the binding', async () => {
     for (const [kind, recipient] of [
-      ['smtp', 'person@demo.ontos'],
+      ['smtp', 'person@example.com'],
       ['cloudflare', message.to],
     ] as const) {
       let calls = 0;
