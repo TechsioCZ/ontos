@@ -20,10 +20,14 @@ import {
 const json = <T>(value: unknown): T => (typeof value === 'string' ? JSON.parse(value) : value) as T;
 const SOURCE_PAGE_SIZE = 10;
 
+/** AKROS orders are row-level secured: the read runs in the AKROS scope (tenant + legal entity) of the runtime role. */
 export const readAkrosOrders = (enabledSince: string) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient;
-    const rows = yield* sql<{ readonly order: unknown }>`
+    const rows = yield* sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`select set_config('ontos.tenant_id', ${DEMO_TENANT_ID}, true), set_config('ontos.legal_entity_id', ${AKROS_LEGAL_ENTITY_ID}, true)`;
+        return yield* sql<{ readonly order: unknown }>`
       select r.document as "order" from demo_merchandise.orders r, lateral (select r.document as o) d
       where r.tenant_id = ${DEMO_TENANT_ID}::uuid and r.legal_entity_id = ${AKROS_LEGAL_ENTITY_ID}::uuid
         and r.channel = 'STOREFRONT' and r.created_at >= ${enabledSince}::timestamptz
@@ -46,6 +50,8 @@ export const readAkrosOrders = (enabledSince: string) =>
                 and (d.status <> 'RETRY' or d.updated_at >= now() - make_interval(secs => least(60, 10 * power(2, least(d.attempts - 1, 3))))))
         )
       order by r.created_at, r.id limit ${SOURCE_PAGE_SIZE}`;
+      }),
+    );
     return rows.map((row) => json<AkrosOrderInput>(row.order));
   });
 
