@@ -1,5 +1,4 @@
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime/auth/system-principal-context-provenance';
-import { moduleReleaseApiBaseUrl } from '@app/core-runtime/unit-service-fetch';
 import type {
   GatewayAssertionRedemption,
   GatewayAssertionRedemptionInput,
@@ -662,10 +661,9 @@ export const makeReferenceGatewayCredentialSource = Effect.fn('GatewayPrincipalV
         ) {
           return yield* Effect.fail(invalidError());
         }
-        const apiBaseUrl = new URL(
-          moduleReleaseApiBaseUrl(audience, module.deployment.buildMarker),
-          snapshot.composition.shell.runtimeContract.url,
-        ).href;
+        // Owner-to-owner reads go straight to the referenced module's approved release origin. The Shell runtime
+        // contract URL is the Shell's static asset release, which does not serve the module API.
+        const apiBaseUrl = new URL(`/${audience}-api`, module.backend.baseUrl).href;
         return {
           apiBaseUrl,
           authorization: Redacted.value(credential.authorization),

@@ -2065,7 +2065,10 @@ const connectionsAdminFailure = (error: ConnectionsAdminError) => {
         ),
       );
     default:
-      return failIdentityProblem(shellCapabilityUnavailableProblem());
+      // Unavailability is retryable for the caller, but the operator needs the underlying cause.
+      return Effect.logWarning('Connections administration unavailable', error.cause).pipe(
+        Effect.andThen(failIdentityProblem(shellCapabilityUnavailableProblem())),
+      );
   }
 };
 
