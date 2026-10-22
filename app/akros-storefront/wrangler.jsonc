@@ -10,5 +10,5 @@
   "routes": [{ "pattern": "ontos-stage-akros.bleeding.dev", "custom_domain": true }],
   "limits": { "cpu_ms": 30000 },
   "triggers": { "crons": ["*/15 * * * *"] },
-  "vars": {}
+  "vars": {},
 }

@@ -19,7 +19,13 @@ if (!/^[a-f\d]{32}$/u.test(catalogNamespaceId)) throw new Error("Invalid catalog
 const shellWorker = required("ONTOS_SHELL_WORKER_NAME");
 if (!/^[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?$/u.test(shellWorker))
   throw new Error("Invalid Shell Worker name");
-const config = JSON.parse(readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8"));
+// wrangler.jsonc as the formatter writes it: JSON plus trailing commas (no comments).
+const config = JSON.parse(
+  readFileSync(new URL("../wrangler.jsonc", import.meta.url), "utf8").replace(
+    /,(\s*[}\]])/gu,
+    "$1",
+  ),
+);
 config.vars = {
   ONTOS_SHELL_URL: shellUrl.origin,
   STOREFRONT_IMAGE_HOSTS: process.env.STOREFRONT_IMAGE_HOSTS ?? "",
