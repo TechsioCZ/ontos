@@ -2482,6 +2482,7 @@ export const makeShellAuthenticationApiRuntime = (
       ModuleApiTransportLive.pipe(Layer.provide(activeApplicationCompositionLive)),
       EmailTransportLive.pipe(
         Layer.provide(Layer.mergeAll(authenticationLayer, contextAccessLayer, legalEntityContextLive)),
+        Layer.orDie,
       ),
       // The same authentication layer as the handlers, so one Better Auth instance serves both.
       OAuthServerTransportLive.pipe(Layer.provide(authenticationLayer), Layer.orDie),
