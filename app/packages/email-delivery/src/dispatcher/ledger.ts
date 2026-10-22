@@ -1,9 +1,11 @@
 // @effect-diagnostics *:off
-// Delivery ledger for the demo e-mail dispatcher: one row per e-mail (primary key = dedupe_key).
+// Delivery ledger for the demo e-mail dispatcher: one row per e-mail (primary key = dedupe_key). RLS scopes every row
+// to its tenant + legal entity: claim/finish/recoverInterrupted run inside inDeliveryScope.
 import { PgClient } from '@effect/sql-pg';
 import { Effect } from 'effect';
 import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID } from './contract.ts';
 import type { DeliveryOutcome, EmailDeliverySource, EmailDeliveryView, PlannedEmail } from './contract.ts';
+import { inDeliveryScope } from './scope.ts';
 
 export const readEnabledSince = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient;
@@ -17,7 +19,7 @@ export const readEnabledSince = Effect.gen(function* () {
   return value;
 });
 
-/** A row left in SENDING by a crashed process may already have been sent: mark UNKNOWN, never resend. */
+/** A row of this scope left in SENDING by a crashed process may already have been sent: mark UNKNOWN, never resend. */
 export const recoverInterrupted = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient;
   const rows = yield* sql<{ readonly dedupe_key: string }>`
@@ -93,13 +95,18 @@ export const listDeliveries = (query: {
       return [] as readonly EmailDeliveryView[];
     }
     const sql = yield* PgClient.PgClient;
-    const tenantId = query.scope.kind === 'company' ? query.scope.tenantId : DEMO_TENANT_ID;
-    const legalEntityId = query.scope.kind === 'company' ? query.scope.legalEntityId : AKROS_LEGAL_ENTITY_ID;
+    // A buyer reads the receipts of the storefront company only, matched by the address the order was placed with.
+    const scope =
+      query.scope.kind === 'company'
+        ? { legalEntityId: query.scope.legalEntityId, tenantId: query.scope.tenantId }
+        : { legalEntityId: AKROS_LEGAL_ENTITY_ID, tenantId: DEMO_TENANT_ID };
     const recipient = query.scope.kind === 'buyer' ? query.scope.recipient.trim().toLowerCase() : null;
     // Unused lists become a value no subject id/number can have, so each query keeps one static shape.
     const ids = query.subjectIds.length > 0 ? query.subjectIds : [''];
     const numbers = query.subjectNumbers.length > 0 ? query.subjectNumbers : [''];
-    const rows = yield* sql<EmailDeliveryView>`
+    const rows = yield* inDeliveryScope(
+      scope,
+      sql<EmailDeliveryView>`
       select source, event, event_label as "eventLabel", status, subject_id as "subjectId", subject_number as "subjectNumber",
         to_char(event_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as "eventAt",
         to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as "createdAt",
@@ -107,10 +114,9 @@ export const listDeliveries = (query: {
       from demo_email.deliveries
       where source = ${query.source}
         and (subject_id in ${sql.in(ids)} or subject_number in ${sql.in(numbers)})
-        and (${tenantId}::uuid is null or tenant_id = ${tenantId}::uuid)
-        and (${legalEntityId}::uuid is null or legal_entity_id = ${legalEntityId}::uuid)
-        and (${recipient}::text is null or lower(recipient) = ${recipient}::text)
-        and (${tenantId}::uuid is not null or ${recipient}::text is not null)`;
+        and tenant_id = ${scope.tenantId}::uuid and legal_entity_id = ${scope.legalEntityId}::uuid
+        and (${recipient}::text is null or lower(recipient) = ${recipient}::text)`,
+    );
     const merged = new Map<string, EmailDeliveryView>();
     for (const row of rows) {
       merged.set(`${row.subjectId}:${row.event}`, row);

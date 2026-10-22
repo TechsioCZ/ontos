@@ -15,6 +15,7 @@
   },
   "scripts": {
     "test:unit": "rstest --project unit",
+    "test:integration": "rstest --project integration",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {

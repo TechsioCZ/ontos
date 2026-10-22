@@ -33,11 +33,25 @@ export const testCaptureFromEnvironment = (
   return { host, port: Number(env['EMAIL_TEST_SMTP_PORT'] ?? 1026) };
 };
 
-/** Suffix rules include the domain itself and its subdomains; no local-part heuristics on real mail. */
-export const DEFAULT_UNDELIVERABLE_DOMAINS =
-  'demo,test,invalid,example,local,demo.ontos,example.com,example.net,example.org,localhost';
+/**
+ * Seeded demo and QA addresses (management@siampark.demo, ucetni@demo.ontos, demo@test.com…): no inbox exists, so
+ * every runtime records them SKIPPED instead of sending. Suffix rules include the domain itself and its subdomains.
+ */
+export const SEEDED_UNDELIVERABLE_DOMAINS = 'demo,demo.ontos,test,test.com,invalid,local,localhost';
+/** RFC 2606 documentation domains: undeliverable on the internet; the local Mailpit still captures them. */
+const DOCUMENTATION_DOMAINS = 'example,example.com,example.net,example.org';
 
-export const isUndeliverableRecipient = (address: string, domains = DEFAULT_UNDELIVERABLE_DOMAINS): boolean => {
+/** `ONTOS_EMAIL_UNDELIVERABLE_DOMAINS` replaces the list; otherwise Workers also skip the documentation domains. */
+export const undeliverableDomainsFor = (
+  transport: 'cloudflare' | 'smtp',
+  env: Readonly<Record<string, string | undefined>>,
+): string =>
+  env['ONTOS_EMAIL_UNDELIVERABLE_DOMAINS'] ??
+  (transport === 'cloudflare'
+    ? `${SEEDED_UNDELIVERABLE_DOMAINS},${DOCUMENTATION_DOMAINS}`
+    : SEEDED_UNDELIVERABLE_DOMAINS);
+
+export const isUndeliverableRecipient = (address: string, domains = SEEDED_UNDELIVERABLE_DOMAINS): boolean => {
   const value = address.trim().toLowerCase();
   if (!/^[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+$/u.test(value)) return true;
   const domain = value.slice(value.lastIndexOf('@') + 1).replace(/\.+$/u, '');
