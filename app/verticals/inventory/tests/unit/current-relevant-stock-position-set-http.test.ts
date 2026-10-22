@@ -194,7 +194,9 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       expect(runtime.snapshot().ownerQueries).toHaveLength(1);
       expect(runtime.snapshot().evidenceWrites).toBe(1);
       expect(runtime.snapshot().stages).toContain('evidence_persisted');
-      expect(runtime.snapshot().statements.at(-1)).toBe('COMMIT');
+      // Allowed evidence follows the committed owner transaction.
+      expect(runtime.snapshot().statements.at(-1)).toContain('insert into "core"."data_access_events"');
+      expect(runtime.snapshot().statements.at(-2)).toBe('COMMIT');
     }),
   );
 
@@ -222,10 +224,12 @@ describe('Current relevant StockPosition set HTTP request contract', () => {
       expect(runtime.snapshot().statuses).toEqual([403]);
       expect(runtime.snapshot().redemptions).toBe(1);
       expect(runtime.snapshot().ownerQueries).toHaveLength(1);
-      expect(runtime.snapshot().stages).not.toContain('handler_executed');
-      expect(runtime.snapshot().statements.some((statement) => statement.startsWith('ROLLBACK TO SAVEPOINT'))).toBe(
-        true,
-      );
+      // The owner observation runs in the transaction; the Position SpiceDB check runs after its commit
+      // (00dc1c50c), so the denial stops the read before any result is decoded or released.
+      expect(runtime.snapshot().stages).toContain('handler_executed');
+      expect(runtime.snapshot().stages).not.toContain('result_decoded');
+      expect(runtime.snapshot().statements.at(-2)).toBe('COMMIT');
+      expect(runtime.snapshot().statements.at(-1)).toContain('insert into "core"."data_access_events"');
       expect(runtime.snapshot().evidenceWrites).toBe(1);
     }),
   );

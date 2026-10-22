@@ -78,6 +78,14 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       ) {
         return [];
       }
+      // Read and write admissions (the unlocked precheck and the locked fence) select only the fence columns;
+      // matching also reads the approved subscriptions.
+      if (
+        text ===
+        'select "phase", "revision", null, "valid_until" > clock_timestamp() from "core"."application_composition_authority" where "core"."application_composition_authority"."authority_key" = $1'
+      ) {
+        return [{ phase: 'active', revision: options.compositionRevision, subscriptionsJson: null, unexpired: true }];
+      }
       if (
         text ===
         'select "phase", "revision", "subscriptions_json", "valid_until" > clock_timestamp() from "core"."application_composition_authority" where "core"."application_composition_authority"."authority_key" = $1'
