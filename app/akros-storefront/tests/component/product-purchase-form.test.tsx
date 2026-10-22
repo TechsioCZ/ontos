@@ -175,6 +175,39 @@ describe("ProductPurchaseForm", () => {
     ).toBe("0");
   });
 
+  it("shows every variant without repeating the container name or requiring another page", async () => {
+    const user = userEvent.setup();
+    const allVariants = Array.from({ length: 8 }, (_, index) => ({
+      ...variants[0],
+      id: `item-${index + 1}`,
+      sku: `100933000${index + 2}0005`,
+      label: `M ${index + 2} × 5`,
+    }));
+    render(
+      <CartProvider storage={null}>
+        <ProductPurchaseForm product={product} variants={allVariants} />
+        <CartLines />
+      </CartProvider>,
+    );
+
+    const table = screen.getByRole("table", { name: "Varianty produktu" });
+    expect(within(table).getAllByRole("row")).toHaveLength(allVariants.length + 1);
+    expect(within(table).queryByText(product.name)).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Stránkování variant" })).toBeNull();
+    for (const item of allVariants) {
+      expect(within(table).getByRole("link", { name: item.label })).toBeTruthy();
+      expect(within(table).getByText(item.sku)).toBeTruthy();
+    }
+
+    const quantity = screen.getByRole("spinbutton", { name: "Množství M 9 × 5" });
+    await user.clear(quantity);
+    await user.type(quantity, "30");
+    await user.click(screen.getByRole("button", { name: "Koupit M 9 × 5" }));
+    expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toEqual([
+      expect.objectContaining({ variantId: "item-8", sku: allVariants[7].sku, quantity: 30 }),
+    ]);
+  });
+
   it("adds the selected source variant with its minimum order quantity", async () => {
     const user = userEvent.setup();
 

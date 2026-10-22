@@ -4,7 +4,7 @@ overview: Upravit výpis, filtry, responzivní vzhled a prezentaci cen podle pů
 todos:
   - id: task-04-variant-list
     content: TASK 04 – zobrazit pouze konkrétní varianty bez opakování kontejneru a prověřit úplný výpis bez stránkování.
-    status: pending
+    status: completed
   - id: task-05-relevant-filters
     content: TASK 05 – odstranit cenu a materiál z filtrace a ověřit automatické použití relevantních parametrů.
     status: pending
@@ -25,6 +25,8 @@ Navazuje na `akros-foundation`. Mapování na issues a otevřená rozhodnutí js
 [hlavním plánu](../IMPLEMENTATION-PLAN.md). Nepotřebuje čekat na ověření hmotností.
 
 ### TASK 04 – výpis variant · #1302
+
+Aktuální rozsah, realizaci a měření vlastní [rozbor TASK 04](akros-task-04-review.md).
 
 - Odstranit opakovaný název kontejneru z jednotlivých řádků. Zachovat názvy variant,
   SKU, parametry, dostupnost a nákupní ovládání konkrétní položky.

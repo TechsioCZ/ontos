@@ -4,7 +4,6 @@ import { useCallback, useId, useMemo, useState, type CSSProperties } from "react
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
-import { Pagination } from "@techsio/ui-kit/molecules/pagination";
 import { Slider } from "@techsio/ui-kit/molecules/slider";
 import { DataTable, type ColumnDef } from "@techsio/ui-kit/organisms/data-table";
 import { ProductVariantLink } from "@/components/product-variant-link";
@@ -29,7 +28,6 @@ interface ProductPurchaseFormProps {
 const variantListRowClassName =
   "@min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:grid-cols-(--akros-variant-table-list-columns)! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(1)]:col-span-1! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(1)]:col-start-1! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(1)]:row-start-1 @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(2)]:hidden @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(4)]:hidden @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:col-start-2! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:row-start-1! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:col-span-1! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:col-start-3! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:row-start-1 @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:border-t-0! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:pt-(--dimension-0)!";
 
-const variantsPerPage = 5;
 const variantListOnlyClassName =
   "hidden @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:block";
 const noVariants: CatalogProductVariant[] = [];
@@ -358,7 +356,6 @@ export function ProductPurchaseForm({
   const initialLengthRange: NumericRange = dimensionBounds?.length ?? [0, 0];
   const initialPriceRange: NumericRange = priceBounds ?? [0, 0];
   const [quantity, setQuantity] = useState(variant?.minimumQuantity ?? product.minimumQuantity);
-  const [page, setPage] = useState(1);
   const [selectedMaterials, setSelectedMaterials] = useState(materialOptions);
   const [appliedMaterials, setAppliedMaterials] = useState(materialOptions);
   const [diameterRange, setDiameterRange] = useState<NumericRange>(initialDiameterRange);
@@ -410,10 +407,6 @@ export function ProductPurchaseForm({
       variantMaterials,
     ],
   );
-  const paginatedVariants = visibleVariants.slice(
-    (page - 1) * variantsPerPage,
-    page * variantsPerPage,
-  );
   const addVariant = useCallback(
     (variant: CatalogProductVariant, selectedQuantity: number) => {
       dispatch({
@@ -435,7 +428,6 @@ export function ProductPurchaseForm({
 
           return (
             <div className="akros-variant-table__name min-w-0">
-              <span className="@max-akros-variant-table/akros-variants:hidden">{product.name}</span>
               <strong className="min-w-0 whitespace-normal wrap-anywhere @max-akros-variant-table/akros-variants:text-(length:--text-base)!">
                 <ProductVariantLink
                   slug={product.slug}
@@ -636,7 +628,6 @@ export function ProductPurchaseForm({
     setAppliedDiameterRange(diameterRange);
     setAppliedLengthRange(lengthRange);
     setAppliedPriceRange(priceRange);
-    setPage(1);
   };
 
   return (
@@ -727,7 +718,7 @@ export function ProductPurchaseForm({
         <DataTable
           className="akros-variant-data-table"
           columns={variantColumns}
-          data={paginatedVariants}
+          data={visibleVariants}
           enableSorting={false}
           getRowId={(item) => item.id}
           renderEmpty={() => (
@@ -754,20 +745,6 @@ export function ProductPurchaseForm({
           }}
           variant="line"
         />
-        {visibleVariants.length > variantsPerPage && (
-          <Pagination
-            aria-label="Stránkování variant"
-            className="akros-pagination"
-            count={visibleVariants.length}
-            getPageUrl={() => "#product-variants"}
-            onChange={setPage}
-            page={page}
-            pageSize={variantsPerPage}
-            showPrevNext
-            size="md"
-            variant="filled"
-          />
-        )}
       </>
     </div>
   );

@@ -38,6 +38,11 @@ focus, direct/reloaded links, independent favorites/watch state, purchase identi
 sharing and prefilled questions, invalid IDs and missing images/descriptions.
 Screenshots are saved under `test-results/variant-detail/`.
 
+`npm run test:variant-list` checks all 47/386 variants without pagination at eight
+desktop/mobile widths, the last variant and its modal/focus, purchase identity,
+filter recovery and exact shared/SKU links. Screenshots and local interaction timings
+are saved under `test-results/variant-list/`.
+
 `npm run test:catalog` checks catalog/variant token consumption and purchase/filter/pagination
 flows at 1920, 1024 and 390px. It covers minimum quantities, whole packages, empty filter results,
 keyboard slider changes and preservation of the search query when paging through results.

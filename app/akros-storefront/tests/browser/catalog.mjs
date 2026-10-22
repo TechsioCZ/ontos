@@ -108,12 +108,14 @@ try {
       { variantId: variant.id, expected: variant.minimumQuantity + variant.packageQuantity },
     );
 
-    const nextVariants = page.locator('.akros-pagination [data-part="next-trigger"]');
-    const firstSku = await table.locator(".akros-variant-table__sku").first().textContent();
-    await nextVariants.click();
-    await page.waitForFunction(
-      (previous) => document.querySelector(".akros-variant-table__sku")?.textContent !== previous,
-      firstSku,
+    assert.equal(await table.locator("tbody tr").count(), product.detail.variants.length);
+    assert.equal(await page.getByRole("navigation", { name: "Stránkování variant" }).count(), 0);
+    assert.equal(
+      await table
+        .locator(".akros-variant-table__name")
+        .allTextContents()
+        .then((names) => names.some((name) => name.includes(product.name))),
+      false,
     );
 
     // Selecting no materials must show the empty state; restoring them brings rows back.
@@ -129,6 +131,7 @@ try {
     for (let index = 0; index < count; index++) await checkboxes.nth(index).locator("..").click();
     await submit.click();
     await table.locator("tbody tr").first().waitFor();
+    assert.equal(await table.locator("tbody tr").count(), product.detail.variants.length);
 
     const slider = form.getByRole("slider").first();
     const before = Number(await slider.getAttribute("aria-valuenow"));
@@ -156,7 +159,7 @@ try {
     }
     await context.close();
     console.log(
-      `Catalog passed ${width}px: tokens, minimum/package purchase, filters, slider and pagination.`,
+      `Catalog passed ${width}px: tokens, minimum/package purchase, all variants, filters, slider and catalog pagination.`,
     );
   }
 } finally {

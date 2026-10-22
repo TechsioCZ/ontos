@@ -32,6 +32,10 @@ Uživatel odsouhlasil [detailní návrh TASK 03 + 07](plans/akros-task-03-07-rev
 a jeho realizaci: modal z názvu varianty, přímé akce, obrázkový náhled a přesná URL.
 Neověřená jednotka hmotnosti zůstává otevřená a neblokuje ostatní části detailu.
 
+[TASK 04](plans/akros-task-04-review.md) je implementovaný a ověřený: výpis obsahuje
+všechny odpovídající varianty bez opakování kontejneru a bez stránkování. Ověřeno
+i na 386 variantách a mobilních šířkách; další rozbor podle původního pořadí je TASK 05.
+
 ## Zadání a porovnání s GitHubem
 
 Zdroje: zadání uživatele v této konverzaci a issues přiřazené do
