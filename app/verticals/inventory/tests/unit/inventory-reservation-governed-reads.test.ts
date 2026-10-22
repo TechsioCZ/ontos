@@ -303,11 +303,11 @@ it.effect('reads the exact Reservation with bounded evidence and returns typed n
 
 it.effect('denies the exact Inventory Resource before opening owner persistence or producing evidence', () =>
   Effect.gen(function* denyBeforeOwnerPersistence() {
-    let databaseCalls = 0;
+    const statements: string[] = [];
     const stages: string[] = [];
     const database = {
-      executor: yield* makeTestDatabase(() => {
-        databaseCalls += 1;
+      executor: yield* makeTestDatabase((statement) => {
+        statements.push(statement);
         return Effect.succeed([]);
       }),
     };
@@ -353,7 +353,12 @@ it.effect('denies the exact Inventory Resource before opening owner persistence 
       .pipe(Effect.flip);
 
     expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
-    expect(databaseCalls).toBe(1);
+    // The only database work is Core's denial evidence, in its own transaction; no Inventory table is touched.
+    expect(statements.map((statement) => statement.split(' (', 1)[0])).toEqual([
+      'BEGIN',
+      'insert into "core"."data_access_events"',
+      'COMMIT',
+    ]);
     expect(stages).toEqual(['input_decoded', 'scope_validated', 'module_state_checked', 'permission_checked']);
   }),
 );

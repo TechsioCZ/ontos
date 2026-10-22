@@ -1200,7 +1200,7 @@ it('registers the exact owner schema, journal, verifier, and runtime grants', ()
   expect(rootVerifier).toMatch(/'inventory'/u);
   expect(rootVerifier).toMatch(/'__drizzle_migrations_inventory'/u);
   expect(rootVerifier).toMatch(/verticals\/inventory\/scripts\/verify-db-schema\.mts/u);
-  expect(runtimeBootstrap).toMatch(/'catalog', 'inventory'/u);
+  expect(runtimeBootstrap).toMatch(/'catalog',\s*'inventory'/u);
 });
 
 it('exact Inventory catalog comparison rejects missing and unexpected tables', () => {
