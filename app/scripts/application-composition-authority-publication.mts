@@ -45,35 +45,27 @@ export const ApplicationCompositionAuthorityAdminDatabaseLive = CoreDatabaseLive
   ),
 );
 
-/** Every native publisher, including retained artifact uploads, uses this same database lock. */
-export const withApplicationCompositionPublicationLock = Effect.fn(
-  'ApplicationCompositionAuthority.withPublicationLock',
-)(function* withApplicationCompositionPublicationLock<Value, Failure, Requirements>(
-  publication: Effect.Effect<Value, Failure, Requirements>,
-) {
-  const database = yield* CoreDatabase;
-  const client = database.executor.$client;
-  const publicationContext = yield* Effect.context<Requirements>();
-  if (Option.isSome(Context.getOption(publicationContext, client.transactionService))) {
-    return yield* unavailable('Application Composition publication must own its database transactions');
-  }
-  return yield* Effect.scoped(
-    Effect.gen(function* serializePublication() {
-      // Reserve one native session without BEGIN. Incompatible ALTER statements must not wait
-      // on a table lock retained by the publication serialization transaction itself.
-      const connection = yield* client.reserve;
-      yield* Effect.acquireRelease(
-        connection.executeValues(
-          "select pg_advisory_lock(hashtextextended('ontos.application-composition-publication', 0))",
-          [],
-        ),
-        () =>
-          connection
-            .executeValues(
-              "select pg_advisory_unlock(hashtextextended('ontos.application-composition-publication', 0))",
-              [],
-            )
-            .pipe(
+/** One session-level advisory lock, held on a reserved native session for exactly the given effect. */
+const withSessionAdvisoryLock = Effect.fn('ApplicationCompositionAuthority.withSessionAdvisoryLock')(
+  function* withSessionAdvisoryLock<Value, Failure, Requirements>(
+    lock: { readonly key: string; readonly params: readonly string[] },
+    publication: Effect.Effect<Value, Failure, Requirements>,
+  ) {
+    const database = yield* CoreDatabase;
+    const client = database.executor.$client;
+    const publicationContext = yield* Effect.context<Requirements>();
+    if (Option.isSome(Context.getOption(publicationContext, client.transactionService))) {
+      return yield* unavailable('Application Composition publication must own its database transactions');
+    }
+    return yield* Effect.scoped(
+      Effect.gen(function* serializePublication() {
+        // Reserve one native session without BEGIN. Incompatible ALTER statements must not wait
+        // on a table lock retained by the publication serialization transaction itself.
+        const connection = yield* client.reserve;
+        yield* Effect.acquireRelease(
+          connection.executeValues(`select pg_advisory_lock(${lock.key})`, [...lock.params]),
+          () =>
+            connection.executeValues(`select pg_advisory_unlock(${lock.key})`, [...lock.params]).pipe(
               Effect.flatMap((rows) =>
                 rows[0]?.[0] === true
                   ? Effect.void
@@ -86,16 +78,38 @@ export const withApplicationCompositionPublicationLock = Effect.fn(
                   .pipe(Effect.ignore, Effect.andThen(Effect.die(error))),
               ),
             ),
-      );
-      return yield* publication;
-    }),
-  ).pipe(
-    Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
-    Effect.catchIf(isSqlError, () =>
-      Effect.fail(unavailable('Application Composition database publication lock is unavailable')),
-    ),
+        );
+        return yield* publication;
+      }),
+    ).pipe(
+      Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
+      Effect.catchIf(isSqlError, () =>
+        Effect.fail(unavailable('Application Composition database publication lock is unavailable')),
+      ),
+    );
+  },
+);
+
+/** Every composition publisher and Shell artifact upload uses this same environment-wide database lock. */
+export const withApplicationCompositionPublicationLock = <Value, Failure, Requirements>(
+  publication: Effect.Effect<Value, Failure, Requirements>,
+) =>
+  withSessionAdvisoryLock(
+    { key: "hashtextextended('ontos.application-composition-publication', 0)", params: [] },
+    publication,
   );
-});
+
+/**
+ * An immutable application release upload registers nothing in the database, so distinct releases upload in
+ * parallel. Only the same release identity is serialized, keeping its absence check, upload and readback atomic.
+ */
+export const withImmutableApplicationReleaseIdentityLock =
+  (releaseIdentity: string) =>
+  <Value, Failure, Requirements>(upload: Effect.Effect<Value, Failure, Requirements>) =>
+    withSessionAdvisoryLock(
+      { key: 'hashtextextended($1, 0)', params: [`ontos.immutable-application-release:${releaseIdentity}`] },
+      upload,
+    );
 
 const requireNoLegacyRuntimeTransactions = Effect.fn('ApplicationCompositionAuthority.requireQuiescentRuntime')(
   function* requireNoLegacyRuntimeTransactions() {

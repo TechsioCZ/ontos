@@ -52,7 +52,7 @@ import { verifyImmutableBackendModuleContent } from './immutable-backend-package
 import { OpsShellLive, runCommand } from './ops/ops-shell.mts';
 import {
   ApplicationCompositionAuthorityAdminDatabaseLive,
-  withApplicationCompositionPublicationLock,
+  withImmutableApplicationReleaseIdentityLock,
 } from './application-composition-authority-publication.mts';
 
 export class ImmutableApplicationReleaseError extends Schema.TaggedError<ImmutableApplicationReleaseError>()(
@@ -1041,9 +1041,9 @@ export const deployImmutableAssets = Effect.fn('ImmutableApplicationRelease.depl
   },
 );
 
-/** Called only inside the repository's environment-wide serialized publication job. Never deletes a release. */
-export const deployImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease.deploy')(
-  function* deployImmutableReleaseEffect(input: {
+/** Uploads one content-addressed release and reads it back. Registers nothing and never deletes a release. */
+const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease.upload')(
+  function* uploadImmutableReleaseEffect(input: {
     readonly appDirectory: string;
     readonly plan: ImmutableApplicationReleasePlan;
   }) {
@@ -1280,6 +1280,17 @@ export const deployImmutableApplicationRelease = Effect.fn('ImmutableApplication
   Effect.scoped,
 );
 
+/**
+ * Distinct releases upload in parallel: an upload only produces a receipt, and the composition publication
+ * (the one database registration) keeps the environment-wide publication lock. The same release identity
+ * stays serialized so its absence check, upload and readback cannot interleave with a second upload.
+ */
+export const deployImmutableApplicationRelease = (input: {
+  readonly appDirectory: string;
+  readonly plan: ImmutableApplicationReleasePlan;
+}) =>
+  withImmutableApplicationReleaseIdentityLock(input.plan.backendScriptName)(uploadImmutableApplicationRelease(input));
+
 const PlanDocumentSchema = Schema.Struct({
   ...ImmutableApplicationReleasePlanSchema.fields,
   buildEnvironment: Schema.Record(Schema.String, Schema.String),
@@ -1293,19 +1304,18 @@ const deployCommand = Command.make(
     receiptFile: Flag.String('receipt-file'),
   },
   ({ appDirectory, planFile, receiptFile }) =>
-    withApplicationCompositionPublicationLock(
-      Effect.gen(function* deployCommandEffect() {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const plan = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ImmutableApplicationReleasePlanSchema))(
-          yield* fileSystem.readFileString(planFile),
-        );
-        const receipt = yield* deployImmutableApplicationRelease({ appDirectory, plan });
-        yield* fileSystem.writeFileString(
-          receiptFile,
-          yield* Schema.encodeEffect(Schema.fromJsonString(ImmutableApplicationReleaseReceiptSchema))(receipt),
-        );
-      }),
-    ),
+    Effect.gen(function* deployCommandEffect() {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const plan = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ImmutableApplicationReleasePlanSchema))(
+        yield* fileSystem.readFileString(planFile),
+      );
+      // The receipt is written only after the upload was read back; a failed upload leaves no receipt.
+      const receipt = yield* deployImmutableApplicationRelease({ appDirectory, plan });
+      yield* fileSystem.writeFileString(
+        receiptFile,
+        yield* Schema.encodeEffect(Schema.fromJsonString(ImmutableApplicationReleaseReceiptSchema))(receipt),
+      );
+    }),
 ).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
 
 const candidateCommand = Command.make(

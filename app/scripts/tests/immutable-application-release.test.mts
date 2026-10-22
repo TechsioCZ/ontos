@@ -47,6 +47,8 @@ import { createShellRuntimeContract } from '../generate-ontos-shell-runtime-cont
 import { OpsShell, OpsShellLive, runCommand } from '../ops/ops-shell.mts';
 import type { OpsCommand } from '../ops/ops-shell.mts';
 import { OpsCommandError } from '../ops/ops-command-error.mts';
+import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
+import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 
 const APP_ID = 'party-registry';
 const GIT_COMMAND = 'git';
@@ -939,6 +941,7 @@ const refusesExistingProviderRelease = (existingBackend: boolean) =>
       });
       const refusalLayer = Layer.mergeAll(
         Layer.succeed(HttpClient.HttpClient, client),
+        releaseLockDatabase([]),
         Layer.succeed(OpsShell, {
           run: (command) => {
             if (command.command === GIT_COMMAND) {
@@ -992,6 +995,18 @@ it.effect('refuses an existing backend identity before commands, secret writes, 
 it.effect('refuses an existing assets identity before commands, secret writes, or generated deployment config', () =>
   refusesExistingProviderRelease(false),
 );
+
+/** Records every advisory lock statement and its key, in order, against the native release timeline. */
+const releaseLockDatabase = (timeline: string[]) =>
+  Layer.effect(
+    CoreDatabase,
+    makeTestDatabase((statement, params) =>
+      Effect.sync(() => {
+        timeline.push(`${statement.replace(/^select /u, '')} ${params.join(',')}`.trim());
+        return statement.includes('pg_advisory_unlock') ? [{ unlocked: true }] : [];
+      }),
+    ).pipe(Effect.map((executor) => ({ executor }))),
+  );
 
 const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* prepareDeploymentEffect(
   options: {
@@ -1108,6 +1123,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   const notFoundBodies: Response[] = [];
   const headerReadinessBodies: Response[] = [];
   const commands: OpsCommand[] = [];
+  const timeline: string[] = [];
   const capturedConfigs: Readonly<Record<string, Schema.Json>>[] = [];
   const publishedInventories: (readonly ReleaseFile[])[] = [];
   const requests: string[] = [];
@@ -1376,6 +1392,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
           return options.resolvedWranglerVersion ?? WRANGLER_VERSION;
         }
         commands.push(command);
+        timeline.push(command.args.join(' '));
         const config = command.args[command.args.indexOf('--config') + 1];
         if (config === undefined) {
           return yield* Effect.die('a native release command must identify its Wrangler config');
@@ -1431,6 +1448,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   const layer = Layer.mergeAll(
     Layer.succeed(HttpClient.HttpClient, client),
     shellLayer,
+    releaseLockDatabase(timeline),
     ConfigProvider.layer(
       ConfigProvider.fromUnknown({
         CLOUDFLARE_ACCOUNT_ID: 'a'.repeat(32),
@@ -1459,8 +1477,25 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     recoveryWorkerPath,
     recoveryWorkerReadStarted,
     requests,
+    timeline,
   };
 });
+
+it.effect('uploads a release under its own identity lock, never the environment-wide publication lock', () =>
+  Effect.scoped(
+    Effect.gen(function* parallelReleaseUpload() {
+      const deployment = yield* prepareDeployment();
+      yield* deployment.deploy;
+      const identityKey = `ontos.immutable-application-release:${deployment.plan.backendScriptName}`;
+      const { timeline } = deployment;
+
+      expect(timeline.some((entry) => entry.includes('ontos.application-composition-publication'))).toBe(false);
+      expect(timeline[0]).toBe(`pg_advisory_lock(hashtextextended($1, 0)) ${identityKey}`);
+      expect(timeline.at(-1)).toBe(`pg_advisory_unlock(hashtextextended($1, 0)) ${identityKey}`);
+      expect(timeline.filter((entry) => entry.startsWith('exec wrangler deploy')).length).toBe(3);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.effect('publishes native route chunks without exposing compiler source maps or changing the compiled output', () =>
   Effect.scoped(
