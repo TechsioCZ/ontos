@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
 
 import { ProductDetailActions } from "@/components/product-detail-actions";
+import { ProductVariantDetail } from "@/components/product-variant-detail";
 import { FavoriteButton } from "@/features/favorites/favorite-button";
 import { ProductGrid } from "@/components/product-grid";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
@@ -200,7 +201,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                 <dt>Kód produktu</dt>
                 <dd>{purchaseItem.sku}</dd>
               </div>
-              {product.netWeight && (
+              {!hasMultipleVariants && product.netWeight && (
                 <div>
                   <dt>Váha</dt>
                   <dd>
@@ -315,7 +316,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
         )}
 
         {hasMultipleVariants && (
-          <section id="product-variants" aria-label="Varianty produktu">
+          <section id="product-variants" aria-label="Varianty produktu" tabIndex={-1}>
             {sharedIds.length > 0 && (
               <div className="akros-shared-selection" data-shared-variant-selection>
                 <p>
@@ -356,6 +357,8 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
           </section>
         )}
       </article>
+
+      {hasMultipleVariants && <ProductVariantDetail product={product} />}
 
       <section className="akros-print-sheet" aria-label="Produktový list pro tisk">
         <p>AKROS — produktový list</p>

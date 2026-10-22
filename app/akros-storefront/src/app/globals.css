@@ -28,6 +28,8 @@
 @import "../tokens/components/templates/_akros-auth.css";
 @import "../tokens/components/templates/_akros-content-pages.css";
 @import "../tokens/components/molecules/_akros-favorites.css";
+@import "../tokens/components/molecules/_akros-variant-detail.css";
+@import "../styles/variant-detail.css";
 @import "../styles/favorites.css";
 @import "../styles/product-print.css";
 @import "../styles/content-pages.css";

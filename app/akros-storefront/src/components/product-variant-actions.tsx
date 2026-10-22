@@ -20,14 +20,17 @@ export function ProductVariantActions({
   productId,
   productName,
   productSlug,
+  variantId,
 }: {
   productId: string;
   productName: string;
   productSlug: string;
+  variantId?: string;
 }) {
   const router = useRouter();
   const { references, ready } = useVariantReferences(productWatchStorageKey);
   const watched = references.filter((item) => item.productId === productId);
+  const variantWatched = watched.some((item) => item.variantId === variantId);
   const [action, setAction] = useState<"watch" | "question" | null>(null);
   const watchTrigger = useRef<HTMLButtonElement>(null);
   const questionTrigger = useRef<HTMLButtonElement>(null);
@@ -36,29 +39,67 @@ export function ProductVariantActions({
       <Button
         ref={watchTrigger}
         disabled={!ready}
-        aria-haspopup="dialog"
+        aria-haspopup={variantId ? undefined : "dialog"}
+        aria-pressed={variantId ? variantWatched : undefined}
         className="akros-product-actions__watch hover:underline focus-visible:underline"
         icon="token-icon-akros-product-watch"
         iconSize="sm"
         size="sm"
         theme="borderless"
         variant="secondary"
-        onClick={() => setAction("watch")}
+        onClick={() => {
+          if (!variantId) {
+            setAction("watch");
+            return;
+          }
+          try {
+            replaceStoredProductReferences(
+              productWatchStorageKey,
+              productId,
+              variantWatched
+                ? watched.filter((item) => item.variantId !== variantId)
+                : [...watched, { productId, productSlug, variantId }],
+            );
+            toaster.create({
+              type: "success",
+              title: variantWatched
+                ? "Hlídání varianty odebráno v tomto prohlížeči."
+                : "Hlídání varianty uloženo v tomto prohlížeči.",
+              duration: 4000,
+            });
+          } catch {
+            toaster.create({
+              type: "error",
+              title: "Hlídání se nepodařilo uložit. Zkuste to znovu.",
+              duration: 6000,
+            });
+          }
+        }}
       >
-        {watched.length ? `Upravit hlídání (${watched.length})` : "Hlídat produkt"}
+        {variantId
+          ? variantWatched
+            ? "Zrušit hlídání varianty"
+            : "Hlídat variantu"
+          : watched.length
+            ? `Upravit hlídání (${watched.length})`
+            : "Hlídat produkt"}
       </Button>
       <Button
         ref={questionTrigger}
-        aria-haspopup="dialog"
+        aria-haspopup={variantId ? undefined : "dialog"}
         className="akros-product-actions__question hover:underline focus-visible:underline"
         icon="token-icon-akros-product-question"
         iconSize="sm"
         size="sm"
         theme="borderless"
         variant="secondary"
-        onClick={() => setAction("question")}
+        onClick={() =>
+          variantId
+            ? router.push(buildVariantQuestionHref(productSlug, [variantId]))
+            : setAction("question")
+        }
       >
-        Dotaz na produkt
+        {variantId ? "Dotaz na variantu" : "Dotaz na produkt"}
       </Button>
       {action && (
         <VariantSelectionDialog

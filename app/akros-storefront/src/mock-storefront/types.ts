@@ -19,6 +19,9 @@ export interface CatalogProductVariant {
   sourceId: string;
   sku: string;
   label: string;
+  description?: string;
+  /** Raw feed value; weight unit and relation to the sale unit are not yet verified. */
+  sourceNetWeight?: number;
   minimumQuantity: number;
   packageQuantity?: number;
   priceMinor: number;

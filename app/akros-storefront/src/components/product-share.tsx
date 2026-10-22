@@ -6,7 +6,7 @@ import { Input } from "@techsio/ui-kit/atoms/input";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Popover } from "@techsio/ui-kit/molecules/popover";
 import dynamic from "next/dynamic";
-import { buildVariantSelectionHref } from "@/lib/product-variant-links";
+import { buildVariantDetailHref, buildVariantSelectionHref } from "@/lib/product-variant-links";
 
 const VariantSelectionDialog = dynamic(() =>
   import("./variant-selection-dialog").then((module) => module.VariantSelectionDialog),
@@ -16,10 +16,12 @@ export function ProductShare({
   productId,
   productName,
   productSlug,
+  variantId,
 }: {
   productId: string;
   productName: string;
   productSlug: string;
+  variantId?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [selecting, setSelecting] = useState(false);
@@ -31,8 +33,12 @@ export function ProductShare({
   const fallbackPending = useRef(false);
   const id = useId();
   async function share(ids: string[]) {
-    const canonical = new URL(buildVariantSelectionHref(productSlug, ids), window.location.origin)
-      .href;
+    const canonical = new URL(
+      variantId
+        ? buildVariantDetailHref(productSlug, variantId)
+        : buildVariantSelectionHref(productSlug, ids),
+      window.location.origin,
+    ).href;
     setUrl(canonical);
     setMessage("");
     setManual(false);
@@ -66,6 +72,7 @@ export function ProductShare({
       ids={{ trigger: `${id}-trigger`, content: `${id}-content` }}
       placement="bottom-start"
       size="md"
+      portalled={!variantId}
     >
       <Popover.Anchor className="inline-flex">
         <Button
@@ -80,9 +87,10 @@ export function ProductShare({
           size="sm"
           theme="borderless"
           variant="secondary"
-          onClick={() => {
+          onClick={async () => {
             setOpen(false);
-            setSelecting(true);
+            if (variantId) setOpen(await share([variantId]));
+            else setSelecting(true);
           }}
         >
           Sdílet
@@ -90,7 +98,7 @@ export function ProductShare({
       </Popover.Anchor>
       <Popover.Positioner className="akros-share-positioner">
         <Popover.Content className="akros-share-content">
-          <Popover.Title>Sdílet výběr</Popover.Title>
+          <Popover.Title>{variantId ? "Sdílet variantu" : "Sdílet výběr"}</Popover.Title>
           <Button size="md" variant="secondary" theme="outlined" onClick={copy}>
             Kopírovat odkaz
           </Button>

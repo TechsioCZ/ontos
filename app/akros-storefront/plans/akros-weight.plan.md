@@ -18,8 +18,15 @@ nikoli nový obchodní požadavek. Rozhodnutí D3 a společná pravidla jsou v
 
 ### Hmotnost varianty
 
-- Prověřit `scripts/generate-akros-catalog.mjs`: parser již načítá `net_weight`,
-  ale výstup jej přenáší pouze na kontejner. `CatalogProductVariant` hmotnost nemá.
+Kontrola 21. 10. 2026: feed má kladnou hodnotu u 13 597 z 19 025 variant,
+dalších 5 428 má nulu. Tag `net_weight` nemá atribut jednotky. Implementace
+[detailu](akros-task-03-07-review.md) přenáší kladné zdrojové hodnoty do
+`CatalogProductVariant.sourceNetWeight`; nula zůstává neznámým údajem.
+Toto pole není interpretovanou hmotností a nesmí vstoupit do výpočtu košíku.
+Jednotka a vztah k prodejní jednotce/balení dále čekají na doložení.
+
+- Výchozí generátor přenášel `net_weight` pouze na kontejner. Nyní ověřit význam
+  variantního zdrojového pole před zavedením normalizované hmotnosti.
 - Dohledat význam hodnoty u konkrétní zdrojové položky: jednotku váhy a vztah
   k prodejní jednotce nebo balení. Nedědit automaticky váhu rodiče do všech variant.
 - Přenést ověřenou hodnotu i její jednotkový význam do katalogového kontraktu;

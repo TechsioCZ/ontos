@@ -32,6 +32,12 @@ reload persistence, removal, storage failures and independent products. It check
 sharing and the product print sheet. Screenshots and a sample PDF are saved under
 `test-results/favorites/`.
 
+`npm run test:variant-detail` checks the exact variant modal at eight desktop/mobile
+sizes, including 320 × 480 px. It covers keyboard image previews, history and return
+focus, direct/reloaded links, independent favorites/watch state, purchase identity,
+sharing and prefilled questions, invalid IDs and missing images/descriptions.
+Screenshots are saved under `test-results/variant-detail/`.
+
 `npm run test:catalog` checks catalog/variant token consumption and purchase/filter/pagination
 flows at 1920, 1024 and 390px. It covers minimum quantities, whole packages, empty filter results,
 keyboard slider changes and preservation of the search query when paging through results.
@@ -204,9 +210,17 @@ in `src/mock-storefront/fixtures/checkout.ts`; they are not live AKROS business 
   activate actual e-mail notifications. Questions prefill the local contact form with selected SKUs.
 - Sharing supports multiple selected variants through `?variantIds=item-1,item-2` (URL encoded),
   resolved against the product's exact IDs. The existing `?variant=` free-text search still works.
-  Favorites use the same exact links. Native sharing has copy/e-mail fallback; the individual
-  variant detail modal remains a subsequent task. Print creates a
+  Favorites use the same exact selection links. `?variantDetail=item-1` opens a specific
+  variant modal and preserves an existing list selection/search when opened from a row.
+  Its actions target that variant directly; sharing from the modal opens its exact detail.
+  Native sharing has copy/e-mail fallback. Print creates a
   clean product sheet without the variant list; it does not print only the current purchase page.
+- Variant names are kit links with a keyboard/hover image preview. The kit Dialog is mounted
+  after hydration to avoid portalled `useId` differences on direct URLs. Its maximum height
+  explicitly consumes the dialog token so the body scrolls while the header/footer remain visible.
+  Variant descriptions and positive raw `sourceNetWeight` come from the catalog generator;
+  the weight unit/sale-unit relationship remains unverified. The modal shows weight as unknown,
+  and the multi-variant container no longer displays its parent's weight.
 - No account backend, database, authentication, checkout submission, or OntOS application module is used.
 - `npm run check` runs formatting, linting, type checking, tests, and the production build.
 

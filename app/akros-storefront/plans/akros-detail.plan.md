@@ -21,9 +21,11 @@ isProject: false
 
 ## Execution Notes
 
-Navazuje na `akros-variants` a ověřenou hmotnost z `akros-weight`. Mapování na issues
-a rozhodnutí jsou v [hlavním plánu](../IMPLEMENTATION-PLAN.md). TASK 03 a 07 tvoří
-jeden atomický celek: modal a jeho akce potřebují tutéž identitu, data a návratový stav.
+Navazuje na `akros-variants`; část hmotnosti čeká na ověření v `akros-weight`,
+ostatní části detailu lze dodat samostatně. Mapování na issues
+a rozhodnutí jsou v [hlavním plánu](../IMPLEMENTATION-PLAN.md). Modal a jeho akce
+z TASK 03 a 07 se dodávají společně: potřebují tutéž identitu, data a návratový stav.
+Zobrazení hmotnosti má samostatnou bránu ověření zdrojových jednotek.
 
 Aktuální [rozbor TASK 02](akros-task-02-review.md) obsahuje uživatelův požadavek na
 tabulku pro výběr variant po kliknutí na srdíčko a ověřený inventář komponent kitu.
@@ -36,8 +38,14 @@ přidává „Tisk“. Po souhlasu s realizací se implementuje potvrzování tl
 
 Uživatelské upřesnění po TASK 02 dodává společný výběr pro hlídání, dotaz a sdílení
 více variant, přesné odkazy a předvyplněný dotaz. Stav tohoto dílčího kroku je v
-[záznamu akcí](akros-task-03-actions-review.md). Samostatný detail varianty s popisem,
-obrázkem a váhou zatím dokončený není; společný úkol 03/07 proto zůstává rozpracovaný.
+[záznamu akcí](akros-task-03-actions-review.md). Navazující implementace modalu,
+popisu, obrázku a přímých akcí je v níže uvedeném rozboru. Společný úkol 03/07
+zůstává rozpracovaný kvůli neověřené jednotce a významu hmotnosti.
+
+Uživatel schválil [konkrétní návrh a realizaci](akros-task-03-07-review.md).
+Tento dokument vlastní otevření z názvu, obsah modalu, přímé akce, obrázkový náhled,
+URL/historii, chybějící data a ověření. Hromadné akce zůstávají zachované;
+neověřená hmotnost neblokuje zbytek realizace a neznamená dokončení celého TASK 07.
 
 - Doplnit požadovaný modální detail přes kit `Dialog`. Aktuální produktová stránka
   pouze filtruje varianty přes URL; existenci hotového modalu tato větev nepotvrzuje.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildVariantDetailHref,
   buildVariantQuestionHref,
   buildVariantSelectionHref,
   parseVariantIds,
@@ -8,6 +9,28 @@ import {
 import { getProducts } from "@/mock-storefront/catalog";
 
 describe("exact variant selection URLs", () => {
+  it("opens and closes one detail without changing the shared selection or search", () => {
+    const current = "variantIds=item-1%2Citem-2&variant=M6";
+    const opened = new URL(
+      buildVariantDetailHref("vruty", "item-2", current),
+      "https://example.test",
+    );
+    expect(opened.searchParams.get("variantDetail")).toBe("item-2");
+    expect(opened.searchParams.get("variantIds")).toBe("item-1,item-2");
+    expect(opened.searchParams.get("variant")).toBe("M6");
+    expect(buildVariantDetailHref("vruty", null, opened.search)).toBe(
+      `/produkt/vruty?${current}#product-variants`,
+    );
+  });
+  it("retains variant content from the feed without inventing a weight unit", () => {
+    const variant = getProducts()
+      .flatMap((item) => item.detail.variants)
+      .find((item) => item.sku === "10799700050025")!;
+    expect(variant.description?.length).toBeGreaterThan(0);
+    expect(variant.description).not.toMatch(/<[^>]+>/);
+    expect(variant.sourceNetWeight).toBe(0.0034);
+    expect(variant).not.toHaveProperty("netWeight");
+  });
   it("round-trips multiple IDs independently of free text and deduplicates them", () => {
     const product = getProducts().find((item) => item.detail.variants.length > 2)!;
     const [a, b] = product.detail.variants;

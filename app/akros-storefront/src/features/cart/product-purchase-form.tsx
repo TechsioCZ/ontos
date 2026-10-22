@@ -7,6 +7,7 @@ import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
 import { Pagination } from "@techsio/ui-kit/molecules/pagination";
 import { Slider } from "@techsio/ui-kit/molecules/slider";
 import { DataTable, type ColumnDef } from "@techsio/ui-kit/organisms/data-table";
+import { ProductVariantLink } from "@/components/product-variant-link";
 
 import { useCart } from "@/features/cart/cart-provider";
 import { cs } from "@/i18n/cs";
@@ -436,7 +437,12 @@ export function ProductPurchaseForm({
             <div className="akros-variant-table__name min-w-0">
               <span className="@max-akros-variant-table/akros-variants:hidden">{product.name}</span>
               <strong className="min-w-0 whitespace-normal wrap-anywhere @max-akros-variant-table/akros-variants:text-(length:--text-base)!">
-                {label}
+                <ProductVariantLink
+                  slug={product.slug}
+                  imageSrc={product.imageSrc}
+                  variant={row.original}
+                  label={label}
+                />
               </strong>
               <p
                 className={`${variantListOnlyClassName} mt-(--dimension-8) whitespace-nowrap text-xs font-normal text-fg-secondary`}

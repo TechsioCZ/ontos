@@ -82,7 +82,12 @@ export function FavoriteButton({
         theme={placement === "detail" ? "outlined" : "borderless"}
         variant="secondary"
       >
-        {placement === "action" && `Oblíbené varianty${saved.length ? ` (${saved.length})` : ""}`}
+        {placement === "action" &&
+          (concrete
+            ? selected
+              ? "Odebrat z oblíbených"
+              : "Uložit do oblíbených"
+            : `Oblíbené varianty${saved.length ? ` (${saved.length})` : ""}`)}
       </Button>
       {open && (
         <FavoriteDialog

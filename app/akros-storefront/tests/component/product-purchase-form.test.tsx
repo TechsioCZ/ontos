@@ -1,10 +1,12 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CartProvider, useCart } from "@/features/cart/cart-provider";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
 import type { CatalogProduct, CatalogProductVariant } from "@/mock-storefront/types";
+
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
 
 const variants: CatalogProductVariant[] = [
   {

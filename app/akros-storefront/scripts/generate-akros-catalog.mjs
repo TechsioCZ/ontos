@@ -300,6 +300,8 @@ for (const [groupId, items] of groups) {
         sourceId: item.id,
         sku: cleanText(item.sku),
         label: cleanText(item.variantName || item.title || item.productName) || itemName(item),
+        description: cleanText(item.shortDescription || item.description) || undefined,
+        sourceNetWeight: toOptionalPositiveNumber(item.netWeight),
         minimumQuantity: toPositiveNumber(item.minimumQuantity, 1),
         packageQuantity: toOptionalPositiveNumber(item.packageQuantity),
         priceMinor: itemPrice(item),

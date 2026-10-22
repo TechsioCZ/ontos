@@ -32,3 +32,12 @@ export function buildVariantQuestionHref(slug: string, ids: string[]): string {
   if (ids.length) params.set("variantIds", [...new Set(ids)].join(","));
   return `/kontakty?${params}#primy-kontakt`;
 }
+
+/** Keep list selection and search intact when opening or closing one variant detail. */
+export function buildVariantDetailHref(slug: string, id: string | null, search = ""): string {
+  const params = new URLSearchParams(search);
+  if (id) params.set("variantDetail", id);
+  else params.delete("variantDetail");
+  const query = params.toString();
+  return `/produkt/${encodeURIComponent(slug)}${query ? `?${query}` : ""}#product-variants`;
+}

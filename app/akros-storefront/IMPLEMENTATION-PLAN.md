@@ -24,9 +24,13 @@ Po souhlasu s realizací používáme „Uložit výběr“ a produktový list b
 TASK 02 a doplňkové akce jsou lokálně implementované a ověřené; podrobnosti vlastní
 odkazovaný rozbor. Následné upřesnění rozšiřuje stejný výběr na hlídání, dotaz a sdílení
 více variant; [záznam úpravy](plans/akros-task-03-actions-review.md) popisuje také přesné
-odkazy a sjednocení stínu. Základ stránky oblíbených pokrývá část TASK 13; samostatný
-modální detail varianty z TASK 07 a finální návaznosti TASK 03/13 zůstávají další prací.
+odkazy a sjednocení stínu. Základ stránky oblíbených pokrývá část TASK 13;
+navazující modal z TASK 03/07 a jeho ověření vlastní níže uvedený rozbor.
 GitHub issues zůstávají beze změny.
+
+Uživatel odsouhlasil [detailní návrh TASK 03 + 07](plans/akros-task-03-07-review.md)
+a jeho realizaci: modal z názvu varianty, přímé akce, obrázkový náhled a přesná URL.
+Neověřená jednotka hmotnosti zůstává otevřená a neblokuje ostatní části detailu.
 
 ## Zadání a porovnání s GitHubem
 
