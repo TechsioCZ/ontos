@@ -67,6 +67,7 @@ const swc = {
 
 export default defineConfig({
   output: { distPath: path.join(tmpdir(), `ontos-shell-rstest-${process.pid}`) },
+  performance: { buildCache: false },
   projects: [
     {
       clearMocks: true,
