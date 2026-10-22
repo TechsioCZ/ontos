@@ -229,11 +229,17 @@ jobs:
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
       ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE: topology/initial-composition-execution.stage.json
-      ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE: ${{ github.workspace }}/app/.initial-composition-cutover/initial-composition-cutover-receipt.json
-      CANDIDATE_FILE: ${{ github.workspace }}/app/.composition-candidate/active-application-composition-candidate.json
-      RECEIPTS: ${{ github.workspace }}/app/.release-receipts
       UNITS_JSON: ${{ needs.plan.outputs.units }}
     steps:
+      # Release scripts require a clean Git checkout, so everything this job writes lives in the runner temp.
+      - name: Name the release files in the runner temp
+        run: |
+          {
+            echo "ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE=$RUNNER_TEMP/initial-composition-cutover/initial-composition-cutover-receipt.json"
+            echo "CANDIDATE_FILE=$RUNNER_TEMP/composition-candidate/active-application-composition-candidate.json"
+            echo "RECEIPTS=$RUNNER_TEMP/release-receipts"
+          } >>"$GITHUB_ENV"
+
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -257,6 +263,17 @@ jobs:
             mise exec -- pnpm --filter "$package" exec test -f .output/wrangler.json
             test -f ".codex/reports/releases/$id/plan.json"
           done < <(jq -r '.[] | [.id, .package] | @tsv' <<<"$UNITS_JSON")
+
+      # Wrangler writes .wrangler/tmp next to each unit while it uploads; locally .git/info/exclude ignores it.
+      - name: Require a clean checkout before the uploads
+        run: |
+          echo '.wrangler/' >>.git/info/exclude
+          dirty="$(git status --porcelain=v1 --untracked-files=all)"
+          if [[ -n "$dirty" ]]; then
+            echo "::error title=Dirty checkout::release scripts require a clean Git checkout"
+            head -40 <<<"$dirty"
+            exit 1
+          fi
 
       # Every upload takes the composition publication advisory lock in the stage database.
       - name: Connect the runner to the private Zerops database network
@@ -323,8 +340,8 @@ jobs:
         with:
           name: stage-demo-release
           path: |
-            app/.composition-candidate
-            app/.release-receipts
+            ${{ runner.temp }}/composition-candidate
+            ${{ runner.temp }}/release-receipts
           retention-days: 14
 
       # The stage provider quiescence was proven when stage first cut over (operator receipt, 2026-10-22).
