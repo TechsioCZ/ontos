@@ -11,7 +11,8 @@ import {
   OAUTH_MCP_SCOPE,
 } from '@app/shared-contracts/oauth-connections';
 import { Effect } from 'effect';
-import { type JWTVerifyGetKey, createLocalJWKSet, jwtVerify } from 'jose';
+import { createLocalJWKSet, jwtVerify } from 'jose';
+import type { JSONWebKeySet, JWTVerifyGetKey } from 'jose';
 
 import type { OAuthServerEndpoint } from '../auth/oauth-server/policy.ts';
 import { AuthenticationService } from '../auth/service.ts';
@@ -55,16 +56,28 @@ export const makeAccessTokenVerifier = (config: OAuthServerConfig, keys: JWTVeri
     );
 };
 
-/** Resolve the local AS keys in-process: Workers must never fetch their own public hostname. */
-export const makeOAuthJwksResolver =
-  (endpoint: OAuthServerEndpoint): JWTVerifyGetKey =>
-  async (header, token) => {
-    const response = await endpoint.handler(new Request(`${endpoint.issuer}/jwks`));
-    if (!response.ok) {
-      throw new Error('OAuth signing keys unavailable');
-    }
-    return createLocalJWKSet(await response.json())(header, token);
-  };
+/** Loads the local AS keys in-process: Workers must never fetch their own public hostname. */
+export const loadOAuthJwks = (endpoint: OAuthServerEndpoint): Effect.Effect<JWTVerifyGetKey, ConnectionUnavailable> =>
+  Effect.tryPromise({
+    catch: (cause) => new ConnectionUnavailable({ cause }),
+    try: () => endpoint.handler(new Request(`${endpoint.issuer}/jwks`)),
+  }).pipe(
+    Effect.filterOrFail(
+      (response) => response.ok,
+      (response) => new ConnectionUnavailable({ cause: `OAuth signing keys answered HTTP ${response.status}` }),
+    ),
+    Effect.flatMap((response) =>
+      Effect.tryPromise({
+        catch: (cause) => new ConnectionUnavailable({ cause }),
+        try: (): Promise<JSONWebKeySet> => response.json(),
+      }),
+    ),
+    Effect.map((keys) => createLocalJWKSet(keys)),
+    Effect.timeoutOrElse({
+      duration: '5 seconds',
+      orElse: () => Effect.fail(new ConnectionUnavailable({ cause: 'OAuth signing keys timed out' })),
+    }),
+  );
 
 /** Trusted principal context of a connection (`oauth_connection`, delegated when an agent acts). */
 export const connectionPrincipalContext = (live: LiveConnection) => {
@@ -117,7 +130,7 @@ export const authenticateMcpRequest = Effect.fn('Mcp.authenticate')(function* au
   if (authentication.oauth === undefined || authentication.oauth.issuer !== config.issuer) {
     return yield* new ConnectionUnavailable({ cause: 'OAuth issuer unavailable or mismatched' });
   }
-  const claims = yield* makeAccessTokenVerifier(config, makeOAuthJwksResolver(authentication.oauth))(token);
+  const claims = yield* makeAccessTokenVerifier(config, yield* loadOAuthJwks(authentication.oauth))(token);
   const live = yield* loadLiveConnection(claims.grantId);
   if (live.grant.userId !== claims.sub) {
     return yield* new ConnectionUnauthorized({ code: 'token_invalid' });

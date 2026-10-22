@@ -5,6 +5,7 @@
  * and served from scratch.
  */
 import { createMcpHandler } from '@modelcontextprotocol/server';
+import { Duration, Effect } from 'effect';
 
 import { buildMcpServer } from './server-factory.ts';
 import type { ToolSpec } from './types.ts';
@@ -24,12 +25,18 @@ export interface McpEndpointConfig {
 
 export type McpAuthentication =
   | { readonly kind: 'invalid' }
-  | { readonly kind: 'ok'; readonly clientId: string; readonly grantId: string; readonly tools: () => readonly ToolSpec[] }
+  | {
+      readonly kind: 'ok';
+      readonly clientId: string;
+      readonly grantId: string;
+      readonly tools: () => readonly ToolSpec[];
+    }
   | { readonly kind: 'unavailable' };
 
-export interface McpEndpointDeps {
-  readonly authenticate: (token: string) => Promise<McpAuthentication>;
-  readonly config: (request: Request) => Promise<McpEndpointConfig>;
+/** Per-request inputs of the endpoint; the Shell transport reads them from the request's services. */
+export interface McpEndpointDeps<Failure = never, Requirements = never> {
+  readonly authenticate: (token: string) => Effect.Effect<McpAuthentication, Failure, Requirements>;
+  readonly config: Effect.Effect<McpEndpointConfig, Failure, Requirements>;
 }
 
 export const PUBLIC_CORS_HEADERS: Readonly<Record<string, string>> = {
@@ -101,86 +108,83 @@ export const landingPage = (config: McpEndpointConfig): Response => {
 const BEARER = /^Bearer\s+(\S+)$/iu;
 
 /** Serves `/.well-known/oauth-protected-resource[/mcp]`. */
-export const createMcpMetadataFetch =
-  (deps: Pick<McpEndpointDeps, 'config'>) =>
-  async (request: Request): Promise<Response> => {
+export const serveMcpMetadata =
+  <Failure, Requirements>(deps: Pick<McpEndpointDeps<Failure, Requirements>, 'config'>) =>
+  (request: Request): Effect.Effect<Response, Failure, Requirements> => {
     if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: PREFLIGHT_HEADERS, status: 204 });
+      return Effect.succeed(new Response(null, { headers: PREFLIGHT_HEADERS, status: 204 }));
     }
     if (request.method !== 'GET' && request.method !== 'HEAD') {
-      return new Response(null, { headers: { allow: 'GET, HEAD, OPTIONS' }, status: 405 });
+      return Effect.succeed(new Response(null, { headers: { allow: 'GET, HEAD, OPTIONS' }, status: 405 }));
     }
-    const config = await deps.config(request);
-    return Response.json(protectedResourceMetadata(config), {
-      headers: { ...PUBLIC_CORS_HEADERS, 'cache-control': 'public, max-age=300' },
-    });
+    return deps.config.pipe(
+      Effect.map((config) =>
+        Response.json(protectedResourceMetadata(config), {
+          headers: { ...PUBLIC_CORS_HEADERS, 'cache-control': 'public, max-age=300' },
+        }),
+      ),
+    );
   };
 
 /** Serves the MCP endpoint itself. */
-export const createMcpFetch = (deps: McpEndpointDeps) => {
-  const handler = createMcpHandler(
-    (context) => {
-      const tools = context.authInfo?.extra?.['tools'];
-      if (typeof tools !== 'function') {
-        throw new Error('missing connection tools');
+export const serveMcp =
+  <Failure, Requirements>(deps: McpEndpointDeps<Failure, Requirements>) =>
+  (request: Request): Effect.Effect<Response, Failure, Requirements> =>
+    Effect.gen(function* serveMcpRequest() {
+      if (request.method === 'OPTIONS') {
+        return new Response(null, { headers: PREFLIGHT_HEADERS, status: 204 });
       }
-      return buildMcpServer((tools as () => readonly ToolSpec[])());
-    },
-    {
-      // Current MCP revision only: 2025-era requests get the unsupported-version error naming 2026-07-28.
-      legacy: 'reject',
-      onerror: (error) => {
-        console.error(`mcp handler error: ${error.message}`);
-      },
-    },
-  );
-
-  return async (request: Request): Promise<Response> => {
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { headers: PREFLIGHT_HEADERS, status: 204 });
-    }
-    const config = await deps.config(request);
-    if (request.method === 'GET' && !(request.headers.get('accept') ?? '').includes('text/event-stream')) {
-      return landingPage(config);
-    }
-    const bearer = BEARER.exec((request.headers.get('authorization') ?? '').trim())?.[1];
-    if (bearer === undefined) {
-      return unauthorizedResponse(config.prmUrl, false);
-    }
-    const authentication = await deps.authenticate(bearer);
-    if (authentication.kind === 'invalid') {
-      return unauthorizedResponse(config.prmUrl, true);
-    }
-    if (authentication.kind === 'unavailable') {
-      return unavailableResponse();
-    }
-    const started = Date.now();
-    const response = await handler.fetch(request, {
-      authInfo: {
-        clientId: authentication.clientId,
-        extra: { tools: authentication.tools },
-        resource: new URL(config.resource),
-        scopes: [OAUTH_SCOPE],
-        token: bearer,
-      },
+      const config = yield* deps.config;
+      if (request.method === 'GET' && !(request.headers.get('accept') ?? '').includes('text/event-stream')) {
+        return landingPage(config);
+      }
+      const bearer = BEARER.exec((request.headers.get('authorization') ?? '').trim())?.[1];
+      if (bearer === undefined) {
+        return unauthorizedResponse(config.prmUrl, false);
+      }
+      const authentication = yield* deps.authenticate(bearer);
+      if (authentication.kind === 'invalid') {
+        return unauthorizedResponse(config.prmUrl, true);
+      }
+      if (authentication.kind === 'unavailable') {
+        return unavailableResponse();
+      }
+      // The SDK calls back with Promises; tools and logs run with the services of this request.
+      const services = yield* Effect.context<never>();
+      const handler = createMcpHandler(() => buildMcpServer(authentication.tools(), Effect.runPromiseWith(services)), {
+        // Current MCP revision only: 2025-era requests get the unsupported-version error naming 2026-07-28.
+        legacy: 'reject',
+        onerror: (error) => {
+          Effect.runForkWith(services)(Effect.logError(`mcp handler error: ${error.message}`));
+        },
+      });
+      const [elapsed, response] = yield* Effect.timed(
+        Effect.promise(() =>
+          handler.fetch(request, {
+            authInfo: {
+              clientId: authentication.clientId,
+              resource: new URL(config.resource),
+              scopes: [OAUTH_SCOPE],
+              token: bearer,
+            },
+          }),
+        ),
+      );
+      yield* Effect.logInfo('mcp.request').pipe(
+        Effect.annotateLogs({
+          grantId: authentication.grantId,
+          method: request.method,
+          ms: Duration.toMillis(elapsed),
+          status: response.status,
+        }),
+      );
+      const headers = new Headers(response.headers);
+      for (const [name, value] of Object.entries(PUBLIC_CORS_HEADERS)) {
+        headers.set(name, value);
+      }
+      if ((response.headers.get('content-type') ?? '').includes('text/event-stream')) {
+        headers.set('cache-control', 'no-cache');
+        headers.set('x-accel-buffering', 'no');
+      }
+      return new Response(response.body, { headers, status: response.status, statusText: response.statusText });
     });
-    console.log(
-      JSON.stringify({
-        event: 'mcp.request',
-        grantId: authentication.grantId,
-        method: request.method,
-        ms: Date.now() - started,
-        status: response.status,
-      }),
-    );
-    const headers = new Headers(response.headers);
-    for (const [name, value] of Object.entries(PUBLIC_CORS_HEADERS)) {
-      headers.set(name, value);
-    }
-    if ((response.headers.get('content-type') ?? '').includes('text/event-stream')) {
-      headers.set('cache-control', 'no-cache');
-      headers.set('x-accel-buffering', 'no');
-    }
-    return new Response(response.body, { headers, status: response.status, statusText: response.statusText });
-  };
-};

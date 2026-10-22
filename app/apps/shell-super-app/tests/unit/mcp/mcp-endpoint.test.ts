@@ -7,8 +7,10 @@ import {
   StreamableHTTPClientTransport,
 } from '@modelcontextprotocol/client';
 import { describe, expect, it } from '@rstest/core';
+import { Crypto, Effect } from 'effect';
 
-import { createMcpFetch, createMcpMetadataFetch } from '../../../api/mcp/http.ts';
+import { ShellCryptoLive } from '../../../api/auth/gateway-issuer.ts';
+import { serveMcp, serveMcpMetadata } from '../../../api/mcp/http.ts';
 import type { McpEndpointConfig } from '../../../api/mcp/http.ts';
 import { buildConnectionTools } from '../../../api/mcp/tools.ts';
 import type { McpBackend, ModuleAnswer } from '../../../api/mcp/types.ts';
@@ -61,51 +63,60 @@ interface Recorded {
 }
 
 const fakeBackend = (calls: Recorded[], proposals: unknown[] = []): McpBackend => ({
-  callModule: async (appId, path, body, options): Promise<ModuleAnswer> => {
-    calls.push({ appId, body, options, path });
-    if (path === '/reads/records') {
-      return { body: { canWrite: true, notes: [{ text: 'první' }], revision: 7 }, status: 200 };
-    }
-    return { body: { ok: true }, status: 200 };
-  },
-  listProposals: async () => ({
+  callModule: (appId, path, body, options) =>
+    Effect.sync((): ModuleAnswer => {
+      calls.push({ appId, body, options, path });
+      if (path === '/reads/records') {
+        return { body: { canWrite: true, notes: [{ text: 'první' }], revision: 7 }, status: 200 };
+      }
+      return { body: { ok: true }, status: 200 };
+    }),
+  listProposals: Effect.succeed({
     batches: [],
     company: { legalEntityId: 'le', legalName: 'Obchodní firma' },
     pendingCount: 0,
     unavailableModules: [],
   }),
-  submitProposals: async (request) => {
-    proposals.push(request);
-    return { batchId: 'batch-1', proposalIds: ['p-1'], replayed: false, reviewPath: '/cs/sprava/ke-schvaleni' };
-  },
+  submitProposals: (request) =>
+    Effect.sync(() => {
+      proposals.push(request);
+      return { batchId: 'batch-1', proposalIds: ['p-1'], replayed: false, reviewPath: '/cs/sprava/ke-schvaleni' };
+    }),
 });
+
+const shellCrypto = Effect.runSync(Effect.service(Crypto.Crypto).pipe(Effect.provide(ShellCryptoLive)));
 
 const endpoint = (options: {
   readonly backend: McpBackend;
   readonly description: ReturnType<typeof connectionDescription>;
   readonly token?: string;
-}) =>
-  createMcpFetch({
-    authenticate: async (token) =>
-      token === (options.token ?? 'good')
-        ? {
-            clientId: options.description.client.clientId,
-            grantId: options.description.grantId,
-            kind: 'ok',
-            tools: () =>
-              buildConnectionTools({
-                backend: options.backend,
-                catalog: fixtureCatalog(),
-                description: options.description,
-                prmUrl: CONFIG.prmUrl,
-                publicOrigin: CONFIG.publicOrigin,
-              }),
-          }
-        : token === 'down'
-          ? { kind: 'unavailable' }
-          : { kind: 'invalid' },
-    config: async () => CONFIG,
+}) => {
+  const serve = serveMcp({
+    authenticate: (token) =>
+      Effect.succeed(
+        token === (options.token ?? 'good')
+          ? {
+              clientId: options.description.client.clientId,
+              grantId: options.description.grantId,
+              kind: 'ok' as const,
+              tools: () =>
+                buildConnectionTools({
+                  backend: options.backend,
+                  catalog: fixtureCatalog(),
+                  crypto: shellCrypto,
+                  description: options.description,
+                  prmUrl: CONFIG.prmUrl,
+                  publicOrigin: CONFIG.publicOrigin,
+                }),
+            }
+          : token === 'down'
+            ? { kind: 'unavailable' as const }
+            : { kind: 'invalid' as const },
+      ),
+    config: Effect.succeed(CONFIG),
   });
+  return (request: Request): Promise<Response> => Effect.runPromise(serve(request));
+};
 
 const connect = async (handler: (request: Request) => Promise<Response>, token = 'good') => {
   const client = new Client(CLIENT_INFO, { versionNegotiation: { mode: { pin: PROTOCOL_VERSION } } });
@@ -138,8 +149,10 @@ describe('root routes', () => {
 
 describe('Protected Resource Metadata and challenges', () => {
   it('names the Shell resource and its authorization server', async () => {
-    const response = await createMcpMetadataFetch({ config: async () => CONFIG })(
-      new Request('http://localhost:3020/.well-known/oauth-protected-resource/mcp'),
+    const response = await Effect.runPromise(
+      serveMcpMetadata({ config: Effect.succeed(CONFIG) })(
+        new Request('http://localhost:3020/.well-known/oauth-protected-resource/mcp'),
+      ),
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({

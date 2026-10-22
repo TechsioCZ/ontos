@@ -2,6 +2,8 @@
  * Keeps MCP read results small (a module read can be hundreds of kilobytes): lists are paged, and while the JSON is
  * over budget the largest parts are replaced by `{ _omitted, count, path }` markers the client can drill into.
  */
+import { Data, Result } from 'effect';
+
 export interface TruncatedPath {
   readonly path: string;
   readonly total: number;
@@ -30,12 +32,11 @@ const isPlainObject = (value: unknown): value is Readonly<Record<string, unknown
 const sizeOf = (value: unknown): number => JSON.stringify(value)?.length ?? 0;
 const joinPath = (prefix: string, key: string): string => (prefix === '' ? key : `${prefix}.${key}`);
 
-export class ReadPathError extends Error {
-  override readonly name = 'ReadPathError';
-}
+/** The requested path is not in the read result; `message` is Czech and lists what is there. */
+export class ReadPathError extends Data.TaggedError('ReadPathError')<{ readonly message: string }> {}
 
 /** Resolves `a.b[2].c` (or `a.b.2.c`) inside a read result. */
-export const selectPath = (value: unknown, path: string): unknown => {
+export const selectPath = (value: unknown, path: string): Result.Result<unknown, ReadPathError> => {
   const segments = path
     .replace(/\[(\d+)\]/gu, '.$1')
     .split('.')
@@ -54,13 +55,15 @@ export const selectPath = (value: unknown, path: string): unknown => {
         : Array.isArray(current)
           ? `indexy 0–${Math.max(current.length - 1, 0)}`
           : 'žádné';
-      throw new ReadPathError(
-        `Cesta „${path}“ ve výsledku neexistuje (chybí „${segment}“${walked === '' ? '' : ` pod „${walked}“`}). Dostupné: ${keys}.`,
+      return Result.fail(
+        new ReadPathError({
+          message: `Cesta „${path}“ ve výsledku neexistuje (chybí „${segment}“${walked === '' ? '' : ` pod „${walked}“`}). Dostupné: ${keys}.`,
+        }),
       );
     }
     walked = joinPath(walked, segment);
   }
-  return current;
+  return Result.succeed(current);
 };
 
 type Mutable = Record<string, unknown> | unknown[];
@@ -95,7 +98,15 @@ export const shapeReadResult = (
   const budget = options.budget ?? READ_CHAR_BUDGET;
   const base = options.basePath?.trim() ?? '';
   const display = (inner: string): string =>
-    base === '' ? (inner === '' ? '(kořen)' : inner) : inner === '' ? base : inner.startsWith('[') ? `${base}${inner}` : `${base}.${inner}`;
+    base === ''
+      ? inner === ''
+        ? '(kořen)'
+        : inner
+      : inner === ''
+        ? base
+        : inner.startsWith('[')
+          ? `${base}${inner}`
+          : `${base}.${inner}`;
   const truncated = new Map<string, TruncatedPath>();
   const omitted: OmittedPath[] = [];
 
@@ -166,16 +177,18 @@ export const shapeReadResult = (
       slot.parent[slot.key as string] = next;
     }
   };
-  const originalCount = (path: string, fallback: number): number => {
-    try {
-      const original = selectPath(value, path);
-      return Array.isArray(original) ? original.length : isPlainObject(original) ? Object.keys(original).length : fallback;
-    } catch {
-      return fallback;
-    }
-  };
+  const originalCount = (path: string, fallback: number): number =>
+    Result.match(selectPath(value, path), {
+      onFailure: () => fallback,
+      onSuccess: (original) =>
+        Array.isArray(original) ? original.length : isPlainObject(original) ? Object.keys(original).length : fallback,
+    });
   const collapseLargest = (kind: 'list' | 'object'): boolean => {
-    const candidates = slots((node) => (kind === 'list' ? Array.isArray(node) && node.length > 0 : isPlainObject(node) && !Object.hasOwn(node, '_omitted')))
+    const candidates = slots((node) =>
+      kind === 'list'
+        ? Array.isArray(node) && node.length > 0
+        : isPlainObject(node) && !Object.hasOwn(node, '_omitted'),
+    )
       .map((slot) => ({ size: sizeOf(slot.value), slot }))
       .filter((candidate) => candidate.size > 200)
       .sort((left, right) => right.size - left.size);
@@ -224,7 +237,11 @@ export const shapeReadResult = (
     break;
   }
   const omittedPaths = new Set(omitted.map((item) => item.path));
-  return { data: root.value, omitted, truncated: [...truncated.values()].filter((item) => !omittedPaths.has(item.path)) };
+  return {
+    data: root.value,
+    omitted,
+    truncated: [...truncated.values()].filter((item) => !omittedPaths.has(item.path)),
+  };
 };
 
 export const DEFAULT_READ_LIMIT = 25;

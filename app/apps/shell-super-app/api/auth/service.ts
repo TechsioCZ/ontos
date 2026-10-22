@@ -639,22 +639,23 @@ type ShellBetterAuth = ReturnType<typeof makeShellBetterAuth>;
 const readyBetterAuth = new Map<string, ShellBetterAuth>();
 const MAX_SHARED_BETTER_AUTH = 4;
 
-const publishWhenReady = async (key: string, created: ShellBetterAuth): Promise<void> => {
-  try {
-    await created.$context;
-  } catch {
+const publishWhenReady = (key: string, created: ShellBetterAuth): Effect.Effect<void> =>
+  Effect.tryPromise(() => created.$context).pipe(
+    Effect.andThen(
+      Effect.sync(() => {
+        if (readyBetterAuth.has(key)) {
+          return;
+        }
+        // An isolate serves one configuration; the bound only keeps a misconfiguration from growing the map.
+        if (readyBetterAuth.size >= MAX_SHARED_BETTER_AUTH) {
+          readyBetterAuth.clear();
+        }
+        readyBetterAuth.set(key, created);
+      }),
+    ),
     // A failed setup stays with the request that built it; the next request builds again.
-    return;
-  }
-  if (readyBetterAuth.has(key)) {
-    return;
-  }
-  // An isolate serves one configuration; the bound only keeps a misconfiguration from growing the map.
-  if (readyBetterAuth.size >= MAX_SHARED_BETTER_AUTH) {
-    readyBetterAuth.clear();
-  }
-  readyBetterAuth.set(key, created);
-};
+    Effect.ignore,
+  );
 
 /**
  * One Better Auth instance per isolate and configuration. The database is not part of the key: on Workers every request
@@ -681,7 +682,7 @@ const isolateBetterAuth = (
     return ready;
   }
   const created = betterAuthRequest.run(bindings, () => makeShellBetterAuth(configuration, allowFixtureSignUp));
-  void publishWhenReady(key, created);
+  Effect.runFork(publishWhenReady(key, created));
   return created;
 };
 

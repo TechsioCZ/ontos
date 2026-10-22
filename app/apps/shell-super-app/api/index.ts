@@ -2708,6 +2708,7 @@ export const handleOAuthMetadata = (request: Request): Promise<Response> =>
             ? Effect.succeed(oauthNotFoundResponse())
             : forwardOAuthRequest(service.oauth)(request),
         ),
+        // @effect-diagnostics-next-line strictEffectProvide:off -- Node entry point: the root OAuth metadata alias runs outside the BFF runtime, so it provides its own scoped authentication service.
         Effect.provide(authenticationServiceLive),
       ),
     ),

@@ -1,4 +1,6 @@
 /** SDK-independent tool shapes of the Shell MCP endpoint. Keep this file free of logic. */
+import { Data } from 'effect';
+import type { Crypto, Effect } from 'effect';
 import type {
   AgentProposalSubmitRequest,
   AgentProposalSubmitResponse,
@@ -43,15 +45,15 @@ export interface ToolResult {
 export interface ToolSpec {
   readonly annotations: ToolAnnotationsSpec;
   readonly description: string;
-  /** Never throws: failures come back as `isError: true`. */
-  readonly handler: (args: Readonly<Record<string, unknown>>) => Promise<ToolResult>;
+  /** Never fails: failures come back as `isError: true`. */
+  readonly handler: (args: Readonly<Record<string, unknown>>) => Effect.Effect<ToolResult>;
   readonly inputSchema: JsonObject;
   readonly name: string;
   readonly outputSchema?: JsonObject;
   readonly title: string;
 }
 
-/** A module answer (any status); transport failures throw `ModuleUnavailable`. */
+/** A module answer (any status); transport failures are `ModuleUnavailable`. */
 export interface ModuleAnswer {
   readonly body: unknown;
   readonly status: number;
@@ -64,14 +66,18 @@ export interface McpBackend {
     path: string,
     body: unknown,
     options: { readonly idempotencyKey?: string; readonly referenceAudiences?: readonly string[] },
-  ) => Promise<ModuleAnswer>;
-  readonly listProposals: () => Promise<AgentQueueResponse>;
-  readonly submitProposals: (request: AgentProposalSubmitRequest) => Promise<AgentProposalSubmitResponse>;
+  ) => Effect.Effect<ModuleAnswer, ModuleUnavailable>;
+  readonly listProposals: Effect.Effect<AgentQueueResponse, ModuleUnavailable>;
+  readonly submitProposals: (
+    request: AgentProposalSubmitRequest,
+  ) => Effect.Effect<AgentProposalSubmitResponse, ModuleUnavailable | ProposalRefused>;
 }
 
 export interface McpToolContext {
   readonly backend: McpBackend;
   readonly catalog: McpCatalog;
+  /** Idempotency keys, run ids and request hashes. */
+  readonly crypto: Crypto.Crypto;
   readonly description: ConnectionDescription;
   /** `https://ontos-stage.example` (links shown to people). */
   readonly publicOrigin: string;
@@ -80,24 +86,19 @@ export interface McpToolContext {
 }
 
 /** The module could not be reached (composition, assertion or dispatch failed before it ran). */
-export class ModuleUnavailable extends Error {
-  override readonly name = 'ModuleUnavailable';
-}
+export class ModuleUnavailable extends Data.TaggedError('ModuleUnavailable')<{ readonly message: string }> {}
 
 /** A failed answer of a module, as an RFC 9457 problem. */
-export class ModuleProblem extends Error {
-  override readonly name = 'ModuleProblem';
-  constructor(
-    readonly status: number,
-    readonly code: string | undefined,
-    readonly detail: string | undefined,
-    readonly title: string | undefined,
-  ) {
-    super(`module answered HTTP ${status}${code === undefined ? '' : ` ${code}`}`);
+export class ModuleProblem extends Data.TaggedError('ModuleProblem')<{
+  readonly code: string | undefined;
+  readonly detail: string | undefined;
+  readonly status: number;
+  readonly title: string | undefined;
+}> {
+  override get message(): string {
+    return `module answered HTTP ${this.status}${this.code === undefined ? '' : ` ${this.code}`}`;
   }
 }
 
 /** The platform approval queue refused the batch; `message` is Czech. */
-export class ProposalRefused extends Error {
-  override readonly name = 'ProposalRefused';
-}
+export class ProposalRefused extends Data.TaggedError('ProposalRefused')<{ readonly message: string }> {}

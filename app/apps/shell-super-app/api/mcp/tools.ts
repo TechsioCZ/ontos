@@ -5,27 +5,22 @@
  */
 import { agentCommandOf } from '@app/shared-contracts/agent-proposals';
 import type { AgentProposalInput } from '@app/shared-contracts/agent-proposals';
+import { Duration, Effect, Result } from 'effect';
 
 import type { JsonObject, McpCatalogModule, McpCatalogTool } from './catalog.ts';
 import { findModule, findTool } from './catalog.ts';
 import { czechProblem } from './errors-cs.ts';
 import { inputProblems } from './input-check.ts';
 import { CAPABILITIES_OUTPUT, PROPOSALS_OUTPUT, READ_OUTPUT, WHOAMI_OUTPUT, WRITE_OUTPUT } from './output-schemas.ts';
-import { DEFAULT_READ_LIMIT, ReadPathError, selectPath, shapeReadResult } from './read-shaping.ts';
+import { DEFAULT_READ_LIMIT, selectPath, shapeReadResult } from './read-shaping.ts';
+import type { ReadPathError } from './read-shaping.ts';
 import { directReplays, requestHash } from './replay.ts';
 import { matchesTokens, queryTokens } from './search.ts';
-import {
-  annotationsFor,
-  canPropose,
-  canRead,
-  canWrite,
-  grantAllowsWrite,
-  isOffered,
-  planTools,
-} from './tool-plan.ts';
+import { annotationsFor, canPropose, canRead, canWrite, grantAllowsWrite, isOffered, planTools } from './tool-plan.ts';
 import type { GenericToolName } from './tool-plan.ts';
 import type { McpToolContext, ToolAnnotationsSpec, ToolContent, ToolResult, ToolSpec } from './types.ts';
-import { ModuleProblem, ModuleUnavailable, ProposalRefused } from './types.ts';
+import { ModuleProblem, ModuleUnavailable } from './types.ts';
+import type { ProposalRefused } from './types.ts';
 
 export const WRITE_POLICY_CS = {
   approval: 'zápis jen přes schválení – každá změna čeká na rozhodnutí člověka v aplikaci',
@@ -78,7 +73,10 @@ const intArg = (args: Readonly<Record<string, unknown>>, key: string): number | 
   const value = args[key];
   return typeof value === 'number' && Number.isInteger(value) ? value : undefined;
 };
-const objectArg = (args: Readonly<Record<string, unknown>>, key: string): Readonly<Record<string, unknown>> | undefined => {
+const objectArg = (
+  args: Readonly<Record<string, unknown>>,
+  key: string,
+): Readonly<Record<string, unknown>> | undefined => {
   const value = args[key];
   return isPlainObject(value) ? value : undefined;
 };
@@ -88,8 +86,13 @@ const problemOf = (status: number, body: unknown): ModuleProblem => {
     const value = isPlainObject(body) ? body[key] : undefined;
     return typeof value === 'string' && value.trim() !== '' ? value : undefined;
   };
-  return new ModuleProblem(status, field('code'), field('detail'), field('title'));
+  return new ModuleProblem({ code: field('code'), detail: field('detail'), status, title: field('title') });
 };
+
+/** Everything a tool can fail with; each becomes an `isError` tool result. */
+type ToolFailure = ModuleProblem | ModuleUnavailable | ProposalRefused | ReadPathError;
+
+type ToolRun = (args: Readonly<Record<string, unknown>>) => Effect.Effect<ToolResult, ToolFailure>;
 
 /** Optional fields every typed write tool gets besides the Action input (only when the input has no such field). */
 const TYPED_WRITE_EXTRAS: Readonly<Record<string, JsonObject>> = {
@@ -111,7 +114,10 @@ const typedWriteSchema = (schema: JsonObject): { readonly extras: readonly strin
         extras,
         schema: {
           ...schema,
-          properties: { ...properties, ...Object.fromEntries(extras.map((key) => [key, TYPED_WRITE_EXTRAS[key] ?? {}])) },
+          properties: {
+            ...properties,
+            ...Object.fromEntries(extras.map((key) => [key, TYPED_WRITE_EXTRAS[key] ?? {}])),
+          },
         },
       };
 };
@@ -181,21 +187,19 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
     return `${tool.title.cs} (${label}).${extra} Zápis přes governed Action: server ověří oprávnění a zapíše audit. Id: ${tool.id}.${english}`;
   };
 
-  const toolError = (error: unknown): ToolResult => {
-    if (error instanceof ModuleProblem) {
-      if (error.status === 401) {
-        return errorResult('Připojení k OntOS už neplatí. Připojte aplikaci znovu.', {
-          'mcp/www_authenticate': [`Bearer resource_metadata="${context.prmUrl}", scope="ontos", error="invalid_token"`],
-        });
-      }
-      const problem = czechProblem(error);
-      return errorResult(problem.text, problem.meta);
-    }
-    if (error instanceof ModuleUnavailable || error instanceof ProposalRefused || error instanceof ReadPathError) {
+  const toolError = (error: ToolFailure): ToolResult => {
+    if (error._tag !== 'ModuleProblem') {
       return errorResult(error.message);
     }
-    return errorResult(error instanceof Error ? error.message : String(error));
+    if (error.status === 401) {
+      return errorResult('Připojení k OntOS už neplatí. Připojte aplikaci znovu.', {
+        'mcp/www_authenticate': [`Bearer resource_metadata="${context.prmUrl}", scope="ontos", error="invalid_token"`],
+      });
+    }
+    const problem = czechProblem(error);
+    return errorResult(problem.text, problem.meta);
   };
+  const newId = context.crypto.randomUUIDv4.pipe(Effect.orDie);
 
   const instrument = (
     name: string,
@@ -203,98 +207,109 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
     toolDescription: string,
     inputSchema: JsonObject,
     annotations: ToolAnnotationsSpec,
-    run: (args: Readonly<Record<string, unknown>>) => Promise<ToolResult>,
+    run: ToolRun,
     outputSchema?: JsonObject,
   ): ToolSpec => ({
     annotations,
     description: toolDescription,
-    handler: async (args) => {
-      const started = Date.now();
-      let result: ToolResult;
-      try {
+    handler: (args) =>
+      Effect.suspend(() => {
         const problems = inputProblems(inputSchema, args);
-        result =
-          problems === undefined
-            ? await run(args)
-            : errorResult(`Neplatné argumenty nástroje ${name}: ${problems}.`, { 'ontos/code': 'invalid_arguments' });
-      } catch (error) {
-        result = toolError(error);
-      }
-      console.log(
-        JSON.stringify({
-          event: 'mcp.tool',
-          grantId: d.grantId,
-          ms: Date.now() - started,
-          outcome: result.isError === true ? 'error' : 'ok',
-          tool: name,
-        }),
-      );
-      return result;
-    },
+        return problems === undefined
+          ? run(args)
+          : Effect.succeed(
+              errorResult(`Neplatné argumenty nástroje ${name}: ${problems}.`, { 'ontos/code': 'invalid_arguments' }),
+            );
+      }).pipe(
+        Effect.catch((error) => Effect.succeed(toolError(error))),
+        // A tool never fails the MCP call: a defect becomes an error result like any other failure.
+        Effect.catchDefect((defect) =>
+          Effect.succeed(errorResult(defect instanceof Error ? defect.message : String(defect))),
+        ),
+        Effect.timed,
+        Effect.tap(([elapsed, result]) =>
+          Effect.logInfo('mcp.tool').pipe(
+            Effect.annotateLogs({
+              grantId: d.grantId,
+              ms: Duration.toMillis(elapsed),
+              outcome: result.isError === true ? 'error' : 'ok',
+              tool: name,
+            }),
+          ),
+        ),
+        Effect.map(([, result]) => result),
+      ),
     inputSchema,
     name,
     ...(outputSchema === undefined ? {} : { outputSchema }),
     title,
   });
 
-  const call = async (
+  const call = (
     tool: McpCatalogTool,
     path: string,
     body: unknown,
     options: { readonly idempotencyKey?: string; readonly referenceAudiences?: readonly string[] } = {},
-  ): Promise<unknown> => {
-    const answer = await backend.callModule(tool.appId, path, body, options);
-    if (answer.status < 200 || answer.status >= 300) {
-      throw problemOf(answer.status, answer.body);
-    }
-    return answer.body;
-  };
+  ): Effect.Effect<unknown, ModuleProblem | ModuleUnavailable> =>
+    backend
+      .callModule(tool.appId, path, body, options)
+      .pipe(
+        Effect.flatMap((answer) =>
+          answer.status < 200 || answer.status >= 300
+            ? Effect.fail(problemOf(answer.status, answer.body))
+            : Effect.succeed(answer.body),
+        ),
+      );
 
-  const runRead = async (
+  const runRead = (
     tool: McpCatalogTool,
     input: Readonly<Record<string, unknown>>,
     options: { readonly limit?: number; readonly offset?: number; readonly path?: string },
-  ) => {
-    const limit = Math.min(Math.max(options.limit ?? DEFAULT_READ_LIMIT, 1), 500);
-    const offset = Math.max(options.offset ?? 0, 0);
-    const data = await call(tool, tool.invoke.path, input);
-    const path = options.path?.trim() ?? '';
-    const selected = path === '' ? data : selectPath(data, path);
-    const shaped = shapeReadResult(selected, { basePath: path, limit, offset });
-    return {
-      data: shaped.data,
-      id: tool.id,
-      legalEntityId: d.legalEntityId,
-      omitted: shaped.omitted,
-      ...(path === '' ? {} : { path }),
-      truncated: shaped.truncated,
-    };
-  };
+  ) =>
+    Effect.gen(function* runReadEffect() {
+      const limit = Math.min(Math.max(options.limit ?? DEFAULT_READ_LIMIT, 1), 500);
+      const offset = Math.max(options.offset ?? 0, 0);
+      const data = yield* call(tool, tool.invoke.path, input);
+      const path = options.path?.trim() ?? '';
+      const selected = path === '' ? data : yield* Effect.fromResult(selectPath(data, path));
+      const shaped = shapeReadResult(selected, { basePath: path, limit, offset });
+      return {
+        data: shaped.data,
+        id: tool.id,
+        legalEntityId: d.legalEntityId,
+        omitted: shaped.omitted,
+        ...(path === '' ? {} : { path }),
+        truncated: shaped.truncated,
+      };
+    });
 
-  const runReadTool = async (
+  const runReadTool = (
     id: string,
     input: Readonly<Record<string, unknown>> | undefined,
     options: { readonly limit?: number; readonly offset?: number; readonly path?: string } = {},
-  ): Promise<ToolResult> => {
+  ): Effect.Effect<ToolResult, ToolFailure> => {
     const tool = findTool(catalog, id);
     const moduleId = moduleIdOf(id, tool);
     if (!canRead(d, moduleId)) {
-      return errorResult(MSG_NO_READ(labelOf(moduleId)));
+      return Effect.succeed(errorResult(MSG_NO_READ(labelOf(moduleId))));
     }
     if (tool === undefined || tool.access !== 'read') {
-      return errorResult(MSG_UNKNOWN(id));
+      return Effect.succeed(errorResult(MSG_UNKNOWN(id)));
     }
     const problems = inputProblems(tool.inputSchema, input ?? {}, 'input');
     if (problems !== undefined) {
-      return errorResult(MSG_INVALID_INPUT(tool.id, problems), { 'ontos/code': 'invalid_input' });
+      return Effect.succeed(errorResult(MSG_INVALID_INPUT(tool.id, problems), { 'ontos/code': 'invalid_input' }));
     }
-    const read = await runRead(tool, input ?? {}, options);
-    return okResult(read.truncated.length > 0 || read.omitted.length > 0 ? { ...read, noteCs: READ_NOTE_CS } : read);
+    return runRead(tool, input ?? {}, options).pipe(
+      Effect.map((read) =>
+        okResult(read.truncated.length > 0 || read.omitted.length > 0 ? { ...read, noteCs: READ_NOTE_CS } : read),
+      ),
+    );
   };
 
   /** The answer of the module's revision read (also carries live right flags such as `canWrite`). */
-  const revisionAnswer = async (module: McpCatalogModule, tool: McpCatalogTool): Promise<unknown> =>
-    module.revision === undefined ? undefined : await call(tool, module.revision.path, module.revision.query);
+  const revisionAnswer = (module: McpCatalogModule, tool: McpCatalogTool) =>
+    module.revision === undefined ? Effect.void : call(tool, module.revision.path, module.revision.query);
 
   const revisionFrom = (module: McpCatalogModule, answer: unknown, tag: string | undefined): number | undefined => {
     const revision = module.revision;
@@ -304,61 +319,59 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
     const field =
       revision.fieldsByCommandPrefix.find((entry) => tag !== undefined && tag.startsWith(entry.prefix))?.field ??
       revision.field;
-    try {
-      const value = selectPath(answer, field);
-      return typeof value === 'number' ? value : undefined;
-    } catch {
-      return undefined;
-    }
+    return Result.match(selectPath(answer, field), {
+      onFailure: () => undefined,
+      onSuccess: (value) => (typeof value === 'number' ? value : undefined),
+    });
   };
 
-  const executeDirect = async (
+  const executeDirect = (
     tool: McpCatalogTool,
     input: Readonly<Record<string, unknown>>,
     key: string,
-  ): Promise<unknown> => {
+  ): Effect.Effect<unknown, ModuleProblem | ModuleUnavailable> => {
     const module = moduleOf(tool.moduleId);
     const options = { referenceAudiences: tool.referenceAudiences };
     if (tool.invoke.commandTag === undefined || module === undefined) {
-      return await call(tool, tool.invoke.path, input, { ...options, idempotencyKey: key });
+      return call(tool, tool.invoke.path, input, { ...options, idempotencyKey: key });
     }
     const command = commandOf(tool, input);
-    const currentRevision = async (): Promise<number> => {
-      const revision = revisionFrom(module, await revisionAnswer(module, tool), tool.invoke.commandTag);
-      if (revision === undefined) {
-        throw new ModuleUnavailable(MSG_NO_REVISION(labelOf(tool.moduleId)));
-      }
-      return revision;
-    };
+    const currentRevision = revisionAnswer(module, tool).pipe(
+      Effect.flatMap((answer) => {
+        const revision = revisionFrom(module, answer, tool.invoke.commandTag);
+        return revision === undefined
+          ? Effect.fail(new ModuleUnavailable({ message: MSG_NO_REVISION(labelOf(tool.moduleId)) }))
+          : Effect.succeed(revision);
+      }),
+    );
     const given = input['expectedRevision'];
-    const send = async (revision: number, idempotencyKey: string) =>
-      await call(tool, tool.invoke.path, { command, expectedRevision: revision }, { ...options, idempotencyKey });
-    try {
-      return await send(typeof given === 'number' ? given : await currentRevision(), key);
-    } catch (error) {
-      if (!(error instanceof ModuleProblem && error.status === 409 && (error.code ?? '').endsWith('revision_conflict'))) {
-        throw error;
-      }
-      // The rejected attempt keeps its key; the retry is a new request body, so it needs its own stable key.
-      return await send(await currentRevision(), `${key}-retry`);
-    }
+    const send = (revision: number, idempotencyKey: string) =>
+      call(tool, tool.invoke.path, { command, expectedRevision: revision }, { ...options, idempotencyKey });
+    return (typeof given === 'number' ? Effect.succeed(given) : currentRevision).pipe(
+      Effect.flatMap((revision) => send(revision, key)),
+      Effect.catchIf(
+        (error) =>
+          error._tag === 'ModuleProblem' && error.status === 409 && (error.code ?? '').endsWith('revision_conflict'),
+        // The rejected attempt keeps its key; the retry is a new request body, so it needs its own stable key.
+        () => currentRevision.pipe(Effect.flatMap((revision) => send(revision, `${key}-retry`))),
+      ),
+    );
   };
 
   /** Live flags of the revision read: `canWrite` and the tool's own `liveRight`. Unknown counts as allowed. */
-  const liveWriteAllowed = async (tool: McpCatalogTool): Promise<boolean> => {
+  const liveWriteAllowed = (tool: McpCatalogTool): Effect.Effect<boolean> => {
     const module = moduleOf(tool.moduleId);
     if (module?.revision === undefined) {
-      return true;
+      return Effect.succeed(true);
     }
-    try {
-      const flags = await revisionAnswer(module, tool);
-      if (!isPlainObject(flags)) {
-        return true;
-      }
-      return flags['canWrite'] !== false && (tool.liveRight === undefined || flags[tool.liveRight] !== false);
-    } catch {
-      return true;
-    }
+    return revisionAnswer(module, tool).pipe(
+      Effect.map(
+        (flags) =>
+          !isPlainObject(flags) ||
+          (flags['canWrite'] !== false && (tool.liveRight === undefined || flags[tool.liveRight] !== false)),
+      ),
+      Effect.orElseSucceed(() => true),
+    );
   };
 
   const writeTargetOf = (id: string, mode: 'propose' | 'write' = 'write'): WriteTarget => {
@@ -388,9 +401,9 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
       : errorResult(MSG_INVALID_INPUT(tool.id, problems), { 'ontos/code': 'invalid_input' });
   };
 
-  const proposeBatch = async (instruction: string, items: readonly ProposeItem[], runId: string): Promise<ToolResult> => {
-    const proposals = items.map(
-      (item): AgentProposalInput => ({
+  const proposeBatch = (instruction: string, items: readonly ProposeItem[], runId: string) =>
+    Effect.gen(function* proposeBatchEffect() {
+      const proposals = items.map((item): AgentProposalInput => ({
         actionSlug: actionSlugOf(item.tool),
         appId: item.tool.appId,
         command: agentCommandOf(commandOf(item.tool, item.input)),
@@ -400,166 +413,174 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
         risk: item.tool.destructive ? 'high' : 'medium',
         summary: item.summary.slice(0, 300),
         targetLabel: item.targetLabel.slice(0, 300),
-      }),
-    );
-    const response = await backend.submitProposals({
-      agentLabel: `${d.acting.displayName} přes ${d.client.name}`.slice(0, 300),
-      instruction: instruction.slice(0, 4000),
-      legalEntityId: d.legalEntityId,
-      proposals,
-      runId,
+      }));
+      const response = yield* backend.submitProposals({
+        agentLabel: `${d.acting.displayName} přes ${d.client.name}`.slice(0, 300),
+        instruction: instruction.slice(0, 4000),
+        legalEntityId: d.legalEntityId,
+        proposals,
+        runId,
+      });
+      const batchUrl = `${context.publicOrigin}${response.reviewPath}?davka=${encodeURIComponent(response.batchId)}`;
+      return okResult(
+        {
+          batchId: response.batchId,
+          messageCs: MSG_PROPOSED,
+          proposalId: response.proposalIds[0],
+          proposalIds: response.proposalIds,
+          replayed: response.replayed,
+          reviewUrl: batchUrl,
+          status: 'proposed',
+        },
+        [reviewLink(batchUrl)],
+      );
     });
-    const batchUrl = `${context.publicOrigin}${response.reviewPath}?davka=${encodeURIComponent(response.batchId)}`;
-    return okResult(
-      {
-        batchId: response.batchId,
-        messageCs: MSG_PROPOSED,
-        proposalId: response.proposalIds[0],
-        proposalIds: response.proposalIds,
-        replayed: response.replayed,
-        reviewUrl: batchUrl,
-        status: 'proposed',
-      },
-      [reviewLink(batchUrl)],
-    );
-  };
 
-  const executeOne = async (
+  const executeOne = (
     id: string,
     input: Readonly<Record<string, unknown>> | undefined,
     reason: string | undefined,
     idempotencyKey: string | undefined,
-  ): Promise<ToolResult> => {
-    const checked = writeTargetOf(id);
-    if ('error' in checked) {
-      return checked.error;
-    }
-    const { tool } = checked;
-    const payload = input ?? {};
-    const invalid = checkActionInput(tool, payload);
-    if (invalid !== undefined) {
-      return invalid;
-    }
-    const key = idempotencyKey ?? crypto.randomUUID();
-    if (d.writePolicy === 'direct') {
-      if (!(await liveWriteAllowed(tool))) {
-        return errorResult(MSG_NO_LIVE_RIGHT(labelOf(tool.moduleId)));
+  ): Effect.Effect<ToolResult, ToolFailure> =>
+    Effect.gen(function* executeOneEffect() {
+      const checked = writeTargetOf(id);
+      if ('error' in checked) {
+        return checked.error;
       }
-      const hash = await requestHash(tool.id, payload);
-      if (idempotencyKey !== undefined) {
-        const replay = directReplays.lookup(d.grantId, idempotencyKey, hash);
-        if (replay.kind === 'hit') {
-          return okResult({ ...replay.result, replayed: true });
+      const { tool } = checked;
+      const payload = input ?? {};
+      const invalid = checkActionInput(tool, payload);
+      if (invalid !== undefined) {
+        return invalid;
+      }
+      const key = idempotencyKey ?? (yield* newId);
+      if (d.writePolicy === 'direct') {
+        if (!(yield* liveWriteAllowed(tool))) {
+          return errorResult(MSG_NO_LIVE_RIGHT(labelOf(tool.moduleId)));
         }
-        if (replay.kind === 'conflict') {
-          return errorResult(MSG_IDEMPOTENCY_CONFLICT, { 'ontos/code': 'idempotency_key_reused' });
+        const hash = yield* requestHash(context.crypto, tool.id, payload);
+        if (idempotencyKey !== undefined) {
+          const replay = directReplays.lookup(d.grantId, idempotencyKey, hash);
+          if (replay.kind === 'hit') {
+            return okResult({ ...replay.result, replayed: true });
+          }
+          if (replay.kind === 'conflict') {
+            return errorResult(MSG_IDEMPOTENCY_CONFLICT, { 'ontos/code': 'idempotency_key_reused' });
+          }
         }
-      }
-      const result = await executeDirect(tool, payload, key);
-      const link = moduleLink(tool.moduleId);
-      const value: Record<string, unknown> = {
-        messageCs: MSG_EXECUTED,
-        replayed: false,
-        result,
-        status: 'executed',
-        ...(link?.type === 'resource_link' ? { url: link.uri } : {}),
-      };
-      if (idempotencyKey !== undefined) {
-        directReplays.remember(d.grantId, idempotencyKey, hash, value);
-      }
-      return okResult(value, link === undefined ? [] : [link]);
-    }
-    const trimmed = (reason ?? '').trim();
-    const reasonText = trimmed.length >= 3 ? trimmed : `Změna navržená přes ${d.client.name}`;
-    const title = titleOf(tool);
-    return proposeBatch(
-      trimmed === '' ? title : trimmed,
-      [{ input: payload, reason: reasonText, summary: title, targetLabel: title, tool }],
-      key,
-    );
-  };
-
-  const capabilities = async (args: Readonly<Record<string, unknown>>): Promise<ToolResult> => {
-    const id = stringArg(args, 'id');
-    if (id !== undefined) {
-      const tool = findTool(catalog, id);
-      if (tool === undefined) {
-        return errorResult(MSG_UNKNOWN(id));
-      }
-      if (!canRead(d, tool.moduleId)) {
-        return errorResult(MSG_NO_READ(labelOf(tool.moduleId)));
-      }
-      const module = moduleOf(tool.moduleId);
-      const moduleCs = labelOf(tool.moduleId);
-      const writable =
-        tool.access === 'write' &&
-        canWrite(d, module) &&
-        isOffered(tool, d.writePolicy, d.acting.kind) &&
-        (d.writePolicy !== 'direct' || (await liveWriteAllowed(tool)));
-      return okResult({
-        descriptionCs: descriptionOf(tool),
-        id: tool.id,
-        inputSchema: tool.inputSchema,
-        kind: tool.access === 'read' ? 'read' : 'action',
-        moduleCs,
-        moduleId: tool.moduleId,
-        titleCs: tool.title.cs,
-        titleEn: tool.title.en,
-        toolName: tool.name,
-        ...(tool.access === 'write'
-          ? { destructive: tool.destructive, proposable: canPropose(d, module), writable }
-          : {}),
-      });
-    }
-    const tokens = queryTokens(stringArg(args, 'query') ?? '');
-    const moduleFilter = stringArg(args, 'moduleId');
-    const modules = catalog.modules
-      .filter((module) => canRead(d, module.moduleId) && (moduleFilter === undefined || module.moduleId === moduleFilter))
-      .flatMap((module) => {
-        const moduleCs = labelOf(module.moduleId);
-        const moduleText = `${module.moduleId} ${moduleCs} ${module.label.en} ${module.description.cs} ${module.description.en} ${module.keywords}`;
-        const write = canWrite(d, module);
-        const moduleHit = tokens.length > 0 && matchesTokens(tokens, moduleText);
-        const matches = (row: { readonly id: string; readonly titleCs: string; readonly titleEn: string }): boolean =>
-          moduleHit || matchesTokens(tokens, `${row.id} ${row.titleCs} ${row.titleEn} ${moduleText}`);
-        const reads = module.tools
-          .filter((tool) => tool.access === 'read')
-          .map((tool) => ({ id: tool.id, titleCs: tool.title.cs, titleEn: tool.title.en }))
-          .filter(matches)
-          .slice(0, 60);
-        const actions = write
-          ? module.tools
-              .filter((tool) => tool.access === 'write' && isOffered(tool, d.writePolicy, d.acting.kind))
-              .map((tool) => ({ destructive: tool.destructive, id: tool.id, titleCs: tool.title.cs, titleEn: tool.title.en }))
-              .filter(matches)
-              .slice(0, 60)
-          : [];
-        if (tokens.length > 0 && reads.length === 0 && actions.length === 0) {
-          return [];
+        const result = yield* executeDirect(tool, payload, key);
+        const link = moduleLink(tool.moduleId);
+        const value: Record<string, unknown> = {
+          messageCs: MSG_EXECUTED,
+          replayed: false,
+          result,
+          status: 'executed',
+          ...(link?.type === 'resource_link' ? { url: link.uri } : {}),
+        };
+        if (idempotencyKey !== undefined) {
+          directReplays.remember(d.grantId, idempotencyKey, hash, value);
         }
-        const writeNoteCs =
-          !write && grantAllowsWrite(d, module.moduleId) && d.writePolicy === 'approval' && !module.approvals
-            ? NOT_PROPOSABLE_NOTE
-            : undefined;
-        return [
-          {
-            actions,
-            descriptionCs: module.description.cs,
-            moduleCs,
-            moduleId: module.moduleId,
-            reads,
-            write,
-            ...(writeNoteCs === undefined ? {} : { writeNoteCs }),
-          },
-        ];
-      });
-    return okResult({
-      hint: 'Čtení: ontos_read {id, input}. Zápis: ontos_execute {id, input, reason}. Vstupní schéma: ontos_capabilities {id}.',
-      modules,
-      writePolicy: d.writePolicy,
-      writePolicyCs: WRITE_POLICY_CS[d.writePolicy],
+        return okResult(value, link === undefined ? [] : [link]);
+      }
+      const trimmed = (reason ?? '').trim();
+      const reasonText = trimmed.length >= 3 ? trimmed : `Změna navržená přes ${d.client.name}`;
+      const title = titleOf(tool);
+      return yield* proposeBatch(
+        trimmed === '' ? title : trimmed,
+        [{ input: payload, reason: reasonText, summary: title, targetLabel: title, tool }],
+        key,
+      );
     });
-  };
+
+  const capabilities = (args: Readonly<Record<string, unknown>>): Effect.Effect<ToolResult> =>
+    Effect.gen(function* capabilitiesEffect() {
+      const id = stringArg(args, 'id');
+      if (id !== undefined) {
+        const tool = findTool(catalog, id);
+        if (tool === undefined) {
+          return errorResult(MSG_UNKNOWN(id));
+        }
+        if (!canRead(d, tool.moduleId)) {
+          return errorResult(MSG_NO_READ(labelOf(tool.moduleId)));
+        }
+        const module = moduleOf(tool.moduleId);
+        const moduleCs = labelOf(tool.moduleId);
+        const writable =
+          tool.access === 'write' &&
+          canWrite(d, module) &&
+          isOffered(tool, d.writePolicy, d.acting.kind) &&
+          (d.writePolicy !== 'direct' || (yield* liveWriteAllowed(tool)));
+        return okResult({
+          descriptionCs: descriptionOf(tool),
+          id: tool.id,
+          inputSchema: tool.inputSchema,
+          kind: tool.access === 'read' ? 'read' : 'action',
+          moduleCs,
+          moduleId: tool.moduleId,
+          titleCs: tool.title.cs,
+          titleEn: tool.title.en,
+          toolName: tool.name,
+          ...(tool.access === 'write'
+            ? { destructive: tool.destructive, proposable: canPropose(d, module), writable }
+            : {}),
+        });
+      }
+      const tokens = queryTokens(stringArg(args, 'query') ?? '');
+      const moduleFilter = stringArg(args, 'moduleId');
+      const modules = catalog.modules
+        .filter(
+          (module) => canRead(d, module.moduleId) && (moduleFilter === undefined || module.moduleId === moduleFilter),
+        )
+        .flatMap((module) => {
+          const moduleCs = labelOf(module.moduleId);
+          const moduleText = `${module.moduleId} ${moduleCs} ${module.label.en} ${module.description.cs} ${module.description.en} ${module.keywords}`;
+          const write = canWrite(d, module);
+          const moduleHit = tokens.length > 0 && matchesTokens(tokens, moduleText);
+          const matches = (row: { readonly id: string; readonly titleCs: string; readonly titleEn: string }): boolean =>
+            moduleHit || matchesTokens(tokens, `${row.id} ${row.titleCs} ${row.titleEn} ${moduleText}`);
+          const reads = module.tools
+            .filter((tool) => tool.access === 'read')
+            .map((tool) => ({ id: tool.id, titleCs: tool.title.cs, titleEn: tool.title.en }))
+            .filter(matches)
+            .slice(0, 60);
+          const actions = write
+            ? module.tools
+                .filter((tool) => tool.access === 'write' && isOffered(tool, d.writePolicy, d.acting.kind))
+                .map((tool) => ({
+                  destructive: tool.destructive,
+                  id: tool.id,
+                  titleCs: tool.title.cs,
+                  titleEn: tool.title.en,
+                }))
+                .filter(matches)
+                .slice(0, 60)
+            : [];
+          if (tokens.length > 0 && reads.length === 0 && actions.length === 0) {
+            return [];
+          }
+          const writeNoteCs =
+            !write && grantAllowsWrite(d, module.moduleId) && d.writePolicy === 'approval' && !module.approvals
+              ? NOT_PROPOSABLE_NOTE
+              : undefined;
+          return [
+            {
+              actions,
+              descriptionCs: module.description.cs,
+              moduleCs,
+              moduleId: module.moduleId,
+              reads,
+              write,
+              ...(writeNoteCs === undefined ? {} : { writeNoteCs }),
+            },
+          ];
+        });
+      return okResult({
+        hint: 'Čtení: ontos_read {id, input}. Zápis: ontos_execute {id, input, reason}. Vstupní schéma: ontos_capabilities {id}.',
+        modules,
+        writePolicy: d.writePolicy,
+        writePolicyCs: WRITE_POLICY_CS[d.writePolicy],
+      });
+    });
 
   const genericSpecs: Partial<Record<GenericToolName, ToolSpec>> = {
     ontos_capabilities: instrument(
@@ -616,20 +637,26 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
       'Stav návrhů změn, které toto připojení odeslalo ke schválení. / Status of proposals sent by this connection.',
       { additionalProperties: false, properties: {}, type: 'object' },
       { openWorldHint: false, readOnlyHint: true },
-      async () => {
-        const queue = await backend.listProposals();
-        return okResult({
-          batches: queue.batches.slice(0, 20).map((batch) => ({
-            batchId: batch.batchId,
-            createdAt: batch.createdAt,
-            instruction: batch.instruction,
-            items: batch.items.map((item) => ({ status: item.status, summary: item.summary, targetLabel: item.targetLabel })),
-            reviewUrl: `${reviewUrl}?davka=${encodeURIComponent(batch.batchId)}`,
-          })),
-          pendingCount: queue.pendingCount,
-          reviewUrl,
-        });
-      },
+      () =>
+        backend.listProposals.pipe(
+          Effect.map((queue) =>
+            okResult({
+              batches: queue.batches.slice(0, 20).map((batch) => ({
+                batchId: batch.batchId,
+                createdAt: batch.createdAt,
+                instruction: batch.instruction,
+                items: batch.items.map((item) => ({
+                  status: item.status,
+                  summary: item.summary,
+                  targetLabel: item.targetLabel,
+                })),
+                reviewUrl: `${reviewUrl}?davka=${encodeURIComponent(batch.batchId)}`,
+              })),
+              pendingCount: queue.pendingCount,
+              reviewUrl,
+            }),
+          ),
+        ),
       PROPOSALS_OUTPUT,
     ),
     ontos_propose: instrument(
@@ -662,38 +689,39 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
         type: 'object',
       },
       { destructiveHint: false, openWorldHint: false, readOnlyHint: false },
-      async (args) => {
-        const instruction = stringArg(args, 'instruction') ?? '';
-        const changes = args['changes'];
-        if (!Array.isArray(changes) || changes.length === 0) {
-          return errorResult('Chybí seznam změn (changes).');
-        }
-        const items: ProposeItem[] = [];
-        for (const [index, change] of changes.entries()) {
-          if (!isPlainObject(change)) {
-            return errorResult('Každá změna musí být objekt.');
+      (args) =>
+        Effect.gen(function* proposeEffect() {
+          const instruction = stringArg(args, 'instruction') ?? '';
+          const changes = args['changes'];
+          if (!Array.isArray(changes) || changes.length === 0) {
+            return errorResult('Chybí seznam změn (changes).');
           }
-          const checked = writeTargetOf(stringArg(change, 'id') ?? '', 'propose');
-          if ('error' in checked) {
-            return checked.error;
+          const items: ProposeItem[] = [];
+          for (const [index, change] of changes.entries()) {
+            if (!isPlainObject(change)) {
+              return errorResult('Každá změna musí být objekt.');
+            }
+            const checked = writeTargetOf(stringArg(change, 'id') ?? '', 'propose');
+            if ('error' in checked) {
+              return checked.error;
+            }
+            const input = objectArg(change, 'input') ?? {};
+            const invalid = checkActionInput(checked.tool, input);
+            if (invalid !== undefined) {
+              const text = invalid.content[0]?.type === 'text' ? invalid.content[0].text : '';
+              return errorResult(`Změna č. ${index + 1}: ${text}`, { 'ontos/code': 'invalid_input' });
+            }
+            const title = titleOf(checked.tool);
+            items.push({
+              input,
+              reason: (stringArg(change, 'reason') ?? '').trim() || `Změna navržená přes ${d.client.name}`,
+              summary: stringArg(change, 'summary')?.trim() || title,
+              targetLabel: stringArg(change, 'targetLabel')?.trim() || title,
+              tool: checked.tool,
+            });
           }
-          const input = objectArg(change, 'input') ?? {};
-          const invalid = checkActionInput(checked.tool, input);
-          if (invalid !== undefined) {
-            const text = invalid.content[0]?.type === 'text' ? invalid.content[0].text : '';
-            return errorResult(`Změna č. ${index + 1}: ${text}`, { 'ontos/code': 'invalid_input' });
-          }
-          const title = titleOf(checked.tool);
-          items.push({
-            input,
-            reason: (stringArg(change, 'reason') ?? '').trim() || `Změna navržená přes ${d.client.name}`,
-            summary: stringArg(change, 'summary')?.trim() || title,
-            targetLabel: stringArg(change, 'targetLabel')?.trim() || title,
-            tool: checked.tool,
-          });
-        }
-        return proposeBatch(instruction.trim() === '' ? 'Dávka změn' : instruction, items, crypto.randomUUID());
-      },
+          return yield* proposeBatch(instruction.trim() === '' ? 'Dávka změn' : instruction, items, yield* newId);
+        }),
       WRITE_OUTPUT,
     ),
     ontos_read: instrument(
@@ -735,36 +763,39 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
       'Profil tohoto připojení: firma, za koho aplikace jedná, moduly a režim zápisu. Vrací profile_id. Zavolej jako první. / Connection profile (profile_id, company, acting identity, modules, write mode); call it first.',
       { additionalProperties: false, properties: {}, type: 'object' },
       { openWorldHint: false, readOnlyHint: true },
-      async () =>
-        okResult({
-          acting: d.acting,
-          client: { host: d.client.host, kind: d.client.kind, name: d.client.name },
-          company: { legalEntityId: d.legalEntityId, legalName: d.legalName },
-          delegatedBy: d.delegatedBy,
-          modules: d.modules.map((granted) => {
-            const module = moduleOf(granted.moduleId);
-            const write = canWrite(d, module);
-            return {
-              label: labelOf(granted.moduleId),
-              moduleId: granted.moduleId,
-              read: granted.read,
-              tools: module?.tools.length ?? 0,
-              write,
-              ...(!write && grantAllowsWrite(d, granted.moduleId) ? { writeNoteCs: NOT_PROPOSABLE_NOTE } : {}),
-            };
+      () =>
+        Effect.sync(() =>
+          okResult({
+            acting: d.acting,
+            client: { host: d.client.host, kind: d.client.kind, name: d.client.name },
+            company: { legalEntityId: d.legalEntityId, legalName: d.legalName },
+            delegatedBy: d.delegatedBy,
+            modules: d.modules.map((granted) => {
+              const module = moduleOf(granted.moduleId);
+              const write = canWrite(d, module);
+              return {
+                label: labelOf(granted.moduleId),
+                moduleId: granted.moduleId,
+                read: granted.read,
+                tools: module?.tools.length ?? 0,
+                write,
+                ...(!write && grantAllowsWrite(d, granted.moduleId) ? { writeNoteCs: NOT_PROPOSABLE_NOTE } : {}),
+              };
+            }),
+            profile_id: d.profileId,
+            reviewUrl,
+            typedTools: { count: plan.typed.length, overCap: plan.typedOverCap },
+            writePolicy: d.writePolicy,
+            writePolicyCs: WRITE_POLICY_CS[d.writePolicy],
           }),
-          profile_id: d.profileId,
-          reviewUrl,
-          typedTools: { count: plan.typed.length, overCap: plan.typedOverCap },
-          writePolicy: d.writePolicy,
-          writePolicyCs: WRITE_POLICY_CS[d.writePolicy],
-        }),
+        ),
       WHOAMI_OUTPUT,
     ),
   };
 
   const typedSpecs = plan.typed.map((tool) => {
-    const base: JsonObject = tool.inputSchema['type'] === 'object' ? tool.inputSchema : { additionalProperties: true, type: 'object' };
+    const base: JsonObject =
+      tool.inputSchema['type'] === 'object' ? tool.inputSchema : { additionalProperties: true, type: 'object' };
     if (tool.access === 'read') {
       return instrument(
         tool.name,
@@ -777,18 +808,26 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
       );
     }
     const { extras, schema } = typedWriteSchema(base);
-    return instrument(tool.name, titleOf(tool), descriptionOf(tool), schema, annotationsFor(tool), (args) => {
-      const input: Record<string, unknown> = { ...args };
-      for (const key of extras) {
-        delete input[key];
-      }
-      return executeOne(
-        tool.id,
-        input,
-        extras.includes('reason') ? stringArg(args, 'reason') : undefined,
-        extras.includes('idempotencyKey') ? stringArg(args, 'idempotencyKey') : undefined,
-      );
-    }, WRITE_OUTPUT);
+    return instrument(
+      tool.name,
+      titleOf(tool),
+      descriptionOf(tool),
+      schema,
+      annotationsFor(tool),
+      (args) => {
+        const input: Record<string, unknown> = { ...args };
+        for (const key of extras) {
+          delete input[key];
+        }
+        return executeOne(
+          tool.id,
+          input,
+          extras.includes('reason') ? stringArg(args, 'reason') : undefined,
+          extras.includes('idempotencyKey') ? stringArg(args, 'idempotencyKey') : undefined,
+        );
+      },
+      WRITE_OUTPUT,
+    );
   });
 
   const genericTools = plan.generic.flatMap((name) => {

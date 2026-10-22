@@ -3,6 +3,9 @@
  * fills in, so a client retry with the same idempotencyKey would otherwise get 409 once the revision moved on. The
  * first result is kept per (grant, key) for a day in this isolate; the same key with a different input is refused.
  */
+import { Effect } from 'effect';
+import type { Crypto } from 'effect';
+
 const TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_ENTRIES = 5000;
 
@@ -25,11 +28,12 @@ const stableJson = (value: unknown): string => {
   return JSON.stringify(value) ?? 'null';
 };
 
-/** SHA-256 of the tool id and its canonical input (Web Crypto: Node and workerd). */
-export const requestHash = async (id: string, input: unknown): Promise<string> => {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${id}\n${stableJson(input)}`));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-};
+/** SHA-256 of the tool id and its canonical input. A digest failure is a platform defect. */
+export const requestHash = (crypto: Crypto.Crypto, id: string, input: unknown): Effect.Effect<string> =>
+  crypto.digest('SHA-256', new TextEncoder().encode(`${id}\n${stableJson(input)}`)).pipe(
+    Effect.map((digest) => [...digest].map((byte) => byte.toString(16).padStart(2, '0')).join('')),
+    Effect.orDie,
+  );
 
 export type ReplayLookup =
   | { readonly kind: 'conflict' }

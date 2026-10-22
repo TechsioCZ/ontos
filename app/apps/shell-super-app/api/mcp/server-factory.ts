@@ -1,5 +1,12 @@
 import { fromJsonSchema, McpServer } from '@modelcontextprotocol/server';
-import type { CallToolResult, JsonSchemaType, JsonSchemaValidator, jsonSchemaValidator } from '@modelcontextprotocol/server';
+import type {
+  CallToolResult,
+  JsonSchemaType,
+  JsonSchemaValidator,
+  jsonSchemaValidator,
+} from '@modelcontextprotocol/server';
+import { Effect } from 'effect';
+
 import type { ToolResult, ToolSpec } from './types.ts';
 
 export const SERVER_INFO = { name: 'ontos', title: 'OntOS', version: '0.3.0' };
@@ -21,11 +28,13 @@ export const SERVER_INSTRUCTIONS = [
  * call gets a Czech tool error instead of the SDK's English "Input validation error"; output shapes are unit-tested.
  */
 export const PASS_THROUGH_VALIDATOR: jsonSchemaValidator = {
-  getValidator: <T>(): JsonSchemaValidator<T> => (input: unknown) => ({
-    data: input as T,
-    errorMessage: undefined,
-    valid: true as const,
-  }),
+  getValidator:
+    <T>(): JsonSchemaValidator<T> =>
+    (input: unknown) => ({
+      data: input as T,
+      errorMessage: undefined,
+      valid: true as const,
+    }),
 };
 
 /** Catalog schemas are draft 2020-12 documents; drop $schema and fall back to a permissive object. */
@@ -57,8 +66,11 @@ const toCallToolResult = (result: ToolResult): CallToolResult => ({
   ...(result._meta === undefined ? {} : { _meta: { ...result._meta } }),
 });
 
+/** Runs a tool's Effect with the services of the request being served. */
+export type McpToolRunner = <A>(effect: Effect.Effect<A>) => Promise<A>;
+
 /** One McpServer per request: the tool list always reflects the current grant (no list_changed needed). */
-export const buildMcpServer = (tools: readonly ToolSpec[]): McpServer => {
+export const buildMcpServer = (tools: readonly ToolSpec[], run: McpToolRunner): McpServer => {
   const server = new McpServer({ ...SERVER_INFO }, { instructions: SERVER_INSTRUCTIONS });
   for (const tool of tools) {
     server.registerTool(
@@ -71,13 +83,9 @@ export const buildMcpServer = (tools: readonly ToolSpec[]): McpServer => {
         ...(tool.outputSchema === undefined ? {} : { outputSchema: toolInputSchema(tool.outputSchema) }),
         title: tool.title,
       },
-      async (args): Promise<CallToolResult> => {
-        try {
-          return toCallToolResult(await tool.handler((args ?? {}) as Readonly<Record<string, unknown>>));
-        } catch (error) {
-          return { content: [{ text: `Nástroj selhal: ${error instanceof Error ? error.message : String(error)}`, type: 'text' }], isError: true };
-        }
-      },
+      // The SDK awaits a Promise; the tool handler never fails (failures are `isError` results).
+      (args): Promise<CallToolResult> =>
+        run(tool.handler((args ?? {}) as Readonly<Record<string, unknown>>).pipe(Effect.map(toCallToolResult))),
     );
   }
   return server;

@@ -4,14 +4,16 @@
  */
 import {
   AuthenticationNamespaceRegistry,
+  makeAuthenticationNamespaceRegistryEffect,
   makeTrustedAuthenticationAdmissionService,
   makeTrustedExternalSubjectAdmissionService,
   TrustedAuthenticationAdmissionService,
   TrustedExternalSubjectAdmissionService,
 } from '@app/core-runtime/auth/external-identity-admission';
+import { staffAuthenticationNamespaceRegistration } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { Context, Effect, Layer, Option } from 'effect';
 
-import { StaffAuthenticationNamespaceRegistryLive } from '../authentication-namespace-registry.ts';
+import { SHELL_STAFF_AUDIENCES } from '../authentication-namespace-registry.ts';
 import {
   ExternalIdentityProviderConfigurationService,
   externalIdentityProviderRegistrationOf,
@@ -26,9 +28,9 @@ import { InstalledExternalIdentityProviderResolver } from './provider-resolver.t
 export const ExternalIdentityProviderNamespaceRegistryLive = Layer.effect(
   AuthenticationNamespaceRegistry,
   Effect.gen(function* makeExternalIdentityProviderNamespaceRegistry() {
-    const staff = yield* AuthenticationNamespaceRegistry.pipe(
-      // oxlint-disable-next-line effect-native/no-effect-provide-in-library -- The staff registry is the fixed first lookup of this merged registry.
-      Effect.provide(StaffAuthenticationNamespaceRegistryLive),
+    // The staff registry is the fixed first lookup of this merged registry.
+    const staff = yield* staffAuthenticationNamespaceRegistration(SHELL_STAFF_AUDIENCES).pipe(
+      Effect.flatMap((registration) => makeAuthenticationNamespaceRegistryEffect([registration])),
     );
     const configuration = yield* ExternalIdentityProviderConfigurationService;
     const resolver = yield* InstalledExternalIdentityProviderResolver;
@@ -38,14 +40,11 @@ export const ExternalIdentityProviderNamespaceRegistryLive = Layer.effect(
     return {
       lookup: (authenticationNamespaceId) =>
         staff.lookup(authenticationNamespaceId).pipe(
-          Effect.flatMap((registration) => {
-            if (Option.isSome(registration)) {
-              return Effect.succeed(registration);
-            }
-            return authenticationNamespaceId === configuration.authenticationNamespaceId
+          Effect.filterOrElse(Option.isSome, () =>
+            authenticationNamespaceId === configuration.authenticationNamespaceId
               ? providerRegistration
-              : Effect.succeedNone;
-          }),
+              : Effect.succeedNone,
+          ),
         ),
     };
   }),
