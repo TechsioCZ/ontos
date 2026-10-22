@@ -379,6 +379,14 @@ export const deriveOntosMcpContribution = (input: DeriveOntosMcpContributionInpu
   const schemas = shareRepeatedSubtrees(drafts, definitions);
   const revision = authored.revision;
   const contribution = {
+    ...(authored.approvalReview === undefined
+      ? {}
+      : {
+          approvalReview: {
+            path: `/reads/${authored.approvalReview.read}`,
+            privateRecords: authored.approvalReview.privateRecords === true,
+          },
+        }),
     approvals: authored.approvals,
     definitions,
     description: authored.description,

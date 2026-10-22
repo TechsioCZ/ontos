@@ -19,6 +19,8 @@ export interface McpCatalogTool extends Omit<OntosMcpTool, 'inputSchema'> {
 
 export interface McpCatalogModule {
   readonly appId: string;
+  /** The module's agent review read the approval platform asks (undefined: generic handling). */
+  readonly approvalReview: OntosMcpContribution['approvalReview'];
   readonly approvals: boolean;
   readonly description: OntosMcpText;
   readonly keywords: string;
@@ -116,6 +118,7 @@ export const buildMcpCatalog = (composition: {
       return [
         {
           appId,
+          approvalReview: contribution.approvalReview,
           approvals: contribution.approvals,
           description: contribution.description,
           keywords: contribution.keywords,

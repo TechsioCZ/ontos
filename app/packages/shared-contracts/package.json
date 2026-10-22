@@ -18,6 +18,7 @@
     "./agent-proposals": "./src/agent-proposals.ts",
     "./agent-revert": "./src/agent-revert.ts",
     "./agent-diff": "./src/agent-diff.ts",
+    "./agent-review": "./src/agent-review.ts",
     "./agent-access": "./src/agent-access.ts",
     "./oauth-connections": "./src/oauth-connections.ts"
   },
