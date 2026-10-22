@@ -421,7 +421,6 @@ const createOwnerSchema = Effect.fnUntraced(function* runIntegration5(admin: PgC
   yield* admin.unsafe(`grant usage on schema ${schemaName} to ontos_runtime`);
   yield* admin.unsafe(`grant select, insert, update, delete on all tables in schema ${schemaName} to ontos_runtime`);
 });
-type CoreDatabaseService = Parameters<typeof makeActionRuntime>[0];
 type RuntimeActionRegistration = ActionRegistration<
   Schema.ConstraintDecoder<unknown>,
   Schema.ConstraintDecoder<unknown>,
@@ -436,34 +435,27 @@ const RuntimeActionRegistrationSchema = Schema.declare<RuntimeActionRegistration
   (value): value is RuntimeActionRegistration => Predicate.isObjectKeyword(value),
 );
 const isRuntimeActionRegistration = Schema.is(RuntimeActionRegistrationSchema);
-const failingEvidenceDatabase = (database: CoreDatabaseService): CoreDatabaseService => {
-  const transactionOverride = {
-    transaction: (runInTransaction, configuration) =>
-      database.executor.transaction(
-        (transaction) =>
-          runInTransaction(transaction).pipe(
-            injectStatementFaults((statement) =>
-              statement.startsWith('insert into "core"."data_access_events"')
-                ? Effect.fail(
-                    new SqlError({
-                      reason: new UnknownError({
-                        cause: new Error('Injected SQL failure'),
-                        message: 'Injected evidence persistence failure',
-                      }),
-                    }),
-                  )
-                : Effect.void,
-            ),
-          ),
-        configuration,
+/**
+ * Every Read evidence insert fails, wherever Core writes it: since ff350ac53 allowed evidence follows the owner
+ * transaction's commit, and a definite denial is recorded in its own short transaction.
+ */
+const failingEvidenceRuntime = (runtime: ReadRuntimeService): ReadRuntimeService => ({
+  runRead: (input) =>
+    runtime.runRead(input).pipe(
+      injectStatementFaults((statement) =>
+        statement.startsWith('insert into "core"."data_access_events"')
+          ? Effect.fail(
+              new SqlError({
+                reason: new UnknownError({
+                  cause: new Error('Injected SQL failure'),
+                  message: 'Injected evidence persistence failure',
+                }),
+              }),
+            )
+          : Effect.void,
       ),
-  } satisfies Pick<CoreDatabaseService['executor'], 'transaction'>;
-  const executor: CoreDatabaseService['executor'] = Object.assign(
-    Object.create(database.executor),
-    transactionOverride,
-  );
-  return { executor };
-};
+    ),
+});
 const capturedLoggerLayer = (entries: string[]) =>
   Logger.layer([
     Logger.make((options) => {
@@ -1261,11 +1253,8 @@ it.live(
     expect(JSON.stringify(yield* Effect.tryPromise(() => unavailableResponse.json()))).not.toMatch(
       /postgres|spicedb|permission check|row-level/iu,
     );
-    const evidenceFailureRuntime = makeReadRuntime(
-      failingEvidenceDatabase(runtimeDatabase),
-      moduleGateway,
-      scopeResolver,
-      contextAccess,
+    const evidenceFailureRuntime = failingEvidenceRuntime(
+      makeReadRuntime(runtimeDatabase, moduleGateway, scopeResolver, contextAccess),
     );
     const evidenceFailureOwner = yield* loadGeneratedOwner(
       fixture.verticalRoot,

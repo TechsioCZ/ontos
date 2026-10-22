@@ -88,14 +88,20 @@ export const isolationOwnerApi = HttpApi.make('IsolationOwnerApi');
   yield* writeFixtureFile(
     root,
     `verticals/${GENERATED_OWNER.slug}/api/index.ts`,
-    `import { defineEffectBff, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
-import type { EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
+    `import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
+import { Layer } from '@modern-js/bff-effect/effect-edge';
 import { isolationOwnerApi } from '../shared/api.ts';
 
-const layer = HttpApiBuilder.layer(isolationOwnerApi).pipe(
-  Layer.provide(Layer.empty),
-) satisfies EffectRuntimeLayer;
-export default defineEffectBff({ api: isolationOwnerApi, layer });
+const apiHandlersLive = Layer.empty;
+export const makeIsolationOwnerApiRuntime = () =>
+  assembleEffectBffRuntime({
+    api: isolationOwnerApi,
+    handlers: apiHandlersLive,
+    services: Layer.empty,
+  });
+const apiRuntime = makeIsolationOwnerApiRuntime();
+
+export default apiRuntime;
 `,
   );
   yield* writeFixtureFile(
@@ -342,19 +348,21 @@ export const resourceDetailRead = defineRead(
     resultSchema: ResourceDetailResponseSchema,
     schemaVersion: '1',
   },
-  ({ resourceId }, context) =>
-    Effect.gen(function* generatedDetail() {
-      generatedOwnerHandlerCounts.detail += 1;
-      const rows = yield* context.services.detail(resourceId).pipe(Effect.mapError(() => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner detail is unavailable' })));
-      const row = rows[0];
-      if (row === undefined) {
-        return yield* new ReadHandlerNotFound({ code: 'read_handler_not_found', reason: 'Owner record was not found' });
-      }
-      return {
-        evidence: { resultCount: 1 },
-        result: { fields: [{ label: 'scope', value: row.title }], title: row.title },
-      };
-    }),
+  {
+    load: ({ resourceId }, context) =>
+      Effect.gen(function* generatedDetail() {
+        generatedOwnerHandlerCounts.detail += 1;
+        const rows = yield* context.services.detail(resourceId).pipe(Effect.mapError(() => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner detail is unavailable' })));
+        const row = rows[0];
+        if (row === undefined) {
+          return yield* new ReadHandlerNotFound({ code: 'read_handler_not_found', reason: 'Owner record was not found' });
+        }
+        return {
+          evidence: { resultCount: 1 },
+          result: { fields: [{ label: 'scope', value: row.title }], title: row.title },
+        };
+      }),
+  },
   (transaction) => Effect.succeed(makeOwnerRepository(transaction)),
   ({ resourceId }) => ({
     kind: 'resource',
@@ -393,22 +401,24 @@ export const resourceListRead = defineRead(
     resultSchema: ResourceListResponseSchema,
     schemaVersion: '1',
   },
-  ({ resourceId }, context) =>
-    Effect.gen(function* generatedList() {
-      generatedOwnerHandlerCounts.list += 1;
-      const rows = yield* context.services.listTenant().pipe(Effect.mapError(() => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner list is unavailable' })));
-      return {
-        evidence: { resultCount: rows.length },
-        result: {
-          entries: rows.map((row: { readonly title: string }, index: number) => ({
-            occurredAt: '2026-08-09T00:00:00.000Z',
-            summary: row.title,
-            timelineEntryId: \`\${resourceId}-\${index}\`,
-          })),
-          projectionLagging: false,
-        },
-      };
-    }),
+  {
+    load: ({ resourceId }, context) =>
+      Effect.gen(function* generatedList() {
+        generatedOwnerHandlerCounts.list += 1;
+        const rows = yield* context.services.listTenant().pipe(Effect.mapError(() => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner list is unavailable' })));
+        return {
+          evidence: { resultCount: rows.length },
+          result: {
+            entries: rows.map((row: { readonly title: string }, index: number) => ({
+              occurredAt: '2026-08-09T00:00:00.000Z',
+              summary: row.title,
+              timelineEntryId: \`\${resourceId}-\${index}\`,
+            })),
+            projectionLagging: false,
+          },
+        };
+      }),
+  },
   (transaction) => Effect.succeed(makeOwnerRepository(transaction)),
   ({ resourceId }) => ({
     kind: 'resource',
@@ -448,19 +458,21 @@ export const recordsRead = defineRead(
     resultSchema: RecordsProviderResponseSchema,
     schemaVersion: '1',
   },
-  ({ query }, context) =>
-    Effect.gen(function* generatedSearch() {
-      generatedOwnerHandlerCounts.search += 1;
-      const rows = yield* context.services.search().pipe(Effect.mapError(() => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner search is unavailable' })));
-      const normalized = query.toLocaleLowerCase('en');
-      const result = rows
-        .filter((row: { readonly title: string }) => row.title.toLocaleLowerCase('en').includes(normalized))
-        .map((row: { readonly resourceId: string; readonly title: string }) => ({
-          ref: { moduleId: '${GENERATED_OWNER.moduleId}', resourceId: row.resourceId, resourceType: '${GENERATED_OWNER.resourceType}' },
-          title: row.title,
-        }));
-      return { evidence: { resultCount: result.length }, result };
-    }),
+  {
+    load: ({ query }, context) =>
+      Effect.gen(function* generatedSearch() {
+        generatedOwnerHandlerCounts.search += 1;
+        const rows = yield* context.services.search().pipe(Effect.mapError(() => new ReadHandlerUnavailable({ code: 'read_handler_unavailable', reason: 'Owner search is unavailable' })));
+        const normalized = query.toLocaleLowerCase('en');
+        const result = rows
+          .filter((row: { readonly title: string }) => row.title.toLocaleLowerCase('en').includes(normalized))
+          .map((row: { readonly resourceId: string; readonly title: string }) => ({
+            ref: { moduleId: '${GENERATED_OWNER.moduleId}', resourceId: row.resourceId, resourceType: '${GENERATED_OWNER.resourceType}' },
+            title: row.title,
+          }));
+        return { evidence: { resultCount: result.length }, result };
+      }),
+  },
   (transaction) => Effect.succeed(makeOwnerRepository(transaction)),
   () => ({ kind: 'module', moduleId: '${GENERATED_OWNER.moduleId}' }),
   (result) => result.map(({ ref }) => ref),
