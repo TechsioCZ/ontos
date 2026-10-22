@@ -28,6 +28,7 @@ import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
 import developmentOverlay from '../../topology/local-overlays/development.json';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
+import { CLOUDFLARE_WORKER_CPU_MS, createCloudflareWorkerConfig } from '../../packages/shared-contracts/tooling/modern-config.ts';
 
 const cloudflareDeployEnabled = resolveDeployTarget().target === 'cloudflare';
 
@@ -109,7 +110,12 @@ const withCloudflareDeployment = <T extends object>(base: T) => {
     ...base,
     deploy: {
       worker: {
-        compatibilityDate: '2026-06-02',
+        // The data plane (Hyperdrive, SpiceDB VPC, composition KV) and cost guards every OntOS Worker carries.
+      ...createCloudflareWorkerConfig(getBuildConfigEnvironment, {
+        cpuMs: CLOUDFLARE_WORKER_CPU_MS.largeApiVertical,
+        publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_FINANCE_BILLING',
+      }),
+      compatibilityDate: '2026-06-02',
         name: cloudflareWorkerName,
         security: {
           contentSecurityPolicy: {
