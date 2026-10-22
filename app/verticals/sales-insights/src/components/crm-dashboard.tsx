@@ -59,6 +59,8 @@ export const CrmDashboard = (_props: CrmDashboardProps) => {
                     className="salesinsights:-ml-2"
                     icon="icon-[mdi--arrow-right]"
                     iconPosition="right"
+                    // Each card links to another page; preloading all of them on view resolved three module targets per Home visit.
+                    prefetch="intent"
                     size="sm"
                     theme="borderless"
                     to={value.href}
