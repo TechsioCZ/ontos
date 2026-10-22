@@ -3,7 +3,11 @@ import { expect, it } from 'effect-rstest';
 import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
 import { MerchandiseCommandSchema } from '../../shared/actions/apply-command.ts';
 import { AKROS_LEGAL_ENTITY_ID, assertStorefrontScope } from '../../shared/actions/command-guard.ts';
-import { evolveMerchandiseState, toProductRecord } from '../../src/services/persistence.service.ts';
+import { evolveMerchandiseState } from '../../src/services/persistence.service.ts';
+import { stockLevelsOf, toProductRecord } from '../../src/services/stock-levels.ts';
+
+const recordOf = (product: Parameters<typeof toProductRecord>[0], movements: Parameters<typeof stockLevelsOf>[0]) =>
+  toProductRecord(product, stockLevelsOf(movements, product.id));
 
 const actor = { principalId: '20000000-0000-4000-8000-000000000002', tenantId: '20000000-0000-4000-8000-000000000001' };
 const at = '2026-10-19T08:00:00.000Z';
@@ -60,7 +64,7 @@ const place = (quantity: number, expectedUnitPriceMinor: number) =>
   );
 
 it('retains exact source gross price, tiers and minimum in the read projection', () => {
-  const record = toProductRecord(state.products[0]!, state.movements).variantRecords?.[0];
+  const record = recordOf(state.products[0]!, state.movements).variantRecords?.[0];
   expect(record?.grossPriceMinor).toBe(10);
   expect(record?.priceTiers?.[1]?.priceMinor).toBe(7);
   expect(record?.minimumQuantity).toBe(10);
@@ -110,7 +114,7 @@ it.effect('staff price edits update live tier prices without losing source metad
       }),
       { actor, now: DateTime.makeUnsafe(at), resourceId: 'price-1' },
     );
-    const variant = toProductRecord(changed.state.products[0]!, changed.state.movements).variantRecords?.[0];
+    const variant = recordOf(changed.state.products[0]!, changed.state.movements).variantRecords?.[0];
     expect(variant?.grossPriceMinor).toBe(19);
     expect(variant?.priceTiers?.[1]?.priceMinor).toBe(13);
     expect(variant?.sourceId).toBe('1');
@@ -132,7 +136,7 @@ it.effect('first seeded variant edit snapshots its existing price through both s
         Schema.decodeUnknownSync(MerchandiseCommandSchema)(command),
         { actor, now: DateTime.makeUnsafe(at), resourceId: 'first-price' },
       );
-      const history = toProductRecord(changed.state.products[0]!, changed.state.movements).variantRecords?.[0]
+      const history = recordOf(changed.state.products[0]!, changed.state.movements).variantRecords?.[0]
         ?.priceHistory;
       expect(history).toHaveLength(1);
       expect(history?.[0]?.previousPriceMinor).toBe(8);
