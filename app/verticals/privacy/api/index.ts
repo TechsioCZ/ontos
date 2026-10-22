@@ -7,7 +7,7 @@ import {
   ReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
-import type { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
+import type { GatewayAssertionRedemptionService } from '@app/core-runtime';
 import {
   ActionPermissionLive,
   ActionRepositoryLive,
@@ -23,7 +23,7 @@ import { FetchHttpClient } from 'effect/unstable/http';
 import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { Effect, HttpApiBuilder, Layer, Schema } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
-import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
+import { Logger, References, Tracer } from 'effect';
 
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
@@ -203,8 +203,14 @@ const productionActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUni
 );
 
 type PrivacyApiRuntimeArguments = readonly [
-  readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
-  actionRuntime: Layer.Layer<ActionRuntime, Layer.Error<typeof productionActionRuntimeLive>>,
+  readRuntime: Layer.Layer<
+    Layer.Success<typeof productionReadRuntimeLive>,
+    Layer.Error<typeof productionReadRuntimeLive>
+  >,
+  actionRuntime: Layer.Layer<
+    Layer.Success<typeof productionActionRuntimeLive>,
+    Layer.Error<typeof productionActionRuntimeLive>
+  >,
   gatewayAssertionRedemption: Layer.Layer<GatewayAssertionRedemptionService>,
 ];
 
@@ -218,64 +224,66 @@ export const makePrivacyApiRuntime = (
   const apiHandlersLive = Layer.mergeAll(
     privacyReadinessLayer,
     // <generated-governed-http-handler-layers>
-    addProcessingPurposeVersionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    applicabilityDecisionsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    assignDsrResolverActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    assignLegalBasisActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    assignPrivacyResponsibilityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    consentSelfServiceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    createDsrCaseActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    createNoticeVersionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    createPrivacySubjectActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    createProcessingActivityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    createProcessingPurposeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    currentConsentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    dispatchPrivacyMeasureActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    dsrCasesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    enqueueRetentionEvaluationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    evaluateProcessingEligibilityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    issueDsrDeliveryAccessActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    legalBasisAssignmentsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    noticeVersionsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    ownerInventoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    privacySubjectsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    processingActivitiesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    processingEligibilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    processingPurposesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    recordAntiResurrectionProtectionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    recordApplicabilityPolicyActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    recordConsentDecisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    recordDispositionDecisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    recordDsrDeadlineActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    recordDsrDeliveryEvidenceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    recordDsrResponseActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    recordDsrSubstantiveDecisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    recordDsrVerificationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    recordExternalObligationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    recordLegalHoldActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    recordNoticeProvisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    recordOwnerContributionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    recordOwnerExecutionOutcomeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    recordPrivacyApplicabilityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    recordPrivacyRepresentationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    recordProcessingInterventionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    recordRetentionExceptionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    responsibilityAssignmentsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    retentionRulesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    transitionProcessingActivityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    updateDsrCaseActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    upsertDsrOwnerTaskActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    upsertRetentionRuleActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    upsertTemporaryDsrExportActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    addProcessingPurposeVersionActionApiLive,
+    applicabilityDecisionsReadApiLive,
+    assignDsrResolverActionApiLive,
+    assignLegalBasisActionApiLive,
+    assignPrivacyResponsibilityActionApiLive,
+    consentSelfServiceActionApiLive,
+    createDsrCaseActionApiLive,
+    createNoticeVersionActionApiLive,
+    createPrivacySubjectActionApiLive,
+    createProcessingActivityActionApiLive,
+    createProcessingPurposeActionApiLive,
+    currentConsentReadApiLive,
+    dispatchPrivacyMeasureActionApiLive,
+    dsrCasesReadApiLive,
+    enqueueRetentionEvaluationActionApiLive,
+    evaluateProcessingEligibilityActionApiLive,
+    issueDsrDeliveryAccessActionApiLive,
+    legalBasisAssignmentsReadApiLive,
+    noticeVersionsReadApiLive,
+    ownerInventoryReadApiLive,
+    privacySubjectsReadApiLive,
+    processingActivitiesReadApiLive,
+    processingEligibilityReadApiLive,
+    processingPurposesReadApiLive,
+    recordAntiResurrectionProtectionActionApiLive,
+    recordApplicabilityPolicyActionApiLive,
+    recordConsentDecisionActionApiLive,
+    recordDispositionDecisionActionApiLive,
+    recordDsrDeadlineActionApiLive,
+    recordDsrDeliveryEvidenceActionApiLive,
+    recordDsrResponseActionApiLive,
+    recordDsrSubstantiveDecisionActionApiLive,
+    recordDsrVerificationActionApiLive,
+    recordExternalObligationActionApiLive,
+    recordLegalHoldActionApiLive,
+    recordNoticeProvisionActionApiLive,
+    recordOwnerContributionActionApiLive,
+    recordOwnerExecutionOutcomeActionApiLive,
+    recordPrivacyApplicabilityActionApiLive,
+    recordPrivacyRepresentationActionApiLive,
+    recordProcessingInterventionActionApiLive,
+    recordRetentionExceptionActionApiLive,
+    responsibilityAssignmentsReadApiLive,
+    retentionRulesReadApiLive,
+    transitionProcessingActivityActionApiLive,
+    updateDsrCaseActionApiLive,
+    upsertDsrOwnerTaskActionApiLive,
+    upsertRetentionRuleActionApiLive,
+    upsertTemporaryDsrExportActionApiLive,
     // </generated-governed-http-handler-layers>
-  ).pipe(
-    Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)),
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive)),
+  ).pipe(Layer.provide(RequestSchemaProblemLive));
+  const requestServicesLive = Layer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive).pipe(
+    Layer.provideMerge(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)),
+    Layer.provideMerge(Layer.mergeAll(runtimeObservabilityLive, compositionSourceLive)),
     Layer.orDie,
   );
   return assembleEffectBffRuntime({
     api: privacyApi,
     handlers: apiHandlersLive,
+    services: requestServicesLive,
   });
 };
 

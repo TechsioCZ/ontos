@@ -117,38 +117,41 @@ export const governedActionRuntimeLive = actionRuntimeLive;
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   taxReadinessLayer,
   // <generated-governed-http-handler-layers>
-  applicableTaxRuleSetReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-  correctTaxRuleRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  createTaxRuleActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  createTaxRuleRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  declareSellerVatRegimeActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  endTaxRuleRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  finalizeOrderTaxActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  finalOrderTaxReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-  importSellerVatRegimeDeclarationsActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  sellerVatRegimeAtInstantReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-  sellerVatRegimeHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-  taxCorrectionPreviewReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-  taxEvaluationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-  taxMaterialityComparisonReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-  taxPrivacyOwnerCoverageReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-  taxRuleHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  applicableTaxRuleSetReadApiLive,
+  correctTaxRuleRevisionActionApiLive,
+  createTaxRuleActionApiLive,
+  createTaxRuleRevisionActionApiLive,
+  declareSellerVatRegimeActionApiLive,
+  endTaxRuleRevisionActionApiLive,
+  finalizeOrderTaxActionApiLive,
+  finalOrderTaxReadApiLive,
+  importSellerVatRegimeDeclarationsActionApiLive,
+  sellerVatRegimeAtInstantReadApiLive,
+  sellerVatRegimeHistoryReadApiLive,
+  taxCorrectionPreviewReadApiLive,
+  taxEvaluationReadApiLive,
+  taxMaterialityComparisonReadApiLive,
+  taxPrivacyOwnerCoverageReadApiLive,
+  taxRuleHistoryReadApiLive,
   // </generated-governed-http-handler-layers>
-).pipe(
+);
+const requestServicesLive = Layer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive).pipe(
   // <generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provide(
+  GovernedReadLayer.provideMerge(
     GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive),
   ),
   // </generated-governed-http-handler-support-layers>
-  Layer.provide(compositionSourceLive),
-  Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive)),
+  Layer.provideMerge(compositionSourceLive),
+  Layer.provideMerge(runtimeObservabilityLive),
+  Layer.orDie,
 );
-const resolvedApiHandlersLive = governedReadApiHandlersLive.pipe(Layer.orDie);
+const resolvedApiHandlersLive = governedReadApiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));
 
 export const makeTaxApiRuntime = (): EffectBffDefinition<typeof taxApi> & EffectBffRuntime<typeof taxApi> =>
   assembleEffectBffRuntime({
     api: taxApi,
     handlers: resolvedApiHandlersLive,
+    services: requestServicesLive,
   });
 
 const apiRuntime: EffectBffDefinition<typeof taxApi> & EffectBffRuntime<typeof taxApi> = makeTaxApiRuntime();

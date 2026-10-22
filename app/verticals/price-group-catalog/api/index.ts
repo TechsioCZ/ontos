@@ -20,7 +20,7 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
-import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
+import { Logger, References, Schema, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 // <generated-governed-http-handler-support-imports>
@@ -142,17 +142,19 @@ export const makePriceGroupCatalogApiRuntime = (
   const apiHandlersLive = Layer.mergeAll(
     priceGroupCatalogReadinessLayer,
     // <generated-governed-http-handler-layers>
-    createPriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    createPriceGroupDefinitionRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    priceGroupDefinitionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    retirePriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    validatePriceGroupCompatibilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    createPriceGroupActionApiLive,
+    createPriceGroupDefinitionRevisionActionApiLive,
+    priceGroupDefinitionReadApiLive,
+    retirePriceGroupActionApiLive,
+    validatePriceGroupCompatibilityReadApiLive,
     // </generated-governed-http-handler-layers>
-  ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
-  const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive)),
+  );
+  const requestServicesLive = Layer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive).pipe(
+    Layer.provideMerge(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)),
+    Layer.provideMerge(Layer.mergeAll(runtimeObservabilityLive, compositionSourceLive)),
     Layer.orDie,
   );
+  const resolvedApiHandlersLive = apiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));
   const transportLive = HttpRouter.cors({
     allowedHeaders: [...priceGroupCatalogCorsAllowedHeaders],
     allowedMethods: [...priceGroupCatalogCorsAllowedMethods],
@@ -163,6 +165,7 @@ export const makePriceGroupCatalogApiRuntime = (
   return assembleEffectBffRuntime({
     api: priceGroupCatalogApi,
     handlers: resolvedApiHandlersLive,
+    services: requestServicesLive,
     transport: transportLive,
   });
 };

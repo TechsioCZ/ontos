@@ -81,13 +81,20 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit)
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
-  agentReviewReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), Layer.provide(ActionPermissionLive)),
-  applyCommandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-  recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), Layer.provide(ActionPermissionLive)),
+  agentReviewReadApiLive,
+  applyCommandActionApiLive,
+  recordsReadApiLive,
   // </generated-governed-http-handler-layers>
+);
+
+/** What the handlers resolve when they run: built for each request on Workers, once on Node. */
+const governedRequestServicesLive = GovernedReadLayer.mergeAll(
+  governedReadRuntimeLive,
+  ActionPermissionLive,
+  governedActionRuntimeLive,
 ).pipe(
   // <generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provide(
+  GovernedReadLayer.provideMerge(
     GovernedReadLayer.mergeAll(
       GovernedActionPrincipalVerifierLive,
       GovernedGatewayAssertionRedemptionLive.pipe(
@@ -98,7 +105,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
     ),
   ),
   // </generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provide(GovernedReadLayer.empty),
+  GovernedReadLayer.provideMerge(GovernedReadLayer.empty),
 );
 
 const operationAttributes = (operationContext: OperationContext) => {
@@ -134,10 +141,10 @@ const propertyLeasingReadinessLayer = HttpApiBuilder.group(propertyLeasingApi, '
 );
 
 const apiHandlersLive = propertyLeasingReadinessLayer;
-const governedResolvedApiHandlersLive = GovernedReadLayer.mergeAll(apiHandlersLive, governedReadApiHandlersLive).pipe(
-  GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
-  GovernedReadLayer.provide(GovernedDatabaseConfigLive),
-  GovernedReadLayer.provide(
+const governedResolvedRequestServicesLive = governedRequestServicesLive.pipe(
+  GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive),
+  GovernedReadLayer.provideMerge(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provideMerge(
     GovernedReadLayer.mergeAll(
       Logger.layer([Logger.defaultLogger]),
       GovernedReadLayer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
@@ -150,7 +157,8 @@ const governedResolvedApiHandlersLive = GovernedReadLayer.mergeAll(apiHandlersLi
 export const makePropertyLeasingApiRuntime = () =>
   assembleEffectBffRuntime({
     api: propertyLeasingApi,
-    handlers: governedResolvedApiHandlersLive,
+    handlers: GovernedReadLayer.mergeAll(apiHandlersLive, governedReadApiHandlersLive),
+    services: governedResolvedRequestServicesLive,
   });
 const apiRuntime = makePropertyLeasingApiRuntime();
 

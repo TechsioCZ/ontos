@@ -79,14 +79,19 @@ const governedActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit)
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   // <generated-governed-http-handler-layers>
   // The action reads Core's legal entity (export issuer) through the governed Read runtime.
-  applyCommandActionApiLive.pipe(
-    GovernedReadLayer.provide(GovernedReadLayer.mergeAll(governedActionRuntimeLive, governedReadRuntimeLive)),
-  ),
-  recordsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), Layer.provide(ActionPermissionLive)),
+  applyCommandActionApiLive,
+  recordsReadApiLive,
   // </generated-governed-http-handler-layers>
+);
+
+/** What the handlers resolve when they run: built for each request on Workers, once on Node. */
+const governedRequestServicesLive = GovernedReadLayer.mergeAll(
+  governedActionRuntimeLive,
+  governedReadRuntimeLive,
+  ActionPermissionLive,
 ).pipe(
   // <generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provide(
+  GovernedReadLayer.provideMerge(
     GovernedReadLayer.mergeAll(
       GovernedActionPrincipalVerifierLive,
       GovernedGatewayAssertionRedemptionLive.pipe(
@@ -95,7 +100,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
     ),
   ),
   // </generated-governed-http-handler-support-layers>
-  GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
+  GovernedReadLayer.provideMerge(governedReadRuntimeDependenciesLive),
 );
 
 const financeBillingReadinessLayer = HttpApiBuilder.group(financeBillingApi, 'foundation', (handlers) =>
@@ -120,10 +125,10 @@ const financeBillingReadinessLayer = HttpApiBuilder.group(financeBillingApi, 'fo
 );
 
 const apiHandlersLive = Layer.mergeAll(financeBillingReadinessLayer);
-const governedResolvedApiHandlersLive = GovernedReadLayer.mergeAll(apiHandlersLive, governedReadApiHandlersLive).pipe(
-  GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
-  GovernedReadLayer.provide(GovernedDatabaseConfigLive),
-  GovernedReadLayer.provide(
+const governedResolvedRequestServicesLive = governedRequestServicesLive.pipe(
+  GovernedReadLayer.provideMerge(governedApplicationCompositionSourceLive),
+  GovernedReadLayer.provideMerge(GovernedDatabaseConfigLive),
+  GovernedReadLayer.provideMerge(
     GovernedReadLayer.mergeAll(
       Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
       GovernedReadLayer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
@@ -136,7 +141,8 @@ const governedResolvedApiHandlersLive = GovernedReadLayer.mergeAll(apiHandlersLi
 export const makeFinanceBillingApiRuntime = () =>
   assembleEffectBffRuntime({
     api: financeBillingApi,
-    handlers: governedResolvedApiHandlersLive,
+    handlers: GovernedReadLayer.mergeAll(apiHandlersLive, governedReadApiHandlersLive),
+    services: governedResolvedRequestServicesLive,
   });
 const apiRuntime = makeFinanceBillingApiRuntime();
 

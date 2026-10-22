@@ -45,6 +45,7 @@ import {
   insertSortedSlot,
   insertModuleFederationExposure,
   isModuleManifestImport,
+  isGovernedHttpHandlerLayerSlotEntry,
   raiseScaffoldFailure,
   readGeneratedSlotEntries,
   requireCanonicalSlug,
@@ -274,16 +275,6 @@ const insertGovernedHttpSupportImport = (
     `import { ${expected.binding} } from '${expected.module}';`,
     (candidate) => governedHttpSupportImport(candidate) !== undefined,
   );
-};
-
-const isGovernedHttpHandlerLayerSlotEntry = (candidate: string): boolean => {
-  const isRead =
-    /^[A-Za-z][A-Za-z0-9]*ReadApiLive\.pipe\(/u.test(candidate) &&
-    candidate.includes('GovernedReadLayer.provide(governedReadRuntimeLive)');
-  const isAction =
-    /^[A-Za-z][A-Za-z0-9]*ActionApiLive\.pipe\(/u.test(candidate) &&
-    candidate.includes('GovernedReadLayer.provide(governedActionRuntimeLive)');
-  return (isRead || isAction) && candidate.endsWith('),');
 };
 
 const generatedHeader = (kind: GovernedContributionKind) =>
@@ -935,7 +926,7 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
         ),
         GOVERNED_HTTP_HANDLER_LAYER_SLOT_START,
         GOVERNED_HTTP_HANDLER_LAYER_SLOT_END,
-        `${layerValue}.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),`,
+        `${layerValue},`,
         isGovernedHttpHandlerLayerSlotEntry,
       );
       if (next.includes(GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START)) {
@@ -948,8 +939,8 @@ const patchGovernedHttpComposition = Effect.fn('GovernedContributionScaffold.pat
           next,
           GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_START,
           GOVERNED_HTTP_HANDLER_SUPPORT_LAYER_SLOT_END,
-          'GovernedReadLayer.provide(GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive)),',
-          (candidate) => candidate.startsWith('GovernedReadLayer.provide(') && candidate.endsWith('),'),
+          'GovernedReadLayer.provideMerge(GovernedReadLayer.mergeAll(GovernedActionPrincipalVerifierLive, GovernedGatewayAssertionRedemptionLive)),',
+          (candidate) => candidate.startsWith('GovernedReadLayer.provideMerge(') && candidate.endsWith('),'),
         );
       }
       return next;

@@ -1,5 +1,5 @@
 diff --git a/dist/cjs/ultramodern-workspace/add-vertical/execute.cjs b/dist/cjs/ultramodern-workspace/add-vertical/execute.cjs
-index a1775149e82be16500687d9712a2bd37b6427034..9fc7e36413ca4a7fe095732b4f7dba2a17e010c4 100644
+index a177514..9fc7e36 100644
 --- a/dist/cjs/ultramodern-workspace/add-vertical/execute.cjs
 +++ b/dist/cjs/ultramodern-workspace/add-vertical/execute.cjs
 @@ -179,11 +179,8 @@ function executeAddUltramodernVertical(options, logicalWorkspaceRoot = options.w
@@ -17,7 +17,7 @@ index a1775149e82be16500687d9712a2bd37b6427034..9fc7e36413ca4a7fe095732b4f7dba2a
          devPorts: previousDevPorts,
          enableTailwind: previousTailwind
 diff --git a/dist/cjs/ultramodern-workspace/add-vertical/shell-files.cjs b/dist/cjs/ultramodern-workspace/add-vertical/shell-files.cjs
-index 935bd9aff97cbb83a4b33fdd188a98358baeb3c2..b1c17ab5be7cc741f517a2ec375981fea57724b6 100644
+index 935bd9a..b1c17ab 100644
 --- a/dist/cjs/ultramodern-workspace/add-vertical/shell-files.cjs
 +++ b/dist/cjs/ultramodern-workspace/add-vertical/shell-files.cjs
 @@ -44,7 +44,6 @@ const external_node_fs_namespaceObject = require("node:fs");
@@ -39,7 +39,7 @@ index 935bd9aff97cbb83a4b33fdd188a98358baeb3c2..b1c17ab5be7cc741f517a2ec375981fe
      return {
          shellHost,
 diff --git a/dist/cjs/ultramodern-workspace/api/client.cjs b/dist/cjs/ultramodern-workspace/api/client.cjs
-index be972eb6fd9bdfc9270a431f194f590632c040a7..6dfb3efd4d0ff2a8dfb8d9ffca51b06b4b267673 100644
+index be972eb..6dfb3ef 100644
 --- a/dist/cjs/ultramodern-workspace/api/client.cjs
 +++ b/dist/cjs/ultramodern-workspace/api/client.cjs
 @@ -28,8 +28,7 @@ var __webpack_require__ = {};
@@ -97,8 +97,20 @@ index be972eb6fd9bdfc9270a431f194f590632c040a7..6dfb3efd4d0ff2a8dfb8d9ffca51b06b
  ].indexOf(__rspack_i)) exports[__rspack_i] = __webpack_exports__[__rspack_i];
  Object.defineProperty(exports, '__esModule', {
      value: true
+diff --git a/dist/cjs/ultramodern-workspace/api/service.cjs b/dist/cjs/ultramodern-workspace/api/service.cjs
+index 47fe9d2..d5827bb 100644
+--- a/dist/cjs/ultramodern-workspace/api/service.cjs
++++ b/dist/cjs/ultramodern-workspace/api/service.cjs
+@@ -188,6 +188,7 @@ export const make${apiExport[0].toUpperCase()}${apiExport.slice(1)}Runtime = ()
+   assembleEffectBffRuntime({
+     api: ${apiExport},
+     handlers: apiHandlersLive,
++    services: Layer.empty,
+   });` : `export const make${apiExport[0].toUpperCase()}${apiExport.slice(1)}Runtime = () => {
+   const layer = HttpApiBuilder.layer(${apiExport}).pipe(
+     Layer.provide(${groupName}Layer),
 diff --git a/dist/cjs/ultramodern-workspace/api.cjs b/dist/cjs/ultramodern-workspace/api.cjs
-index 7567a916e8470b19c5187f6b4a1d004e575d1dda..8740d6edadb71337e4f9b6d4c26374171aab24bb 100644
+index 7567a91..8740d6e 100644
 --- a/dist/cjs/ultramodern-workspace/api.cjs
 +++ b/dist/cjs/ultramodern-workspace/api.cjs
 @@ -36,7 +36,6 @@ __webpack_require__.d(__webpack_exports__, {
@@ -126,7 +138,7 @@ index 7567a916e8470b19c5187f6b4a1d004e575d1dda..8740d6edadb71337e4f9b6d4c2637417
      "verticalApiCreatePayloadSchemaExport",
      "verticalApiErrorStem",
 diff --git a/dist/cjs/ultramodern-workspace/package-json.cjs b/dist/cjs/ultramodern-workspace/package-json.cjs
-index 83471cd1f552d0e05fb9799407f3611f1be26140..12b5c5c0cad62f2a375efe473cc29e29b01d403f 100644
+index 83471cd..12b5c5c 100644
 --- a/dist/cjs/ultramodern-workspace/package-json.cjs
 +++ b/dist/cjs/ultramodern-workspace/package-json.cjs
 @@ -72,7 +72,6 @@ function appDependencies(scope, packageSource, app, remotes = [], bridge) {
@@ -149,7 +161,7 @@ index 83471cd1f552d0e05fb9799407f3611f1be26140..12b5c5c0cad62f2a375efe473cc29e29
      return packageJson;
  }
 diff --git a/dist/cjs/ultramodern-workspace/validation/architecture.cjs b/dist/cjs/ultramodern-workspace/validation/architecture.cjs
-index 70bb2be66ec4be9fddea2f3511021caaa3f47f2b..1f90c1c1352dd25e83e0ca130874e349286ccba3 100644
+index 70bb2be..1f90c1c 100644
 --- a/dist/cjs/ultramodern-workspace/validation/architecture.cjs
 +++ b/dist/cjs/ultramodern-workspace/validation/architecture.cjs
 @@ -45,6 +45,8 @@ const external_node_module_namespaceObject = require("node:module");
@@ -218,9 +230,9 @@ index 70bb2be66ec4be9fddea2f3511021caaa3f47f2b..1f90c1c1352dd25e83e0ca130874e349
                          if (typescript.isBinaryExpression(node) && node.operatorToken.kind === typescript.SyntaxKind.EqualsToken && propertyAccessPath(node.left)?.slice(0, 2).join('.') === 'window.location' || typescript.isCallExpression(node) && propertyAccessPath(node.expression)?.slice(0, 2).join('.') === 'window.location') compilerFailure(sourceFile, node, 'shell routing window-location-navigation', 'Shell routing must use router navigation instead of window.location.', 'use the router navigation primitive');
                      }
                      node.forEachChild(visit);
-diff --git a/dist/cjs/ultramodern-workspace/validation/native-build-target.cjs b/dist/cjs/ultramodern-workspace/validation/native-build-target.cjs
+diff --git a/b/dist/cjs/ultramodern-workspace/validation/native-build-target.cjs b/dist/cjs/ultramodern-workspace/validation/native-build-target.cjs
 new file mode 100644
-index 0000000000000000000000000000000000000000..47e5963d3a6cf0fcd5eadb67fa81742c8d5c7e4f
+index 0000000..47e5963
 --- /dev/null
 +++ b/dist/cjs/ultramodern-workspace/validation/native-build-target.cjs
 @@ -0,0 +1,254 @@
@@ -478,9 +490,9 @@ index 0000000000000000000000000000000000000000..47e5963d3a6cf0fcd5eadb67fa81742c
 +Object.defineProperty(exports, '__esModule', {
 +    value: true
 +});
-diff --git a/dist/cjs/ultramodern-workspace/validation/native-federation-loading.cjs b/dist/cjs/ultramodern-workspace/validation/native-federation-loading.cjs
+diff --git a/b/dist/cjs/ultramodern-workspace/validation/native-federation-loading.cjs b/dist/cjs/ultramodern-workspace/validation/native-federation-loading.cjs
 new file mode 100644
-index 0000000000000000000000000000000000000000..9daf092eb6209826ab6ab76bff6426775dd7a783
+index 0000000..9daf092
 --- /dev/null
 +++ b/dist/cjs/ultramodern-workspace/validation/native-federation-loading.cjs
 @@ -0,0 +1,319 @@
@@ -804,7 +816,7 @@ index 0000000000000000000000000000000000000000..9daf092eb6209826ab6ab76bff642677
 +    value: true
 +});
 diff --git a/dist/cjs/ultramodern-workspace/write-app.cjs b/dist/cjs/ultramodern-workspace/write-app.cjs
-index d4b1e65841ceafcb458bc28b5d04dfda1d7c80db..bf22157844a22f18f9cf3cd58d12f643a7f9de4e 100644
+index d4b1e65..bf22157 100644
 --- a/dist/cjs/ultramodern-workspace/write-app.cjs
 +++ b/dist/cjs/ultramodern-workspace/write-app.cjs
 @@ -102,7 +102,7 @@ function writeAppFederationConfigFiles({ targetDir, scope, resolvedApp, emitsUi,
@@ -825,7 +837,7 @@ index d4b1e65841ceafcb458bc28b5d04dfda1d7c80db..bf22157844a22f18f9cf3cd58d12f643
  }
  function writeAppApiAndRemoteExposeFiles({ targetDir, scope, resolvedApp, emitsUi, writeAppFile }) {
 diff --git a/dist/esm/ultramodern-workspace/add-vertical/execute.js b/dist/esm/ultramodern-workspace/add-vertical/execute.js
-index 03a8a20c9fe87f39b03b4645b990ca609647f551..0cf126787936dec4ca9aba503e00176f48a53edb 100644
+index 03a8a20..0cf1267 100644
 --- a/dist/esm/ultramodern-workspace/add-vertical/execute.js
 +++ b/dist/esm/ultramodern-workspace/add-vertical/execute.js
 @@ -135,11 +135,8 @@ function executeAddUltramodernVertical(options, logicalWorkspaceRoot = options.w
@@ -843,7 +855,7 @@ index 03a8a20c9fe87f39b03b4645b990ca609647f551..0cf126787936dec4ca9aba503e00176f
          devPorts: previousDevPorts,
          enableTailwind: previousTailwind
 diff --git a/dist/esm/ultramodern-workspace/add-vertical/shell-files.js b/dist/esm/ultramodern-workspace/add-vertical/shell-files.js
-index c8afbb23380fdfbc50bdb1241ce7abfbcd02107b..719faf1237544a940e567e57500120c8357f237a 100644
+index c8afbb2..719faf1 100644
 --- a/dist/esm/ultramodern-workspace/add-vertical/shell-files.js
 +++ b/dist/esm/ultramodern-workspace/add-vertical/shell-files.js
 @@ -1,6 +1,5 @@
@@ -864,7 +876,7 @@ index c8afbb23380fdfbc50bdb1241ce7abfbcd02107b..719faf1237544a940e567e57500120c8
      return {
          shellHost,
 diff --git a/dist/esm/ultramodern-workspace/api/client.js b/dist/esm/ultramodern-workspace/api/client.js
-index 3a74e5de87f91feff4d8ae6de22c3fdf3ff1875a..99859b129beb97f65b838da74cc63a38aa2f4674 100644
+index 3a74e5d..99859b1 100644
 --- a/dist/esm/ultramodern-workspace/api/client.js
 +++ b/dist/esm/ultramodern-workspace/api/client.js
 @@ -1,6 +1,6 @@
@@ -915,8 +927,20 @@ index 3a74e5de87f91feff4d8ae6de22c3fdf3ff1875a..99859b129beb97f65b838da74cc63a38
 -}
 -export { createApiClient, createShellApiClient };
 +export { createApiClient };
+diff --git a/dist/esm/ultramodern-workspace/api/service.js b/dist/esm/ultramodern-workspace/api/service.js
+index 0512d11..6081997 100644
+--- a/dist/esm/ultramodern-workspace/api/service.js
++++ b/dist/esm/ultramodern-workspace/api/service.js
+@@ -155,6 +155,7 @@ export const make${apiExport[0].toUpperCase()}${apiExport.slice(1)}Runtime = ()
+   assembleEffectBffRuntime({
+     api: ${apiExport},
+     handlers: apiHandlersLive,
++    services: Layer.empty,
+   });` : `export const make${apiExport[0].toUpperCase()}${apiExport.slice(1)}Runtime = () => {
+   const layer = HttpApiBuilder.layer(${apiExport}).pipe(
+     Layer.provide(${groupName}Layer),
 diff --git a/dist/esm/ultramodern-workspace/api.js b/dist/esm/ultramodern-workspace/api.js
-index fec430d98bb2dd7b7fd82b4c410bcd7cc45347e3..f7353299e98813dbfc811025d5f0e02871fd8f69 100644
+index fec430d..f735329 100644
 --- a/dist/esm/ultramodern-workspace/api.js
 +++ b/dist/esm/ultramodern-workspace/api.js
 @@ -1,4 +1,4 @@
@@ -926,7 +950,7 @@ index fec430d98bb2dd7b7fd82b4c410bcd7cc45347e3..f7353299e98813dbfc811025d5f0e028
  export { verticalApiCreatePayloadSchemaExport, verticalApiErrorStem, verticalApiExport, verticalApiGroupName, verticalApiMarkerSchemaExport, verticalApiName, verticalApiNotFoundErrorExport, verticalApiNotFoundSchemaExport, verticalApiReadinessSchemaExport, verticalApiSchemaExport } from "./api/names.js";
  export { createRpcApiServiceEntry, createRpcClientFile, createRpcContractFile, rpcPath, verticalRpcContractExport, verticalRpcGroupExport } from "./api/rpc.js";
 diff --git a/dist/esm/ultramodern-workspace/package-json.js b/dist/esm/ultramodern-workspace/package-json.js
-index ba734258982ca646c8bc24ce1289c975f998e266..86213278d3466a5eee63bc915f0fac0b6f84d873 100644
+index ba73425..8621327 100644
 --- a/dist/esm/ultramodern-workspace/package-json.js
 +++ b/dist/esm/ultramodern-workspace/package-json.js
 @@ -1,5 +1,5 @@
@@ -956,7 +980,7 @@ index ba734258982ca646c8bc24ce1289c975f998e266..86213278d3466a5eee63bc915f0fac0b
      return packageJson;
  }
 diff --git a/dist/esm/ultramodern-workspace/validation/architecture.js b/dist/esm/ultramodern-workspace/validation/architecture.js
-index 2894a1f3bef8328a616d87132d99d74b779661e5..ef8defaa82dfe29f881ae56c4167bca41a9cb92a 100644
+index 2894a1f..ef8defa 100644
 --- a/dist/esm/ultramodern-workspace/validation/architecture.js
 +++ b/dist/esm/ultramodern-workspace/validation/architecture.js
 @@ -2,6 +2,8 @@ import node_fs from "node:fs";
@@ -1025,9 +1049,9 @@ index 2894a1f3bef8328a616d87132d99d74b779661e5..ef8defaa82dfe29f881ae56c4167bca4
                          if (typescript.isBinaryExpression(node) && node.operatorToken.kind === typescript.SyntaxKind.EqualsToken && propertyAccessPath(node.left)?.slice(0, 2).join('.') === 'window.location' || typescript.isCallExpression(node) && propertyAccessPath(node.expression)?.slice(0, 2).join('.') === 'window.location') compilerFailure(sourceFile, node, 'shell routing window-location-navigation', 'Shell routing must use router navigation instead of window.location.', 'use the router navigation primitive');
                      }
                      node.forEachChild(visit);
-diff --git a/dist/esm/ultramodern-workspace/validation/native-build-target.js b/dist/esm/ultramodern-workspace/validation/native-build-target.js
+diff --git a/b/dist/esm/ultramodern-workspace/validation/native-build-target.js b/dist/esm/ultramodern-workspace/validation/native-build-target.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..78788b36ac3767fa4c47156dac979022c6ea9b78
+index 0000000..78788b3
 --- /dev/null
 +++ b/dist/esm/ultramodern-workspace/validation/native-build-target.js
 @@ -0,0 +1,210 @@
@@ -1241,9 +1265,9 @@ index 0000000000000000000000000000000000000000..78788b36ac3767fa4c47156dac979022
 +    };
 +}
 +export { createNativeBuildTargetProof, isNativeBrowserCompilerDefine, isNativeModernCompilerOwner };
-diff --git a/dist/esm/ultramodern-workspace/validation/native-federation-loading.js b/dist/esm/ultramodern-workspace/validation/native-federation-loading.js
+diff --git a/b/dist/esm/ultramodern-workspace/validation/native-federation-loading.js b/dist/esm/ultramodern-workspace/validation/native-federation-loading.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..b1cf8dd98e2eaa02bcc2a3da9606a54a4f0489dd
+index 0000000..b1cf8dd
 --- /dev/null
 +++ b/dist/esm/ultramodern-workspace/validation/native-federation-loading.js
 @@ -0,0 +1,281 @@
@@ -1529,7 +1553,7 @@ index 0000000000000000000000000000000000000000..b1cf8dd98e2eaa02bcc2a3da9606a54a
 +}
 +export { createNativeFederationLoadingProof };
 diff --git a/dist/esm/ultramodern-workspace/write-app.js b/dist/esm/ultramodern-workspace/write-app.js
-index a088df6f5ada150436a4a22b3694e0b7f363aa2b..c096e1182415b7beff5348603e7b9786177211fe 100644
+index a088df6..c096e11 100644
 --- a/dist/esm/ultramodern-workspace/write-app.js
 +++ b/dist/esm/ultramodern-workspace/write-app.js
 @@ -1,4 +1,4 @@
@@ -1556,7 +1580,7 @@ index a088df6f5ada150436a4a22b3694e0b7f363aa2b..c096e1182415b7beff5348603e7b9786
  }
  function writeAppApiAndRemoteExposeFiles({ targetDir, scope, resolvedApp, emitsUi, writeAppFile }) {
 diff --git a/dist/esm-node/ultramodern-workspace/add-vertical/execute.js b/dist/esm-node/ultramodern-workspace/add-vertical/execute.js
-index 84dd46012ffe2a416c4525412ae50322a94f66b9..31368dbf6724b646189e8a77acc4f8bf1c80caef 100644
+index 84dd460..31368db 100644
 --- a/dist/esm-node/ultramodern-workspace/add-vertical/execute.js
 +++ b/dist/esm-node/ultramodern-workspace/add-vertical/execute.js
 @@ -136,11 +136,8 @@ function executeAddUltramodernVertical(options, logicalWorkspaceRoot = options.w
@@ -1574,7 +1598,7 @@ index 84dd46012ffe2a416c4525412ae50322a94f66b9..31368dbf6724b646189e8a77acc4f8bf
          devPorts: previousDevPorts,
          enableTailwind: previousTailwind
 diff --git a/dist/esm-node/ultramodern-workspace/add-vertical/shell-files.js b/dist/esm-node/ultramodern-workspace/add-vertical/shell-files.js
-index e7e848b125f8113728baa6ff223bf10891f2337a..7d2cee0f4b093065c73f83da33ef0d336c63b714 100644
+index e7e848b..7d2cee0 100644
 --- a/dist/esm-node/ultramodern-workspace/add-vertical/shell-files.js
 +++ b/dist/esm-node/ultramodern-workspace/add-vertical/shell-files.js
 @@ -1,7 +1,6 @@
@@ -1596,7 +1620,7 @@ index e7e848b125f8113728baa6ff223bf10891f2337a..7d2cee0f4b093065c73f83da33ef0d33
      return {
          shellHost,
 diff --git a/dist/esm-node/ultramodern-workspace/api/client.js b/dist/esm-node/ultramodern-workspace/api/client.js
-index 2130262836ce84891529d286060ce7a32801a24c..de5ace1fee8affea201b93bd6fa63eb3b8279cbe 100644
+index 2130262..de5ace1 100644
 --- a/dist/esm-node/ultramodern-workspace/api/client.js
 +++ b/dist/esm-node/ultramodern-workspace/api/client.js
 @@ -1,7 +1,7 @@
@@ -1648,8 +1672,20 @@ index 2130262836ce84891529d286060ce7a32801a24c..de5ace1fee8affea201b93bd6fa63eb3
 -}
 -export { createApiClient, createShellApiClient };
 +export { createApiClient };
+diff --git a/dist/esm-node/ultramodern-workspace/api/service.js b/dist/esm-node/ultramodern-workspace/api/service.js
+index 4bf8ad1..17172c9 100644
+--- a/dist/esm-node/ultramodern-workspace/api/service.js
++++ b/dist/esm-node/ultramodern-workspace/api/service.js
+@@ -156,6 +156,7 @@ export const make${apiExport[0].toUpperCase()}${apiExport.slice(1)}Runtime = ()
+   assembleEffectBffRuntime({
+     api: ${apiExport},
+     handlers: apiHandlersLive,
++    services: Layer.empty,
+   });` : `export const make${apiExport[0].toUpperCase()}${apiExport.slice(1)}Runtime = () => {
+   const layer = HttpApiBuilder.layer(${apiExport}).pipe(
+     Layer.provide(${groupName}Layer),
 diff --git a/dist/esm-node/ultramodern-workspace/api.js b/dist/esm-node/ultramodern-workspace/api.js
-index d031b785e09cb02b9bcfe57ba5555508ede2d995..8799aa8f7592f2cdef962b7f854d0bd83b342d70 100644
+index d031b78..8799aa8 100644
 --- a/dist/esm-node/ultramodern-workspace/api.js
 +++ b/dist/esm-node/ultramodern-workspace/api.js
 @@ -1,5 +1,5 @@
@@ -1660,7 +1696,7 @@ index d031b785e09cb02b9bcfe57ba5555508ede2d995..8799aa8f7592f2cdef962b7f854d0bd8
  export { verticalApiCreatePayloadSchemaExport, verticalApiErrorStem, verticalApiExport, verticalApiGroupName, verticalApiMarkerSchemaExport, verticalApiName, verticalApiNotFoundErrorExport, verticalApiNotFoundSchemaExport, verticalApiReadinessSchemaExport, verticalApiSchemaExport } from "./api/names.js";
  export { createRpcApiServiceEntry, createRpcClientFile, createRpcContractFile, rpcPath, verticalRpcContractExport, verticalRpcGroupExport } from "./api/rpc.js";
 diff --git a/dist/esm-node/ultramodern-workspace/package-json.js b/dist/esm-node/ultramodern-workspace/package-json.js
-index 3ca791c80522aa987881e6e2cf2c68ddeee0e34b..ad573d8a8959ae19f747866a35bc61ba817d0124 100644
+index 3ca791c..ad573d8 100644
 --- a/dist/esm-node/ultramodern-workspace/package-json.js
 +++ b/dist/esm-node/ultramodern-workspace/package-json.js
 @@ -1,6 +1,6 @@
@@ -1691,7 +1727,7 @@ index 3ca791c80522aa987881e6e2cf2c68ddeee0e34b..ad573d8a8959ae19f747866a35bc61ba
      return packageJson;
  }
 diff --git a/dist/esm-node/ultramodern-workspace/validation/architecture.js b/dist/esm-node/ultramodern-workspace/validation/architecture.js
-index 3841fc7d052286545b37a749b3a2cb9dd90528f7..36a404ff45f52115f9ca46f0ca8aebd2d5429355 100644
+index 3841fc7..36a404f 100644
 --- a/dist/esm-node/ultramodern-workspace/validation/architecture.js
 +++ b/dist/esm-node/ultramodern-workspace/validation/architecture.js
 @@ -3,6 +3,8 @@ import node_fs from "node:fs";
@@ -1760,9 +1796,9 @@ index 3841fc7d052286545b37a749b3a2cb9dd90528f7..36a404ff45f52115f9ca46f0ca8aebd2
                          if (typescript.isBinaryExpression(node) && node.operatorToken.kind === typescript.SyntaxKind.EqualsToken && propertyAccessPath(node.left)?.slice(0, 2).join('.') === 'window.location' || typescript.isCallExpression(node) && propertyAccessPath(node.expression)?.slice(0, 2).join('.') === 'window.location') compilerFailure(sourceFile, node, 'shell routing window-location-navigation', 'Shell routing must use router navigation instead of window.location.', 'use the router navigation primitive');
                      }
                      node.forEachChild(visit);
-diff --git a/dist/esm-node/ultramodern-workspace/validation/native-build-target.js b/dist/esm-node/ultramodern-workspace/validation/native-build-target.js
+diff --git a/b/dist/esm-node/ultramodern-workspace/validation/native-build-target.js b/dist/esm-node/ultramodern-workspace/validation/native-build-target.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..f9c4d2593d3a2eab74dd9d52417a189792dddd0c
+index 0000000..f9c4d25
 --- /dev/null
 +++ b/dist/esm-node/ultramodern-workspace/validation/native-build-target.js
 @@ -0,0 +1,211 @@
@@ -1977,9 +2013,9 @@ index 0000000000000000000000000000000000000000..f9c4d2593d3a2eab74dd9d52417a1897
 +    };
 +}
 +export { createNativeBuildTargetProof, isNativeBrowserCompilerDefine, isNativeModernCompilerOwner };
-diff --git a/dist/esm-node/ultramodern-workspace/validation/native-federation-loading.js b/dist/esm-node/ultramodern-workspace/validation/native-federation-loading.js
+diff --git a/b/dist/esm-node/ultramodern-workspace/validation/native-federation-loading.js b/dist/esm-node/ultramodern-workspace/validation/native-federation-loading.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..9fd2cda6fb498e553901b6e0be83c98e6c4a110e
+index 0000000..9fd2cda
 --- /dev/null
 +++ b/dist/esm-node/ultramodern-workspace/validation/native-federation-loading.js
 @@ -0,0 +1,282 @@
@@ -2266,7 +2302,7 @@ index 0000000000000000000000000000000000000000..9fd2cda6fb498e553901b6e0be83c98e
 +}
 +export { createNativeFederationLoadingProof };
 diff --git a/dist/esm-node/ultramodern-workspace/write-app.js b/dist/esm-node/ultramodern-workspace/write-app.js
-index d4b148e9904eb663e7a04b64c894c7dd20ef6f03..347202223343221ecb4c986d9594fe490bc9a303 100644
+index d4b148e..3472022 100644
 --- a/dist/esm-node/ultramodern-workspace/write-app.js
 +++ b/dist/esm-node/ultramodern-workspace/write-app.js
 @@ -1,5 +1,5 @@
@@ -2294,7 +2330,7 @@ index d4b148e9904eb663e7a04b64c894c7dd20ef6f03..347202223343221ecb4c986d9594fe49
  }
  function writeAppApiAndRemoteExposeFiles({ targetDir, scope, resolvedApp, emitsUi, writeAppFile }) {
 diff --git a/dist/types/ultramodern-workspace/api/client.d.ts b/dist/types/ultramodern-workspace/api/client.d.ts
-index f3d332aaeeede471d4cd6c7e1457c0da7de4e0df..4bb005a2f9ef0ab936862abe9248934686fc7f59 100644
+index f3d332a..4bb005a 100644
 --- a/dist/types/ultramodern-workspace/api/client.d.ts
 +++ b/dist/types/ultramodern-workspace/api/client.d.ts
 @@ -1,8 +1,7 @@
@@ -2308,7 +2344,7 @@ index f3d332aaeeede471d4cd6c7e1457c0da7de4e0df..4bb005a2f9ef0ab936862abe92489346
  }): string;
 -export declare function createShellApiClient(scope: string, remotes?: WorkspaceApp[]): string;
 diff --git a/dist/types/ultramodern-workspace/api.d.ts b/dist/types/ultramodern-workspace/api.d.ts
-index e4fa4c992169a7bba102f93b1344140f80d9d475..d422cdc2a0915ea0071ea12e7d4933a6cf22ea05 100644
+index e4fa4c9..d422cdc 100644
 --- a/dist/types/ultramodern-workspace/api.d.ts
 +++ b/dist/types/ultramodern-workspace/api.d.ts
 @@ -1,4 +1,4 @@
@@ -2317,9 +2353,9 @@ index e4fa4c992169a7bba102f93b1344140f80d9d475..d422cdc2a0915ea0071ea12e7d4933a6
  export { apiTopologyMetadata } from './api/contracts.js';
  export { verticalApiCreatePayloadSchemaExport, verticalApiErrorStem, verticalApiExport, verticalApiGroupName, verticalApiMarkerSchemaExport, verticalApiName, verticalApiNotFoundErrorExport, verticalApiNotFoundSchemaExport, verticalApiReadinessSchemaExport, verticalApiSchemaExport, } from './api/names.js';
  export { createRpcApiServiceEntry, createRpcClientFile, createRpcContractFile, rpcPath, verticalRpcContractExport, verticalRpcGroupExport, } from './api/rpc.js';
-diff --git a/dist/types/ultramodern-workspace/validation/native-build-target.d.ts b/dist/types/ultramodern-workspace/validation/native-build-target.d.ts
+diff --git a/b/dist/types/ultramodern-workspace/validation/native-build-target.d.ts b/dist/types/ultramodern-workspace/validation/native-build-target.d.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..db8d9d46d127e0ffe4f51a0fabb3ed4aabdb64ad
+index 0000000..db8d9d4
 --- /dev/null
 +++ b/dist/types/ultramodern-workspace/validation/native-build-target.d.ts
 @@ -0,0 +1,11 @@
@@ -2334,9 +2370,9 @@ index 0000000000000000000000000000000000000000..db8d9d46d127e0ffe4f51a0fabb3ed4a
 +    comparison: (node: ts.Node, target?: 'browser' | 'node') => boolean;
 +    environmentAccess: (node: ts.Node) => boolean;
 +};
-diff --git a/dist/types/ultramodern-workspace/validation/native-federation-loading.d.ts b/dist/types/ultramodern-workspace/validation/native-federation-loading.d.ts
+diff --git a/b/dist/types/ultramodern-workspace/validation/native-federation-loading.d.ts b/dist/types/ultramodern-workspace/validation/native-federation-loading.d.ts
 new file mode 100644
-index 0000000000000000000000000000000000000000..051848ebdfdf4a8a1bc219a113fb6b3bc5c149ee
+index 0000000..051848e
 --- /dev/null
 +++ b/dist/types/ultramodern-workspace/validation/native-federation-loading.d.ts
 @@ -0,0 +1,4 @@
@@ -2345,7 +2381,7 @@ index 0000000000000000000000000000000000000000..051848ebdfdf4a8a1bc219a113fb6b3b
 +/** Proves native instance provenance; application admission remains a separate boundary. */
 +export declare function createNativeFederationLoadingProof(ast: typeof import('typescript/unstable/ast'), checker: Checker, sourceFile: ts.SourceFile, compilerOwned: boolean, browserDefineOwned: boolean): (node: ts.Node | undefined) => boolean;
 diff --git a/templates/workspace-scripts/proof-workerd-ssr.mjs b/templates/workspace-scripts/proof-workerd-ssr.mjs
-index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..16417d5ea6de27426fb5a401a31ffb3fd5f786c8 100644
+index 3a9a5c5..16417d5 100644
 --- a/templates/workspace-scripts/proof-workerd-ssr.mjs
 +++ b/templates/workspace-scripts/proof-workerd-ssr.mjs
 @@ -219,14 +219,22 @@ const readDevVars = (outputRoot) => {

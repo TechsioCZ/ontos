@@ -1077,10 +1077,14 @@ import { stockListReadApiLive } from './stock-list-read-server.ts';
 const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(GovernedReadLayer.provide(governedReadRuntimeDependenciesLive));
 const handlersLive = Layer.mergeAll(
   // <generated-governed-http-handler-layers>
-  stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  stockListReadApiLive,
   // </generated-governed-http-handler-layers>
 );
-export default assembleEffectBffRuntime({ api, handlers: handlersLive });`,
+const requestServicesLive = GovernedReadLayer.mergeAll(governedReadRuntimeLive).pipe(
+  GovernedReadLayer.provideMerge(governedReadRuntimeDependenciesLive),
+  GovernedReadLayer.orDie,
+);
+export default assembleEffectBffRuntime({ api, handlers: handlersLive, services: requestServicesLive });`,
   );
   yield* write(
     root,
@@ -1207,20 +1211,20 @@ for (const suffix of ['search', 'report']) {
 }
 
 it.live(
-  'accepts the native Layer alias for additional read dependencies and retains the runtime boundary',
+  'accepts request-service outputs with the native Layer alias and retains the runtime boundary',
   Effect.fn(function* nativeReadDependencyComposition() {
     const root = yield* makeFixture();
     yield* writeGovernedModuleApi(root);
     const handlerRootPath = `${INVENTORY_VERTICAL_PATH}/api/index.ts`;
     const handlerRoot = yield* Effect.promise(() => readFile(path.join(root, handlerRootPath), 'utf-8'));
-    const runtimeProvider = 'GovernedReadLayer.provide(governedReadRuntimeLive)';
-    const permissionProvider = 'Layer.provide(ActionPermissionLive)';
-    const composed = handlerRoot.replace(runtimeProvider, `${runtimeProvider}, ${permissionProvider}`);
+    const runtimeProvider = 'GovernedReadLayer.mergeAll(governedReadRuntimeLive)';
+    const permissionProvider = 'Layer.provideMerge(ActionPermissionLive)';
+    const composed = handlerRoot.replace(runtimeProvider, `${runtimeProvider}.pipe(${permissionProvider})`);
     yield* write(root, handlerRootPath, composed);
     yield* checkModuleEntrypointBoundaries(root);
     for (const invalid of [
-      composed.replace(runtimeProvider, 'GovernedReadLayer.provide(WrongRuntimeLive)'),
-      composed.replace(permissionProvider, 'ForeignLayer.provide(ActionPermissionLive)'),
+      composed.replace(runtimeProvider, 'GovernedReadLayer.mergeAll(WrongRuntimeLive)'),
+      composed.replace(permissionProvider, 'ForeignLayer.provideMerge(ActionPermissionLive)'),
     ]) {
       yield* write(root, handlerRootPath, invalid);
       yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
@@ -1307,7 +1311,7 @@ const decoyApi = HttpApi.make('DecoyApi').addHttpApi(StockListApi);`,
         )
         .replace(
           '// </generated-governed-http-handler-layers>',
-          'missingDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),\n// </generated-governed-http-handler-layers>',
+          'missingDetailReadApiLive,\n// </generated-governed-http-handler-layers>',
         ),
     );
     const secondContractPath = 'verticals/inventory-stock/shared/apis/missing-detail.ts';
@@ -3185,33 +3189,30 @@ it('resolves only immutable literal permission aliases and preserves exact autho
 });
 
 it.live(
-  'accepts canonical additional Layer provisions and rejects unsupported aliases without dropping the governed runtime',
+  'keeps owner services in request outputs and rejects every per-handler runtime provision',
   Effect.fn(function* canonicalLayerProvisionScenario() {
     const root = yield* makeFixture();
     yield* writeGovernedModuleApi(root);
     const handlerPath = `${INVENTORY_VERTICAL_PATH}/api/index.ts`;
     const original = yield* Effect.promise(() => readFile(path.join(root, handlerPath), 'utf-8'));
-    const first = 'stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive))';
-    const ownerProvision = 'Layer.provide(ownerDependenciesLive)';
-    const provisioned = original.replace(
-      first,
-      `stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), ${ownerProvision})`,
-    );
+    const runtime = 'GovernedReadLayer.mergeAll(governedReadRuntimeLive)';
+    const provisioned = original.replace(runtime, `${runtime}.pipe(Layer.provideMerge(ownerDependenciesLive))`);
     yield* write(root, handlerPath, provisioned);
     yield* checkModuleEntrypointBoundaries(root);
     const invalidSources = [
-      provisioned.replace(ownerProvision, 'GovernedReadLayer.provide(ownerDependenciesLive)'),
-      provisioned.replace(ownerProvision, 'UnknownLayer.provide(ownerDependenciesLive)'),
-      provisioned.replace(ownerProvision, 'Layer.provide(makeDependencies())'),
-      provisioned.replace(ownerProvision, 'Layer.provide(ownerDependenciesLive, attacker)'),
-      provisioned.replace(ownerProvision, 'ownerDependenciesLive'),
-      provisioned.replace('GovernedReadLayer.provide(governedReadRuntimeLive), ', ''),
-      provisioned.replace(
-        'GovernedReadLayer.provide(governedReadRuntimeLive)',
-        'Layer.provide(governedReadRuntimeLive)',
-      ),
+      ...[
+        'stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),',
+        'stockListReadApiLive.pipe(Layer.provide(ownerDependenciesLive)),',
+        'stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), Layer.provide(ownerDependenciesLive)),',
+        'stockListReadApiLive.pipe(GovernedReadLayer.provideMerge(governedReadRuntimeLive)),',
+      ].map((entry) => provisioned.replace('  stockListReadApiLive,', `  ${entry}`)),
+      provisioned.replace(runtime, 'Layer.empty.pipe(Layer.provide(governedReadRuntimeLive))'),
+      provisioned.replace('services: requestServicesLive', 'services: unrelatedServicesLive'),
     ];
     yield* assertRejectedSources(root, handlerPath, invalidSources, /module APIs require/u);
+    const merged = original.replace(runtime, 'Layer.empty.pipe(Layer.provideMerge(governedReadRuntimeLive))');
+    yield* write(root, handlerPath, merged);
+    yield* checkModuleEntrypointBoundaries(root);
   }),
 );
 

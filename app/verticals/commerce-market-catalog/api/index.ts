@@ -17,7 +17,7 @@ import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
-import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
+import { Logger, References, Schema, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 import { commerceMarketCatalogApi, commerceMarketCatalogOperationContexts } from '../shared/api.ts';
@@ -105,30 +105,32 @@ export const makeCommerceMarketCatalogApiRuntime = (
   const apiHandlersLive = Layer.mergeAll(
     commerceMarketCatalogReadinessLayer,
     // <generated-governed-http-handler-layers>
-    currentMarketCatalogReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    eligibleMarketTuplesReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    marketHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    pricingCurrentMarketEvidenceReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    resolveCommerceMarketReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    verifyMarketEligibilityV1ReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    currentMarketCatalogReadApiLive,
+    eligibleMarketTuplesReadApiLive,
+    marketHistoryReadApiLive,
+    pricingCurrentMarketEvidenceReadApiLive,
+    resolveCommerceMarketReadApiLive,
+    verifyMarketEligibilityV1ReadApiLive,
     // </generated-governed-http-handler-layers>
-  ).pipe(Layer.provide(Layer.mergeAll(ActionPrincipalVerifierLive, gatewayAssertionRedemption)));
-  const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(
-      Layer.mergeAll(
-        runtimeObservabilityLive,
-        RequestSchemaProblemLive,
-        ActiveApplicationCompositionSourceLive.pipe(
-          Layer.provide(
-            FetchHttpClient.layer.pipe(
-              Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
-            ),
+  );
+  const requestServicesLive = Layer.mergeAll(
+    governedReadRuntimeLive,
+    ActionPrincipalVerifierLive,
+    gatewayAssertionRedemption,
+  ).pipe(
+    Layer.provideMerge(runtimeObservabilityLive),
+    Layer.provideMerge(
+      ActiveApplicationCompositionSourceLive.pipe(
+        Layer.provide(
+          FetchHttpClient.layer.pipe(
+            Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
           ),
         ),
       ),
     ),
     Layer.orDie,
   );
+  const resolvedApiHandlersLive = apiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));
   const transportLive = HttpRouter.cors({
     allowedHeaders: [...commerceMarketCatalogCorsAllowedHeaders],
     allowedMethods: [...commerceMarketCatalogCorsAllowedMethods],
@@ -139,6 +141,7 @@ export const makeCommerceMarketCatalogApiRuntime = (
   return assembleEffectBffRuntime({
     api: commerceMarketCatalogApi,
     handlers: resolvedApiHandlersLive,
+    services: requestServicesLive,
     transport: transportLive,
   });
 };

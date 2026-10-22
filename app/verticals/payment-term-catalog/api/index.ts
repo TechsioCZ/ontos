@@ -20,7 +20,7 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
-import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
+import { Logger, References, Schema, Tracer } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
@@ -143,22 +143,24 @@ export const makePaymentTermCatalogApiRuntime = (
   const apiHandlersLive = Layer.mergeAll(
     paymentTermCatalogReadinessLayer,
     // <generated-governed-http-handler-layers>
-    acceptPaymentTermSourceStatementActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    configurePaymentTermSourceAuthorityActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    correctPaymentTermActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    createPaymentTermActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    currentPaymentTermsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    paymentTermHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    paymentTermSourceRecordHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    paymentTermSourceStatementReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
-    reconcilePaymentTermReferenceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
-    retirePaymentTermActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    acceptPaymentTermSourceStatementActionApiLive,
+    configurePaymentTermSourceAuthorityActionApiLive,
+    correctPaymentTermActionApiLive,
+    createPaymentTermActionApiLive,
+    currentPaymentTermsReadApiLive,
+    paymentTermHistoryReadApiLive,
+    paymentTermSourceRecordHistoryReadApiLive,
+    paymentTermSourceStatementReadApiLive,
+    reconcilePaymentTermReferenceActionApiLive,
+    retirePaymentTermActionApiLive,
     // </generated-governed-http-handler-layers>
-  ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
-  const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive)),
+  );
+  const requestServicesLive = Layer.mergeAll(governedReadRuntimeLive, governedActionRuntimeLive).pipe(
+    Layer.provideMerge(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)),
+    Layer.provideMerge(Layer.mergeAll(runtimeObservabilityLive, compositionSourceLive)),
     Layer.orDie,
   );
+  const resolvedApiHandlersLive = apiHandlersLive.pipe(Layer.provide(RequestSchemaProblemLive));
   const transportLive = HttpRouter.cors({
     allowedHeaders: [...paymentTermCatalogCorsAllowedHeaders],
     allowedMethods: [...paymentTermCatalogCorsAllowedMethods],
@@ -169,6 +171,7 @@ export const makePaymentTermCatalogApiRuntime = (
   return assembleEffectBffRuntime({
     api: paymentTermCatalogApi,
     handlers: resolvedApiHandlersLive,
+    services: requestServicesLive,
     transport: transportLive,
   });
 };

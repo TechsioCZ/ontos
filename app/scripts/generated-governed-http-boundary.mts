@@ -21,6 +21,7 @@ import {
 import {
   GOVERNED_HTTP_API_CLOSING_ANNOTATION,
   isCodePosition,
+  isGovernedHttpHandlerLayerSlotEntry,
   maskNonCode,
   toCamelCase,
   toPascalCase,
@@ -653,13 +654,20 @@ const outputCompositionIncludes = (
     return (
       piped.transforms.length > 0 &&
       piped.transforms.every(isOutputSafeLayerTransform) &&
-      outputCompositionIncludes(source, piped.base, expectedLayer, seen, depth + 1)
+      (outputCompositionIncludes(source, piped.base, expectedLayer, new Set(seen), depth + 1) ||
+        piped.transforms.some((transform) => {
+          const provided = wholeCallArguments(transform, /^(?:GovernedReadLayer|Layer)\.provideMerge\(/u);
+          return (
+            provided?.length === 1 &&
+            outputCompositionIncludes(source, provided[0] ?? '', expectedLayer, new Set(seen), depth + 1)
+          );
+        }))
     );
   }
   const merged = wholeCallArguments(candidate, /^(?:GovernedReadLayer|Layer)\.mergeAll\(/u);
   return (
     merged !== undefined &&
-    merged.some((operand) => outputCompositionIncludes(source, operand, expectedLayer, seen, depth + 1))
+    merged.some((operand) => outputCompositionIncludes(source, operand, expectedLayer, new Set(seen), depth + 1))
   );
 };
 
@@ -681,45 +689,6 @@ const slotIsMountedByAssembler = (
   }
   const handlers = objectPropertyValue(definition, 'handlers');
   return handlers !== undefined && outputCompositionIncludes(runtimeSource, handlers, layerName);
-};
-
-const definesExpectedRuntime = (definition: string | undefined, expectedApi: string, runtimeName: string): boolean =>
-  definition !== undefined &&
-  !definition.includes('...') &&
-  objectPropertyValue(definition, 'api') === expectedApi &&
-  hasExactlyOne(
-    definition,
-    runtimeName === 'layer'
-      ? /(?:\{|,)\s*layer(?:\s*:\s*layer)?\s*(?:,|\})/gu
-      : new RegExp(`(?:\\{|,)\\s*layer\\s*:\\s*${escapeRegExp(runtimeName)}\\s*(?:,|\\})`, 'gu'),
-  );
-
-const legacyRuntimeMount = (
-  source: string,
-  code: string,
-  runtimeSource: string,
-  closing: number,
-  layerName: string,
-  expectedApi: string,
-): boolean => {
-  const runtimeDeclaration = /const\s+(?<name>[A-Za-z][A-Za-z0-9]*)\s*=\s*HttpApiBuilder\.layer\(/u.exec(runtimeSource);
-  const runtimeName = runtimeDeclaration?.groups?.name;
-  if (runtimeDeclaration === null || runtimeName === undefined) {
-    return false;
-  }
-  const runtimeStart = closing + 1 + runtimeDeclaration.index;
-  const runtimeEnd = code.indexOf('satisfies EffectRuntimeLayer', runtimeStart);
-  if (runtimeEnd <= runtimeStart) {
-    return false;
-  }
-  const runtimeSlice = code.slice(runtimeStart, runtimeEnd);
-  const definition = effectBffDefinition(source);
-  return (
-    callArgument(runtimeSlice, /HttpApiBuilder\.layer\(/u) === expectedApi &&
-    matches(runtimeSlice, new RegExp(`(?:GovernedReadLayer|Layer)\\.provide\\(${escapeRegExp(layerName)}\\)`, 'u')) &&
-    hasExactlyOne(code, /\bdefineEffectBff\(/gu) &&
-    definesExpectedRuntime(definition, expectedApi, runtimeName)
-  );
 };
 
 const slotIsInsideMountedLayer = (
@@ -755,10 +724,7 @@ const slotIsInsideMountedLayer = (
     return false;
   }
   const runtimeSource = code.slice(closing + 1);
-  if (slotIsMountedByAssembler(source, runtimeSource, layerName, expectedApi)) {
-    return true;
-  }
-  return legacyRuntimeMount(source, code, runtimeSource, closing, layerName, expectedApi);
+  return slotIsMountedByAssembler(source, runtimeSource, layerName, expectedApi);
 };
 
 // A trailing slot comment may precede an ASI-terminated root. Stop at the next
@@ -861,7 +827,7 @@ const hasInjectedGovernedReadRuntime = (source: string): boolean => {
   return (
     type !== undefined &&
     new RegExp(
-      `type ${escapeRegExp(type)}\\s*=\\s*readonly\\s*\\[\\s*readRuntime:\\s*Layer\\.Layer<\\s*ReadRuntime\\s*[,>]`,
+      `type ${escapeRegExp(type)}\\s*=\\s*readonly\\s*\\[\\s*readRuntime:\\s*Layer\\.Layer<\\s*(?:ReadRuntime\\s*[,>]|Layer\\.Success<\\s*typeof\\s+productionReadRuntimeLive\\s*>)`,
       'u',
     ).test(maskNonCode(source)) &&
     effectBffDefinition(source) !== undefined
@@ -871,14 +837,31 @@ const hasInjectedGovernedReadRuntime = (source: string): boolean => {
 const wholeCall = (expression: string | undefined, callee: RegExp): boolean =>
   expression !== undefined && isWholeCallExpression(expression, callee);
 
+const servicesCompositionIncludes = (source: string, layerName: string): boolean => {
+  const definition = effectBffDefinition(source);
+  const services = definition === undefined ? undefined : objectPropertyValue(definition, 'services');
+  if (services === undefined) {
+    return false;
+  }
+  const factory = exportedRuntimeFactory(source)?.value;
+  const body = factory?.slice(factory.indexOf('=>') + 2).trim();
+  const runtimeSource = body?.startsWith('{') === true ? `${body.slice(1, -1)}\n${source}` : source;
+  return outputCompositionIncludes(maskComments(runtimeSource), services, layerName);
+};
+
 const hasGovernedHandlerRoot = (source: string): boolean => {
+  if (!servicesCompositionIncludes(source, 'governedReadRuntimeLive')) {
+    return false;
+  }
   if (hasInjectedGovernedReadRuntime(source)) {
     return true;
   }
   const runtime = assignedExpression(source, /const governedReadRuntimeLive\s*=\s*/u);
   if (
     runtime === undefined ||
-    (!/^readRuntimeLive$/u.test(runtime) && !runtime.startsWith('GovernedReadRuntimeLive.pipe('))
+    (!/^readRuntimeLive$/u.test(runtime) &&
+      runtime !== 'GovernedReadRuntimeLive' &&
+      !runtime.startsWith('GovernedReadRuntimeLive.pipe('))
   ) {
     return false;
   }
@@ -891,14 +874,20 @@ const hasGovernedHandlerRoot = (source: string): boolean => {
       return false;
     }
   } else if (
-    !isWholeCallExpression(runtime, /^GovernedReadRuntimeLive\.pipe\(/u) ||
-    callArgument(runtime, /^GovernedReadRuntimeLive\.pipe\(/u) !==
-      'GovernedReadLayer.provide(governedReadRuntimeDependenciesLive)'
+    runtime !== 'GovernedReadRuntimeLive' &&
+    (!isWholeCallExpression(runtime, /^GovernedReadRuntimeLive\.pipe\(/u) ||
+      callArgument(runtime, /^GovernedReadRuntimeLive\.pipe\(/u) !==
+        'GovernedReadLayer.provide(governedReadRuntimeDependenciesLive)')
   ) {
     return false;
   }
   return effectBffDefinition(source) !== undefined;
 };
+
+const hasBareGovernedHandlerEntries = (source: string): boolean =>
+  generatedSlotEntries(source, GOVERNED_HANDLER_LAYER_SLOT_START, GOVERNED_HANDLER_LAYER_SLOT_END)?.every((entry) =>
+    isGovernedHttpHandlerLayerSlotEntry(`${entry},`),
+  ) === true;
 
 const hasGovernedSupportSlots = (handlerRoot: string): boolean => {
   const supportImportStart = '// <generated-governed-http-handler-support-imports>';
@@ -909,15 +898,43 @@ const hasGovernedSupportSlots = (handlerRoot: string): boolean => {
   const supportLayers = handlerRoot.includes(supportLayerStart)
     ? generatedSlotRange(handlerRoot, supportLayerStart, '// </generated-governed-http-handler-support-layers>')
     : null;
-  const generatedHandlers = assignedExpressionRange(handlerRoot, /export const governedReadApiHandlersLive\s*=\s*/u);
-  return (
-    (supportImports === null || supportImports?.depth === 0) &&
-    (supportLayers === null ||
-      (generatedHandlers !== undefined &&
-        supportLayers !== undefined &&
-        supportLayers.markerStart > generatedHandlers.start &&
-        supportLayers.markerEnd < generatedHandlers.end))
+  if ((supportImports !== null && supportImports?.depth !== 0) || supportLayers === undefined) {
+    return false;
+  }
+  if (supportLayers === null) {
+    return true;
+  }
+  const entries = generatedSlotEntries(
+    handlerRoot,
+    supportLayerStart,
+    '// </generated-governed-http-handler-support-layers>',
   );
+  if (
+    entries === undefined ||
+    !entries.every((entry) => isWholeCallExpression(entry, /^GovernedReadLayer\.provideMerge\(/u))
+  ) {
+    return false;
+  }
+  return [
+    ...maskNonCode(handlerRoot).matchAll(/(?<exported>export\s+)?const\s+(?<name>[A-Za-z][A-Za-z0-9]*)\s*=\s*/gu),
+  ].some((declaration) => {
+    const name = declaration.groups?.name;
+    if (name === undefined || declaration.groups?.exported !== undefined) {
+      return false;
+    }
+    const initializer = assignedExpressionRange(handlerRoot, new RegExp(`const ${escapeRegExp(name)}\\s*=\\s*`, 'u'));
+    const piped = initializer === undefined ? undefined : outputPipeExpression(initializer.value);
+    return (
+      initializer !== undefined &&
+      piped !== undefined &&
+      wholeCallArguments(piped.base, /^(?:GovernedReadLayer|Layer)\.mergeAll\(/u) !== undefined &&
+      outputCompositionIncludes(handlerRoot, piped.base, 'governedReadRuntimeLive') &&
+      supportLayers.depth === codeDepthBeforePosition(handlerRoot, initializer.start) + 1 &&
+      supportLayers.markerStart > initializer.start + piped.base.length &&
+      supportLayers.markerEnd < initializer.end &&
+      servicesCompositionIncludes(handlerRoot, name)
+    );
+  });
 };
 
 export const hasValidGovernedHttpCompositionRoot = (sharedApi: string, handlerRoot: string): boolean => {
@@ -944,6 +961,7 @@ export const hasValidGovernedHttpCompositionRoot = (sharedApi: string, handlerRo
   return (
     sharedRoot !== undefined &&
     hasGovernedHandlerRoot(handlerRoot) &&
+    hasBareGovernedHandlerEntries(handlerRoot) &&
     sharedImports?.depth === 0 &&
     handlerImports?.depth === 0 &&
     hasGovernedSupportSlots(handlerRoot) &&
@@ -2494,40 +2512,20 @@ const hasPublishedContract = (
   const apiValue = contributionApiValue(contribution.kind, contribution.name);
   const camel = toCamelCase(contribution.name);
   const serverStem = contributionServerStem(contribution);
-  const escapedCamel = escapeRegExp(camel);
   const handlerLayers = generatedSlotEntries(
     handlerRoot,
     GOVERNED_HANDLER_LAYER_SLOT_START,
     GOVERNED_HANDLER_LAYER_SLOT_END,
   );
   const expectedLayer = `${camel}ReadApiLive`;
-  const isExpectedHandlerLayer = (entry: string): boolean => {
-    if (!isWholeCallExpression(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'))) {
-      return false;
-    }
-    const first = callArgument(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'));
-    if (first !== 'GovernedReadLayer.provide(governedReadRuntimeLive)') {
-      return false;
-    }
-    let index = 1;
-    let argument = callArgument(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'), index);
-    while (argument !== undefined) {
-      if (argument === '') {
-        return callArgument(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'), index + 1) === undefined;
-      }
-      if (!/^Layer\.provide\([A-Za-z][A-Za-z0-9]*\)$/u.test(argument)) {
-        return false;
-      }
-      index += 1;
-      argument = callArgument(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'), index);
-    }
-    return entry.startsWith(`${expectedLayer}.pipe(`);
-  };
   const publicationChecks = {
     apiBinding: expectedApi !== undefined,
     handlerImport: hasExactValueImport(handlerRoot, `${camel}ReadApiLive`, `./${serverStem}-server.ts`),
-    handlerLayer: handlerLayers?.filter(isExpectedHandlerLayer).length === 1,
-    handlerRoot: hasGovernedHandlerRoot(handlerRoot),
+    handlerLayer: handlerLayers?.filter((entry) => entry === expectedLayer).length === 1,
+    handlerRoot:
+      hasGovernedHandlerRoot(handlerRoot) &&
+      hasBareGovernedHandlerEntries(handlerRoot) &&
+      hasGovernedSupportSlots(handlerRoot),
     manifest: hasManifestContract(manifest, contribution, moduleId),
     mountedLayer:
       expectedApi !== undefined &&
@@ -2774,15 +2772,12 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
         '// </generated-governed-http-handler-imports>',
         new RegExp(`import \\{ ${escapedLayerValue} \\} from './${escapedSlug}-action-server\\.ts';`, 'gu'),
       ),
-      slotHasExactlyOneCodeMatch(
+      generatedSlotEntries(
         input.handlerRoot,
         GOVERNED_HANDLER_LAYER_SLOT_START,
         GOVERNED_HANDLER_LAYER_SLOT_END,
-        new RegExp(
-          `${escapedLayerValue}\\.pipe\\(\\s*GovernedReadLayer\\.provide\\(governedActionRuntimeLive\\),?\\s*\\),`,
-          'gu',
-        ),
-      ),
+      )?.filter((entry) => entry === layerValue).length === 1,
+      servicesCompositionIncludes(input.handlerRoot, 'governedActionRuntimeLive'),
       hasGeneratedActionClientPublication(clientRoot, slug) ||
         hasGeneratedActionHttpClientExports(clientRoot, slug, type),
       slotHasExactlyOneCodeMatch(
@@ -2815,7 +2810,8 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
       'client fresh assertion',
       'shared API contribution',
       'handler import',
-      'handler runtime',
+      'handler layer',
+      'Action request runtime',
       'client exports',
       'manifest Action',
       'runtime Action',

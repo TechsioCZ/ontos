@@ -59,7 +59,11 @@ import {
   toBusinessPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
 } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { makeCommerceCustomerContextApiRuntime } from '../../api/index.ts';
+import {
+  makeCommerceCustomerContextApiRuntime,
+  productionActionRuntimeLive,
+  productionReadRuntimeLive,
+} from '../../api/index.ts';
 import { commercePortalAuthRealmUnavailableLive } from '../../api/portal-auth/realm-unavailable.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { SavedAddressListForbiddenProblemSchema } from '../../shared/apis/saved-address-list.ts';
@@ -384,8 +388,9 @@ const configuredRuntime = Effect.fn('PermissionAcceptance.configuredRuntime')(fu
   return yield* Effect.acquireRelease(
     Effect.sync(() =>
       makeCommerceCustomerContextApiRuntime(
-        Layer.succeed(ReadRuntime, readRuntime),
-        actionRuntime,
+        // Retain the owner ports published by production; only the governed runtimes use this test's Core scope.
+        Layer.succeed(ReadRuntime, readRuntime).pipe(Layer.provideMerge(productionReadRuntimeLive)),
+        actionRuntime.pipe(Layer.provideMerge(productionActionRuntimeLive)),
         singleUseRedemptionLive,
         commercePortalAuthRealmUnavailableLive([ORIGIN]),
         gateway.verificationLive,
