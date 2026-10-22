@@ -1468,6 +1468,24 @@ const executableLayer = Layer.effectDiscard(Command.run(command, { version: '1.0
 const exitWhenCommandCompletes: Runtime.Teardown = (exit, onExit) => {
   Runtime.defaultTeardown(exit, (code) => {
     onExit(code);
+    // Names what would still have held the event loop open (diagnostic for the 58 s exit delay).
+    const handles = (process as unknown as { _getActiveHandles?: () => unknown[] })._getActiveHandles?.() ?? [];
+    const described = handles.map((handle) => {
+      const value = handle as {
+        constructor?: { name?: string };
+        remoteAddress?: string;
+        remotePort?: number;
+        spawnargs?: string[];
+        pid?: number;
+      };
+      const kind = value.constructor?.name ?? typeof handle;
+      if (value.remoteAddress !== undefined) return `${kind} ${value.remoteAddress}:${String(value.remotePort)}`;
+      if (value.spawnargs !== undefined) return `${kind} pid ${String(value.pid)} ${value.spawnargs.join(' ').slice(0, 120)}`;
+      return kind;
+    });
+    process.stderr.write(
+      `release CLI exit ${String(code)}: open resources ${JSON.stringify(process.getActiveResourcesInfo())} handles ${JSON.stringify(described)}\n`,
+    );
     process.exit(code);
   });
 };

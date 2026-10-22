@@ -358,7 +358,9 @@ jobs:
 
       - name: Summarize the upload phases
         if: always()
-        run: grep -h ' phase ' "$RUNNER_TEMP"/upload-logs/*.log | sed -E 's/^.*(release [^ ]+ phase)/\1/' | sort || true
+        run: |
+          grep -h ' phase \|receipt written' "$RUNNER_TEMP"/upload-logs/*.log | sed -E 's/^.*(release [^ ]+ (phase|receipt))/\1/' | sort || true
+          grep -h 'release CLI exit' "$RUNNER_TEMP"/upload-logs/*.log | sort | uniq -c || true
 
       - name: Assemble the composition candidate
         working-directory: app
