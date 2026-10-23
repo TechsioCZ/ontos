@@ -46,7 +46,7 @@ export const CounterpartyDossierView = ({
     (record) => record.customerCounterpartyRef?.resourceId === counterpartyId,
   );
   const dossier = snapshot?.tenantDossiers?.find((item) => item.counterpartyId === counterpartyId);
-  const name = entry?.displayName ?? (directoryLoaded ? 'Protistrana' : 'Načítání…');
+  const name = entry?.displayName ?? (directoryLoaded ? 'Protistrana' : '');
   return (
     <>
       <div>

@@ -15,6 +15,8 @@ import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { failureFeedback } from '../../../../shared/actions/apply-command.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
+import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
+import type { ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import {
   createCustomer,
   executeCounterpartyRead,
@@ -29,17 +31,18 @@ import { executeRecords as executeFinanceRecords } from '@app/finance-billing/cl
 import { executeRecords as executeWorkRecords } from '@app/work-tasks/clients/records';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { OccupancyRefSchema } from '../../../../shared/resources/occupancy.ts';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { Table } from '@techsio/ui-kit/organisms/table';
-import { Crypto, DateTime, Effect, Option, PlatformError, Schema } from 'effect';
-import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import { Crypto, DateTime, Effect, Option, PlatformError } from 'effect';
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from 'react';
 
 import type { OccupancyCommand, Feedback } from '../../../../shared/actions/apply-command.ts';
 import type { Occupancy, RecordsResponse, RentTerms } from '../../../../shared/apis/records.ts';
+import { decodeRecordsSearch } from '../../../../shared/apis/records-search.ts';
+import type { RecordsSearch } from '../../../../shared/apis/records-search.ts';
 import {
   ContractCard,
   InvoicesCard,
@@ -69,12 +72,6 @@ import type { NoticeContext } from './notice-templates.ts';
 import { OccupancyCalendar } from './occupancy-calendar.tsx';
 import './occupancy-form.css';
 
-const RecordsSearchSchema = Schema.Struct({
-  resourceId: Schema.optional(OccupancyRefSchema.fields.resourceId),
-  counterpartyId: Schema.optional(OccupancyRefSchema.fields.resourceId),
-  create: Schema.optional(Schema.Literal('lease')),
-  unitId: Schema.optional(OccupancyRefSchema.fields.resourceId),
-});
 const LABEL_CHOOSE = 'property-leasing.demo.choose';
 const LABEL_UNIT = 'property-leasing.demo.unit';
 const LABEL_DETAIL = 'property-leasing.demo.detail';
@@ -112,8 +109,6 @@ const browserCrypto = Crypto.make({
 const newUuid = browserCrypto.randomUUIDv4;
 type Guests = Effect.Success<ReturnType<typeof loadPartiesClient>>;
 type Customers = Effect.Success<ReturnType<typeof listCustomers>>;
-type Properties = Effect.Success<ReturnType<typeof executePropertyRecords>>;
-type Agreements = Effect.Success<ReturnType<typeof executeAgreementsRecords>>;
 const loadOccupantName = Effect.fn('Occupancy.loadOccupantName')(function* resolveOccupantName(
   record: Occupancy | undefined,
 ) {
@@ -133,14 +128,139 @@ const loadOccupantName = Effect.fn('Occupancy.loadOccupantName')(function* resol
   }
   return Option.none<string>();
 });
-const useRecordsPage = () => {
+interface LeaseInput {
+  readonly legalEntityId: string;
+}
+interface LeaseDetailInput extends LeaseInput {
+  readonly resourceId: string;
+}
+const leaseInputOf = (context: ModulePageProps['context']): LeaseInput => ({
+  legalEntityId: context?.legalEntityId ?? '',
+});
+/** Guest names of short stays for the list column; a guest the role cannot read stays unnamed. */
+const loadGuestNames = (records: RecordsResponse) =>
+  Effect.forEach(
+    [
+      ...new Map(
+        records.occupancies.flatMap((record) =>
+          record.guestPartyRef === null ? [] : [[record.guestPartyRef.resourceId, record.guestPartyRef] as const],
+        ),
+      ).values(),
+    ],
+    (partyRef) =>
+      executePartyDetail({ partyRef }, 'property-leasing.guest-names').pipe(
+        Effect.map((detail) => [partyRef.resourceId, Option.getOrUndefined(detail.party.displayName)] as const),
+        Effect.orElseSucceed(() => [partyRef.resourceId, undefined] as const),
+      ),
+    { concurrency: 4 },
+  ).pipe(
+    Effect.map(
+      (entries): Readonly<Record<string, string>> =>
+        Object.fromEntries(entries.flatMap(([id, name]) => (name === undefined ? [] : [[id, name]]))),
+    ),
+  );
+const loadLeaseRecords = Effect.fn('PropertyLeasing.loadLeaseRecords')(function* loadLeaseRecordsData() {
+  const { agreements, directory, properties, records } = yield* Effect.all(
+    {
+      agreements: executeAgreementsRecords({}, 'property-leasing.contracts'),
+      // The tenant column and card are optional: a role without the customer list still sees its leases.
+      directory: listCustomers({ includeArchived: true, limit: 500 }).pipe(Effect.option),
+      properties: executePropertyRecords({}, 'property-leasing.units'),
+      records: executeRecords({}, 'property-leasing.records'),
+    },
+    { concurrency: 4 },
+  );
+  const guestNames = yield* loadGuestNames(records);
+  const tenantDirectory: readonly TenantDirectoryEntry[] = Option.getOrElse(directory, () => []);
+  return { agreements, guestNames, properties, records, tenantDirectory };
+});
+/** Primary data of the page: leases and stays, units, contracts, the tenant directory and guest names. */
+const leaseRecords = definePageData({
+  key: (input: LeaseInput) => input.legalEntityId,
+  load: () => loadLeaseRecords(),
+  runtime: browserRuntime,
+});
+/** Name of the tenant or guest of the lease or stay opened by URL. */
+const leaseOccupant = definePageData({
+  key: (input: LeaseDetailInput) => `${input.legalEntityId}:${input.resourceId}`,
+  load: (input: LeaseDetailInput) =>
+    leaseRecords.preload(input).pipe(
+      Effect.andThen(() => {
+        const current = leaseRecords.snapshot(input);
+        return loadOccupantName(
+          current.state === 'ready'
+            ? current.value.records.occupancies.find((record) => record.occupancyRef.resourceId === input.resourceId)
+            : undefined,
+        );
+      }),
+      Effect.map(Option.getOrUndefined),
+    ),
+  runtime: browserRuntime,
+});
+export const preloadPage = modulePagePreload(
+  (props) => leaseRecords.preload(leaseInputOf(props.context)),
+  (props) => {
+    const resourceId = Option.getOrUndefined(decodeRecordsSearch(props.search))?.resourceId;
+    return resourceId === undefined ? Effect.void : leaseOccupant.preload({ ...leaseInputOf(props.context), resourceId });
+  },
+);
+type FailureLike = Parameters<typeof failureFeedback>[0];
+const loadFeedbackOf = <A, E extends FailureLike>(snapshot: PageDataSnapshot<A, E>): Feedback => {
+  if (snapshot.state === 'pending') {
+    return 'loading';
+  }
+  return snapshot.state === 'failed' ? failureFeedback(snapshot.error) : 'ready';
+};
+/** Reads the page's data and the opened record's occupant from their stores; a cold mount starts their loads. */
+const useLeaseData = (context: ModulePageProps['context'], search: Option.Option<RecordsSearch>) => {
+  const legalEntityId = context?.legalEntityId ?? '';
+  const resourceId = Option.getOrUndefined(search)?.resourceId;
+  const leaseInput: LeaseInput = { legalEntityId };
+  const detailInput: LeaseDetailInput | undefined =
+    resourceId === undefined ? undefined : { legalEntityId, resourceId };
+  const records = useSyncExternalStore(
+    leaseRecords.subscribe,
+    () => leaseRecords.snapshot(leaseInput),
+    () => pageDataPending,
+  );
+  const occupant = useSyncExternalStore(
+    leaseOccupant.subscribe,
+    () => (detailInput === undefined ? pageDataPending : leaseOccupant.snapshot(detailInput)),
+    () => pageDataPending,
+  );
+  useEffect(() => {
+    leaseRecords.ensure({ legalEntityId });
+    if (resourceId !== undefined) {
+      leaseOccupant.ensure({ legalEntityId, resourceId });
+    }
+  }, [legalEntityId, resourceId]);
+  return { detailInput, leaseInput, occupant, records };
+};
+/** What the page shows from its data; a read that refused this role hides the loaded records. */
+const leaseViewOf = <E1 extends FailureLike, E2 extends FailureLike>(
+  records: PageDataSnapshot<Effect.Success<ReturnType<typeof loadLeaseRecords>>, E1>,
+  occupant: PageDataSnapshot<string | undefined, E2>,
+  cleared: boolean,
+) => {
+  const loaded = records.state === 'ready' && !cleared ? records.value : undefined;
+  return {
+    agreements: loaded?.agreements,
+    customerName: occupant.state === 'ready' ? occupant.value : undefined,
+    customerNameFeedback: occupant.state === 'failed' ? failureFeedback(occupant.error) : undefined,
+    customerNamePending: occupant.state === 'pending',
+    directoryLoaded: loaded !== undefined,
+    guestNames: loaded?.guestNames ?? {},
+    properties: loaded?.properties,
+    snapshot: loaded?.records,
+    tenantDirectory: loaded?.tenantDirectory ?? [],
+  };
+};
+const useRecordsPage = (context: ModulePageProps['context']) => {
   const { language, t } = useModernI18n();
-  const { location } = useRouterState();
-  const rawSearch: unknown = location.search;
-  const search = Schema.is(Schema.toEncoded(RecordsSearchSchema))(rawSearch)
-    ? Schema.decodeOption(RecordsSearchSchema)(rawSearch)
-    : Option.none();
+  const searchStr = useRouterState({ select: (state) => state.location.searchStr });
+  const search = decodeRecordsSearch(searchStr);
   const linkedResourceId = Option.getOrUndefined(search)?.resourceId;
+  const { detailInput, leaseInput, occupant, records } = useLeaseData(context, search);
   const linkedCounterpartyId = Option.getOrUndefined(search)?.counterpartyId;
   const cancellation = useRef<AbortController | null>(null);
   const run = <A, E>(effect: Effect.Effect<A, E>) => {
@@ -148,16 +268,28 @@ const useRecordsPage = () => {
     cancellation.current = controller;
     void browserRuntime.runPromiseExit(effect, { signal: controller.signal });
   };
-  const [snapshot, setSnapshot] = useState<RecordsResponse>();
-  const [properties, setProperties] = useState<Properties>();
-  const [agreements, setAgreements] = useState<Agreements>();
+  /** Set when a read refused this role: the loaded records stay hidden until the next refresh. */
+  const [cleared, setCleared] = useState(false);
+  const {
+    agreements,
+    customerName,
+    customerNameFeedback,
+    customerNamePending,
+    directoryLoaded,
+    guestNames,
+    properties,
+    snapshot,
+    tenantDirectory,
+  } = leaseViewOf(records, occupant, cleared);
   const [customers, setCustomers] = useState<Customers>([]);
   const [guests, setGuests] = useState<Guests>([]);
   const [guestId, setGuestId] = useState('');
   const [guestQuery, setGuestQuery] = useState('');
   const [peopleCount, setPeopleCount] = useState('2');
   const [stayNote, setStayNote] = useState('');
-  const [feedback, setFeedback] = useState<Feedback>('loading');
+  /** Outcome of the person's own action; the page's read state shows when there is none. */
+  const [actionFeedback, setActionFeedback] = useState<Feedback>();
+  const feedback: Feedback = actionFeedback ?? (cleared ? 'forbidden' : loadFeedbackOf(records));
   const [unitId, setUnitId] = useState('');
   const [customerId, setCustomerId] = useState('');
   const [customersLoading, setCustomersLoading] = useState(false);
@@ -166,13 +298,8 @@ const useRecordsPage = () => {
   const [retryObservationId, setRetryObservationId] = useState<string>();
   const [startDate, setStartDate] = useState(DEFAULT_START_DATE);
   const [endDate, setEndDate] = useState(DEFAULT_END_DATE);
-  const [customerName, setCustomerName] = useState<string>();
-  const [customerNameFeedback, setCustomerNameFeedback] = useState<Feedback>();
   const [editingId, setEditingId] = useState('');
   const [kindFilter, setKindFilter] = useState<'ALL' | 'LONG_TERM_LEASE' | 'SHORT_STAY'>('ALL');
-  const [tenantDirectory, setTenantDirectory] = useState<readonly TenantDirectoryEntry[]>([]);
-  const [directoryLoaded, setDirectoryLoaded] = useState(false);
-  const [guestNames, setGuestNames] = useState<Readonly<Record<string, string>>>({});
   const [collision, setCollision] = useState<{ readonly text: string; readonly href: string }>();
   const [createError, setCreateError] = useState<string>();
   const [related, setRelated] = useState<LeaseRelated>({ invoices: undefined, tasks: undefined });
@@ -185,11 +312,6 @@ const useRecordsPage = () => {
     setEditor(undefined);
     setRetryObservationId(undefined);
     setCustomersLoading(false);
-    setSnapshot(undefined);
-    setProperties(undefined);
-    setAgreements(undefined);
-    setCustomerName(undefined);
-    setCustomerNameFeedback(undefined);
     setEditingId('');
     setCustomers([]);
     setGuests([]);
@@ -200,9 +322,6 @@ const useRecordsPage = () => {
     setUnitId('');
     setStartDate(DEFAULT_START_DATE);
     setEndDate(DEFAULT_END_DATE);
-    setTenantDirectory([]);
-    setDirectoryLoaded(false);
-    setGuestNames({});
     setRelated({ invoices: undefined, tasks: undefined });
     setRentEditorOpen(false);
   };
@@ -212,8 +331,9 @@ const useRecordsPage = () => {
       cancellation.current?.abort();
       cancellation.current = new AbortController();
       clearSensitiveState();
+      setCleared(true);
     }
-    setFeedback(nextFeedback);
+    setActionFeedback(nextFeedback);
   };
   const loadRelated = (record: Occupancy) =>
     Effect.all(
@@ -240,96 +360,36 @@ const useRecordsPage = () => {
       },
       { concurrency: 2 },
     ).pipe(Effect.tap((value) => Effect.sync(() => setRelated(value))));
-  const load = () =>
-    Effect.sync(clearSensitiveState).pipe(
-      Effect.flatMap(() =>
-        Effect.all(
-          {
-            agreements: executeAgreementsRecords({}, 'property-leasing.contracts'),
-            properties: executePropertyRecords({}, 'property-leasing.units'),
-            records: executeRecords({}, 'property-leasing.records'),
-          },
-          { concurrency: 3 },
-        ),
-      ),
-      Effect.tap((value) =>
-        Effect.sync(() => {
-          setSnapshot(value.records);
-          setProperties(value.properties);
-          setAgreements(value.agreements);
-        }),
-      ),
-      Effect.tap(() =>
-        // The tenant column and card are optional: a role without the customer list still sees its leases.
-        listCustomers({ includeArchived: true, limit: 500 }).pipe(
-          Effect.match({ onFailure: () => undefined, onSuccess: (items) => setTenantDirectory(items) }),
-          Effect.ensuring(Effect.sync(() => setDirectoryLoaded(true))),
-        ),
-      ),
-      Effect.tap((value) =>
-        // Guest names of short stays for the list column; a guest the role cannot read stays unnamed.
-        Effect.forEach(
-          [
-            ...new Map(
-              value.records.occupancies.flatMap((record) =>
-                record.guestPartyRef === null ? [] : [[record.guestPartyRef.resourceId, record.guestPartyRef] as const],
-              ),
-            ).values(),
-          ],
-          (partyRef) =>
-            executePartyDetail({ partyRef }, 'property-leasing.guest-names').pipe(
-              Effect.map((detail) => [partyRef.resourceId, Option.getOrUndefined(detail.party.displayName)] as const),
-              Effect.orElseSucceed(() => [partyRef.resourceId, undefined] as const),
-            ),
-          { concurrency: 4 },
-        ).pipe(
-          Effect.tap((entries) =>
-            Effect.sync(() =>
-              setGuestNames(
-                Object.fromEntries(entries.flatMap(([id, name]) => (name === undefined ? [] : [[id, name]]))),
-              ),
-            ),
-          ),
-        ),
-      ),
-      Effect.tap((value) => {
-        const record = value.records.occupancies.find((item) => item.occupancyRef.resourceId === linkedResourceId);
-        return record === undefined ? Effect.void : loadRelated(record);
-      }),
-      Effect.tap((value) => {
-        const record = value.records.occupancies.find((item) => item.occupancyRef.resourceId === linkedResourceId);
-        return loadOccupantName(record).pipe(
-          Effect.map(Option.getOrUndefined),
-          Effect.match({
-            onFailure: (failure) => setCustomerNameFeedback(failureFeedback(failure)),
-            onSuccess: (name) => setCustomerName(name),
-          }),
-        );
-      }),
+  /** Re-reads the page's data after the person's own write; the loaded values stay on screen meanwhile. */
+  const reload = () =>
+    Effect.all(
+      [leaseRecords.refresh(leaseInput), detailInput === undefined ? Effect.void : leaseOccupant.refresh(detailInput)],
+      { concurrency: 2, discard: true },
     );
   const refresh = () => {
     cancellation.current?.abort();
     cancellation.current = new AbortController();
     clearSensitiveState();
-    setFeedback('loading');
-    run(
-      load().pipe(
-        Effect.match({
-          onFailure: reportFailure,
-          onSuccess: () => setFeedback('ready'),
-        }),
-      ),
-    );
+    setCleared(false);
+    setActionFeedback(undefined);
+    run(reload());
   };
-  const loadOnMount = useEffectEvent(() => {
-    run(load().pipe(Effect.match({ onFailure: reportFailure, onSuccess: () => setFeedback('ready') })));
+  const loadRelatedOf = useEffectEvent((record: Occupancy) => {
+    run(loadRelated(record));
   });
+  // Invoices and tasks of the opened lease are secondary: they load once the lease itself is on screen, and again
+  // whenever its records are re-read.
   useEffect(() => {
-    loadOnMount();
-    return () => {
+    if (selected !== undefined) {
+      loadRelatedOf(selected);
+    }
+  }, [selected]);
+  useEffect(
+    () => () => {
       cancellation.current?.abort();
-    };
-  }, []);
+    },
+    [],
+  );
   /** S10-01: names the confirmed stay or lease that blocks the second confirmation of the same unit. */
   const collisionFor = (command: OccupancyCommand) => {
     if (snapshot === undefined || (command._tag !== 'Confirm' && command._tag !== 'Activate')) return undefined;
@@ -370,7 +430,7 @@ const useRecordsPage = () => {
       return;
     }
     setCollision(undefined);
-    setFeedback('saving');
+    setActionFeedback('saving');
     run(
       Effect.all(
         {
@@ -390,11 +450,15 @@ const useRecordsPage = () => {
             referenceCredentials,
           }),
         ),
-        Effect.flatMap((result) => load().pipe(Effect.map((value) => ({ records: value.records, result })))),
-        Effect.tap(({ records, result }) => {
-          const record = records.occupancies.find(
-            (item) => item.occupancyRef.resourceId === result.resourceRef?.resourceId,
-          );
+        Effect.tap(() => reload()),
+        Effect.tap((result) => {
+          const current = leaseRecords.snapshot(leaseInput);
+          const record =
+            current.state === 'ready'
+              ? current.value.records.occupancies.find(
+                  (item) => item.occupancyRef.resourceId === result.resourceRef?.resourceId,
+                )
+              : undefined;
           if (record !== undefined && linkedResourceId !== record.occupancyRef.resourceId) {
             const url = new URL(window.location.href);
             url.searchParams.set('resourceId', record.occupancyRef.resourceId);
@@ -409,9 +473,9 @@ const useRecordsPage = () => {
           onFailure: (failure) => {
             const next = failureFeedback(failure);
             setCollision(next === 'conflict' ? collisionFor(command) : undefined);
-            setFeedback(next);
+            setActionFeedback(next);
           },
-          onSuccess: () => setFeedback('ready'),
+          onSuccess: () => setActionFeedback(undefined),
         }),
       ),
     );
@@ -425,7 +489,7 @@ const useRecordsPage = () => {
   const createCounterparty = (input: NewCounterpartyInput) => {
     if (snapshot === undefined) return;
     setCreateError(undefined);
-    setFeedback('saving');
+    setActionFeedback('saving');
     run(
       createCustomer({
         partyType: input.partyType,
@@ -478,7 +542,7 @@ const useRecordsPage = () => {
                   ? 'Protistrana se shoduje s více existujícími záznamy. Vyřešte shodu v registru zákazníků.'
                   : 'Protistranu se nepodařilo uložit. Zkontrolujte údaje a zkuste to znovu.',
             );
-            setFeedback(status === 403 ? 'forbidden' : 'ready');
+            setActionFeedback(status === 403 ? 'forbidden' : undefined);
           },
           onSuccess: (created) => {
             const url = new URL(window.location.href);
@@ -521,7 +585,7 @@ const useRecordsPage = () => {
   const saveRentTerms = () => {
     const rentTerms = rentTermsFromForm();
     if (selected === undefined || rentTerms === undefined || rentTerms === 'invalid') {
-      setFeedback('validation');
+      setActionFeedback('validation');
       return;
     }
     setRentEditorOpen(false);
@@ -532,7 +596,7 @@ const useRecordsPage = () => {
     const customer = customers.find((record) => record.counterpartyRef.resourceId === customerId);
     const rentTerms = rentTermsFromForm();
     if (unit === undefined || customer === undefined || rentTerms === 'invalid') {
-      setFeedback('validation');
+      setActionFeedback('validation');
       return;
     }
     run(
@@ -580,7 +644,7 @@ const useRecordsPage = () => {
       endDate <= startDate ||
       stayNote.length > 500
     ) {
-      setFeedback('validation');
+      setActionFeedback('validation');
       return;
     }
     run(
@@ -677,7 +741,7 @@ const useRecordsPage = () => {
   const saveDraft = () => {
     const rentTerms = rentTermsFromForm();
     if (selected?.state !== 'DRAFT' || selected.occupancyRef.resourceId !== editingId || rentTerms === 'invalid') {
-      setFeedback('validation');
+      setActionFeedback('validation');
       return;
     }
     runCommand({
@@ -704,7 +768,7 @@ const useRecordsPage = () => {
   };
   const searchGuests = () => {
     if (guestQuery.trim().length === 0) {
-      setFeedback('validation');
+      setActionFeedback('validation');
       return;
     }
     run(
@@ -714,7 +778,7 @@ const useRecordsPage = () => {
           onSuccess: (values) => {
             setGuests(values);
             setGuestId('');
-            setFeedback('ready');
+            setActionFeedback(undefined);
           },
         }),
       ),
@@ -724,7 +788,7 @@ const useRecordsPage = () => {
     const unit = properties?.units.find((record) => record.unitRef.resourceId === unitId);
     const guest = guests.find((record) => record.ref.resourceId === guestId);
     if (unit === undefined || guest === undefined || endDate.length === 0) {
-      setFeedback('validation');
+      setActionFeedback('validation');
       return;
     }
     run(
@@ -832,6 +896,7 @@ const useRecordsPage = () => {
     customerId,
     customerName,
     customerNameFeedback,
+    customerNamePending,
     customerOpen,
     customers,
     customersEmpty: !customersLoading && customers.length === 0,
@@ -906,17 +971,20 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
           {t('property-leasing.detail.back')}
         </a>
         <PageHeader title={t(LABEL_DETAIL)} />
-        <output aria-live="polite">
-          {t(
-            feedback === 'ready'
-              ? 'property-leasing.detail.notFound'
-              : `property-leasing.demo.feedback.${feedback}`,
-          )}
-        </output>
+        {feedback !== 'loading' && (
+          <output aria-live="polite">
+            {t(
+              feedback === 'ready'
+                ? 'property-leasing.detail.notFound'
+                : `property-leasing.demo.feedback.${feedback}`,
+            )}
+          </output>
+        )}
       </>
     );
   }
-  const customerLabel = customerName ?? t('property-leasing.detail.customerUnknown');
+  const customerLabel =
+    customerName ?? (state.customerNamePending ? '—' : t('property-leasing.detail.customerUnknown'));
   const unit = state.unitOf(selected);
   const property = state.propertyOf(selected);
   const tenant = state.tenantOf(selected);
@@ -971,7 +1039,7 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
         }
         title={`${unitName(selected.unitRef.resourceId)}${tenant?.displayName == null ? '' : ` · ${tenant.displayName}`}`}
       />
-      {feedback !== 'ready' && (
+      {feedback !== 'ready' && feedback !== 'loading' && (
         <output aria-live="polite" className="sp-occupancy-feedback">
           {state.collision === undefined ? t(`property-leasing.demo.feedback.${feedback}`) : state.collision.text}
           {state.collision !== undefined && (
@@ -1089,7 +1157,7 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
             </SectionCard>
             {isLease ? (
               <TenantCard
-                fallbackName={feedback === 'loading' ? t('property-leasing.demo.customersLoading') : customerLabel}
+                fallbackName={customerLabel}
                 language={language}
                 t={t}
                 tenant={tenant}
@@ -1101,7 +1169,7 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
                   items={[
                     {
                       label: t('property-leasing.detail.customerName'),
-                      value: feedback === 'loading' ? t('property-leasing.demo.customersLoading') : customerLabel,
+                      value: customerLabel,
                     },
                   ]}
                 />
@@ -1640,8 +1708,8 @@ const OccupancySummary = ({ state }: { readonly state: ReturnType<typeof useReco
     </div>
   );
 };
-const RecordsPageContent = () => {
-  const state = useRecordsPage();
+const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['context'] }) => {
+  const state = useRecordsPage(context);
   const [calendarMonth, setCalendarMonth] = useState('');
   const {
     busy,
@@ -1666,7 +1734,9 @@ const RecordsPageContent = () => {
             counterpartyId={state.linkedCounterpartyId}
             directoryLoaded={state.directoryLoaded}
             entry={state.tenantDirectory.find((item) => item.counterpartyRef.resourceId === state.linkedCounterpartyId)}
-            feedbackText={feedback === 'ready' ? undefined : t(`property-leasing.demo.feedback.${feedback}`)}
+            feedbackText={
+              feedback === 'ready' || feedback === 'loading' ? undefined : t(`property-leasing.demo.feedback.${feedback}`)
+            }
             language={state.language}
             newContactId={newUuid}
             onUpdate={state.updateCounterpartyDossier(state.linkedCounterpartyId)}
@@ -1710,6 +1780,7 @@ const RecordsPageContent = () => {
               }
               description={t('property-leasing.pages.records.description')}
               meta={
+                feedback !== 'loading' && (
                 <output aria-live="polite">
                   <Badge
                     size="sm"
@@ -1718,7 +1789,6 @@ const RecordsPageContent = () => {
                         {
                           conflict: 'warning',
                           forbidden: 'danger',
-                          loading: 'info',
                           ready: 'success',
                           saving: 'info',
                           unavailable: 'danger',
@@ -1730,6 +1800,7 @@ const RecordsPageContent = () => {
                     {t(`property-leasing.demo.feedback.${feedback}`)}
                   </Badge>
                 </output>
+                )
               }
               title={t('property-leasing.pages.records.title')}
             />
@@ -1920,7 +1991,8 @@ const RecordsPageContent = () => {
     </>
   );
 };
-export const RecordsPage = () => {
+/** Exposed page: the Shell passes the person's context; the vertical's own route renders it without one. */
+export const RecordsPage = ({ context }: Partial<ModulePageProps>) => {
   const search = useRouterState({ select: (state) => state.location.searchStr });
   return (
     <FederatedI18nBoundary
@@ -1929,7 +2001,7 @@ export const RecordsPage = () => {
       resources={propertyLeasingI18nResources}
       supportedLanguages={['en', 'cs']}
     >
-      <RecordsPageContent key={search} />
+      <RecordsPageContent context={context} key={search} />
     </FederatedI18nBoundary>
   );
 };
