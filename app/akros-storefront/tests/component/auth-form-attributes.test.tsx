@@ -114,20 +114,20 @@ describe("password-manager form semantics with the published UI-kit", () => {
     );
   });
 
-  it("marks both optional account-change passwords as new-password, not current-password", () => {
+  it("shows the authenticated account and does not simulate password changes", () => {
     render(
       <AppRouterContext.Provider value={router}>
         <PathnameContext.Provider value="/muj-ucet">
           <CartProvider storage={null}>
-            <AccountProfilePage />
+            <AccountProfilePage account={{ id: "customer-1", partyId: "party-1", tenantId: "tenant-1", email: "customer@example.test", name: "Customer One" }} />
           </CartProvider>
         </PathnameContext.Provider>
       </AppRouterContext.Provider>,
     );
 
-    const password = expectNewPasswords("account-password", "account-password-confirmation");
-    expectForm(password, "/muj-ucet");
-    expect(password.required).toBe(false);
-    expectInput("account-email", { name: "email", type: "email", autocomplete: "username" });
+    expect(document.getElementById("account-password")).toBeNull();
+    const email = expectInput("account-email", { name: "email", type: "email", autocomplete: "username" });
+    expect(email.value).toBe("customer@example.test");
+    expect(email.readOnly).toBe(true);
   });
 });
