@@ -181,6 +181,16 @@ for id in "$@"; do
 done
 
 if [ "$COMPOSITION_ONLY" = 1 ]; then set -- ; fi
+SHARED_SOURCE_DIGEST="$(node "$APP/scripts/demo/shared-build-source-digest.mts")"
+# Shared source changes invalidate every served consumer, not just the requested owner.
+for id in shell-super-app "${SERVED[@]}"; do
+  if [ "$(cat "$(dir_of "$id")/dist/.ontos-shared-source-digest" 2>/dev/null || true)" != "$SHARED_SOURCE_DIGEST" ]; then
+    case " $* " in
+      *" $id "*) ;;
+      *) set -- "$@" "$id" ;;
+    esac
+  fi
+done
 # One lock per requested app, taken in sorted order so two callers never deadlock.
 for id in $(printf '%s\n' "$@" | sort -u); do acquire_app_lock "$id"; done
 # Acquire one of two build slots.
@@ -210,6 +220,9 @@ for id in "$@"; do
     if [ -d "$dist.prev" ]; then rm -rf "$dist" && mv "$dist.prev" "$dist"; fi
     die "build failed: $id (previous build kept running; full log $LOG_DIR/build-$id.log)"
   fi
+  [ "$(node "$APP/scripts/demo/shared-build-source-digest.mts")" = "$SHARED_SOURCE_DIGEST" ] ||
+    die "shared sources changed during $id build; refusing to stamp or restart mixed artifacts"
+  printf '%s\n' "$SHARED_SOURCE_DIGEST" >"$dist/.ontos-shared-source-digest"
   rm -rf "$dist.prev"
   touch "$STAMP_DIR/$id.stamp"
 done

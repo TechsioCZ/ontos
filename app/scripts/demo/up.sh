@@ -155,14 +155,17 @@ fi
 step authorization-provision "${WITH_ENV[@]}" node scripts/demo/provision-actions.mts
 
 # 4. Native development builds, only when missing, stale, or forced.
+SHARED_SOURCE_DIGEST="$(node "$APP/scripts/demo/shared-build-source-digest.mts")"
 needs_build() {
   local id="$1" dir stamp
-  # DEMO_SKIP_BUILD=1 serves whatever dist/ already holds (builds are done separately, e.g. rebuild-one.sh).
-  [ "${DEMO_SKIP_BUILD:-0}" = 1 ] && [ -f "$(contract_of "$id")" ] && return 1
   dir="$(dir_of "$id")"
   stamp="$STAMP_DIR/$id.stamp"
+  [ -f "$(contract_of "$id")" ] || return 0
+  # Never reuse a dist compiled against another Core/contract schema, even with DEMO_SKIP_BUILD.
+  [ "$(cat "$dir/dist/.ontos-shared-source-digest" 2>/dev/null || true)" = "$SHARED_SOURCE_DIGEST" ] || return 0
   [ "${DEMO_REBUILD:-0}" = 1 ] && return 0
-  [ -f "$(contract_of "$id")" ] && [ -f "$stamp" ] || return 0
+  [ "${DEMO_SKIP_BUILD:-0}" = 1 ] && return 1
+  [ -f "$stamp" ] || return 0
   [ -n "$(find "$dir" packages pnpm-lock.yaml -newer "$stamp" -type f \
     -not -path '*/node_modules/*' -not -path '*/dist/*' -not -path '*/.dev-public/*' \
     -not -path '*/cloudflare-dist/*' -not -path '*/.output/*' -not -path '*/.modern/*' \
@@ -184,6 +187,8 @@ for id in "${APPS[@]}"; do
     say "building $id (log: $LOG_DIR/build-$id.log)"
     touch "$STAMP_DIR/$id.building"
     ("${NO_GIT[@]}" "${WITH_ENV[@]}" pnpm --dir "$(dir_of "$id")" exec sh -c "$script" >"$LOG_DIR/build-$id.log" 2>&1 &&
+      [ "$(node "$APP/scripts/demo/shared-build-source-digest.mts")" = "$SHARED_SOURCE_DIGEST" ] &&
+      printf '%s\n' "$SHARED_SOURCE_DIGEST" >"$(dir_of "$id")/dist/.ontos-shared-source-digest" &&
       mv "$STAMP_DIR/$id.building" "$STAMP_DIR/$id.stamp") &
     build_pids+=($!)
     build_ids+=("$id")
