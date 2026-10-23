@@ -620,6 +620,26 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
         activeId === undefined ? sql`false` : eq(categories.parentId, activeId),
       )
     : active;
+  // A content read needs only the active branch and its ancestors for the publication check below.
+  // UNION terminates even a cyclic stored path; every recursive step stays in this company scope.
+  const contentBranch =
+    input.contentOnly === true
+      ? inArray(
+          categories.id,
+          sql`(with recursive content_branch(id, parent_id) as (
+            select ${categories.id}, ${categories.parentId} from ${categories}
+            where ${and(
+              whereScope(categories, scope),
+              or(active, activeId === undefined ? sql`false` : eq(categories.parentId, activeId)),
+            )}
+            union
+            select parent.id, parent.parent_id from ${categories} parent
+            inner join content_branch child on parent.id = child.parent_id
+            where parent.tenant_id = ${scope.tenantId}::uuid
+              and parent.legal_entity_id = ${scope.legalEntityId}::uuid
+          ) select id from content_branch)`,
+        )
+      : undefined;
   const rows = yield* query(
     db
       .select({
@@ -640,7 +660,7 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
         slug: categories.slug,
       })
       .from(categories)
-      .where(whereScope(categories, scope))
+      .where(and(whereScope(categories, scope), contentBranch))
       .orderBy(asc(categories.ordinal)),
     'Categories could not be read',
   );

@@ -152,6 +152,69 @@ it.live('projects compact category content identically to the full tree and hide
   }),
 );
 
+const node = (id: string, parentId: string | null, published = true) => ({
+  ...catalogInput.categories[0],
+  id,
+  parentId,
+  published,
+  slug: id,
+});
+
+it.live('reads compact content with the full tree visibility rules across ancestors, cycles and company scopes', () => {
+  const state = decodeState({
+    ...catalogInput,
+    categories: [
+      node('root', null),
+      node('active', 'root'),
+      node('child', 'active'),
+      node('grandchild', 'child'),
+      node('hidden', 'root', false),
+      node('hidden-active', 'hidden'),
+      node('hidden-child', 'hidden-active'),
+      node('cycle-a', 'cycle-b'),
+      node('cycle-b', 'cycle-a'),
+      node('orphan', 'missing-parent'),
+      ...Array.from({ length: 100 }, (_, index) => node(`unrelated-${index}`, 'root')),
+    ],
+  });
+  return withMerchandise(state, (fixture) =>
+    // Matching ids in another company must not hide or enrich this company's branch.
+    withMerchandise(
+      decodeState({ ...catalogInput, categories: [node('root', null, false), node('active', 'root', false)] }),
+      () =>
+        Effect.gen(function* compactStoredBranches() {
+          for (const activeId of ['active', 'hidden-active', 'cycle-a', 'orphan', 'missing']) {
+            const full = yield* categoryTree(fixture.db, fixture.scope, { activeId, storefront: true });
+            const expected = full.filter((category) => category.id === activeId || category.parentId === activeId);
+            for (const selector of [{ activeId }, { activeSlug: activeId }]) {
+              expect(
+                yield* categoryTree(fixture.db, fixture.scope, {
+                  ...selector,
+                  contentOnly: true,
+                  storefront: true,
+                }),
+              ).toEqual(expected);
+            }
+          }
+          expect(
+            (yield* categoryTree(fixture.db, fixture.scope, {
+              activeSlug: 'active',
+              contentOnly: true,
+              storefront: true,
+            })).map((category) => category.id),
+          ).toEqual(['active', 'child']);
+          expect(
+            yield* categoryTree(fixture.db, fixture.scope, {
+              activeSlug: 'hidden-active',
+              contentOnly: true,
+              storefront: true,
+            }),
+          ).toEqual([]);
+        }),
+    ),
+  );
+});
+
 it.live('lists featured products in homepage order followed by recommended ones', () =>
   onCatalog((fixture) =>
     Effect.gen(function* () {
