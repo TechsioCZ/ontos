@@ -7,8 +7,10 @@ import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Table } from '@techsio/ui-kit/organisms/table';
+import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
+import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { DateTime, Effect, Match, Random } from 'effect';
-import { useState } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import csResource from '../../../../../locales/cs/property-portfolio.json';
@@ -29,40 +31,47 @@ const loadOutcomes = Effect.fn('Property.Integrations.loadOutcomes')(function* l
       notification: requestId.pipe(Effect.flatMap((id) => executeNotifications({}, id))),
       signature: requestId.pipe(Effect.flatMap((id) => executeSignatures({}, id))),
     },
-    { concurrency: 1 },
+    // Four independent owners: read them side by side instead of one after another.
+    { concurrency: 4 },
   );
 });
 
-const IntegrationsPageContent = () => {
+interface IntegrationsInput {
+  readonly legalEntityId: string;
+}
+const integrationsData = definePageData({
+  key: (input: IntegrationsInput) => input.legalEntityId,
+  load: () => loadOutcomes(),
+  runtime: browserRuntime,
+});
+const integrationsInput = (context: ModulePageProps['context']): IntegrationsInput => ({
+  legalEntityId: context?.legalEntityId ?? '',
+});
+export const preloadPage = modulePagePreload((props) => integrationsData.preload(integrationsInput(props.context)));
+
+const IntegrationsPageContent = ({ legalEntityId }: IntegrationsInput) => {
   const { language, t } = useModernI18n();
   const headingId = 'integrations-heading';
   const key = 'property-portfolio.pages.integrations';
-  const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState('');
-  const [records, setRecords] = useState<Effect.Success<ReturnType<typeof loadOutcomes>>>();
+  const snapshot = useSyncExternalStore(
+    integrationsData.subscribe,
+    () => integrationsData.snapshot({ legalEntityId }),
+    () => pageDataPending,
+  );
+  useEffect(() => {
+    integrationsData.ensure({ legalEntityId });
+  }, [legalEntityId]);
+  const records = snapshot.state === 'ready' ? snapshot.value : undefined;
+  const loading = snapshot.state === 'pending' || snapshot.refreshing;
+  const message =
+    snapshot.state === 'failed'
+      ? Match.value(snapshot.error).pipe(
+          Match.tag('RecordsForbiddenProblem', () => t(`${key}.forbidden`)),
+          Match.orElse(() => t(`${key}.unavailable`)),
+        )
+      : '';
   const refresh = () => {
-    setPending(true);
-    void browserRuntime.runPromise(
-      loadOutcomes().pipe(
-        Effect.match({
-          onFailure: (error) => {
-            setRecords(undefined);
-            setMessage(
-              Match.value(error).pipe(
-                Match.tag('RecordsForbiddenProblem', () => t(`${key}.forbidden`)),
-                Match.orElse(() => t(`${key}.unavailable`)),
-              ),
-            );
-            setPending(false);
-          },
-          onSuccess: (result) => {
-            setRecords(result);
-            setMessage('');
-            setPending(false);
-          },
-        }),
-      ),
-    );
+    void browserRuntime.runPromise(integrationsData.refresh({ legalEntityId }));
   };
 
   const ownerHref = (owner: string, resourceId: string) =>
@@ -86,7 +95,7 @@ const IntegrationsPageContent = () => {
               {t(`${key}.simulation`)}
             </p>
           </div>
-          <Button disabled={pending} onClick={refresh} size="sm" variant="warning">
+          <Button isLoading={loading} onClick={refresh} size="sm" variant="warning">
             {t(`${key}.refresh`)}
           </Button>
         </header>
@@ -324,14 +333,14 @@ const IntegrationsPageContent = () => {
   );
 };
 
-export const IntegrationsPage = () => (
+export const IntegrationsPage = ({ context }: Pick<ModulePageProps, 'context'>) => (
   <FederatedI18nBoundary
     defaultNamespace="property-portfolio"
     fallbackLanguage="en"
     resources={propertyPortfolioI18nResources}
     supportedLanguages={['en', 'cs']}
   >
-    <IntegrationsPageContent />
+    <IntegrationsPageContent {...integrationsInput(context)} />
   </FederatedI18nBoundary>
 );
 

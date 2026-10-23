@@ -10,8 +10,10 @@ import { executeRecords as readAgreements } from '@app/legal-agreements/clients/
 import { executeRecords as readOccupancy } from '@app/property-leasing/clients/records';
 import { executeRecords as readFinance } from '@app/finance-billing/clients/records';
 import { executeRecords as readWork } from '@app/work-tasks/clients/records';
+import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
+import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { DateTime, Effect, Match, Option, Random, Result, Schema } from 'effect';
-import { useEffect, useEffectEvent, useState } from 'react';
+import { useEffect, useEffectEvent, useState, useSyncExternalStore } from 'react';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { usePropertyEditor } from './use-property-editor.ts';
 import './property-editor.css';
@@ -123,7 +125,45 @@ export const projectPropertyRelatedRecords = ({
     ) ?? [];
   return { activeOccupancies, propertyContracts, propertyDocuments, propertyTasks };
 };
-const usePropertyRecords = () => {
+interface RecordsInput {
+  readonly legalEntityId: string;
+}
+/** The register of buildings, units and assets (archived included); the selection only filters it. */
+const propertyRecords = definePageData({
+  key: (input: RecordsInput) => input.legalEntityId,
+  load: () =>
+    Random.nextInt.pipe(Effect.flatMap((id) => executeRecords({ includeArchived: true }, `property-records:${id}`))),
+  runtime: browserRuntime,
+});
+const recordsInput = (context: ModulePageProps['context']): RecordsInput => ({
+  legalEntityId: context?.legalEntityId ?? '',
+});
+export const preloadPage = modulePagePreload((props) => propertyRecords.preload(recordsInput(props.context)));
+interface Selection {
+  readonly assetId: string;
+  readonly propertyId: string;
+  readonly unitId: string;
+}
+const noSelection: Selection = { assetId: '', propertyId: '', unitId: '' };
+/** The URL's resourceId names a building, a unit or an asset; a unit or an asset also selects its building. */
+const selectionFor = (records: RecordsResponse | undefined, resourceId: string | undefined): Selection => {
+  if (records === undefined || resourceId === undefined) {
+    return noSelection;
+  }
+  const selectedUnit = records.units.find((item) => item.unitRef.resourceId === resourceId);
+  const selectedAsset = records.assets.find((item) => item.assetRef.resourceId === resourceId);
+  const selectedProperty = records.properties.find((item) => item.propertyRef.resourceId === resourceId);
+  return {
+    assetId: selectedAsset?.assetRef.resourceId ?? '',
+    propertyId:
+      selectedProperty?.propertyRef.resourceId ??
+      selectedUnit?.propertyRef.resourceId ??
+      selectedAsset?.propertyRef.resourceId ??
+      '',
+    unitId: selectedUnit?.unitRef.resourceId ?? '',
+  };
+};
+const usePropertyRecords = (legalEntityId: string) => {
   const { language, t } = useModernI18n();
   const rawSearch: unknown = useRouterState().location.search;
   const search = Schema.is(Schema.toEncoded(searchSchema))(rawSearch)
@@ -131,23 +171,39 @@ const usePropertyRecords = () => {
     : Option.none();
   const resourceId = Option.getOrUndefined(search)?.resourceId;
   const key = 'property-portfolio.pages.records';
-  const [records, setRecords] = useState<RecordsResponse>();
-  const [selection, setSelection] = useState({ assetId: '', propertyId: '', unitId: '' });
-  const { assetId, propertyId, unitId } = selection;
+  const snapshot = useSyncExternalStore(
+    propertyRecords.subscribe,
+    () => propertyRecords.snapshot({ legalEntityId }),
+    () => pageDataPending,
+  );
+  useEffect(() => {
+    propertyRecords.ensure({ legalEntityId });
+  }, [legalEntityId]);
+  const records = snapshot.state === 'ready' ? snapshot.value : undefined;
+  const recordsLoading = snapshot.state === 'pending' || snapshot.refreshing;
+  const message =
+    snapshot.state === 'failed'
+      ? Match.value(snapshot.error).pipe(
+          Match.tag('RecordsForbiddenProblem', () => t(`${key}.forbidden`)),
+          Match.orElse(() => t(`${key}.unavailable`)),
+        )
+      : '';
+  // A click shows its selection at once; the URL (and with it this page, keyed by location) follows right after.
+  const [selection, setSelection] = useState<Selection>();
+  const { assetId, propertyId, unitId } = selection ?? selectionFor(records, resourceId);
   const navigate = useNavigate();
   const selectResource = (id: string) => {
     void navigate({ replace: true, search: { resourceId: id }, to: '.' });
   };
   const setUnitId = (selectedUnitId: string) => {
-    setSelection((current) => ({ ...current, assetId: '', unitId: selectedUnitId }));
+    setSelection({ assetId: '', propertyId, unitId: selectedUnitId });
     selectResource(selectedUnitId || propertyId);
   };
   const setAssetId = (selectedAssetId: string) => {
-    setSelection((current) => ({ ...current, assetId: selectedAssetId, unitId: '' }));
+    setSelection({ assetId: selectedAssetId, propertyId, unitId: '' });
     selectResource(selectedAssetId || propertyId);
   };
-  const [pending, setPending] = useState(false);
-  const [message, setMessage] = useState('');
+  const [summaryPending, setSummaryPending] = useState(false);
   const [summary, setSummary] = useState<{
     readonly agreements?: Effect.Success<ReturnType<typeof readAgreements>> | undefined;
     readonly finance?: Effect.Success<ReturnType<typeof readFinance>> | undefined;
@@ -163,45 +219,7 @@ const usePropertyRecords = () => {
     setSummaryMessage('');
   };
   const refresh = () => {
-    setPending(true);
-    void browserRuntime.runPromise(
-      Random.nextInt.pipe(
-        Effect.flatMap((id) => executeRecords({ includeArchived: true }, `property-records:${id}`)),
-        Effect.match({
-          onFailure: (error) => {
-            setRecords(undefined);
-            setSummary({});
-            setMessage(
-              Match.value(error).pipe(
-                Match.tag('RecordsForbiddenProblem', () => t(`${key}.forbidden`)),
-                Match.orElse(() => t(`${key}.unavailable`)),
-              ),
-            );
-            setPending(false);
-          },
-          onSuccess: (result) => {
-            setRecords(result);
-            const selectedUnit = result.units.find((item) => item.unitRef.resourceId === resourceId);
-            const selectedAsset = result.assets.find((item) => item.assetRef.resourceId === resourceId);
-            const selectedProperty = result.properties.find((item) => item.propertyRef.resourceId === resourceId);
-            setSelection((current) => ({
-              assetId: selectedAsset?.assetRef.resourceId ?? (resourceId === undefined ? current.assetId : ''),
-              propertyId:
-                selectedProperty?.propertyRef.resourceId ??
-                selectedUnit?.propertyRef.resourceId ??
-                selectedAsset?.propertyRef.resourceId ??
-                (resourceId === undefined &&
-                result.properties.some((item) => item.propertyRef.resourceId === current.propertyId)
-                  ? current.propertyId
-                  : ''),
-              unitId: selectedUnit?.unitRef.resourceId ?? (resourceId === undefined ? current.unitId : ''),
-            }));
-            setMessage('');
-            setPending(false);
-          },
-        }),
-      ),
-    );
+    void browserRuntime.runPromise(propertyRecords.refresh({ legalEntityId }));
   };
   const property = records?.properties.find((item) => item.propertyRef.resourceId === propertyId);
   const units = records?.units.filter((item) => item.propertyRef.resourceId === propertyId) ?? [];
@@ -214,7 +232,7 @@ const usePropertyRecords = () => {
     if (property === undefined) {
       return;
     }
-    setPending(true);
+    setSummaryPending(true);
     setSummary({});
     const requestId = Random.nextInt.pipe(Effect.map((id) => `property-portfolio.summary:${id}`));
     void browserRuntime.runPromise(
@@ -261,7 +279,7 @@ const usePropertyRecords = () => {
               unavailable.push(t(`${key}.tasksUnavailable`));
             }
             setSummaryMessage(unavailable.join(' · '));
-            setPending(false);
+            setSummaryPending(false);
           }),
         ),
       ),
@@ -382,9 +400,10 @@ const usePropertyRecords = () => {
     money,
     occupancy,
     ownerHref,
-    pending,
+    pending: recordsLoading || summaryPending,
     property,
     records,
+    recordsLoading,
     refresh,
     relatedSections,
     selectProperty,
@@ -409,13 +428,9 @@ const tableWrapperClass =
 const messageClass = 'propertyportfolio:block propertyportfolio:text-sm propertyportfolio:text-(--color-fg-secondary)';
 const archivedAtFormat = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeZone: 'Europe/Prague' });
 const formatArchivedAt = (value: string) => archivedAtFormat.format(DateTime.toEpochMillis(DateTime.makeUnsafe(value)));
-const RecordsPageContent = () => {
-  const model = usePropertyRecords();
+const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
+  const model = usePropertyRecords(legalEntityId);
   const editor = usePropertyEditor(model.records, model.refresh);
-  const refreshOnMount = useEffectEvent(model.refresh);
-  useEffect(() => {
-    refreshOnMount();
-  }, []);
   // Building detail shows its leases, contracts and tasks at once; the explicit button stays for a manual reload.
   const loadSummaryOnSelect = useEffectEvent(model.loadSummary);
   const selectedProperty = model.property;
@@ -473,7 +488,13 @@ const RecordsPageContent = () => {
             </h1>
             <p className={secondaryTextClass}>{t(`${key}.description`)}</p>
           </div>
-          <Button disabled={model.pending || editor.busy} onClick={handleRefresh} size="sm" variant="warning">
+          <Button
+            disabled={editor.busy}
+            isLoading={model.recordsLoading}
+            onClick={handleRefresh}
+            size="sm"
+            variant="warning"
+          >
             {t(`${key}.refresh`)}
           </Button>
         </header>
@@ -948,7 +969,7 @@ const RecordsPageContent = () => {
   );
 };
 
-export const RecordsPage = () => {
+export const RecordsPage = ({ context }: Pick<ModulePageProps, 'context'>) => {
   const location = useRouterState({ select: (state) => state.location.href });
   return (
     <FederatedI18nBoundary
@@ -957,7 +978,7 @@ export const RecordsPage = () => {
       resources={propertyPortfolioI18nResources}
       supportedLanguages={['en', 'cs']}
     >
-      <RecordsPageContent key={location} />
+      <RecordsPageContent key={location} {...recordsInput(context)} />
     </FederatedI18nBoundary>
   );
 };

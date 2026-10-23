@@ -5,8 +5,10 @@ import { executeRecords as executeOccupancy } from '@app/property-leasing/client
 import { executeRecords as executeWork } from '@app/work-tasks/clients/records';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
+import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { Effect, Random } from 'effect';
-import { useEffect, useEffectEvent, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { executeRecords as executeProperty } from '../../../../api/records-client';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
@@ -147,6 +149,19 @@ const loadOverview = () => {
     { concurrency: 5 },
   );
 };
+interface OverviewInput {
+  readonly legalEntityId: string;
+}
+/** One dataset per legal entity: the five governed reads (and with them every permission check) settle before reveal. */
+const overviewData = definePageData({
+  key: (input: OverviewInput) => input.legalEntityId,
+  load: loadOverview,
+  runtime: browserRuntime,
+});
+const overviewInput = (context: ModulePageProps['context']): OverviewInput => ({
+  legalEntityId: context?.legalEntityId ?? '',
+});
+export const preloadPage = modulePagePreload((props) => overviewData.preload(overviewInput(props.context)));
 const sourceLabels: Record<keyof OverviewSources, string> = {
   agreements: 'Smlouvy',
   finance: 'Finance',
@@ -166,32 +181,26 @@ const availabilityTone = {
   RESERVED: 'warning',
 } as const;
 
-const OverviewPageContent = () => {
+const OverviewPageContent = ({ legalEntityId }: OverviewInput) => {
   const { language } = useModernI18n();
   const lang = language ?? 'cs';
-  const [sources, setSources] = useState<OverviewSources>();
-  const [pending, setPending] = useState(true);
+  const snapshot = useSyncExternalStore(
+    overviewData.subscribe,
+    () => overviewData.snapshot({ legalEntityId }),
+    () => pageDataPending,
+  );
+  useEffect(() => {
+    overviewData.ensure({ legalEntityId });
+  }, [legalEntityId]);
+  const sources: OverviewSources | undefined = snapshot.state === 'ready' ? snapshot.value : undefined;
+  const loading = snapshot.state === 'pending' || snapshot.refreshing;
   const [query, setQuery] = useState('');
   const [includeClosed, setIncludeClosed] = useState(false);
   const [selection, setSelection] = useState('');
   const today = pragueToday();
   const refresh = () => {
-    setPending(true);
-    void browserRuntime.runPromise(
-      loadOverview().pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            setSources(result);
-            setPending(false);
-          }),
-        ),
-      ),
-    );
+    void browserRuntime.runPromise(overviewData.refresh({ legalEntityId }));
   };
-  const onMount = useEffectEvent(refresh);
-  useEffect(() => {
-    onMount();
-  }, []);
   const property = sources === undefined ? undefined : readyData(sources.property);
   const occupancy = sources === undefined ? undefined : readyData(sources.occupancy);
   const agreements = sources === undefined ? undefined : readyData(sources.agreements);
@@ -280,7 +289,7 @@ const OverviewPageContent = () => {
   return (
     <>
       <UltramodernRouteHead />
-      <section aria-labelledby="overview-heading" className="sp-overview">
+      <section aria-busy={loading} aria-labelledby="overview-heading" className="sp-overview">
         <header className="sp-heading">
           <div className="sp-stack">
             <span className="sp-eyebrow">SPRÁVA NEMOVITOSTÍ</span>
@@ -289,8 +298,8 @@ const OverviewPageContent = () => {
               Obsazenost, nájemci a nejbližší kroky na jednom místě. Stav k {formatDay(today)}.
             </p>
           </div>
-          <Button disabled={pending} onClick={refresh} size="sm" theme="outlined" variant="secondary">
-            {pending ? 'Načítání přehledu…' : 'Obnovit přehled'}
+          <Button isLoading={loading} onClick={refresh} size="sm" theme="outlined" variant="secondary">
+            Obnovit přehled
           </Button>
         </header>
         <nav aria-label="Agendy nemovitostí" className="sp-quicklinks">
@@ -302,11 +311,7 @@ const OverviewPageContent = () => {
               </a>
             ))}
         </nav>
-        {sources === undefined ? (
-          <p aria-live="polite" className="sp-muted">
-            Načítáme dostupné agendy a ověřujeme vaše oprávnění…
-          </p>
-        ) : (
+        {sources !== undefined && (
           <>
             <div aria-label="Přehled dnešního dne" className="sp-stats">
               <button
@@ -554,14 +559,14 @@ const OverviewPageContent = () => {
     </>
   );
 };
-export const OverviewPage = () => (
+export const OverviewPage = ({ context }: Pick<ModulePageProps, 'context'>) => (
   <FederatedI18nBoundary
     defaultNamespace="property-portfolio"
     fallbackLanguage="en"
     resources={propertyPortfolioI18nResources}
     supportedLanguages={['en', 'cs']}
   >
-    <OverviewPageContent />
+    <OverviewPageContent {...overviewInput(context)} />
   </FederatedI18nBoundary>
 );
 export default OverviewPage;
