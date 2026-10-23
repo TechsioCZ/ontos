@@ -1710,7 +1710,9 @@ it.live(
                 reason: 'Decision belongs to another principal',
               });
             }
-            const query = yield* Schema.decodeUnknownEffect(PartyMatchDecisionRequestSchema)(input.input).pipe(
+            const query = yield* Schema.decodeUnknownEffect(Schema.toType(PartyMatchDecisionRequestSchema))(
+              input.decodedInput,
+            ).pipe(
               Effect.mapError(
                 () =>
                   new ReadHandlerNotFound({

@@ -315,7 +315,8 @@ it.effect('passes only payload, trusted principal, registration, and correlation
     expect(result).toEqual({ ok: true });
     expect(observed).toEqual([
       {
-        input: payload,
+        decodedInput: payload,
+        inputFormat: 'decoded',
         principal,
         registration,
         transport: { correlationId: 'correlation-test' },
@@ -560,5 +561,54 @@ it.effect('uses the configured receiver audience instead of an HTTP audience hea
       Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
     );
     expect(observed.map((input) => input.audience)).toEqual(['test.receiver.api']);
+  }),
+);
+
+it.effect('passes transformed framework payloads through the explicit decoded runtime entry', () =>
+  Effect.gen(function* transformedHttpPayload() {
+    const inputSchema = Schema.Struct({
+      at: Schema.DateTimeUtcFromString,
+      filter: Schema.OptionFromNullOr(Schema.String),
+    });
+    const transformedRegistration = defineRead(
+      {
+        accessKind: 'detail',
+        entrypoint: registration.descriptor.entrypoint,
+        evidencePolicy: registration.descriptor.evidencePolicy,
+        inputSchema,
+        legalEntityScope: 'forbidden',
+        owningModuleKey: 'core.shell',
+        permissionTarget: 'module',
+        policies: [],
+        readKey: 'core.shell.governed-http-transformed-test',
+        resultSchema: Schema.Struct({ ok: Schema.Literal(true) }),
+        schemaVersion: '1',
+      },
+      {
+        load: () => Effect.succeed({ evidence: { resultCount: 1 }, result: { ok: true as const } }),
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const wireInput = { at: '2026-10-23T12:00:00.000Z', filter: null };
+    const payload = yield* Schema.decodeEffect(inputSchema)(wireInput);
+    observed.length = 0;
+    const handler = makeGovernedReadHttpHandler({
+      authenticatePrincipal: () => Effect.succeed(principal),
+      problems,
+      registration: transformedRegistration,
+    });
+    const result = yield* handler({
+      payload,
+      request: { headers: Headers.fromInput({ 'x-correlation-id': 'transformed-input' }) },
+    }).pipe(
+      Effect.provideService(ReadRuntime, readRuntime),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+    );
+    expect(result).toEqual({ ok: true });
+    expect(observed).toHaveLength(1);
+    expect(observed[0]?.input).toBeUndefined();
+    expect(observed[0]?.decodedInput).toEqual(payload);
+    expect(yield* Schema.decodeUnknownEffect(Schema.toType(inputSchema))(observed[0]?.decodedInput)).toEqual(payload);
   }),
 );

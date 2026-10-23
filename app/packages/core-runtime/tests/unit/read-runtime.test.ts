@@ -1,3 +1,4 @@
+import { ReadInputValidationError } from '../../src/reads/read-input-validation-error.ts';
 import { PgClient } from '@effect/sql-pg';
 import { Cause, Context, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Schema } from 'effect';
 import { FetchHttpClient, HttpClient } from 'effect/unstable/http';
@@ -3250,5 +3251,50 @@ it.effect('preserves only schema-declared owner Read failures', () =>
     );
     expect(Predicate.isTagged(failure, 'DeclaredReadFailure')).toBe(true);
     expect((yield* Schema.decodeUnknownEffect(DeclaredReadFailure)(failure)).reasonCode).toBe('PURPOSE_NOT_ALLOWED');
+  }),
+);
+
+it.effect('accepts already-decoded DateTime input without running its wire transformation again', () =>
+  Effect.gen(function* decodedTemporalInput() {
+    const harness = yield* makeHarness();
+    const inputSchema = Schema.Struct({ validFrom: Schema.DateTimeUtcFromString });
+    const received: unknown[] = [];
+    const transformedRegistration = defineRead(
+      { ...registration().descriptor, inputSchema },
+      {
+        load: (input) => {
+          received.push(input);
+          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        },
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const wireInput = { validFrom: '2026-10-23T12:00:00.000Z' };
+    const decodedInput = yield* Schema.decodeEffect(inputSchema)(wireInput);
+    for (const input of [{ input: wireInput }, { decodedInput, inputFormat: 'decoded' as const }]) {
+      expect(
+        yield* harness.runtime.runRead({
+          ...input,
+          principal: scope,
+          registration: transformedRegistration,
+          transport: { correlationId: scope.correlationId },
+        }),
+      ).toEqual([]);
+    }
+    expect(received).toEqual([decodedInput, decodedInput]);
+
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        // @ts-expect-error The explicit decoded entry never accepts the encoded timestamp string.
+        decodedInput: wireInput,
+        inputFormat: 'decoded',
+        principal: scope,
+        registration: transformedRegistration,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Schema.is(ReadInputValidationError)(failure)).toBe(true);
+    expect(received).toHaveLength(2);
   }),
 );

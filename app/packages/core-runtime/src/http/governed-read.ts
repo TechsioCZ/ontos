@@ -488,7 +488,8 @@ export function makeGovernedReadHttpHandler<
       return yield* runtime
         .runRead({
           ...receivingAudience,
-          input: payload,
+          decodedInput: payload,
+          inputFormat: 'decoded',
           principal,
           registration: options.registration,
           transport: { correlationId },

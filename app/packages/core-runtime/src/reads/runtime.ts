@@ -1136,6 +1136,29 @@ const checkResultPermissions = Effect.fn('ReadRuntime.checkResultPermissions')(f
   return yield* Effect.void;
 });
 
+/** Callers explicitly distinguish encoded ingress from framework-decoded domain values. */
+type ReadRuntimeInput<InputSchema extends Schema.ConstraintDecoder<unknown>> =
+  | {
+      readonly decodedInput?: never;
+      readonly input: unknown;
+      readonly inputFormat?: 'encoded';
+    }
+  | {
+      readonly decodedInput: InputSchema['Type'];
+      readonly input?: never;
+      readonly inputFormat: 'decoded';
+    };
+
+const decodeReadRuntimeInput = <InputSchema extends Schema.ConstraintDecoder<unknown>>(
+  schema: InputSchema,
+  input: ReadRuntimeInput<InputSchema>,
+) => {
+  const decoded = input.inputFormat === 'decoded';
+  return Schema.decodeUnknownEffect(decoded ? Schema.toType(schema) : schema, {
+    onExcessProperty: 'error',
+  })(decoded ? input.decodedInput : input.input);
+};
+
 const readRuntimeFromDependencies = <
   DatabaseValue extends (typeof CoreDatabase)['Service'],
   GatewayValue extends ModuleEntrypointGatewayService,
@@ -1162,25 +1185,24 @@ const readRuntimeFromDependencies = <
     DomainErrorSchema extends Schema.ConstraintDecoder<{
       readonly _tag: string;
     }>,
-  >(input: {
-    /** Trusted receiving deployment audience for per-operation admission. */
-    readonly audience?: string;
-    readonly input: unknown;
-    readonly principal: unknown;
-    readonly registration: ReadRegistration<
-      InputSchema,
-      ResultSchema,
-      Owner,
-      Services,
-      HandlerError,
-      Requirements,
-      DomainErrorSchema
-    >;
-    readonly transport: unknown;
-  }): Effect.fn.Return<ResultSchema['Type'], ReadCoreError | DomainErrorSchema['Type'], Requirements> {
-    const decodedInput = yield* Schema.decodeUnknownEffect(input.registration.descriptor.inputSchema, {
-      onExcessProperty: 'error',
-    })(input.input).pipe(
+  >(
+    input: {
+      /** Trusted receiving deployment audience for per-operation admission. */
+      readonly audience?: string;
+      readonly principal: unknown;
+      readonly registration: ReadRegistration<
+        InputSchema,
+        ResultSchema,
+        Owner,
+        Services,
+        HandlerError,
+        Requirements,
+        DomainErrorSchema
+      >;
+      readonly transport: unknown;
+    } & ReadRuntimeInput<InputSchema>,
+  ): Effect.fn.Return<ResultSchema['Type'], ReadCoreError | DomainErrorSchema['Type'], Requirements> {
+    const decodedInput = yield* decodeReadRuntimeInput(input.registration.descriptor.inputSchema, input).pipe(
       Effect.mapError((parseIssue) =>
         preserveFailureCause(
           new ReadInputValidationError({
