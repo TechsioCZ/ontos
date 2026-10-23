@@ -21,7 +21,6 @@
 import { randomUUID } from 'node:crypto';
 
 import { NodeServices } from '@effect/platform-node';
-import { toSpiceDbActionObjectId } from '@app/core-runtime/actions/runtime-wiring';
 import { eq } from 'drizzle-orm';
 import {
   Config,
@@ -48,11 +47,23 @@ import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../../apps/she
 import { apikey } from '../../apps/shell-super-app/api/auth/db/schema.ts';
 import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
 import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from '../siampark/reset-configuration.mts';
-import { writeAiRelationships } from './ai-profiles.mts';
-import type { AiRelationship } from './ai-profiles.mts';
+import { writeBootstrapRelationships } from './bootstrap-relationships.mts';
+import type { BootstrapRelationship } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
+import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
+import {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+} from '../../packages/core-runtime/src/modules/active-application-composition.ts';
+import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
 import { akrosDemoLegalEntityId, demoId, demoTenantId } from './fixture-ids.mts';
-import { principalRelationships, privacyReadContextPermissions } from './permissions.mts';
-import type { DemoRole } from './permissions.mts';
+import {
+  principalRelationships,
+  privacyReadContextPermissions,
+  demoPrincipalRoleKey,
+  roleRelationship,
+  scopedDemoActionRelationships,
+} from './permissions.mts';
+import type { DemoAction, DemoRole } from './permissions.mts';
 
 const COMMERCE_PORTAL = 'commerce-portal';
 
@@ -79,7 +90,6 @@ const BINDING_OPERATIONS = ['activate', 'read', 'reserve', 'resolve', 'status'] 
 /** Exact company-scoped native reads; the Actions below are granted one by one. */
 const commercePortalRole: DemoRole = {
   contextPermissions: { 'privacy.core': privacyReadContextPermissions },
-  identityAdmin: false,
   label: 'Commerce portal (service)',
   modules: { 'commerce.customer-context': 'read', 'party.registry': 'read', 'privacy.core': 'read' },
 };
@@ -106,24 +116,25 @@ export const commercePortalActionKeys: readonly string[] = [
   'commerce.customer-context.record-portal-enrollment-outcome',
 ];
 
-interface DiscoveredAction {
-  readonly actionKey: string;
-  readonly provisioning: 'explicit' | 'tenant_membership_default';
-}
-
-const relationshipKey = (relationship: AiRelationship) =>
+const relationshipKey = (relationship: BootstrapRelationship) =>
   [
     relationship.resourceType,
     relationship.resourceId,
     relationship.relation,
     relationship.subjectType,
     relationship.subjectId,
+    relationship.subjectRelation ?? '',
   ].join('|');
 
-export const commercePortalRelationships = (actions: readonly DiscoveredAction[]): readonly AiRelationship[] => {
+export const commercePortalRelationships = (actions: readonly DemoAction[]): readonly BootstrapRelationship[] => {
   const { legalEntityId, principalId } = commercePortalPrincipal;
   const namespace = toIdentityNamespaceAccessObjectId(demoTenantId, COMMERCE_PORTAL_NAMESPACE) ?? '';
-  const relationships: AiRelationship[] = [
+  const roleId = toScopedRoleObjectId({
+    legalEntityId,
+    roleKey: demoPrincipalRoleKey(principalId),
+    tenantId: demoTenantId,
+  });
+  const relationships: BootstrapRelationship[] = [
     {
       relation: 'tenant',
       resourceId: namespace,
@@ -131,64 +142,34 @@ export const commercePortalRelationships = (actions: readonly DiscoveredAction[]
       subjectId: demoTenantId,
       subjectType: 'tenant',
     },
-    {
-      relation: 'provisioner',
-      resourceId: namespace,
-      resourceType: 'identity_namespace',
-      subjectId: principalId,
-      subjectType: 'principal',
-    },
+    roleRelationship('identity_namespace', namespace, 'provisioner', roleId),
     ...principalRelationships(principalId, commercePortalRole, actions, legalEntityId),
     // Business authority is independent of the exact Action executor allowlist below.
     // Keep module access read-only: a write role would automatically grant every Party Action.
-    {
-      relation: 'party_identity_manager',
-      resourceId: demoTenantId,
-      resourceType: 'tenant',
-      subjectId: principalId,
-      subjectType: 'principal',
-    },
-    {
-      relation: 'counterparty_manager',
-      resourceId: toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '',
-      resourceType: 'legal_entity',
-      subjectId: principalId,
-      subjectType: 'principal',
-    },
+    roleRelationship('tenant', demoTenantId, 'party_identity_manager', roleId),
+    roleRelationship(
+      'legal_entity',
+      toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '',
+      'counterparty_manager',
+      roleId,
+    ),
   ];
-  for (const { actionKey, provisioning } of actions.filter((action) =>
-    commercePortalActionKeys.includes(action.actionKey),
-  )) {
-    const action = toSpiceDbActionObjectId(actionKey);
-    if (provisioning === 'explicit') {
-      relationships.push({
-        relation: 'restriction',
-        resourceId: action,
-        resourceType: 'action',
-        subjectId: action,
-        subjectType: 'action',
-      });
-    }
-    relationships.push({
-      relation: 'executor',
-      resourceId: action,
-      resourceType: 'action',
-      subjectId: principalId,
-      subjectType: 'principal',
-    });
+  for (const action of actions.filter(({ actionKey }) => commercePortalActionKeys.includes(actionKey))) {
+    relationships.push(...scopedDemoActionRelationships(principalId, action, legalEntityId));
   }
   return [...new Map(relationships.map((relationship) => [relationshipKey(relationship), relationship])).values()];
 };
 
 /** Privacy can resolve only the two Commerce authority facts, not read customer groups or execute Actions. */
-export const privacyConsentAuthorityRelationships = (actions: readonly DiscoveredAction[]): readonly AiRelationship[] =>
+export const privacyConsentAuthorityRelationships = (
+  actions: readonly DemoAction[],
+): readonly BootstrapRelationship[] =>
   principalRelationships(
     privacyConsentPrincipal.principalId,
     {
       contextPermissions: {
         'commerce.customer-context': ['customer.consent.resolve_authority', 'customer.notice.resolve_authority'],
       },
-      identityAdmin: false,
       label: 'Privacy consent authority reader',
       modules: { 'commerce.customer-context': 'read' },
       restrictedModules: ['commerce.customer-context'],
@@ -384,14 +365,14 @@ const main = (envFileOption: string | undefined) =>
         set: { displayName: commercePortalPrincipal.displayName, status: 'active' },
         target: principals.principalId,
       });
-    const actions = yield* discoverCurrentActions(root);
+    const source = yield* ActiveApplicationCompositionService;
+    const actions = yield* discoverCurrentActions(yield* source.load);
     const missing = commercePortalActionKeys.filter((key) => !actions.some(({ actionKey }) => actionKey === key));
     if (missing.length > 0) {
-      // A newer owner may not be deployed yet; its grants follow on the next run.
-      yield* Console.warn(`commerce-portal: not in the current module contracts yet: ${missing.join(', ')}`);
+      return yield* fail(`Published Commerce enrollment Actions missing: ${missing.join(', ')}`);
     }
-    const relationships = commercePortalRelationships(actions);
-    yield* writeAiRelationships(root, environment, relationships);
+    const relationships = yield* Effect.try(() => commercePortalRelationships(actions));
+    yield* writeBootstrapRelationships(root, environment, relationships);
     yield* Console.log(
       `commerce-portal: principal ${commercePortalPrincipal.principalId}, ${relationships.length} relationships`,
     );
@@ -423,8 +404,8 @@ const main = (envFileOption: string | undefined) =>
         set: { displayName: privacyConsentPrincipal.displayName, status: 'active' },
         target: principals.principalId,
       });
-    const privacyRelationships = privacyConsentAuthorityRelationships(actions);
-    yield* writeAiRelationships(root, environment, privacyRelationships);
+    const privacyRelationships = yield* Effect.try(() => privacyConsentAuthorityRelationships(actions));
+    yield* writeBootstrapRelationships(root, environment, privacyRelationships);
     const previousPrivacyKey = existing.get('ONTOS_PRIVACY_GATEWAY_API_KEY');
     const privacyKey = Redacted.value(
       yield* ensureKey(
@@ -452,7 +433,7 @@ const main = (envFileOption: string | undefined) =>
         ['COMMERCE_MARKETING_ACTOR_PRINCIPAL_ID', commercePortalPrincipal.principalId],
       ]),
     );
-    yield* Console.log(`commerce-portal: Core identity transport and Shell provider data -> ${envFile}`);
+    return yield* Console.log(`commerce-portal: Core identity transport and Shell provider data -> ${envFile}`);
   });
 
 const environmentLive = ConfigProvider.layer(
@@ -472,6 +453,10 @@ const adminDatabaseConfigLive = Layer.effect(
 const servicesLive = Layer.mergeAll(
   AuthDatabaseFromDatabaseConfigLive.pipe(Layer.provide(adminDatabaseConfigLive)),
   FetchHttpClient.layer,
+  ActiveApplicationCompositionConfigLive.pipe(
+    Layer.provide(ActiveApplicationCompositionSourceLive),
+    Layer.provide(FetchHttpClient.layer),
+  ),
 );
 
 const command = Command.make(COMMERCE_PORTAL, { envFile: Flag.String('env-file').pipe(Flag.optional) }, ({ envFile }) =>

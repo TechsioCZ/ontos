@@ -1,6 +1,5 @@
 import { NodeServices } from '@effect/platform-node';
 import { counterpartyResourceDescriptor } from '@app/party-registry/resources/counterparty';
-import { toSpiceDbActionObjectId } from '@app/core-runtime/actions/runtime-wiring';
 import {
   toContextPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
@@ -26,6 +25,8 @@ import {
   partyFixture,
 } from './fixtures.mts';
 import type { Relationship } from './fixtures.mts';
+import { demoPrincipalRoleKey, roleRelationship } from '../demo/permissions.mts';
+import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from './reset-configuration.mts';
 
 class DemoResetError extends Schema.TaggedError<DemoResetError>()('DemoResetError', { reason: Schema.String }) {}
@@ -61,15 +62,6 @@ type AddRelationship = (
   subjectType: string,
   subjectId: string,
 ) => number;
-const actionModulesFor = (index: number): readonly string[] => {
-  if (index === 1) {
-    return moduleIds.filter((moduleId) => moduleId !== partyModuleId);
-  }
-  if (index === 2) {
-    return [financeModuleId];
-  }
-  return [];
-};
 const addPermissionRelationships = (add: AddRelationship, index: number, principalId: string) => {
   for (const moduleId of [workModuleId, relationshipsModuleId, ...salesDemoModuleIds]) {
     for (const permission of ['read_all', 'write_all']) {
@@ -80,29 +72,54 @@ const addPermissionRelationships = (add: AddRelationship, index: number, princip
           permission: `${moduleId.replaceAll('-', '_')}.${permission}`,
         }) ?? '';
       add('context_permission', objectId, 'tenant', 'tenant', demoTenantId);
+      add(
+        'context_permission',
+        objectId,
+        'legal_entity',
+        'legal_entity',
+        toLegalEntityAccessObjectId(demoTenantId, demoLegalEntityId) ?? '',
+      );
       if ((permission === 'read_all' && index < 3) || (permission === 'write_all' && index === 1)) {
         add('context_permission', objectId, 'grantee', 'principal', principalId);
       }
     }
   }
 };
-const addActionRelationships = (add: AddRelationship, index: number, principalId: string) => {
-  const actions = actionModulesFor(index);
-  for (const moduleId of actions) {
-    const actionKey = `${moduleId}.apply-command`;
-    const action = toSpiceDbActionObjectId(actionKey);
-    add('action', action, 'restriction', 'action', action);
-    add('action', action, 'executor', 'principal', principalId);
-  }
-};
 const relationships = (): readonly Relationship[] => {
   const result: Relationship[] = [];
-  const add = (resourceType: string, resourceId: string, relation: string, subjectType: string, subjectId: string) =>
-    result.push({ relation, resourceId, resourceType, subjectId, subjectType });
+  const add = (resourceType: string, resourceId: string, relation: string, subjectType: string, subjectId: string) => {
+    if (subjectType !== 'principal' || relation === 'member') {
+      return result.push({ relation, resourceId, resourceType, subjectId, subjectType });
+    }
+    const roleId = toScopedRoleObjectId({
+      legalEntityId: demoLegalEntityId,
+      roleKey: demoPrincipalRoleKey(subjectId),
+      tenantId: demoTenantId,
+    });
+    let roleRelation = relation;
+    if (relation === 'accessor') {
+      roleRelation = 'accessor_role';
+    }
+    if (relation === 'grantee') {
+      roleRelation = 'role_grantee';
+    }
+    return result.push(roleRelationship(resourceType, resourceId, roleRelation, roleId));
+  };
   const legal = toLegalEntityAccessObjectId(demoTenantId, demoLegalEntityId) ?? '';
   add('legal_entity', legal, 'tenant', 'tenant', demoTenantId);
   for (const [index, account] of demoAccounts.entries()) {
     add('tenant', demoTenantId, 'member', 'principal', account.principalId);
+    add(
+      'scoped_role',
+      toScopedRoleObjectId({
+        legalEntityId: demoLegalEntityId,
+        roleKey: demoPrincipalRoleKey(account.principalId),
+        tenantId: demoTenantId,
+      }),
+      'member',
+      'principal',
+      account.principalId,
+    );
     add('legal_entity', legal, 'member', 'principal', account.principalId);
     const shell = toModuleAccessObjectId(demoTenantId, demoLegalEntityId, 'core.shell') ?? '';
     add('module_access', shell, 'legal_entity', 'legal_entity', legal);
@@ -135,7 +152,6 @@ const relationships = (): readonly Relationship[] => {
       }
     }
     addPermissionRelationships(add, index, account.principalId);
-    addActionRelationships(add, index, account.principalId);
   }
   for (const reference of [
     demoRef(workModuleId, 'task', 'task.external-agent-assigned'),
@@ -161,6 +177,7 @@ const relationships = (): readonly Relationship[] => {
           relationship.relation,
           relationship.subjectType,
           relationship.subjectId,
+          relationship.subjectRelation ?? '',
         ].join('|'),
         relationship,
       ]),
@@ -171,6 +188,12 @@ const encodedPorts = Effect.gen(function* encodeDemoPortInputs() {
   const accounts = yield* encodeOperatorFixture(AccountsFixtureSchema, { accounts: demoAccounts });
   const context = yield* encodeOperatorFixture(ContextFixtureSchema, {
     accounts: demoAccounts,
+    companyMemberships: [
+      { affiliation: 'employee', legalEntityId: demoLegalEntityId, principalId: demoAccounts[0].principalId },
+      { affiliation: 'employee', legalEntityId: demoLegalEntityId, principalId: demoAccounts[1].principalId },
+      { affiliation: 'employee', legalEntityId: demoLegalEntityId, principalId: demoAccounts[2].principalId },
+      { affiliation: 'external', legalEntityId: demoLegalEntityId, principalId: demoAccounts[3].principalId },
+    ],
     legalEntity: {
       legalEntityId: demoLegalEntityId,
       legalName: 'Siampark DEMO s.r.o.',
