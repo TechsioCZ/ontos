@@ -61,7 +61,7 @@
     "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.3",
     "@module-federation/runtime": "npm:@bleedingdev/mf-runtime@2.9.2",
     "@tanstack/react-router": "1.170.39",
-    "@techsio/ui-kit": "0.56.0",
+    "@techsio/ui-kit": "catalog:",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.0-rc.117",
     "i18next": "26.4.2",

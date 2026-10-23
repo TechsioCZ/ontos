@@ -1,3 +1,8 @@
+catalog:
+  '@techsio/ui-kit': 0.57.0
+catalogMode: strict
+packageImportMethod: clone-or-copy
+
 catalogs:
   ultramodern:
     '@modern-js/adapter-rstest': 'npm:@bleedingdev/modern-js-adapter-rstest@3.9.0-ultramodern.28'
@@ -26,7 +31,7 @@ packages:
 enableGlobalVirtualStore: false
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
-  - '@techsio/ui-kit@0.56.0'
+  - '@techsio/ui-kit@0.57.0'
   - '@bleedingdev/mf-bridge-react@2.9.2'
   - '@bleedingdev/mf-cli@2.9.2'
   - '@bleedingdev/mf-dts-plugin@2.9.2'
@@ -104,6 +109,7 @@ peerDependencyRules:
   allowedVersions:
     react: '>=19.0.0'
 overrides:
+  '@techsio/ui-kit': "catalog:"
   '@tanstack/react-router': 1.170.39
   '@tanstack/router-core': 1.171.32
   '@effect/opentelemetry': 4.0.0-rc.117
@@ -140,6 +146,6 @@ patchedDependencies:
   '@tanstack/router-core@1.171.32': patches/@tanstack__router-core@1.171.32.patch
   # local until upstreamed to @techsio/ui-kit: label/translations props (Toaster, Combobox, DatePicker, Dialog,
   # DataTable row labels, Switch role), DatePicker label/aria-controls ids and Czech segment announcements
-  '@techsio/ui-kit@0.56.0': patches/@techsio__ui-kit@0.56.0.patch
+  '@techsio/ui-kit@0.57.0': patches/@techsio__ui-kit@0.57.0.patch
   # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6380
   drizzle-orm@1.0.0-rc.5-ab785fc: patches/drizzle-orm-rc5-declarations.patch

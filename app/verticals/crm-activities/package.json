@@ -53,7 +53,7 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "@techsio/ui-kit": "0.25.1",
+    "@techsio/ui-kit": "catalog:",
     "@app/party-registry": "workspace:*",
     "@app/work-tasks": "workspace:*",
     "@effect/sql-pg": "4.0.0-rc.117",

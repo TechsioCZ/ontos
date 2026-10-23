@@ -220,6 +220,7 @@ catalogs:
       version: 3.9.0-ultramodern.28
 
 overrides:
+  '@techsio/ui-kit': 0.57.0
   '@tanstack/react-router': 1.170.39
   '@tanstack/router-core': 1.171.32
   '@effect/opentelemetry': 4.0.0-rc.117
@@ -238,7 +239,7 @@ patchedDependencies:
   '@bleedingdev/modern-js-plugin-tanstack@3.9.0-ultramodern.28': 5fcd3789e8a8a0ce91af838b83dcd94f5bf039302d17032ba43cfd2ca0660e9b
   '@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.28': 94e26a23e23ef4136167d558e7e9bb2c24631cb20d9e287c1e486d30420c4eec
   '@tanstack/router-core@1.171.32': fda52ecfa3ec46559d44ba037067cae400755912bd53fba786b26c1bc4732ef3
-  '@techsio/ui-kit@0.56.0': 69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36
+  '@techsio/ui-kit@0.57.0': 69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36
   drizzle-orm@1.0.0-rc.5-ab785fc: b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe
 
 importers:
@@ -584,8 +585,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@techsio/ui-kit':
-        specifier: 0.56.0
-        version: 0.56.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.57.0
+        version: 0.57.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       better-auth:
         specifier: 1.7.12
         version: 1.7.12(@opentelemetry/api@1.9.1)(drizzle-kit@1.0.0-rc.5-ab785fc)(drizzle-orm@1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5))(pg@8.22.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -697,8 +698,8 @@ importers:
         specifier: 0.11.12
         version: 0.11.12(@bleedingdev/mf-runtime-tools@2.9.2)(core-js@3.50.0)(happy-dom@20.8.3)
       '@techsio/ui-kit':
-        specifier: 0.56.0
-        version: 0.56.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.57.0
+        version: 0.57.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       '@types/node':
         specifier: ^26.4.1
         version: 26.6.3
@@ -1696,8 +1697,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@techsio/ui-kit':
-        specifier: 0.56.0
-        version: 0.56.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.57.0
+        version: 0.57.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5)
@@ -1838,8 +1839,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@techsio/ui-kit':
-        specifier: 0.25.1
-        version: 0.25.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.57.0
+        version: 0.57.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5)
@@ -1998,8 +1999,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@techsio/ui-kit':
-        specifier: 0.56.0
-        version: 0.56.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.57.0
+        version: 0.57.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5)
@@ -2164,8 +2165,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@techsio/ui-kit':
-        specifier: 0.56.0
-        version: 0.56.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.57.0
+        version: 0.57.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5)
@@ -2454,8 +2455,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@techsio/ui-kit':
-        specifier: 0.56.0
-        version: 0.56.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.57.0
+        version: 0.57.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5)
@@ -2596,8 +2597,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@techsio/ui-kit':
-        specifier: 0.56.0
-        version: 0.56.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.57.0
+        version: 0.57.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5)
@@ -2735,8 +2736,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@techsio/ui-kit':
-        specifier: 0.56.0
-        version: 0.56.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.57.0
+        version: 0.57.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5)
@@ -3361,8 +3362,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@techsio/ui-kit':
-        specifier: 0.56.0
-        version: 0.56.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.57.0
+        version: 0.57.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5)
@@ -3512,8 +3513,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@techsio/ui-kit':
-        specifier: 0.25.1
-        version: 0.25.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.57.0
+        version: 0.57.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5)
@@ -3672,8 +3673,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@techsio/ui-kit':
-        specifier: 0.56.0
-        version: 0.56.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.57.0
+        version: 0.57.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5)
@@ -3829,8 +3830,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@techsio/ui-kit':
-        specifier: 0.56.0
-        version: 0.56.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.57.0
+        version: 0.57.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5)
@@ -4074,8 +4075,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@techsio/ui-kit':
-        specifier: 0.56.0
-        version: 0.56.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.57.0
+        version: 0.57.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5)
@@ -4325,8 +4326,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@techsio/ui-kit':
-        specifier: 0.56.0
-        version: 0.56.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.57.0
+        version: 0.57.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5)
@@ -4467,8 +4468,8 @@ importers:
         specifier: 1.170.39
         version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       '@techsio/ui-kit':
-        specifier: 0.56.0
-        version: 0.56.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
+        specifier: 0.57.0
+        version: 0.57.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(effect@4.0.0-rc.117)(pg@8.22.0)(zod@4.6.5)
@@ -6270,9 +6271,6 @@ packages:
 
   '@internationalized/date@3.12.4':
     resolution: {integrity: sha512-M1dEn4c1U1HsSlaVR8upZtSqvXrTkHDfv18H01uCSJyjVLDxnBR38v/fMxecmlwXKR4i9HeZcmgQAPE6A+aGJQ==}
-
-  '@internationalized/number@3.6.7':
-    resolution: {integrity: sha512-3ji1fcrT+FPAK86UqEhB/psHixYo6niWPJtt7+qRaYFynt/BaJG8GhAPimtWUpEiVSTq8ZM8L5psMxGquiB/Vg==}
 
   '@internationalized/number@3.6.9':
     resolution: {integrity: sha512-GgWy2caO/+hV9sT/oCTWGHvbjmJMPT9kkXzoKRLnkEq7adghhR7UprhvY9sXrKfrp3NcDfhF6QQHXR1KfQbB8g==}
@@ -8272,16 +8270,8 @@ packages:
   '@tanstack/virtual-core@3.19.0':
     resolution: {integrity: sha512-6k6+BXoM01iJTfqH5hvih0Kj49x130wRzty1muE1hBJJm5/P8h3aEYEtQPa4iYE239nF4i6UL/KIIuQI3zG4sw==}
 
-  '@techsio/ui-kit@0.25.1':
-    resolution: {integrity: sha512-N0H7MqZooyVxd3ZDn2gBCBrR0+LJGhetde7Dp9XVj0iy4Clcu1kMTar322Mfbbg8CYdGd++TfA7nzni6RIsVlQ==}
-    peerDependencies:
-      '@types/react': '>=19.2.0'
-      '@types/react-dom': '>=19.2.0'
-      react: '>=19.2.0'
-      react-dom: '>=19.2.0'
-
-  '@techsio/ui-kit@0.56.0':
-    resolution: {integrity: sha512-1Rm0sa4L83cnkN5AZdcbxl674kTw9rLDJbVLIH7ujFFTpPGpLeNVhoTYr4E1yamlE+jjrVB0iH2TtrodsZCbGQ==}
+  '@techsio/ui-kit@0.57.0':
+    resolution: {integrity: sha512-X36ZZUcR/ivPIDFg6DyZDD6PMotcZyltoeXMPiKe33Y1SvWM32VqOgz54GIbwJEgrUgwhSwL2f1SEp+xysZlKA==}
     peerDependencies:
       '@types/react': '>=19.2.0'
       '@types/react-dom': '>=19.2.0'
@@ -8730,26 +8720,14 @@ packages:
   '@xtuc/long@4.2.2':
     resolution: {integrity: sha512-NuHqBY1PB/D8xU6s/thBgOAiAP7HOYDQ32+BFZILJ8ivkUkAHQnWfn6WhL79Owj1qmUnoN/YPhktdIoucipkAQ==}
 
-  '@zag-js/accordion@1.44.0':
-    resolution: {integrity: sha512-BRinHGl7Z2K8maQKzr8txpU+1GC78nn8pV74Ox0jVJwpDvXzB4485qwdSHESyLBCbgFOd1qpfxRd7QbRiYM4Zg==}
-
   '@zag-js/accordion@1.46.0':
     resolution: {integrity: sha512-vxC8mw6ykcUYGAVp/oFoZNYSxRfaWR7AsVQahm1b/RvFo0ahVqES8KP+iKsdgzYrMYA8khxc8hoay2ZjRq6Q5A==}
-
-  '@zag-js/anatomy@1.44.0':
-    resolution: {integrity: sha512-gVN02k7cUqEDlEDDv3CcStMIqDQ32e7QCH8FVBwwXqbSH8D5KMuqPrmyfdE8irVZuPfY4PtKuZsNvJLYvXDpgA==}
 
   '@zag-js/anatomy@1.46.0':
     resolution: {integrity: sha512-geWPKs9FtZ3FihwOyW/swG3IlJxqGydiAEUHRjBq3q45IarxV4gJZfpvWGlv20mVjOhbWkNEG+CDPsUGw4ixow==}
 
-  '@zag-js/aria-hidden@1.44.0':
-    resolution: {integrity: sha512-sk9Zh93piT6NdXL0EW45fvhjrwSHjjPxeKOG+y68731Dqk0sdmP6/E1XQDwXiLhVLDySJ8PhGX8B7Zp+ZiZOIQ==}
-
   '@zag-js/aria-hidden@1.46.0':
     resolution: {integrity: sha512-TQRJxzT4wzXHMKX+mnnm4qWEU6ASpkYcpR6/h3oaJ/3g2AreUYzmThdsS1FwDl0SkdoQEsuCQXWrMpHXUdAmJg==}
-
-  '@zag-js/carousel@1.44.0':
-    resolution: {integrity: sha512-Ny+BygglDwfzF6iBgiXErxDzhgWKyvRN1582l23m2YhDeUiMfpV9EQCums63CbwYepm6HpjzsZfi6TBkKQgqDg==}
 
   '@zag-js/carousel@1.46.0':
     resolution: {integrity: sha512-Z1STExmqwwSF0cLkF9ZXEIrBg11PTAf8sAPNfvGoyPf5mL/T7HGaAIRcjMFJnmpFA9nG1eJYvXJ3f5rRrqoKAw==}
@@ -8757,29 +8735,17 @@ packages:
   '@zag-js/cascade-select@1.46.0':
     resolution: {integrity: sha512-5Zy0Cv97gyBBXxLVRhD2tbGzfPoluN0SxEL5svm6ZBkFQW3sShdIQfqILio2WLN8Pfx8ah1McX/xl8K2R4Hu4w==}
 
-  '@zag-js/checkbox@1.44.0':
-    resolution: {integrity: sha512-2Tz2CroVmb8hT7nGknVbf4eW3UmDNZUrA2JoGYlAIQ8jJG3+lmxyFbO83o5RTh4oVeQiTsyn/V+jgLMS6V9z/g==}
-
   '@zag-js/checkbox@1.46.0':
     resolution: {integrity: sha512-FD0kk1FU7T1EGn95hd23CFSDVDndg4MCsSTBfzsGlmDhgJMosR9fubvt2S0ynvPqiBLRS+5wPIQ2cIP7bo9hyQ==}
 
   '@zag-js/collapsible@1.46.0':
     resolution: {integrity: sha512-RjcU4uenU7uV+tPvvSjTfACFYOIpHgQceheVB+qhzVFxGgUFjlyUcjW7MEV+n2d8FDzNaTonEDmzR89QBeZqHA==}
 
-  '@zag-js/collection@1.44.0':
-    resolution: {integrity: sha512-BmBSYuj+bLQWOpj0pe7E5ulCgSikT7Hr69noc09j9TT8GN3Jf8yfN1houQdKpM61qjlllDSeN3t7j3HQDAJJ8Q==}
-
   '@zag-js/collection@1.46.0':
     resolution: {integrity: sha512-+9cHlDyf+y3oaD/zjctxYrU367vrrNjxoUbupSR8rRYXPPPS5nwNXkCZQQxLGJ16v/wABrBCQ5zzyl7wgnBz4A==}
 
-  '@zag-js/combobox@1.44.0':
-    resolution: {integrity: sha512-En5S/53CQkvd7TZxuDK9fF7/X0eye/3wIhIcYqdw0301oWyl/eQXZTIs8Rm2XQ7G/qa5CCVQeAdCJoAyJzQzmQ==}
-
   '@zag-js/combobox@1.46.0':
     resolution: {integrity: sha512-F/euRFG5aG6xYxJNtsmQFprgM95P9oYfGnXkW9JQCy6JucXEW/YrXvRxB5VlLrMh8ty/tjFOc8nt3b8otnAmtA==}
-
-  '@zag-js/core@1.44.0':
-    resolution: {integrity: sha512-tqDBJeDpDuLfjodk6NetSDZLMy7+r799RcC5oDtVivowfSxfPBSsfh4UxYT/+zXv9RZ0mYG3TzO4yFROPmniIA==}
 
   '@zag-js/core@1.46.0':
     resolution: {integrity: sha512-zwiTDz9iBi1a/CyzdaeI8TlBADmeLCDNONh930a7x32TpduN8LiY26X58zrgimvCowOu7YIFNzI/vqW7Wp1phA==}
@@ -8799,20 +8765,11 @@ packages:
     peerDependencies:
       '@internationalized/date': '>=3.0.0'
 
-  '@zag-js/dialog@1.44.0':
-    resolution: {integrity: sha512-KLIfXVtEGf+7TtYjLT6IZ83SWolOH4q2fUHeowzGZ4LK+IEkvK3MQYnGpudFYV/SO7MBeYkpCQGO5MKl6R3dfQ==}
-
   '@zag-js/dialog@1.46.0':
     resolution: {integrity: sha512-OCJl9WWOjoPRaX6mhIRGxZ0b28BOm3bRokMTuf+wDQ6uowgNGZRhRW3TIFRtGJBmpEEVOF7p92b4qpG6Q1YSDg==}
 
-  '@zag-js/dismissable@1.44.0':
-    resolution: {integrity: sha512-S4xfFrcy38JQXmgiFlkyP/W+iC/crTwOqHT1d8AcIxaTxDya/dIUb1mTTZVyJRo5DA7C4Xp3oPqFxEJ2jSENFQ==}
-
   '@zag-js/dismissable@1.46.0':
     resolution: {integrity: sha512-HramN58RwrpuSEdrN7XecL7g5wvwck3HJE81s7zli2qP/kIaVLodE5qbzR/PW4715daM1rO+Ptsd96dkeBzICQ==}
-
-  '@zag-js/dom-query@1.44.0':
-    resolution: {integrity: sha512-BKdiKNjd9iTtaQjjU07YymGkgKVSO7vXu8ukZPyt+F8tOesAv9xW5wCn3fuEI6zNthzOpHD9ejj48YW0mljnpQ==}
 
   '@zag-js/dom-query@1.46.0':
     resolution: {integrity: sha512-ibkO0VkQ2rLaclrO/O7kunvvwK8ZiW2L78arxsPYOEWmTqdNM6eQh721l9jGREUggh8nGsydNaoJH7lP3z1DUg==}
@@ -8826,14 +8783,8 @@ packages:
   '@zag-js/file-utils@1.46.0':
     resolution: {integrity: sha512-gIYi73gln3Hdzc0pY2uxOF+Bmeru0AlF3IbWvjOb5vCFjkTdToNoExeqZHUzp+AZexcbQzako7249+MglzB2sQ==}
 
-  '@zag-js/focus-trap@1.44.0':
-    resolution: {integrity: sha512-L3HMgBLcVZl4+++ivXt3nVTu+9Me9rZO0IcKWb3g5dLPAza8G85rT0VFqCq9znXU/cHc5iSZTDHssFPpYBcn3w==}
-
   '@zag-js/focus-trap@1.46.0':
     resolution: {integrity: sha512-c+CiVRGj4yGQeAwqJB5GGo0kERrpR5MxjohpKcZuIy7uaQSXsxY+TzSjP2+JRBSDHMMV2UuCdkV+G0RbWyzEjQ==}
-
-  '@zag-js/focus-visible@1.44.0':
-    resolution: {integrity: sha512-uw/MjetjFP16IiOQLr3snfnEd5772lXPuQR8mct432t4AyPEAskZBwO9MTDbWukNXQ20VKpcorMZm+QXG3NY4g==}
 
   '@zag-js/focus-visible@1.46.0':
     resolution: {integrity: sha512-H/npFbU9yRLWhzPud/uuGKxwtsh/FcMaL5IisBJxo3txqotbfcgPNN9VvqQY2BuSbJi2gg01u9ngwBIZPVaUmQ==}
@@ -8841,50 +8792,26 @@ packages:
   '@zag-js/hotkeys@1.46.0':
     resolution: {integrity: sha512-xtqzfVGmZ8MAlw4e6FYW7xwY0vO0pzPD5JIHxr8jEjUlBak5lZTGqX8lcz/uUevJ/ZUQM/BWaCjg6kmCIbvQxQ==}
 
-  '@zag-js/i18n-utils@1.44.0':
-    resolution: {integrity: sha512-UGYpkpnEowFqeBkSIw4dtRJCf5O/4JH3eDT0BXKFHMFAptwCM/4+lHD8dnxkUgjFN8H5OELUtBWZDrM71VlrcA==}
-
   '@zag-js/i18n-utils@1.46.0':
     resolution: {integrity: sha512-NoctvbCnJ0J4BoQNXlfcvkE9Kcczo7+k85gGQ0vdAHqWzRVOU61+uBhgtW4LiJqIUiMtGyFqT1D2UI5J6+BRWg==}
-
-  '@zag-js/interact-outside@1.44.0':
-    resolution: {integrity: sha512-yFX3eHamp82kax65xIYLemXNH8kD9MvXm7lHttnwlp/XZoAgDTR2l+iLJYU6pLZsuSM9GsrnWQrfHaHWBhyNWw==}
 
   '@zag-js/interact-outside@1.46.0':
     resolution: {integrity: sha512-gzOj8zNvZzrF8l7ikYcYmdOlhLXEBGm7Qsp++hE/in47Nhi1uHWlamW21orqYdNF8Y250qrK24vIr0ZW4xTPcw==}
 
-  '@zag-js/live-region@1.44.0':
-    resolution: {integrity: sha512-lNvzkp1XimNmY31Gs6mmACFV7w2Dgx8FBooTg9eovznG6pRNMtSivEfoAAc3VHma4GgQY+S074j3wT4S6nXp1w==}
-
   '@zag-js/live-region@1.46.0':
     resolution: {integrity: sha512-d7wjSUr8tyH+2kQicbv+InfrYOoDQkSsziLrQiHSLTZ0n1OPhgjM10N3PcewPnVIrmpS+FLyCX6dEyVrzQT1/g==}
-
-  '@zag-js/menu@1.44.0':
-    resolution: {integrity: sha512-Z1k6h8PRYtO7S8CeMupoODyuMWBK+eDBwS+r+A8gQOajWXxn7YGKha4/fxtUyyuW0e0U/b//JIM8qvwDPLoK3Q==}
 
   '@zag-js/menu@1.46.0':
     resolution: {integrity: sha512-oQZ0SUI4AWQP5CocSVyiP55SVQZUa6eHTl3Ia8W0ByH/LK6ShFHTpEr/7eDt6uoHT9pDMpAscIIoMF70LvunTg==}
 
-  '@zag-js/number-input@1.44.0':
-    resolution: {integrity: sha512-deYbnCklFLXAx0UkzLYNfbUj9T7nGPPjnFKmhOkgz/n6E1C5r8+AWxMCrDHzEgpYcvSw1fM04lrQJvM/TyBMiQ==}
-
   '@zag-js/number-input@1.46.0':
     resolution: {integrity: sha512-/3Dmjn2J3Pu9vRUTApEFd8PIpUlk4n3TQVbiZmhOUrYQqiawelPoFDQOlbfmNbyjUc/12c6M1deEvpCbHEwuEg==}
-
-  '@zag-js/pagination@1.44.0':
-    resolution: {integrity: sha512-ccl2mEeKUIa4iGXkbib1Shp+53hN2gQCvTNdH5aoDDBKXAjnW8ya9hmGGEo6ql5J+QZwlTAIw+T4uWoK5JOE0Q==}
 
   '@zag-js/pagination@1.46.0':
     resolution: {integrity: sha512-WGMByrSC+wHM/QbemkuaIm69aJpW3dYU1Jv/qt0CHMCMUqrtYZ8WZJr4kKHUTsrgdigTX2MGIKM7IQ7cxIeS6A==}
 
-  '@zag-js/popover@1.44.0':
-    resolution: {integrity: sha512-TQ6EVjwxYgow3aHCVRIrAJqn9eM1ld/SoVg3Ftuztc0xIEXeKCh0B2q06mxB+J0CNnmDzfFngzmC7OoV6jKAnw==}
-
   '@zag-js/popover@1.46.0':
     resolution: {integrity: sha512-9S5+S6GjfQFwy3lfeQw2VIIPmpz3YjWkqnXV2/xc6p6vcVDjV4NOyIkLEUQhbWwXNP8J8yFbAqAxuQoH2Uozpg==}
-
-  '@zag-js/popper@1.44.0':
-    resolution: {integrity: sha512-uSYqdkGlDC/rCQqYecHAfjhASQjziAR2uiFBjceUK9eG8bjua4Ev6vcaFEjrD4EcOKMMosve5mjWfHcHh5lL6A==}
 
   '@zag-js/popper@1.46.0':
     resolution: {integrity: sha512-tpTOiwWY8FRQHzKycKbj+aJbhMpjvTsH871XXQdB2H+56eJ7sgffECCJZTByq3qsC+d2g/WCJqAfLJqgtYagww==}
@@ -8892,23 +8819,11 @@ packages:
   '@zag-js/presence@1.46.0':
     resolution: {integrity: sha512-WA33+sc7Qqosx+bvU9mZD+fvFdi7x72fXc7m6dIH1pTwaB22YdHmr6zmTDZV6k824Uvcbbo4t2rsNGmMFkKWLw==}
 
-  '@zag-js/radio-group@1.44.0':
-    resolution: {integrity: sha512-aSKAir9CoVdivX0KZNfEF/ZXHD9HBPIhnEyg+gHrrzOQg0+Uqj9/ubpf16TRKFjU+p7i1ZzRHi5KK19B52EzHg==}
-
   '@zag-js/radio-group@1.46.0':
     resolution: {integrity: sha512-J2CmS3vpJnHKTBR3zsceo4eAMAf4fhljanTETFxkbX/rec23EUpzUBEA3l7LFwz7Iar8VsX8iNbD8thmwPkYpw==}
 
-  '@zag-js/rating-group@1.44.0':
-    resolution: {integrity: sha512-O58cbm3KjPkrTdWlrBeyQNoJr2FQx+i7mz4tMyCgyuSZEIH9fLRndwnzLhJlRxv8+zq5OkRLSH2UqLvcomHfhQ==}
-
   '@zag-js/rating-group@1.46.0':
     resolution: {integrity: sha512-SLpZhYpbnff+/JB9l26y9cMYgdfn+/ZzmukO4joFrIsqLl9sTED+sSrHMSkRMg22BU9dYZO7lDBc5HZvu7mMPg==}
-
-  '@zag-js/react@1.44.0':
-    resolution: {integrity: sha512-qRO5LJLzKuul97it+qYj/IrriS+IX9KZ7OrhCxPbY1Xd2g7TJdOpuGRU5IsGwTJCUfW6vQBrBj/0Qhc1GMClog==}
-    peerDependencies:
-      react: '>=18.0.0'
-      react-dom: '>=18.0.0'
 
   '@zag-js/react@1.46.0':
     resolution: {integrity: sha512-x13nWlS/lwvK81gTJKhe4SUvyxgPCAzjkE8n+0vVtN7q4xi1zFPwhdSAu8EZGPGvQ4UWJt6ENLpm4sxWyey7Yg==}
@@ -8916,68 +8831,35 @@ packages:
       react: '>=18.0.0'
       react-dom: '>=18.0.0'
 
-  '@zag-js/rect-utils@1.44.0':
-    resolution: {integrity: sha512-OuxBWzwP0zKDundVBH/ZJerrNo+0yP2HyWWwcqV/PI78W3SflMn6BAzsfCOLVxRNq7XfewCPYmz2bZo5tgpjvw==}
-
   '@zag-js/rect-utils@1.46.0':
     resolution: {integrity: sha512-w9USQ+fm2Ad9Z9loSdGic5pawCP2ALHW1p1IES3J6neXcbd4PyAX744qmUq3AckdVK+c88PSRL02i1ctCOFmYQ==}
-
-  '@zag-js/remove-scroll@1.44.0':
-    resolution: {integrity: sha512-Y7Oxp63eMOC3UpUj/Uk5d6mDTI//XrfBl780X40zf/FlwTu9Tjaw7T+Hq7kg0oDDXPnP65pb4MxG9UHhGfH7Gg==}
 
   '@zag-js/remove-scroll@1.46.0':
     resolution: {integrity: sha512-i/GbBWtlmWBpA3YGCWxIBnzNhEtZ42o7rjRL9JrHb7xX6oyHzDB5sVT9oImrB3ih63V5/Y5YTbkkAAmL5D9G0w==}
 
-  '@zag-js/scroll-snap@1.44.0':
-    resolution: {integrity: sha512-xE7zHw+vNSeYGuPfcosTpMgRVoM1pipouQFomFfdJMShLQaZYYu2Utyw4tkHfCVSm9AALCetyIJfneZJudKwaA==}
-
   '@zag-js/scroll-snap@1.46.0':
     resolution: {integrity: sha512-cAq+0UFKFWj2y2rYPSPQnKCdVg6CbWXx1KUvJphN7xPQGORwApMH8GpA9TygvfmcmzdrITrzHtKTlMrrohrH7g==}
-
-  '@zag-js/select@1.44.0':
-    resolution: {integrity: sha512-SvLYvx4DtrtLfA0KYmA+qsVwrPYLPkTVigifEqeZKJBQRyHlwAaub7ncC+TsTpCl5XmiV+eitBaaZlHCFbqdaA==}
 
   '@zag-js/select@1.46.0':
     resolution: {integrity: sha512-Qjq4b1aPDVm/XsLRKPryWnyFMzUWdSK4Qt9mWogk0G+E9WhMKQEtqWgyRch9NQNqtlmY3e1rn3H+LJlUREuV0Q==}
 
-  '@zag-js/slider@1.44.0':
-    resolution: {integrity: sha512-Pb1T0GQV/GXPUgBHSCFs9zpDmIjYNNEuVnNbypa3r7FvitfpDpZRgDN+aztW5M69cb6Z1r2ZgsMBhm55vRydTg==}
-
   '@zag-js/slider@1.46.0':
     resolution: {integrity: sha512-7QLQkxMrNl9KvUQSG/PrAYqshBBIfPIM29q51M062QfnAAI4CxjuDhbgedPxGhPCJ5CVp/yAbnbwUKQDsGXHrw==}
-
-  '@zag-js/steps@1.44.0':
-    resolution: {integrity: sha512-mPrUfYQVQlZNVJDUuCxbujNqQn8orH3Fm3S8AQ0AjZxAEMFvFK7Jyzox385c3BWRK6vPkyacgJ7+317PMtps2A==}
 
   '@zag-js/steps@1.46.0':
     resolution: {integrity: sha512-BNVbQJ5N4jGoTDlYBtU1FZuB+me972owKzl2em7aGCl9uG5tBmubb2SPDn0Q1euVVbTPhGzhYAjyMdnuew7i2A==}
 
-  '@zag-js/store@1.44.0':
-    resolution: {integrity: sha512-syjbybsc1e2zro50Eu+SaloeJbiXTY78wa+m8iUzswdmVzpts+7KSk3Oogso7jxZ7L91vNAQDhSqZR73Il3KOA==}
-
   '@zag-js/store@1.46.0':
     resolution: {integrity: sha512-NXjE6pITQaORVDxSX5nriNMtIBJGpq92ni3YvcZ1f37CZO2qXumOnYzyWWJNSwDMpfqEmPh83cW0Nxse7AUILA==}
-
-  '@zag-js/switch@1.44.0':
-    resolution: {integrity: sha512-J4Xk4kK2NmY5CGho8a4AOlcxtJI/it9ITNmmP3ZONdfu3IJGJxs7VCLHfcRc+89iKtqLuD+KB2yaCyZ8lS/tOQ==}
 
   '@zag-js/switch@1.46.0':
     resolution: {integrity: sha512-RqzTJqLagjruPoSKf//U1T4eNnwVlA6znQFTPf5el/TNuN7Rpm5dRyEe6nE8yWCXwCaBNfz/Jmjmx7NY7NTH4w==}
 
-  '@zag-js/tabs@1.44.0':
-    resolution: {integrity: sha512-RZq89qz3SRVDHa1Og/Apco1gGPt0qK9tfoiWf61NA/ckV8r2LGf8IxvilGgUuHc5TUYWh938ERzZ4vjqWzGRug==}
-
   '@zag-js/tabs@1.46.0':
     resolution: {integrity: sha512-OdD0zPgYOagW/8tm0PfIm/UwBjLKS3fjaIGXzUNH6yC0E2JMD6IrHCAh69V2qsIxtzT8+tVky1IQo5P3WsO3Ow==}
 
-  '@zag-js/toast@1.44.0':
-    resolution: {integrity: sha512-rcfVWoghcoGyNs0pvGJB0qwuBdpyvtUnac5pmkIKYFW046rCAeVaSnw5hjkr9GMvt3iikvEjhFDTEP1z7j/Q7g==}
-
   '@zag-js/toast@1.46.0':
     resolution: {integrity: sha512-7EL8nm6Z1P64XEUqHT3DPHKi/F+0UR9fJeL6ELgnqpDMYwOPNCxTXnh26vIV0g9UWyorMdgZMqljAchMPF5xMQ==}
-
-  '@zag-js/tooltip@1.44.0':
-    resolution: {integrity: sha512-OnOQ3NSXDe9YAoekKWMnbEVvoAa5R3ZdXyHx3UEFxIRjPB+J5xk8+8MVNR6715ifndLmBjexVm/UR//Bf47tpA==}
 
   '@zag-js/tooltip@1.46.0':
     resolution: {integrity: sha512-H0Ov0bDW8thYqRO/VI5RW4vVc/qOW8S8du9uI5mSisyyY25GiG5N2iuOiM0kaYXBo1wUTvMJFsBdfMwhi4z9oA==}
@@ -8985,20 +8867,11 @@ packages:
   '@zag-js/tour@1.46.0':
     resolution: {integrity: sha512-TpBpTKI9d8vMjWXBVlb72x1+4K3k5veIfy09Pnh60N/avoMEvYHdYHh4vDxawGY2t8ZBNEnV/3i7W21JyPNQaQ==}
 
-  '@zag-js/tree-view@1.44.0':
-    resolution: {integrity: sha512-ZkdM35tJZ9U6d9wAneo+MdQ+vq7ZIZMebXC8/Q94EMOuZGQdf02SYZN9vUeFTVCaNJjWq/eMtL4c7T15Tslemw==}
-
   '@zag-js/tree-view@1.46.0':
     resolution: {integrity: sha512-UXSmHQCLbgPyEIebGMCnd/CSpVTzpshGBdIdl1JsGe4Nl2IFmw9NC8k6K9f9lTUR0Lx563aiCdOTBPfmJFy7lw==}
 
-  '@zag-js/types@1.44.0':
-    resolution: {integrity: sha512-hVi+EekA3V2EDyJxhkSg1Znmk8Qhk3JRWH8atkwTvnGckpCXjQQ9YpKGsP6KSzD88ci7PgH/mYj7fU62E+GYqw==}
-
   '@zag-js/types@1.46.0':
     resolution: {integrity: sha512-HwIvuXCGx/wgCNNXYvKyCJ62e/QmIi02v9GsA0icFxDKxv6i7J2mZmAQ/vF5Nmh3q80Nj5CZ1DdQ7bXYt/Yzww==}
-
-  '@zag-js/utils@1.44.0':
-    resolution: {integrity: sha512-XO4UoPSRBE/CQ781eSqYELOzsc8Bch33340L6/iVEP+5rW8SL5yCyKewu9w0t0bG1Y+EETLlmvswDjI252t1Vw==}
 
   '@zag-js/utils@1.46.0':
     resolution: {integrity: sha512-SOKa832hWCoXaYB2Pcdb0c+ZcyNSuAAPpL5YRnVHskuc0BEsHPWOhxSIxuGF1gvz4RsfBKiAHrDoFDl8JLSOEg==}
@@ -11193,9 +11066,6 @@ packages:
     resolution: {integrity: sha512-+bT2uH4E5LGE7h/n3evcS/sQlJXCpIp6ym8OWJ5eV6+67Dsql/LaaT7qJBAt2rzfoa/5QBGBhxDix1dMt2kQKQ==}
     engines: {node: '>= 0.8.0'}
 
-  libphonenumber-js@1.13.14:
-    resolution: {integrity: sha512-llihgCcx0BFLksecLP+x1J+6JDE1GsXS1RN/LoPF6qcwpeQcnjj0lcvZxY8AzbEpYwyZWPZW/nDuqkqzm3amiw==}
-
   libphonenumber-js@1.13.15:
     resolution: {integrity: sha512-AHdhEQeDFEJ4GKDAQ9AwxChy+v2kUILUB3TGQRpkXMkWePjXTU/WQEzWVQoIx/Gz8fE73Wr5SEuZCy2vk8jrMQ==}
 
@@ -13063,11 +12933,6 @@ packages:
         optional: true
       tailwindcss:
         optional: true
-
-  tailwindcss-animate@1.0.7:
-    resolution: {integrity: sha512-bl6mpH3T7I3UFxuvDEXLxy/VuFxBk5bbzplh7tXI68mwMokNYd1t9qPBHlnyTwfa4JGC4zP516I1hYYtQ/vspA==}
-    peerDependencies:
-      tailwindcss: '>=3.0.0 || insiders'
 
   tailwindcss@4.3.3:
     resolution: {integrity: sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ==}
@@ -15768,10 +15633,6 @@ snapshots:
     dependencies:
       '@swc/helpers': 0.5.23
 
-  '@internationalized/number@3.6.7':
-    dependencies:
-      '@swc/helpers': 0.5.23
-
   '@internationalized/number@3.6.9':
     dependencies:
       '@swc/helpers': 0.5.23
@@ -17300,46 +17161,7 @@ snapshots:
 
   '@tanstack/virtual-core@3.19.0': {}
 
-  '@techsio/ui-kit@0.25.1(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)':
-    dependencies:
-      '@iconify-json/mdi': 1.2.3
-      '@iconify-json/mdi-light': 1.2.2
-      '@iconify-json/svg-spinners': 1.2.4
-      '@iconify/tailwind4': 1.2.3(tailwindcss@4.3.3)
-      '@types/react': 19.3.0
-      '@types/react-dom': 19.3.0(@types/react@19.3.0)
-      '@zag-js/accordion': 1.44.0
-      '@zag-js/carousel': 1.44.0
-      '@zag-js/checkbox': 1.44.0
-      '@zag-js/combobox': 1.44.0
-      '@zag-js/dialog': 1.44.0
-      '@zag-js/i18n-utils': 1.44.0
-      '@zag-js/menu': 1.44.0
-      '@zag-js/number-input': 1.44.0
-      '@zag-js/pagination': 1.44.0
-      '@zag-js/popover': 1.44.0
-      '@zag-js/radio-group': 1.44.0
-      '@zag-js/rating-group': 1.44.0
-      '@zag-js/react': 1.44.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      '@zag-js/select': 1.44.0
-      '@zag-js/slider': 1.44.0
-      '@zag-js/steps': 1.44.0
-      '@zag-js/switch': 1.44.0
-      '@zag-js/tabs': 1.44.0
-      '@zag-js/toast': 1.44.0
-      '@zag-js/tooltip': 1.44.0
-      '@zag-js/tree-view': 1.44.0
-      better-themes: 1.1.1(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      libphonenumber-js: 1.13.14
-      react: 19.2.8
-      react-dom: 19.2.8(react@19.2.8)
-      tailwind-merge: 3.7.0
-      tailwind-variants: 3.3.1(tailwind-merge@3.7.0)(tailwindcss@4.3.3)
-      tailwindcss-animate: 1.0.7(tailwindcss@4.3.3)
-    transitivePeerDependencies:
-      - tailwindcss
-
-  '@techsio/ui-kit@0.56.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)':
+  '@techsio/ui-kit@0.57.0(patch_hash=69403b6ef4dca822ec7751b5fb4573503aa263d396228a7fb3a5f72d05af7b36)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tailwindcss@4.3.3)':
     dependencies:
       '@dnd-kit/abstract': 0.5.0
       '@dnd-kit/collision': 0.5.0
@@ -17514,7 +17336,7 @@ snapshots:
 
   '@types/pg@8.20.0':
     dependencies:
-      '@types/node': 20.19.43
+      '@types/node': 26.6.3
       pg-protocol: 1.16.1
       pg-types: 2.2.0
 
@@ -17534,7 +17356,7 @@ snapshots:
 
   '@types/ws@8.18.2':
     dependencies:
-      '@types/node': 20.19.43
+      '@types/node': 26.6.3
 
   '@types/yargs-parser@21.0.3': {}
 
@@ -17915,14 +17737,6 @@ snapshots:
 
   '@xtuc/long@4.2.2': {}
 
-  '@zag-js/accordion@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
-
   '@zag-js/accordion@1.46.0':
     dependencies:
       '@zag-js/anatomy': 1.46.0
@@ -17931,26 +17745,11 @@ snapshots:
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
 
-  '@zag-js/anatomy@1.44.0': {}
-
   '@zag-js/anatomy@1.46.0': {}
-
-  '@zag-js/aria-hidden@1.44.0':
-    dependencies:
-      '@zag-js/dom-query': 1.44.0
 
   '@zag-js/aria-hidden@1.46.0':
     dependencies:
       '@zag-js/dom-query': 1.46.0
-
-  '@zag-js/carousel@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/scroll-snap': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
 
   '@zag-js/carousel@1.46.0':
     dependencies:
@@ -17974,15 +17773,6 @@ snapshots:
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
 
-  '@zag-js/checkbox@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/focus-visible': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
-
   '@zag-js/checkbox@1.46.0':
     dependencies:
       '@zag-js/anatomy': 1.46.0
@@ -18000,26 +17790,9 @@ snapshots:
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
 
-  '@zag-js/collection@1.44.0':
-    dependencies:
-      '@zag-js/utils': 1.44.0
-
   '@zag-js/collection@1.46.0':
     dependencies:
       '@zag-js/utils': 1.46.0
-
-  '@zag-js/combobox@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/collection': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dismissable': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/focus-visible': 1.44.0
-      '@zag-js/live-region': 1.44.0
-      '@zag-js/popper': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
 
   '@zag-js/combobox@1.46.0':
     dependencies:
@@ -18033,11 +17806,6 @@ snapshots:
       '@zag-js/popper': 1.46.0
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
-
-  '@zag-js/core@1.44.0':
-    dependencies:
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/utils': 1.44.0
 
   '@zag-js/core@1.46.0':
     dependencies:
@@ -18072,18 +17840,6 @@ snapshots:
     dependencies:
       '@internationalized/date': 3.12.4
 
-  '@zag-js/dialog@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/aria-hidden': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dismissable': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/focus-trap': 1.44.0
-      '@zag-js/remove-scroll': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
-
   '@zag-js/dialog@1.46.0':
     dependencies:
       '@zag-js/anatomy': 1.46.0
@@ -18096,21 +17852,11 @@ snapshots:
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
 
-  '@zag-js/dismissable@1.44.0':
-    dependencies:
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/interact-outside': 1.44.0
-      '@zag-js/utils': 1.44.0
-
   '@zag-js/dismissable@1.46.0':
     dependencies:
       '@zag-js/dom-query': 1.46.0
       '@zag-js/interact-outside': 1.46.0
       '@zag-js/utils': 1.46.0
-
-  '@zag-js/dom-query@1.44.0':
-    dependencies:
-      '@zag-js/types': 1.44.0
 
   '@zag-js/dom-query@1.46.0':
     dependencies:
@@ -18142,17 +17888,9 @@ snapshots:
     dependencies:
       '@zag-js/i18n-utils': 1.46.0
 
-  '@zag-js/focus-trap@1.44.0':
-    dependencies:
-      '@zag-js/dom-query': 1.44.0
-
   '@zag-js/focus-trap@1.46.0':
     dependencies:
       '@zag-js/dom-query': 1.46.0
-
-  '@zag-js/focus-visible@1.44.0':
-    dependencies:
-      '@zag-js/dom-query': 1.44.0
 
   '@zag-js/focus-visible@1.46.0':
     dependencies:
@@ -18162,39 +17900,16 @@ snapshots:
     dependencies:
       '@zag-js/dom-query': 1.46.0
 
-  '@zag-js/i18n-utils@1.44.0':
-    dependencies:
-      '@zag-js/dom-query': 1.44.0
-
   '@zag-js/i18n-utils@1.46.0':
     dependencies:
       '@zag-js/dom-query': 1.46.0
-
-  '@zag-js/interact-outside@1.44.0':
-    dependencies:
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/utils': 1.44.0
 
   '@zag-js/interact-outside@1.46.0':
     dependencies:
       '@zag-js/dom-query': 1.46.0
       '@zag-js/utils': 1.46.0
 
-  '@zag-js/live-region@1.44.0': {}
-
   '@zag-js/live-region@1.46.0': {}
-
-  '@zag-js/menu@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dismissable': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/focus-visible': 1.44.0
-      '@zag-js/popper': 1.44.0
-      '@zag-js/rect-utils': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
 
   '@zag-js/menu@1.46.0':
     dependencies:
@@ -18208,15 +17923,6 @@ snapshots:
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
 
-  '@zag-js/number-input@1.44.0':
-    dependencies:
-      '@internationalized/number': 3.6.7
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
-
   '@zag-js/number-input@1.46.0':
     dependencies:
       '@internationalized/number': 3.6.9
@@ -18226,14 +17932,6 @@ snapshots:
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
 
-  '@zag-js/pagination@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
-
   '@zag-js/pagination@1.46.0':
     dependencies:
       '@zag-js/anatomy': 1.46.0
@@ -18241,19 +17939,6 @@ snapshots:
       '@zag-js/dom-query': 1.46.0
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
-
-  '@zag-js/popover@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/aria-hidden': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dismissable': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/focus-trap': 1.44.0
-      '@zag-js/popper': 1.44.0
-      '@zag-js/remove-scroll': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
 
   '@zag-js/popover@1.46.0':
     dependencies:
@@ -18268,12 +17953,6 @@ snapshots:
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
 
-  '@zag-js/popper@1.44.0':
-    dependencies:
-      '@floating-ui/dom': 1.8.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/utils': 1.44.0
-
   '@zag-js/popper@1.46.0':
     dependencies:
       '@floating-ui/dom': 1.8.0
@@ -18286,15 +17965,6 @@ snapshots:
       '@zag-js/dom-query': 1.46.0
       '@zag-js/types': 1.46.0
 
-  '@zag-js/radio-group@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/focus-visible': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
-
   '@zag-js/radio-group@1.46.0':
     dependencies:
       '@zag-js/anatomy': 1.46.0
@@ -18304,14 +17974,6 @@ snapshots:
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
 
-  '@zag-js/rating-group@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
-
   '@zag-js/rating-group@1.46.0':
     dependencies:
       '@zag-js/anatomy': 1.46.0
@@ -18319,15 +17981,6 @@ snapshots:
       '@zag-js/dom-query': 1.46.0
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
-
-  '@zag-js/react@1.44.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
-    dependencies:
-      '@zag-js/core': 1.44.0
-      '@zag-js/store': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
-      react: 19.2.8
-      react-dom: 19.2.8(react@19.2.8)
 
   '@zag-js/react@1.46.0(react-dom@19.2.8(react@19.2.8))(react@19.2.8)':
     dependencies:
@@ -18338,37 +17991,15 @@ snapshots:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)
 
-  '@zag-js/rect-utils@1.44.0': {}
-
   '@zag-js/rect-utils@1.46.0': {}
-
-  '@zag-js/remove-scroll@1.44.0':
-    dependencies:
-      '@zag-js/dom-query': 1.44.0
 
   '@zag-js/remove-scroll@1.46.0':
     dependencies:
       '@zag-js/dom-query': 1.46.0
 
-  '@zag-js/scroll-snap@1.44.0':
-    dependencies:
-      '@zag-js/dom-query': 1.44.0
-
   '@zag-js/scroll-snap@1.46.0':
     dependencies:
       '@zag-js/dom-query': 1.46.0
-
-  '@zag-js/select@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/collection': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dismissable': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/focus-visible': 1.44.0
-      '@zag-js/popper': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
 
   '@zag-js/select@1.46.0':
     dependencies:
@@ -18382,14 +18013,6 @@ snapshots:
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
 
-  '@zag-js/slider@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
-
   '@zag-js/slider@1.46.0':
     dependencies:
       '@zag-js/anatomy': 1.46.0
@@ -18397,14 +18020,6 @@ snapshots:
       '@zag-js/dom-query': 1.46.0
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
-
-  '@zag-js/steps@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
 
   '@zag-js/steps@1.46.0':
     dependencies:
@@ -18414,22 +18029,9 @@ snapshots:
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
 
-  '@zag-js/store@1.44.0':
-    dependencies:
-      proxy-compare: 3.0.1
-
   '@zag-js/store@1.46.0':
     dependencies:
       proxy-compare: 3.0.1
-
-  '@zag-js/switch@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/focus-visible': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
 
   '@zag-js/switch@1.46.0':
     dependencies:
@@ -18440,14 +18042,6 @@ snapshots:
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
 
-  '@zag-js/tabs@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
-
   '@zag-js/tabs@1.46.0':
     dependencies:
       '@zag-js/anatomy': 1.46.0
@@ -18455,15 +18049,6 @@ snapshots:
       '@zag-js/dom-query': 1.46.0
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
-
-  '@zag-js/toast@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dismissable': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
 
   '@zag-js/toast@1.46.0':
     dependencies:
@@ -18473,16 +18058,6 @@ snapshots:
       '@zag-js/dom-query': 1.46.0
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
-
-  '@zag-js/tooltip@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/focus-visible': 1.44.0
-      '@zag-js/popper': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
 
   '@zag-js/tooltip@1.46.0':
     dependencies:
@@ -18506,15 +18081,6 @@ snapshots:
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
 
-  '@zag-js/tree-view@1.44.0':
-    dependencies:
-      '@zag-js/anatomy': 1.44.0
-      '@zag-js/collection': 1.44.0
-      '@zag-js/core': 1.44.0
-      '@zag-js/dom-query': 1.44.0
-      '@zag-js/types': 1.44.0
-      '@zag-js/utils': 1.44.0
-
   '@zag-js/tree-view@1.46.0':
     dependencies:
       '@zag-js/anatomy': 1.46.0
@@ -18524,15 +18090,9 @@ snapshots:
       '@zag-js/types': 1.46.0
       '@zag-js/utils': 1.46.0
 
-  '@zag-js/types@1.44.0':
-    dependencies:
-      csstype: 3.2.3
-
   '@zag-js/types@1.46.0':
     dependencies:
       csstype: 3.2.3
-
-  '@zag-js/utils@1.44.0': {}
 
   '@zag-js/utils@1.46.0': {}
 
@@ -18844,7 +18404,7 @@ snapshots:
 
   bun-types@1.4.0:
     dependencies:
-      '@types/node': 20.19.43
+      '@types/node': 26.6.3
 
   bundle-name@4.1.1:
     dependencies:
@@ -20276,7 +19836,7 @@ snapshots:
 
   happy-dom@20.8.3:
     dependencies:
-      '@types/node': 20.19.43
+      '@types/node': 26.6.3
       '@types/whatwg-mimetype': 3.0.2
       '@types/ws': 8.18.2
       entities: 7.0.1
@@ -20818,8 +20378,6 @@ snapshots:
     dependencies:
       prelude-ls: 1.2.1
       type-check: 0.4.0
-
-  libphonenumber-js@1.13.14: {}
 
   libphonenumber-js@1.13.15: {}
 
@@ -22117,7 +21675,7 @@ snapshots:
       '@protobufjs/path': 1.1.2
       '@protobufjs/pool': 1.1.0
       '@protobufjs/utf8': 1.1.2
-      '@types/node': 20.19.43
+      '@types/node': 26.6.3
       long: 5.3.2
 
   protocols@2.0.2: {}
@@ -22777,10 +22335,6 @@ snapshots:
   tailwind-variants@3.3.1(tailwind-merge@3.7.0)(tailwindcss@4.3.3):
     optionalDependencies:
       tailwind-merge: 3.7.0
-      tailwindcss: 4.3.3
-
-  tailwindcss-animate@1.0.7(tailwindcss@4.3.3):
-    dependencies:
       tailwindcss: 4.3.3
 
   tailwindcss@4.3.3: {}

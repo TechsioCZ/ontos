@@ -16,13 +16,13 @@
     "effect": "4.0.0-rc.117"
   },
   "peerDependencies": {
-    "@techsio/ui-kit": "0.56.0",
+    "@techsio/ui-kit": "catalog:",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@rstest/core": "0.11.12",
-    "@techsio/ui-kit": "0.56.0",
+    "@techsio/ui-kit": "catalog:",
     "@types/node": "^26.4.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",

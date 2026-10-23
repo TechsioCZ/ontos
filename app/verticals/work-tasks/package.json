@@ -58,7 +58,7 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "@techsio/ui-kit": "0.56.0",
+    "@techsio/ui-kit": "catalog:",
     "@app/property-portfolio": "workspace:*",
     "@app/legal-agreements": "workspace:*",
     "@app/workforce": "workspace:*",

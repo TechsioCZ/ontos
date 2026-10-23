@@ -55,8 +55,26 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
-          sparse-checkout: app/topology
+          sparse-checkout: |
+            app/topology
+            app/pnpm-lock.yaml
+            app/pnpm-workspace.yaml
           sparse-checkout-cone-mode: false
+
+      - name: Require one published UI kit version
+        working-directory: app
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          const workspace = readFileSync('pnpm-workspace.yaml', 'utf8');
+          const catalogVersion = workspace.match(/^catalog:\n  '@techsio\/ui-kit': (\S+)$/m)?.[1];
+          assert.ok(catalogVersion, 'UI kit must have one default catalog version');
+          const lock = readFileSync('pnpm-lock.yaml', 'utf8');
+          const versions = [...new Set([...lock.matchAll(/^  '@techsio\/ui-kit@([^'(:\s]+)[^\n]*:/gm)].map(match => match[1]))];
+          assert.deepEqual(versions, [catalogVersion], `UI kit lockfile versions: ${versions.join(', ')}`);
+          console.log(`Every UI kit resolution uses published ${catalogVersion}`);
+          NODE
 
       # The served set is the Shell plus every module of the release intent (what the composition publishes).
       - name: List the Shell and every released module
