@@ -20,6 +20,7 @@ import { isVerifiedOutboxWorkerHandlerContext } from './verified-handler-context
 
 export { ActionAuthorizationLifecycleLive } from '../permissions/action-authorization-lifecycle.ts';
 export { ScopedRoleMembershipLifecycleLive } from '../permissions/scoped-role-membership-lifecycle.ts';
+export { SpiceDbConfigError } from '../permissions/config-error.ts';
 export { SpiceDbConfigLive } from '../permissions/config.ts';
 export { CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS } from './core-system-subscriptions.ts';
 export { OutboxRuntimeLive } from './runtime.ts';
