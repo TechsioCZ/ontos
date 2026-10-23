@@ -11,22 +11,20 @@ import type {
 } from '@app/shared-contracts/agent-access';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
+import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { Effect } from 'effect';
-import { useCallback, useEffect, useState } from 'react';
-import {
-  loadAgentEntities,
-  revokeAgentConnection,
-  runAgentCommand,
-  saveAgentOperators,
-} from '../../../../api/agent-entities-client.ts';
+import { useCallback, useState } from 'react';
+import { revokeAgentConnection, runAgentCommand, saveAgentOperators } from '../../../../api/agent-entities-client.ts';
 import type { AgentFailure } from '../../../../api/agent-entities-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { usePageData } from '../../../../runtime/use-page-data.ts';
 import { newRequestToken } from '../../prodej/zamestnanci/employee-model.ts';
 import { AgentEditorPanel } from './agent-editor-panel.tsx';
+import { agentEntitiesData } from './people-data.ts';
 
 const key = 'workforce.agents.section';
 const connectionsKey = 'workforce.agents.connections';
@@ -38,11 +36,6 @@ const statusVariant = { active: 'success', archived: 'outline', disabled: 'dange
 
 type Notify = (title: string, description?: string) => void;
 
-type LoadState =
-  | { readonly status: 'loading' }
-  | { readonly detail: string | null; readonly reason: AgentFailure; readonly status: 'failed' }
-  | { readonly overview: AgentEntityOverview; readonly status: 'ready' };
-
 type EditingState = { readonly mode: 'create' } | { readonly agent: AgentEntity; readonly mode: 'edit' };
 
 interface AgentStatusAction {
@@ -51,6 +44,8 @@ interface AgentStatusAction {
 }
 
 export interface AgentEntitiesSectionProps {
+  /** Key of the prepared agent dataset (see `people-data.ts`). */
+  readonly legalEntityId: string;
   readonly onNotify: (title: string, description?: string) => void;
   /** Person name as the people table shows it (Lidé a role labels some demo principals in Czech). */
   readonly personLabel: (displayName: string) => string;
@@ -83,41 +78,25 @@ const sameIds = (left: readonly string[], right: readonly string[]) =>
   left.length === right.length && left.every((id) => right.includes(id));
 
 /** Agents of the selected company: list, create/edit panel, activate/deactivate/delete, operators, connections and history. */
-export const AgentEntitiesSection = ({ onNotify, personLabel }: AgentEntitiesSectionProps) => {
+export const AgentEntitiesSection = ({ legalEntityId, onNotify, personLabel }: AgentEntitiesSectionProps) => {
   const { t } = useModernI18n();
-  const [state, setState] = useState<LoadState>({ status: 'loading' });
+  // Prepared with the page; a change re-reads it while the current agents stay on screen.
+  const state = usePageData(agentEntitiesData, legalEntityId);
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [statusAction, setStatusAction] = useState<AgentStatusAction | null>(null);
 
   const fetchOverview = useCallback(() => {
-    void browserRuntime.runPromise(loadAgentEntities).then(
-      (outcome) =>
-        setState(
-          outcome.status === 'ok'
-            ? { overview: outcome.value, status: 'ready' }
-            : { detail: outcome.detail, reason: outcome.reason, status: 'failed' },
-        ),
-      () => setState({ detail: null, reason: 'error', status: 'failed' }),
-    );
-  }, []);
+    void browserRuntime.runPromise(agentEntitiesData.refresh(legalEntityId));
+  }, [legalEntityId]);
 
-  useEffect(() => {
-    fetchOverview();
-  }, [fetchOverview]);
-
-  const retry = () => {
-    setState({ status: 'loading' });
-    fetchOverview();
-  };
-
-  const overview = state.status === 'ready' ? labelled(state.overview, personLabel) : null;
+  const overview = state.state === 'ready' ? labelled(state.value, personLabel) : null;
 
   return (
     <>
       <SectionCard
         actions={
           <Button
-            disabled={state.status !== 'ready'}
+            disabled={state.state !== 'ready'}
             icon="icon-[mdi--robot-outline]"
             onClick={() => setEditing({ mode: 'create' })}
             size="sm"
@@ -131,14 +110,28 @@ export const AgentEntitiesSection = ({ onNotify, personLabel }: AgentEntitiesSec
         <div className="flex min-w-0 flex-col gap-200">
           <p className="text-fg-secondary text-sm">{t(`${key}.description`)}</p>
 
-          {state.status === 'loading' && <p className="text-fg-secondary text-sm">{t(`${key}.loading`)}</p>}
+          {state.state === 'pending' && (
+            // Only on a cold mount the Shell could not prepare: one quiet skeleton, the copy stays for screen readers.
+            <div aria-busy="true">
+              <span className="sr-only">{t(`${key}.loading`)}</span>
+              <Skeleton isLoaded={false}>
+                <Skeleton.Rectangle className="h-24 w-full" />
+              </Skeleton>
+            </div>
+          )}
 
-          {state.status === 'failed' && (
+          {state.state === 'failed' && (
             <div className="flex flex-wrap items-center gap-150">
               <StatusText showIcon status="error">
-                {state.detail ?? t(`${PEOPLE_ERROR_KEY}.${state.reason}`)}
+                {state.error.detail ?? t(`${PEOPLE_ERROR_KEY}.${state.error.reason}`)}
               </StatusText>
-              <Button onClick={retry} size="sm" theme="outlined" variant="secondary">
+              <Button
+                disabled={state.refreshing}
+                onClick={fetchOverview}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
                 {t(`${key}.retry`)}
               </Button>
             </div>

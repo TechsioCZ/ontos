@@ -26,8 +26,9 @@ import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef, DataTableTranslations, Row } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { Effect } from 'effect';
-import { useEffect, useState } from 'react';
-import { loadPeopleOverview, runPeopleCommand } from '../../../../api/people-admin-client.ts';
+import type { ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
+import { useState } from 'react';
+import { runPeopleCommand } from '../../../../api/people-admin-client.ts';
 import type {
   AuditEntry,
   ManageResult,
@@ -40,7 +41,9 @@ import type {
 import { isCrmSalesRole, syncCrmSalesperson } from '../../../../api/crm-salesperson-sync.ts';
 import type { SalespersonAccount, SalespersonSync } from '../../../../api/crm-salesperson-sync.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { legalEntityOf, usePageData } from '../../../../runtime/use-page-data.ts';
 import { AgentEntitiesSection } from './agent-entities-section.tsx';
+import { peopleData } from './people-data.ts';
 import csResource from '../../../../../locales/cs/workforce.json';
 import enResource from '../../../../../locales/en/workforce.json';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
@@ -63,6 +66,18 @@ type LoadState =
   | { readonly reason: PeopleFailure; readonly status: 'failed' }
   | { readonly status: 'loading' }
   | { readonly data: PeopleOverview; readonly status: 'ready' };
+
+const loadStateOf = (snapshot: PageDataSnapshot<PeopleOverview, PeopleFailure>): LoadState => {
+  if (snapshot.state === 'pending') {
+    return { status: 'loading' };
+  }
+  return snapshot.state === 'failed'
+    ? { reason: snapshot.error, status: 'failed' }
+    : { data: snapshot.value, status: 'ready' };
+};
+
+/** Named export of the exposed page: the Shell prepares the people and the agents before it reveals the page. */
+export { preloadPeoplePage as preloadPage } from './people-data.ts';
 
 const statusVariant = { active: 'success', archived: 'outline', disabled: 'danger' } as const;
 
@@ -655,22 +670,22 @@ const RolesCard = ({ data }: { readonly data: PeopleOverview }) => {
   );
 };
 
-const PeoplePageContent = () => {
+const PeoplePageContent = ({ legalEntityId }: { readonly legalEntityId: string }) => {
   const { t } = useModernI18n();
   const toaster = useToast();
-  const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const snapshot = usePageData(peopleData, legalEntityId);
+  const state = loadStateOf(snapshot);
   const [creating, setCreating] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('active');
   const [allAudit, setAllAudit] = useState(false);
 
+  /** Re-reads the overview while the current one stays on screen. */
   const reload = () => {
-    void browserRuntime
-      .runPromise(loadPeopleOverview)
-      .then((outcome) => setState(outcome.status === 'ok' ? { data: outcome.value, status: 'ready' } : outcome));
+    void browserRuntime.runPromise(peopleData.refresh(legalEntityId));
   };
-  useEffect(reload, []);
+  const reloading = snapshot.state !== 'pending' && snapshot.refreshing;
 
   const data = state.status === 'ready' ? state.data : undefined;
   const identityLabels: Readonly<Record<string, string>> = {
@@ -738,7 +753,7 @@ const PeoplePageContent = () => {
           <EmptyState
             action={
               reason === 'error' ? (
-                <Button onClick={reload} size="sm" theme="outlined" variant="secondary">
+                <Button disabled={reloading} onClick={reload} size="sm" theme="outlined" variant="secondary">
                   {t(`${key}.error.retry`)}
                 </Button>
               ) : undefined
@@ -766,7 +781,14 @@ const PeoplePageContent = () => {
         <PageHeader
           actions={
             <>
-              <Button icon="icon-[mdi--refresh]" onClick={reload} size="sm" theme="outlined" variant="secondary">
+              <Button
+                disabled={reloading}
+                icon="icon-[mdi--refresh]"
+                onClick={reload}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
                 {t(`${key}.reload`)}
               </Button>
               <Button
@@ -859,6 +881,7 @@ const PeoplePageContent = () => {
 
         {data !== undefined && (
           <AgentEntitiesSection
+            legalEntityId={legalEntityId}
             onNotify={(title, description) => toaster.create({ description, title, type: 'success' })}
             personLabel={personLabel}
           />
@@ -899,7 +922,8 @@ const PeoplePageContent = () => {
   );
 };
 
-const PeoplePage = () => {
+/** Rendered by the Shell with the props its `preloadPage` received; the standalone app passes none. */
+const PeoplePage = (props: Partial<ModulePageProps>) => {
   const location = useRouterState({ select: (routerState) => routerState.location.href });
   return (
     <FederatedI18nBoundary
@@ -908,7 +932,7 @@ const PeoplePage = () => {
       resources={workforceI18nResources}
       supportedLanguages={['en', 'cs']}
     >
-      <PeoplePageContent key={location} />
+      <PeoplePageContent key={location} legalEntityId={legalEntityOf(props)} />
     </FederatedI18nBoundary>
   );
 };

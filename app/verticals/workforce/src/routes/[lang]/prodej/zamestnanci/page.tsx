@@ -12,7 +12,9 @@ import {
   paginationTranslations,
   surfaceTileClassName,
 } from '@app/admin-ui';
-import { BulkTagDialog, TagCell, TagFilter, useTagsOfKind } from '@app/tagging/components/tag-controls';
+import { modulePagePreload } from '@app/shared-contracts/page-data';
+import type { ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
+import { BulkTagDialog, TagCell, TagFilter } from '@app/tagging/components/tag-controls';
 import type { TagCatalog, TagsStatus } from '@app/tagging/components/tag-controls';
 import type { SubjectId, Tag, TagId } from '@app/tagging/contracts/records';
 import { SubjectIdSchema } from '@app/tagging/contracts/records';
@@ -27,16 +29,18 @@ import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef, DataTableTranslations, Row } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { Effect, Match, Option, Schema } from 'effect';
-import { createContext, use, useEffect, useState } from 'react';
+import { createContext, use, useState } from 'react';
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
-import { executeRecords } from '../../../../api/records-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { legalEntityOf, usePageData } from '../../../../runtime/use-page-data.ts';
 import type { Employee, EmployeeRole, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import csResource from '../../../../../locales/cs/workforce.json';
 import enResource from '../../../../../locales/en/workforce.json';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
 import { AiActivityCard } from './ai-activity-card.tsx';
+import { aiActivityData, employeeTagsData, employeesData } from './employees-data.ts';
+import type { EmployeeTags, EmployeesLoadError } from './employees-data.ts';
 import { BulkDepartmentDialog, BulkRoleDialog, EmployeeFormDialog, selectLabelProps } from './employee-dialogs.tsx';
 import type { CommitCommand, ShownEdit } from './employee-dialogs.tsx';
 import type { CommitOutcome, EmployeeFilters } from './employee-model.ts';
@@ -80,22 +84,30 @@ type BulkDialogKind = typeof BulkDialogKindSchema.Type;
 const salesStaff = (byRole: Partial<Record<EmployeeRole, number>>): number =>
   (byRole.SALES_HEAD ?? 0) + (byRole.SALES_REP ?? 0);
 
-/** Reads every Employee the caller may see, unfiltered, so the stat tiles describe the whole team. */
-const loadEmployees = (onLoaded: (state: LoadState) => void): void => {
-  void browserRuntime.runPromise(
-    newRequestToken.pipe(
-      Effect.flatMap((token) => executeRecords({}, `workforce:list:${token}`)),
-      Effect.match({
-        onFailure: (error): LoadState =>
-          Match.value(error).pipe(
-            Match.tag('RecordsForbiddenProblem', (): LoadState => ({ status: 'forbidden' })),
-            Match.orElse((): LoadState => ({ status: 'error' })),
-          ),
-        onSuccess: (data): LoadState => ({ data, status: 'ready' }),
-      }),
-      Effect.map(onLoaded),
-    ),
-  );
+/**
+ * Named export of the exposed page: the Shell runs it before it reveals the page. The employees and their tags are
+ * awaited; the AI activity feed only starts, so a slow audit read never holds the page back.
+ */
+export const preloadPage = modulePagePreload(
+  (props) => employeesData.preload(legalEntityOf(props)),
+  (props) => employeeTagsData.preload(legalEntityOf(props)),
+  (props) => Effect.sync(() => aiActivityData.ensure(legalEntityOf(props))),
+);
+
+const loadStateOf = (snapshot: PageDataSnapshot<RecordsResponse, EmployeesLoadError>): LoadState => {
+  if (snapshot.state === 'pending') {
+    return { status: 'loading' };
+  }
+  return snapshot.state === 'failed' ? { status: snapshot.error } : { data: snapshot.value, status: 'ready' };
+};
+
+const noTags: EmployeeTags = { catalog: [], tagsBySubject: new Map() };
+
+const tagsStatusOf = (snapshot: PageDataSnapshot<EmployeeTags, unknown>): TagsStatus => {
+  if (snapshot.state === 'pending') {
+    return 'loading';
+  }
+  return snapshot.state === 'failed' ? 'error' : 'ready';
 };
 
 /** Text columns sort in Czech collation. The default sort compares code points, so "Účetní" would land after "Vedoucí". */
@@ -165,17 +177,11 @@ const outcomeOfFailure = (error: Effect.Error<ReturnType<typeof executeApplyComm
   );
 
 /** The list after a saved edit: the named rows show the saved fields. The reread that follows brings the server's values. */
-const withSavedEdit = (state: LoadState, shown: ShownEdit): LoadState => {
-  if (state.status !== 'ready') {
-    return state;
-  }
+const withSavedEdit = (data: RecordsResponse, shown: ShownEdit): RecordsResponse => {
   const ids = new Set(shown.ids);
   return {
-    ...state,
-    data: {
-      ...state.data,
-      items: state.data.items.map((employee) => (ids.has(employee.id) ? { ...employee, ...shown.patch } : employee)),
-    },
+    ...data,
+    items: data.items.map((employee) => (ids.has(employee.id) ? { ...employee, ...shown.patch } : employee)),
   };
 };
 
@@ -454,10 +460,11 @@ const employeeColumns = (t: (key: string) => string): ColumnDef<Employee>[] => [
   },
 ];
 
-const EmployeesPageContent = () => {
+const EmployeesPageContent = ({ legalEntityId }: { readonly legalEntityId: string }) => {
   const { t } = useModernI18n();
   const toaster = useToast();
-  const [state, setState] = useState<LoadState>({ status: 'loading' });
+  const state = loadStateOf(usePageData(employeesData, legalEntityId));
+  const tagsSnapshot = usePageData(employeeTagsData, legalEntityId);
   const [filters, setFilters] = useState<EmployeeFilters>(noFilters);
   const [selection, setSelection] = useState<Selection>({});
   const [form, setForm] = useState<{ readonly employee: Employee | null } | null>(null);
@@ -466,13 +473,12 @@ const EmployeesPageContent = () => {
   const [tagFilter, setTagFilter] = useState<TagId | null>(null);
   const [tagDialogOpen, setTagDialogOpen] = useState(false);
 
-  useEffect(() => {
-    loadEmployees(setState);
-  }, []);
+  /** Re-reads the list while the current rows stay on screen. */
+  const reload = () => {
+    void browserRuntime.runPromise(employeesData.refresh(legalEntityId));
+  };
 
-  const reload = () => loadEmployees(setState);
-
-  const showSaved = (shown: ShownEdit) => setState((current) => withSavedEdit(current, shown));
+  const showSaved = (shown: ShownEdit) => employeesData.update(legalEntityId, (data) => withSavedEdit(data, shown));
 
   /** Sends one command on the revision the page last read. A conflict or a success reloads the list. */
   const commit: CommitCommand = (build, successKey, shown) => {
@@ -513,9 +519,14 @@ const EmployeesPageContent = () => {
   const data = state.status === 'ready' ? state.data : undefined;
   const items = data?.items ?? [];
   const canWrite = data?.canWrite === true;
-  // Starts with the employee read instead of after it, so the Štítky cells settle together with the rows. The same
-  // read feeds the tag filter, so the page issues no separate catalog read.
-  const { catalog: tagCatalog, refetch: refetchTags, status: tagStatus, tagsBySubject } = useTagsOfKind('employee');
+  // Prepared together with the employee read, so the Štítky cells settle with the rows. The same read feeds the tag
+  // filter, so the page issues no separate catalog read.
+  const { catalog: tags, tagsBySubject } = tagsSnapshot.state === 'ready' ? tagsSnapshot.value : noTags;
+  const tagStatus = tagsStatusOf(tagsSnapshot);
+  const refetchTags = () => {
+    void browserRuntime.runPromise(employeeTagsData.refresh(legalEntityId));
+  };
+  const tagCatalog: TagCatalog = { refetch: refetchTags, status: tagStatus, tags };
   // The tag filter works on the tags already loaded for the list, so picking a tag never waits for another read.
   const tagFilterLoading = tagFilter !== null && tagStatus === 'loading';
   const tagFilterFailed = tagFilter !== null && tagStatus === 'error';
@@ -697,7 +708,7 @@ const EmployeesPageContent = () => {
           </EmployeeTagsContext>
         </EmployeeTagStatusContext>
 
-        <AiActivityCard />
+        <AiActivityCard legalEntityId={legalEntityId} />
 
         <PermissionsCard />
       </div>
@@ -724,7 +735,8 @@ const EmployeesPageContent = () => {
   );
 };
 
-const EmployeesPage = () => {
+/** Rendered by the Shell with the props its `preloadPage` received; the standalone app passes none. */
+const EmployeesPage = (props: Partial<ModulePageProps>) => {
   const location = useRouterState({ select: (routerState) => routerState.location.href });
   return (
     <FederatedI18nBoundary
@@ -733,7 +745,7 @@ const EmployeesPage = () => {
       resources={workforceI18nResources}
       supportedLanguages={['en', 'cs']}
     >
-      <EmployeesPageContent key={location} />
+      <EmployeesPageContent key={location} legalEntityId={legalEntityOf(props)} />
     </FederatedI18nBoundary>
   );
 };

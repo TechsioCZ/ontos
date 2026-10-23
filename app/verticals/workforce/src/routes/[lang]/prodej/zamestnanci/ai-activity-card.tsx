@@ -3,21 +3,15 @@ import { EmptyState, SectionCard } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Skeleton } from '@techsio/ui-kit/atoms/skeleton';
-import { Effect } from 'effect';
-import { useCallback, useEffect, useState } from 'react';
-import { executeRecords } from '../../../../api/records-client.ts';
+import { useCallback, useEffect } from 'react';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { usePageData } from '../../../../runtime/use-page-data.ts';
 import type { AiActivityEntry } from '../../../../../shared/apis/records.ts';
-import { newRequestToken } from './employee-model.ts';
+import { aiActivityData } from './employees-data.ts';
 
 const key = 'workforce.pages.employees.aiActivity';
 /** The list refreshes itself while the page is open, so an AI action appears without a reload. */
 const REFRESH_MS = 10_000;
-
-type Feed =
-  | { readonly status: 'loading' }
-  | { readonly status: 'unavailable' }
-  | { readonly entries: readonly AiActivityEntry[]; readonly status: 'ready' };
 
 type BadgeVariant = 'danger' | 'info' | 'outline' | 'primary' | 'success' | 'warning';
 
@@ -41,31 +35,23 @@ const levelOf = (entry: AiActivityEntry): Level | undefined => {
   return level === 'A' || level === 'B' || level === 'C' ? level : undefined;
 };
 
-const loadFeed = (onLoaded: (feed: Feed) => void) => {
-  void browserRuntime.runPromise(
-    newRequestToken.pipe(
-      Effect.flatMap((token) => executeRecords({ includeAiActivity: true }, `workforce:ai-activity:${token}`)),
-      Effect.match({
-        onFailure: (): Feed => ({ status: 'unavailable' }),
-        onSuccess: (data): Feed =>
-          data.aiActivity === undefined ? { status: 'unavailable' } : { entries: data.aiActivity, status: 'ready' },
-      }),
-      Effect.map(onLoaded),
-    ),
-  );
-};
+const noEntries: readonly AiActivityEntry[] = [];
 
 /**
  * "AI aktivita": the latest Core audit events of non-human principals (AI agents A/B/C, integrations) in the selected
- * company — who, what, result, when. Read from the real Core audit, refreshed every 10 s.
+ * company — who, what, result, when. Read from the real Core audit, refreshed every 10 s. The page's `preloadPage`
+ * starts the read with the page; it is secondary, so the card keeps its own skeleton until the read settles.
  */
-export const AiActivityCard = () => {
+export const AiActivityCard = ({ legalEntityId }: { readonly legalEntityId: string }) => {
   const { language, t } = useModernI18n();
-  const [feed, setFeed] = useState<Feed>({ status: 'loading' });
-  const refresh = useCallback(() => loadFeed(setFeed), []);
+  const feed = usePageData(aiActivityData, legalEntityId);
+  // A refresh keeps the current entries on screen until the new read settles.
+  const refresh = useCallback(() => {
+    void browserRuntime.runPromise(aiActivityData.refresh(legalEntityId));
+  }, [legalEntityId]);
 
+  // The first read is the prepared (or ensured) entry; the timer only keeps it current.
   useEffect(() => {
-    refresh();
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible') {
         refresh();
@@ -86,7 +72,7 @@ export const AiActivityCard = () => {
   const label = (group: string, value: string, fallback: string) =>
     t(`${key}.${group}.${value.replaceAll('.', '_')}`, { defaultValue: fallback });
 
-  const entries = feed.status === 'ready' ? feed.entries : [];
+  const entries = feed.state === 'ready' ? feed.value : noEntries;
   const executed = entries.filter((entry) => entry.outcome === 'succeeded').length;
   const denied = entries.filter((entry) => entry.outcome === 'denied').length;
 
@@ -94,7 +80,7 @@ export const AiActivityCard = () => {
     <SectionCard
       actions={
         <>
-          {feed.status === 'ready' && (
+          {feed.state === 'ready' && (
             <>
               <Badge size="sm" variant="success">
                 {t(`${key}.executed`, { count: executed })}
@@ -112,16 +98,16 @@ export const AiActivityCard = () => {
       title={t(`${key}.title`)}
     >
       <p className="-mt-100 text-fg-secondary text-sm">{t(`${key}.description`)}</p>
-      {feed.status === 'loading' && (
+      {feed.state === 'pending' && (
         <Skeleton isLoaded={false}>
           <Skeleton.Rectangle className="h-40 w-full" />
         </Skeleton>
       )}
-      {feed.status === 'unavailable' && <EmptyState title={t(`${key}.unavailable`)} />}
-      {feed.status === 'ready' && entries.length === 0 && (
+      {feed.state === 'failed' && <EmptyState title={t(`${key}.unavailable`)} />}
+      {feed.state === 'ready' && entries.length === 0 && (
         <EmptyState description={t(`${key}.emptyDescription`)} title={t(`${key}.empty`)} />
       )}
-      {feed.status === 'ready' && entries.length > 0 && (
+      {feed.state === 'ready' && entries.length > 0 && (
         <div className="max-h-[28rem] overflow-auto">
           <table className="w-full border-collapse text-left text-sm">
             <thead className="sticky top-0 bg-surface">
