@@ -1,4 +1,11 @@
-import { v1 } from '@authzed/authzed-node';
+import {
+  ObjectReference,
+  Relationship,
+  RelationshipUpdate,
+  RelationshipUpdate_Operation,
+  SubjectReference,
+} from '@authzed/authzed-node/v1/core';
+import { WriteRelationshipsRequest } from '@authzed/authzed-node/v1/permissions';
 import { Context, Effect, Layer, Option, Schema } from 'effect';
 import type { Scope } from 'effect';
 
@@ -176,7 +183,7 @@ const validRelationships = (relationships: readonly ResourceContainmentRelations
   new Set(relationships.map(membershipKey)).size === relationships.length;
 
 const objectReference = ({ objectId, objectType }: SpiceDbResourceReference) =>
-  v1.ObjectReference.create({ objectId, objectType });
+  ObjectReference.create({ objectId, objectType });
 
 export const makeResourceContainmentRelationshipMutation = (
   client: Pick<ResourceContainmentRelationshipMutationClient, 'writeRelationships'>,
@@ -189,16 +196,16 @@ export const makeResourceContainmentRelationshipMutation = (
         return yield* unavailable();
       }
       const updates = input.relationships.map(({ container, relation, resource }) =>
-        v1.RelationshipUpdate.create({
-          operation: v1.RelationshipUpdate_Operation.TOUCH,
-          relationship: v1.Relationship.create({
+        RelationshipUpdate.create({
+          operation: RelationshipUpdate_Operation.TOUCH,
+          relationship: Relationship.create({
             relation,
             resource: objectReference(resource),
-            subject: v1.SubjectReference.create({ object: objectReference(container) }),
+            subject: SubjectReference.create({ object: objectReference(container) }),
           }),
         }),
       );
-      return yield* client.writeRelationships(v1.WriteRelationshipsRequest.create({ updates })).pipe(Effect.asVoid);
+      return yield* client.writeRelationships(WriteRelationshipsRequest.create({ updates })).pipe(Effect.asVoid);
     }),
   });
 

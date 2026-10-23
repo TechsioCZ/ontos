@@ -231,6 +231,7 @@ overrides:
   zod: 4.6.5
 
 patchedDependencies:
+  '@authzed/authzed-node@1.6.1': e09ba889807720f24431c2f4e1666486dcb20a184b8b5ee3445c5e4deaeb5396
   '@bleedingdev/modern-js-app-tools-extensions@3.9.0-ultramodern.28': 718be9e6dca091bd52d800ee9abaa2e288ab9b67aea4180bf076fb8b10a07459
   '@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.28': 5e0da4f8ef2281769910cfbd55a53fd10ce633c6c9edcb38466d60fcd37869ba
   '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28': e637eba8978bc238fce75fe747e8fcd25f4c415d6bac9aa36cff0f05b70a65f7
@@ -284,7 +285,7 @@ importers:
         version: link:verticals/work-tasks
       '@authzed/authzed-node':
         specifier: 1.6.1
-        version: 1.6.1
+        version: 1.6.1(patch_hash=e09ba889807720f24431c2f4e1666486dcb20a184b8b5ee3445c5e4deaeb5396)
       '@effect/sql-pg':
         specifier: 4.0.0-rc.117
         version: 4.0.0-rc.117(effect@4.0.0-rc.117)
@@ -593,7 +594,7 @@ importers:
         version: link:../../verticals/workforce
       '@authzed/authzed-node':
         specifier: 1.6.1
-        version: 1.6.1
+        version: 1.6.1(patch_hash=e09ba889807720f24431c2f4e1666486dcb20a184b8b5ee3445c5e4deaeb5396)
       '@better-auth/api-key':
         specifier: 1.7.12
         version: 1.7.12(81a7f2eaf31d2bff0a05d21ffd2319d2)
@@ -818,7 +819,7 @@ importers:
     dependencies:
       '@authzed/authzed-node':
         specifier: 1.6.1
-        version: 1.6.1
+        version: 1.6.1(patch_hash=e09ba889807720f24431c2f4e1666486dcb20a184b8b5ee3445c5e4deaeb5396)
       '@effect/platform-node':
         specifier: 4.0.0-rc.117
         version: 4.0.0-rc.117(effect@4.0.0-rc.117)(redis@6.3.0(@opentelemetry/api@1.9.1))
@@ -14879,7 +14880,7 @@ snapshots:
       '@ast-grep/napi-win32-ia32-msvc': 0.45.3
       '@ast-grep/napi-win32-x64-msvc': 0.45.3
 
-  '@authzed/authzed-node@1.6.1':
+  '@authzed/authzed-node@1.6.1(patch_hash=e09ba889807720f24431c2f4e1666486dcb20a184b8b5ee3445c5e4deaeb5396)':
     dependencies:
       '@grpc/grpc-js': 1.14.5
       '@protobuf-ts/runtime': 2.11.1

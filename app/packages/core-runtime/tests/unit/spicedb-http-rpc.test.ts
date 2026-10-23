@@ -1,4 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
+import { ObjectReference } from '@authzed/authzed-node/v1/core';
+import { CheckPermissionRequest } from '@authzed/authzed-node/v1/permissions';
+import { WriteSchemaRequest } from '@authzed/authzed-node/v1/schema';
 import { Cause, Effect, Fiber, Match, Option, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -34,6 +37,14 @@ const gateway = (answer: () => Response | 'hang') => {
 
 const ndjson = (frames: readonly Schema.Json[]) =>
   new Response(frames.map((frame) => `${Schema.encodeSync(JsonText)(frame)}\n`).join(''));
+
+it.effect('message-only package exports retain the official SDK codec identities', () =>
+  Effect.sync(() => {
+    expect(ObjectReference).toBe(v1.ObjectReference);
+    expect(CheckPermissionRequest).toBe(v1.CheckPermissionRequest);
+    expect(WriteSchemaRequest).toBe(v1.WriteSchemaRequest);
+  }),
+);
 
 it.effect('posts canonical proto3 JSON with the preshared key to the gateway route', () =>
   Effect.gen(function* checksGatewayRequest() {

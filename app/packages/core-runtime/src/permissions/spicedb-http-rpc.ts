@@ -1,4 +1,14 @@
-import { v1 } from '@authzed/authzed-node';
+import {
+  CheckBulkPermissionsRequest,
+  CheckBulkPermissionsResponse,
+  CheckPermissionRequest,
+  CheckPermissionResponse,
+  ReadRelationshipsRequest,
+  ReadRelationshipsResponse,
+  WriteRelationshipsRequest,
+  WriteRelationshipsResponse,
+} from '@authzed/authzed-node/v1/permissions';
+import { WriteSchemaRequest, WriteSchemaResponse } from '@authzed/authzed-node/v1/schema';
 import { Effect, Option, Schema } from 'effect';
 import type { Redacted } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
@@ -93,15 +103,15 @@ const readJsonMessage = <Message>(
     Effect.flatMap((text) => readMessage(type, text)),
   );
 
-const readFrame = (line: string): Effect.Effect<v1.ReadRelationshipsResponse, SpiceDbRpcError> =>
+const readFrame = (line: string): Effect.Effect<ReadRelationshipsResponse, SpiceDbRpcError> =>
   decodeStreamFrame(line).pipe(
     Effect.mapError(transportFailure),
     Effect.flatMap(({ error, result = null }) =>
-      error === undefined ? readJsonMessage(v1.ReadRelationshipsResponse, result) : Effect.fail(statusFailure(error)),
+      error === undefined ? readJsonMessage(ReadRelationshipsResponse, result) : Effect.fail(statusFailure(error)),
     ),
   );
 
-const readFrames = (text: string): Effect.Effect<readonly v1.ReadRelationshipsResponse[], SpiceDbRpcError> =>
+const readFrames = (text: string): Effect.Effect<readonly ReadRelationshipsResponse[], SpiceDbRpcError> =>
   Effect.forEach(
     text.split('\n').filter((line) => line.trim().length > 0),
     readFrame,
@@ -109,10 +119,10 @@ const readFrames = (text: string): Effect.Effect<readonly v1.ReadRelationshipsRe
     { concurrency: 1 },
   );
 
-const readBulkResponse = (text: string): Effect.Effect<v1.CheckBulkPermissionsResponse, SpiceDbRpcError> =>
+const readBulkResponse = (text: string): Effect.Effect<CheckBulkPermissionsResponse, SpiceDbRpcError> =>
   decodeBulkResponse(text).pipe(
     Effect.mapError(transportFailure),
-    Effect.flatMap((response) => readJsonMessage(v1.CheckBulkPermissionsResponse, response)),
+    Effect.flatMap((response) => readJsonMessage(CheckBulkPermissionsResponse, response)),
   );
 
 /** SpiceDB over its HTTP/JSON gateway, for runtimes without an HTTP/2 gRPC client. */
@@ -151,16 +161,16 @@ export const spiceDbHttpRpc = (endpoint: SpiceDbHttpEndpoint): SpiceDbHttpRpc =>
 
   return {
     checkBulkPermissions: (request) =>
-      post('/v1/permissions/checkbulk', v1.CheckBulkPermissionsRequest, request, decodeUnaryErrorCode).pipe(
+      post('/v1/permissions/checkbulk', CheckBulkPermissionsRequest, request, decodeUnaryErrorCode).pipe(
         Effect.flatMap(readBulkResponse),
       ),
-    checkPermission: unary('/v1/permissions/check', v1.CheckPermissionRequest, v1.CheckPermissionResponse),
+    checkPermission: unary('/v1/permissions/check', CheckPermissionRequest, CheckPermissionResponse),
     // A failed stream fails the whole read, as a failed gRPC stream rejects `readRelationships`.
     readRelationships: (request) =>
-      post('/v1/relationships/read', v1.ReadRelationshipsRequest, request, decodeStreamErrorCode).pipe(
+      post('/v1/relationships/read', ReadRelationshipsRequest, request, decodeStreamErrorCode).pipe(
         Effect.flatMap(readFrames),
       ),
-    writeRelationships: unary('/v1/relationships/write', v1.WriteRelationshipsRequest, v1.WriteRelationshipsResponse),
-    writeSchema: unary('/v1/schema/write', v1.WriteSchemaRequest, v1.WriteSchemaResponse),
+    writeRelationships: unary('/v1/relationships/write', WriteRelationshipsRequest, WriteRelationshipsResponse),
+    writeSchema: unary('/v1/schema/write', WriteSchemaRequest, WriteSchemaResponse),
   };
 };
