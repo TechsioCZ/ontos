@@ -7,10 +7,12 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
  *
  * Level 1 is the isolate's bounded map. On Workers, level 2 is the colo's Cache API (every isolate of the
  * storefront in that data center) and level 3 the storefront's catalog KV namespace (every data center, so
- * the scheduled warm-up and a deploy's warm-up reach the colo a shopper lands on). A lookup takes the newest.
+ * the scheduled warm-up and a deploy's warm-up reach the colo a shopper lands on). The isolate's own value
+ * renders without any lookup while it is younger than `staleMs`; otherwise the newest shared copy is taken.
+ * Shared copies carry their timestamp outside the body (colo header, KV metadata), so only one is parsed.
  * - younger than `freshMs`: served as is;
- * - younger than `staleMs`: served at once while one owner read refreshes every level in the background
- *   (admin edits show on the next view after that read);
+ * - younger than `staleMs`: served at once while the background takes a shared copy younger than `freshMs`
+ *   or reads the owner and refreshes every level (admin edits show on the next view after that);
  * - older or missing: the page waits for the owner read; if that fails, a value younger than `keepMs`
  *   still renders, so only a key that was never cached shows the catalog error.
  */
@@ -23,8 +25,15 @@ interface EdgeCache {
   put(request: Request, response: Response): Promise<void>;
 }
 interface CatalogStore {
-  get(key: string, options: { type: "json"; cacheTtl?: number }): Promise<unknown>;
-  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
+  getWithMetadata(
+    key: string,
+    options: { type: "text"; cacheTtl?: number },
+  ): Promise<{ value: string | null; metadata: unknown }>;
+  put(
+    key: string,
+    value: string,
+    options?: { expirationTtl?: number; metadata?: { at: number } },
+  ): Promise<void>;
 }
 declare global {
   interface CloudflareEnv {
@@ -66,11 +75,14 @@ const runtime = (): Runtime => {
   }
 };
 
-const isEntry = <T>(value: unknown): value is Entry<T> =>
-  typeof value === "object" &&
-  value !== null &&
-  typeof (value as Entry<T>).at === "number" &&
-  "value" in value;
+/** A shared copy whose age is known without parsing it (colo header or KV metadata). */
+interface SharedCopy {
+  readonly at: number;
+  readonly text: () => Promise<string>;
+}
+const AT_HEADER = "x-catalog-at";
+const atOf = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? value : undefined;
 
 export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
   const local = new Map<string, Entry<T>>();
@@ -87,32 +99,54 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
   };
   const hashed = (key: string) => `${name}/${createHash("sha256").update(key).digest("hex")}`;
   const age = (entry: Entry<T>) => Date.now() - entry.at;
-  const newest = (...entries: (Entry<T> | undefined)[]) =>
-    entries.reduce<Entry<T> | undefined>(
-      (best, entry) =>
-        entry !== undefined && (best === undefined || entry.at > best.at) ? entry : best,
-      undefined,
-    );
+  const keyOf = (id: string) => new Request(`${EDGE_ORIGIN}/${id}`);
 
-  const recall = async (key: string, { edge, store }: Runtime) => {
-    const own = local.get(key);
-    if (own !== undefined && age(own) < options.freshMs) return own;
+  /** The newest shared copy of `key` (colo cache or KV) by its timestamp; nothing is parsed yet. */
+  const shared = async (key: string, { edge, store }: Runtime): Promise<SharedCopy | undefined> => {
     const id = hashed(key);
     const [colo, global] = await Promise.all([
       edge
-        ?.match(new Request(`${EDGE_ORIGIN}/${id}`))
-        .then((response) => (response ? response.json() : undefined))
+        ?.match(keyOf(id))
+        .then((response): SharedCopy | undefined => {
+          const at = atOf(Number(response?.headers.get(AT_HEADER)));
+          return response && at !== undefined ? { at, text: () => response.text() } : undefined;
+        })
         .catch(() => undefined),
-      store?.get(id, { type: "json", cacheTtl: STORE_READ_TTL_S }).catch(() => undefined),
+      store
+        ?.getWithMetadata(id, { type: "text", cacheTtl: STORE_READ_TTL_S })
+        .then(({ value, metadata }): SharedCopy | undefined => {
+          const at = atOf((metadata as { at?: unknown } | null)?.at);
+          return value !== null && at !== undefined ? { at, text: async () => value } : undefined;
+        })
+        .catch(() => undefined),
     ]);
-    const found = newest(
-      own,
-      isEntry<T>(colo) ? colo : undefined,
-      isEntry<T>(global) ? global : undefined,
-    );
-    if (found === undefined || age(found) >= options.keepMs) return undefined;
-    remember(key, found);
-    return found;
+    return colo !== undefined && (global === undefined || colo.at >= global.at) ? colo : global;
+  };
+
+  /** Adopts a shared copy newer than the isolate's own (parsing only that one copy). */
+  const adopt = async (key: string, copy: SharedCopy): Promise<Entry<T> | undefined> => {
+    const own = local.get(key);
+    if (own !== undefined && own.at >= copy.at) return own;
+    try {
+      const entry = { at: copy.at, value: (JSON.parse(await copy.text()) as Entry<T>).value };
+      remember(key, entry);
+      return entry;
+    } catch {
+      return own;
+    }
+  };
+
+  /**
+   * The isolate's own value while it may still render (younger than `staleMs`); otherwise the newest of the
+   * isolate's and the shared copies.
+   */
+  const recall = async (key: string, context: Runtime) => {
+    const own = local.get(key);
+    if (own !== undefined && age(own) < options.staleMs) return own;
+    const copy = await shared(key, context);
+    const found =
+      copy !== undefined && (own === undefined || copy.at > own.at) ? await adopt(key, copy) : own;
+    return found === undefined || age(found) >= options.keepMs ? undefined : found;
   };
 
   const save = (key: string, entry: Entry<T>, { edge, store, waitUntil }: Runtime) => {
@@ -125,12 +159,17 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
         headers: {
           "cache-control": `public, max-age=${keepS}`,
           "content-type": "application/json",
+          [AT_HEADER]: String(entry.at),
         },
       });
-      waitUntil(edge.put(new Request(`${EDGE_ORIGIN}/${id}`), response).catch(() => undefined));
+      waitUntil(edge.put(keyOf(id), response).catch(() => undefined));
     }
     if (store !== undefined)
-      waitUntil(store.put(id, body, { expirationTtl: keepS }).catch(() => undefined));
+      waitUntil(
+        store
+          .put(id, body, { expirationTtl: keepS, metadata: { at: entry.at } })
+          .catch(() => undefined),
+      );
   };
 
   const read = async (key: string, load: () => Promise<T>, context: Runtime) => {
@@ -139,13 +178,23 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
     return value;
   };
 
+  /** A shared copy another isolate or the warm-up refreshed recently enough, else an owner read. */
+  const refresh = async (key: string, load: () => Promise<T>, context: Runtime) => {
+    const copy = await shared(key, context);
+    if (copy !== undefined && Date.now() - copy.at < options.freshMs) {
+      await adopt(key, copy);
+      return;
+    }
+    await read(key, load, context);
+  };
+
   /** One background refresh per key and isolate at a time; the read outlives the page that started it. */
   const refreshInBackground = (key: string, load: () => Promise<T>, context: Runtime) => {
     const started = refreshing.get(key);
     if (started !== undefined && Date.now() - started < REFRESH_GUARD_MS) return;
     refreshing.set(key, Date.now());
     context.waitUntil(
-      read(key, load, context)
+      refresh(key, load, context)
         .catch(() => undefined)
         .finally(() => refreshing.delete(key)),
     );
@@ -171,8 +220,10 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
     /** Reads `key` from the owner unless a cached value is younger than `minAgeMs` (scheduled warm-up). */
     warm: async (key: string, load: () => Promise<T>, minAgeMs: number): Promise<WarmResult> => {
       const context = runtime();
-      const entry = await recall(key, context);
-      if (entry !== undefined && age(entry) < minAgeMs) return "fresh";
+      const own = local.get(key);
+      const copy = await shared(key, context);
+      const at = Math.max(own?.at ?? 0, copy?.at ?? 0);
+      if (Date.now() - at < minAgeMs) return "fresh";
       return await read(key, load, context).then(
         () => "refreshed" as const,
         () => "failed" as const,

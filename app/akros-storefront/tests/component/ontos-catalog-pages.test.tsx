@@ -5,12 +5,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import CategoryPage from "@/app/kategorie/[slug]/page";
 import SearchPage from "@/app/vyhledavani/page";
 import { CartProvider } from "@/features/cart/cart-provider";
-import { getCatalogPage, type CatalogPage } from "@/ontos/catalog-server";
+import { getCatalogPage, getCategoryListing, type CatalogPage } from "@/ontos/catalog-server";
+import type { ProductPage } from "@/ontos/catalog-projection";
 import { asCard, fixtureCatalog, fixtureCategoryProducts } from "../support/catalog-fixture";
 
 vi.mock("@/ontos/catalog-server", async () => {
   const { fixtureCatalog } = await import("../support/catalog-fixture");
-  return { getCatalog: async () => fixtureCatalog, getCatalogPage: vi.fn() };
+  return {
+    CATEGORY_PAGE_SIZE: 24,
+    getCatalog: async () => fixtureCatalog,
+    getCatalogPage: vi.fn(),
+    getCategoryListing: vi.fn(),
+  };
 });
 // The active-branch navigation is an async server wrapper; shell rendering is covered elsewhere.
 vi.mock("@/ontos/category-branch", () => ({
@@ -36,12 +42,21 @@ const ownerPage = (total: number): CatalogPage => ({
   pageSize: 24,
 });
 
-beforeEach(() => vi.mocked(getCatalogPage).mockReset());
+/** A category listing page as `getCategoryListing` returns it (no model: the page takes it from getCatalog). */
+const listingPage = (total: number): ProductPage => {
+  const { products, page, pageSize } = ownerPage(total);
+  return { products, total, page, pageSize, revision: 1, homepageFeaturedProductIds: [] };
+};
+
+beforeEach(() => {
+  vi.mocked(getCatalogPage).mockReset();
+  vi.mocked(getCategoryListing).mockReset();
+});
 afterEach(cleanup);
 
 describe("OntOS category and search pages", () => {
   it("lets OntOS filter, sort and page the category and shows its total", async () => {
-    vi.mocked(getCatalogPage).mockResolvedValue(ownerPage(100));
+    vi.mocked(getCategoryListing).mockResolvedValue(listingPage(100));
     render(
       <CartProvider storage={null}>
         {await CategoryPage({
@@ -55,7 +70,7 @@ describe("OntOS category and search pages", () => {
         })}
       </CartProvider>,
     );
-    expect(getCatalogPage).toHaveBeenCalledWith({
+    expect(getCategoryListing).toHaveBeenCalledWith({
       categorySlug: "srouby",
       page: 2,
       pageSize: 24,
@@ -69,20 +84,20 @@ describe("OntOS category and search pages", () => {
     );
   });
   it("re-reads the last page when the requested page is past the end", async () => {
-    vi.mocked(getCatalogPage)
-      .mockResolvedValueOnce({ ...ownerPage(30), products: [] })
-      .mockResolvedValueOnce(ownerPage(30));
+    vi.mocked(getCategoryListing)
+      .mockResolvedValueOnce({ ...listingPage(30), products: [] })
+      .mockResolvedValueOnce(listingPage(30));
     await CategoryPage({
       params: Promise.resolve({ slug: "srouby" }),
       searchParams: Promise.resolve({ page: "9" }),
     });
-    expect(vi.mocked(getCatalogPage).mock.calls[1][0]).toMatchObject({
+    expect(vi.mocked(getCategoryListing).mock.calls[1][0]).toMatchObject({
       categorySlug: "srouby",
       page: 2,
     });
   });
   it("shows the Czech filter hint when OntOS finds nothing for active filters", async () => {
-    vi.mocked(getCatalogPage).mockResolvedValue({ ...ownerPage(0), products: [] });
+    vi.mocked(getCategoryListing).mockResolvedValue({ ...listingPage(0), products: [] });
     render(
       <CartProvider storage={null}>
         {await CategoryPage({

@@ -96,15 +96,14 @@ describe("catalog stale-while-revalidate cache", () => {
     expect(load).toHaveBeenCalledTimes(1);
   });
   it("on Workers reads and writes the shared catalog store, so another isolate starts warm", async () => {
-    const stored = new Map<string, string>();
+    const stored = new Map<string, { value: string; metadata: unknown }>();
     const waits: Promise<unknown>[] = [];
     const store = {
-      get: vi.fn(async (key: string) => {
-        const value = stored.get(key);
-        return value === undefined ? null : JSON.parse(value);
-      }),
-      put: vi.fn(async (key: string, value: string) => {
-        stored.set(key, value);
+      getWithMetadata: vi.fn(
+        async (key: string) => stored.get(key) ?? { value: null, metadata: null },
+      ),
+      put: vi.fn(async (key: string, value: string, options: { metadata?: unknown }) => {
+        stored.set(key, { value, metadata: options.metadata });
       }),
     };
     vi.mocked(getCloudflareContext).mockReturnValue({
@@ -115,9 +114,15 @@ describe("catalog stale-while-revalidate cache", () => {
     await Promise.all(waits);
     expect(store.put).toHaveBeenCalledWith(expect.stringMatching(/^t\//u), expect.any(String), {
       expirationTtl: options.keepMs / 1000,
+      metadata: { at: expect.any(Number) },
     });
     const load = vi.fn(async () => "v2");
-    expect(await catalogCache<string>("t", options).get("k", load)).toBe("v1");
+    const other = catalogCache<string>("t", options);
+    expect(await other.get("k", load)).toBe("v1");
     expect(load).not.toHaveBeenCalled();
+    // The isolate's own copy then renders without another shared lookup.
+    store.getWithMetadata.mockClear();
+    expect(await other.get("k", load)).toBe("v1");
+    expect(store.getWithMetadata).not.toHaveBeenCalled();
   });
 });

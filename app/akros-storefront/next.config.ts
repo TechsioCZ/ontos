@@ -25,6 +25,9 @@ const nextConfig: NextConfig = {
     ],
   },
   reactStrictMode: true,
+  // Product links prefetch their page on intent (StoreLink); a prefetched page is reused for 30 s only, so a
+  // click never shows an older price than that.
+  experimental: { staleTimes: { static: 30 } },
   async headers() {
     return [
       {
