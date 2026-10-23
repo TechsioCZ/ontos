@@ -5,6 +5,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import type { ReactNode } from 'react';
 import { facilityOperationsI18nResources } from '../i18n/resources.ts';
+import { LoadingSkeleton } from './loading-skeleton.tsx';
 import type { LoadStatus } from './use-agenda.ts';
 import '../routes/index.css';
 
@@ -39,7 +40,7 @@ export const SimulationBadge = () => {
   );
 };
 
-/** Loading / forbidden / error gate. Renders children only when data is ready. */
+/** Pending (skeleton) / forbidden / error gate. Renders children only when data is ready. */
 export const AgendaGate = ({
   children,
   onRetry,
@@ -54,7 +55,7 @@ export const AgendaGate = ({
 }) => {
   const { t } = useModernI18n();
   if (status === 'loading') {
-    return <p className="text-fg-secondary text-sm">{t('facility-operations.common.loading')}</p>;
+    return <LoadingSkeleton rows={5} />;
   }
   if (status === 'forbidden' || (status === 'ready' && !readable)) {
     return (

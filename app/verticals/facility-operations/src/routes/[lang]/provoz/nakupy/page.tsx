@@ -14,7 +14,7 @@ import {
   orderOpenValueMinor,
 } from '../../../../../shared/domain/purchasing-stock.ts';
 import { AgendaFrame, AgendaGate } from '../../../../ui/agenda-frame.tsx';
-import { useAgendaRecords } from '../../../../ui/use-agenda.ts';
+import { preloadAgendaRecords, useAgendaRecords } from '../../../../ui/use-agenda.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { ItemCreatePanel, PurchaseDocumentPanel, SupplierPanel } from './order-forms.tsx';
 import type { DraftLine } from './order-forms.tsx';
@@ -308,4 +308,6 @@ export const PurchasingPage = () => (
   </AgendaFrame>
 );
 
+/** The Shell awaits this before it reveals the page, so the first render already has the purchasing agenda. */
+export const preloadPage = preloadAgendaRecords(['purchasing']);
 export default PurchasingPage;

@@ -12,7 +12,7 @@ import { AgendaFrame } from '../../../../ui/agenda-frame.tsx';
 import { pragueToday } from '../../../../ui/ops-agenda/deadlines.ts';
 import { currentAgendaState, buildDeadlines, buildKpis, buildSearchIndex } from '../../../../ui/ops-agenda/model.ts';
 import type { KpiId } from '../../../../ui/ops-agenda/model.ts';
-import { allSettled, useRentalOverviewSources } from '../../../../ui/ops-agenda/sources.ts';
+import { allSettled, preloadRentalOverviewSources, useRentalOverviewSources } from '../../../../ui/ops-agenda/sources.ts';
 import { Icon, fmt, langOf } from '../../../../ui/ops-agenda/ui-bits.tsx';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { DrillDown, Hero, KpiGrid, OccupancyByBuilding, OpsAgendas, SearchResults, UpcomingTimeline } from './dashboard-parts.tsx';
@@ -54,7 +54,7 @@ const OverviewView = () => {
   // Search rows of the provoz records are fetched only when someone actually searches.
   useEffect(() => {
     if (query.trim() !== '') {
-      void loadSearch();
+      loadSearch();
     }
   }, [query, loadSearch]);
 
@@ -184,4 +184,6 @@ export const OverviewPage = () => (
   </AgendaFrame>
 );
 
+/** The Shell awaits this before it reveals the page, so the KPI tiles render values in the first commit. */
+export const preloadPage = preloadRentalOverviewSources;
 export default OverviewPage;

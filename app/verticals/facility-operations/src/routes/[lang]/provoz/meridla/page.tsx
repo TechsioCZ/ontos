@@ -29,7 +29,7 @@ import {
 } from '../../../../../shared/domain/meters.ts';
 import type { Meter, MeterMedium } from '../../../../../shared/domain/meters.ts';
 import { AgendaFrame, AgendaGate } from '../../../../ui/agenda-frame.tsx';
-import { useAgendaRecords } from '../../../../ui/use-agenda.ts';
+import { preloadAgendaRecords, useAgendaRecords } from '../../../../ui/use-agenda.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { ConsumptionByPlace } from './consumption-by-place.tsx';
 import { MeterDetail } from './meter-detail.tsx';
@@ -511,4 +511,6 @@ export const MetersPage = () => (
   </AgendaFrame>
 );
 
+/** The Shell awaits this before it reveals the page, so the first render already has the meters agenda. */
+export const preloadPage = preloadAgendaRecords(['meters']);
 export default MetersPage;

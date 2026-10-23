@@ -8,7 +8,9 @@ import { executeRecords as executeOccupancy } from '@app/property-leasing/client
 import { executeRecords as executeProperty } from '@app/property-portfolio/clients/records';
 import { executeRecords as executeWork } from '@app/work-tasks/clients/records';
 import { Effect, Schedule } from 'effect';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
+import type { PageData, PageDataSnapshot } from '@app/shared-contracts/page-data';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { OverviewResponse } from '../../../shared/apis/overview.ts';
 import { readFinance } from '../../api/finance-reads.ts';
 import { executeOverview } from '../../api/overview-client.ts';
@@ -30,20 +32,21 @@ const transientOverviewFailure = (error: { readonly _tag: string }) =>
     error._tag,
   );
 
-/** `search`: also load the search rows of the provoz records (only once someone searches on Přehled). */
-const loadEffect = (search: boolean) => ({
-  agreements: executeAgreements({}, 'ops-agenda.agreements'),
-  finance: readFinance('ops-agenda.finance'),
-  occupancy: executeOccupancy({}, 'ops-agenda.occupancy'),
-  ops: executeOverview(search ? { includeSearch: true } : {}, 'ops-agenda.overview').pipe(
-    Effect.retry({ schedule: Schedule.spaced('700 millis'), times: 2, while: transientOverviewFailure }),
-  ),
-  parties: listCustomers({ includeArchived: false }),
-  property: executeProperty({}, 'ops-agenda.property'),
-  sales: loadSalesCases('ops-agenda.sales'),
-  work: executeWork({}, 'ops-agenda.work'),
-});
-type Loaders = ReturnType<typeof loadEffect>;
+/** The governed read of each source; `ops(true)` also loads the search rows of the provoz records (first search on Přehled). */
+const loaders = {
+  agreements: () => executeAgreements({}, 'ops-agenda.agreements'),
+  finance: () => readFinance('ops-agenda.finance'),
+  occupancy: () => executeOccupancy({}, 'ops-agenda.occupancy'),
+  ops: (search: boolean) =>
+    executeOverview(search ? { includeSearch: true } : {}, 'ops-agenda.overview').pipe(
+      Effect.retry({ schedule: Schedule.spaced('700 millis'), times: 2, while: transientOverviewFailure }),
+    ),
+  parties: () => listCustomers({ includeArchived: false }),
+  property: () => executeProperty({}, 'ops-agenda.property'),
+  sales: () => loadSalesCases('ops-agenda.sales'),
+  work: () => executeWork({}, 'ops-agenda.work'),
+};
+type Loaders = { readonly [Key in keyof typeof loaders]: ReturnType<(typeof loaders)[Key]> };
 type Success<Key extends keyof Loaders> = Effect.Success<Loaders[Key]>;
 
 export type PropertyData = Success<'property'>;
@@ -70,80 +73,129 @@ export interface RentalOverviewSources {
 export type SourceKey = keyof RentalOverviewSources;
 export const sourceKeys: readonly SourceKey[] = ['property', 'occupancy', 'agreements', 'work', 'finance', 'ops', 'parties'];
 
-const loading = { status: 'loading' } as const;
-const initial: RentalOverviewSources = {
-  agreements: loading,
-  finance: loading,
-  occupancy: loading,
-  ops: loading,
-  parties: loading,
-  property: loading,
-  sales: loading,
-  work: loading,
-};
-
 const failureStatus = (error: unknown): SourceStatus => {
   const tag = typeof error === 'object' && error !== null && '_tag' in error ? String(error._tag) : '';
   return /Forbidden|Authentication|Unauthorized/u.test(tag) ? 'forbidden' : 'unavailable';
 };
 
-const settle = <A, E>(effect: Effect.Effect<A, E>): Promise<SourceState<A>> =>
-  browserRuntime.runPromise(
-    effect.pipe(
-      Effect.timeout('12 seconds'),
-      Effect.match({
-        onFailure: (error): SourceState<A> => ({ status: failureStatus(error) }),
-        onSuccess: (data): SourceState<A> => ({ data, loadedAt: new Date().toISOString(), status: 'ready' }),
-      }),
-    ),
+interface Loaded<A> {
+  readonly data: A;
+  readonly loadedAt: string;
+}
+
+const timed = <A, E>(effect: Effect.Effect<A, E>) =>
+  effect.pipe(
+    Effect.timeout('12 seconds'),
+    Effect.map((data): Loaded<A> => ({ data, loadedAt: new Date().toISOString() })),
   );
 
+/** Every source but `ops` is one read per document. */
+type Whole = 'all';
+const whole: Whole = 'all';
+
+const sourceData = <A, E>(load: () => Effect.Effect<A, E>) =>
+  definePageData({ key: (input: Whole) => input, load: () => timed(load()), runtime: browserRuntime });
+
 /**
- * Loads all sources in parallel; each settles independently so a slow or forbidden one never blocks the rest.
- * Search rows of the provoz records are loaded only after `loadSearch()` (the first search on Přehled).
+ * One page-data store per source (one entry per document; `ops` has a second entry with the search rows). The Shell
+ * fills them through `preloadPage` before it reveals Přehled or Moje agenda, so KPI tiles render values in the first
+ * commit; each source still settles on its own, so a slow or forbidden one never blocks the rest.
+ */
+const sourceStores = {
+  agreements: sourceData(loaders.agreements),
+  finance: sourceData(loaders.finance),
+  occupancy: sourceData(loaders.occupancy),
+  parties: sourceData(loaders.parties),
+  property: sourceData(loaders.property),
+  sales: sourceData(loaders.sales),
+  work: sourceData(loaders.work),
+};
+const opsStore = definePageData({
+  key: (search: boolean) => (search ? 'search' : 'base'),
+  load: (search: boolean) => timed(loaders.ops(search)),
+  runtime: browserRuntime,
+});
+const wholeKeys = ['agreements', 'finance', 'occupancy', 'parties', 'property', 'sales', 'work'] as const satisfies readonly (keyof typeof sourceStores)[];
+const SOURCE_CONCURRENCY = 8;
+
+/** `preloadPage` of Přehled and Moje agenda: all eight sources (the provoz source without search rows). */
+export const preloadRentalOverviewSources = modulePagePreload(
+  () => opsStore.preload(false),
+  ...wholeKeys.map((key) => () => sourceStores[key].preload(whole)),
+);
+
+const stateOf = <A, E>(snapshot: PageDataSnapshot<Loaded<A>, E>): SourceState<A> => {
+  if (snapshot.state === 'pending') {
+    return { status: 'loading' };
+  }
+  if (snapshot.state === 'failed') {
+    return { status: failureStatus(snapshot.error) };
+  }
+  return { data: snapshot.value.data, loadedAt: snapshot.value.loadedAt, status: 'ready' };
+};
+
+const pendingSnapshot = () => pageDataPending;
+
+const useSource = <A, E>(store: PageData<Whole, Loaded<A>, E>) => {
+  const snapshot = useSyncExternalStore(store.subscribe, () => store.snapshot(whole), pendingSnapshot);
+  useEffect(() => store.ensure(whole), [store]);
+  return snapshot;
+};
+
+/**
+ * Reads all sources from their stores (normally already filled before the page is revealed); each settles
+ * independently. Search rows of the provoz records are loaded only after `loadSearch()` (the first search on Přehled);
+ * until they arrive the provoz source without them stays on screen.
  */
 export const useRentalOverviewSources = () => {
-  const [sources, setSources] = useState<RentalOverviewSources>(initial);
-  const ticket = useRef(0);
-  const search = useRef(false);
-
-  const reload = useCallback(async () => {
-    ticket.current += 1;
-    const mine = ticket.current;
-    const update = <Key extends SourceKey>(key: Key, value: RentalOverviewSources[Key]) => {
-      if (mine === ticket.current) {
-        setSources((current) => ({ ...current, [key]: value }));
-      }
-    };
-    const loaders = loadEffect(search.current);
-    await Promise.all([
-      settle(loaders.ops).then((value) => update('ops', value)),
-      settle(loaders.property).then((value) => update('property', value)),
-      settle(loaders.agreements).then((value) => update('agreements', value)),
-      settle(loaders.occupancy).then((value) => update('occupancy', value)),
-      settle(loaders.work).then((value) => update('work', value)),
-      settle(loaders.finance).then((value) => update('finance', value)),
-      settle(loaders.parties).then((value) => update('parties', value)),
-      settle(loaders.sales).then((value) => update('sales', value)),
-    ]);
-  }, []);
-
+  const [search, setSearch] = useState(false);
+  const opsBase = useSyncExternalStore(opsStore.subscribe, () => opsStore.snapshot(false), pendingSnapshot);
+  const opsSearch = useSyncExternalStore(
+    opsStore.subscribe,
+    search ? () => opsStore.snapshot(true) : pendingSnapshot,
+    pendingSnapshot,
+  );
+  useEffect(() => opsStore.ensure(false), []);
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    if (search) {
+      opsStore.ensure(true);
+    }
+  }, [search]);
+  const ops = search && opsSearch.state !== 'pending' ? opsSearch : opsBase;
+  const agreements = useSource(sourceStores.agreements);
+  const finance = useSource(sourceStores.finance);
+  const occupancy = useSource(sourceStores.occupancy);
+  const parties = useSource(sourceStores.parties);
+  const property = useSource(sourceStores.property);
+  const sales = useSource(sourceStores.sales);
+  const work = useSource(sourceStores.work);
+
+  const sources = useMemo<RentalOverviewSources>(
+    () => ({
+      agreements: stateOf(agreements),
+      finance: stateOf(finance),
+      occupancy: stateOf(occupancy),
+      ops: stateOf(ops),
+      parties: stateOf(parties),
+      property: stateOf(property),
+      sales: stateOf(sales),
+      work: stateOf(work),
+    }),
+    [agreements, finance, occupancy, ops, parties, property, sales, work],
+  );
+
+  /** Re-reads every source; the current values stay on screen until the new ones arrive. */
+  const reload = useCallback(async () => {
+    await browserRuntime.runPromise(
+      Effect.all([opsStore.refresh(search), ...wholeKeys.map((key) => sourceStores[key].refresh(whole))], {
+        concurrency: SOURCE_CONCURRENCY,
+        discard: true,
+      }),
+    );
+  }, [search]);
 
   /** Re-reads the provoz source with its search rows, once. */
-  const loadSearch = useCallback(async () => {
-    if (search.current) {
-      return;
-    }
-    search.current = true;
-    const mine = ticket.current;
-    const value = await settle(loadEffect(true).ops);
-    if (mine === ticket.current) {
-      setSources((current) => ({ ...current, ops: value }));
-    }
-  }, []);
+  const loadSearch = useCallback(() => setSearch(true), []);
 
   const names = useMemo(() => nameLookup(sources), [sources]);
   return { loadSearch, names, reload, sources };

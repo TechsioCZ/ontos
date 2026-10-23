@@ -14,7 +14,7 @@ import { AgendaFrame } from '../../../../ui/agenda-frame.tsx';
 import { notificationCandidates, taskAssignmentCandidates, pragueToday } from '../../../../ui/ops-agenda/deadlines.ts';
 import type { Deadline } from '../../../../../shared/domain/ops-overview.ts';
 import { currentAgendaState, buildDeadlines } from '../../../../ui/ops-agenda/model.ts';
-import { allSettled, useRentalOverviewSources } from '../../../../ui/ops-agenda/sources.ts';
+import { allSettled, preloadRentalOverviewSources, useRentalOverviewSources } from '../../../../ui/ops-agenda/sources.ts';
 import { SourceHealth } from '../prehled/dashboard-parts.tsx';
 import { useAgendaCommands } from '../../../../ui/ops-agenda/use-agenda-commands.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
@@ -252,4 +252,6 @@ export const AgendaPage = () => (
   </AgendaFrame>
 );
 
+/** The Shell awaits this before it reveals the page, so the calendar opens with its sources loaded. */
+export const preloadPage = preloadRentalOverviewSources;
 export default AgendaPage;

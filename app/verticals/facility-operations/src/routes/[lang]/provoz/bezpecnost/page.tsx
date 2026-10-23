@@ -16,7 +16,7 @@ import { isInspectionOverdue } from '../../../../../shared/commands/security.ts'
 import { isOpenIncident, securityDeviceStates, securityDeviceTypes } from '../../../../../shared/domain/security.ts';
 import type { SecurityDevice, SecurityIncident, SecurityState } from '../../../../../shared/domain/security.ts';
 import { AgendaFrame, AgendaGate } from '../../../../ui/agenda-frame.tsx';
-import { useAgendaRecords } from '../../../../ui/use-agenda.ts';
+import { preloadAgendaRecords, useAgendaRecords } from '../../../../ui/use-agenda.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { DeviceDetailPanel } from './device-detail.tsx';
 import { DeviceFormPanel, InspectionPanel, ReportFaultPanel, ResolvePanel } from './device-forms.tsx';
@@ -466,4 +466,6 @@ export const SecurityPage = () => (
   </AgendaFrame>
 );
 
+/** The Shell awaits this before it reveals the page, so the first render already has the security agenda. */
+export const preloadPage = preloadAgendaRecords(['security']);
 export default SecurityPage;

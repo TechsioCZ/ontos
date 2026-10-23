@@ -20,6 +20,7 @@ import {
   usePrincipalLabel,
 } from './documents-kit.tsx';
 import { canPreview, DownloadButton, FilePreviewDialog } from './file-preview.tsx';
+import { LoadingSkeleton } from './loading-skeleton.tsx';
 import { MAX_UPLOAD_BYTES, uploadFile, useAgendaRecords } from './use-agenda.ts';
 import { dividedListClassName } from '@app/admin-ui';
 
@@ -36,7 +37,8 @@ export const LinkedDocuments = ({
 }) => {
   const { language, t } = useModernI18n();
   const principalLabel = usePrincipalLabel();
-  const own = useAgendaRecords(records === undefined ? ['documents'] : []);
+  // The page's records when it passes them (same store entry, no second read), else this panel's own documents read.
+  const own = useAgendaRecords(['documents'], { enabled: records === undefined });
   const ops = records ?? own;
   const [preview, setPreview] = useState<{ readonly file: StoredFileRef; readonly title: string } | undefined>(
     undefined,
@@ -48,7 +50,7 @@ export const LinkedDocuments = ({
   const canWrite = envelope?.canWrite === true;
 
   if (ops.status === 'loading') {
-    return <p className="text-fg-secondary text-sm">{t('facility-operations.common.loading')}</p>;
+    return <LoadingSkeleton rows={2} />;
   }
   if (state === undefined) {
     return hideWhenForbidden ? null : <p className="text-fg-secondary text-sm">{t(`${k}.linked.forbidden`)}</p>;

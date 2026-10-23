@@ -34,7 +34,7 @@ import type {
 } from '../../../../../shared/domain/assets.ts';
 import { assetKinds, isActiveAsset, isArchivedAsset, upcomingServiceDue } from '../../../../../shared/domain/assets.ts';
 import { AgendaFrame, AgendaGate } from '../../../../ui/agenda-frame.tsx';
-import { useAgendaRecords } from '../../../../ui/use-agenda.ts';
+import { preloadAgendaRecords, useAgendaRecords } from '../../../../ui/use-agenda.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { AssetCardForm, FollowUpForm, InventoryCreateForm, TemplateForm } from './asset-forms.tsx';
 import { AssetDetailPanel, KindBadge, StatusBadge } from './asset-detail.tsx';
@@ -682,4 +682,6 @@ export const AssetsPage = () => (
   </AgendaFrame>
 );
 
+/** The Shell awaits this before it reveals the page, so the first render already has the assets agenda. */
+export const preloadPage = preloadAgendaRecords(['assets']);
 export default AssetsPage;

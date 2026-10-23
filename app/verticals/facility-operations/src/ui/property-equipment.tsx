@@ -1,6 +1,7 @@
 import { Link } from '@techsio/ui-kit/atoms/link';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Table } from '@techsio/ui-kit/organisms/table';
+import { LoadingSkeleton } from './loading-skeleton.tsx';
 import { useAgendaRecords } from './use-agenda.ts';
 import { assetsAtLocation } from '../../shared/domain/asset-location.ts';
 
@@ -24,7 +25,7 @@ export const PropertyEquipment = ({
     <section aria-label={title} style={{ minWidth: 0 }}>
       <h2 style={{ fontSize: '1rem', fontWeight: 600, marginBottom: '0.75rem' }}>{title}</h2>
       {records.status === 'loading' ? (
-        <p role="status">{english ? 'Loading equipment…' : 'Načítání vybavení…'}</p>
+        <LoadingSkeleton label={english ? 'Loading equipment…' : 'Načítání vybavení…'} rows={3} />
       ) : records.status === 'error' ? (
         <div role="status">
           <p>{english ? 'Equipment could not be loaded.' : 'Vybavení se nepodařilo načíst.'}</p>

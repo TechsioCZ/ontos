@@ -15,6 +15,7 @@ import type { ReactNode } from 'react';
 import type { CommentRecord, DocumentsState, SubjectRef } from '../../shared/domain/documents.ts';
 import { sameSubject } from '../../shared/domain/documents.ts';
 import { formatWhen, isoOf, PrincipalAvatar, principalEmail, usePrincipalLabel } from './documents-kit.tsx';
+import { LoadingSkeleton } from './loading-skeleton.tsx';
 import { useAgendaRecords } from './use-agenda.ts';
 import type { FailureReason } from './use-agenda.ts';
 import { surfaceTileClassName } from '@app/admin-ui';
@@ -250,7 +251,8 @@ export const CommentThread = ({
 }: CommentThreadProps) => {
   const { t } = useModernI18n();
   const toast = useToast();
-  const own = useAgendaRecords(records === undefined ? ['documents'] : []);
+  // The page's records when it passes them (same store entry, no second read), else this panel's own documents read.
+  const own = useAgendaRecords(['documents'], { enabled: records === undefined });
   const ops = records ?? own;
   const envelope = ops.data?.agendas.documents;
   const state: DocumentsState | undefined = envelope?.state;
@@ -261,7 +263,7 @@ export const CommentThread = ({
   const withAttachment = allowAttachment ?? variant === 'chat';
 
   if (ops.status === 'loading') {
-    return <p className="text-fg-secondary text-sm">{t('facility-operations.common.loading')}</p>;
+    return <LoadingSkeleton rows={2} />;
   }
   if (ops.status !== 'ready' || state === undefined) {
     return hideWhenForbidden ? null : (

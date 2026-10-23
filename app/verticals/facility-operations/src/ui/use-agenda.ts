@@ -2,14 +2,16 @@
 // Shared browser data layer for every Facility operations page (owned by ops-scaffold; lanes import, do not fork).
 //   const ops = useAgendaRecords(['assets']);
 //   ops.data?.agendas.assets?.state.assets         -> typed agenda state
-//   await ops.run({ _tag: 'AssetCreate', ... })     -> picks the owning agenda's revision, reloads on success
+//   await ops.run({ _tag: 'AssetCreate', ... })     -> picks the owning agenda's revision, re-reads on success
+//   export const preloadPage = preloadAgendaRecords(['assets']) -> the Shell loads it before it reveals the page
 //   await uploadFile(file) / await downloadFile(fileId)
 import { DateTime, Effect, Match, Random, Schedule } from 'effect';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { executeApplyCommand } from '../api/apply-command-action-client.ts';
 import { executeRecords } from '../api/records-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
-import { agendaOfCommand } from '../../shared/agendas.ts';
+import { agendaIds, agendaOfCommand } from '../../shared/agendas.ts';
 import type { OpsCommand } from '../../shared/agendas.ts';
 import type { ApplyCommandResult } from '../../shared/actions/apply-command.ts';
 import type { RecordsResponse, StoredFile } from '../../shared/apis/records.ts';
@@ -62,22 +64,31 @@ const transientAuthFailure = (error: RecordsFailure) =>
     error._tag,
   );
 
+/** The governed records read as an Effect (transient gateway failures are retried twice); failures stay typed. */
+const recordsRead = (request: {
+  readonly agendas?: readonly AgendaId[];
+  readonly fileId?: string;
+  readonly historyFor?: string;
+}) =>
+  newId.pipe(
+    Effect.flatMap((correlation) =>
+      executeRecords(
+        {
+          ...(request.agendas === undefined ? {} : { agendas: [...request.agendas] }),
+          ...(request.fileId === undefined ? {} : { fileId: request.fileId }),
+          ...(request.historyFor === undefined ? {} : { historyFor: request.historyFor }),
+        },
+        correlation,
+      ).pipe(Effect.retry({ schedule: Schedule.spaced('700 millis'), times: 2, while: transientAuthFailure })),
+    ),
+  );
+
 /** Runs the governed records read (transient gateway failures are retried twice). */
 export const loadRecords = (
   request: { readonly agendas?: readonly AgendaId[]; readonly fileId?: string; readonly historyFor?: string } = {},
 ): Promise<{ readonly ok: true; readonly data: RecordsResponse } | { readonly ok: false; readonly reason: FailureReason }> =>
   browserRuntime.runPromise(
-    newId.pipe(
-      Effect.flatMap((correlation) =>
-        executeRecords(
-          {
-            ...(request.agendas === undefined ? {} : { agendas: [...request.agendas] }),
-            ...(request.fileId === undefined ? {} : { fileId: request.fileId }),
-            ...(request.historyFor === undefined ? {} : { historyFor: request.historyFor }),
-          },
-          correlation,
-        ).pipe(Effect.retry({ schedule: Schedule.spaced('700 millis'), times: 2, while: transientAuthFailure })),
-      ),
+    recordsRead(request).pipe(
       Effect.match({
         onFailure: (error) => ({ ok: false as const, reason: recordsReason(error) }),
         onSuccess: (data) => ({ ok: true as const, data }),
@@ -170,31 +181,68 @@ export const downloadFile = async (fileId: string): Promise<{ readonly ok: boole
 
 export type LoadStatus = 'loading' | 'ready' | 'error' | 'forbidden';
 
-/** React hook: loads the given agendas, exposes typed data and a `run` that uses the right agenda revision. */
-export const useAgendaRecords = (agendas: readonly AgendaId[]) => {
-  const [data, setData] = useState<RecordsResponse | undefined>(undefined);
-  const [status, setStatus] = useState<LoadStatus>('loading');
-  const latest = useRef(0);
-  const key = agendas.join(',');
+/** Canonical agenda list of one records read (registry order, no duplicates): every reader of the same agendas shares one store entry. */
+const agendaSet = (agendas: readonly string[]): readonly AgendaId[] => {
+  const wanted = new Set(agendas);
+  return agendaIds.filter((id) => wanted.has(id));
+};
+
+/**
+ * The agenda records of the signed-in principal, one entry per sorted agenda list. The Shell fills it through a page's
+ * `preloadPage` before it reveals the page, so the page (and every panel reading the same agendas) renders real data
+ * in its first commit and never starts a second read.
+ */
+export const agendaRecordsData = definePageData({
+  key: (agendas: readonly AgendaId[]) => agendas.join(','),
+  load: (agendas: readonly AgendaId[]) => recordsRead({ agendas }),
+  runtime: browserRuntime,
+});
+
+/** `preloadPage` of a page that reads `agendas` (the same list it passes to `useAgendaRecords`). */
+export const preloadAgendaRecords = (agendas: readonly AgendaId[]) => {
+  const input = agendaSet(agendas);
+  return modulePagePreload(() => agendaRecordsData.preload(input));
+};
+
+type AgendaSnapshot = ReturnType<typeof agendaRecordsData.snapshot>;
+
+const statusOf = (snapshot: AgendaSnapshot): LoadStatus => {
+  if (snapshot.state === 'pending') {
+    return 'loading';
+  }
+  if (snapshot.state === 'failed') {
+    return recordsReason(snapshot.error) === 'forbidden' ? 'forbidden' : 'error';
+  }
+  return 'ready';
+};
+
+const idleSnapshot = (): AgendaSnapshot => pageDataPending;
+
+/**
+ * React hook: reads the given agendas from the shared store, exposes typed data and a `run` that uses the right agenda
+ * revision. `enabled: false` reads nothing (for panels that use the page's records when it passes them).
+ */
+export const useAgendaRecords = (agendas: readonly AgendaId[], options: { readonly enabled?: boolean } = {}) => {
+  const enabled = options.enabled ?? true;
+  const key = agendaRecordsData.key(agendaSet(agendas));
+  const input = useMemo(() => agendaSet(key.split(',')), [key]);
+  const snapshot = useSyncExternalStore(
+    agendaRecordsData.subscribe,
+    enabled ? () => agendaRecordsData.snapshot(input) : idleSnapshot,
+    idleSnapshot,
+  );
+  useEffect(() => {
+    if (enabled) {
+      agendaRecordsData.ensure(input);
+    }
+  }, [enabled, input]);
 
   const reload = useCallback(async () => {
-    latest.current += 1;
-    const ticket = latest.current;
-    const outcome = await loadRecords({ agendas: key === '' ? [] : (key.split(',') as AgendaId[]) });
-    if (ticket !== latest.current) {
-      return;
-    }
-    if (outcome.ok) {
-      setData(outcome.data);
-      setStatus('ready');
-    } else {
-      setStatus(outcome.reason === 'forbidden' ? 'forbidden' : 'error');
-    }
-  }, [key]);
+    await browserRuntime.runPromise(agendaRecordsData.refresh(input));
+  }, [input]);
 
-  useEffect(() => {
-    void reload();
-  }, [reload]);
+  // A failed re-read keeps the last records on screen (the store keeps the ready value).
+  const data = snapshot.state === 'ready' ? snapshot.value : undefined;
 
   const run = useCallback(
     async (command: OpsCommand): Promise<CommandOutcome> => {
@@ -212,5 +260,5 @@ export const useAgendaRecords = (agendas: readonly AgendaId[]) => {
   );
 
   const access = (agenda: AgendaId) => data?.access.find((entry) => entry.agenda === agenda);
-  return { access, data, reload, run, status };
+  return { access, data, reload, run, status: statusOf(snapshot) };
 };

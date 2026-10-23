@@ -29,7 +29,7 @@ import {
   useCategoryLabel,
   usePrincipalLabel,
 } from '../../../../ui/documents-kit.tsx';
-import { useAgendaRecords } from '../../../../ui/use-agenda.ts';
+import { preloadAgendaRecords, useAgendaRecords } from '../../../../ui/use-agenda.ts';
 import { exportCsv } from '../../../../ui/ops-agenda/ui-bits.tsx';
 import { LinkedDocuments } from '../../../../ui/linked-documents.tsx';
 import { useTaskOptions } from '../../../../ui/task-options.ts';
@@ -741,4 +741,6 @@ export const DocumentsPage = () => (
   </AgendaFrame>
 );
 
+/** The Shell awaits this before it reveals the page, so the first render already has the documents agenda. */
+export const preloadPage = preloadAgendaRecords(['documents']);
 export default DocumentsPage;

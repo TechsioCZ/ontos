@@ -11,6 +11,7 @@ import { opsSegments } from '../../../../../shared/domain/ops-overview.ts';
 import type { Deadline } from '../../../../../shared/domain/ops-overview.ts';
 import { searchRows, unitAvailability } from '../../../../ui/ops-agenda/model.ts';
 import type { DrillRow, Kpi, KpiId, SearchKind, SearchRow, Tone } from '../../../../ui/ops-agenda/model.ts';
+import { LoadingSkeleton } from '../../../../ui/loading-skeleton.tsx';
 import { personaOf } from '../../../../ui/ops-agenda/personas.ts';
 import { sourceKeys } from '../../../../ui/ops-agenda/sources.ts';
 import type { RentalOverviewSources } from '../../../../ui/ops-agenda/sources.ts';
@@ -81,7 +82,7 @@ const OccupancyFigure = ({ kpi }: { readonly kpi: Kpi | undefined }) => {
         </>
       ) : (
         <span className="facilityoperations:text-sm" style={muted}>
-          {kpi === undefined || kpi.status === 'loading' ? t('facility-operations.common.loading') : t(`${k}.state.${kpi.status === 'ready' ? 'noData' : kpi.status}`)}
+          {kpi === undefined || kpi.status === 'loading' ? <PendingBar /> : t(`${k}.state.${kpi.status === 'ready' ? 'noData' : kpi.status}`)}
         </span>
       )}
     </div>
@@ -228,6 +229,19 @@ const secondaryValues = (kpi: Kpi): Record<string, string | number> => {
     values['amount'] = formatMoney(values['amountMinor']);
   }
   return values;
+};
+
+/** Quiet inline placeholder of a value whose source has not settled yet (no loading text). */
+const PendingBar = () => {
+  const { t } = useLang();
+  return (
+    <span
+      className="facilityoperations:inline-block facilityoperations:h-3 facilityoperations:w-16 facilityoperations:animate-pulse facilityoperations:rounded"
+      style={{ background: 'var(--color-neutral-200, #e5e7eb)' }}
+    >
+      <span className="facilityoperations:sr-only">{t('facility-operations.common.loading')}</span>
+    </span>
+  );
 };
 
 const KpiValue = ({ kpi }: { readonly kpi: Kpi }) => {
@@ -654,9 +668,7 @@ export const OccupancyByBuilding = ({ sources, today }: { readonly sources: Rent
     const status = sources.property.status !== 'ready' ? sources.property.status : sources.occupancy.status;
     body =
       status === 'loading' ? (
-        <p className="facilityoperations:m-0 facilityoperations:text-sm" style={muted}>
-          {t('facility-operations.common.loading')}
-        </p>
+        <LoadingSkeleton rows={3} />
       ) : (
         <EmptyState description={t(`${k}.state.${status}Description`)} title={t(`${k}.state.${status}`)} />
       );
@@ -744,7 +756,7 @@ export const OpsAgendas = ({ sources }: { readonly sources: RentalOverviewSource
               <span className="facilityoperations:text-sm facilityoperations:font-medium">{t(`facility-operations.${agenda}.title`)}</span>
               <span className="facilityoperations:text-xs" style={muted}>
                 {ops.status === 'loading'
-                  ? t('facility-operations.common.loading')
+                  ? <PendingBar />
                   : locked || ops.status === 'forbidden'
                     ? t(`${k}.state.forbidden`)
                     : envelope === undefined
