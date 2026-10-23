@@ -11,7 +11,10 @@ import {
   ActiveApplicationCompositionSnapshotSchema,
   validateActiveApplicationCompositionSnapshot,
 } from '../../src/modules/active-application-composition.ts';
-import { ActiveApplicationCompositionSource } from '../../src/modules/active-application-composition-source-service.ts';
+import {
+  ActiveApplicationCompositionSource,
+  requestScopedActiveApplicationCompositionSource,
+} from '../../src/modules/active-application-composition-source-service.ts';
 import { ActiveApplicationCompositionSourceReadError } from '../../src/modules/active-application-composition-source-errors.ts';
 import type { ActiveApplicationCompositionSnapshot } from '../../src/modules/active-application-composition.ts';
 import {
@@ -52,6 +55,46 @@ const snapshot = (): ActiveApplicationCompositionSnapshot => {
     validUntil: Schema.decodeSync(Schema.DateTimeUtcFromString)(validUntil),
   };
 };
+
+it.effect('shares a wire observation only inside one request Layer build', () =>
+  Effect.gen(function* requestScopedSource() {
+    let reads = 0;
+    const sourceLive = Effect.sync(() => {
+      reads += 1;
+      return `observation-${reads}`;
+    }).pipe(requestScopedActiveApplicationCompositionSource, Layer.effect(ActiveApplicationCompositionSource));
+    const request = Layer.build(sourceLive).pipe(
+      Effect.flatMap((context) => {
+        const source = Context.get(context, ActiveApplicationCompositionSource);
+        return Effect.all([source.load, source.load], { concurrency: 2 });
+      }),
+      Effect.scoped,
+    );
+    expect(yield* request).toEqual(['observation-1', 'observation-1']);
+    expect(reads).toBe(1);
+    expect(yield* request).toEqual(['observation-2', 'observation-2']);
+    expect(reads).toBe(2);
+  }),
+);
+
+it.effect('a failed request observation cannot replace a fresh observation in the next request', () =>
+  Effect.gen(function* retryObservationInNextRequest() {
+    let reads = 0;
+    const sourceLive = Effect.suspend(() => {
+      reads += 1;
+      return reads === 1
+        ? Effect.fail(new ActiveApplicationCompositionSourceReadError({ reason: 'KV unavailable' }))
+        : Effect.succeed('new publication');
+    }).pipe(requestScopedActiveApplicationCompositionSource, Layer.effect(ActiveApplicationCompositionSource));
+    const request = Layer.build(sourceLive).pipe(
+      Effect.flatMap((context) => Context.get(context, ActiveApplicationCompositionSource).load),
+      Effect.scoped,
+    );
+    expect((yield* Effect.flip(request)).reason).toBe('KV unavailable');
+    expect(yield* request).toBe('new publication');
+    expect(reads).toBe(2);
+  }),
+);
 
 it.effect('accepts a complete empty installation while its authority is live', () =>
   Effect.gen(function* acceptLiveSnapshot() {
