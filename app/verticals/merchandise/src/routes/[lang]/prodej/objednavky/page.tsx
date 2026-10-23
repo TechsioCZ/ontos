@@ -17,6 +17,8 @@ import {
   Toaster,
 } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
+import { modulePagePreload } from '@app/shared-contracts/page-data';
+import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { Effect } from 'effect';
 import { useMemo, useState } from 'react';
 import type { Order } from '../../../../../shared/apis/records.ts';
@@ -24,6 +26,7 @@ import type { OrderStatus } from '../../../../../shared/domain/merchandise-model
 import csResource from '../../../../../locales/cs/merchandise.json';
 import enResource from '../../../../../locales/en/merchandise.json';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { legalEntityOf } from '../../../../runtime/page-data-hooks.ts';
 import { toSubjectIds, useSubjectTagFilter, useSubjectTags } from '../../../../tags/subject-tags.ts';
 import type { SubjectTagFilter } from '../../../../tags/subject-tags.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
@@ -42,7 +45,13 @@ import {
   statusDoneKey,
   transitionsFrom,
 } from './orders-model.ts';
-import { changeOrderStatuses, useOrderDetail, useOrders } from './orders-records.ts';
+import {
+  changeOrderStatuses,
+  preloadOrdersPage,
+  recordsCanEditOrders,
+  useOrderDetail,
+  useOrders,
+} from './orders-records.ts';
 import type { OrdersQuery } from './orders-records.ts';
 import { useDebounced } from '../../provoz/produkty/product-reads.ts';
 import { ordersColumns, ordersTranslations } from './orders-table.tsx';
@@ -86,7 +95,11 @@ const statusChangeNotification = (
   } satisfies Parameters<ReturnType<typeof useToast>['create']>[0];
 };
 
-const OrdersPageContent = () => {
+interface OrdersPageContentProps {
+  readonly legalEntityId: string;
+}
+
+const OrdersPageContent = ({ legalEntityId }: OrdersPageContentProps) => {
   const { t } = useModernI18n();
   const toaster = useToast();
   const [search, setSearch] = useState('');
@@ -95,7 +108,7 @@ const OrdersPageContent = () => {
   const settledSearch = useDebounced(search);
   // Dispatch processes order snapshots; it has no customer-directory or tagging access. Known after the first read.
   const [canEditOrders, setCanEditOrders] = useState(false);
-  const directory = useCustomerDirectory(canEditOrders);
+  const directory = useCustomerDirectory(legalEntityId, canEditOrders);
   const customerEntries = directory.entries;
   const customerPartyIds = useMemo(
     () => customersMatching(customerEntries, settledSearch),
@@ -114,7 +127,7 @@ const OrdersPageContent = () => {
     }),
     [customerPartyIds, pagination, settledSearch, statusFilter, taggedIds],
   );
-  const orders$ = useOrders(query);
+  const orders$ = useOrders(legalEntityId, query);
   const { state } = orders$;
   // Selected orders by id, kept across pages: bulk actions need each order's status, not only its id.
   const [selectedOrders, setSelectedOrders] = useState<Readonly<Record<string, Order>>>({});
@@ -141,9 +154,9 @@ const OrdersPageContent = () => {
     setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
     setSelectedOrders({});
   };
-  const recordsCanEditOrders = ready?.records.canEditOrders ?? canWrite;
-  if (ready !== undefined && recordsCanEditOrders !== canEditOrders) {
-    setCanEditOrders(recordsCanEditOrders);
+  const readyCanEditOrders = ready === undefined ? canEditOrders : recordsCanEditOrders(ready.records);
+  if (readyCanEditOrders !== canEditOrders) {
+    setCanEditOrders(readyCanEditOrders);
   }
   const orderTags = useSubjectTags('order', canEditOrders ? orders.map((order) => order.id) : []);
   const statusItems = [{ label: t(key('filters.allStatuses')), value: ALL_STATUSES }, ...bulkStatusItems];
@@ -516,14 +529,17 @@ const OrdersPageContent = () => {
   );
 };
 
-export const OrdersPage = () => (
+/** The Shell prepares the first page, its header counts and the customer names before it reveals the page. */
+export const preloadPage = modulePagePreload((props) => preloadOrdersPage(legalEntityOf(props), PAGE_SIZE));
+
+export const OrdersPage = (props: Partial<ModulePageProps>) => (
   <FederatedI18nBoundary
     defaultNamespace="merchandise"
     fallbackLanguage="en"
     resources={merchandiseI18nResources}
     supportedLanguages={['en', 'cs']}
   >
-    <OrdersPageContent />
+    <OrdersPageContent legalEntityId={legalEntityOf(props)} />
   </FederatedI18nBoundary>
 );
 

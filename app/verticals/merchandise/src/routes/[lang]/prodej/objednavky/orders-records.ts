@@ -1,5 +1,7 @@
 import { Effect, Exit, Match, Random, Schema } from 'effect';
-import { useEffect, useRef, useState } from 'react';
+import { definePageData, pageDataPending } from '@app/shared-contracts/page-data';
+import type { PageDataSnapshot } from '@app/shared-contracts/page-data';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import type { MerchandiseCommand } from '../../../../../shared/actions/apply-command.ts';
 import type { Order, ProductRecord, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { OrderStatus, ProductId, VariantId } from '../../../../../shared/domain/merchandise-model.ts';
@@ -7,7 +9,10 @@ import { OrderIdSchema, PartyIdSchema } from '../../../../../shared/domain/merch
 import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
 import { executeRecords } from '../../../../api/records-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
+import { useSettledPageData } from '../../../../runtime/page-data-hooks.ts';
+import type { SettledPageData } from '../../../../runtime/page-data-hooks.ts';
 import { readProductRecord } from '../../provoz/produkty/product-reads.ts';
+import { customerDirectoryData } from './customers-directory.ts';
 
 /** What the orders table asks the server for: filters and one page, newest first. */
 export interface OrdersQuery {
@@ -184,59 +189,128 @@ export const loadFailureKind = (error: LoadFailure): 'error' | 'forbidden' =>
     Match.orElse((): 'error' => 'error'),
   );
 
-/** Reads one page; only the newest read may land, so a slow earlier page never replaces the current one. */
-const readPage = (query: OrdersQuery, generation: { current: number }, setState: (next: OrdersState) => void): void => {
-  generation.current += 1;
-  const requested = generation.current;
-  const land = (next: OrdersState) => {
-    if (requested === generation.current) {
-      setState(next);
-    }
-  };
-  void browserRuntime.runPromise(
-    loadOrders(query).pipe(
-      Effect.match({
-        onFailure: (error): OrdersState => ({ kind: loadFailureKind(error) }),
-        onSuccess: (records): OrdersState => ({ counts: null, kind: 'ready', query, records }),
-      }),
-      Effect.map(land),
-    ),
-  );
+/** Input of the orders list data: the company and one filtered page. */
+export interface OrdersPageInput {
+  readonly legalEntityId: string;
+  readonly query: OrdersQuery;
+}
+
+/** Everything `ordersView` sends, in a fixed order: equal requests share one entry. */
+const ordersPageKey = ({ legalEntityId, query }: OrdersPageInput): string => {
+  const search = query.search.trim();
+  return [
+    legalEntityId,
+    query.limit,
+    query.offset,
+    query.status ?? '',
+    search,
+    search === '' ? '' : query.customerPartyIds.join(','),
+    query.taggedIds === null ? '*' : query.taggedIds.join(','),
+  ].join('|');
 };
 
-/** The header counts; a failed count reads as unknown (a dash), never as zero. */
-const readCounts = (setCounts: (next: OrderCounts | null) => void): void => {
-  void browserRuntime.runPromise(
-    loadCounts.pipe(
-      Effect.match({
-        onFailure: (): OrderCounts | null => null,
-        onSuccess: (counts): OrderCounts | null => counts,
+/** One page of orders per company and request. */
+export const ordersPageData = definePageData({
+  key: ordersPageKey,
+  load: ({ query }: OrdersPageInput) => loadOrders(query),
+  runtime: browserRuntime,
+});
+
+/** The header counts per company; they do not depend on the filters. */
+export const orderCountsData = definePageData({
+  key: (legalEntityId: string) => legalEntityId,
+  load: () => loadCounts,
+  runtime: browserRuntime,
+});
+
+/** The page the orders list opens with: no filters, newest first. */
+export const firstOrdersPage = (limit: number): OrdersQuery => ({
+  customerPartyIds: [],
+  limit,
+  offset: 0,
+  search: '',
+  status: null,
+  taggedIds: null,
+});
+
+/** Staff with order editing see customer names from the directory; dispatch reads no directory. */
+export const recordsCanEditOrders = (records: RecordsResponse): boolean => records.canEditOrders ?? records.canWrite;
+
+/**
+ * Prepares the first page, the header counts and, for staff who edit orders, the customer directory the names come
+ * from, so the page opens with all of them in place.
+ */
+export const preloadOrdersPage = (legalEntityId: string, limit: number): Effect.Effect<void> => {
+  const input: OrdersPageInput = { legalEntityId, query: firstOrdersPage(limit) };
+  const firstPageWithNames = ordersPageData.preload(input).pipe(
+    Effect.andThen(
+      Effect.suspend(() => {
+        const page = ordersPageData.snapshot(input);
+        return page.state === 'ready' && recordsCanEditOrders(page.value)
+          ? customerDirectoryData.preload(legalEntityId)
+          : Effect.void;
       }),
-      Effect.map(setCounts),
     ),
   );
+  return Effect.all([firstPageWithNames, orderCountsData.preload(legalEntityId)], {
+    concurrency: 2,
+    discard: true,
+  });
+};
+
+/** The page's orders state from the last settled read; a failed count reads as unknown (a dash), never as zero. */
+const ordersState = (
+  settled: SettledPageData<OrdersPageInput, RecordsResponse, LoadFailure> | undefined,
+  counts: PageDataSnapshot<OrderCounts, unknown>,
+): OrdersState => {
+  if (settled === undefined) {
+    return { kind: 'loading' };
+  }
+  const { snapshot } = settled;
+  return snapshot.state === 'failed'
+    ? { kind: loadFailureKind(snapshot.error) }
+    : {
+        counts: counts.state === 'ready' ? counts.value : null,
+        kind: 'ready',
+        query: settled.input.query,
+        records: snapshot.value,
+      };
 };
 
 /**
- * Loads one page of orders for `query`; a new query reads again. `load` refreshes the page and the header counts
- * after a change. A refresh keeps the current rows until the new read lands.
+ * One page of orders for `query` with the header counts. While a new query loads the last page stays on screen
+ * (`state.query` tells which query it answers). `load` reads the page and the counts again after a change.
  */
-export const useOrders = (query: OrdersQuery) => {
-  const [state, setState] = useState<OrdersState>({ kind: 'loading' });
-  const [counts, setCounts] = useState<OrderCounts | null>(null);
-  const generation = useRef(0);
+export const useOrders = (legalEntityId: string, query: OrdersQuery) => {
+  const input: OrdersPageInput = { legalEntityId, query };
+  const page = useSyncExternalStore(
+    ordersPageData.subscribe,
+    () => ordersPageData.snapshot(input),
+    () => pageDataPending,
+  );
+  const counts = useSyncExternalStore(
+    orderCountsData.subscribe,
+    () => orderCountsData.snapshot(legalEntityId),
+    () => pageDataPending,
+  );
+  // Cold mounts only: under the Shell the first page and the counts are prepared before the page shows.
   useEffect(() => {
-    readPage(query, generation, setState);
-  }, [query]);
+    ordersPageData.ensure({ legalEntityId, query });
+  }, [legalEntityId, query]);
   useEffect(() => {
-    readCounts(setCounts);
-  }, []);
+    orderCountsData.ensure(legalEntityId);
+  }, [legalEntityId]);
+  const settled = useSettledPageData(page, input);
   return {
     load: () => {
-      readPage(query, generation, setState);
-      readCounts(setCounts);
+      browserRuntime.runFork(
+        Effect.all([ordersPageData.refresh(input), orderCountsData.refresh(legalEntityId)], {
+          concurrency: 2,
+          discard: true,
+        }),
+      );
     },
-    state: state.kind === 'ready' ? { ...state, counts } : state,
+    state: ordersState(settled, counts),
   };
 };
 

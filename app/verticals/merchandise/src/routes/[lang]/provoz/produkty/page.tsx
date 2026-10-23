@@ -9,15 +9,14 @@ import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { PageHeader, StatCard, StatRow, formatNumber, Toaster } from '@app/admin-ui';
 import { BulkTagDialog, TagFilter } from '@app/tagging/components/tag-controls';
 import { Effect, Schema } from 'effect';
+import { modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
+import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { legalEntityOf, useSettledPageData } from '../../../../runtime/page-data-hooks.ts';
+import type { SettledPageData } from '../../../../runtime/page-data-hooks.ts';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { BulkProductPatch } from '../../../../../shared/actions/apply-command.ts';
-import type {
-  CategoryTrail,
-  ProductCategoryCount,
-  ProductRecord,
-  RecordsResponse,
-} from '../../../../../shared/apis/records.ts';
+import type { CategoryTrail, ProductRecord, RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { ProductIdSchema } from '../../../../../shared/domain/merchandise-model.ts';
 import csResource from '../../../../../locales/cs/merchandise.json';
 import enResource from '../../../../../locales/en/merchandise.json';
@@ -26,8 +25,20 @@ import type { SubjectTagFilter } from '../../../../tags/subject-tags.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
 import { formatKc } from '../../../../list-cells.tsx';
-import { loadCategoryChoices, loadProducts, runCommand, productNavigationFailureKey } from './products-api.ts';
-import type { FailureReason, ProductListQuery, ProductSort } from './products-api.ts';
+import {
+  categoryChoicesData,
+  firstProductPage,
+  productListData,
+  runCommand,
+  productNavigationFailureKey,
+} from './products-api.ts';
+import type {
+  CategoryChoices,
+  FailureReason,
+  ProductListInput,
+  ProductListQuery,
+  ProductSort,
+} from './products-api.ts';
 import { CategorySearchCombobox } from './category-search-combobox.tsx';
 import { useDebounced } from './product-reads.ts';
 import { ProductBulkBar } from './product-bulk-bar.tsx';
@@ -63,59 +74,58 @@ type LoadState =
   | { readonly query: ProductListQuery; readonly response: RecordsResponse; readonly status: 'ready' }
   | { readonly status: 'loading' };
 
-const NO_PRODUCT_CATEGORIES: readonly ProductCategoryCount[] = [];
+const NO_CHOICES: CategoryChoices = { hasTree: false, labels: [] };
 
-interface CategoryChoices {
-  /** The company has a storefront tree: the filter searches it on the server. */
-  readonly hasTree: boolean;
-  /** Distinct product category labels; the filter offers them when the company has no storefront tree. */
-  readonly labels: readonly ProductCategoryCount[];
-}
-const NO_CHOICES: CategoryChoices = { hasTree: false, labels: NO_PRODUCT_CATEGORIES };
-
-type SetLoadState = (next: LoadState) => void;
-
-/** Reads one page; only the newest read may land, so a slow earlier page never replaces the page the user moved to. */
-const readPage = (query: ProductListQuery, generation: { current: number }, setState: SetLoadState): void => {
-  generation.current += 1;
-  const requested = generation.current;
-  loadProducts(query, (outcome) => {
-    if (requested !== generation.current) {
-      return;
-    }
-    setState(
-      outcome.ok ? { query, response: outcome.response, status: 'ready' } : { reason: outcome.reason, status: 'error' },
-    );
-  });
+/** The last settled read of the list; while a new query loads it stays on screen (`query` tells which it answers). */
+const productLoadState = (
+  settled: SettledPageData<ProductListInput, RecordsResponse, FailureReason> | undefined,
+): LoadState => {
+  if (settled === undefined) {
+    return { status: 'loading' };
+  }
+  const { snapshot } = settled;
+  return snapshot.state === 'failed'
+    ? { reason: snapshot.error, status: 'error' }
+    : { query: settled.input.query, response: snapshot.value, status: 'ready' };
 };
 
 /** The products page for `query`. A refresh keeps the rows on screen; only the first load shows the loading state. */
-const useProductPage = (query: ProductListQuery) => {
-  const [state, setState] = useState<LoadState>({ status: 'loading' });
-  const generation = useRef(0);
+const useProductPage = (legalEntityId: string, query: ProductListQuery) => {
+  const input: ProductListInput = { legalEntityId, query };
+  const snapshot = useSyncExternalStore(
+    productListData.subscribe,
+    () => productListData.snapshot(input),
+    () => pageDataPending,
+  );
+  // Cold mounts only: under the Shell the first page is prepared before the page shows.
   useEffect(() => {
-    readPage(query, generation, setState);
-  }, [query]);
-  return { reload: () => readPage(query, generation, setState), state };
+    productListData.ensure({ legalEntityId, query });
+  }, [legalEntityId, query]);
+  const settled = useSettledPageData(snapshot, input);
+  return {
+    reload: () => {
+      browserRuntime.runFork(productListData.refresh(input));
+    },
+    state: productLoadState(settled),
+  };
 };
 
-const readChoices = (setChoices: (next: CategoryChoices) => void): void =>
-  loadCategoryChoices((outcome) => {
-    if (outcome.ok) {
-      setChoices({
-        hasTree: outcome.response.hasCategoryTree === true,
-        labels: outcome.response.productCategories ?? NO_PRODUCT_CATEGORIES,
-      });
-    }
-  });
-
 /** The category filter's choices; reread after the category panel or a product's category changes. */
-const useCategoryChoices = () => {
-  const [choices, setChoices] = useState<CategoryChoices>(NO_CHOICES);
+const useCategoryChoices = (legalEntityId: string) => {
+  const snapshot = useSyncExternalStore(
+    categoryChoicesData.subscribe,
+    () => categoryChoicesData.snapshot(legalEntityId),
+    () => pageDataPending,
+  );
   useEffect(() => {
-    readChoices(setChoices);
-  }, []);
-  return { choices, reload: () => readChoices(setChoices) };
+    categoryChoicesData.ensure(legalEntityId);
+  }, [legalEntityId]);
+  return {
+    choices: snapshot.state === 'ready' ? snapshot.value : NO_CHOICES,
+    reload: () => {
+      browserRuntime.runFork(categoryChoicesData.refresh(legalEntityId));
+    },
+  };
 };
 
 /** Label filter options of a company without a storefront tree: the product category labels with their counts. */
@@ -179,7 +189,11 @@ const bulkFailureKey = (reason: FailureReason): string => {
   return reason === 'rejected' ? 'messages.rejected' : 'messages.failed';
 };
 
-const RecordsPageContent = () => {
+interface RecordsPageContentProps {
+  readonly legalEntityId: string;
+}
+
+const RecordsPageContent = ({ legalEntityId }: RecordsPageContentProps) => {
   const { language, t } = useModernI18n();
   const navigate = useNavigate();
   const toaster = useToast();
@@ -197,7 +211,7 @@ const RecordsPageContent = () => {
   const [bulkBusy, setBulkBusy] = useState(false);
   const settledSearch = useDebounced(search);
   const tagFilter = useSubjectTagFilter('product');
-  const { choices, reload: reloadCategories } = useCategoryChoices();
+  const { choices, reload: reloadCategories } = useCategoryChoices(legalEntityId);
   const byTree = choices.hasTree;
   const treeCategoryId = byTree ? (treeCategory?.id ?? null) : null;
   const category = byTree ? null : labelCategory;
@@ -215,7 +229,7 @@ const RecordsPageContent = () => {
     }),
     [category, lowStockOnly, pagination, settledSearch, sort, taggedIds, treeCategoryId],
   );
-  const { reload, state } = useProductPage(query);
+  const { reload, state } = useProductPage(legalEntityId, query);
 
   /** A filter change starts again at the first page. */
   const firstPage = () =>
@@ -544,7 +558,13 @@ const RecordsPageContent = () => {
   );
 };
 
-export const RecordsPage = () => {
+/** The Shell prepares the first page with the header indicators and the category filter before it reveals the page. */
+export const preloadPage = modulePagePreload(
+  (props) => productListData.preload({ legalEntityId: legalEntityOf(props), query: firstProductPage(PAGE_SIZE) }),
+  (props) => categoryChoicesData.preload(legalEntityOf(props)),
+);
+
+export const RecordsPage = (props: Partial<ModulePageProps>) => {
   const location = useRouterState({ select: (router) => router.location.href });
   return (
     <FederatedI18nBoundary
@@ -553,7 +573,7 @@ export const RecordsPage = () => {
       resources={merchandiseI18nResources}
       supportedLanguages={['en', 'cs']}
     >
-      <RecordsPageContent key={location} />
+      <RecordsPageContent key={location} legalEntityId={legalEntityOf(props)} />
     </FederatedI18nBoundary>
   );
 };

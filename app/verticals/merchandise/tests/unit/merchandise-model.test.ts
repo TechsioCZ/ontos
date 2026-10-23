@@ -1,9 +1,14 @@
 import { expect, it } from 'effect-rstest';
-import { Schema } from 'effect';
+import { pageDataPending } from '@app/shared-contracts/page-data';
+import { Option, Schema } from 'effect';
 import { HttpClientError, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
 import { RecordsResponseSchema } from '../../shared/apis/records.ts';
-import { createProductDetailQuery, recordsReason } from '../../src/routes/[lang]/provoz/produkty/products-api.ts';
-import type { LoadOutcome } from '../../src/routes/[lang]/provoz/produkty/products-api.ts';
+import {
+  detailInput,
+  detailState,
+  productDetailData,
+  recordsReason,
+} from '../../src/routes/[lang]/provoz/produkty/products-api.ts';
 import { ProductRecordSchema, sameSku } from '../../shared/domain/merchandise-model.ts';
 import { productResourceDescriptor } from '../../shared/resources/product.ts';
 
@@ -31,63 +36,8 @@ const response = (revision = 0) =>
     revision,
   });
 
-it('detail query starts lazily, rejects invalid IDs without a read and has stable snapshots', () => {
-  let reads = 0;
-  const read = (_callback: (outcome: LoadOutcome) => void) => {
-    reads += 1;
-  };
-  const query = createProductDetailQuery('product-1', read);
-  expect(reads).toBe(0);
-  expect(query.getSnapshot()).toBe(query.getSnapshot());
-  const invalid = createProductDetailQuery('', read);
-  const stop = invalid.subscribe(() => {});
-  invalid.reload();
-  expect(invalid.getSnapshot()).toEqual({ status: 'invalid' });
-  expect(reads).toBe(0);
-  stop();
-});
-
-it('detail query ignores stale results after reload and StrictMode unsubscribe/resubscribe', () => {
-  const callbacks: ((outcome: LoadOutcome) => void)[] = [];
-  const read = (outcomeListener: (outcome: LoadOutcome) => void) => {
-    callbacks.push(outcomeListener);
-  };
-  const query = createProductDetailQuery('product-1', read);
-  const firstStop = query.subscribe(() => {});
-  firstStop();
-  const secondStop = query.subscribe(() => {});
-  expect(callbacks).toHaveLength(2);
-  callbacks[0]?.({ ok: false, reason: 'forbidden' });
-  expect(query.getSnapshot()).toEqual({ status: 'loading' });
-  query.reload();
-  callbacks[1]?.({ ok: false, reason: 'unavailable' });
-  expect(query.getSnapshot()).toEqual({ status: 'loading' });
-  callbacks[2]?.({ ok: true, response: response(2) });
-  expect(query.getSnapshot()).toEqual({ status: 'not-found' });
-  secondStop();
-  callbacks[2]?.({ ok: false, reason: 'forbidden' });
-  expect(query.getSnapshot()).toEqual({ status: 'not-found' });
-});
-
-it('detail query exposes forbidden failures and can retry without sharing state with another query', () => {
-  const callbacks: ((outcome: LoadOutcome) => void)[] = [];
-  const read = (outcomeListener: (outcome: LoadOutcome) => void) => {
-    callbacks.push(outcomeListener);
-  };
-  const query = createProductDetailQuery('product-1', read);
-  const separate = createProductDetailQuery('product-1', () => {});
-  const stop = query.subscribe(() => {});
-  callbacks[0]?.({ ok: false, reason: 'forbidden' });
-  expect(query.getSnapshot()).toEqual({ reason: 'forbidden', status: 'error' });
-  expect(separate.getSnapshot()).toEqual({ status: 'loading' });
-  query.reload();
-  callbacks[1]?.({ ok: true, response: response() });
-  expect(query.getSnapshot()).toEqual({ status: 'not-found' });
-  stop();
-});
-
-it('detail query resolves only the requested product and preserves read-only capability', () => {
-  const product = Schema.decodeUnknownSync(ProductRecordSchema)({
+const product = () =>
+  Schema.decodeUnknownSync(ProductRecordSchema)({
     active: true,
     category: 'IT',
     createdAt: '2026-10-05T10:00:00Z',
@@ -104,40 +54,42 @@ it('detail query resolves only the requested product and preserves read-only cap
     updatedAt: '2026-10-05T10:00:00Z',
     vatRate: 21,
   });
-  const loaded = { ...response(), products: [product] };
-  const callbacks: ((outcome: LoadOutcome) => void)[] = [];
-  const read = (outcomeListener: (outcome: LoadOutcome) => void) => {
-    callbacks.push(outcomeListener);
-  };
-  const query = createProductDetailQuery('product-1', read);
-  const missing = createProductDetailQuery('product-2', read);
-  const stop = query.subscribe(() => {});
-  const stopMissing = missing.subscribe(() => {});
-  callbacks[0]?.({ ok: true, response: loaded });
-  callbacks[1]?.({ ok: true, response: loaded });
-  expect(query.getSnapshot()).toEqual({ product, response: loaded, status: 'ready' });
-  expect(missing.getSnapshot()).toEqual({ status: 'not-found' });
-  expect(loaded.canWrite).toBe(false);
-  query.reload();
-  callbacks[2]?.({ ok: false, reason: 'unavailable' });
-  expect(query.getSnapshot()).toEqual({ product, refreshFailure: 'unavailable', response: loaded, status: 'ready' });
-  query.reload();
-  callbacks[3]?.({ ok: false, reason: 'forbidden' });
-  expect(query.getSnapshot()).toEqual({ reason: 'forbidden', status: 'error' });
-  stop();
-  stopMissing();
+
+it('detail page reads nothing for an id no product can have', () => {
+  expect(Option.isNone(detailInput('entity-1', ''))).toBe(true);
+  expect(detailState(false, pageDataPending)).toEqual({ status: 'invalid' });
+  expect(Option.getOrThrow(detailInput('entity-1', 'product-1'))).toEqual({
+    legalEntityId: 'entity-1',
+    productId: 'product-1',
+  });
 });
 
-it('detail query keeps release-change failures distinct from record revision conflicts', () => {
-  const callbacks: ((outcome: LoadOutcome) => void)[] = [];
-  const query = createProductDetailQuery('product-1', (callback) => callbacks.push(callback));
-  const stop = query.subscribe(() => {});
-  callbacks[0]?.({ ok: false, reason: 'reload-required' });
-  expect(query.getSnapshot()).toEqual({ reason: 'reload-required', status: 'error' });
-  query.reload();
-  callbacks[1]?.({ ok: false, reason: 'conflict' });
-  expect(query.getSnapshot()).toEqual({ reason: 'conflict', status: 'error' });
-  stop();
+it('detail data is one entry per company and product', () => {
+  const input = Option.getOrThrow(detailInput('entity-1', 'product-1'));
+  expect(productDetailData.key(input)).toBe(productDetailData.key({ ...input }));
+  expect(productDetailData.key(input)).not.toBe(productDetailData.key({ ...input, legalEntityId: 'entity-2' }));
+});
+
+it('detail page resolves only the requested product and preserves read-only capability', () => {
+  const cable = product();
+  const loaded = { ...response(), products: [cable] };
+  expect(detailState(true, pageDataPending)).toEqual({ status: 'loading' });
+  expect(
+    detailState(true, { refreshing: false, state: 'ready', value: { product: Option.some(cable), response: loaded } }),
+  ).toEqual({ product: cable, response: loaded, status: 'ready' });
+  expect(
+    detailState(true, { refreshing: false, state: 'ready', value: { product: Option.none(), response: loaded } }),
+  ).toEqual({ status: 'not-found' });
+  expect(loaded.canWrite).toBe(false);
+});
+
+it('detail page keeps release-change, permission and revision failures distinct', () => {
+  for (const reason of ['reload-required', 'forbidden', 'conflict'] as const) {
+    expect(detailState(true, { error: reason, refreshing: false, state: 'failed' })).toEqual({
+      reason,
+      status: 'error',
+    });
+  }
 });
 
 it('plain module admission 409 requires document reload, not query retry or a connection message', () => {

@@ -72,7 +72,7 @@ export const agentReviewRead = defineRead(
     // The person's rights, resolved before the transaction; a failed check leaves every answer open.
     prepare: (input: AgentReviewRequest, context) =>
       merchandiseRecordsGrants(context.scope, reviewRecordsRequest(input, context.scope)).pipe(
-        Effect.map(Option.some),
+        Effect.asSome,
         Effect.orElseSucceed(Option.none),
       ),
     load: (input: AgentReviewRequest, context) =>

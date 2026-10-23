@@ -4,7 +4,11 @@ import { ApplyCommandResultSchema } from '../../shared/actions/apply-command.ts'
 import { ApplyCommandActionConflictProblemSchema } from '../../shared/apis/apply-command-action.ts';
 import { OrderSchema } from '../../shared/apis/records.ts';
 import { executeApplyCommand } from '../../src/api/apply-command-action-client.ts';
-import { changeOrderStatuses } from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
+import {
+  changeOrderStatuses,
+  firstOrdersPage,
+  ordersPageData,
+} from '../../src/routes/[lang]/prodej/objednavky/orders-records.ts';
 
 rstest.mock('../../src/api/apply-command-action-client.ts');
 
@@ -110,4 +114,14 @@ describe('bulk order status commands', () => {
       expect(executeApplyCommand).not.toHaveBeenCalled();
     }),
   );
+});
+
+it('the first orders page the Shell prepares is the entry the page reads', () => {
+  const first = { legalEntityId: 'entity-1', query: firstOrdersPage(50) };
+  const key = ordersPageData.key(first);
+  // Without a search the customer lookup is not sent, so it does not split the entry.
+  expect(ordersPageData.key({ ...first, query: { ...firstOrdersPage(50), customerPartyIds: ['party-1'] } })).toBe(key);
+  expect(ordersPageData.key({ ...first, query: { ...firstOrdersPage(50), offset: 50 } })).not.toBe(key);
+  expect(ordersPageData.key({ ...first, query: { ...firstOrdersPage(50), status: 'NEW' } })).not.toBe(key);
+  expect(ordersPageData.key({ ...first, legalEntityId: 'entity-2' })).not.toBe(key);
 });
