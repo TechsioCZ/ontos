@@ -524,6 +524,15 @@ it.layer(NodeCrypto.layer, { excludeTestServices: true })((suite) => {
             ),
           ),
         ).toEqual([{ tenant: tenantA }]);
+        // The outbox claim filter reads the tenant lifecycle column, so the worker must be able to evaluate it.
+        // A column-scoped grant that omits `status` fails every claim for this worker.
+        expect(
+          yield* query(
+            worker,
+            `select exists (select 1 from core.tenants t where t.tenant_id = $1 and t.status = 'active') as claimable`,
+            [tenantA],
+          ),
+        ).toEqual([{ claimable: true }]);
         for (const [statement, parameter] of [
           ['update core.tenants set tenant_id = tenant_id where tenant_id = $1', tenantA],
           ['update core.domain_events set domain_event_id = domain_event_id where domain_event_id = $1', domainEventA],

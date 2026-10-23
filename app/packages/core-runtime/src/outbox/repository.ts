@@ -168,6 +168,14 @@ export const makeOutboxRepository = (executor: CoreDbExecutor, crypto: Crypto.Cr
             .where(
               and(
                 inArray(outboxDeliveries.workerKey, [...byWorkerKey.keys()]),
+                // A tenant that is no longer active must not have background work claimed at all. This is a
+                // predicate rather than a join on purpose: `.for('update')` below locks every row named in the
+                // FROM list, and `core.tenants` is the per-tenant serialization anchor held FOR UPDATE by every
+                // event-emitting action, so joining it would make claim transactions contend with ordinary
+                // writes. Keeping ineligible deliveries pending means resuming the work resumes with the tenant;
+                // for an archived tenant, which is terminal, they stay pending rather than being retried, and
+                // cancelling them belongs with the archive procedure that changes the status.
+                sql`exists (select 1 from ${tenants} where ${tenants.tenantId} = ${outboxMessages.tenantId} and ${tenants.status} = 'active')`,
                 or(
                   and(eq(outboxDeliveries.status, 'pending'), lte(outboxDeliveries.availableAt, now)),
                   and(eq(outboxDeliveries.status, 'processing'), lte(outboxDeliveries.claimExpiresAt, now)),

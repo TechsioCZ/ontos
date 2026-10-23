@@ -207,8 +207,9 @@ export const PARTY_REGISTRY_WORKER_DATABASE_GRANTS: DatabaseRoleGrants = {
     {
       table: 'core.tenants',
       privileges: ['select', 'update'],
-      columns: { select: ['tenant_id'], update: ['tenant_id'] },
-      reason: 'Core outbox/tenant-scope resolves and row-locks the delivery tenant with a no-op update',
+      columns: { select: ['tenant_id', 'status'], update: ['tenant_id'] },
+      reason:
+        'Core outbox/repository filters claimable deliveries by tenant lifecycle status, and Core outbox/tenant-scope resolves and row-locks the delivery tenant with a no-op update',
     },
     {
       table: 'core.legal_entities',
