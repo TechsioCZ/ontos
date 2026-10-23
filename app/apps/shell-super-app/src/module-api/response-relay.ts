@@ -11,15 +11,20 @@
  */
 
 const RELAYED_RESPONSE_HEADERS = [
+  'accept-ranges',
   'content-disposition',
   'content-encoding',
   'content-language',
   'content-length',
+  'content-range',
   'content-type',
   'etag',
   'last-modified',
   'location',
   'retry-after',
+  // A 401 from an owner release carries its own authentication challenge. Dropping it leaves the status
+  // without the challenge that tells the caller how to authenticate.
+  'www-authenticate',
 ] as const;
 
 /**
