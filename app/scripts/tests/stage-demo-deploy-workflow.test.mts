@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, FileSystem, Schema } from 'effect';
+import { Effect, FileSystem, Layer, Schema } from 'effect';
 import { sharedBuildSourceDigest } from '../demo/shared-build-source-digest.mts';
+import { OpsShellLive, runCommand } from '../ops/ops-shell.mts';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
@@ -81,16 +82,22 @@ it('publishes rebuilt contracts before replacing running demo processes, but sta
   expect(script.slice(replace)).toContain('stop_pid "$id"\n  start_unit "$id"');
 });
 
+const sharedSourceFixture = Effect.gen(function* sharedSourceFixture() {
+  const fs = yield* FileSystem.FileSystem;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: 'demo-shared-digest-' });
+  for (const owner of ['core-runtime', 'shared-contracts']) {
+    yield* fs.makeDirectory(`${root}/packages/${owner}/src`, { recursive: true });
+    yield* fs.writeFileString(`${root}/packages/${owner}/package.json`, '{}');
+    yield* fs.writeFileString(`${root}/packages/${owner}/src/index.ts`, ORIGINAL_SHARED_SOURCE);
+  }
+  return root;
+});
+
 it.effect('hashes shared build sources by exact content and path, without Git or output mtimes', () =>
   Effect.scoped(
     Effect.gen(function* checksSharedBuildDigest() {
       const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: 'demo-shared-digest-' });
-      for (const owner of ['core-runtime', 'shared-contracts']) {
-        yield* fs.makeDirectory(`${root}/packages/${owner}/src`, { recursive: true });
-        yield* fs.writeFileString(`${root}/packages/${owner}/package.json`, '{}');
-        yield* fs.writeFileString(`${root}/packages/${owner}/src/index.ts`, ORIGINAL_SHARED_SOURCE);
-      }
+      const root = yield* sharedSourceFixture;
       const original = yield* sharedBuildSourceDigest(root);
       expect(original).toMatch(/^[a-f0-9]{64}$/u);
       yield* fs.writeFileString(`${root}/packages/core-runtime/src/index.ts`, ORIGINAL_SHARED_SOURCE);
@@ -134,3 +141,44 @@ it('expands a requested owner refresh to every stale served shared-source consum
   expect(stamp).toBeGreaterThan(build);
   expect(script.slice(build, stamp)).toContain('refusing to stamp or restart mixed artifacts');
 });
+
+it.effect('a real MCP schema source change forces the native Bash build selector despite DEMO_SKIP_BUILD=1', () =>
+  Effect.scoped(
+    Effect.gen(function* executesSkipBuildRegression() {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* sharedSourceFixture;
+      yield* fs.makeDirectory(`${root}/unit/dist`, { recursive: true });
+      yield* fs.writeFileString(`${root}/unit/dist/contract.json`, '{}');
+      const script = readFileSync(new URL('../demo/up.sh', import.meta.url), 'utf-8');
+      const selector = script.slice(script.indexOf('needs_build()'), script.indexOf('# The package'));
+      const command = [
+        'set -eu',
+        'SHARED_SOURCE_DIGEST="$1"',
+        'STAMP_DIR=stamps',
+        'DEMO_SKIP_BUILD=1',
+        'DEMO_REBUILD=0',
+        'dir_of() { printf "%s" "$1"; }',
+        'contract_of() { printf "%s/dist/contract.json" "$1"; }',
+        selector,
+        'if needs_build unit; then printf rebuild; else printf reuse; fi',
+      ].join('\n');
+      const select = (digest: string) =>
+        runCommand({
+          args: ['-c', command, 'demo-build-selector-test', digest],
+          command: 'bash',
+          cwd: root,
+        });
+      const original = yield* sharedBuildSourceDigest(root);
+      expect(yield* select(original)).toBe('rebuild');
+      yield* fs.writeFileString(`${root}/unit/dist/.ontos-shared-source-digest`, `${original}\n`);
+      expect(yield* select(original)).toBe('reuse');
+      yield* fs.writeFileString(
+        `${root}/packages/core-runtime/src/index.ts`,
+        'export const mcp = { recordLinks: true, agentAdministrationPage: true };',
+      );
+      const changed = yield* sharedBuildSourceDigest(root);
+      expect(changed).not.toBe(original);
+      expect(yield* select(changed)).toBe('rebuild');
+    }),
+  ).pipe(Effect.provide(OpsShellLive.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
