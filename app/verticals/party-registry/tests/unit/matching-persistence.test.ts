@@ -1196,7 +1196,7 @@ it.layer(
   );
 });
 
-const retailEvidence = Schema.decodeUnknownSync(RetailEnrollmentEvidenceSchema)({
+const retailEvidence = Schema.decodeSync(RetailEnrollmentEvidenceSchema)({
   authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1' as const,
   candidateEvidenceRef: '80000000-0000-4000-8000-000000000001',
   emailOwnership: 'VERIFIED' as const,

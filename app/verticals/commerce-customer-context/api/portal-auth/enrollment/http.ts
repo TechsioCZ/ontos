@@ -537,19 +537,31 @@ export const commercePortalAuthEnrollmentAccountVerificationOutcome = Effect.fn(
  * Native claim fences an expired lease; only then may native reconciliation settle the same invocation.
  */
 export const recoverEnrollmentAccountVerification = Effect.fn('CommercePortalAuthEnrollmentHttp.recoverVerification')(
-  function* recoverVerification(
+  function* recoverVerification<Failure, Requirements>(
     store: CommerceEnrollmentOwnerAttemptStore,
     claim: CommercePortalAuthEnrollmentTransitionClaim,
     attempt: EnrollmentAttemptSnapshot,
     accountSubject: CommercePortalAccountSubject,
+    claimMissing: (current: EnrollmentAttemptSnapshot) => Effect.Effect<unknown, Failure, Requirements>,
   ) {
     let currentAttempt = attempt;
     const identity = { portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId, tenantId: attempt.tenantId };
-    let operation = yield* store.readOwnerOperation({
+    const operationIdentity = {
       ...identity,
       ownerModuleKey: claim.ownerModuleKey,
       transitionKey: claim.transitionKey,
-    });
+    };
+    const existing = yield* store.readOwnerOperation(operationIdentity).pipe(
+      Effect.asSome,
+      Effect.catchTag('CommerceEnrollmentAttemptNotFound', () => Effect.succeedNone),
+    );
+    if (Option.isNone(existing)) {
+      // Only an absent operation owes the governed initial claim. Replaying a settled Action
+      // with its old revision must not block recovery of the exact native operation it created.
+      yield* claimMissing(currentAttempt);
+      currentAttempt = yield* store.read(identity);
+    }
+    let operation = Option.isSome(existing) ? existing.value : yield* store.readOwnerOperation(operationIdentity);
     if (
       operation.ownerInvocationId !== claim.ownerInvocationId ||
       operation.requestDigest !== claim.requestDigest ||
@@ -558,11 +570,11 @@ export const recoverEnrollmentAccountVerification = Effect.fn('CommercePortalAut
     ) {
       return yield* Effect.fail(commercePortalAuthEnrollmentUnavailableProblem());
     }
-    if (operation.status === 'SUCCEEDED' || isEnrollmentAttemptTerminal(attempt.state)) {
-      return attempt;
+    if (operation.status === 'SUCCEEDED' || isEnrollmentAttemptTerminal(currentAttempt.state)) {
+      return currentAttempt;
     }
     if (operation.status === 'IN_PROGRESS') {
-      const fence = yield* Schema.decodeUnknownEffect(ClaimEnrollmentTransitionInputSchema)({
+      const fence = yield* Schema.decodeEffect(ClaimEnrollmentTransitionInputSchema)({
         ...identity,
         ...claim,
         actorPrincipalId: operation.actorPrincipalId,
@@ -591,12 +603,12 @@ export const recoverEnrollmentAccountVerification = Effect.fn('CommercePortalAut
     if (operation.status !== 'INDETERMINATE' && operation.status !== 'RECONCILIATION_REQUIRED') {
       return yield* Effect.fail(commercePortalAuthEnrollmentUnavailableProblem());
     }
-    const request = yield* Schema.decodeUnknownEffect(ReconcileEnrollmentRequestSchema)({
+    const request = yield* Schema.decodeEffect(ReconcileEnrollmentRequestSchema)({
       ...identity,
       ...claim,
       expectedRevision: currentAttempt.revision,
     }).pipe(Effect.mapError(commercePortalAuthEnrollmentUnavailableProblem));
-    const resolution = yield* Schema.decodeUnknownEffect(ReconcileEnrollmentResolutionSchema)({
+    const resolution = yield* Schema.decodeEffect(ReconcileEnrollmentResolutionSchema)({
       accountSubject,
       actorPrincipalId: operation.actorPrincipalId,
       outcomeCode: PORTAL_ACCOUNT_VERIFIED_OUTCOME_CODE,
@@ -721,6 +733,44 @@ export const enrollmentSubjectOwnsAttempt = (
   attempt.accountSubject.subjectType === subject.subjectType &&
   attempt.accountSubject.providerSubjectId === subject.providerSubjectId;
 
+/** A committed start is recovered from current native lineage, never from a cached Action answer. */
+export const readRestartEnrollmentForIntent = Effect.fn('CommercePortalAuthEnrollmentHttp.readRestartForIntent')(
+  function* readRestartForIntent(
+    run: CommerceEnrollmentOwnerTransactionRun,
+    scope: { readonly legalEntityId: string; readonly tenantId: string },
+    actorPrincipalId: string,
+    subject: CommercePortalAccountSubject,
+    intent: StartPortalEnrollmentPayload,
+  ) {
+    const current = yield* run(scope, (transaction) =>
+      readCurrentRetailEnrollment(transaction, actorPrincipalId, subject),
+    );
+    if (Option.isNone(current)) {
+      return yield* attemptUnavailable('The committed restart is unavailable');
+    }
+    const tenantId = yield* Schema.decodeEffect(EnrollmentTenantIdSchema)(scope.tenantId).pipe(
+      Effect.mapError((cause) => attemptUnavailable('The restart tenant is invalid', undefined, cause)),
+    );
+    const store = commerceEnrollmentOwnerAttemptStoreForRun({ tenantId }, run);
+    const attempt = yield* store.read({ portalEnrollmentAttemptId: current.value, tenantId });
+    const proof = yield* run(scope, (transaction) =>
+      readRetailEnrollmentRestartContext(transaction, attempt.portalEnrollmentAttemptId, false),
+    );
+    if (
+      Option.isNone(proof) ||
+      attempt.createdByPrincipalId !== actorPrincipalId ||
+      attempt.journey !== 'EXISTING_ACCOUNT' ||
+      attempt.targetLegalEntityId !== scope.legalEntityId ||
+      attempt.intentKey !== intent.intentKey ||
+      attempt.intentDigest !== intent.intentDigest ||
+      attempt.targetResourceId !== intent.targetResourceId
+    ) {
+      return yield* attemptUnavailable('The committed restart does not match its native intent');
+    }
+    return { attempt, outcome: 'EXISTING' as const };
+  },
+);
+
 const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(function* startEnrollmentEffect(
   payload: Schema.Codec.Encoded<typeof CommercePortalAuthEnrollmentStartInputSchema>,
   idempotencyKey: string | undefined,
@@ -816,7 +866,31 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
     (yield* commercePortalAuthEnrollmentIntent(input).pipe(
       Effect.mapError(commercePortalAuthEnrollmentInvalidProblem),
     ));
-  const started = yield* runEnrollmentAction(startPortalEnrollmentAction, intent);
+  const restartRunner = yield* CommerceEnrollmentOwnerTransactionRunner;
+  const started = yield* restart === undefined
+    ? runEnrollmentAction(startPortalEnrollmentAction, intent)
+    : runActionHttp({
+        endpointHeaders: actionEndpointHeaders(request, idempotencyKey),
+        internalProblem: () => commercePortalAuthEnrollmentUnavailableProblem(),
+        invalidCorrelationProblem: () => commercePortalAuthEnrollmentInvalidProblem(),
+        mapError: actionProblem,
+        payload: intent,
+        recoverAlreadyCommitted: () => null,
+        registration: startPortalEnrollmentAction,
+        requestHeaders: actionRequestHeaders(request),
+      }).pipe(
+        Effect.filterOrElse(
+          (result) => result !== null,
+          () =>
+            readRestartEnrollmentForIntent(
+              restartRunner.run,
+              { legalEntityId: input.sellingLegalEntityId, tenantId: caller.tenantId },
+              caller.principalId,
+              restart.subject,
+              intent,
+            ).pipe(Effect.mapError(commercePortalAuthEnrollmentUnavailableProblem)),
+        ),
+      );
 
   if (started.outcome === 'EXISTING') {
     // Convergence names an Attempt this request did not create; only its own creator may claim its
@@ -860,24 +934,14 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
       input,
       started.attempt.portalEnrollmentAttemptId,
     ).pipe(Effect.mapError(commercePortalAuthEnrollmentUnavailableProblem));
-    const verified = yield* runEnrollmentAction(claimPortalEnrollmentTransitionAction, {
-      expectedRevision: started.attempt.revision,
-      ownerInvocationId: verification.ownerInvocationId,
-      ownerModuleKey: verification.ownerModuleKey,
-      portalEnrollmentAttemptId: started.attempt.portalEnrollmentAttemptId,
-      requestDigest: verification.requestDigest,
-      transitionKey: verification.transitionKey,
-    });
-    const verifiedRunner = yield* CommerceEnrollmentOwnerTransactionRunner;
     const verifiedStore = commerceEnrollmentOwnerAttemptStoreForRun(
-      { tenantId: verified.attempt.tenantId },
-      verifiedRunner.run,
+      { tenantId: started.attempt.tenantId },
+      restartRunner.run,
     );
-    // The Action answer may be a cached claim. Read the current native revision before fencing.
     const current = yield* verifiedStore
       .read({
-        portalEnrollmentAttemptId: verified.attempt.portalEnrollmentAttemptId,
-        tenantId: verified.attempt.tenantId,
+        portalEnrollmentAttemptId: started.attempt.portalEnrollmentAttemptId,
+        tenantId: started.attempt.tenantId,
       })
       .pipe(Effect.mapError(commercePortalAuthEnrollmentUnavailableProblem));
     const journalled = yield* recoverEnrollmentAccountVerification(
@@ -885,6 +949,24 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
       verification,
       current,
       ownerSubject,
+      (unclaimed) =>
+        runActionHttp({
+          endpointHeaders: actionEndpointHeaders(request, idempotencyKey),
+          internalProblem: () => commercePortalAuthEnrollmentUnavailableProblem(),
+          invalidCorrelationProblem: () => commercePortalAuthEnrollmentInvalidProblem(),
+          mapError: actionProblem,
+          payload: {
+            expectedRevision: unclaimed.revision,
+            ownerInvocationId: verification.ownerInvocationId,
+            ownerModuleKey: verification.ownerModuleKey,
+            portalEnrollmentAttemptId: unclaimed.portalEnrollmentAttemptId,
+            requestDigest: verification.requestDigest,
+            transitionKey: verification.transitionKey,
+          },
+          recoverAlreadyCommitted: () => null,
+          registration: claimPortalEnrollmentTransitionAction,
+          requestHeaders: actionRequestHeaders(request),
+        }),
     ).pipe(Effect.mapError(commercePortalAuthEnrollmentUnavailableProblem));
     yield* triggerEnrollmentContinuation(continuation, journalled);
     return { attempt: commercePortalAuthEnrollmentAttemptProjection(journalled), outcome: started.outcome };

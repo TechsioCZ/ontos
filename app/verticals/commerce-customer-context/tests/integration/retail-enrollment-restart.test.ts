@@ -31,7 +31,10 @@ import {
   enrollmentJourneyDefinitionForAttempt,
 } from '../../src/enrollment/orchestration/completion.ts';
 import { retailEnrollmentRetainedResultsOwnerEffect } from '../../src/enrollment/journeys/retail-enrollment-restart-owner.ts';
-import { recoverEnrollmentAccountVerification } from '../../api/portal-auth/enrollment/http.ts';
+import {
+  readRestartEnrollmentForIntent,
+  recoverEnrollmentAccountVerification,
+} from '../../api/portal-auth/enrollment/http.ts';
 import { commerceEnrollmentOwnerAttemptStoreForRun } from '../../src/enrollment/orchestration/owner-transition-production.ts';
 import { CommerceEnrollmentOwnerTransitionSchema } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
 import type { CommerceEnrollmentOwnerTransactionRun } from '../../src/enrollment/orchestration/owner-transition-production.ts';
@@ -108,7 +111,9 @@ const verifyInterruptedAccount = (
     const store = commerceEnrollmentOwnerAttemptStoreForRun({ tenantId: claim.tenantId }, run);
     const identity = { portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId, tenantId: attempt.tenantId };
     const current = yield* store.read(identity);
-    const verified = yield* recoverEnrollmentAccountVerification(store, claim, current, subject);
+    const verified = yield* recoverEnrollmentAccountVerification(store, claim, current, subject, () =>
+      Effect.die('An existing native verification must never replay governed claim preparation'),
+    );
     expect(verified.accountSubject).toEqual(subject);
     const operation = yield* store.readOwnerOperation({
       ...identity,
@@ -258,6 +263,35 @@ const assertRepeatedFailedRestart = (input: {
     yield* execute(sql`rollback to savepoint repeat_failed_restart`);
   });
 
+const assertRestartHttpRecovery = (
+  run: CommerceEnrollmentOwnerTransactionRun,
+  scope: { readonly legalEntityId: string; readonly tenantId: string },
+  attempt: EnrollmentAttemptSnapshot,
+  original: EnrollmentAttemptSnapshot,
+  subject: CommercePortalAccountSubject,
+  intent: Parameters<typeof readRestartEnrollmentForIntent>[4],
+) =>
+  Effect.gen(function* restartHttpRecovery() {
+    const creatorId = attempt.createdByPrincipalId;
+    // The HTTP adapter recovers ActionAlreadyCommitted through this exact native reader,
+    // before verification exists, without creating or claiming anything again.
+    expect((yield* readRestartEnrollmentForIntent(run, scope, creatorId, subject, intent)).attempt).toEqual(attempt);
+    const wrongSubject = yield* Schema.decodeEffect(CommercePortalAccountSubjectSchema)({
+      ...subject,
+      providerSubjectId: 'another-customer',
+    });
+    for (const mismatch of [
+      readRestartEnrollmentForIntent(run, scope, randomUUID(), subject, intent),
+      readRestartEnrollmentForIntent(run, scope, creatorId, subject, {
+        ...intent,
+        intentDigest: original.intentDigest,
+      }),
+      readRestartEnrollmentForIntent(run, scope, creatorId, wrongSubject, intent),
+    ]) {
+      expect(Result.isFailure(yield* mismatch.pipe(Effect.result))).toBe(true);
+    }
+  });
+
 const restartCase = (input: {
   readonly compositionRevision: string;
   readonly creatorId: string;
@@ -388,6 +422,7 @@ const restartCase = (input: {
     };
     const run: CommerceEnrollmentOwnerTransactionRun = (ownerScope, operation) =>
       operation(scopedRoutineInvokerFromTransaction(execute, ownerScope));
+    yield* assertRestartHttpRecovery(run, scope, created.attempt, original, subject, intent);
     yield* assertRepeatedFailedRestart({ attempt: created.attempt, execute, legalEntityId, mask, subject });
     const completion = commerceEnrollmentCompletionAuthorityForPersistence(persistence());
     let advancing = created.attempt;
@@ -404,13 +439,29 @@ const restartCase = (input: {
         transitionKey: step.transitionKey,
         workerId: 'native-restart-acceptance',
       });
+      if (step.transitionKey === 'provider.account.verify') {
+        if (mask === 0) {
+          const store = commerceEnrollmentOwnerAttemptStoreForRun({ tenantId: claim.tenantId }, run);
+          const verified = yield* recoverEnrollmentAccountVerification(store, claim, advancing, subject, (unclaimed) =>
+            persistence()
+              .claim({ ...claim, expectedRevision: unclaimed.revision })
+              .pipe(
+                // Another authenticated owner may settle the proof before the governed claim returns.
+                Effect.andThen(() => verifyInterruptedAccount(execute, run, claim, newIdentity, subject, false)),
+              ),
+          );
+          expect(verified.accountSubject).toEqual(subject);
+          expect(verified.revision).toBeGreaterThan(advancing.revision);
+        } else {
+          yield* persistence().claim(claim);
+        }
+        // Both settled and expired verification bypass governed claim preparation on retry.
+        advancing = yield* verifyInterruptedAccount(execute, run, claim, newIdentity, subject, mask !== 0);
+        continue;
+      }
       const claimed = yield* persistence().claim(claim);
       if (claimed.outcome === 'INDETERMINATE' || claimed.operation.lease === undefined) {
         return yield* Effect.die('The isolated native claim must carry its lease');
-      }
-      if (step.transitionKey === 'provider.account.verify') {
-        advancing = yield* verifyInterruptedAccount(execute, run, claim, newIdentity, subject, mask !== 0);
-        continue;
       }
       const transition = yield* Schema.decodeUnknownEffect(CommerceEnrollmentOwnerTransitionSchema)({
         ...claim,

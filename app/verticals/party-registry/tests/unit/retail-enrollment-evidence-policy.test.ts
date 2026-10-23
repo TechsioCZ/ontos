@@ -87,7 +87,7 @@ it('rejects unverified email and another provider namespace at the public schema
 });
 
 it('accepts missing Party work on an existing-account restart without pretending a new provider account was created', () => {
-  const restart = Schema.decodeUnknownSync(RetailEnrollmentEvidenceSchema)({
+  const restart = Schema.decodeSync(RetailEnrollmentEvidenceSchema)({
     ...evidence,
     journey: 'EXISTING_ACCOUNT',
   });

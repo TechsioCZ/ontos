@@ -128,7 +128,7 @@ const bindingOwnerProof = Effect.fn('RetailEnrollmentBinding.ownerProof')(functi
   restart: Option.Option<RetailEnrollmentRestartContext>,
 ) {
   const operation = (ownerModuleKey: string, transitionKey: string) =>
-    Schema.decodeUnknownEffect(ReadEnrollmentOwnerOperationInputSchema)({
+    Schema.decodeEffect(ReadEnrollmentOwnerOperationInputSchema)({
       ...identity,
       ownerModuleKey,
       transitionKey,
@@ -183,7 +183,7 @@ export const retailEnrollmentBindingForPorts = (ports: RetailEnrollmentBindingPo
       if (legalEntityId === undefined || !requestMatchesCaller(input, payload)) {
         return Option.none();
       }
-      const identity = yield* Schema.decodeUnknownEffect(
+      const identity = yield* Schema.decodeEffect(
         Schema.Struct({
           portalEnrollmentAttemptId: EnrollmentAttemptIdSchema,
           tenantId: EnrollmentTenantIdSchema,
@@ -217,7 +217,7 @@ export const retailEnrollmentBindingForPorts = (ports: RetailEnrollmentBindingPo
       ) {
         return Option.none();
       }
-      const request = yield* Schema.decodeUnknownEffect(ReadPrincipalBindingPayloadSchema)({
+      const request = yield* Schema.decodeEffect(ReadPrincipalBindingPayloadSchema)({
         authenticationNamespaceId: subject.authenticationNamespaceId,
         lookup: 'subject',
         providerSubjectId: subject.providerSubjectId,
