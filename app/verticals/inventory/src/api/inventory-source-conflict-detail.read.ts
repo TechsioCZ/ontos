@@ -40,7 +40,7 @@ export const inventorySourceConflictDetailRead = defineRead(
     inputSchema: InventorySourceConflictDetailRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'resource',
+    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.inventory.api.inventory-source-conflict-detail',
     resultSchema: InventorySourceConflictDetailResponseSchema,
@@ -73,5 +73,5 @@ export const inventorySourceConflictDetailRead = defineRead(
         positions: stockPositionPersistenceForScope(transaction, scope),
       }),
     ),
-  (input) => ({ kind: 'resource', permission: 'read', resource: input.conflictRef }),
+  () => ({ kind: 'tenant' as const, permission: 'access' as const }),
 );
