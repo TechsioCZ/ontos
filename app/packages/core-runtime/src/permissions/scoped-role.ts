@@ -14,13 +14,35 @@ export interface ScopedRoleIdentity {
   readonly tenantId: string;
 }
 
-const encodeRoleIdentity = Schema.encodeResult(
-  Schema.fromJsonString(Schema.Tuple([Schema.String, Schema.OptionFromNullOr(Schema.String), Schema.String])),
+const RoleIdentityCodec = Schema.fromJsonString(
+  Schema.Tuple([Schema.String, Schema.OptionFromNullOr(Schema.String), Schema.String]),
 );
+const encodeRoleIdentity = Schema.encodeResult(RoleIdentityCodec);
+const decodeRoleIdentity = Schema.decodeUnknownResult(RoleIdentityCodec);
 
 /** Lossless tuple encoding also distinguishes a tenant role from every company role. */
 export const toScopedRoleObjectId = ({ legalEntityId, roleKey, tenantId }: ScopedRoleIdentity): string =>
   `sr_${Buffer.from(Result.getOrThrow(encodeRoleIdentity([tenantId, Option.fromNullishOr(legalEntityId), roleKey])), 'utf-8').toString('base64url')}`;
+
+/** Rejects malformed and noncanonical graph IDs rather than guessing a role scope from its label. */
+export const fromScopedRoleObjectId = (objectId: string): Option.Option<ScopedRoleIdentity> => {
+  if (!objectId.startsWith('sr_')) {
+    return Option.none();
+  }
+  const decoded = decodeRoleIdentity(Buffer.from(objectId.slice(3), 'base64url').toString('utf-8'));
+  if (Result.isFailure(decoded)) {
+    return Option.none();
+  }
+  const [tenantId, company, roleKey] = decoded.success;
+  if (tenantId.length === 0 || roleKey.length === 0 || Option.exists(company, (companyId) => companyId.length === 0)) {
+    return Option.none();
+  }
+  const role = Option.match(company, {
+    onNone: () => ({ roleKey, tenantId }),
+    onSome: (legalEntityId) => ({ legalEntityId, roleKey, tenantId }),
+  });
+  return toScopedRoleObjectId(role) === objectId ? Option.some(role) : Option.none();
+};
 
 /** Phase 1 agent policy uses one explicit role per principal and company. */
 export const agentScopedRoleObjectId = (input: {

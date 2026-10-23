@@ -8,7 +8,12 @@ import {
   companyActorKind,
   isCompanyAffiliationValid,
 } from '../../src/permissions/company-membership.ts';
-import { buildScopedRoleMembershipUpdates, toScopedRoleObjectId } from '../../src/permissions/scoped-role.ts';
+import {
+  buildScopedRoleMembershipUpdates,
+  fromScopedRoleObjectId,
+  toScopedRoleObjectId,
+} from '../../src/permissions/scoped-role.ts';
+import { PeopleDirectoryInputSchema, PeopleDirectoryResultSchema } from '../../src/auth/people-directory-read.ts';
 import { toLegalEntityAccessObjectId } from '../../src/permissions/context-access.ts';
 import { createActionCollector } from '../../src/actions/collector.ts';
 import {
@@ -156,6 +161,60 @@ it.effect('revokes only one assignee and preserves the role admission link for o
     expect(updates[0]?.operation).toBe(v1.RelationshipUpdate_Operation.DELETE);
     expect(updates[0]?.relationship?.relation).toBe('member');
     expect(updates[0]?.relationship?.subject?.object?.objectId).toBe(principalId);
+  }),
+);
+
+it.effect('decodes only canonical scoped-role graph identities without guessing company scope from role names', () =>
+  Effect.sync(() => {
+    const tenantRole = { roleKey: 'superadmin', tenantId };
+    const companyRole = { legalEntityId, roleKey: 'superadmin', tenantId };
+    expect(fromScopedRoleObjectId(toScopedRoleObjectId(tenantRole))).toEqual(Option.some(tenantRole));
+    expect(fromScopedRoleObjectId(toScopedRoleObjectId(companyRole))).toEqual(Option.some(companyRole));
+    for (const invalid of [
+      'superadmin',
+      'sr_not-json',
+      `${toScopedRoleObjectId(tenantRole)}=`,
+      toScopedRoleObjectId({ roleKey: '', tenantId }),
+      toScopedRoleObjectId({ roleKey: 'reader', tenantId: '' }),
+      toScopedRoleObjectId({ legalEntityId: '', roleKey: 'reader', tenantId }),
+      `sr_${Buffer.from(JSON.stringify([tenantId, null, 'reader', 'extra'])).toString('base64url')}`,
+    ]) {
+      expect(Option.isNone(fromScopedRoleObjectId(invalid))).toBe(true);
+    }
+  }),
+);
+
+it.effect('keeps selected company membership and observed graph projection distinct in directory wire results', () =>
+  Effect.sync(() => {
+    const wire = {
+      items: [
+        {
+          displayName: 'Retained person',
+          kind: 'human',
+          principalRef: principal,
+          principalStatus: 'disabled',
+          roleAssignments: [],
+          selectedCompanyMembership: {
+            affiliation: 'employee',
+            legalEntityId,
+            principalRef: principal,
+            revision: 3,
+            status: 'departed',
+          },
+          selectedCompanyMembershipProjection: { expectedMember: false, observedMember: true },
+        },
+      ],
+      nextOffset: null,
+      scope: { _tag: 'company', legalEntityId },
+      tenantId,
+    };
+    const decoded = Schema.decodeUnknownSync(PeopleDirectoryResultSchema)(wire);
+    expect(decoded.items[0]?.selectedCompanyMembershipProjection).toEqual(
+      Option.some({ expectedMember: false, observedMember: true }),
+    );
+    expect(Schema.encodeSync(PeopleDirectoryResultSchema)(decoded)).toEqual(wire);
+    expect(() => Schema.decodeUnknownSync(PeopleDirectoryInputSchema)({ limit: 101, offset: 0 })).toThrow();
+    expect(() => Schema.decodeUnknownSync(PeopleDirectoryInputSchema)({ limit: 1, offset: -1 })).toThrow();
   }),
 );
 

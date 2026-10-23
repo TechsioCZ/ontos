@@ -30,6 +30,7 @@ definition tenant {
   permission read_all = (superadmin + auditor) & access
   permission write_all = superadmin & access
   permission manage_identity = (identity_admin + superadmin) & access
+  permission read_people = (identity_admin + superadmin + auditor) & access
   permission manage_party_identity = (party_identity_manager + superadmin) & access
   permission manage_party_relationships = (party_relationship_manager + superadmin) & access
   permission merge_party_identity = (party_identity_merger + superadmin) & access
@@ -57,6 +58,7 @@ definition legal_entity {
   permission read_all = (admin + auditor + tenant->read_all) & access
   permission write_all = (admin + tenant->write_all) & access
   permission manage_people = write_all
+  permission read_people = read_all
   permission manage_counterparty = (counterparty_manager + write_all) & access
   permission read_counterparty = (counterparty_reader + read_all) & access
 }

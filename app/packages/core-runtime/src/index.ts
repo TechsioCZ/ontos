@@ -94,6 +94,11 @@ export {
 } from './auth/principal-management-errors.ts';
 export type { PrincipalManagementError } from './auth/principal-management-errors.ts';
 export { managedPrincipalsRead, selfApiKeyBindingsRead } from './auth/principal-administration-reads.ts';
+export {
+  PeopleDirectoryInputSchema,
+  PeopleDirectoryResultSchema,
+  peopleDirectoryRead,
+} from './auth/people-directory-read.ts';
 export { isConnectionWriteAllowed } from './auth/oauth-connection-scope.ts';
 // @ontos-codesmith-core-read-exports:start
 

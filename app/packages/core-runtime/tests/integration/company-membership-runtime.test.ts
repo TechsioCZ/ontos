@@ -7,6 +7,9 @@ import { Reactivity } from 'effect/unstable/reactivity';
 import { expect, it } from 'effect-rstest';
 
 import { ActionAlreadyCommitted, ActionPermissionDenied } from '../../src/actions/errors.ts';
+import { peopleDirectoryRead } from '../../src/auth/people-directory-read.ts';
+import { ReadPermissionDenied } from '../../src/reads/errors.ts';
+import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import {
   IdentityLifecycleConflictError,
   IdentityTargetInvalidError,
@@ -59,7 +62,11 @@ import {
 } from '../../src/permissions/action-authorization-lifecycle.ts';
 import { createSpiceDbPermissionClient, fullyConsistent } from '../../src/permissions/client.ts';
 import { loadSpiceDbConfig, SpiceDbConfig } from '../../src/permissions/config.ts';
-import { makeContextAccess, toLegalEntityAccessObjectId } from '../../src/permissions/context-access.ts';
+import {
+  makeContextAccess,
+  toLegalEntityAccessObjectId,
+  toModuleAccessObjectId,
+} from '../../src/permissions/context-access.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
 import { toScopedRoleObjectId } from '../../src/permissions/scoped-role.ts';
 import { makeActionPermissionService } from '../../src/permissions/service.ts';
@@ -217,6 +224,23 @@ it.live(
         ...[companyAdmin, ordinaryMember].map((id) =>
           relationship('legal_entity', companyObjectId(companyId), 'member', 'principal', id),
         ),
+        ...[companyId, otherCompanyId].map((id) =>
+          relationship(
+            'module_access',
+            toModuleAccessObjectId(tenantId, id, 'core.identity') ?? expect.unreachable('Invalid fixture module scope'),
+            'legal_entity',
+            'legal_entity',
+            companyObjectId(id),
+          ),
+        ),
+        relationship(
+          'module_access',
+          toModuleAccessObjectId(tenantId, companyId, 'core.identity') ??
+            expect.unreachable('Invalid fixture module scope'),
+          'accessor',
+          'principal',
+          ordinaryMember,
+        ),
         relationship('scoped_role', roles.companyAdmin, 'member', 'principal', companyAdmin),
         relationship('legal_entity', companyObjectId(companyId), 'admin', 'scoped_role', roles.companyAdmin, 'member'),
         relationship('scoped_role', roles.superadmin, 'member', 'principal', superadmin),
@@ -256,6 +280,21 @@ it.live(
           resolveCompositionRevision: makeActionCompositionRevisionResolver(authority, composition.shell.deployment),
         },
       );
+      const readRuntime = makeReadRuntime(
+        database,
+        makeModuleEntrypointGateway(stateGate),
+        makeOperationalScopeResolver(makeOperationalScopeRepository(database), contextAccess),
+        contextAccess,
+      );
+      const readPeople = (id: string, company?: string, offset = 0, limit = 100) =>
+        readRuntime
+          .runRead({
+            input: { limit, offset },
+            principal: principal(id, company),
+            registration: peopleDirectoryRead,
+            transport: { correlationId: randomUUID() },
+          })
+          .pipe(Effect.provideService(AuthenticationNamespaceRegistry, registry));
       const invoke = (id: string, payload: MembershipWirePayload, legalEntityId = companyId, key = randomUUID()) =>
         runtime
           .runAction({
@@ -287,6 +326,45 @@ it.live(
       const created = yield* invoke(companyAdmin, payload, companyId, idempotencyKey);
       expect(created.revision).toBe(1);
       expect(created.affiliation).toEqual(Option.some('employee'));
+      const pendingDirectory = yield* readPeople(companyAdmin, companyId);
+      expect(pendingDirectory.items).toHaveLength(1);
+      expect(pendingDirectory.items[0]?.principalRef).toEqual(payload.principalRef);
+      expect(pendingDirectory.items[0]?.selectedCompanyMembershipProjection).toEqual(
+        Option.some({
+          expectedMember: true,
+          observedMember: false,
+        }),
+      );
+      const tenantDirectory = yield* readPeople(superadmin);
+      expect(tenantDirectory.items).toHaveLength(6);
+      expect(tenantDirectory.items.every((item) => item.principalRef.tenantId === tenantId)).toBe(true);
+      expect(tenantDirectory.items.some((item) => item.principalRef.principalId === service)).toBe(false);
+      expect(tenantDirectory.items.some((item) => item.principalRef.principalId === foreignHuman)).toBe(false);
+      expect(tenantDirectory.items.every((item) => Option.isNone(item.selectedCompanyMembership))).toBe(true);
+      expect(tenantDirectory.items.every((item) => Option.isNone(item.selectedCompanyMembershipProjection))).toBe(true);
+      expect(
+        tenantDirectory.items.find((item) => item.principalRef.principalId === superadmin)?.roleAssignments,
+      ).toEqual([
+        {
+          roleKey: 'tenant-superadmin',
+          scope: { _tag: 'tenant' },
+          tenantId,
+        },
+      ]);
+      expect((yield* readPeople(auditor, companyId)).items).toHaveLength(1);
+      expect((yield* readPeople(auditor)).items).toHaveLength(6);
+      const page = yield* readPeople(superadmin, undefined, 0, 1);
+      expect(page.items).toHaveLength(1);
+      expect(page.nextOffset).toEqual(Option.some(1));
+      expect((yield* readPeople(superadmin, undefined, 1, 1)).items[0]?.principalRef).not.toEqual(
+        page.items[0]?.principalRef,
+      );
+      const deniedPeople = yield* readPeople(ordinaryMember, companyId).pipe(Effect.flip);
+      expect(Schema.is(ReadPermissionDenied)(deniedPeople)).toBe(true);
+      const deniedTenantPeople = yield* readPeople(companyAdmin).pipe(Effect.flip);
+      expect(Schema.is(ReadPermissionDenied)(deniedTenantPeople)).toBe(true);
+      const deniedCompanyPeople = yield* readPeople(companyAdmin, otherCompanyId).pipe(Effect.flip);
+      expect(Schema.is(OperationContextDenied)(deniedCompanyPeople)).toBe(true);
       const replayed = yield* invoke(companyAdmin, payload, companyId, idempotencyKey).pipe(Effect.flip);
       expect(Schema.is(ActionAlreadyCommitted)(replayed)).toBe(true);
       expect(yield* countEvents()).toBe(1);
@@ -343,6 +421,17 @@ it.live(
       expect(Schema.is(IdentityLifecycleConflictError)(missing)).toBe(true);
       const departed = yield* invoke(companyAdmin, { ...payload, expectedRevision: 1, status: 'departed' });
       expect(departed.revision).toBe(2);
+      const departedDirectory = yield* readPeople(companyAdmin, companyId);
+      expect(departedDirectory.items).toHaveLength(1);
+      expect(departedDirectory.items[0]?.selectedCompanyMembership).toEqual(
+        Option.some({
+          affiliation: Option.some('employee'),
+          legalEntityId: companyId,
+          principalRef: payload.principalRef,
+          revision: 2,
+          status: 'departed',
+        }),
+      );
       const agentMembership = yield* invoke(
         superadmin,
         { ...payload, affiliation: null, principalRef: { principalId: agent, tenantId } },
@@ -420,6 +509,12 @@ it.live(
       expect(active.revision).toBe(3);
       expect((yield* drain()).succeeded).toBe(1);
       expect(yield* access(human)).toBe(true);
+      expect((yield* readPeople(companyAdmin, companyId)).items[0]?.selectedCompanyMembershipProjection).toEqual(
+        Option.some({
+          expectedMember: true,
+          observedMember: true,
+        }),
+      );
       yield* admin.executor.update(principals).set({ status: 'disabled' }).where(eq(principals.principalId, human));
       yield* lifecycle.reconcilePrincipal(tenantId, human, composition.revision);
       expect(yield* access(human)).toBe(false);
@@ -434,6 +529,17 @@ it.live(
       expect(retained[0]?.affiliation).toBe('employee');
       const people = yield* admin.executor.select().from(principals).where(eq(principals.principalId, human));
       expect(people).toHaveLength(1);
+      const disabledDirectory = yield* readPeople(companyAdmin, companyId);
+      expect(disabledDirectory.items[0]?.principalStatus).toBe('disabled');
+      expect(disabledDirectory.items[0]?.selectedCompanyMembershipProjection).toEqual(
+        Option.some({
+          expectedMember: false,
+          observedMember: false,
+        }),
+      );
+      expect(
+        (yield* readPeople(superadmin, otherCompanyId)).items.map((item) => item.principalRef.principalId),
+      ).toEqual([agent]);
       const rolePayload = {
         operation: 'assign',
         principalRef: { principalId: agent, tenantId },
@@ -625,6 +731,20 @@ it.live(
         );
       expect((yield* drain(coreScopedRoleMembershipSubscription, 2000)).succeeded).toBe(1);
       expect(yield* tenantContext(ordinaryMember)).toBe(false);
+      // The directory never invents memberships from roles: only the explicit owner
+      // command makes the existing company administrator appear in this company list.
+      yield* invoke(superadmin, { ...payload, principalRef: { principalId: companyAdmin, tenantId } });
+      expect((yield* drain()).succeeded).toBe(1);
+      const companyRoles = (yield* readPeople(companyAdmin, companyId)).items.find(
+        (item) => item.principalRef.principalId === companyAdmin,
+      )?.roleAssignments;
+      expect(companyRoles).toEqual([
+        { roleKey: 'company-admin', scope: { _tag: 'company', legalEntityId: companyId }, tenantId },
+      ]);
+      expect(
+        (yield* readPeople(superadmin)).items.find((item) => item.principalRef.principalId === companyAdmin)
+          ?.roleAssignments,
+      ).toEqual([]);
       // The caller drops the entire owned DB on success or failure; release the
       // singleton here only so another bounded proof can use this same fresh DB.
       return yield* admin.executor
