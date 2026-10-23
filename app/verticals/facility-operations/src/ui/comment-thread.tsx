@@ -14,7 +14,7 @@ import { Fragment, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { CommentRecord, DocumentsState, SubjectRef } from '../../shared/domain/documents.ts';
 import { sameSubject } from '../../shared/domain/documents.ts';
-import { formatWhen, isoOf, PrincipalAvatar, principalEmail, usePrincipalLabel } from './documents-kit.tsx';
+import { formatWhen, isoOf } from './documents-kit.tsx';
 import { LoadingSkeleton } from './loading-skeleton.tsx';
 import { useAgendaRecords } from './use-agenda.ts';
 import type { FailureReason } from './use-agenda.ts';
@@ -74,13 +74,11 @@ const CommentItem = ({
 }) => {
   const { language, t } = useModernI18n();
   const toast = useToast();
-  const principalLabel = usePrincipalLabel();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(comment.body);
   const [showHistory, setShowHistory] = useState(false);
   const [confirmRetract, setConfirmRetract] = useState(false);
   const [busy, setBusy] = useState(false);
-  const author = principalLabel(comment.createdBy);
   const mine = meId !== undefined && comment.createdBy.principalId === meId;
   const retracted = comment.retractedAt !== undefined;
 
@@ -116,13 +114,9 @@ const CommentItem = ({
 
   return (
     <li className="flex gap-150" data-comment-id={comment.id}>
-      <PrincipalAvatar label={author} principal={comment.createdBy} />
       <div className="flex min-w-0 flex-1 flex-col gap-50">
         <div className="flex flex-wrap items-baseline gap-x-100 gap-y-50">
-          <span className="font-semibold text-sm" title={principalEmail(comment.createdBy)}>
-            {author}
-            {mine && <span className="font-normal text-fg-secondary"> ({t(`${k}.you`)})</span>}
-          </span>
+          {mine && <span className="font-semibold text-sm">{t(`${k}.you`)}</span>}
           <time className="text-fg-secondary text-xs" dateTime={isoOf(comment.createdAt)}>
             {formatWhen(comment.createdAt)}
           </time>
@@ -197,7 +191,6 @@ const CommentItem = ({
                 <span className="text-fg-secondary">
                   {t(`${k}.historyEntry`, {
                     when: formatWhen(entry.editedAt),
-                    who: principalLabel(entry.editedBy),
                   })}
                 </span>
                 <p className="whitespace-pre-wrap text-fg-secondary line-through">{entry.body}</p>

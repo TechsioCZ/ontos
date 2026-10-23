@@ -53,16 +53,8 @@ export const parseSerials = (text: string) =>
     .map((value) => value.trim())
     .filter((value) => value !== '');
 
-const knownPrincipals: Readonly<Record<string, string>> = {
-  '72000000-0000-4000-8000-000000000021': 'management@siampark.demo',
-  '72000000-0000-4000-8000-000000000022': 'operations@siampark.demo',
-  '72000000-0000-4000-8000-000000000023': 'finance@siampark.demo',
-  '72000000-0000-4000-8000-000000000024': 'external@siampark.demo',
-};
 export const principalLabel = (ref: PrincipalRef, me: PrincipalRef | undefined, you: string) =>
-  me !== undefined && me.principalId === ref.principalId
-    ? `${knownPrincipals[ref.principalId] ?? ref.principalId} (${you})`
-    : (knownPrincipals[ref.principalId] ?? ref.principalId);
+  me !== undefined && me.tenantId === ref.tenantId && me.principalId === ref.principalId ? you : '';
 
 export const dateTimeIso = (value: DateTime.Utc) => DateTime.formatIso(value);
 /** `13. 10. 2026 14:05` of a stored audit timestamp. */

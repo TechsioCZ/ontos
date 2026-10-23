@@ -114,8 +114,8 @@
     "taskLive": "Aktuální stav v Úkolech: {{state}}",
     "taskLiveUnavailable": "Stav úkolu se nepodařilo načíst.",
     "maxSize": "PDF, obrázek nebo dokument do 5 MB.",
-    "createdInfo": "Založeno {{at}} · {{by}}",
-    "updatedInfo": "Změněno {{at}} · {{by}}",
+    "createdInfo": "Založeno {{at}}",
+    "updatedInfo": "Změněno {{at}}",
     "comments": "Komentáře k zařízení",
     "linkedDocuments": "Dokumenty z agendy Dokumenty"
   },
@@ -170,12 +170,5 @@
     "emptyDescription": "Založte první kameru, přístupový systém nebo alarm.",
     "noResults": "Filtru neodpovídá žádné zařízení.",
     "noIncidents": "Žádné poruchy k zobrazení."
-  },
-  "persona": {
-    "management": "Vedení Siamparku",
-    "operations": "Provoz Siamparku",
-    "finance": "Finance Siamparku",
-    "external": "Externí partner",
-    "unknown": "Uživatel {{id}}"
   }
 }

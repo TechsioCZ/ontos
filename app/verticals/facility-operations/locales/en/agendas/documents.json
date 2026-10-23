@@ -8,7 +8,6 @@
     "versions": "Versions",
     "description": "Description",
     "links": "Linked to",
-    "uploadedBy": "Uploaded by",
     "uploadedAt": "Uploaded",
     "lastChange": "Last change",
     "currentVersion": "Current version",
@@ -78,12 +77,12 @@
     "signedBy": "Signed by",
     "signedOn": "Signed on",
     "version": "Signed version",
-    "recordedBy": "Recorded by {{who}} {{when}}",
     "signed": "Signed {{date}}",
     "signedVersion": "Signed version",
     "manualNote": "Manual signature record, not an electronic signature.",
     "saved": "Signature recorded",
-    "needVersion": "Upload the signed file first."
+    "needVersion": "Upload the signed file first.",
+    "recordedAt": "Recorded {{when}}"
   },
   "tabs": {
     "all": "All documents",
@@ -176,7 +175,7 @@
     "edit": "Edit details",
     "comments": "Comments",
     "noVersions": "The document has no file yet.",
-    "uploadedLine": "{{who}} · {{when}}",
+    "uploadedLine": "Uploaded {{when}}",
     "notFound": "Document not found."
   },
   "linked": {
@@ -207,7 +206,7 @@
     "retracted": "Removed by the author {{when}}.",
     "edited": "edited",
     "history": "Edit history",
-    "historyEntry": "Original wording ({{who}}, {{when}})",
+    "historyEntry": "Original text ({{when}})",
     "attachment": "Link to document",
     "noAttachment": "No link",
     "forbidden": "Comments are available to internal roles only.",
@@ -228,13 +227,6 @@
       "vedeni": "Contracts, decisions and approvals",
       "technika": "Inspections, service and suppliers"
     }
-  },
-  "principals": {
-    "management": "Management",
-    "operations": "Operations",
-    "finance": "Finance",
-    "external": "External partner",
-    "unknown": "User {{id}}"
   },
   "pdfPage": "Page {{page}} of {{count}}",
   "pdfPrevious": "Previous page",

@@ -34,20 +34,11 @@ export const formatRate = (value: number, unit: string): string =>
 /** `0.43` → `+43 %`. */
 export const formatChange = (change: number): string => `${change >= 0 ? '+' : ''}${formatPercent(change)}`;
 
-const demoPersonaByPrincipal: Readonly<Record<string, string>> = {
-  '72000000-0000-4000-8000-000000000021': 'management',
-  '72000000-0000-4000-8000-000000000022': 'operations',
-  '72000000-0000-4000-8000-000000000023': 'finance',
-  '72000000-0000-4000-8000-000000000024': 'external',
-};
-
-/** Display name of an author principal (demo personas are known; anyone else is „jiný uživatel“). */
 export const personLabel = (t: Translate, principal: PrincipalRef, actor: PrincipalRef | undefined): string => {
-  if (actor !== undefined && actor.principalId === principal.principalId) {
+  if (actor !== undefined && actor.tenantId === principal.tenantId && actor.principalId === principal.principalId) {
     return t('facility-operations.meters.people.you');
   }
-  const persona = demoPersonaByPrincipal[principal.principalId];
-  return t(`facility-operations.meters.people.${persona ?? 'other'}`);
+  return '';
 };
 
 /** Property label part of a location (`Rezidence Parková`), used to group units under their property. */
@@ -103,12 +94,16 @@ export const metersAt = (meters: readonly Meter[], place: string): readonly Mete
 };
 
 const todayInPrague = (): string =>
-  new Intl.DateTimeFormat('en-CA', { day: '2-digit', month: '2-digit', timeZone: 'Europe/Prague', year: 'numeric' }).format(
-    Date.now(),
-  );
+  new Intl.DateTimeFormat('en-CA', {
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: 'Europe/Prague',
+    year: 'numeric',
+  }).format(Date.now());
 
 /** Latest anomalous period of a meter still within the highlight window (see ANOMALY_WINDOW_DAYS). */
-export const recentAnomaly = (meter: Meter) => (meter.status === 'RETIRED' ? undefined : recentAnomalyRow(meter, todayInPrague()));
+export const recentAnomaly = (meter: Meter) =>
+  meter.status === 'RETIRED' ? undefined : recentAnomalyRow(meter, todayInPrague());
 
 export const isAnomalous = (meter: Meter): boolean => recentAnomaly(meter) !== undefined;
 
@@ -135,12 +130,16 @@ export const trendOf = (meter: Meter, count = 6) =>
 
 /** `2026-09` → `zář 2026` style short month label in the page language. */
 export const monthLabel = (month: string, language: string): string =>
-  new Intl.DateTimeFormat(language === 'en' ? 'en-GB' : 'cs-CZ', { month: 'short', timeZone: 'UTC', year: 'numeric' }).format(
-    Date.parse(`${month}-01T00:00:00Z`),
-  );
+  new Intl.DateTimeFormat(language === 'en' ? 'en-GB' : 'cs-CZ', {
+    month: 'short',
+    timeZone: 'UTC',
+    year: 'numeric',
+  }).format(Date.parse(`${month}-01T00:00:00Z`));
 
 /** `2026-09` → `září 2026` long month label. */
 export const monthLongLabel = (month: string, language: string): string =>
-  new Intl.DateTimeFormat(language === 'en' ? 'en-GB' : 'cs-CZ', { month: 'long', timeZone: 'UTC', year: 'numeric' }).format(
-    Date.parse(`${month}-01T00:00:00Z`),
-  );
+  new Intl.DateTimeFormat(language === 'en' ? 'en-GB' : 'cs-CZ', {
+    month: 'long',
+    timeZone: 'UTC',
+    year: 'numeric',
+  }).format(Date.parse(`${month}-01T00:00:00Z`));

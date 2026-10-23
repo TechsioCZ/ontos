@@ -6,6 +6,8 @@ rstest.mock('../../src/ui/ops-agenda/sources.ts', () => ({
 }));
 rstest.mock('@app/admin-ui', () => ({ foldSearchText: (value: string) => value.toLowerCase() }));
 
+import { principalLabel as assetPrincipalLabel } from '../../src/routes/[lang]/provoz/majetek/assets-model.ts';
+import { personLabel as meterPersonLabel } from '../../src/routes/[lang]/provoz/meridla/meters-view.ts';
 import { opsSearchRows } from '../../shared/domain/ops-overview.ts';
 import {
   agendaPeople,
@@ -170,4 +172,19 @@ it('agenda assignee names come only from the session and visible same-tenant eve
   ]);
   expect(agendaPeople(state, undefined)).toEqual([]);
   expect(agendaPeople(undefined, { ...context, displayName: undefined })).toEqual([]);
+});
+
+it('author labels never infer a demo identity and self labels include tenant identity', () => {
+  const actor = {
+    principalId: '72000000-0000-4000-8000-000000000021',
+    tenantId: '70000000-0000-4000-8000-000000000020',
+  } as import('@app/core-runtime/permissions/principal-ref').PrincipalRef;
+  const otherTenant = { ...actor, tenantId: 'another-tenant' } as typeof actor;
+  const translate = (key: string) => key;
+  expect(assetPrincipalLabel(actor, actor, 'vy')).toBe('vy');
+  expect(assetPrincipalLabel(actor, undefined, 'vy')).toBe('');
+  expect(assetPrincipalLabel(actor, otherTenant, 'vy')).toBe('');
+  expect(meterPersonLabel(translate, actor, actor)).toBe('facility-operations.meters.people.you');
+  expect(meterPersonLabel(translate, actor, undefined)).toBe('');
+  expect(meterPersonLabel(translate, actor, otherTenant)).toBe('');
 });

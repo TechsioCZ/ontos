@@ -174,11 +174,6 @@
     "meters": "Meters included: {{count}}"
   },
   "people": {
-    "you": "you",
-    "management": "Siampark management",
-    "operations": "Siampark operations",
-    "finance": "Siampark finance",
-    "external": "External partner",
-    "other": "another user"
+    "you": "you"
   }
 }

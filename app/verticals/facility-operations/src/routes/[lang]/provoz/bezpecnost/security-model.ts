@@ -1,5 +1,5 @@
 // @effect-diagnostics asyncFunction:off
-// Security agenda view model: labels, persona names and the linked service task in work-tasks.
+// Security agenda view model: labels and the linked service task in work-tasks.
 // The task is created through work-tasks's PUBLIC apply-command Action (its own gateway audience),
 // never by touching that module's tables; the incident only stores the returned TaskRef snapshot.
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -9,7 +9,6 @@ import { executeRecords as executeWorkRecords } from '@app/work-tasks/clients/re
 import type { ContextRef } from '@app/work-tasks/contracts/records';
 import { DateTime, Effect, Random } from 'effect';
 import { useEffect, useState } from 'react';
-import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import type { PropertyRef } from '../../../../../shared/domain/common.ts';
 import type { SecurityDevice, SecurityIncident, SecuritySeverity } from '../../../../../shared/domain/security.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -20,21 +19,6 @@ export const useSecurityLabel = () => {
 };
 
 export type SecurityLabel = ReturnType<typeof useSecurityLabel>;
-
-const personaByPrincipal: Readonly<Record<string, string>> = {
-  '72000000-0000-4000-8000-000000000021': 'management',
-  '72000000-0000-4000-8000-000000000022': 'operations',
-  '72000000-0000-4000-8000-000000000023': 'finance',
-  '72000000-0000-4000-8000-000000000024': 'external',
-};
-
-/** Display name of a demo persona; unknown principals show a short id (no invented names). */
-export const personaName = (label: SecurityLabel, principal: PrincipalRef) => {
-  const persona = personaByPrincipal[principal.principalId];
-  return persona === undefined
-    ? label('persona.unknown', { id: principal.principalId.slice(0, 8) })
-    : label(`persona.${persona}`);
-};
 
 const pragueDate = new Intl.DateTimeFormat('sv-SE', {
   day: '2-digit',

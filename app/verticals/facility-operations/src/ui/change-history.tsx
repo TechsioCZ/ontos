@@ -8,7 +8,6 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { DateTime } from 'effect';
 import { useEffect, useState } from 'react';
 import type { ChangeEntry, FieldChange } from '../../shared/domain/change-log.ts';
-import { usePrincipalLabel } from './documents-kit.tsx';
 import { loadRecords } from './use-agenda.ts';
 
 const k = 'facility-operations.common.history';
@@ -108,7 +107,6 @@ export const ChangeHistory = ({
   readonly refreshKey?: number | string | DateTime.Utc;
 }) => {
   const { language, t } = useModernI18n();
-  const principalLabel = usePrincipalLabel();
   const [load, setLoad] = useState<Load>({ status: 'loading' });
   const [showAll, setShowAll] = useState(false);
   const czech = !language.startsWith('en');
@@ -162,7 +160,9 @@ export const ChangeHistory = ({
         <h3 className="font-semibold text-fg-primary text-sm">{t(`${k}.title`)}</h3>
         <p className="text-fg-secondary text-xs">{t(`${k}.description`)}</p>
       </div>
-      {load.status === 'loading' && <p className="text-fg-secondary text-sm">{t('facility-operations.common.loading')}</p>}
+      {load.status === 'loading' && (
+        <p className="text-fg-secondary text-sm">{t('facility-operations.common.loading')}</p>
+      )}
       {load.status === 'unavailable' && <p className="text-fg-secondary text-sm">{t(`${k}.unavailable`)}</p>}
       {load.status === 'ready' && entries.length === 0 && (
         <p className="text-fg-secondary text-sm">{t(`${k}.empty`)}</p>
@@ -173,11 +173,11 @@ export const ChangeHistory = ({
             <li className={`${surfaceTileClassName} p-150`} key={`${DateTime.formatIso(entry.at)}-${index}`}>
               <div className="flex flex-wrap items-baseline gap-x-150 gap-y-50 text-xs">
                 <span className="font-semibold text-fg-primary">{t(`${k}.${entry.kind}`)}</span>
-                <span className="text-fg-secondary">
-                  {formatDateTime(DateTime.formatIso(entry.at))} · {principalLabel(entry.by)}
-                </span>
+                <span className="text-fg-secondary">{formatDateTime(DateTime.formatIso(entry.at))}</span>
               </div>
-              {entry.changes.length > 0 && <ul className="mt-100 flex flex-col gap-50">{entry.changes.map(renderChange)}</ul>}
+              {entry.changes.length > 0 && (
+                <ul className="mt-100 flex flex-col gap-50">{entry.changes.map(renderChange)}</ul>
+              )}
             </li>
           ))}
         </ol>
