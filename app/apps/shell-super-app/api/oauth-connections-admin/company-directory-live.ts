@@ -66,7 +66,11 @@ const people = Effect.fn('CompanyDirectory.people')(function* people(tenantId: s
   return [...rows].sort((left, right) => left.displayName.localeCompare(right.displayName, 'cs'));
 });
 
-const agents = Effect.fn('CompanyDirectory.agents')(function* agents(tenantId: string, memberIds: readonly string[]) {
+const agents = Effect.fn('CompanyDirectory.agents')(function* agents(
+  tenantId: string,
+  legalEntityId: string,
+  memberIds: readonly string[],
+) {
   if (memberIds.length === 0) {
     return [] as readonly CompanyAgent[];
   }
@@ -88,6 +92,7 @@ const agents = Effect.fn('CompanyDirectory.agents')(function* agents(tenantId: s
     .pipe(Effect.mapError(unavailable));
   const profiles = yield* loadAgentProfiles(
     tenantId,
+    legalEntityId,
     rows.map((row) => row.principalId),
   ).pipe(Effect.mapError(unavailable));
   return [...rows]
@@ -99,7 +104,7 @@ const agents = Effect.fn('CompanyDirectory.agents')(function* agents(tenantId: s
         modules: profile?.modules ?? [],
         ownerPrincipalId: profile?.ownerPrincipalId ?? null,
         principalId: row.principalId,
-        seeded: profile?.seeded ?? false,
+        hasProfile: profile?.hasProfile ?? false,
         status: row.status === 'active' ? 'active' : row.status === 'archived' ? 'archived' : 'disabled',
         writePolicy: profile?.writePolicy ?? 'read_only',
       };

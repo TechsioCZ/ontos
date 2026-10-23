@@ -85,7 +85,7 @@ export interface CompanyAgent {
   /** Responsible person of the company; null when none. */
   readonly ownerPrincipalId: string | null;
   readonly principalId: string;
-  readonly seeded: boolean;
+  readonly hasProfile: boolean;
   readonly status: AgentStatus;
   readonly writePolicy: AgentWritePolicy;
 }
@@ -105,6 +105,7 @@ export interface CompanyDirectoryPort<R> {
   /** Agent entities among the company's `members` (any status), sorted by display name (cs). */
   readonly agents: (
     tenantId: string,
+    legalEntityId: string,
     members: readonly string[],
   ) => Effect.Effect<readonly CompanyAgent[], ConnectionsUnavailable, R>;
   /** Principal ids with `principal:{agent}#operator`. */

@@ -1,8 +1,8 @@
 /**
  * Agent entities of the selected company (Lidé a role › Agentní entity). The company administrator lists, creates,
  * configures, deactivates / reactivates and deletes agents. Every change runs the Core Action
- * `core.identity.manage-demo-account` (create-agent / configure-agent / change-status / delete (archives the principal), sensitive
- * audit); then its company-scoped role policy is rebuilt from the selected module access and write policy,
+ * `core.identity.configure-agent` for profiles (`manage-demo-account` remains for status/archive), with sensitive
+ * audit; then its company-scoped role policy is rebuilt from the selected module access and write policy,
  * and its operators are written with principal#tenant. Deactivation and deletion revoke the agent's active OAuth
  * connections at once and withdraw its waiting proposals. Changes of one company's agents run one at a time
  * (a private session advisory lock, without an open SQL transaction), so two parallel creates cannot both pass the
@@ -14,6 +14,7 @@ import {
   agentGrantRelationships,
   agentModuleAccessOf,
   manageDemoAccountAction,
+  configureAgentAction,
   openDemoAccountGrants,
   withPostgresSessionAdvisoryLock,
 } from '@app/core-runtime';
@@ -24,8 +25,7 @@ import type {
   ManageAgentEntityRequest,
   ManageAgentEntityResponse,
 } from '@app/shared-contracts/agent-access';
-import { AgentModuleGrantSchema } from '@app/shared-contracts/agent-access';
-import { Effect, Redacted, Schema } from 'effect';
+import { Effect, Redacted } from 'effect';
 
 import { composedModulesOf } from '../agent-platform/composed-modules.ts';
 import { withdrawPendingOfAgent } from '../agent-platform/proposal-store.ts';
@@ -91,9 +91,6 @@ const fromActionError = (error: { readonly _tag: string }) => {
   }
 };
 
-const ModulesJson = Schema.fromJsonString(Schema.Array(AgentModuleGrantSchema));
-const modulesJsonOf = Schema.encodeSync(ModulesJson);
-
 const cleanDescription = (value: string | null) => {
   const trimmed = value?.trim() ?? '';
   return trimmed === '' ? null : trimmed;
@@ -105,15 +102,15 @@ const roleTemplates = (tenantId: string, legalEntityId: string) =>
 export const companyCatalog = (
   legalEntityId: string,
   roles: Effect.Success<ReturnType<typeof roleTemplates>>,
-  grants: Pick<DemoAccountGrants, 'relationshipsOf'>,
+  grants: Pick<DemoAccountGrants, 'rolePolicyOf'>,
 ) =>
   Effect.gen(function* companyCatalog() {
-    // relationshipsOf opens two gateway reads per principal. Two roles plus one operator read leave the sixth
+    // Native role policy expansion is bounded per template principal. Two roles plus one operator read leave the sixth
     // Worker connection for PostgreSQL. Unbounded fan-out can cancel a queued fetch before it makes progress.
     const templates = yield* Effect.forEach(
       roles,
       (role) =>
-        grants.relationshipsOf(role.templatePrincipalId).pipe(Effect.map((relationships) => ({ relationships, role }))),
+        grants.rolePolicyOf(role.templatePrincipalId).pipe(Effect.map((relationships) => ({ relationships, role }))),
       { concurrency: 2 },
     ).pipe(Effect.mapError(unavailable));
     const union = templates.flatMap(({ relationships }) => relationships);
@@ -153,7 +150,7 @@ export const listAgentEntities = <R>(caller: DemoAccountCaller, deps: Connection
     // outbound-connection slots of the request until it ends.
     const company = Effect.gen(function* companyAgents() {
       // Agents someone answers for first (the ones the company set up), then technical ones without an owner.
-      const agents = (yield* deps.directory.agents(tenantId, members))
+      const agents = (yield* deps.directory.agents(tenantId, legalEntityId, members))
         .filter((agent) => agent.status !== 'archived')
         .toSorted((left, right) => Number(left.ownerPrincipalId === null) - Number(right.ownerPrincipalId === null));
       const [operators, [people, audit]] = yield* Effect.all(
@@ -186,7 +183,7 @@ export const listAgentEntities = <R>(caller: DemoAccountCaller, deps: Connection
       operators: people.filter((person) => operators[index]?.includes(person.principalId) === true),
       owner: people.find((person) => person.principalId === agent.ownerPrincipalId) ?? null,
       principalId: agent.principalId,
-      seeded: agent.seeded,
+      hasProfile: agent.hasProfile,
       status: agent.status,
       writePolicy: agent.writePolicy,
     }));
@@ -227,7 +224,9 @@ const changeAgent = <R>(
         .runAction({ payload, principal: caller.principal, registration: manageDemoAccountAction, transport })
         .pipe(Effect.mapError(fromActionError));
     const members = yield* deps.directory.members(tenantId, legalEntityId);
-    const agents = (yield* deps.directory.agents(tenantId, members)).filter((agent) => agent.status !== 'archived');
+    const agents = (yield* deps.directory.agents(tenantId, legalEntityId, members)).filter(
+      (agent) => agent.status !== 'archived',
+    );
     const memberIds = (yield* deps.directory.people(tenantId, members)).map((person) => person.principalId);
     const revokeActive = (agentPrincipalId: string, reasonText: string) =>
       deps.grants.list({ actingPrincipalId: agentPrincipalId, legalEntityId, statuses: ['active'], tenantId }).pipe(
@@ -273,14 +272,14 @@ const changeAgent = <R>(
           payload: {
             description: cleanDescription(request.description),
             displayName: request.displayName.trim(),
-            modulesJson: modulesJsonOf(request.modules),
+            modules: request.modules,
             operation: 'create-agent',
             ownerPrincipalId: request.ownerPrincipalId,
             principalId,
             writePolicy: request.writePolicy,
           },
           principal: caller.principal,
-          registration: manageDemoAccountAction,
+          registration: configureAgentAction,
           transport,
         })
         .pipe(
@@ -346,17 +345,27 @@ const changeAgent = <R>(
       if (problem !== null) {
         return yield* new ConnectionsInvalid({ reason: problem });
       }
-      const result = yield* run({
-        description: cleanDescription(request.description),
-        displayName: request.displayName.trim(),
-        modulesJson: modulesJsonOf(request.modules),
-        operation: 'configure-agent',
-        ownerPrincipalId: request.ownerPrincipalId,
-        previousModulesJson: modulesJsonOf(agent.modules),
-        previousWritePolicy: agent.writePolicy,
-        principalId: agent.principalId,
-        writePolicy: request.writePolicy,
-      });
+      const result = yield* runtime
+        .runAction({
+          payload: {
+            description: cleanDescription(request.description),
+            displayName: request.displayName.trim(),
+            modules: request.modules,
+            operation: 'configure-agent',
+            ownerPrincipalId: request.ownerPrincipalId,
+            principalId: agent.principalId,
+            writePolicy: request.writePolicy,
+          },
+          principal: caller.principal,
+          registration: configureAgentAction,
+          transport,
+        })
+        .pipe(
+          Effect.catchTag('ActionAlreadyCommitted', () =>
+            Effect.succeed({ principalId: agent.principalId, status: agent.status }),
+          ),
+          Effect.mapError(fromActionError),
+        );
       const written = yield* grants
         .replaceAgentGrants({
           desired: agentGrantRelationships({

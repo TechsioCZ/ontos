@@ -360,7 +360,7 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
   }
   const { legalEntityId, tenantId } = caller.principal;
   const agentIds = yield* listCompanyAgentIds(tenantId);
-  const profiles = yield* loadAgentProfiles(tenantId, agentIds).pipe(
+  const profiles = yield* loadAgentProfiles(tenantId, legalEntityId, agentIds).pipe(
     Effect.mapError((cause) => new AgentStoreUnavailable({ cause })),
   );
   const proposalOnlyAgents = new Set(
@@ -432,9 +432,15 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
   const visiblePrincipals = canManage
     ? yield* companyDirectoryLive.members(tenantId, legalEntityId).pipe(
         Effect.flatMap((members) =>
-          Effect.all([companyDirectoryLive.agents(tenantId, members), companyDirectoryLive.people(tenantId, members)], {
-            concurrency: 1,
-          }),
+          Effect.all(
+            [
+              companyDirectoryLive.agents(tenantId, legalEntityId, members),
+              companyDirectoryLive.people(tenantId, members),
+            ],
+            {
+              concurrency: 1,
+            },
+          ),
         ),
         Effect.map(([agents, people]) => ({
           agents: new Set(agents.filter((agent) => agent.status !== 'archived').map((agent) => agent.principalId)),

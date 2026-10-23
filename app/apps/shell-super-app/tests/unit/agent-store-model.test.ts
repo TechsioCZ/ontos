@@ -1,110 +1,88 @@
 import { expect, test } from 'effect-rstest';
 
 import { DEFAULT_AGENT_PROFILE, foldAgentProfiles } from '../../api/auth/agent-store-model.ts';
-import { seededAgentProfiles } from '../../api/auth/demo-seed/agent-profiles.ts';
+import { demoAgentProfileSetup } from '../../api/auth/demo-seed/agent-profiles.ts';
 
-const OBCHOD_B = 'e931e0fd-adba-56fd-9e17-e5f3adb3efa0';
-const HANAK_C = '6300a06d-e532-5f52-8f66-5f1d4752a75e';
-const UNKNOWN = '00000000-0000-4000-8000-000000000000';
-
-const configure = (targetPrincipalId: string, writePolicy: unknown, modulesJson: unknown) => ({
-  modulesJson,
+const principalId = '6300a06d-e532-5f52-8f66-5f1d4752a75e';
+const company = '71000000-0000-4000-8000-000000000022';
+const foreignCompany = '71000000-0000-4000-8000-000000000020';
+const profile = {
+  description: 'Hlídá úkoly provozu.',
+  displayName: 'Agent',
+  legalEntityId: company,
+  modules: [{ access: 'write', moduleId: 'work.tasks' }],
   operation: 'configure-agent',
-  targetPrincipalId,
-  writePolicy,
+  ownerPrincipalId: null,
+  previousProfile: null,
+  revision: 1,
+  targetPrincipalId: principalId,
+  writePolicy: 'approval',
+};
+
+test('explicit setup covers six inputs but creates no runtime profile', () => {
+  expect(demoAgentProfileSetup).toHaveLength(6);
+  for (const input of demoAgentProfileSetup) {
+    expect(foldAgentProfiles(input.legalEntityId, [input.principalId], []).get(input.principalId)).toEqual(
+      DEFAULT_AGENT_PROFILE,
+    );
+  }
 });
 
-test('seeded agent profiles cover six principals with two of each policy', () => {
-  const entries = Object.values(seededAgentProfiles);
-  expect(entries).toHaveLength(6);
-  const policies = entries.map((entry) => entry.writePolicy);
-  expect(policies.filter((policy) => policy === 'read_only')).toHaveLength(2);
-  expect(policies.filter((policy) => policy === 'direct')).toHaveLength(2);
-  expect(policies.filter((policy) => policy === 'approval')).toHaveLength(2);
-});
-
-test('fold returns the seed for a seeded id and the default for an unknown id', () => {
-  const profiles = foldAgentProfiles([OBCHOD_B, UNKNOWN], []);
-  expect(profiles.get(OBCHOD_B)?.seeded).toBe(true);
-  expect(profiles.get(OBCHOD_B)?.writePolicy).toBe('direct');
-  expect(profiles.get(UNKNOWN)).toEqual(DEFAULT_AGENT_PROFILE);
-});
-
-test('a valid configure-agent evidence overrides the seed', () => {
-  const modulesJson = JSON.stringify([{ access: 'read', moduleId: 'demo.crm' }]);
-  const profiles = foldAgentProfiles([HANAK_C], [configure(HANAK_C, 'direct', modulesJson)]);
-  expect(profiles.get(HANAK_C)).toEqual({
+test('an unaudited known demo ID is bez profilu, never a seeded grant or write policy', () => {
+  expect(foldAgentProfiles(company, [principalId], []).get(principalId)).toEqual({
     description: null,
-    modules: [{ access: 'read', moduleId: 'demo.crm' }],
+    hasProfile: false,
+    modules: [],
     ownerPrincipalId: null,
-    seeded: false,
-    writePolicy: 'direct',
+    writePolicy: 'read_only',
   });
 });
 
-test('evidence with an invalid modulesJson is ignored', () => {
-  const profiles = foldAgentProfiles([HANAK_C], [configure(HANAK_C, 'direct', 'not json')]);
-  expect(profiles.get(HANAK_C)?.seeded).toBe(true);
-  expect(profiles.get(HANAK_C)?.writePolicy).toBe('approval');
-});
-
-test('later evidence wins over earlier evidence', () => {
-  const first = configure(HANAK_C, 'read_only', JSON.stringify([]));
-  const second = configure(HANAK_C, 'approval', JSON.stringify([{ access: 'write', moduleId: 'demo.crm' }]));
-  const profiles = foldAgentProfiles([HANAK_C], [first, second]);
-  expect(profiles.get(HANAK_C)).toEqual({
-    description: null,
-    modules: [{ access: 'write', moduleId: 'demo.crm' }],
+test('native exact-company audit evidence is the only configured profile', () => {
+  expect(foldAgentProfiles(company, [principalId], [{ evidence: profile }]).get(principalId)).toEqual({
+    description: profile.description,
+    hasProfile: true,
+    modules: profile.modules,
     ownerPrincipalId: null,
-    seeded: false,
     writePolicy: 'approval',
   });
 });
 
-test('create-agent evidence carries description and owner', () => {
-  const agent = '11111111-1111-4111-8111-111111111111';
-  const owner = '72000000-0000-4000-8000-000000000022';
-  const modulesJson = JSON.stringify([{ access: 'write', moduleId: 'work.tasks' }]);
-  const profiles = foldAgentProfiles(
-    [agent],
-    [
-      {
-        description: 'Hlídá úkoly provozu.',
-        modulesJson,
-        operation: 'create-agent',
-        ownerPrincipalId: owner,
-        targetPrincipalId: agent,
-        writePolicy: 'approval',
-      },
-    ],
+test('another company cannot supply a profile for the same principal', () => {
+  expect(foldAgentProfiles(foreignCompany, [principalId], [{ evidence: profile }]).get(principalId)).toEqual(
+    DEFAULT_AGENT_PROFILE,
   );
-  expect(profiles.get(agent)).toEqual({
-    description: 'Hlídá úkoly provozu.',
-    modules: [{ access: 'write', moduleId: 'work.tasks' }],
-    ownerPrincipalId: owner,
-    seeded: false,
-    writePolicy: 'approval',
-  });
 });
 
-test('a later configure-agent without description clears it', () => {
-  const agent = '11111111-1111-4111-8111-111111111111';
-  const modulesJson = JSON.stringify([{ access: 'read', moduleId: 'work.tasks' }]);
-  const created = {
-    description: 'Popis',
-    modulesJson,
-    operation: 'create-agent',
-    ownerPrincipalId: null,
-    targetPrincipalId: agent,
-    writePolicy: 'direct',
-  };
-  const configured = {
-    description: null,
-    modulesJson,
-    operation: 'configure-agent',
-    ownerPrincipalId: null,
-    targetPrincipalId: agent,
-    writePolicy: 'direct',
-  };
-  expect(foldAgentProfiles([agent], [created, configured]).get(agent)?.description).toBeNull();
+test('profile revisions, not timestamp ties or input order, choose the current configuration', () => {
+  const newer = { ...profile, modules: [], revision: 2, writePolicy: 'read_only' };
+  const result = foldAgentProfiles(company, [principalId], [{ evidence: newer }, { evidence: profile }]).get(
+    principalId,
+  );
+  expect(result?.modules).toEqual([]);
+  expect(result?.writePolicy).toBe('read_only');
+});
+
+test('an out-of-order corrupt revision cannot revive an older valid profile', () => {
+  expect(
+    foldAgentProfiles(
+      company,
+      [principalId],
+      [
+        { evidence: { ...profile, revision: 3, writePolicy: 'invented' } },
+        { evidence: { ...profile, revision: 2 } },
+        { evidence: profile },
+      ],
+    ).get(principalId),
+  ).toEqual(DEFAULT_AGENT_PROFILE);
+});
+
+test('malformed latest native evidence fails closed rather than reviving an older profile', () => {
+  expect(
+    foldAgentProfiles(
+      company,
+      [principalId],
+      [{ evidence: profile }, { evidence: { ...profile, revision: 2, writePolicy: 'invented' } }],
+    ).get(principalId),
+  ).toEqual(DEFAULT_AGENT_PROFILE);
 });
