@@ -1,8 +1,11 @@
 import { ContextAccess, LegalEntityContext } from '@app/core-runtime';
 import type { ContextAccessService, LegalEntityContextService } from '@app/core-runtime';
-import { Effect, Layer, Predicate } from 'effect';
+import { Effect, Layer, Option, Predicate, Ref } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
+import { GatewayTimings } from '../../api/auth/gateway-timing.ts';
+import type { GatewayPhase } from '../../api/auth/gateway-timing.ts';
 import {
   resolveAuthorizedLegalEntities,
   validateAuthorizedLegalEntity,
@@ -136,5 +139,38 @@ it.effect('starts the shared demo tenant in a stable authorized company without 
       access({ [alpha.legalEntityId]: 'allowed', [beta.legalEntityId]: 'allowed' }),
     );
     expect(selected).toEqual({ available: [beta, alpha], selected: alpha, state: 'selected' });
+  }),
+);
+
+it.effect('times SQL and SpiceDB independently for API-key and session legal-entity selection', () =>
+  Effect.gen(function* timedSelections() {
+    const timings = yield* Ref.make<readonly { readonly durationMs: number; readonly phase: GatewayPhase }[]>([]);
+    const records = context();
+    const permissions = access({ [alpha.legalEntityId]: 'allowed' });
+    const timedRecords: LegalEntityContextService = {
+      listActiveForTenant: (tenant) => TestClock.adjust(20).pipe(Effect.andThen(records.listActiveForTenant(tenant))),
+      validateSelection: (tenant, entity) =>
+        TestClock.adjust(20).pipe(Effect.andThen(records.validateSelection(tenant, entity))),
+    };
+    const timedPermissions: ContextAccessService = {
+      ...permissions,
+      legalEntities: (input) => TestClock.adjust(2000).pipe(Effect.andThen(permissions.legalEntities(input))),
+    };
+    yield* provideSelectionServices(
+      validateAuthorizedLegalEntity({ legalEntityId: alpha.legalEntityId, principalId, tenantId }),
+      timedRecords,
+      timedPermissions,
+    ).pipe(Effect.provideService(GatewayTimings, Option.some(timings)));
+    yield* provideSelectionServices(
+      resolveAuthorizedLegalEntities({ principalId, tenantId }),
+      timedRecords,
+      timedPermissions,
+    ).pipe(Effect.provideService(GatewayTimings, Option.some(timings)));
+    expect(yield* Ref.get(timings)).toEqual([
+      { durationMs: 20, phase: 'legal-entity-sql' },
+      { durationMs: 2000, phase: 'legal-entity-spicedb' },
+      { durationMs: 20, phase: 'legal-entity-sql' },
+      { durationMs: 2000, phase: 'legal-entity-spicedb' },
+    ]);
   }),
 );
