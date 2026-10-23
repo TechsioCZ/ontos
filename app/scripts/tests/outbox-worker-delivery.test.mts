@@ -13,7 +13,24 @@ import { expect, it } from 'effect-rstest';
 
 import { generateOutboxWorkerDeployment } from '../generate-outbox-worker-deployment.mjs';
 import { materializeOutboxWorker } from '../materialize-outbox-worker.mjs';
-import { OUTBOX_WORKER_HOST } from '../outbox-worker-delivery.mjs';
+import { CORE_SYSTEM_OUTBOX_WORKER, OUTBOX_WORKER_HOST } from '../outbox-worker-delivery.mjs';
+
+const SHELL_UNIT_ID = 'app/shell-super-app';
+const SHELL_PACKAGE = '@app/shell-super-app';
+const SHELL_PATH = 'apps/shell-super-app';
+const CORE_WORKER_ENTRY = 'src/entry.core-system-worker.ts';
+const SHELL_GENERATION_MARKER = 'shell-generation';
+const shellTopology = (sourceRevision = 'workspace') => ({
+  deliveryUnit: {
+    buildMarker: SHELL_GENERATION_MARKER,
+    packageName: SHELL_PACKAGE,
+    sourceRevision,
+    unitId: SHELL_UNIT_ID,
+  },
+  id: 'shell-super-app',
+  package: SHELL_PACKAGE,
+  path: SHELL_PATH,
+});
 
 const LEDGER_PACKAGE = '@app/ledger';
 const LEDGER_PATH = 'verticals/ledger';
@@ -107,6 +124,20 @@ const makeFixture = () =>
         recursive: true,
       }),
     );
+    yield* Effect.tryPromise(() => mkdir(path.join(root, SHELL_PATH, 'src'), { recursive: true }));
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        path.join(root, SHELL_PATH, PACKAGE_MANIFEST),
+        JSON.stringify({
+          exports: { './outbox-worker-host': `./${CORE_WORKER_ENTRY}` },
+          name: SHELL_PACKAGE,
+          type: 'module',
+        }),
+      ),
+    );
+    yield* Effect.tryPromise(() =>
+      writeFile(path.join(root, SHELL_PATH, CORE_WORKER_ENTRY), 'export const outboxWorkerEntry = {};\n'),
+    );
     yield* Effect.tryPromise(() => mkdir(path.join(root, 'topology'), { recursive: true }));
     yield* Effect.tryPromise(() => mkdir(path.join(root, 'scripts'), { recursive: true }));
     // Artifact tests never contact a configured stage dispatcher. The real trigger has its own unit tests.
@@ -149,7 +180,11 @@ const makeFixture = () =>
       writeFile(
         path.join(root, PACKAGE_MANIFEST),
         JSON.stringify({
-          dependencies: { '@app/core-runtime': WORKSPACE_DEPENDENCY, [LEDGER_PACKAGE]: WORKSPACE_DEPENDENCY },
+          dependencies: {
+            '@app/core-runtime': WORKSPACE_DEPENDENCY,
+            [LEDGER_PACKAGE]: WORKSPACE_DEPENDENCY,
+            [SHELL_PACKAGE]: WORKSPACE_DEPENDENCY,
+          },
           name: 'app',
         }),
       ),
@@ -158,6 +193,7 @@ const makeFixture = () =>
       writeFile(
         path.join(root, 'topology/reference-topology.json'),
         JSON.stringify({
+          shell: shellTopology(),
           verticals: [
             {
               id: 'ledger',
@@ -180,7 +216,7 @@ it.live('generates a separate supervised worker setup without changing owner con
     const owner = `zerops:\n  - setup: 'ledger'\n    build:\n      buildCommands:\n        - cd app && pnpm --filter '@app/ledger' run build\n        - cd app && pnpm run zerops:materialize --app 'ledger' --package '@app/ledger' --package-dir 'verticals/ledger'\n        - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/ledger/topology.json'\n      deployFiles:\n        - 'app/.zerops/runtime/ledger'\n    run:\n      base: 'nodejs@24'\n      envVariables:\n        DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}\n        PORT: '4110'\n        VERTICAL_LEDGER_PORT: '4110'\n        ONTOS_KEEP_ME: 'true'\n        ULTRAMODERN_ZEROPS_SERVICE: ledger\n      healthCheck:\n        httpGet:\n          path: '/ledger-api/ledger/readiness'\n      start: sh -c 'cd app/.zerops/runtime/ledger && exec npm run serve'\n`;
     const { deployment: generated } = yield* Effect.tryPromise(() => generateOutboxWorkerDeployment(root, owner));
     const [, workerAndHost] = generated.split("setup: 'ledger-worker'");
-    const [worker] = (workerAndHost ?? '').split("setup: 'outbox-worker-host'");
+    const [worker] = (workerAndHost ?? '').split("setup: 'core-system-worker'");
     expect(generated).toMatch(/setup: 'ledger-worker'/u);
     expect(generated).toMatch(/zerops:materialize .* --worker/u);
     expect(worker).toContain(`DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}`);
@@ -194,7 +230,7 @@ it.live('generates a separate supervised worker setup without changing owner con
     expect(worker).not.toMatch(/(?:^|\s)&(?:\s|$)/u);
     expect(worker).toContain("path: '/live'");
     expect(worker).not.toContain("path: '/ready'");
-    expect(generated.match(/ONTOS_KEEP_ME: 'true'/gu)?.length).toBe(3);
+    expect(generated.match(/ONTOS_KEEP_ME: 'true'/gu)?.length).toBe(4);
     expect((yield* Effect.tryPromise(() => generateOutboxWorkerDeployment(root, generated))).deployment).toBe(
       generated,
     );
@@ -205,10 +241,19 @@ it.live('generates the Outbox Worker host setup and entry beside the dedicated w
   Effect.gen(function* generatesHost() {
     const root = yield* makeFixture();
     const owner = `zerops:\n  - setup: 'ledger'\n    build:\n      buildCommands:\n        - cd app && pnpm run zerops:materialize --app 'ledger' --package '@app/ledger' --package-dir 'verticals/ledger'\n      deployFiles:\n        - 'app/.zerops/runtime/ledger'\n    deploy:\n      readinessCheck:\n        httpGet:\n          port: 4110\n          path: '/ledger-api/ledger/readiness'\n    run:\n      base: 'nodejs@24'\n      envVariables:\n        DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}\n        PORT: '4110'\n        ULTRAMODERN_ZEROPS_SERVICE: ledger\n      start: sh -c 'cd app/.zerops/runtime/ledger && exec npm run serve'\n`;
-    const { deployment, hostEntry } = yield* Effect.tryPromise(() => generateOutboxWorkerDeployment(root, owner));
+    const { coreEntry, deployment, hostEntry } = yield* Effect.tryPromise(() =>
+      generateOutboxWorkerDeployment(root, owner),
+    );
     const [, host] = deployment.split(`setup: '${OUTBOX_WORKER_HOST.stageSetup}'`);
     // The dedicated worker stays for the Zerops target; the host runs it on the Cloudflare target.
     expect(deployment).toContain("setup: 'ledger-worker'");
+    expect(deployment).toContain("setup: 'core-system-worker'");
+    expect(deployment).toContain(
+      "zerops:materialize --app 'core-system-worker' --package 'app' --package-dir '.' --worker",
+    );
+    expect(coreEntry).toContain("from '@app/shell-super-app/outbox-worker-host'");
+    expect(coreEntry).toContain('entries: [outboxWorkerEntry]');
+    expect(coreEntry).not.toContain('@app/ledger');
     expect(host).toContain("zerops:materialize --app 'outbox-worker-host' --package 'app' --package-dir '.' --worker");
     expect(host).toContain("deployFiles:\n        - 'app/.zerops/runtime/outbox-worker-host'");
     expect(host).toContain("OUTBOX_WORKER_HEALTH_PORT: '4100'");
@@ -222,6 +267,10 @@ it.live('generates the Outbox Worker host setup and entry beside the dedicated w
     expect(hostEntry).toContain(
       "import { outboxWorkerEntry as ledgerOutboxWorkerEntry } from '@app/ledger/outbox-worker-host';",
     );
+    expect(hostEntry).toContain(
+      "import { outboxWorkerEntry as coreSystemOutboxWorkerEntry } from '@app/shell-super-app/outbox-worker-host';",
+    );
+    expect(hostEntry).toContain('    coreSystemOutboxWorkerEntry,\n');
     expect(hostEntry).not.toContain('/src/');
     expect(hostEntry).toContain('    ledgerOutboxWorkerEntry,\n');
   }),
@@ -255,13 +304,42 @@ it.live('rejects a host whose workspace root does not depend on every hosted own
     yield* Effect.tryPromise(() =>
       writeFile(
         path.join(root, PACKAGE_MANIFEST),
-        JSON.stringify({ dependencies: { '@app/core-runtime': WORKSPACE_DEPENDENCY }, name: 'app' }),
+        JSON.stringify({
+          dependencies: { '@app/core-runtime': WORKSPACE_DEPENDENCY, [SHELL_PACKAGE]: WORKSPACE_DEPENDENCY },
+          name: 'app',
+        }),
       ),
     );
     const error = yield* Effect.flip(
       Effect.tryPromise(() => generateOutboxWorkerDeployment(root, HOST_OWNER_DEPLOYMENT)),
     );
     expect(String(error.cause)).toContain('must depend on @app/ledger as workspace:*');
+  }),
+);
+
+it.live('rejects a Core host without its Shell public export or root dependency', () =>
+  Effect.gen(function* rejectsUnpublishedCoreHost() {
+    const root = yield* makeFixture();
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        path.join(root, PACKAGE_MANIFEST),
+        JSON.stringify({
+          dependencies: { '@app/core-runtime': WORKSPACE_DEPENDENCY, [LEDGER_PACKAGE]: WORKSPACE_DEPENDENCY },
+          name: 'app',
+        }),
+      ),
+    );
+    const dependencyFailure = yield* Effect.flip(
+      Effect.tryPromise(() => generateOutboxWorkerDeployment(root, HOST_OWNER_DEPLOYMENT)),
+    );
+    expect(String(dependencyFailure.cause)).toContain('must depend on @app/shell-super-app as workspace:*');
+    yield* Effect.tryPromise(() =>
+      writeFile(path.join(root, SHELL_PATH, PACKAGE_MANIFEST), JSON.stringify({ name: SHELL_PACKAGE })),
+    );
+    const exportFailure = yield* Effect.flip(
+      Effect.tryPromise(() => generateOutboxWorkerDeployment(root, HOST_OWNER_DEPLOYMENT)),
+    );
+    expect(String(exportFailure.cause)).toContain('Invalid generated Outbox Worker delivery');
   }),
 );
 
@@ -308,6 +386,10 @@ it.live('bundles every hosted owner entry into the real Outbox Worker host artif
       expect(artifact.sourceInputs).not.toContain(`verticals/${owner}/src/worker-host/main.ts`);
     }
     expect(artifact.sourceInputs).toContain(OUTBOX_WORKER_HOST.entry);
+    expect(artifact.sourceInputs).toContain(`${SHELL_PATH}/${CORE_WORKER_ENTRY}`);
+    expect(artifact.sourceInputs).toContain(`${SHELL_PATH}/${OWNER_MARKER_SOURCE}`);
+    expect(artifact.sourceInputs).toContain('packages/core-runtime/src/outbox/core-system-worker-entry.ts');
+    expect(artifact.ownerBuildIdentities.some(({ appId }) => appId === 'shell-super-app')).toBe(true);
   }),
 );
 
@@ -328,6 +410,23 @@ const makeReleaseMarkerFixture = (sourceRevision = 'workspace') =>
       writeFile(
         path.join(corePath, 'src/outbox/worker-entrypoint.ts'),
         'export const startOutboxWorkerHost = ({ entries }) => console.log(JSON.stringify(entries.map((entry) => entry.expectedDeployment)));\n',
+      ),
+    );
+    yield* Effect.tryPromise(() => mkdir(path.join(root, SHELL_PATH, 'shared'), { recursive: true }));
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        path.join(root, SHELL_PATH, OWNER_MARKER_SOURCE),
+        [
+          'declare const ULTRAMODERN_BUILD_MARKER: string;',
+          'declare const ULTRAMODERN_SOURCE_REVISION: string;',
+          `export const ultramodernApiMarker = { build: ULTRAMODERN_BUILD_MARKER, buildMarker: ULTRAMODERN_BUILD_MARKER, sourceRevision: ULTRAMODERN_SOURCE_REVISION, unitId: '${SHELL_UNIT_ID}' };`,
+        ].join('\n'),
+      ),
+    );
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        path.join(root, SHELL_PATH, CORE_WORKER_ENTRY),
+        "import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';\nexport const outboxWorkerEntry = { expectedDeployment: ultramodernApiMarker };\n",
       ),
     );
     for (const owner of RELEASE_FIXTURE_OWNERS) {
@@ -374,10 +473,9 @@ const makeReleaseMarkerFixture = (sourceRevision = 'workspace') =>
         path.join(root, PACKAGE_MANIFEST),
         JSON.stringify({
           dependencies: Object.fromEntries(
-            ['@app/core-runtime', ...RELEASE_FIXTURE_OWNERS.map((owner) => `@app/${owner.id}`)].map((name) => [
-              name,
-              WORKSPACE_DEPENDENCY,
-            ]),
+            ['@app/core-runtime', SHELL_PACKAGE, ...RELEASE_FIXTURE_OWNERS.map((owner) => `@app/${owner.id}`)].map(
+              (name) => [name, WORKSPACE_DEPENDENCY],
+            ),
           ),
           name: 'app',
         }),
@@ -391,6 +489,7 @@ const makeReleaseMarkerFixture = (sourceRevision = 'workspace') =>
             baseUrl: '.',
             paths: {
               '@app/core-runtime/outbox/worker': ['packages/core-runtime/src/outbox/worker-entrypoint.ts'],
+              [`${SHELL_PACKAGE}/outbox-worker-host`]: [`${SHELL_PATH}/${CORE_WORKER_ENTRY}`],
               ...Object.fromEntries(
                 RELEASE_FIXTURE_OWNERS.map((owner) => [
                   `@app/${owner.id}/outbox-worker-host`,
@@ -406,6 +505,7 @@ const makeReleaseMarkerFixture = (sourceRevision = 'workspace') =>
       writeFile(
         path.join(root, 'topology/reference-topology.json'),
         JSON.stringify({
+          shell: shellTopology(sourceRevision),
           verticals: RELEASE_FIXTURE_OWNERS.map((owner) => ({
             deliveryUnit: {
               buildMarker: owner.generationBuildMarker,
@@ -427,16 +527,20 @@ const makeReleaseMarkerFixture = (sourceRevision = 'workspace') =>
     const generated = yield* Effect.tryPromise(() => generateOutboxWorkerDeployment(root, deployments));
     yield* Effect.tryPromise(() => mkdir(path.join(root, 'scripts'), { recursive: true }));
     yield* Effect.tryPromise(() => writeFile(path.join(root, OUTBOX_WORKER_HOST.entry), generated.hostEntry ?? ''));
+    yield* Effect.tryPromise(() =>
+      writeFile(path.join(root, CORE_SYSTEM_OUTBOX_WORKER.entry), generated.coreEntry ?? ''),
+    );
     return root;
   });
 
 const compileReleaseFixture = (root: string, appId: string, sourceRevision: string, injectSourceRevision = true) =>
   Effect.gen(function* compileReleaseFixtureEffect() {
     const runtimeDir = path.join(root, '.zerops/runtime', sourceRevision, appId);
+    const rootRunner = appId === OUTBOX_WORKER_HOST.id || appId === CORE_SYSTEM_OUTBOX_WORKER.id;
     const options = {
       appId,
-      packageDir: appId === OUTBOX_WORKER_HOST.id ? '.' : `verticals/${appId}`,
-      packageName: appId === OUTBOX_WORKER_HOST.id ? 'app' : `@app/${appId}`,
+      packageDir: rootRunner ? '.' : `verticals/${appId}`,
+      packageName: rootRunner ? 'app' : `@app/${appId}`,
       runtimeDir,
       workspaceRoot: root,
     };
@@ -515,11 +619,20 @@ it.live('compiles independent source-promoted owner identities in dedicated and 
         expect(yield* compileReleaseFixture(root, owner.id, sourceRevision)).toEqual([expected[index]]);
       }
       const combined = yield* compileReleaseFixture(root, OUTBOX_WORKER_HOST.id, sourceRevision);
-      expect(combined).toEqual(expected);
+      const shellBuildMarker = createUltramodernReleaseBuildMarker({
+        generationBuildMarker: SHELL_GENERATION_MARKER,
+        sourceRevision,
+        unitId: SHELL_UNIT_ID,
+      });
+      expect(combined).toEqual([
+        { build: shellBuildMarker, buildMarker: shellBuildMarker, sourceRevision, unitId: SHELL_UNIT_ID },
+        ...expected,
+      ]);
+      expect(yield* compileReleaseFixture(root, CORE_SYSTEM_OUTBOX_WORKER.id, sourceRevision)).toEqual([combined[0]]);
       expect(combined[0]?.buildMarker).not.toBe(combined[1]?.buildMarker);
       identitiesByRevision.push(combined);
     }
-    for (const [index] of RELEASE_FIXTURE_OWNERS.entries()) {
+    for (const index of [0, 1, 2]) {
       expect(identitiesByRevision[0]?.[index]?.buildMarker).not.toBe(identitiesByRevision[1]?.[index]?.buildMarker);
     }
   }),
@@ -530,7 +643,11 @@ it.live('retains the compiled owner revision in an exported-source artifact with
     const sourceRevision = 'd'.repeat(40);
     const root = yield* makeReleaseMarkerFixture(sourceRevision);
     const identities = yield* compileReleaseFixture(root, OUTBOX_WORKER_HOST.id, sourceRevision, false);
-    expect(identities.map((identity) => identity.sourceRevision)).toEqual([sourceRevision, sourceRevision]);
+    expect(identities.map((identity) => identity.sourceRevision)).toEqual([
+      sourceRevision,
+      sourceRevision,
+      sourceRevision,
+    ]);
   }),
 );
 

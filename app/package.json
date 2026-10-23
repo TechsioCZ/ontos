@@ -156,6 +156,7 @@
     "@app/party-registry": "workspace:*",
     "@app/price-group-catalog": "workspace:*",
     "@app/privacy": "workspace:*",
+    "@app/shell-super-app": "workspace:*",
     "@authzed/authzed-node": "1.6.1",
     "@effect/sql-pg": "4.0.0-rc.117",
     "better-auth": "1.7.12",

@@ -26,7 +26,12 @@ import type {
   AuthorizationReadinessEvidence,
 } from './check-authorization-readiness.mts';
 import { hashAuthorizationEvidence } from './check-authorization-readiness.mts';
-import { OUTBOX_WORKER_HOST, OutboxWorkerModeSchema, outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
+import {
+  CORE_SYSTEM_OUTBOX_WORKER,
+  OUTBOX_WORKER_HOST,
+  OutboxWorkerModeSchema,
+  outboxWorkerDelivery,
+} from './outbox-worker-delivery.mjs';
 import type { OutboxWorkerMode } from './outbox-worker-delivery.mjs';
 import type { AuthorizationImpactReport } from './report-fail-closed-authorization-impact.mts';
 
@@ -1208,6 +1213,7 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   'scripts/locked-registry-overrides.mjs',
   'scripts/outbox-worker-delivery.mjs',
   OUTBOX_WORKER_HOST.entry,
+  CORE_SYSTEM_OUTBOX_WORKER.entry,
   'zerops.yaml',
 ]);
 const isConservativeFullDeployChange = (changedPath: string): boolean =>
@@ -1388,6 +1394,8 @@ const planWorkerPhases = (
       stageSetup: worker.stageSetup,
     }));
   }
+  // Core's dedicated worker is owned by Shell; its inclusion also replans the combined
+  // host whenever a Shell release changes the admitted Core build identity.
   return impactedWorkers.length === 0
     ? []
     : [
@@ -1457,7 +1465,8 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
         }),
       ),
     );
-    const workers = workerDeliveries.filter((delivery) => delivery !== undefined);
+    const moduleWorkers = workerDeliveries.filter((delivery) => delivery !== undefined);
+    const workers = moduleWorkers.length === 0 ? [] : [...moduleWorkers, CORE_SYSTEM_OUTBOX_WORKER];
     validateWorkerStageSetups(workers.length === 0 ? [] : [...workers, OUTBOX_WORKER_HOST], stageSetups);
     const shell = orderedUnits.find((unit) => unit.kind === 'shell');
     if (shell === undefined) {

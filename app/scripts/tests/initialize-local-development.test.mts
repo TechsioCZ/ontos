@@ -192,6 +192,8 @@ it.effect('derives the fixed local commerce launch modules through generated own
       'sales-pipeline',
       'merchandise',
       'sales-insights',
+      'facility-operations',
+      'crm',
     ]);
   }),
 );
@@ -290,7 +292,23 @@ it.effect('generates stable module state IDs and complete access relationships',
     expect(moduleStateIdFor(PARTY_REGISTRY_MODULE_ID)).toBe(moduleStateIdFor(PARTY_REGISTRY_MODULE_ID));
     expect(moduleStateIdFor(PARTY_REGISTRY_MODULE_ID)).not.toBe(moduleStateIdFor(INVENTORY_MODULE_ID));
     const relationships = yield* buildLocalDevelopmentRelationships([PARTY_REGISTRY_MODULE_ID, INVENTORY_MODULE_ID]);
-    expect(relationships.length).toBe(8);
+    expect(relationships.length).toBe(10);
+    expect(relationships.filter(({ resourceType }) => resourceType === 'principal')).toEqual([
+      {
+        relation: 'tenant',
+        resourceId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
+        resourceType: 'principal',
+        subjectId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+        subjectType: 'tenant',
+      },
+      {
+        relation: 'self',
+        resourceId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
+        resourceType: 'principal',
+        subjectId: LOCAL_DEVELOPMENT_CONTEXT.principalId,
+        subjectType: 'principal',
+      },
+    ]);
     expect(relationships.filter(({ relation }) => relation === 'accessor').length).toBe(2);
     expect(relationships.filter(({ relation }) => relation === 'legal_entity').length).toBe(2);
     // Party Registry's governed reads need the tenant read permission, not only module access.

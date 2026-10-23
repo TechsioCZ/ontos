@@ -3,6 +3,7 @@ import { Array as Arr, Effect, FileSystem, ManagedRuntime, Order, Path, Schema }
 import { Command, Flag } from 'effect/unstable/cli';
 
 import {
+  CORE_SYSTEM_OUTBOX_WORKER,
   OUTBOX_WORKER_BUNDLE,
   OUTBOX_WORKER_HOST,
   outboxWorkerDelivery,
@@ -14,6 +15,7 @@ export const OUTBOX_WORKER_HOST_HEALTH_PORT = '4100';
 
 const TopologySchema = Schema.fromJsonString(
   Schema.Struct({
+    shell: Schema.Struct({ id: Schema.String, package: Schema.String, path: Schema.String }),
     verticals: Schema.Array(
       Schema.Struct({
         id: Schema.String,
@@ -74,7 +76,7 @@ export const readOutboxWorkerHost = (root) =>
         return yield* Effect.fail(failure(`${vertical.id} uses the Outbox Worker host health port`));
       }
     }
-    return yield* outboxWorkerHostDelivery(root, topology.verticals).pipe(
+    return yield* outboxWorkerHostDelivery(root, topology.verticals, topology.shell).pipe(
       Effect.mapError(() => failure('Invalid generated Outbox Worker delivery')),
     );
   });
@@ -91,6 +93,7 @@ export const renderOutboxWorkerHostEntry = (host) => {
     HOST_ENTRY_HEADER,
     "import { startEmailDispatchTrigger } from './email-dispatch-trigger.mts';",
     "import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';",
+    `import { outboxWorkerEntry as coreSystemOutboxWorkerEntry } from '${host.coreOwner.hostExport}';`,
     ...host.owners.map(
       (owner, index) => `import { outboxWorkerEntry as ${bindings[index] ?? ''} } from '${owner.hostExport}';`,
     ),
@@ -99,6 +102,7 @@ export const renderOutboxWorkerHostEntry = (host) => {
     '',
     'startOutboxWorkerHost({',
     '  entries: [',
+    '    coreSystemOutboxWorkerEntry,',
     ...bindings.map((binding) => `    ${binding},`),
     '  ],',
     '  health: true,',
@@ -106,6 +110,24 @@ export const renderOutboxWorkerHostEntry = (host) => {
     '',
   ].join('\n');
 };
+
+/**
+ * A dedicated Core runner uses precisely the same public Shell entry as the combined host.
+ * @param {import('./outbox-worker-delivery.mjs').OutboxWorkerHostedOwner} coreOwner Published Core/Shell identity.
+ * @returns {string} Dedicated Core runner source.
+ */
+export const renderCoreSystemOutboxWorkerEntry = (coreOwner) =>
+  [
+    HOST_ENTRY_HEADER,
+    "import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';",
+    `import { outboxWorkerEntry } from '${coreOwner.hostExport}';`,
+    '',
+    'startOutboxWorkerHost({',
+    '  entries: [outboxWorkerEntry],',
+    '  health: true,',
+    '});',
+    '',
+  ].join('\n');
 
 /**
  * @param {string} service Generated worker service section.
@@ -132,14 +154,15 @@ const runEnvironment = (service) => {
  * @param {readonly string[]} services Generated dedicated worker services, in topology order.
  * @param {readonly string[]} serviceIds Their setups.
  * @param {string} rootPackageName Workspace root package name.
+ * @param {{ readonly id: string, readonly stageSetup: string }} delivery Combined or dedicated Core service.
  */
-const renderHostService = (services, serviceIds, rootPackageName) =>
+const renderHostService = (services, serviceIds, rootPackageName, delivery) =>
   Effect.gen(function* renderHostServiceEffect() {
     /** @type {Map<string, string>} */
     const environment = new Map([
       ['OUTBOX_WORKER_HEALTH_PORT', `'${OUTBOX_WORKER_HOST_HEALTH_PORT}'`],
       ['PORT', `'${OUTBOX_WORKER_HOST_HEALTH_PORT}'`],
-      ['ULTRAMODERN_ZEROPS_SERVICE', OUTBOX_WORKER_HOST.id],
+      ['ULTRAMODERN_ZEROPS_SERVICE', delivery.id],
     ]);
     for (const [index, service] of services.entries()) {
       for (const [key, value] of runEnvironment(service)) {
@@ -161,14 +184,14 @@ const renderHostService = (services, serviceIds, rootPackageName) =>
       return yield* Effect.fail(failure('The Outbox Worker host has no owners'));
     }
     const runStart = template.indexOf('\n    run:\n');
-    const runtimeDir = `app/.zerops/runtime/${OUTBOX_WORKER_HOST.id}`;
+    const runtimeDir = `app/.zerops/runtime/${delivery.id}`;
     const buildAndDeploy = template
       .slice(0, runStart)
-      .replace(`setup: '${templateId}'`, `setup: '${OUTBOX_WORKER_HOST.stageSetup}'`)
+      .replace(`setup: '${templateId}'`, `setup: '${delivery.stageSetup}'`)
       .replaceAll(`app/.zerops/runtime/${templateId}`, runtimeDir)
       .replace(
         /--app '[^']*' --package '[^']*' --package-dir '[^']*' --worker/u,
-        `--app '${OUTBOX_WORKER_HOST.id}' --package '${rootPackageName}' --package-dir '.' --worker`,
+        `--app '${delivery.id}' --package '${rootPackageName}' --package-dir '.' --worker`,
       )
       .replace(/^(?<key> {10}port: )[0-9]+$/mu, `$<key>${OUTBOX_WORKER_HOST_HEALTH_PORT}`);
     const runBase = /^ {6}base: (?<base>.*)$/mu.exec(template.slice(runStart))?.groups?.base;
@@ -261,31 +284,38 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
     }
     const host = yield* readOutboxWorkerHost(root);
     if (host === undefined) {
-      return { deployment: result, hostEntry: null };
+      return { coreEntry: null, deployment: result, hostEntry: null };
     }
     const rootPackage = yield* Schema.decodeUnknownEffect(RootPackageSchema)(
       yield* fs.readFileString(path.join(root, 'package.json')),
     );
     // The host reaches every owner only through the package export that owner publishes, so the
     // workspace root must depend on each hosted owner package and on the Core worker entrypoint.
-    const missingDependencies = [CORE_WORKER_PACKAGE, ...host.owners.map((owner) => owner.packageName)].filter(
-      (name) => rootPackage.dependencies?.[name] !== 'workspace:*',
-    );
+    const missingDependencies = [
+      CORE_WORKER_PACKAGE,
+      host.coreOwner.packageName,
+      ...host.owners.map((owner) => owner.packageName),
+    ].filter((name) => rootPackage.dependencies?.[name] !== 'workspace:*');
     if (missingDependencies.length > 0) {
       return yield* Effect.fail(
         failure(`The workspace root must depend on ${missingDependencies.join(', ')} as workspace:*`),
       );
     }
     // The `dedicated` Outbox Worker mode deploys each owner's own worker; the `host` mode deploys the host instead.
-    const hostService = yield* renderHostService(services, serviceIds, rootPackage.name);
-    result = `${result.trimEnd()}\n\n  # <generated-outbox-worker-deployments>\n${[...services, hostService].join('\n\n')}\n  # </generated-outbox-worker-deployments>\n`;
-    return { deployment: result, hostEntry: renderOutboxWorkerHostEntry(host) };
+    const hostService = yield* renderHostService(services, serviceIds, rootPackage.name, OUTBOX_WORKER_HOST);
+    const coreService = yield* renderHostService(services, serviceIds, rootPackage.name, CORE_SYSTEM_OUTBOX_WORKER);
+    result = `${result.trimEnd()}\n\n  # <generated-outbox-worker-deployments>\n${[...services, coreService, hostService].join('\n\n')}\n  # </generated-outbox-worker-deployments>\n`;
+    return {
+      coreEntry: renderCoreSystemOutboxWorkerEntry(host.coreOwner),
+      deployment: result,
+      hostEntry: renderOutboxWorkerHostEntry(host),
+    };
   });
 
 /**
  * @param {string} root Workspace root.
  * @param {string} source Existing Zerops deployment source.
- * @returns {PromiseLike<{ deployment: string, hostEntry: string | null }>} Deployment source with the generated worker services, and the Outbox Worker host entry source.
+ * @returns {PromiseLike<{ deployment: string, hostEntry: string | null, coreEntry: string | null }>} Deployment source with the generated worker services, and the Outbox Worker host entry source.
  */
 export const generateOutboxWorkerDeployment = (root, source) =>
   nodeRuntime.runPromise(generateOutboxWorkerDeploymentEffect(root, source));
@@ -298,15 +328,24 @@ const runCommand = ({ write }) =>
     const root = path.resolve();
     const file = path.join(root, 'zerops.yaml');
     const hostEntryFile = path.join(root, OUTBOX_WORKER_HOST.entry);
+    const coreEntryFile = path.join(root, CORE_SYSTEM_OUTBOX_WORKER.entry);
     const source = yield* fs.readFileString(file);
     const currentHostEntry = (yield* fs.exists(hostEntryFile)) ? yield* fs.readFileString(hostEntryFile) : null;
+    const currentCoreEntry = (yield* fs.exists(coreEntryFile)) ? yield* fs.readFileString(coreEntryFile) : null;
     const generated = yield* generateOutboxWorkerDeploymentEffect(root, source);
     if (write) {
       yield* fs.writeFileString(file, generated.deployment);
       yield* generated.hostEntry === null
         ? fs.remove(hostEntryFile, { force: true })
         : fs.writeFileString(hostEntryFile, generated.hostEntry);
-    } else if (source !== generated.deployment || currentHostEntry !== generated.hostEntry) {
+      yield* generated.coreEntry === null
+        ? fs.remove(coreEntryFile, { force: true })
+        : fs.writeFileString(coreEntryFile, generated.coreEntry);
+    } else if (
+      source !== generated.deployment ||
+      currentHostEntry !== generated.hostEntry ||
+      currentCoreEntry !== generated.coreEntry
+    ) {
       yield* Effect.fail(
         failure('Worker deployment drift: run node scripts/generate-outbox-worker-deployment.mjs --write'),
       );

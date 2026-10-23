@@ -405,6 +405,20 @@ export const buildLocalDevelopmentRelationships = Effect.fn('LocalDevelopment.bu
     }
     const shared: LocalDevelopmentRelationship[] = [
       {
+        relation: 'tenant',
+        resourceId: context.principalId,
+        resourceType: 'principal',
+        subjectId: context.tenantId,
+        subjectType: 'tenant',
+      },
+      {
+        relation: 'self',
+        resourceId: context.principalId,
+        resourceType: 'principal',
+        subjectId: context.principalId,
+        subjectType: 'principal',
+      },
+      {
         relation: 'member',
         resourceId: context.tenantId,
         resourceType: 'tenant',

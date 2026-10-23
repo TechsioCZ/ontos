@@ -273,6 +273,9 @@ importers:
       '@app/privacy':
         specifier: workspace:*
         version: link:verticals/privacy
+      '@app/shell-super-app':
+        specifier: workspace:*
+        version: link:apps/shell-super-app
       '@app/property-leasing':
         specifier: workspace:*
         version: link:verticals/property-leasing
