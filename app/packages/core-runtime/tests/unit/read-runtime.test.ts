@@ -72,7 +72,12 @@ const transactionOperationAt = DateTime.toDateUtc(DateTime.makeUnsafe(Date.parse
 /** The Read installs its scope and reads the start time in one statement; `set_config` echoes what it set. */
 const transactionTimeRow = (text: string, values: readonly unknown[]) =>
   text.includes('set_config')
-    ? { legal_entity_id: values[1], operation_at: transactionOperationAt, tenant_id: values[0] }
+    ? {
+        isolation: 'read committed',
+        legal_entity_id: values[1],
+        operation_at: transactionOperationAt,
+        tenant_id: values[0],
+      }
     : { operation_at: transactionOperationAt };
 
 const approvedCompositionRevision = 'a'.repeat(64);
@@ -161,11 +166,8 @@ const makeHarness = Effect.fn(function* makeHarness(
   let tenantPermissionChecks = 0;
   const evidenceRows: EvidenceRow[] = [];
   const evidenceParameterRows: unknown[][] = [];
-  const query = (text: string, values: readonly unknown[]) =>
-    Effect.gen(function* executeReadQuery() {
-      if (/^(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE SAVEPOINT)/u.test(text)) {
-        options.sqlEvents?.push(text);
-      }
+  const transactionSetup = (text: string, values: readonly unknown[]) =>
+    Effect.gen(function* transactionSetupQuery() {
       if (text.includes("current_setting('transaction_isolation')")) {
         const isolation = options.compositionIsolation ?? 'read committed';
         if (isolation !== 'read committed') {
@@ -173,7 +175,36 @@ const makeHarness = Effect.fn(function* makeHarness(
         }
         authorityLocks += 1;
         options.authorityEvents?.push('authority_locked');
-        return [{ isolation }];
+        if (!text.includes('set_config')) {
+          return [{ isolation }];
+        }
+      }
+      if (text.includes('set_config')) {
+        scopeInstalls += 1;
+        options.authorityEvents?.push('scope_installed');
+      }
+      if (text.includes('transaction_timestamp')) {
+        transactionTimestampReadCount += 1;
+        if (options.failTransactionTimestamp === true) {
+          return yield* new SqlError({
+            reason: new ConnectionError({ cause: new Error('transaction clock unavailable') }),
+          });
+        }
+        return [transactionTimeRow(text, values)];
+      }
+      return [];
+    });
+  const query = (text: string, values: readonly unknown[]) =>
+    Effect.gen(function* executeReadQuery() {
+      if (/^(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE SAVEPOINT)/u.test(text)) {
+        options.sqlEvents?.push(text);
+      }
+      if (
+        text.includes('transaction_isolation') ||
+        text.includes('transaction_timestamp') ||
+        text.includes('set_config')
+      ) {
+        return yield* transactionSetup(text, values);
       }
       if (text.includes('application_composition_authority')) {
         authorityReads += 1;
@@ -192,19 +223,6 @@ const makeHarness = Effect.fn(function* makeHarness(
                 unexpired: authority.unexpired,
               },
             ];
-      }
-      if (text.includes('set_config')) {
-        scopeInstalls += 1;
-        options.authorityEvents?.push('scope_installed');
-      }
-      if (text.includes('transaction_timestamp')) {
-        transactionTimestampReadCount += 1;
-        if (options.failTransactionTimestamp === true) {
-          return yield* new SqlError({
-            reason: new ConnectionError({ cause: new Error('transaction clock unavailable') }),
-          });
-        }
-        return [transactionTimeRow(text, values)];
       }
       if (text.includes('data_access_events')) {
         if (options.failEvidence === true) {

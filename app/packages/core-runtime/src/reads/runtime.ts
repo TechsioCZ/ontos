@@ -14,6 +14,7 @@ import { installOperationalScope, installOperationalScopeAt } from '../db/scoped
 import type { CoreTransaction } from '../db/types.ts';
 import {
   lockApplicationCompositionAuthority,
+  lockApplicationCompositionReadScope,
   precheckApplicationCompositionAdmission,
 } from '../modules/application-composition-authority.ts';
 import type { ModuleEntrypointDescriptor } from '../modules/module-entrypoint.ts';
@@ -1301,21 +1302,13 @@ const readRuntimeFromDependencies = <
         }),
         cause,
       );
-    const admittedTransaction = <Value, Failure, Environment>(
+    const readTransaction = <Value, Failure, Environment>(
       body: (transaction: CoreTransaction) => Effect.Effect<Value, Failure, Environment>,
     ) =>
       database.executor
-        .transaction(
-          Effect.fn('ReadRuntime.admittedTransaction')(function* admittedTransactionBody(transaction: CoreTransaction) {
-            if (compositionRevision !== undefined) {
-              yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'read').pipe(
-                Effect.mapError(compositionNoLongerAdmits),
-                observe('read-authority'),
-              );
-            }
-            // Between BEGIN and COMMIT nothing reaches SpiceDB, a module, the network, or a second pooled connection.
-            return yield* body(transaction).pipe(insideDatabaseTransaction(input.registration.descriptor.readKey));
-          }),
+        .transaction((transaction) =>
+          // Between BEGIN and COMMIT nothing reaches SpiceDB, a module, the network, or a second pooled connection.
+          body(transaction).pipe(insideDatabaseTransaction(input.registration.descriptor.readKey)),
         )
         .pipe(
           observe('read-transaction'),
@@ -1337,6 +1330,21 @@ const readRuntimeFromDependencies = <
               : transactionFailure,
           ),
         );
+
+    const admittedTransaction = <Value, Failure, Environment>(
+      body: (transaction: CoreTransaction) => Effect.Effect<Value, Failure, Environment>,
+    ) =>
+      readTransaction(
+        Effect.fn('ReadRuntime.admittedTransaction')(function* admittedTransactionBody(transaction: CoreTransaction) {
+          if (compositionRevision !== undefined) {
+            yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'read').pipe(
+              Effect.mapError(compositionNoLongerAdmits),
+              observe('read-authority'),
+            );
+          }
+          return yield* body(transaction);
+        }),
+      );
 
     /** A definite denial is recorded only while the composition still admits this Read. */
     const recordDenial = (evidence: PersistReadEvidenceInput, failure: ReadPermissionDenied | ReadPolicyDenied) =>
@@ -1594,11 +1602,14 @@ const readRuntimeFromDependencies = <
       ).pipe(observe('read-prepare'));
       // Owner work: the transaction holds only the scope installation, owner authorization state, and `load`.
       // Remote I/O and a second pooled connection refuse to run inside it (`insideDatabaseTransaction`).
-      const finishOwner = yield* admittedTransaction(
+      const finishOwner = yield* readTransaction(
         Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBody(transaction: CoreTransaction) {
-          const { operationAt, scoped } = yield* installOperationalScopeAt(transaction, scope).pipe(
-            observe('read-rls'),
-          );
+          const { operationAt, scoped } = yield* compositionRevision === undefined
+            ? installOperationalScopeAt(transaction, scope).pipe(observe('read-rls'))
+            : lockApplicationCompositionReadScope(transaction, compositionRevision, scope).pipe(
+                Effect.mapError(compositionNoLongerAdmits),
+                observe('read-authority'),
+              );
           stage('scope_installed');
           const ownerAuthorizationDecision = yield* ownerAuthorizationCheck(scoped, operationAt);
           if (ownerAuthorizationDecision === 'denied') {

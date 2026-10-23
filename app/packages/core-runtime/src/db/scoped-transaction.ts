@@ -128,6 +128,7 @@ export const installOperationalScopeFromTransactionService = Effect.fn('installO
 );
 
 interface InstalledScopeRow extends SettingRow {
+  readonly isolation?: string;
   readonly operation_at: unknown;
 }
 
@@ -138,16 +139,27 @@ interface InstalledScopeRow extends SettingRow {
  * on every governed Read transaction.
  */
 export const installOperationalScopeAt = Effect.fn('installOperationalScopeAt')(
-  function* installOperationalScopeAtEffect(transaction: OperationalScopeRawTransaction, scope: OperationalScope) {
+  function* installOperationalScopeAtEffect(
+    transaction: OperationalScopeRawTransaction,
+    scope: OperationalScope,
+    lock?: { readonly acquire: SQL; readonly isolation: 'read committed' },
+  ) {
+    // Infrastructure locks may share scope installation, but any protected data read must use a later
+    // statement: READ COMMITTED needs a new snapshot after a possible advisory-lock wait.
+    const locking =
+      lock === undefined
+        ? sql``
+        : sql`, current_setting('transaction_isolation') as isolation, case when current_setting('transaction_isolation') = ${lock.isolation} then ${lock.acquire} end as publication_lock`;
     const [installed] = yield* transaction
       .execute<InstalledScopeRow>(
-        sql`select set_config('ontos.tenant_id', ${scope.tenantId}, true) as tenant_id, set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true) as legal_entity_id, transaction_timestamp() as operation_at`,
+        sql`select set_config('ontos.tenant_id', ${scope.tenantId}, true) as tenant_id, set_config('ontos.legal_entity_id', ${scope.legalEntityId ?? ''}, true) as legal_entity_id, transaction_timestamp() as operation_at${locking}`,
         'objects',
       )
       .pipe(Effect.mapError(operationContextUnavailable));
     if (
       installed === undefined ||
       !installedScopeMatches(installed, scope) ||
+      (lock !== undefined && installed.isolation !== lock.isolation) ||
       !Predicate.isDate(installed.operation_at) ||
       !Number.isFinite(installed.operation_at.getTime())
     ) {
