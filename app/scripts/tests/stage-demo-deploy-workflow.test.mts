@@ -63,3 +63,17 @@ it('runs this workflow test with the release script tests that gate the release 
   const tests = readJobs()['release-script-tests'].steps.find(({ run }) => run?.includes('rstest') === true);
   expect(tests?.run).toContain('scripts/tests/stage-demo-deploy-workflow.test.mts');
 });
+
+it('publishes rebuilt contracts before replacing running demo processes, but starts new artifact endpoints first', () => {
+  const script = readFileSync(new URL('../demo/rebuild-one.sh', import.meta.url), 'utf-8');
+  const newUnits = script.indexOf('RUNNING_UNITS=()');
+  const publish = script.indexOf('start composition');
+  const ready = script.indexOf('wait_http "http://127.0.0.1:$COMPOSITION_PORT/active"');
+  const replace = script.indexOf('for id in ${RUNNING_UNITS[@]+');
+  expect(newUnits).toBeGreaterThan(0);
+  expect(publish).toBeGreaterThan(newUnits);
+  expect(ready).toBeGreaterThan(publish);
+  expect(replace).toBeGreaterThan(ready);
+  expect(script.slice(newUnits, publish)).toContain('start_unit "$id"');
+  expect(script.slice(replace)).toContain('stop_pid "$id"\n  start_unit "$id"');
+});

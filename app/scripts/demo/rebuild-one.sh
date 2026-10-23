@@ -231,8 +231,8 @@ start() {
 # publisher started while another caller restarts a different app cannot fetch that app's manifest and never
 # answers (STATUS 2026-10-21 15:58, tagging + workforce rebuilt at once).
 acquire_app_lock composition
-for id in "$@"; do
-  stop_pid "$id"
+start_unit() {
+  local id="$1"
   if [ "$id" = shell-super-app ]; then
     start shell-super-app "${WITH_ENV[@]}" pnpm --dir apps/shell-super-app exec modern serve
     wait_http "http://127.0.0.1:3020/.well-known/ontos-shell-runtime.json" 180 shell-super-app
@@ -240,11 +240,23 @@ for id in "$@"; do
     start "$id" "${WITH_ENV[@]}" pnpm --dir "verticals/$id" exec modern serve
     wait_http "http://127.0.0.1:$(port_of "$id")/.well-known/ontos-module-manifest.json" 180 "$id"
   fi
-  say "restarted $id"
+  say "started $id"
+}
+# Existing processes keep serving the freshly built static artifacts while the publisher observes them.
+# Do not let a replacement process pin the previous contract under the same local build marker.
+RUNNING_UNITS=()
+for id in "$@"; do
+  pid="$(cat "$PID_DIR/$id.pid" 2>/dev/null || true)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    RUNNING_UNITS+=("$id")
+  else
+    # A genuinely new unit has no old admitted contract to pin. Its artifact endpoint must exist
+    # before publication; admission stays unavailable until the new composition approves it.
+    start_unit "$id"
+  fi
 done
 
-# A rebuilt app gets a new build marker, so the composition must be republished either way (still under the
-# composition lock taken before the restarts).
+# Publish and await the rebuilt artifacts before replacing any already-running process.
 stop_pid composition
 # Demo only: after downtime the previous composition lease has expired and the publisher refuses to drain it.
 docker --context orbstack exec ontos-demo-db psql -q -U "${POSTGRES_USER:-ontos_admin}" -d "${POSTGRES_DB:-siampark_demo}" \
@@ -257,6 +269,10 @@ docker --context orbstack exec ontos-demo-db psql -q -U "${POSTGRES_USER:-ontos_
 start composition "${NO_GIT[@]}" "${WITH_ENV[@]}" node scripts/siampark/development-composition.mts \
   --environment development --port "$COMPOSITION_PORT"
 wait_http "http://127.0.0.1:$COMPOSITION_PORT/active" 180 composition
+for id in ${RUNNING_UNITS[@]+"${RUNNING_UNITS[@]}"}; do
+  stop_pid "$id"
+  start_unit "$id"
+done
 [ "$changed_set" = 1 ] && say "served verticals now: ${SERVED[*]}"
 # Keep the outbox worker host alive so deliveries are processed instead of piling up before the next drain.
 if ! kill -0 "$(cat "$PID_DIR/outbox-worker-host.pid" 2>/dev/null)" 2>/dev/null; then

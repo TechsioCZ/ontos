@@ -78,7 +78,15 @@ it('keeps the warehouse account out of the rental company and limits identity ad
   const identityAdministrators = relationships
     .filter((row) => row.resourceType === 'tenant' && row.relation === 'identity_admin')
     .map((row) => row.subjectId);
-  expect(identityAdministrators).toEqual([administrator.principalId, crmPersonaPrincipalIds.spravce]);
+  // The AKROS administrator owns its real agent entities and has had this declared role since 5e1deb67f.
+  // Storefront and Commerce/Privacy service principals must never acquire tenant identity administration.
+  const akrosAdministrator = companyHumanAccounts.find((account) => account.role === 'akrosAdmin');
+  expect(akrosAdministrator).toBeDefined();
+  expect(identityAdministrators).toEqual([
+    administrator.principalId,
+    crmPersonaPrincipalIds.spravce,
+    akrosAdministrator?.principalId,
+  ]);
   expect(new Set(relationships.map((row) => JSON.stringify(row))).size).toBe(relationships.length);
 });
 
@@ -212,21 +220,23 @@ it('provisions only the Commerce portal namespace and its three Core binding Act
   const namespace = toIdentityNamespaceAccessObjectId(demoTenantId, 'ontos.commerce.portal.better-auth.v1');
   expect(rows.filter((row) => row.resourceType === 'identity_namespace')).toEqual([
     {
-      resourceType: 'identity_namespace',
-      resourceId: namespace,
       relation: 'tenant',
-      subjectType: 'tenant',
+      resourceId: namespace,
+      resourceType: 'identity_namespace',
       subjectId: demoTenantId,
+      subjectType: 'tenant',
     },
     {
-      resourceType: 'identity_namespace',
-      resourceId: namespace,
       relation: 'provisioner',
-      subjectType: 'principal',
+      resourceId: namespace,
+      resourceType: 'identity_namespace',
       subjectId: commercePortalPrincipal.principalId,
+      subjectType: 'principal',
     },
   ]);
-  for (const actionKey of coreActions) expect(commercePortalActionKeys).toContain(actionKey);
+  for (const actionKey of coreActions) {
+    expect(commercePortalActionKeys).toContain(actionKey);
+  }
   expect(rows.filter((row) => row.resourceType === 'action' && row.relation === 'executor')).toHaveLength(3);
   expect(rows.some((row) => row.relation === 'identity_admin')).toBe(false);
 });

@@ -106,8 +106,7 @@ const relationshipKey = (relationship: AiRelationship) =>
 
 export const commercePortalRelationships = (actions: readonly DiscoveredAction[]): readonly AiRelationship[] => {
   const { legalEntityId, principalId } = commercePortalPrincipal;
-  const namespace = toIdentityNamespaceAccessObjectId(demoTenantId, COMMERCE_PORTAL_NAMESPACE);
-  if (namespace === undefined) throw new Error('The Commerce portal namespace access object is invalid');
+  const namespace = toIdentityNamespaceAccessObjectId(demoTenantId, COMMERCE_PORTAL_NAMESPACE) ?? '';
   const relationships: AiRelationship[] = [
     {
       relation: 'tenant',
