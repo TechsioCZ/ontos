@@ -337,7 +337,7 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
       return call(tool, tool.invoke.path, input, { ...options, idempotencyKey: key });
     }
     const command = commandOf(tool, input);
-    const revisionOf = (answer: unknown) => {
+    const revisionOf = (answer: unknown): Effect.Effect<number, ModuleUnavailable> => {
       const revision = revisionFrom(module, answer, tool.invoke.commandTag);
       return revision === undefined
         ? Effect.fail(new ModuleUnavailable({ message: MSG_NO_REVISION(labelOf(tool.moduleId)) }))
