@@ -3,143 +3,158 @@
  * Usage: node scripts/demo/seed-company-employees.mts <hanak|akros> [--apply]
  * Without --apply, validates existing bindings and reports missing employees without writing.
  */
+import { NodeServices } from '@effect/platform-node';
+import { WorkforceCommandSchema } from '../../verticals/workforce/shared/actions/apply-command.ts';
+import { EmployeeSchema } from '../../verticals/workforce/shared/apis/records.ts';
+import { Config, Console, Effect, Exit, FileSystem, Layer, Redacted, Schema } from 'effect';
+import { Argument, Command, Flag } from 'effect/unstable/cli';
+import { FetchHttpClient } from 'effect/unstable/http';
+
 import { akrosDemoLegalEntityId, crmDemoLegalEntityId, demoId, demoTenantId } from './fixture-ids.mts';
+import { connectSeedClient, DemoSeedError, validateSeedTarget } from './seed-client.mts';
+import type { SeedClient } from './seed-client.mts';
+import { seedCheckpointDirectory, seedWriteCheckpoint } from './seed-checkpoint.mts';
 
 const companies = {
-  hanak: {
-    legalEntityId: crmDemoLegalEntityId,
-    email: 'spravce@hanak.demo',
-    employees: [
-      {
-        key: 'hanak-spravce',
-        fullName: 'Karel Hanák',
-        email: 'spravce@hanak.demo',
-        role: 'SUPPORT',
-        department: 'Správa firmy',
-      },
-      {
-        key: 'hanak-vedouci',
-        fullName: 'Lucie Dvořáková',
-        email: 'vedouci@hanak.demo',
-        role: 'SALES_HEAD',
-        department: 'Obchod',
-      },
-      {
-        key: 'hanak-obchodnik-a',
-        fullName: 'Jan Novák',
-        email: 'obchodnik.a@hanak.demo',
-        role: 'SALES_REP',
-        department: 'Obchod',
-      },
-      {
-        key: 'hanak-obchodnik-b',
-        fullName: 'Petra Svobodová',
-        email: 'obchodnik.b@hanak.demo',
-        role: 'SALES_REP',
-        department: 'Obchod',
-      },
-    ],
-  },
   akros: {
-    legalEntityId: akrosDemoLegalEntityId,
     email: 'eshop@akros.demo',
     employees: [
       {
-        key: 'akros-eshop',
-        fullName: 'Správce e-shopu AKROS',
-        email: 'eshop@akros.demo',
-        role: 'SUPPORT',
         department: 'E-shop',
+        email: 'eshop@akros.demo',
+        fullName: 'Správce e-shopu AKROS',
+        key: 'akros-eshop',
+        role: 'SUPPORT',
       },
       {
-        key: 'akros-expedice',
-        fullName: 'Expedice AKROS',
-        email: 'expedice@akros.demo',
-        role: 'WAREHOUSE',
         department: 'Sklad a expedice',
+        email: 'expedice@akros.demo',
+        fullName: 'Expedice AKROS',
+        key: 'akros-expedice',
+        role: 'WAREHOUSE',
       },
     ],
+    legalEntityId: akrosDemoLegalEntityId,
+  },
+  hanak: {
+    email: 'spravce@hanak.demo',
+    employees: [
+      {
+        department: 'Správa firmy',
+        email: 'spravce@hanak.demo',
+        fullName: 'Karel Hanák',
+        key: 'hanak-spravce',
+        role: 'SUPPORT',
+      },
+      {
+        department: 'Obchod',
+        email: 'vedouci@hanak.demo',
+        fullName: 'Lucie Dvořáková',
+        key: 'hanak-vedouci',
+        role: 'SALES_HEAD',
+      },
+      {
+        department: 'Obchod',
+        email: 'obchodnik.a@hanak.demo',
+        fullName: 'Jan Novák',
+        key: 'hanak-obchodnik-a',
+        role: 'SALES_REP',
+      },
+      {
+        department: 'Obchod',
+        email: 'obchodnik.b@hanak.demo',
+        fullName: 'Petra Svobodová',
+        key: 'hanak-obchodnik-b',
+        role: 'SALES_REP',
+      },
+    ],
+    legalEntityId: crmDemoLegalEntityId,
   },
 } as const;
-const companyKey = process.argv[2];
-if ((companyKey !== 'hanak' && companyKey !== 'akros') || process.argv.slice(3).some((arg) => arg !== '--apply')) {
-  throw new Error('Usage: seed-company-employees.mts <hanak|akros> [--apply]');
-}
-const company = companies[companyKey];
-const apply = process.argv.includes('--apply');
-const shell = 'http://localhost:3020';
-const jar = new Map<string, string>();
-const headers = () => ({
-  'content-type': 'application/json',
-  origin: shell,
-  cookie: [...jar].map(([key, value]) => `${key}=${value}`).join('; '),
-});
-const call = async (path: string, payload?: unknown) => {
-  const response = await fetch(`${shell}/shell-super-app-api${path}`, {
-    method: payload === undefined ? 'GET' : 'POST',
-    headers: headers(),
-    ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
-  });
-  for (const raw of response.headers.getSetCookie()) {
-    const pair = raw.split(';')[0] ?? '';
-    const index = pair.indexOf('=');
-    if (index > 0) jar.set(pair.slice(0, index), pair.slice(index + 1));
-  }
-  if (!response.ok) throw new Error(`${path}: HTTP ${response.status} ${await response.text()}`);
-  return response.json();
-};
-await call('/auth/sign-in', { email: company.email, password: 'password1234' });
-await call('/auth/legal-entity/switch', { legalEntityId: company.legalEntityId });
-const composition = await call('/shell/composition');
-const gateway = await call('/auth/gateway-context', {
-  audience: 'workforce',
-  compositionRevision: composition.compositionRevision,
-  legalEntityId: company.legalEntityId,
-});
-const invoke = async (path: string, payload: unknown) => {
-  const response = await fetch(`${shell}${gateway.apiBaseUrl}${path}`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      origin: shell,
-      authorization: `Bearer ${gateway.token}`,
-      'x-ontos-composition-revision': gateway.compositionRevision,
-      'x-correlation-id': `seed-company-employees-${crypto.randomUUID()}`,
-      'idempotency-key': `seed-company-employees-${crypto.randomUUID()}`,
-    },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) throw new Error(`${path}: HTTP ${response.status} ${await response.text()}`);
-  return response.json();
-};
-type Employee = { id: string; email: string; principalRef?: { principalId: string; tenantId: string } };
-let created = 0;
-for (const employee of company.employees) {
-  const records = await invoke('/reads/records', {});
-  const principalRef = { principalId: demoId('core.principal', employee.key), tenantId: demoTenantId };
-  const id = demoId('workforce.employee', employee.key);
-  const existing = (records.items as Employee[]).find((item) => item.id === id || item.email === employee.email);
-  if (existing !== undefined) {
-    if (
-      existing.email !== employee.email ||
-      existing.principalRef?.principalId !== principalRef.principalId ||
-      existing.principalRef.tenantId !== demoTenantId
-    ) {
-      throw new Error(`Existing employee has a different account binding: ${employee.email}; no overwrite performed`);
+const WorkforceRecords = Schema.Struct({ items: Schema.Array(Schema.toEncoded(EmployeeSchema)), revision: Schema.Int });
+const commandSchema = Schema.toEncoded(WorkforceCommandSchema);
+
+/** Workforce departments and job roles are organizational labels only. Core accounts/rights are never changed. */
+export const seedCompanyEmployees = (client: SeedClient, companyKey: keyof typeof companies, apply: boolean) =>
+  Effect.gen(function* seedEmployees() {
+    const company = companies[companyKey];
+    let created = 0;
+    for (const employee of company.employees) {
+      const records = yield* client.read('workforce', WorkforceRecords);
+      const principalRef = { principalId: demoId('core.principal', employee.key), tenantId: demoTenantId };
+      const id = demoId('workforce.employee', employee.key);
+      const matches = records.items.filter((item) => item.id === id || item.email === employee.email);
+      if (matches.length > 1) {
+        return yield* new DemoSeedError({ reason: `Duplicate employee binding: ${employee.email}` });
+      }
+      const [existing] = matches;
+      if (existing !== undefined) {
+        if (
+          existing.email !== employee.email ||
+          existing.principalRef?.principalId !== principalRef.principalId ||
+          existing.principalRef.tenantId !== demoTenantId
+        ) {
+          return yield* new DemoSeedError({
+            reason: `Existing employee has a different account binding: ${employee.email}; no overwrite performed`,
+          });
+        }
+        yield* Console.log(`Already linked: ${employee.email}`);
+      } else if (apply) {
+        const { key: _key, ...fields } = employee;
+        yield* client.apply(
+          'workforce',
+          commandSchema,
+          {
+            _tag: 'CreateEmployee',
+            ...fields,
+            active: true,
+            id,
+            principalRef,
+          },
+          records.revision,
+        );
+        created += 1;
+        yield* Console.log(`Linked: ${employee.email} → ${employee.fullName}`);
+      } else {
+        yield* Console.log(`Missing: ${employee.email} → ${employee.fullName} (${employee.department})`);
+      }
     }
-    console.log(`Already linked: ${employee.email}`);
-    continue;
-  }
-  if (!apply) {
-    console.log(`Missing: ${employee.email} → ${employee.fullName}`);
-    continue;
-  }
-  const { key: _key, ...fields } = employee;
-  await invoke('/workforce/actions/apply-command', {
-    command: { _tag: 'CreateEmployee', ...fields, id, active: true, principalRef },
-    expectedRevision: records.revision,
+    return { apply, company: companyKey, created, legalEntityId: company.legalEntityId };
   });
-  created += 1;
-  console.log(`Linked: ${employee.email} → ${employee.fullName}`);
+
+if (import.meta.main) {
+  const command = Command.make(
+    'seed-company-employees',
+    {
+      apply: Flag.Boolean('apply').pipe(Flag.withDefault(false)),
+      company: Argument.Literals('company', ['hanak', 'akros']),
+    },
+    ({ apply, company: companyKey }) =>
+      Effect.gen(function* main() {
+        const target = {
+          legalEntityId: companies[companyKey].legalEntityId,
+          shellUrl: yield* Config.String('ONTOS_DEMO_SEED_URL').pipe(Config.withDefault('http://localhost:3020')),
+          tenantId: demoTenantId,
+        };
+        const origin = yield* validateSeedTarget(target);
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* Config.String('ONTOS_DEMO_SEED_CHECKPOINT_DIR').pipe(
+          Config.withDefault('.scratch/demo-seed'),
+        );
+        const checkpoint = seedWriteCheckpoint(fs, seedCheckpointDirectory({ ...target, shellUrl: origin }, root));
+        const password = yield* Config.Redacted('ONTOS_DEMO_SEED_PASSWORD').pipe(
+          Config.withDefault(Redacted.make('password1234')),
+        );
+        const client = yield* connectSeedClient(target, companies[companyKey].email, password, checkpoint);
+        yield* Console.log(yield* seedCompanyEmployees(client, companyKey, apply));
+      }),
+  );
+  const program = Command.run(command, { version: '1.0.0' });
+  const exit = await Effect.runPromiseExit(
+    program.pipe(
+      Effect.tapError((failure) => Console.error(`Employee seed stopped (${failure._tag}); no automatic retry.`)),
+      Effect.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+    ),
+  );
+  process.exitCode = Exit.isFailure(exit) ? 1 : 0;
 }
-console.log(JSON.stringify({ company: companyKey, legalEntityId: company.legalEntityId, apply, created }));

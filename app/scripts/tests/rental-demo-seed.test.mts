@@ -1,19 +1,54 @@
+import { MerchandiseCommandSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
+import {
+  MerchandiseStateSchema,
+  RecordsRequestSchema as MerchandiseRead,
+} from '../../verticals/merchandise/shared/apis/records.ts';
+import { evolveMerchandiseState } from '../../verticals/merchandise/src/services/persistence.service.ts';
+import { computeProductRecords } from '../../verticals/merchandise/src/services/stock-levels.ts';
+import { buildAkrosEncoded } from '../../verticals/merchandise/scripts/akros-catalog.mts';
+import { seedAkrosStock } from '../demo/seed-akros-stock.mts';
+import { applyImportsCommand, ImportsCommandSchema } from '../../verticals/crm/shared/commands/imports.ts';
+import { CrmStateSchema, initialCrmState } from '../../verticals/crm/shared/domain/state.ts';
+import { CrmViewerSchema } from '../../verticals/crm/shared/domain/access.ts';
+import { WorkforceCommandSchema } from '../../verticals/workforce/shared/actions/apply-command.ts';
+import { WorkforceStateSchema } from '../../verticals/workforce/shared/apis/records.ts';
+import { evolveEmployeeState } from '../../verticals/workforce/src/services/persistence.service.ts';
+import { seedCompanyEmployees } from '../demo/seed-company-employees.mts';
+import type { FinanceState } from '../../verticals/finance-billing/shared/apis/records.ts';
+import { FinanceCommandSchema } from '../../verticals/finance-billing/shared/actions/apply-command.ts';
+import { RecordsResponseSchema as FinanceRecords } from '../../verticals/finance-billing/shared/apis/records.ts';
+import {
+  projectFinanceRecords,
+  transitionFinance,
+} from '../../verticals/finance-billing/src/services/persistence.service.ts';
 import { NodeServices } from '@effect/platform-node';
 import { CounterpartyRefSchema } from '../../verticals/party-registry/shared/resources/counterparty.ts';
 import { PartyRefSchema } from '../../verticals/party-registry/shared/resources/party.ts';
 import { PartyIdSchema } from '../../verticals/sales-pipeline/shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
 import { EmployeeIdSchema } from '../../verticals/workforce/shared/resources/employee.ts';
-import { Effect, FileSystem, Match, Redacted, Schema } from 'effect';
+import { Array as EffectArray, DateTime, Effect, FileSystem, Match, Order, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
 import { expect, it } from 'effect-rstest';
 
 import { demoId } from '../demo/fixture-ids.mts';
+import { rentalCrmOrderPlan, seedRentalCrmOrders } from '../demo/rental-crm-orders.mts';
+import { seedCheckpointDirectory, seedWriteCheckpoint } from '../demo/seed-checkpoint.mts';
 import { ensureSeedCustomer, existingSeedCustomer } from '../demo/rental-seed-customer.mts';
 import { seedSiamparkCaseRecords } from '../demo/seed-siampark-cases.mts';
-import { requireSeedMatch, uniqueSeedRecord } from '../demo/rental-seed.mts';
+import {
+  ensureInvoice,
+  rentalInvoicePlan,
+  rentalStory,
+  requireSeedMatch,
+  uniqueSeedRecord,
+} from '../demo/rental-seed.mts';
 import { connectSeedClient, DemoSeedError, validateSeedTarget } from '../demo/seed-client.mts';
 
 const ownerApi = '/owner-api';
+const applyCommandPath = '/actions/apply-command';
+const recordsPath = '/reads/records';
+const seedTestInstant = '2026-10-23T12:00:00Z';
+const seedTestDate = '2026-10-23';
 const revisionFixture = 'revision-fixture';
 const propertyAudience = 'property-portfolio';
 const partyModule = 'party.registry';
@@ -373,7 +408,7 @@ const caseFixture = (options: { readonly failOnboardingOnce?: boolean; readonly 
           validTo: null,
         });
       }
-    } else if (url.pathname.endsWith('/actions/apply-command')) {
+    } else if (url.pathname.endsWith(applyCommandPath)) {
       const { command, expectedRevision } = decodeSeedBody(CaseCommand, body);
       expect(customers.some(({ partyRef }) => partyRef.resourceId === command.partyId)).toBe(true);
       expect(expectedRevision).toBe(items.length);
@@ -452,4 +487,374 @@ it.effect('missing CRM fixture data fails the case seed rather than silently rep
     expect(fixture.parties).toHaveLength(0);
     expect(fixture.items).toHaveLength(0);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it('keeps invoices and CRM orders in four rolling months, including at year rollover', () => {
+  const asOf = DateTime.toDateUtc(DateTime.makeUnsafe('2027-01-02T12:00:00Z'));
+  const invoices = rentalInvoicePlan(asOf);
+  const orders = rentalCrmOrderPlan(asOf);
+  expect(invoices).toHaveLength(12);
+  expect(new Set(invoices.map((invoice) => invoice.documentNumber)).size).toBe(12);
+  expect([...new Set(invoices.map((invoice) => invoice.issueDate.slice(0, 7)))]).toEqual([
+    '2026-10',
+    '2026-11',
+    '2026-12',
+    '2027-01',
+  ]);
+  expect(invoices.filter((invoice) => invoice.paid)).toHaveLength(9);
+  expect(invoices.some((invoice) => !invoice.paid && invoice.dueDate < '2027-01-02')).toBe(true);
+  expect(orders).toHaveLength(12);
+  expect(orders.filter((order) => order.orderedOn.startsWith('2027-01'))).toHaveLength(3);
+  expect(orders.every((order) => order.orderedOn <= '2027-01-02')).toBe(true);
+  expect(new Set(orders.map((order) => order.externalId)).size).toBe(12);
+  expect(rentalInvoicePlan(asOf)).toEqual(invoices);
+  expect(rentalCrmOrderPlan(asOf)).toEqual(orders);
+});
+
+it.effect('persists a write identity before dispatch and reuses it across client recreation', () =>
+  Effect.gen(function* durableWriteIdentity() {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: 'seed-write-checkpoint-' });
+    const directory = seedCheckpointDirectory(target, root);
+    const checkpoint = seedWriteCheckpoint(fs, directory);
+    const audience = 'finance-billing';
+    const route = '/apply';
+    const payload = '{"expectedRevision":1}';
+    const key = yield* checkpoint(audience, route, payload);
+    expect(yield* seedWriteCheckpoint(fs, directory)(audience, route, payload)).toBe(key);
+    expect(yield* checkpoint(audience, route, '{"expectedRevision":2}')).not.toBe(key);
+    expect(seedCheckpointDirectory({ ...target, legalEntityId: demoId('test', 'other-company') }, root)).not.toBe(
+      directory,
+    );
+    const files = yield* fs.readDirectory(`${directory}/writes`);
+    for (const file of files) {
+      yield* fs.writeFileString(`${directory}/writes/${file}`, '{}');
+    }
+    expect(Schema.is(DemoSeedError)(yield* checkpoint(audience, route, payload).pipe(Effect.flip))).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  'resumes a native confirmed invoice after a lost payment response without a second invoice, payment or budget',
+  () =>
+    Effect.gen(function* nativeFinanceResume() {
+      let state: FinanceState = { financialPlanEntries: [], invoices: [] };
+      let revision = 0;
+      let losePaymentResponse = true;
+      const writes: string[] = [];
+      const now = DateTime.makeUnsafe(seedTestInstant);
+      const http = HttpClient.make((request, url) =>
+        Effect.gen(function* ownerRequest() {
+          if (url.pathname === gatewayPath) {
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({ apiBaseUrl: ownerApi, compositionRevision: revisionFixture, token: 'finance-test' }),
+            );
+          }
+          if (url.pathname.endsWith(recordsPath)) {
+            const records = { ...projectFinanceRecords(state, revision, {}, seedTestDate), canWrite: true };
+            return HttpClientResponse.fromWeb(request, Response.json(Schema.encodeSync(FinanceRecords)(records)));
+          }
+          if (url.pathname.endsWith(applyCommandPath)) {
+            const body = Match.value(request.body).pipe(
+              Match.tag('Uint8Array', ({ body: bytes }) => new TextDecoder().decode(bytes)),
+              Match.orElse(() => '{}'),
+            );
+            const payload = decodeSeedBody(
+              Schema.Struct({ command: FinanceCommandSchema, expectedRevision: Schema.Int }),
+              body,
+            );
+            expect(payload.expectedRevision).toBe(revision);
+            writes.push(payload.command._tag);
+            const result = yield* transitionFinance(
+              state,
+              payload.command,
+              target,
+              { invoice: () => Effect.void },
+              {
+                attemptId: `seed-attempt-${revision}`,
+                now,
+                resourceId: `seed-resource-${revision}`,
+              },
+            );
+            ({ state } = result);
+            revision += 1;
+            if (
+              Match.value(payload.command).pipe(
+                Match.tag('RecordManualPayment', () => losePaymentResponse),
+                Match.orElse(() => false),
+              )
+            ) {
+              losePaymentResponse = false;
+              return HttpClientResponse.fromWeb(request, Response.json({}, { status: 503 }));
+            }
+            return HttpClientResponse.fromWeb(request, Response.json({ revision }));
+          }
+          return HttpClientResponse.fromWeb(request, sessionResponse(url.pathname));
+        }).pipe(Effect.orDie),
+      );
+      const propertyRef = {
+        moduleId: 'property.portfolio',
+        resourceId: demoId('seed.property', 'test'),
+        resourceType: 'property.portfolio.property',
+        tenantId: target.tenantId,
+      } as const;
+      const unitRef = {
+        ...propertyRef,
+        resourceId: demoId('seed.unit', 'test'),
+        resourceType: 'property.portfolio.unit',
+      } as const;
+      const tenant = {
+        counterpartyRef: {
+          moduleId: partyModule,
+          resourceId: demoId('seed.counterparty', 'test'),
+          resourceType: counterpartyResource,
+          tenantId: target.tenantId,
+        },
+        partyRef: {
+          moduleId: partyModule,
+          resourceId: demoId('seed.party', 'test'),
+          resourceType: partyResource,
+          tenantId: target.tenantId,
+        },
+      } as const;
+      const occupancyRef = {
+        moduleId: 'property.leasing',
+        resourceId: demoId('seed.occupancy', 'test'),
+        resourceType: 'property.leasing.occupancy',
+        tenantId: target.tenantId,
+      } as const;
+      const [spec] = rentalInvoicePlan(DateTime.toDateUtc(now));
+      yield* Effect.gen(function* seedAndResume() {
+        const client = yield* connect();
+        const run = () =>
+          ensureInvoice(
+            client,
+            spec,
+            rentalStory.leases[0],
+            { code: 'R101', name: 'Kavárna', propertyRef, unitRef },
+            tenant,
+            { occupancyRef },
+          );
+        expect(Schema.is(DemoSeedError)(yield* run().pipe(Effect.flip))).toBe(true);
+        yield* run();
+        const completedWrites = writes.length;
+        yield* run();
+        expect(writes).toHaveLength(completedWrites);
+      }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+      expect(state.invoices).toHaveLength(1);
+      expect(state.invoices[0]?.businessState).toBe('CONFIRMED');
+      expect(state.invoices[0]?.paidMinor).toBe(state.invoices[0]?.totalMinor);
+      expect(state.budgets).toHaveLength(1);
+      expect(writes.filter((tag) => tag === 'RecordManualPayment')).toHaveLength(1);
+      expect(writes).toContain('MarkInvoicesPrepared');
+      expect(writes).toContain('ConfirmInvoice');
+    }),
+);
+
+it.effect('imports current-month orders through the native CRM reducer and creates no second batch on rerun', () =>
+  Effect.gen(function* nativeCrmOrders() {
+    const now = seedTestInstant;
+    const asOf = DateTime.toDateUtc(DateTime.makeUnsafe(now));
+    const viewer = Schema.decodeUnknownSync(CrmViewerSchema)({
+      assign: true,
+      principalId: 'seed-test',
+      readAll: true,
+      readAssigned: false,
+      writeAll: true,
+      writeAssigned: false,
+    });
+    let state = Schema.decodeUnknownSync(CrmStateSchema)({
+      ...initialCrmState,
+      clients: {
+        ...initialCrmState.clients,
+        items: [...new Set(rentalCrmOrderPlan(asOf).map((order) => order.clientId))].map((id) => ({
+          createdAt: now,
+          createdBy: 'seed-test',
+          id,
+          kind: 'organization',
+          name: 'Nájemce',
+          status: 'active',
+          updatedAt: now,
+        })),
+      },
+    });
+    let revision = 0;
+    const http = HttpClient.make((request, url) =>
+      Effect.gen(function* crmOwnerRequest() {
+        if (url.pathname === gatewayPath) {
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({ apiBaseUrl: ownerApi, compositionRevision: revisionFixture, token: 'crm-test' }),
+          );
+        }
+        if (url.pathname.endsWith(recordsPath)) {
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({ revision, state: Schema.encodeSync(CrmStateSchema)(state) }),
+          );
+        }
+        if (url.pathname.endsWith(applyCommandPath)) {
+          const body = Match.value(request.body).pipe(
+            Match.tag('Uint8Array', ({ body: bytes }) => new TextDecoder().decode(bytes)),
+            Match.orElse(() => '{}'),
+          );
+          const payload = decodeSeedBody(
+            Schema.Struct({ command: ImportsCommandSchema, expectedRevision: Schema.Int }),
+            body,
+          );
+          expect(payload.expectedRevision).toBe(revision);
+          const result = yield* applyImportsCommand(state, payload.command, {
+            invocationId: `crm-seed-${revision}`,
+            now,
+            viewer,
+          });
+          ({ state } = result);
+          revision += 1;
+          return HttpClientResponse.fromWeb(request, Response.json({ revision }));
+        }
+        return HttpClientResponse.fromWeb(request, sessionResponse(url.pathname));
+      }).pipe(Effect.orDie),
+    );
+    yield* Effect.gen(function* importAndRerun() {
+      const client = yield* connect();
+      expect(yield* seedRentalCrmOrders(client, asOf)).toBe(12);
+      expect(yield* seedRentalCrmOrders(client, asOf)).toBe(0);
+    }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+    expect(state.imports.orders).toHaveLength(12);
+    expect(state.imports.customerLinks).toHaveLength(3);
+    expect(state.imports.batches).toHaveLength(1);
+    expect(state.imports.orders.every((order) => order.pairing === 'paired')).toBe(true);
+    expect(state.imports.orders.filter((order) => order.orderedAt?.startsWith('2026-10') === true)).toHaveLength(3);
+    expect(state.imports.batches[0]?.rejected).toBe(0);
+  }),
+);
+
+it.effect('links four Hanák organizational employees through native workforce commands, without any Core write', () =>
+  Effect.gen(function* nativeEmployeeSeed() {
+    let state = Schema.decodeUnknownSync(WorkforceStateSchema)({ employees: [] });
+    let revision = 0;
+    const now = DateTime.makeUnsafe(seedTestInstant);
+    const http = HttpClient.make((request, url) =>
+      Effect.gen(function* workforceOwnerRequest() {
+        if (url.pathname === gatewayPath) {
+          const body = Match.value(request.body).pipe(
+            Match.tag('Uint8Array', ({ body: bytes }) => new TextDecoder().decode(bytes)),
+            Match.orElse(() => '{}'),
+          );
+          expect(decodeSeedBody(Schema.Struct({ audience: Schema.String }), body).audience).toBe('workforce');
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({ apiBaseUrl: ownerApi, compositionRevision: revisionFixture, token: 'workforce-test' }),
+          );
+        }
+        if (url.pathname.endsWith(recordsPath)) {
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({ items: Schema.encodeSync(WorkforceStateSchema)(state).employees, revision }),
+          );
+        }
+        if (url.pathname.endsWith(applyCommandPath)) {
+          const body = Match.value(request.body).pipe(
+            Match.tag('Uint8Array', ({ body: bytes }) => new TextDecoder().decode(bytes)),
+            Match.orElse(() => '{}'),
+          );
+          const payload = decodeSeedBody(
+            Schema.Struct({ command: WorkforceCommandSchema, expectedRevision: Schema.Int }),
+            body,
+          );
+          expect(payload.expectedRevision).toBe(revision);
+          const result = yield* evolveEmployeeState(state, payload.command, { now });
+          ({ state } = result);
+          revision += 1;
+          return HttpClientResponse.fromWeb(request, Response.json({ revision }));
+        }
+        return HttpClientResponse.fromWeb(request, sessionResponse(url.pathname));
+      }).pipe(Effect.orDie),
+    );
+    yield* Effect.gen(function* seedAndRepeat() {
+      const client = yield* connect();
+      expect((yield* seedCompanyEmployees(client, 'hanak', false)).created).toBe(0);
+      expect(revision).toBe(0);
+      expect((yield* seedCompanyEmployees(client, 'hanak', true)).created).toBe(4);
+      expect((yield* seedCompanyEmployees(client, 'hanak', true)).created).toBe(0);
+    }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+    expect(state.employees).toHaveLength(4);
+    expect(state.employees.every((employee) => employee.principalRef?.tenantId === target.tenantId)).toBe(true);
+    expect(new Set(state.employees.map((employee) => employee.principalRef?.principalId)).size).toBe(4);
+    expect(revision).toBe(4);
+  }),
+);
+
+it.effect('repairs every stock page through native updates and reruns without moving stock or writing again', () =>
+  Effect.gen(function* paginatedStockRepair() {
+    const baseline = buildAkrosEncoded();
+    const products = baseline.products.slice(0, 260).map((product) => ({ ...product, lowStockThreshold: 5 }));
+    const ids = new Set(products.map((product) => product.id));
+    let state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
+      ...baseline,
+      movements: baseline.movements.filter((movement) => ids.has(movement.productId)),
+      orders: [],
+      products,
+    });
+    const originalMovements = state.movements;
+    const originalPrices = state.products.map((product) => product.currentPriceMinor);
+    let revision = 0;
+    const offsets: number[] = [];
+    const http = HttpClient.make((request, url) =>
+      Effect.gen(function* stockOwnerRequest() {
+        const body = Match.value(request.body).pipe(
+          Match.tag('Uint8Array', ({ body: bytes }) => new TextDecoder().decode(bytes)),
+          Match.orElse(() => '{}'),
+        );
+        if (url.pathname === gatewayPath) {
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({ apiBaseUrl: ownerApi, compositionRevision: revisionFixture, token: 'stock-test' }),
+          );
+        }
+        if (url.pathname.endsWith(recordsPath)) {
+          const { view } = decodeSeedBody(MerchandiseRead, body);
+          expect(view?.productSort).toBe('sku');
+          const offset = view?.offset ?? 0;
+          offsets.push(offset);
+          const records = EffectArray.sort(
+            computeProductRecords(state),
+            Order.mapInput(Order.String, (product: ReturnType<typeof computeProductRecords>[number]) => product.sku),
+          );
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({ products: records.slice(offset, offset + (view?.limit ?? 250)), revision }),
+          );
+        }
+        if (url.pathname.endsWith(applyCommandPath)) {
+          const payload = decodeSeedBody(
+            Schema.Struct({ command: MerchandiseCommandSchema, expectedRevision: Schema.Int }),
+            body,
+          );
+          expect(payload.expectedRevision).toBe(revision);
+          const result = yield* evolveMerchandiseState(state, payload.command, {
+            actor: { principalId: demoId('test', 'stock-owner'), tenantId: target.tenantId },
+            now: DateTime.makeUnsafe(seedTestInstant),
+            resourceId: `stock-repair-${revision}`,
+          });
+          ({ state } = result);
+          revision += 1;
+          return HttpClientResponse.fromWeb(request, Response.json({ revision }));
+        }
+        return HttpClientResponse.fromWeb(request, sessionResponse(url.pathname));
+      }).pipe(Effect.orDie),
+    );
+    yield* Effect.gen(function* repairAndRerun() {
+      const client = yield* connect();
+      expect(yield* seedAkrosStock(client, true)).toBeGreaterThan(0);
+      const completedRevision = revision;
+      expect(yield* seedAkrosStock(client, true)).toBe(0);
+      expect(revision).toBe(completedRevision);
+    }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+    expect(offsets).toEqual([0, 250, 0, 250]);
+    expect(state.movements).toEqual(originalMovements);
+    expect(state.products.map((product) => product.currentPriceMinor)).toEqual(originalPrices);
+    expect(state.orders).toHaveLength(0);
+  }),
 );

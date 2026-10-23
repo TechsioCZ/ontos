@@ -22,7 +22,9 @@ export const stockLevelsOf = (movements: readonly StockMovement[], productId: st
   let total = 0;
   const variants = new Map<string, number>();
   for (const movement of movements) {
-    if (movement.productId !== productId) continue;
+    if (movement.productId !== productId) {
+      continue;
+    }
     total += movement.delta;
     if (movement.variantId !== undefined) {
       variants.set(movement.variantId, (variants.get(movement.variantId) ?? 0) + movement.delta);
@@ -98,7 +100,6 @@ const toVariantRecord = (
   const active = product.active && variant.active !== false;
   return {
     ...variant,
-    unit: variant.unit ?? variant.sourceUnit ?? product.unit,
     active: variant.active !== false,
     attributes: variant.attributes,
     availability: availabilityOf({
@@ -114,12 +115,14 @@ const toVariantRecord = (
     priceMinor: variant.priceMinor,
     sku: variant.sku ?? `${product.sku}-${variant.id}`,
     stockOnHand,
+    unit: variant.unit ?? variant.sourceUnit ?? product.unit,
   };
 };
 
 /**
- * Low stock means on hand is at or below the product threshold. Products with real variants derive stock,
- * value and availability from their variants; the product gross price is then the lowest active variant price.
+ * Replenishment is a product-level policy: alert only below a positive product minimum.
+ * Variant availability stays truthful even when the product is catalogue-only (minimum zero).
+ * Products with real variants derive value, availability and the lowest active price from those variants.
  */
 export const toProductRecord = (product: Product, stock: StockLevels): ProductRecord => {
   const stockOnHand = stock.total;
@@ -135,7 +138,7 @@ export const toProductRecord = (product: Product, stock: StockLevels): ProductRe
       }),
       grossPriceMinor:
         product.priceTiers?.[0]?.priceMinor ?? grossUnitPriceMinor(product.currentPriceMinor, product.vatRate),
-      lowStock: stockOnHand <= product.lowStockThreshold,
+      lowStock: product.lowStockThreshold > 0 && stockOnHand < product.lowStockThreshold,
       stockOnHand,
       stockValueMinor: Math.round(stockOnHand * product.currentPriceMinor),
     };
@@ -151,9 +154,7 @@ export const toProductRecord = (product: Product, stock: StockLevels): ProductRe
     ...product,
     availability: product.active ? best : 'OUT_OF_STOCK',
     grossPriceMinor: Math.min(...grossPrices),
-    lowStock: sellable.some(
-      (variant) => variant.availability === 'LOW_STOCK' || variant.availability === 'OUT_OF_STOCK',
-    ),
+    lowStock: product.lowStockThreshold > 0 && stockOnHand < product.lowStockThreshold,
     stockOnHand,
     stockValueMinor: Math.round(
       sumOf(variants, (variant) => variant.stockOnHand * variant.priceMinor) +
@@ -171,6 +172,7 @@ export const computeProductRecords = (state: MerchandiseState): readonly Product
     bucket.push(movement);
     byProduct.set(movement.productId, bucket);
   }
-  return state.products.map((product) => toProductRecord(product, stockLevelsOf(byProduct.get(product.id) ?? [], product.id)));
+  return state.products.map((product) =>
+    toProductRecord(product, stockLevelsOf(byProduct.get(product.id) ?? [], product.id)),
+  );
 };
-

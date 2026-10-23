@@ -129,7 +129,19 @@ const issueSeedAssertion = (
     },
     { cookie },
   ).pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(Gateway)));
-const makeOwnerClient = (target: SeedTarget, origin: string, cookie: string, compositionRevision: string) => {
+export type SeedWriteCheckpoint = (
+  audience: string,
+  path: string,
+  payload: string,
+) => Effect.Effect<string, DemoSeedError>;
+
+const makeOwnerClient = (
+  target: SeedTarget,
+  origin: string,
+  cookie: string,
+  compositionRevision: string,
+  checkpoint?: SeedWriteCheckpoint,
+) => {
   const issue = (audience: string) => issueSeedAssertion(target, origin, cookie, compositionRevision, audience);
   const call = <P extends Schema.Top, R extends Schema.Top>(
     audience: string,
@@ -150,9 +162,20 @@ const makeOwnerClient = (target: SeedTarget, origin: string, cookie: string, com
       ) {
         return yield* new DemoSeedError({ reason: 'Gateway must publish an origin-relative owner API route.' });
       }
+      let idempotencyKey: string | undefined;
+      if (write) {
+        idempotencyKey =
+          checkpoint === undefined
+            ? randomUUID()
+            : yield* checkpoint(
+                audience,
+                path,
+                yield* Schema.encodeEffect(Schema.fromJsonString(payloadSchema))(payload),
+              );
+      }
       const headers = {
         authorization: `Bearer ${Redacted.value(assertion.token)}`,
-        'idempotency-key': write ? randomUUID() : undefined,
+        'idempotency-key': idempotencyKey,
         'x-ontos-composition-revision': assertion.compositionRevision,
         'x-ontos-reference-credentials':
           referenceAudiences.length > 0 ? yield* encodeReferenceCredentials(referenceAudiences, issue) : undefined,
@@ -196,7 +219,12 @@ const makeOwnerClient = (target: SeedTarget, origin: string, cookie: string, com
   return { apply, authorize, call, read };
 };
 
-export const connectSeedClient = (target: SeedTarget, email: string, password: Redacted.Redacted) =>
+export const connectSeedClient = (
+  target: SeedTarget,
+  email: string,
+  password: Redacted.Redacted,
+  checkpoint?: SeedWriteCheckpoint,
+) =>
   Effect.gen(function* connect() {
     const origin = yield* validateSeedTarget(target);
     const http = yield* HttpClient.HttpClient;
@@ -224,6 +252,12 @@ export const connectSeedClient = (target: SeedTarget, email: string, password: R
     const composition = yield* get('/shell-super-app-api/shell/composition').pipe(
       Effect.flatMap(HttpClientResponse.schemaBodyJson(Composition)),
     );
-    return makeOwnerClient(target, origin, Cookies.toCookieHeader(cookies), composition.compositionRevision);
+    return makeOwnerClient(
+      target,
+      origin,
+      Cookies.toCookieHeader(cookies),
+      composition.compositionRevision,
+      checkpoint,
+    );
   });
 export type SeedClient = Effect.Success<ReturnType<typeof connectSeedClient>>;
