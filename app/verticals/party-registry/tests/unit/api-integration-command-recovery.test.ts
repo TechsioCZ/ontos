@@ -208,6 +208,29 @@ it('recovery rejects an invalid invocation handle', () => {
   ).toThrow();
 });
 
+it('keyed recovery admits only scoped Party actions and rejects mixed lookup identities', () => {
+  for (const actionKey of [
+    'party.registry.create-party',
+    'party.registry.counterparty-customer-onboard',
+    'party.registry.add-contact-point',
+  ]) {
+    expect(
+      Schema.decodeUnknownSync(ResolvePartyCommandCommitPayloadSchema)({
+        actionKey,
+        idempotencyKey: 'opaque-operation-key',
+      }),
+    ).toEqual({ actionKey, idempotencyKey: 'opaque-operation-key' });
+  }
+  for (const invalid of [
+    { actionKey: 'core.identity.arbitrary-action', idempotencyKey: 'key' },
+    { actionKey: 'party.registry.create-party', idempotencyKey: '' },
+    { actionKey: 'party.registry.create-party', idempotencyKey: 'x'.repeat(201) },
+    { invocationId, actionKey: 'party.registry.create-party', idempotencyKey: 'key' },
+    { idempotencyKey: 'key' },
+  ])
+    expect(() => Schema.decodeUnknownSync(ResolvePartyCommandCommitPayloadSchema)(invalid)).toThrow();
+});
+
 it.effect('recovery is separate from the unchanged set of explicit mutation endpoints', () =>
   Effect.gen(function* decodeContract3() {
     const endpoint = partyRegistryCommandRecoveryApi.groups.partyCommandRecovery.endpoints.resolve;
@@ -374,7 +397,8 @@ it.effect('native Create recovery acquires a fresh single-use credential for eac
           })
         : Response.json(createDecision('CREATED')),
     );
-    const recovered = yield* recoverPartyCreateWithAuthorization({ invocationId }, acquire, {
+    const keyedIdentity = { actionKey: 'party.registry.create-party', idempotencyKey: 'create-operation-key' } as const;
+    const recovered = yield* recoverPartyCreateWithAuthorization(keyedIdentity, acquire, {
       baseUrl,
       compositionRevision,
       correlationId: 'native-recovery',
@@ -405,7 +429,7 @@ it.effect('native Create recovery acquires a fresh single-use credential for eac
     if (commitRequest === undefined || decisionRequest === undefined) {
       return expect.unreachable('Expected commit and decision reads');
     }
-    expect(yield* Effect.promise(() => commitRequest.json())).toEqual({ invocationId });
+    expect(yield* Effect.promise(() => commitRequest.json())).toEqual(keyedIdentity);
     expect(yield* Effect.promise(() => decisionRequest.json())).toEqual({ actionInvocationId: invocationId });
   }),
 );

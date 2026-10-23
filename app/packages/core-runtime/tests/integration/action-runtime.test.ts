@@ -1612,6 +1612,36 @@ const testProgram12 = () =>
         .from(tenantModuleStates)
         .where(eq(tenantModuleStates.moduleKey, moduleStateKey));
 
+      const keyedLookup = { actionKey: 'shell.test.lost-ack', idempotencyKey: key, principal };
+      const keyedCommitted = yield* Effect.flip(resolvingRuntime.resolveActionCommit(keyedLookup));
+      expect(Predicate.isTagged(keyedCommitted, 'ActionAlreadyCommitted')).toBe(true);
+      if (Predicate.isTagged(keyedCommitted, 'ActionAlreadyCommitted')) {
+        expect(keyedCommitted.invocationId).toBe(invocationId);
+        expect(keyedCommitted.invocationId).not.toBe(key);
+      }
+      const keyedUnavailable = yield* Effect.flip(unavailableRuntime.resolveActionCommit(keyedLookup));
+      expect(Predicate.isTagged(keyedUnavailable, 'ActionInvocationPersistenceError')).toBe(true);
+      for (const outsideScope of [
+        { ...keyedLookup, actionKey: 'shell.test.other-action' },
+        { ...keyedLookup, idempotencyKey: 'unknown-key' },
+        { ...keyedLookup, principal: { ...principal, tenantId: randomUUID() } },
+        { ...keyedLookup, principal: { ...principal, principalId: randomUUID() } },
+        { ...keyedLookup, principal: { ...principal, legalEntityId: randomUUID() } },
+        {
+          ...keyedLookup,
+          principal: {
+            authBindingId,
+            authContextRef: principal.authContextRef,
+            authenticationNamespaceId: staffAuthenticationNamespaceId,
+            authMethod: 'session',
+            principalId,
+            tenantId,
+          },
+        },
+      ]) {
+        const deniedLookup = yield* Effect.flip(resolvingRuntime.resolveActionCommit(outsideScope));
+        expect(deniedLookup._tag).toBe('ActionInvocationNotFound');
+      }
       expect(hasFailure(committedResolution, 'ActionAlreadyCommitted')).toBe(true);
       expect(hasFailure(unauthorizedResolution, 'ActionInvocationNotFound')).toBe(true);
       expect(hasFailure(unavailableResolution, 'ActionCommitIndeterminate')).toBe(true);
@@ -1663,6 +1693,12 @@ const testProgram12 = () =>
         invocationId: openInvocationId,
         principal,
       });
+      const keyedOpen = yield* resolvingRuntime.resolveActionCommit({
+        actionKey: 'shell.test.lost-ack-open',
+        idempotencyKey: openKey,
+        principal,
+      });
+      expect(keyedOpen.invocationId).toBe(openInvocationId);
       const openResolved = yield* resolvingRuntime.runAction({
         payload: { value: 'rolled-back-with-lost-ack' },
         principal,

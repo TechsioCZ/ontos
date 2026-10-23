@@ -241,6 +241,15 @@ export const makeCommerceEnrollmentCommitResolutionService = (
       Effect.catchTags({
         ActionAlreadyCommitted: onAlreadyCommitted,
         ActionCommitIndeterminate: onCommitIndeterminate,
+        ActionInvocationPersistenceError: (failure) =>
+          Effect.fail(
+            unavailable(
+              originalInvocationId,
+              'commit_resolution_indeterminate',
+              'The Action runtime could not read the original invocation commit state',
+              failure,
+            ),
+          ),
         ActionInvocationNotFound: rejectWith(
           originalInvocationId,
           'commit_resolution_invocation_not_found',

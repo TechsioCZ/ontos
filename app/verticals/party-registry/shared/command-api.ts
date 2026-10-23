@@ -265,9 +265,22 @@ export const PartyCommandCommitIndeterminateProblemSchema = makeProblemDetailsSc
   },
 );
 
-export const ResolvePartyCommandCommitPayloadSchema = Schema.Struct({
-  invocationId: ActionInvocationIdSchema,
-});
+export const ResolvePartyCommandCommitPayloadSchema = Schema.Union([
+  Schema.Struct({
+    invocationId: ActionInvocationIdSchema,
+    actionKey: Schema.optionalKey(Schema.Never),
+    idempotencyKey: Schema.optionalKey(Schema.Never),
+  }),
+  Schema.Struct({
+    invocationId: Schema.optionalKey(Schema.Never),
+    actionKey: Schema.Literals([
+      'party.registry.create-party',
+      'party.registry.counterparty-customer-onboard',
+      'party.registry.add-contact-point',
+    ]),
+    idempotencyKey: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(200)),
+  }),
+]);
 export type ResolvePartyCommandCommitPayload = typeof ResolvePartyCommandCommitPayloadSchema.Type;
 
 export const ResolvePartyCommandCommitResultSchema = Schema.TaggedStruct('PartyCommandCommitResolution', {

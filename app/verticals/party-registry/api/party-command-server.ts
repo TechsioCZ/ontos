@@ -211,7 +211,7 @@ const resolvePartyCommandCommit = Effect.fn('PartyCommandServer.resolvePartyComm
     }
     const principal = yield* verifyPrincipal(Redacted.make(request.headers['authorization']));
     const runtime = yield* ActionRuntime;
-    return yield* runtime.resolveActionCommit({ invocationId: payload.invocationId, principal }).pipe(
+    return yield* runtime.resolveActionCommit({ ...payload, principal }).pipe(
       Effect.map((resolution): ResolvePartyCommandCommitResult => ({
         _tag: 'PartyCommandCommitResolution',
         invocationId: resolution.invocationId,
@@ -230,6 +230,7 @@ const resolvePartyCommandCommit = Effect.fn('PartyCommandServer.resolvePartyComm
         ActionCommitIndeterminate: (failure) =>
           failPartyCommandProblem(partyCommandProblem.indeterminate(failure.invocationId)),
         ActionInvocationNotFound: () => failPartyCommandProblem(partyCommandProblem.notFound()),
+        ActionInvocationPersistenceError: () => failPartyCommandProblem(partyCommandProblem.unavailable()),
         ActionInvocationStateError: (failure) => failPartyCommandProblem(partyCommandProblem.conflict(failure.code)),
         ActionPayloadValidationError: () => failPartyCommandProblem(partyCommandProblem.invalid()),
         ActionTrustedContextValidationError: () => failPartyCommandProblem(partyCommandProblem.authentication()),

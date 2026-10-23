@@ -104,6 +104,7 @@ export interface ActionTestHarnessOptions {
 export interface ActionTestInvocation extends ActionInvocationRecord {
   readonly actionKey: string;
   readonly idempotencyKey: string | undefined;
+  readonly legalEntityId: string | undefined;
   readonly principalId: string;
   readonly tenantId: string;
 }
@@ -170,6 +171,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
       actionKey: input.actionKey,
       completedAt: null,
       idempotencyKey: input.idempotencyKey,
+      legalEntityId: input.principal.legalEntityId,
       principalId: input.principal.principalId,
       requestHash: input.requestHash,
       status: 'received',
@@ -227,7 +229,17 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
     rejectPermissionDenied: (_executor, input) => recordRejection(input, permissionDenials),
     resolveInvocation: (_executor, input) =>
       Effect.suspend(() => {
-        const invocation = invocations.get(input.invocationId);
+        const invocation =
+          input.invocationId !== undefined
+            ? invocations.get(input.invocationId)
+            : [...invocations.values()].find(
+                (candidate) =>
+                  candidate.actionKey === input.actionKey &&
+                  candidate.idempotencyKey === input.idempotencyKey &&
+                  candidate.legalEntityId === input.principal.legalEntityId &&
+                  candidate.tenantId === input.principal.tenantId &&
+                  candidate.principalId === input.principal.principalId,
+              );
         return invocation?.tenantId === input.principal.tenantId &&
           invocation.principalId === input.principal.principalId
           ? Effect.succeed(invocation)

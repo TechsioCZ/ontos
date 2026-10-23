@@ -179,7 +179,13 @@ export const resolvePartyCommandCommitWithAuthorization = (
   ...[credential, options]: PartyCommandRecoveryInvocation
 ) =>
   providePartyCommandRequestContext(
-    partyCommandRecoveryClient.pipe(Effect.flatMap((client) => client.partyCommandRecovery.resolve({ payload }))),
+    partyCommandRecoveryClient.pipe(
+      Effect.flatMap((client) =>
+        payload.invocationId !== undefined
+          ? client.partyCommandRecovery.resolve({ payload })
+          : client.partyCommandRecovery.resolve({ payload }),
+      ),
+    ),
     credential,
     options,
   );
@@ -349,7 +355,6 @@ export const recoverPartyCreateWithAuthorization = <AcquireFailure, AcquireRequi
   options: PartyCommandRecoveryOptions & { readonly compositionRevision: string },
 ) =>
   Effect.gen(function* recoverCreate() {
-    const originalInvocationId = payload.invocationId;
     const originalRevision = options.compositionRevision;
     const originalCorrelationId = options[correlationIdOption];
     const originalTraceId = options[traceIdOption];
@@ -371,14 +376,14 @@ export const recoverPartyCreateWithAuthorization = <AcquireFailure, AcquireRequi
       commitOptions = { ...commitOptions, traceId: originalTraceId };
     }
     const resolution = yield* resolvePartyCommandCommitWithAuthorization(
-      { invocationId: originalInvocationId },
+      payload,
       Redacted.value(commitCredential),
       commitOptions,
     );
     if (resolution.state !== 'COMMITTED') {
       return { _tag: 'PartyCreateRecoveryPending' as const, resolution };
     }
-    const actionInvocationId = yield* Schema.decodeEffect(ActionInvocationIdSchema)(originalInvocationId);
+    const actionInvocationId = yield* Schema.decodeEffect(ActionInvocationIdSchema)(resolution.invocationId);
     const decisionAuthorization = yield* acquire();
     const decisionCredential = decisionAuthorization.credential;
     if (

@@ -206,10 +206,10 @@ export interface PrepareActionInvocationInput {
   readonly transport: ActionTransportMetadata;
 }
 
-interface ResolveActionInvocationInput {
-  readonly invocationId: string;
-  readonly principal: TrustedPrincipalContext;
-}
+type ResolveActionInvocationInput = { readonly principal: TrustedPrincipalContext } & (
+  | { readonly invocationId: string; readonly actionKey?: never; readonly idempotencyKey?: never }
+  | { readonly invocationId?: never; readonly actionKey: string; readonly idempotencyKey: string }
+);
 
 export interface ActionInvocationRecord {
   readonly actionInvocationId: string;
@@ -516,7 +516,15 @@ export const makeActionRepository = (): ActionRepositoryService => {
       .from(actionInvocations)
       .where(
         and(
-          eq(actionInvocations.actionInvocationId, input.invocationId),
+          input.invocationId !== undefined
+            ? eq(actionInvocations.actionInvocationId, input.invocationId)
+            : and(
+                eq(actionInvocations.actionKey, input.actionKey),
+                eq(actionInvocations.idempotencyKey, input.idempotencyKey),
+                input.principal.legalEntityId === undefined
+                  ? isNull(actionInvocations.legalEntityId)
+                  : eq(actionInvocations.legalEntityId, input.principal.legalEntityId),
+              ),
           eq(actionInvocations.tenantId, input.principal.tenantId),
           eq(actionInvocations.principalId, input.principal.principalId),
         ),

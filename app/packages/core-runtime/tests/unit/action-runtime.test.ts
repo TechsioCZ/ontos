@@ -4031,6 +4031,32 @@ it.effect(
       throw new Error('Expected typed test outcome');
     }
     expect(unavailableResolution.invocationId).toBe(invocationId);
+
+    const keyed = { actionKey: 'shell.counter.write', idempotencyKey: 'not-an-invocation-uuid', principal };
+    const keyedOpen = yield* open.runtime.resolveActionCommit(keyed);
+    expect(keyedOpen.invocationId).toBe(invocationId);
+    const keyedCommitted = yield* Effect.flip(committed.runtime.resolveActionCommit(keyed));
+    expect(Predicate.isTagged(keyedCommitted, 'ActionAlreadyCommitted')).toBe(true);
+    if (Predicate.isTagged(keyedCommitted, 'ActionAlreadyCommitted')) {
+      expect(keyedCommitted.invocationId).toBe(invocationId);
+    }
+    const keyedUnavailable = yield* Effect.flip(unavailable.runtime.resolveActionCommit(keyed));
+    expect(Predicate.isTagged(keyedUnavailable, 'ActionInvocationPersistenceError')).toBe(true);
+    expect('invocationId' in keyedUnavailable).toBe(false);
+
+    for (const invalid of [
+      { actionKey: '', idempotencyKey: 'key', principal },
+      { actionKey: ' shell.counter.write', idempotencyKey: 'key', principal },
+      { actionKey: 'shell.counter.write', idempotencyKey: 'x'.repeat(201), principal },
+      { actionKey: 'shell.counter.write', idempotencyKey: undefined, principal },
+      { invocationId: 'invalid-uuid', principal },
+    ]) {
+      const failure = yield* Effect.flip(open.runtime.resolveActionCommit(invalid));
+      expect(Predicate.isTagged(failure, 'ActionPayloadValidationError')).toBe(true);
+    }
+    // @ts-expect-error Exercise a forged transport object that violates the exclusive lookup union.
+    const mixed = yield* Effect.flip(open.runtime.resolveActionCommit({ ...keyed, invocationId }));
+    expect(Predicate.isTagged(mixed, 'ActionPayloadValidationError')).toBe(true);
   }),
 );
 
