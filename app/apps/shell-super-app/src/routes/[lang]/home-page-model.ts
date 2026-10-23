@@ -41,6 +41,7 @@ import {
   isServerRenderWithoutSession,
   shellAuthenticationClientOptionsFromRequest,
 } from '../shell-authentication-client-options.ts';
+import { modulePageProps, prepareModulePage } from '../remote-page-loader.ts';
 import { redirectToSignIn } from '../sign-in-return.ts';
 import type { SignInReason } from '../sign-in-return.ts';
 
@@ -565,9 +566,22 @@ export const loadHomePageModel = Effect.fn('HomePageModel.loadHomePageModel')(
   }),
 );
 
+/** Home waits for its module component's code and primary data like any page, so it reveals real content. */
+const HOME_PREPARE_BUDGET = '2500 millis';
+
+const prepareHomeContribution = (model: HomePageModel, request: Request) =>
+  model.state === 'authenticated' && model.homeContribution?.state === 'ready'
+    ? prepareModulePage(
+        model.homeContribution.target,
+        modulePageProps(model, {}, ''),
+        new URL(request.url).pathname,
+        HOME_PREPARE_BUDGET,
+      ).pipe(Effect.asVoid)
+    : Effect.void;
+
 export const loader = ({ request }: HomeLoaderArguments): Promise<HomePageModel> =>
   browserRuntime
-    .runPromise(loadHomePageModel(request), {
+    .runPromise(loadHomePageModel(request).pipe(Effect.tap((model) => prepareHomeContribution(model, request))), {
       signal: request.signal,
     })
     // Without a live session the dashboard has nothing to show: go to sign-in (with the reason when it died).

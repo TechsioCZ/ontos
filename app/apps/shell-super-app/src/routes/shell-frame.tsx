@@ -856,20 +856,21 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
           {/* On desktop the open guide docks beside the page instead of covering it. */}
           <Sidebar.Inset
             {...{ [demoGuidePageAttribute]: '' }}
-            className={`flex min-w-0 flex-1 flex-col ${guideVisible ? 'lg:pe-(--demo-guide-width)' : ''}`}
+            className={`relative flex min-w-0 flex-1 flex-col ${guideVisible ? 'lg:pe-(--demo-guide-width)' : ''}`}
           >
-            <div className="isolate flex min-w-0 flex-1 flex-col gap-250 p-250">
-              {pendingHref === undefined ? null : (
-                <StatusText aria-live="polite" showIcon status="default">
-                  {t('shell.dashboard.navigation.pending')}
-                </StatusText>
-              )}
-              {/* The router keeps the previous page until the next one loads; hide it instead of showing it under
-                  the new URL, but keep it mounted so a cancelled navigation returns to it intact. */}
-              <div className={pendingHref === undefined ? 'contents' : 'hidden'}>
-                {props.title === undefined ? null : <h1 className="font-semibold text-xl">{props.title}</h1>}
-                {props.children}
+            {/* The router keeps the previous page visible until the next one is prepared (code and data); a thin bar
+                shows a navigation that takes longer than a moment. */}
+            {pendingHref === undefined ? null : (
+              <div className="shell-navigation-progress">
+                <progress aria-label={t('shell.dashboard.navigation.pending')} className="sr-only" />
               </div>
+            )}
+            <div
+              aria-busy={pendingHref !== undefined}
+              className="isolate flex min-w-0 flex-1 flex-col gap-250 p-250"
+            >
+              {props.title === undefined ? null : <h1 className="font-semibold text-xl">{props.title}</h1>}
+              {props.children}
             </div>
           </Sidebar.Inset>
         </div>

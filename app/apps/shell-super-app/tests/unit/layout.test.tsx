@@ -807,7 +807,7 @@ test('marks the sole destination of a module current on its other pages', () => 
   expect(currentLinkNames()).toEqual(['Employees']);
 });
 
-test('hides the previous page and marks the destination while the next page loads', () => {
+test('keeps the previous page visible with a progress bar and marks the destination while the next page loads', () => {
   routerState.current = {
     location: { pathname: '/en/fixture-parties/contacts' },
     resolvedLocation: { pathname: '/en/fixture-staff/records' },
@@ -828,9 +828,11 @@ test('hides the previous page and marks the destination while the next page load
     </AuthenticatedDashboardLayout>,
   );
 
-  expect(screen.getByText('Loading page…')).toBeTruthy();
-  expect(screen.getByText('Employee list').closest('.hidden')).not.toBeNull();
-  expect(screen.getByRole('heading', { level: 1, name: employeesOverviewTitle }).closest('.hidden')).not.toBeNull();
+  expect(screen.getByRole('progressbar', { name: 'Loading page…' })).toBeTruthy();
+  expect(screen.queryByText('Loading page…')).toBeNull();
+  expect(screen.getByText('Employee list').closest('.hidden')).toBeNull();
+  expect(screen.getByText('Employee list').closest('[aria-busy="true"]')).not.toBeNull();
+  expect(screen.getByRole('heading', { level: 1, name: employeesOverviewTitle })).toBeTruthy();
   expect(currentLinkNames()).toEqual(['Contacts']);
   expect(screen.getByRole('navigation', { name: 'Breadcrumb' }).textContent).toBe('Sales and CRMContacts');
 });
@@ -850,7 +852,7 @@ test('keeps the page visible when only search parameters or loader data refresh'
     </AuthenticatedDashboardLayout>,
   );
 
-  expect(screen.queryByText('Loading page…')).toBeNull();
+  expect(screen.queryByRole('progressbar')).toBeNull();
   expect(screen.getByText('Employee list').closest('.hidden')).toBeNull();
   expect(currentLinkNames()).toEqual(['Employees']);
 });

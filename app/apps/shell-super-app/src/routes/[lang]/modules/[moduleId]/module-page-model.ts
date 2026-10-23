@@ -6,14 +6,13 @@ import type { ResolveModuleTargetPayload, ResolvedModuleTarget } from '../../../
 import { resolveModuleTarget } from '../../../../api/auth-client.ts';
 import type { ShellAuthenticationClientOptions, ShellTargetClientError } from '../../../../api/auth-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { prefetchRecordedReads } from '../../../browser-request-cache.ts';
 import {
   browserBaseUrl,
   browserReadKey,
   browserStaleWhileRevalidateCache,
   keyPart,
 } from '../../../browser-swr-cache.ts';
-import { loadRemotePage } from '../../../remote-page-loader.ts';
+import { modulePageProps, prepareModulePage } from '../../../remote-page-loader.ts';
 import {
   isServerRender,
   shellAuthenticationClientOptionsFromRequest,
@@ -33,6 +32,8 @@ interface ModuleTargetLoaderArguments {
 
 export type ModulePageRouteParams = Readonly<Record<string, string>>;
 
+export type ResolvedModulePageModel = Extract<ModuleTargetPageModel, { readonly state: 'resolved' }>;
+
 export type ModuleTargetPageModel =
   | {
       readonly shell: HomePageModel;
@@ -40,6 +41,8 @@ export type ModuleTargetPageModel =
     }
   | {
       readonly routeParams: ModulePageRouteParams;
+      /** Raw query string of the opened URL (`?…` or ''), passed to the page and its `preloadPage`. */
+      readonly search: string;
       readonly shell: HomePageModel;
       readonly state: 'resolved';
       readonly target: ResolvedModuleTarget;
@@ -111,18 +114,21 @@ const targetFor = (
       );
 };
 
+/** A navigation waits this long for the page's code and primary data, then reveals what is ready. */
+export const NAVIGATION_PREPARE_BUDGET = '2500 millis';
+
 /**
- * Starts loading what a resolved page needs before it renders: its remote page module and the module reads the
- * path made on its last visit. Route preloads (links in view, idle preloading) run the loader, so this makes a
- * later click render the page, and usually its data, at once. Detached: a cancelled navigation keeps the work.
+ * Prepares a resolved page before the router reveals it: its remote page module and the module's primary data
+ * (`preloadPage`), beside the reads the path made on its last visit. Route preloads on hover or focus run the loader
+ * too, so a click usually finds both ready. The router keeps the previous page visible meanwhile. Browser only.
  */
-export const preloadModuleTarget = (model: ModuleTargetPageModel, pathname: string) =>
-  'document' in globalThis && model.state === 'resolved'
-    ? Effect.forkDetach(
-        Effect.all([loadRemotePage(model.target), prefetchRecordedReads(pathname)], {
-          concurrency: 2,
-          discard: true,
-        }),
+export const prepareModuleTarget = (model: ModuleTargetPageModel, request: Request) =>
+  model.state === 'resolved'
+    ? prepareModulePage(
+        model.target,
+        modulePageProps(model.shell, model.routeParams, model.search),
+        new URL(request.url).pathname,
+        NAVIGATION_PREPARE_BUDGET,
       ).pipe(Effect.asVoid)
     : Effect.void;
 
@@ -180,7 +186,13 @@ export const loadModulePageModel: (
     return yield* target.pipe(
       Effect.map((resolved): ModuleTargetPageModel =>
         resolved.compositionRevision === compositionRevision
-          ? { routeParams: resolved.routeParameters, shell, state: 'resolved', target: resolved }
+          ? {
+              routeParams: resolved.routeParameters,
+              search: new URL(request.url).search,
+              shell,
+              state: 'resolved',
+              target: resolved,
+            }
           : { shell, state: 'reload_required' },
       ),
       Effect.matchEffect({
@@ -195,7 +207,7 @@ export const loader = (input: ModuleTargetLoaderArguments): Promise<ModuleTarget
   browserRuntime
     .runPromise(
       loadModulePageModel(input).pipe(
-        Effect.tap((model) => preloadModuleTarget(model, new URL(input.request.url).pathname)),
+        Effect.tap((model) => prepareModuleTarget(model, input.request)),
       ),
       { signal: input.request.signal },
     )

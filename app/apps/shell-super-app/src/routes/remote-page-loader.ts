@@ -1,18 +1,21 @@
-import { Cache, Effect, Exit, Predicate, Schema } from 'effect';
+import type { ModulePagePreload, ModulePageProps } from '@app/shared-contracts/page-data';
+import { Cache, Effect, Exit, MutableHashMap, Predicate, Schema } from 'effect';
+import type { Duration, Option } from 'effect';
 import type { ComponentType } from 'react';
 
 import { ResolvedModuleTargetSchema } from '../../shared/api.ts';
 import type { ResolvedModuleTarget } from '../../shared/api.ts';
+import type { HomePageModel } from './[lang]/home-page-model.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { prefetchRecordedReads } from './browser-request-cache.ts';
 import { pinBrowserModuleTarget, settleModuleEntrypointLoads } from './module-entrypoint-loader.ts';
 
-export type ApprovedModulePageComponent = ComponentType<{
-  readonly routeParams: Readonly<Record<string, string>>;
-  readonly target: ResolvedModuleTarget;
-}>;
+/** Every exposed page or component: the props its `preloadPage` received, plus the resolved target. */
+export type ModulePageComponent = ComponentType<ModulePageProps & { readonly target: ResolvedModuleTarget }>;
 
 interface RemotePageModule {
-  readonly default: ApprovedModulePageComponent;
+  readonly default: ModulePageComponent;
+  readonly preloadPage?: ModulePagePreload;
 }
 
 export type RemoteState =
@@ -22,9 +25,12 @@ export type RemoteState =
       readonly state: 'unavailable';
     }
   | {
-      readonly Component: ApprovedModulePageComponent;
+      readonly Component: ModulePageComponent;
+      readonly preloadPage?: ModulePagePreload;
       readonly state: 'ready';
     };
+
+export type ReadyRemotePage = Extract<RemoteState, { readonly state: 'ready' }>;
 
 const browserFederationRuntime = __ONTOS_BROWSER_BUILD__
   ? Effect.tryPromise(() => import('@module-federation/modern-js-v3/runtime')).pipe(Effect.timeout('5 seconds'))
@@ -37,6 +43,19 @@ const RemotePageSchema = ResolvedModuleTargetSchema.mapFields(({ compositionRevi
 }));
 type RemotePage = typeof RemotePageSchema.Type;
 const RemotePageKey = Schema.fromJsonString(RemotePageSchema);
+
+/** Stable identity of a target's remote page, for comparing two loader results. */
+export const remotePageIdentity = ({ compositionRevision, federation }: RemotePage): string =>
+  [
+    compositionRevision,
+    federation.remoteName,
+    federation.manifest.url,
+    federation.manifest.sha256,
+    federation.expose,
+  ].join('\n');
+
+/** Loaded page modules by remote page identity, for a synchronous lookup while rendering. */
+const readyPages = MutableHashMap.empty<string, ReadyRemotePage>();
 
 const loadRemotePageOnce = (target: RemotePage) =>
   Effect.flatMap(pinBrowserModuleTarget(target, document), () => browserFederationRuntime).pipe(
@@ -56,7 +75,10 @@ const loadRemotePageOnce = (target: RemotePage) =>
             Predicate.isObjectKeyword(loaded) &&
             loaded !== null &&
             'default' in loaded &&
-            Predicate.isFunction(loaded.default),
+            Predicate.isFunction(loaded.default) &&
+            (!('preloadPage' in loaded) ||
+              loaded.preloadPage === undefined ||
+              Predicate.isFunction(loaded.preloadPage)),
           load: () => {
             host.registerRemotes([{ entry: federation.manifest.url, name: federation.remoteName }]);
             return host.loadRemote<RemotePageModule>(`${federation.remoteName}/${federation.expose.slice(2)}`);
@@ -73,7 +95,11 @@ const loadRemotePageOnce = (target: RemotePage) =>
           if (result.value === null) {
             return { reason: 'incompatible', state: 'unavailable' };
           }
-          return { Component: result.value.default, state: 'ready' };
+          const { default: Component, preloadPage } = result.value;
+          const ready: ReadyRemotePage =
+            preloadPage === undefined ? { Component, state: 'ready' } : { Component, preloadPage, state: 'ready' };
+          MutableHashMap.set(readyPages, remotePageIdentity(target), ready);
+          return ready;
         }),
       );
     }),
@@ -104,8 +130,11 @@ const remotePages = browserRuntime.runSync(
   ),
 );
 
-/** Loads (or reuses) the remote page module of a resolved target. Never fails; outside a browser it never settles. */
-export const loadRemotePage = (target: ResolvedModuleTarget): Effect.Effect<RemoteState> =>
+/**
+ * Loads (or reuses) the remote page module of a release's exposed page. Never fails; outside a browser it never
+ * settles, so the server must not wait for it.
+ */
+export const loadRemotePage = (target: RemotePage): Effect.Effect<RemoteState> =>
   Schema.encodeEffect(RemotePageKey)({
     compositionRevision: target.compositionRevision,
     federation: target.federation,
@@ -114,12 +143,62 @@ export const loadRemotePage = (target: ResolvedModuleTarget): Effect.Effect<Remo
     Effect.orElseSucceed((): RemoteState => ({ reason: 'incompatible', state: 'unavailable' })),
   );
 
-/** Stable identity of a target's remote page, for comparing two loader results. */
-export const remotePageIdentity = ({ compositionRevision, federation }: ResolvedModuleTarget): string =>
-  [
-    compositionRevision,
-    federation.remoteName,
-    federation.manifest.url,
-    federation.manifest.sha256,
-    federation.expose,
-  ].join('\n');
+/** The props a page and its `preloadPage` both receive: the person's context, the route parameters and the query. */
+export const modulePageProps = (
+  shell: HomePageModel,
+  routeParams: Readonly<Record<string, string>>,
+  search: string,
+): ModulePageProps =>
+  shell.state === 'authenticated' && shell.selectedLegalEntityId !== undefined
+    ? {
+        context: {
+          legalEntityId: shell.selectedLegalEntityId,
+          principalId: shell.identity.principalId,
+          tenantId: shell.identity.tenantId,
+        },
+        routeParams,
+        search,
+      }
+    : { routeParams, search };
+
+/** The target's page module when it is already loaded, so a page can render it in its first commit. */
+export const peekRemotePage = (target: RemotePage): Option.Option<ReadyRemotePage> =>
+  MutableHashMap.get(readyPages, remotePageIdentity(target));
+
+/** A module's `preloadPage` settles on its own; this only bounds one that never does. */
+const PRELOAD_PAGE_LIMIT = '30 seconds';
+
+const preloadPageData = (remote: RemoteState, props: ModulePageProps) => {
+  if (remote.state !== 'ready' || remote.preloadPage === undefined) {
+    return Effect.void;
+  }
+  const { preloadPage } = remote;
+  return Effect.tryPromise(() => preloadPage(props)).pipe(Effect.timeout(PRELOAD_PAGE_LIMIT), Effect.ignore);
+};
+
+/**
+ * Prepares a page before it is revealed: loads its remote page module and then runs the module's `preloadPage` with
+ * the props the page will receive, beside the warm-up of the reads the path made on its last visit. Waits at most
+ * `budget`; answers the module's state, or none when the budget ran out first. A no-op on the server, where a remote
+ * never loads.
+ */
+export const prepareModulePage = (
+  target: RemotePage,
+  props: ModulePageProps,
+  pathname: string,
+  budget: Duration.Input,
+): Effect.Effect<Option.Option<RemoteState>> =>
+  Effect.suspend(() =>
+    'document' in globalThis
+      ? Effect.all(
+          [
+            loadRemotePage(target).pipe(Effect.tap((remote) => preloadPageData(remote, props))),
+            prefetchRecordedReads(pathname),
+          ],
+          { concurrency: 2 },
+        ).pipe(
+          Effect.map(([remote]) => remote),
+          Effect.timeoutOption(budget),
+        )
+      : Effect.succeedNone,
+  );

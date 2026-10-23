@@ -10,7 +10,7 @@ import {
   loadConnectionsAdminPageModel,
 } from './sprava/pripojene-aplikace/connections-admin-page-model.ts';
 import type { ConnectionsAdminPageModel } from './sprava/pripojene-aplikace/connections-admin-page-model.ts';
-import { loadModulePageModel, preloadModuleTarget } from './modules/[moduleId]/module-page-model.ts';
+import { loadModulePageModel, prepareModuleTarget } from './modules/[moduleId]/module-page-model.ts';
 import type { ModuleTargetPageModel } from './modules/[moduleId]/module-page-model.ts';
 import { routeMeta } from './route.meta.ts';
 import { requireSignedIn } from '../sign-in-return.ts';
@@ -83,7 +83,7 @@ export const loader = ({
   return browserRuntime
     .runPromise(
       loadModulePageModel({ canonicalPath, request }).pipe(
-        Effect.tap((model) => preloadModuleTarget(model, new URL(request.url).pathname)),
+        Effect.tap((model) => prepareModuleTarget(model, request)),
       ),
       { signal: request.signal },
     )

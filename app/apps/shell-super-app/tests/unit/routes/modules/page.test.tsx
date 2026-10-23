@@ -5,10 +5,13 @@ import { afterEach, beforeEach, expect, rstest, it } from 'effect-rstest';
 import type { ReactNode } from 'react';
 import { renderToString } from 'react-dom/server';
 
+import type { ModulePageProps } from '@app/shared-contracts/page-data';
+
 import { ResolvedModuleTargetSchema } from '../../../../shared/api.ts';
 import { browserRuntime } from '../../../../src/runtime/browser-effect-runtime.ts';
 import type { ModuleTargetPageModel } from '../../../../src/routes/[lang]/modules/[moduleId]/module-page-model.ts';
 import ModuleTargetPage from '../../../../src/routes/[lang]/modules/[moduleId]/page.tsx';
+import { prepareModulePage } from '../../../../src/routes/remote-page-loader.ts';
 import { authenticatedShellFixture } from '../authenticated-shell-fixture.ts';
 
 type ResolvedPageModel = Extract<ModuleTargetPageModel, { readonly state: 'resolved' }>;
@@ -68,6 +71,13 @@ rstest.mock('../../../../src/routes/use-shell-controls.ts', () => ({
 
 const shell: ResolvedPageModel['shell'] = { ...authenticatedShellFixture(), compositionRevision: 'c'.repeat(64) };
 
+/**
+ * Loaded page modules stay loaded for the document (a revisit renders at once), so every test opens its own remote:
+ * a remote loaded by one test must not make the next test's first load a revisit.
+ */
+let remoteSequence = 0;
+let remoteName = 'previouslyUnknownContacts0';
+
 const targetFixture = (componentKey: string, entrypointKey: string, writable = true) =>
   Schema.decodeUnknownSync(ResolvedModuleTargetSchema)({
     appId: 'contacts',
@@ -80,19 +90,21 @@ const targetFixture = (componentKey: string, entrypointKey: string, writable = t
         sha256: 'a'.repeat(64),
         url: 'https://assets.example.test/contacts/release-a/mf-manifest.json',
       },
-      remoteName: 'previouslyUnknownContacts',
+      remoteName,
     },
     moduleId: 'contacts.core',
     routeParameters: {},
     writable,
   });
 
-const resolvedModel: ResolvedPageModel = {
+const makeResolvedModel = (): ResolvedPageModel => ({
   routeParams: { id: 'customer-1' },
+  search: '?tab=open',
   shell,
   state: 'resolved',
   target: targetFixture('contacts.core.page-customers', 'contacts.core.page.customers'),
-};
+});
+let resolvedModel = makeResolvedModel();
 
 interface ExactPageCase {
   readonly componentKey: string;
@@ -161,6 +173,9 @@ const exactPageCases: ExactPageCase[] = [
 ];
 
 beforeEach(() => {
+  remoteSequence += 1;
+  remoteName = `previouslyUnknownContacts${remoteSequence}`;
+  resolvedModel = makeResolvedModel();
   reloadRequiredMock.mockReturnValue(false);
   loadRemotePageMock.mockResolvedValue({
     default: ({
@@ -256,7 +271,7 @@ it.live('registers and loads a previously unknown approved remote only after aut
         name: resolvedModel.target.federation.remoteName,
       },
     ]);
-    expect(loadRemotePageMock).toHaveBeenCalledWith('previouslyUnknownContacts/contacts.core.page-customers');
+    expect(loadRemotePageMock).toHaveBeenCalledWith(`${remoteName}/contacts.core.page-customers`);
     expect(yield* Effect.promise(() => screen.findByText('contacts.core.page-customers:customer-1'))).toBeTruthy();
   }),
 );
@@ -307,7 +322,7 @@ it.live.each(exactPageCases)(
       render(<ModuleTargetPage />);
 
       yield* Effect.promise(() => waitFor(() => expect(loadRemotePageMock).toHaveBeenCalledTimes(1)));
-      expect(loadRemotePageMock).toHaveBeenCalledWith(`previouslyUnknownContacts/${componentKey}`);
+      expect(loadRemotePageMock).toHaveBeenCalledWith(`${remoteName}/${componentKey}`);
       expect(remotePropsMock).toHaveBeenCalledWith({
         routeParams,
         target: exactModel.target,
@@ -484,3 +499,81 @@ it.live('rejects an approved remote name that collides with the native Shell hos
     expect(remotePropsMock).not.toHaveBeenCalled();
   }),
 );
+
+const expectedPageProps = (model: ResolvedPageModel): ModulePageProps => ({
+  context: {
+    legalEntityId: '20000000-0000-4000-8000-000000000001',
+    principalId: 'principal-1',
+    tenantId: 'tenant-1',
+  },
+  routeParams: model.routeParams,
+  search: model.search,
+});
+
+it.live('a cold page shows one neutral skeleton, then its content once code and primary data are ready', () =>
+  Effect.gen(function* revealsAfterPreparation() {
+    const data = Promise.withResolvers<true>();
+    const preloadPage = rstest.fn(async (_props: ModulePageProps) => {
+      await data.promise;
+    });
+    loadRemotePageMock.mockResolvedValueOnce({
+      default: (props: ModulePageProps) => {
+        remotePropsMock(props);
+        return <div>prepared page</div>;
+      },
+      preloadPage,
+    });
+    useLoaderDataMock.mockReturnValue(resolvedModel);
+    const view = render(<ModuleTargetPage />);
+    expect(view.container.querySelector('[data-module-page-skeleton]')).not.toBeNull();
+    yield* Effect.promise(() => waitFor(() => expect(preloadPage).toHaveBeenCalledTimes(1)));
+    // The code is loaded, but the page waits for its data instead of showing its own loading state.
+    expect(screen.queryByText('prepared page')).toBeNull();
+    expect(view.container.querySelector('[data-module-page-skeleton]')).not.toBeNull();
+    yield* Effect.promise(() =>
+      act(async () => {
+        data.resolve(true);
+        await data.promise;
+      }),
+    );
+    expect(yield* Effect.promise(() => screen.findByText('prepared page'))).toBeTruthy();
+    expect(view.container.querySelector('[data-module-page-skeleton]')).toBeNull();
+    // The page receives exactly the props its preload received, plus its target.
+    expect(preloadPage).toHaveBeenCalledWith(expectedPageProps(resolvedModel));
+    expect(remotePropsMock).toHaveBeenCalledWith({ ...expectedPageProps(resolvedModel), target: resolvedModel.target });
+  }),
+);
+
+it.live('a prepared page renders its content in the first commit, without any placeholder', () =>
+  Effect.gen(function* rendersPreparedPageAtOnce() {
+    const preloadPage = rstest.fn((_props: ModulePageProps) => Promise.resolve());
+    loadRemotePageMock.mockResolvedValueOnce({
+      default: () => <div>ready at once</div>,
+      preloadPage,
+    });
+    const prepared = yield* prepareModulePage(
+      resolvedModel.target,
+      expectedPageProps(resolvedModel),
+      '/en/contacts',
+      '5 seconds',
+    );
+    expect(prepared._tag).toBe('Some');
+    expect(preloadPage).toHaveBeenCalledWith(expectedPageProps(resolvedModel));
+    useLoaderDataMock.mockReturnValue(resolvedModel);
+
+    const view = render(<ModuleTargetPage />);
+
+    expect(screen.getByText('ready at once')).toBeTruthy();
+    expect(view.container.querySelector('[data-module-page-skeleton]')).toBeNull();
+    expect(screen.queryByText('shell.moduleTarget.loading')).toBeNull();
+  }),
+);
+
+it('server rendering emits the neutral skeleton, without visible loading text', () => {
+  useLoaderDataMock.mockReturnValue(resolvedModel);
+
+  const html = renderToString(<ModuleTargetPage />);
+
+  expect(html).toContain('data-module-page-skeleton');
+  expect(html).toContain('aria-busy="true"');
+});

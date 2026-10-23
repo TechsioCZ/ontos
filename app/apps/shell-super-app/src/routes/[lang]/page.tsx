@@ -12,9 +12,13 @@ import { useShellControls } from '../use-shell-controls.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { shellAuthenticationClientOptionsFromRequest } from '../shell-authentication-client-options.ts';
 import { HomeWelcome } from './home-welcome.tsx';
+import { ModulePageSkeleton } from '../module-page-skeleton.tsx';
 import { ResolvedTarget } from './modules/[moduleId]/page.tsx';
 import { resolveHomeContributionWithWelcome } from './home-page-model.ts';
 import type { HomePageModel, ResolvedHomeContribution } from './home-page-model.ts';
+
+/** Home components take no route parameters; one frozen record keeps their props stable across renders. */
+const homeRouteParams: Readonly<Record<string, string>> = Object.freeze({});
 
 interface HomeViewProps {
   readonly initialModel: HomePageModel;
@@ -137,16 +141,12 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
       >
         <section className="shell:flex shell:w-full shell:flex-col shell:gap-4">
           <DemoGuideHomeCard legalEntityId={model.selectedLegalEntityId} />
-          {model.homeCandidates !== undefined && home === undefined ? (
-            <StatusText aria-live="polite" showIcon status="default">
-              {t('shell.moduleTarget.loading')}
-            </StatusText>
-          ) : null}
+          {model.homeCandidates !== undefined && home === undefined ? <ModulePageSkeleton /> : null}
           {Match.value(home?.contribution).pipe(
             Match.when({ state: 'ready' }, (contribution) => (
               <ResolvedTarget
                 key={`${model.identity.principalId}:${model.identity.tenantId}:${model.selectedLegalEntityId}`}
-                model={{ routeParams: {}, shell: model, state: 'resolved', target: contribution.target }}
+                model={{ routeParams: homeRouteParams, search: '', shell: model, state: 'resolved', target: contribution.target }}
               />
             )),
             // Roles without a module Home component get the shell welcome page: company, where to start, their areas.

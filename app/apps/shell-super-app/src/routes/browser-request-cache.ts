@@ -4,6 +4,7 @@ import {
   getDocumentCompositionRevision,
   makeOperationGateway,
 } from '@app/shared-contracts';
+import { moduleWriteEvent } from '@app/shared-contracts/page-data';
 import { Clock, Effect, Exit, Fiber, Match, MutableRef, Option, Predicate, Schedule, Schema } from 'effect';
 
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
@@ -16,7 +17,7 @@ import { documentGatewayAssertion, noteDocumentGatewayAudience } from './documen
  * per remote. `fetch` is the seam they all share: module reads (`/module-api/…/reads/…` and `…/search/…`) are
  * answered from memory, concurrent identical reads share one request, and gateway assertions are reused across
  * remotes until shortly before they expire. Any other module request is a write: once it settles, every cached
- * read is dropped, so a user never sees their own change missing.
+ * read is dropped and `moduleWriteEvent` is dispatched, so a user never sees their own change missing.
  *
  * The reads a page makes right after it opens are remembered per path (in `localStorage`, without credentials), so
  * a later preload of that path can issue them before the click.
@@ -393,6 +394,8 @@ const serveWrite = (state: CacheState, input: RequestInfo | URL, init: RequestIn
                 state.reads.clear();
                 state.generation += 1;
                 state.quietUntil = now + WRITE_QUIET_MILLIS;
+                // Page-data stores in every remote mark their values stale and revalidate what is on screen.
+                globalThis.dispatchEvent(new Event(moduleWriteEvent));
               }),
             ),
           ),

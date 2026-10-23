@@ -1,154 +1,82 @@
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useLoaderData } from '@modern-js/plugin-tanstack/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { Effect, Predicate } from 'effect';
-import { useEffect, useState } from 'react';
-import type { ComponentType } from 'react';
+import { Effect, Option } from 'effect';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 
-import type { ResolvedModuleTarget } from '../../../../../shared/api.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { pinBrowserModuleTarget, settleModuleEntrypointLoads } from '../../../module-entrypoint-loader.ts';
-import { remotePageIdentity } from '../../../remote-page-loader.ts';
+import { ModulePageSkeleton } from '../../../module-page-skeleton.tsx';
+import { modulePageProps, peekRemotePage, prepareModulePage, remotePageIdentity } from '../../../remote-page-loader.ts';
+import type { RemoteState } from '../../../remote-page-loader.ts';
 import { ShellStatusPanel, shellStatusTitleKey } from '../../../shell-status-panel.tsx';
 import { ShellContentLayout } from '../../../shell-content-layout.tsx';
 import { SignInRedirect } from '../../../sign-in-redirect.tsx';
 import { useShellControls } from '../../../use-shell-controls.ts';
-import type { ModuleTargetPageModel } from './module-page-model.ts';
+import type { ModuleTargetPageModel, ResolvedModulePageModel } from './module-page-model.ts';
 
-type ApprovedModulePageComponent = ComponentType<{
-  readonly context?: { readonly legalEntityId: string; readonly principalId: string; readonly tenantId: string };
-  readonly routeParams: Readonly<Record<string, string>>;
-  readonly target: ResolvedModuleTarget;
-}>;
+/** A cold page (first document load, or a navigation whose budget ran out) waits this long for code and data. */
+const COLD_PREPARE_BUDGET = '10 seconds';
 
-interface RemotePageModule {
-  readonly default: ApprovedModulePageComponent;
-}
+const subscribeNever = () => () => {
+  // Read once per render: the page reveals when its preparation settles, not when its code alone arrives.
+};
+const notLoaded: RemoteState = { state: 'loading' };
 
-type RemoteState =
-  | { readonly state: 'loading' }
-  | {
-      readonly reason: 'incompatible' | 'reload_required' | 'timeout' | 'unavailable';
-      readonly state: 'unavailable';
-    }
-  | {
-      readonly Component: ApprovedModulePageComponent;
-      readonly state: 'ready';
-    };
-
-const browserFederationRuntime = __ONTOS_BROWSER_BUILD__
-  ? Effect.tryPromise(() => import('@module-federation/modern-js-v3/runtime')).pipe(Effect.timeout('5 seconds'))
-  : Effect.interrupt;
-
-export const ResolvedTarget = ({
-  model,
-}: {
-  readonly model: Extract<ModuleTargetPageModel, { state: 'resolved' }>;
-}) => {
+/**
+ * Renders a resolved module page. A navigation prepares the page (code and primary data) before the router reveals
+ * it, so the module is found loaded here and renders real content in the first commit. A cold page (the first
+ * document load: the server never renders remote code) shows one neutral skeleton, the same markup on the server and
+ * at hydration, until the same preparation settles, then the page replaces it once.
+ */
+export const ResolvedTarget = ({ model }: { readonly model: ResolvedModulePageModel }) => {
   const { t } = useModernI18n();
   // A loader re-run returns an equal target as a new object. Compare by remote page, so the mounted page is kept
-  // instead of flashing the loading state and remounting (which repeated all of its reads).
+  // instead of remounting (which repeated all of its reads).
   const identity = remotePageIdentity(model.target);
-  const [loadedTarget, setLoadedTarget] = useState<{
-    readonly identity: string;
-    readonly result: RemoteState;
-  }>({ identity, result: { state: 'loading' } });
-  const remote: RemoteState = loadedTarget.identity === identity ? loadedTarget.result : { state: 'loading' };
+  // Hydration uses the server answer (not loaded), so the markup matches the server's skeleton.
+  const loaded = useSyncExternalStore(
+    subscribeNever,
+    () => Option.getOrElse(peekRemotePage(model.target), () => notLoaded),
+    () => notLoaded,
+  );
+  const [prepared, setPrepared] = useState<{ readonly identity: string; readonly result: RemoteState }>();
+  const props = modulePageProps(model.shell, model.routeParams, model.search);
+  const remote = prepared?.identity === identity ? prepared.result : loaded;
+  const needsPreparation = remote.state === 'loading';
 
   useEffect(() => {
-    let current = true;
+    if (!needsPreparation) {
+      return;
+    }
     const controller = new AbortController();
-    if (__ONTOS_BROWSER_BUILD__) {
-      const load = Effect.flatMap(pinBrowserModuleTarget(model.target, document), () => {
-        if (!current || controller.signal.aborted) {
-          return Effect.interrupt;
-        }
-        return browserFederationRuntime;
-      }).pipe(
-        Effect.flatMap(({ getInstance }) => {
-          if (!current || controller.signal.aborted) {
-            return Effect.interrupt;
-          }
-          const host = getInstance((instance) => instance.name === 'shellSuperApp');
-          if (host === undefined || host === null) {
-            return Effect.succeed<RemoteState>({ reason: 'unavailable', state: 'unavailable' });
-          }
-          const { federation } = model.target;
-          if (federation.remoteName === host.name) {
-            return Effect.succeed<RemoteState>({ reason: 'incompatible', state: 'unavailable' });
-          }
-          return settleModuleEntrypointLoads([
-            {
-              identity: model.target,
-              isCompatible: (loaded) =>
-                Predicate.isObjectKeyword(loaded) &&
-                loaded !== null &&
-                'default' in loaded &&
-                Predicate.isFunction(loaded.default),
-              load: () => {
-                controller.signal.throwIfAborted();
-                host.registerRemotes([{ entry: federation.manifest.url, name: federation.remoteName }]);
-                return host.loadRemote<RemotePageModule>(`${federation.remoteName}/${federation.expose.slice(2)}`);
-              },
-            },
-          ]).pipe(
-            Effect.map(([result]): RemoteState => {
-              if (result === undefined) {
-                return { reason: 'unavailable', state: 'unavailable' };
-              }
-              if (result.state === 'unavailable') {
-                return result;
-              }
-              if (result.value === null) {
-                return { reason: 'incompatible', state: 'unavailable' };
-              }
-              return { Component: result.value.default, state: 'ready' };
-            }),
-          );
-        }),
-        Effect.catchTags({
-          BrowserModuleRevisionConflict: () =>
-            Effect.succeed<RemoteState>({ reason: 'reload_required', state: 'unavailable' }),
-          TimeoutError: () => Effect.succeed<RemoteState>({ reason: 'timeout', state: 'unavailable' }),
-          UnknownError: () => Effect.succeed<RemoteState>({ reason: 'unavailable', state: 'unavailable' }),
-        }),
+    void browserRuntime.runPromiseExit(
+      prepareModulePage(model.target, props, globalThis.location.pathname, COLD_PREPARE_BUDGET).pipe(
         Effect.tap((result) =>
           Effect.sync(() => {
-            if (!current) {
-              return;
-            }
-            setLoadedTarget({ identity: remotePageIdentity(model.target), result });
+            setPrepared({
+              identity: remotePageIdentity(model.target),
+              result: Option.getOrElse(
+                Option.orElse(result, () => peekRemotePage(model.target)),
+                (): RemoteState => ({ reason: 'timeout', state: 'unavailable' }),
+              ),
+            });
           }),
         ),
-      );
-      void browserRuntime.runPromiseExit(load, { signal: controller.signal });
-    }
-    return () => {
-      current = false;
-      controller.abort();
-    };
-  }, [model.target]);
+      ),
+      { signal: controller.signal },
+    );
+    return () => controller.abort();
+  }, [needsPreparation, model.target, props]);
 
   if (remote.state === 'ready') {
-    return (
-      <remote.Component
-        {...(model.shell.state === 'authenticated' && model.shell.selectedLegalEntityId !== undefined
-          ? {
-              context: {
-                legalEntityId: model.shell.selectedLegalEntityId,
-                principalId: model.shell.identity.principalId,
-                tenantId: model.shell.identity.tenantId,
-              },
-            }
-          : {})}
-        routeParams={model.routeParams}
-        target={model.target}
-      />
-    );
+    return <remote.Component {...props} target={model.target} />;
+  }
+  if (remote.state === 'loading') {
+    return <ModulePageSkeleton />;
   }
   return (
-    <StatusText aria-live="polite" showIcon status={remote.state === 'loading' ? 'default' : 'error'}>
-      {t(`shell.moduleTarget.${remote.state === 'unavailable' ? remote.reason : remote.state}`)}
+    <StatusText aria-live="polite" showIcon status="error">
+      {t(`shell.moduleTarget.${remote.reason}`)}
     </StatusText>
   );
 };

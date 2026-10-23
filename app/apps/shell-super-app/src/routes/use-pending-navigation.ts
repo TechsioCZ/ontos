@@ -1,9 +1,10 @@
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 
 /**
- * Path the router is moving to while the next page's loader still runs, or undefined once it settles.
- * The router keeps rendering the previous page until then, so the frame uses this to stop showing that
- * page under the new URL. Search-only changes and same-path revalidation never count as pending.
+ * Path the router is moving to while the next page's loader still runs (it prepares the page's code and data), or
+ * undefined once it settles. The router keeps rendering the previous page until then; the frame highlights the
+ * destination in the menu and shows a thin progress bar. Search-only changes and same-path revalidation never count
+ * as pending.
  */
 export const usePendingNavigationPath = (): string | undefined =>
   useRouterState({

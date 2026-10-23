@@ -1,3 +1,4 @@
+import { moduleWriteEvent } from '@app/shared-contracts/page-data';
 import { Deferred, Effect, Fiber, Schema } from 'effect';
 import { afterAll, beforeAll, beforeEach, expect, it, rstest } from 'effect-rstest';
 
@@ -164,5 +165,30 @@ it.live('lets each remote ask alone when the batch fails', () =>
     const answer = yield* askAssertion({ audience: 'failing-a', compositionRevision: revision });
     expect(answer).toEqual({ body: withoutAudience(assertion('failing-a')), status: 200 });
     expect(gatewayRequests()).toHaveLength(1);
+  }),
+);
+
+it.live('announces every settled module write to page-data stores, but not a rejected command', () =>
+  Effect.gen(function* announcesModuleWrites() {
+    let announced = 0;
+    const onWrite = () => {
+      announced += 1;
+    };
+    globalThis.addEventListener(moduleWriteEvent, onWrite);
+    const write = (status: number) =>
+      Effect.promise(async () => {
+        platformFetch.mockResolvedValueOnce(new Response(null, { status }));
+        await globalThis.fetch('/shell-super-app-api/module-api/sales/build/sales-api/commands/close-deal', {
+          body: '{}',
+          method: 'POST',
+        });
+      });
+    yield* write(204);
+    expect(announced).toBe(1);
+    yield* write(409);
+    expect(announced).toBe(1);
+    yield* write(500);
+    expect(announced).toBe(2);
+    globalThis.removeEventListener(moduleWriteEvent, onWrite);
   }),
 );
