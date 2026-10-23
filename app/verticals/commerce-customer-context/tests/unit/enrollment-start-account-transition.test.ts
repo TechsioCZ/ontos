@@ -1,4 +1,4 @@
-import { DateTime, Effect, Redacted, Schema } from 'effect';
+import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CommercePortalAuthEnrollmentStartInputSchema } from '../../api/portal-auth/enrollment/contracts.ts';
@@ -6,11 +6,14 @@ import {
   commercePortalAuthEnrollmentAccountCreationOutcome,
   commercePortalAuthEnrollmentOwesTransitionOutcome,
   commercePortalAuthEnrollmentReadableBy,
+  commercePortalAuthEnrollmentResumeOnRead,
+  enrollmentSubjectOwnsAttempt,
 } from '../../api/portal-auth/enrollment/http.ts';
 import { commercePortalAuthEnrollmentAccountCreationClaim } from '../../api/portal-auth/enrollment/intent.ts';
 import type { CommercePortalAuthEnrollmentTransitionClaim } from '../../api/portal-auth/enrollment/intent.ts';
 import type { CommercePortalAccountCreateResult } from '../../api/portal-auth/provider/account-create.ts';
 import {
+  CommercePortalAccountSubjectSchema,
   EnrollmentActionInvocationIdSchema,
   EnrollmentAttemptIdSchema,
   EnrollmentEvidenceReferenceSchema,
@@ -215,3 +218,54 @@ it('only the Principal that started an Attempt may read it back', () => {
   expect(commercePortalAuthEnrollmentReadableBy(started, actorPrincipalId)).toBe(true);
   expect(commercePortalAuthEnrollmentReadableBy(started, otherPrincipalId)).toBe(false);
 });
+
+it('the shared storefront creator does not prove which customer owns an Attempt', () => {
+  const subject = Schema.decodeSync(CommercePortalAccountSubjectSchema)({
+    authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+    providerSubjectId: PROVIDER_SUBJECT_ID,
+    subjectType: 'user',
+  });
+  const current = attempt({ accountSubject: subject });
+  expect(enrollmentSubjectOwnsAttempt(current, subject)).toBe(true);
+  expect(
+    enrollmentSubjectOwnsAttempt(
+      current,
+      Schema.decodeSync(CommercePortalAccountSubjectSchema)({ ...subject, providerSubjectId: 'another-customer' }),
+    ),
+  ).toBe(false);
+  expect(
+    Schema.is(CommercePortalAccountSubjectSchema)({ ...subject, authenticationNamespaceId: 'another.namespace' }),
+  ).toBe(false);
+  expect(enrollmentSubjectOwnsAttempt(attempt(), subject)).toBe(false);
+});
+
+it.effect('manual recovery keeps the original native Attempt identity and leaves every terminal state alone', () =>
+  Effect.gen(function* manualRecovery() {
+    const calls: string[] = [];
+    const continuation = {
+      advance: (input: { readonly portalEnrollmentAttemptId: string }) => {
+        calls.push(input.portalEnrollmentAttemptId);
+        return Effect.succeed({ outcome: 'COMPLETE' as const });
+      },
+      openSweepPass: Effect.die('No discovery in manual recovery'),
+    };
+    const resumed = yield* commercePortalAuthEnrollmentResumeOnRead(
+      continuation,
+      attempt({ lease: { leaseExpiresAt: at, leaseToken, workerId }, state: 'RECONCILIATION_REQUIRED' }),
+    );
+    expect(Option.isSome(resumed)).toBe(true);
+    expect(calls).toEqual([attemptId]);
+    for (const state of ['FAILED', 'TERMINATED', 'COMPLETE'] as const) {
+      expect(
+        Option.isNone(
+          yield* commercePortalAuthEnrollmentResumeOnRead(
+            continuation,
+            attempt({ lease: { leaseExpiresAt: at, leaseToken, workerId }, state }),
+          ),
+        ),
+      ).toBe(true);
+    }
+    expect(Option.isNone(yield* commercePortalAuthEnrollmentResumeOnRead(continuation, attempt()))).toBe(true);
+    expect(calls).toEqual([attemptId]);
+  }),
+);

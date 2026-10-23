@@ -11,10 +11,10 @@ import { EnrollmentAttemptIdSchema } from '../enrollment-contracts.ts';
 
 /**
  * The Commerce Portal Enrollment transport — the credential carrier for the three supported
- * journeys. Three routes only: one that starts an Attempt and dispatches its first owner
- * transition, one that lets the invitation's recipient present the one-time secret only it holds,
- * and one that reads the Attempt projection back for the exact caller that owns it. There is no
- * route that advances, completes or terminates an Attempt from the outside: every other transition
+ * journeys. Start dispatches the first owner transition; invitation claim accepts its one-time
+ * secret. A live verified customer may read its exact Attempt or request the native continuation
+ * for its current retail Attempt without retaining a browser handle. It cannot assert completion,
+ * termination or any owner outcome: every business transition
  * travels through the continuation or the governed enrollment Actions, and `COMPLETE` is derived
  * from durable owner outcomes rather than asserted by a caller.
  */
@@ -107,6 +107,7 @@ const readErrors = [
   CommercePortalAuthEnrollmentForbiddenProblemSchema,
   CommercePortalAuthEnrollmentNotFoundProblemSchema,
   CommercePortalAuthEnrollmentUnavailableProblemSchema,
+  CommercePortalAuthEnrollmentRateLimitedProblemSchema,
 ] as const;
 const claimInvitationErrors = [
   CommercePortalAuthEnrollmentInvalidProblemSchema,
@@ -155,6 +156,19 @@ const commercePortalAuthEnrollmentGroupDefinition = HttpApiGroup.make('portalAut
       error: claimInvitationErrors,
       params: Schema.Struct({ attemptId: EnrollmentAttemptIdSchema }),
       payload: Schema.toEncoded(CommercePortalAuthEnrollmentClaimInvitationInputSchema),
+      success: CommercePortalAuthEnrollmentAttemptProjectionSchema,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.get('readCurrentEnrollment', '/api/portal-auth/enrollment/current', {
+      error: readErrors,
+      success: CommercePortalAuthEnrollmentAttemptProjectionSchema,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post('resumeCurrentEnrollment', '/api/portal-auth/enrollment/current/resume', {
+      error: readErrors,
+      payload: Schema.Struct({}),
       success: CommercePortalAuthEnrollmentAttemptProjectionSchema,
     }),
   )

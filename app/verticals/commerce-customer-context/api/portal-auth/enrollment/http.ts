@@ -31,6 +31,7 @@ import {
   RecordEnrollmentOutcomeInputSchema,
   isEnrollmentAttemptTerminal,
 } from '../../../shared/enrollment-contracts.ts';
+import { readCurrentRetailEnrollment } from '../../../src/enrollment/attempts/registration-persistence.ts';
 import { CommerceEnrollmentAttemptUnavailable, attemptUnavailable } from '../../../src/enrollment/attempts/errors.ts';
 import type { CommerceEnrollmentAttemptError } from '../../../src/enrollment/attempts/errors.ts';
 import { readCounterpartyInvitationClaimability } from '../../../src/persistence/access-persistence.ts';
@@ -621,6 +622,14 @@ const settleRejectedAccountCreation = Effect.fn('CommercePortalAuthEnrollmentHtt
   },
 );
 
+export const enrollmentSubjectOwnsAttempt = (
+  attempt: EnrollmentAttemptSnapshot,
+  subject: CommercePortalAccountSubject,
+): boolean =>
+  attempt.accountSubject?.authenticationNamespaceId === subject.authenticationNamespaceId &&
+  attempt.accountSubject.subjectType === subject.subjectType &&
+  attempt.accountSubject.providerSubjectId === subject.providerSubjectId;
+
 const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(function* startEnrollmentEffect(
   payload: Schema.Codec.Encoded<typeof CommercePortalAuthEnrollmentStartInputSchema>,
   idempotencyKey: string | undefined,
@@ -716,6 +725,19 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
     );
     if (!commercePortalAuthEnrollmentReadableBy(started.attempt, callerPrincipalId)) {
       return yield* Effect.fail(commercePortalAuthEnrollmentNotFoundProblem());
+    }
+    if (input.journey === 'RETAIL_SELF_ENROLLMENT') {
+      const provider = yield* CommercePortalAuthService;
+      const lifecycle = yield* CommercePortalAuthSessionLifecycle;
+      const subject = yield* commercePortalAuthEnrollmentSessionSubject(
+        provider,
+        lifecycle,
+        requestHeaders(request.headers),
+      );
+      // A repeated signup is not proof of account ownership, even behind the same workload.
+      if (Option.isNone(subject) || !enrollmentSubjectOwnsAttempt(started.attempt, subject.value)) {
+        return yield* Effect.fail(commercePortalAuthEnrollmentNotFoundProblem());
+      }
     }
   }
 
@@ -892,6 +914,57 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
  * Tenant is not merely hidden — it is unreachable. Inside that Tenant the Attempt still belongs to
  * the Principal that started it, so a caller that did not is answered exactly as an absent one is.
  */
+/** No browser Attempt, Party or provider identifier participates in current-subject authority. */
+export const currentEnrollmentForRequest = Effect.fn('CommercePortalAuthEnrollmentHttp.current')(
+  function* currentEnrollment(request: HttpServerRequest.HttpServerRequest, resume: boolean) {
+    yield* noStoreHeaders;
+    if (resume) {
+      yield* requireTrustedOrigin(request.headers, () => commercePortalAuthEnrollmentUntrustedOriginProblem);
+    }
+    const principal = yield* authenticateOperationPrincipal(Redacted.make(request.headers['authorization']), {
+      authentication: () => commercePortalAuthEnrollmentAuthenticationProblem,
+      unavailable: () => commercePortalAuthEnrollmentUnavailableProblem(),
+    });
+    if (principal.legalEntityId === undefined) {
+      return yield* Effect.fail(commercePortalAuthEnrollmentNotFoundProblem());
+    }
+    const provider = yield* CommercePortalAuthService;
+    const lifecycle = yield* CommercePortalAuthSessionLifecycle;
+    const subject = yield* commercePortalAuthEnrollmentSessionSubject(
+      provider,
+      lifecycle,
+      requestHeaders(request.headers),
+    );
+    if (Option.isNone(subject)) {
+      return yield* Effect.fail(commercePortalAuthEnrollmentAuthenticationProblem);
+    }
+    const runner = yield* CommerceEnrollmentOwnerTransactionRunner;
+    const id = yield* runner
+      .run({ legalEntityId: principal.legalEntityId, tenantId: principal.tenantId }, (transaction) =>
+        readCurrentRetailEnrollment(transaction, principal.principalId, subject.value),
+      )
+      .pipe(Effect.mapError(commercePortalAuthEnrollmentUnavailableProblem));
+    if (Option.isNone(id)) {
+      return yield* Effect.fail(commercePortalAuthEnrollmentNotFoundProblem());
+    }
+    const tenantId = yield* Schema.decodeEffect(EnrollmentTenantIdSchema)(principal.tenantId).pipe(
+      Effect.mapError(commercePortalAuthEnrollmentUnavailableProblem),
+    );
+    const store = commerceEnrollmentOwnerAttemptStoreForRun({ tenantId }, runner.run);
+    const attempt = yield* store
+      .read({ portalEnrollmentAttemptId: id.value, tenantId })
+      .pipe(Effect.mapError(commercePortalAuthEnrollmentUnavailableProblem));
+    if (resume && !isEnrollmentAttemptTerminal(attempt.state)) {
+      yield* commercePortalAuthEnrollmentExistingAccountBudget(principal.principalId, subject.value.providerSubjectId);
+      const continuation = yield* CommerceEnrollmentContinuation;
+      // Explicit recovery is independent of background discovery's exhausted budget. It does not
+      // reset that budget, any lease, or the original owner invocation/idempotency key.
+      yield* forkEnrollmentAdvance(commercePortalAuthEnrollmentResumeOnRead(continuation, attempt), id.value);
+    }
+    return commercePortalAuthEnrollmentAttemptProjection(attempt);
+  },
+);
+
 const readEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.read')(function* readEnrollmentEffect(
   portalEnrollmentAttemptId: typeof EnrollmentAttemptIdSchema.Type,
   request: HttpServerRequest.HttpServerRequest,
@@ -926,6 +999,20 @@ const readEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.read')(functi
     // advance it either, and the answer is the one an absent Attempt already gives.
     return yield* Effect.fail(commercePortalAuthEnrollmentNotFoundProblem());
   }
+  const provider = yield* CommercePortalAuthService;
+  const lifecycle = yield* CommercePortalAuthSessionLifecycle;
+  const subject = yield* commercePortalAuthEnrollmentSessionSubject(
+    provider,
+    lifecycle,
+    requestHeaders(request.headers),
+  );
+  if (
+    Option.isNone(subject) ||
+    !enrollmentSubjectOwnsAttempt(attempt, subject.value) ||
+    principal.legalEntityId !== attempt.targetLegalEntityId
+  ) {
+    return yield* Effect.fail(commercePortalAuthEnrollmentNotFoundProblem());
+  }
   // Detached for the same reason the start route detaches: cancelling this request must never
   // cancel a claimed owner transition mid-flight. The caller reads the projection as it was.
   yield* forkEnrollmentAdvance(
@@ -957,5 +1044,7 @@ export const portalAuthEnrollmentApiLive = HttpApiBuilder.group(
           request,
         ),
       )
+      .handle('readCurrentEnrollment', ({ request }) => currentEnrollmentForRequest(request, false))
+      .handle('resumeCurrentEnrollment', ({ request }) => currentEnrollmentForRequest(request, true))
       .handle('readEnrollment', ({ params, request }) => readEnrollment(params.attemptId, request)),
 ).pipe(Layer.provide(commercePortalAuthEnrollmentSchemaErrorLive));

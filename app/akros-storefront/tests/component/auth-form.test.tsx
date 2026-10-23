@@ -53,11 +53,11 @@ describe("real customer forms", () => {
     expect(router.refresh).not.toHaveBeenCalled();
     expect(localStorage.length).toBe(0);
   });
-  it("navigates only after the owner confirms a created session", async () => {
+  it("checks admission after a created session instead of assuming enrollment completed", async () => {
     fetchAccount.mockResolvedValue(Response.json({ outcome: "SESSION_CREATED" }));
     render(<LoginForm />);
     login();
-    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/muj-ucet"));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith("/dokonceni-registrace"));
     expect(router.refresh).toHaveBeenCalledOnce();
     expect(localStorage.length).toBe(0);
   });
