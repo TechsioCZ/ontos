@@ -340,6 +340,18 @@ jobs:
           COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
         run: mise exec -- pnpm db:migrate
 
+      # Reuse the native service TLS secrets and existing VPN; no GitHub secret copies or key rotation.
+      - name: Reconcile storefront, Commerce and Privacy service grants
+        timeout-minutes: 10
+        working-directory: app
+        env:
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: |
+          mise exec -- pnpm exec node scripts/demo/reconcile-stage-service-grants.mts --zerops --check
+          mise exec -- pnpm exec node scripts/demo/reconcile-stage-service-grants.mts --zerops --apply
+          mise exec -- pnpm exec node scripts/demo/reconcile-stage-service-grants.mts --zerops --verify
+
       # Deploys only upload immutable release Workers; nothing serves them until publication. Each upload
       # locks only its own release identity, so eight run side by side (Cloudflare API rate limits).
       - name: Upload every immutable release Worker
