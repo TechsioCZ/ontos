@@ -31,6 +31,7 @@ import {
   readVerifiedReleaseFiles,
   requirePlannedSourceRevision,
   resolveCleanImmutableApplicationSourceRevision,
+  retryTransientImmutableUpload,
   validateImmutableAssetRedirects,
   validateImmutablePublicAssets,
   validateReleasePlan,
@@ -221,6 +222,7 @@ export const deployImmutableShellRelease = Effect.fn('ImmutableShellRelease.depl
     return { artifacts, assetsVersionId, plan: input.plan } satisfies ImmutableShellArtifactReceipt;
   },
   Effect.scoped,
+  (attempt, input) => retryTransientImmutableUpload([input.plan.assetsScriptName])(attempt),
   withApplicationCompositionPublicationLock,
 );
 

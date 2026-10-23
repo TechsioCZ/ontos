@@ -327,8 +327,9 @@ jobs:
             [[ "$id" == shell-super-app ]] && script=scripts/immutable-shell-release.mts
             ONTOS_IMMUTABLE_RELEASE_SECRETS="$(jq -cer --arg app "$id" '.[$app] | select(type == "object")' <<<"$ALL_RELEASE_SECRETS")" || return 1
             export ONTOS_IMMUTABLE_RELEASE_SECRETS
-            # One attempt: a failed upload may already have created the commit's release identity, which a
-            # second attempt refuses ("already exists") and which only a new commit replaces.
+            # The release script retries a transient Cloudflare failure (unknown error 10013, internal 10021,
+            # 429/5xx, dropped connections) up to three times, removing the attempt's half release first so
+            # the same identity uploads again; any other failure ends the unit at once.
             if mise exec -- pnpm exec node "$script" deploy \
               --app-directory "$unit_path" \
               --plan-file ".codex/reports/releases/$id/plan.json" \
@@ -337,7 +338,7 @@ jobs:
               return 0
             fi
             echo "::group::$id upload log"; tail -80 "$log"; echo '::endgroup::'
-            echo "::error title=Upload failed::$id (see its upload log; the next push re-releases every unit under new identities)"
+            echo "::error title=Upload failed::$id (see its upload log; a unit that failed only transiently left no half release, so re-running the job retries it)"
             return 1
           }
           export -f upload

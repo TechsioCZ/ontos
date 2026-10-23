@@ -19,6 +19,7 @@ import {
   Match,
   Order,
   Redacted,
+  Schedule,
   Schema,
 } from 'effect';
 import { TestClock } from 'effect/testing';
@@ -28,6 +29,7 @@ import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
 import {
   ImmutableApplicationReleaseError,
   ImmutableApplicationReleaseReceiptSchema,
+  ImmutableUploadRetrySchedule,
   deployImmutableApplicationRelease,
   immutableAssetsWranglerConfig,
   deriveImmutableApplicationReleasePlan,
@@ -381,6 +383,40 @@ it.effect('executes source checks without inherited process environment selector
     Effect.provide(OpsShellLive.pipe(Layer.provide(NodeServices.layer))),
   ),
 );
+
+const PROVIDER_REQUEST = `A request to the Cloudflare API (/accounts/${'a'.repeat(32)}/workers/scripts/ontos-release) failed.`;
+
+for (const [label, stderr, transient] of [
+  ['unknown error 10013', `\u001B[31m✘ ${PROVIDER_REQUEST}\n  An unknown error has occurred. [code: 10013]\n`, true],
+  [
+    'internal binding error 10021',
+    `${PROVIDER_REQUEST}\n  binding HYPERDRIVE of type hyperdrive failed to generate: internal error; please try again later or contact support: dial tcp: i/o timeout [code: 10021]\n`,
+    true,
+  ],
+  ['gateway error', 'Received a malformed response from the API\n  502 Bad Gateway\n', true],
+  [
+    'script validation error 10021',
+    `${PROVIDER_REQUEST}\n  Uncaught SyntaxError: Unexpected token [code: 10021]\n`,
+    false,
+  ],
+  ['authentication error', `${PROVIDER_REQUEST}\n  Authentication error [code: 10000]\n`, false],
+] as const) {
+  it.effect(`classifies a provider ${label} as ${transient ? 'transient' : 'final'}`, () =>
+    runCommand({
+      args: ['--input-type=module', '-e', `process.stderr.write(${JSON.stringify(stderr)}); process.exit(1);`],
+      classifyTransientProviderFailure: true,
+      command: nodeProcess.execPath,
+    }).pipe(
+      Effect.flip,
+      Effect.tap((failure) =>
+        Effect.sync(() => {
+          expect(failure.transient === true).toBe(transient);
+        }),
+      ),
+      Effect.provide(OpsShellLive.pipe(Layer.provide(NodeServices.layer))),
+    ),
+  );
+}
 
 it.effect('derives stable bounded provider names and the retained assets origin from a release identity', () =>
   Effect.gen(function* releaseIdentity() {
@@ -976,7 +1012,12 @@ const refusesExistingProviderRelease = (existingBackend: boolean) =>
       expect(requests[0]?.url).toBe(
         `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/subdomain`,
       );
-      expect(requests.slice(1).map(({ url }) => url).sort()).toEqual(
+      expect(
+        requests
+          .slice(1)
+          .map(({ url }) => url)
+          .sort(),
+      ).toEqual(
         [
           `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.backendScriptName}`,
           `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.assetsScriptName}`,
@@ -1034,7 +1075,10 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly backendSubdomainEnabled?: boolean;
     readonly backendSubdomainStatus?: number;
     readonly backendSubdomainSuccess?: boolean;
+    /** Outcomes of successive native backend uploads; an upload past the list succeeds. */
+    readonly backendUploadFailures?: readonly ('permanent' | 'transient')[];
     readonly changedSource?: boolean;
+    readonly deleteStatus?: number;
     readonly deployedEntrypoint?: string | false;
     readonly envelopeUnitId?: string;
     readonly initialAssetNotFound?: boolean;
@@ -1130,6 +1174,25 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   let canceledAssetBodies = 0;
   let checkedSource = 0;
   let absentChecks = 0;
+  let backendUploads = 0;
+  // Removing the assets Worker (the last removal) makes the next attempt observe both identities absent again.
+  const removeProviderScript = (destination: URL) => {
+    const status = options.deleteStatus ?? 200;
+    if (status === 200 && destination.pathname.endsWith(`/workers/scripts/${plan.assetsScriptName}`)) {
+      absentChecks = 0;
+    }
+    return Response.json({ success: status === 200 }, { status });
+  };
+  // A native backend upload (not its packaging dry run) fails as the next listed outcome says.
+  const nextBackendUploadOutcome = () => {
+    const outcome = options.backendUploadFailures?.[backendUploads] ?? 'success';
+    backendUploads += 1;
+    return outcome;
+  };
+  const backendUploadOutcome = (command: OpsCommand, capturedConfig: Readonly<Record<string, Schema.Json>>) =>
+    capturedConfig.name === plan.backendScriptName && !command.args.includes('--dry-run')
+      ? nextBackendUploadOutcome()
+      : 'success';
   const providerResponse = (destination: URL) =>
     Match.value(destination.pathname).pipe(
       Match.when(`/client/v4${recoveryWorkerPath}`, () =>
@@ -1252,6 +1315,9 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
       requests.push(destination.href);
       if (request.method !== 'GET') {
         providerWrites.push({ method: request.method, url: destination.href });
+      }
+      if (request.method === 'DELETE') {
+        return HttpClientResponse.fromWeb(request, removeProviderScript(destination));
       }
       let response: Response;
       if (destination.hostname === 'api.cloudflare.com') {
@@ -1424,6 +1490,14 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
             );
           }
         }
+        const uploadOutcome = backendUploadOutcome(command, capturedConfig);
+        if (uploadOutcome !== 'success') {
+          return yield* new OpsCommandError({
+            command: [command.command, ...command.args].join(' '),
+            message: 'native test upload failed',
+            transient: uploadOutcome === 'transient',
+          });
+        }
         if (capturedConfig.name === plan.assetsScriptName && options.assetsUploadError !== undefined) {
           return yield* Effect.fail({
             providerCode: options.assetsUploadError.providerCode,
@@ -1433,18 +1507,20 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
         return '';
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.mapError(
-          (cause) =>
-            new OpsCommandError({
-              cause,
-              command: options.assetsUploadCommand ?? [command.command, ...command.args].join(' '),
-              message: 'native test packaging failed',
-            }),
+        Effect.mapError((cause) =>
+          Schema.is(OpsCommandError)(cause)
+            ? cause
+            : new OpsCommandError({
+                cause,
+                command: options.assetsUploadCommand ?? [command.command, ...command.args].join(' '),
+                message: 'native test packaging failed',
+              }),
         ),
       ),
   });
   const layer = Layer.mergeAll(
     Layer.succeed(HttpClient.HttpClient, client),
+    Layer.succeed(ImmutableUploadRetrySchedule, Schedule.forever),
     shellLayer,
     releaseLockDatabase(timeline),
     ConfigProvider.layer(
@@ -1492,6 +1568,79 @@ it.effect('uploads a release under its own identity lock, never the environment-
       expect(timeline[0]).toBe(`pg_advisory_lock(hashtextextended($1, 0)) ${identityKey}`);
       expect(timeline.at(-1)).toBe(`pg_advisory_unlock(hashtextextended($1, 0)) ${identityKey}`);
       expect(timeline.filter((entry) => entry.startsWith('exec wrangler deploy')).length).toBe(3);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+const backendUploads = (deployment: { readonly timeline: readonly string[] }) =>
+  deployment.timeline.filter((entry) => entry.startsWith('exec wrangler deploy') && entry.includes('--no-bundle'));
+
+it.effect('retries a transient provider upload failure under the same identity after removing its half release', () =>
+  Effect.scoped(
+    Effect.gen(function* transientUploadRetry() {
+      const deployment = yield* prepareDeployment({ backendUploadFailures: ['transient', 'transient'] });
+      const receipt = yield* deployment.deploy;
+      const scripts = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts`;
+
+      expect(receipt.backend.workerName).toBe(deployment.plan.backendScriptName);
+      expect(backendUploads(deployment)).toHaveLength(3);
+      // Each failed attempt removes the backend first, then its assets Worker, and never forces deletion.
+      expect(deployment.providerWrites).toEqual(
+        [1, 2].flatMap(() => [
+          { method: 'DELETE', url: `${scripts}/${deployment.plan.backendScriptName}` },
+          { method: 'DELETE', url: `${scripts}/${deployment.plan.assetsScriptName}` },
+        ]),
+      );
+      // Every attempt re-establishes absence inside the one identity lock.
+      const identityKey = `ontos.immutable-application-release:${deployment.plan.backendScriptName}`;
+      expect(deployment.timeline.filter((entry) => entry.startsWith('pg_advisory_lock'))).toEqual([
+        `pg_advisory_lock(hashtextextended($1, 0)) ${identityKey}`,
+      ]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('fails after three transient upload attempts and leaves no half release behind', () =>
+  Effect.scoped(
+    Effect.gen(function* persistentTransientUpload() {
+      const deployment = yield* prepareDeployment({ backendUploadFailures: ['transient', 'transient', 'transient'] });
+      const failure = yield* deployment.deploy.pipe(Effect.flip);
+
+      expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+      expect(failure.message).toBe(
+        'the provider failed transiently on all 3 upload attempts; the half release was removed',
+      );
+      expect(backendUploads(deployment)).toHaveLength(3);
+      expect(deployment.providerWrites.filter(({ method }) => method === 'DELETE')).toHaveLength(6);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('fails fast on a non-transient provider upload failure without retrying or deleting', () =>
+  Effect.scoped(
+    Effect.gen(function* permanentUpload() {
+      const deployment = yield* prepareDeployment({ backendUploadFailures: ['permanent'] });
+      const failure = yield* deployment.deploy.pipe(Effect.flip);
+
+      expect(Schema.is(OpsCommandError)(failure)).toBe(true);
+      expect(backendUploads(deployment)).toHaveLength(1);
+      expect(deployment.providerWrites).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('stops retrying when a half release cannot be removed', () =>
+  Effect.scoped(
+    Effect.gen(function* unremovableHalfRelease() {
+      const deployment = yield* prepareDeployment({ backendUploadFailures: ['transient'], deleteStatus: 409 });
+      const failure = yield* deployment.deploy.pipe(Effect.flip);
+
+      expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+      expect(failure.message).toBe(
+        `the half-created immutable release ${deployment.plan.backendScriptName} could not be removed`,
+      );
+      expect(backendUploads(deployment)).toHaveLength(1);
+      expect(deployment.providerWrites).toHaveLength(1);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

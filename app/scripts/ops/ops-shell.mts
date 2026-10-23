@@ -18,6 +18,11 @@ export interface OpsCommand {
   readonly args: readonly string[];
   /** Capture stderr for a safe provider error pair instead of inheriting diagnostics. */
   readonly captureProviderFailure?: boolean;
+  /**
+   * Capture stderr (logged afterwards) so a non-zero exit is marked `transient` when the provider reported a
+   * failure its own retry guidance covers.
+   */
+  readonly classifyTransientProviderFailure?: boolean;
   readonly command: string;
   readonly cwd?: string;
   /** Added to the inherited environment; values are secret and never rendered. */
@@ -56,9 +61,12 @@ interface SpawnSettings {
   stdin: ChildProcessModel.CommandInput;
 }
 
+const pipesStderr = (command: OpsCommand) =>
+  command.captureProviderFailure === true || command.classifyTransientProviderFailure === true;
+
 const spawnOptions = (command: OpsCommand): ChildProcessModel.CommandOptions => {
   const options: SpawnSettings = {
-    stderr: command.captureProviderFailure === true ? 'pipe' : 'inherit',
+    stderr: pipesStderr(command) ? 'pipe' : 'inherit',
     stdin: command.stdin === undefined ? 'ignore' : Stream.make(encoder.encode(Redacted.value(command.stdin))),
   };
   if (command.cwd !== undefined) {
@@ -80,7 +88,28 @@ interface CommandFailureDetails {
   cause?: ProviderFailure;
   command: string;
   message: string;
+  transient?: boolean;
 }
+
+/**
+ * Cloudflare failures that say nothing about the request itself: its unknown error (10013, seen on
+ * `assets-upload-session`), an internal error that asks to try again later (10021 binding generation hitting a
+ * DNS timeout), rate limiting, gateway or server errors and dropped connections.
+ */
+const TRANSIENT_PROVIDER_FAILURES: readonly RegExp[] = [
+  /\[code: 10013\]/u,
+  /\binternal error\b[^\n]*\btry again later\b/iu,
+  /\b(?:429 Too Many Requests|50[0234] (?:Internal Server Error|Bad Gateway|Service Unavailable|Gateway Timeout))\b/u,
+  /\[code: (?:971|10429)\]/u,
+  /\bReceived a malformed response from the API\b/u,
+  /\b(?:ECONNRESET|ETIMEDOUT|EAI_AGAIN|UND_ERR_SOCKET|UND_ERR_CONNECT_TIMEOUT|fetch failed|socket hang up)\b/u,
+];
+
+/** Whether captured provider output reports only a transient provider failure. */
+export const isTransientProviderFailure = (stderr: string): boolean => {
+  const output = stripVTControlCharacters(stderr);
+  return TRANSIENT_PROVIDER_FAILURES.some((pattern) => pattern.test(output));
+};
 
 /** Keeps only one unambiguous provider error pair; captured output is never exposed. */
 const parseProviderFailure = (stderr: string): ProviderFailure | undefined => {
@@ -118,21 +147,33 @@ const makeOpsShell = Effect.gen(function* makeOpsShell() {
         const [stdout, stderr, exitCode] = yield* Effect.all(
           [
             handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
-            command.captureProviderFailure === true
-              ? handle.stderr.pipe(Stream.decodeText(), Stream.mkString)
-              : Effect.succeed(null),
+            pipesStderr(command) ? handle.stderr.pipe(Stream.decodeText(), Stream.mkString) : Effect.succeed(null),
             handle.exitCode,
           ],
           { concurrency: 3 },
         );
+        if (stderr !== null && command.classifyTransientProviderFailure === true && stderr.trim() !== '') {
+          // The provider diagnostics stay visible in the command's log, as they were before being captured.
+          yield* (exitCode === 0 ? Effect.logInfo : Effect.logWarning)(stripVTControlCharacters(stderr).trimEnd()).pipe(
+            Effect.annotateLogs({ command: renderCommand(command) }),
+          );
+        }
         if (exitCode !== 0) {
-          const cause = stderr === null ? undefined : parseProviderFailure(stderr);
+          const cause =
+            stderr === null || command.captureProviderFailure !== true ? undefined : parseProviderFailure(stderr);
           const failure: CommandFailureDetails = {
             command: renderCommand(command),
             message: `${renderCommand(command)} exited with ${String(exitCode)}`,
           };
           if (cause !== undefined) {
             failure.cause = cause;
+          }
+          if (
+            stderr !== null &&
+            command.classifyTransientProviderFailure === true &&
+            isTransientProviderFailure(stderr)
+          ) {
+            failure.transient = true;
           }
           return yield* new OpsCommandError(failure);
         }

@@ -14,6 +14,7 @@ import {
   Array as EffectArray,
   Clock,
   Config,
+  Context,
   Data,
   Duration,
   Effect,
@@ -23,6 +24,7 @@ import {
   Order,
   Redacted,
   Runtime,
+  Schedule,
   Schema,
   Stream,
 } from 'effect';
@@ -51,6 +53,7 @@ import {
 } from './application-release-intent.mts';
 import type { ApplicationReleaseIntent } from './application-release-intent.mts';
 import { verifyImmutableBackendModuleContent } from './immutable-backend-package.mts';
+import { OpsCommandError } from './ops/ops-command-error.mts';
 import { OpsShellLive, runCommand } from './ops/ops-shell.mts';
 import {
   ApplicationCompositionAuthorityAdminDatabaseLive,
@@ -59,7 +62,12 @@ import {
 
 export class ImmutableApplicationReleaseError extends Schema.TaggedError<ImmutableApplicationReleaseError>()(
   'ImmutableApplicationReleaseError',
-  { cause: Schema.optional(Schema.Defect()), message: Schema.String },
+  {
+    cause: Schema.optional(Schema.Defect()),
+    message: Schema.String,
+    /** The provider failed an upload in a way its own retry guidance covers. */
+    transient: Schema.optional(Schema.Boolean),
+  },
 ) {}
 
 const ImmutableAssetNotReady = Data.TaggedError('ImmutableAssetNotReady')<{
@@ -119,6 +127,115 @@ export const ImmutableShellArtifactReceiptSchema = Schema.Struct({
 export type ImmutableShellArtifactReceipt = typeof ImmutableShellArtifactReceiptSchema.Type;
 
 const fail = (message: string, cause?: unknown) => new ImmutableApplicationReleaseError({ cause, message });
+
+const isTransientUploadFailure = <E,>(failure: E): boolean =>
+  Schema.is(ImmutableApplicationReleaseError)(failure) && failure.transient === true;
+
+/** Marks a Wrangler upload failure the provider reported as transient, so its release attempt may run again. */
+const classifyTransientUpload = <A, E, R>(upload: Effect.Effect<A, E, R>) =>
+  upload.pipe(
+    Effect.mapError((failure) =>
+      Schema.is(OpsCommandError)(failure) && failure.transient === true
+        ? new ImmutableApplicationReleaseError({
+            cause: failure,
+            message: 'the provider failed the upload transiently',
+            transient: true,
+          })
+        : failure,
+    ),
+  );
+
+export const IMMUTABLE_UPLOAD_ATTEMPTS = 3;
+
+/** The pause before each repeated upload attempt: 10 s, then 20 s. */
+export const ImmutableUploadRetrySchedule = Context.Reference<Schedule.Schedule<unknown>>(
+  '@app/scripts/immutable-application-release/ImmutableUploadRetrySchedule',
+  { defaultValue: () => Schedule.exponential('10 seconds') },
+);
+
+const providerScriptUrl = (accountId: string, scriptName: string) =>
+  `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}`;
+
+/**
+ * Removes what a transiently failed attempt may have created under its release identities. The attempt held
+ * the identity lock and found every identity absent before it uploaded, so anything present now is its own
+ * unpublished half release. Deletion is never forced: a release something already references stays, and the
+ * next attempt's absence check then refuses it.
+ */
+const removeHalfCreatedImmutableRelease = Effect.fn('ImmutableApplicationRelease.removeHalfCreated')(
+  function* removeHalfCreatedImmutableReleaseEffect(scriptNames: readonly string[]) {
+    const client = yield* HttpClient.HttpClient;
+    const accountId = yield* Config.String('CLOUDFLARE_ACCOUNT_ID');
+    const token = yield* Config.Redacted('CLOUDFLARE_API_TOKEN');
+    // The backend goes first: it may reference its assets Worker, never the other way round.
+    // Removal stops at the first identity the provider keeps, so nothing behind it is removed either.
+    return yield* Effect.forEach(
+      scriptNames,
+      (scriptName) =>
+        client
+          .execute(
+            HttpClientRequest.bearerToken(
+              HttpClientRequest.delete(providerScriptUrl(accountId, scriptName)),
+              Redacted.value(token),
+            ),
+          )
+          .pipe(
+            Effect.tap((response) => Effect.ignore(response.arrayBuffer)),
+            Effect.timeout(Duration.seconds(30)),
+            Effect.filterOrFail(
+              (response) => response.status === 200 || response.status === 404,
+              () => fail(`the half-created immutable release ${scriptName} could not be removed`),
+            ),
+            Effect.as(scriptName),
+          ),
+      { concurrency: 1 },
+    );
+  },
+  Effect.mapError((cause) =>
+    Schema.is(ImmutableApplicationReleaseError)(cause)
+      ? cause
+      : fail('the half-created immutable release could not be removed within its timeout'),
+  ),
+);
+
+const removeAfterTransientFailure =
+  (scriptNames: readonly string[], attempt: number) =>
+  <E,>(failure: E) =>
+    isTransientUploadFailure(failure)
+      ? Effect.logWarning(
+          `transient provider failure releasing ${scriptNames.join(', ')} (attempt ${String(attempt)} of ${String(IMMUTABLE_UPLOAD_ATTEMPTS)}); removing its half release`,
+        ).pipe(Effect.andThen(removeHalfCreatedImmutableRelease(scriptNames)))
+      : Effect.void;
+
+const finalTransientFailure = <E,>(failure: E) =>
+  isTransientUploadFailure(failure)
+    ? fail(
+        `the provider failed transiently on all ${String(IMMUTABLE_UPLOAD_ATTEMPTS)} upload attempts; the half release was removed`,
+        failure,
+      )
+    : failure;
+
+/**
+ * Runs one immutable release attempt up to {@link IMMUTABLE_UPLOAD_ATTEMPTS} times while the provider fails
+ * transiently, removing each failed attempt's half release first so the next one starts from verified absence
+ * under the same content-addressed identity. A failed final attempt leaves no half release either, so the
+ * same commit can be released again. Every other failure ends the release at once.
+ */
+export const retryTransientImmutableUpload =
+  (scriptNames: readonly string[]) =>
+  <A, E, R>(attempt: Effect.Effect<A, E, R>) =>
+    Effect.gen(function* retryTransientImmutableUploadEffect() {
+      const schedule = yield* Effect.service(ImmutableUploadRetrySchedule);
+      let attempts = 0;
+      const attemptOnce = Effect.suspend(() => {
+        attempts += 1;
+        return attempt.pipe(Effect.tapError(removeAfterTransientFailure(scriptNames, attempts)));
+      });
+      return yield* attemptOnce.pipe(
+        Effect.retry({ schedule, times: IMMUTABLE_UPLOAD_ATTEMPTS - 1, while: isTransientUploadFailure }),
+        Effect.mapError(finalTransientFailure),
+      );
+    });
 
 /** Logs how long each upload phase took since the previous mark, so a slow release names its slow step. */
 const releasePhaseTimer = (release: string) =>
@@ -1032,6 +1149,7 @@ export const deployImmutableAssets = Effect.fn('ImmutableApplicationRelease.depl
     const command = {
       args: ['exec', 'wrangler', 'deploy', '--config', input.configFile],
       captureProviderFailure: true,
+      classifyTransientProviderFailure: true,
       command: 'pnpm',
       cwd: input.appDirectory,
       env: { CLOUDFLARE_ACCOUNT_ID: Redacted.make(input.accountId), CLOUDFLARE_API_TOKEN: input.token },
@@ -1050,11 +1168,15 @@ export const deployImmutableAssets = Effect.fn('ImmutableApplicationRelease.depl
           return yield* completeImmutableAssetsRouting(input.accountId, input.token, input.plan);
         }),
       ),
+      classifyTransientUpload,
     );
   },
 );
 
-/** Uploads one content-addressed release and reads it back. Registers nothing and never deletes a release. */
+/**
+ * Uploads one content-addressed release and reads it back. Registers nothing and deletes only its own half
+ * release after a transient provider failure (see {@link retryTransientImmutableUpload}).
+ */
 const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease.upload')(
   function* uploadImmutableReleaseEffect(input: {
     readonly appDirectory: string;
@@ -1180,12 +1302,15 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
       ),
     );
     const deploy = (configFile: string, extra: readonly string[]) =>
-      runCommand({
-        args: ['exec', 'wrangler', 'deploy', '--config', configFile, ...extra],
-        command: 'pnpm',
-        cwd: input.appDirectory,
-        env: { CLOUDFLARE_ACCOUNT_ID: Redacted.make(accountId), CLOUDFLARE_API_TOKEN: apiToken },
-      });
+      classifyTransientUpload(
+        runCommand({
+          args: ['exec', 'wrangler', 'deploy', '--config', configFile, ...extra],
+          classifyTransientProviderFailure: true,
+          command: 'pnpm',
+          cwd: input.appDirectory,
+          env: { CLOUDFLARE_ACCOUNT_ID: Redacted.make(accountId), CLOUDFLARE_API_TOKEN: apiToken },
+        }),
+      );
     const packageDirectory = yield* fileSystem.makeTempDirectoryScoped({
       prefix: 'ontos-immutable-package-',
     });
@@ -1325,7 +1450,11 @@ export const deployImmutableApplicationRelease = (input: {
   readonly appDirectory: string;
   readonly plan: ImmutableApplicationReleasePlan;
 }) =>
-  withImmutableApplicationReleaseIdentityLock(input.plan.backendScriptName)(uploadImmutableApplicationRelease(input));
+  withImmutableApplicationReleaseIdentityLock(input.plan.backendScriptName)(
+    uploadImmutableApplicationRelease(input).pipe(
+      retryTransientImmutableUpload([input.plan.backendScriptName, input.plan.assetsScriptName]),
+    ),
+  );
 
 const PlanDocumentSchema = Schema.Struct({
   ...ImmutableApplicationReleasePlanSchema.fields,
@@ -1484,7 +1613,8 @@ const exitWhenCommandCompletes: Runtime.Teardown = (exit, onExit) => {
       };
       const kind = value.constructor?.name ?? typeof handle;
       if (value.remoteAddress !== undefined) return `${kind} ${value.remoteAddress}:${String(value.remotePort)}`;
-      if (value.spawnargs !== undefined) return `${kind} pid ${String(value.pid)} ${value.spawnargs.join(' ').slice(0, 120)}`;
+      if (value.spawnargs !== undefined)
+        return `${kind} pid ${String(value.pid)} ${value.spawnargs.join(' ').slice(0, 120)}`;
       return kind;
     });
     process.stderr.write(
