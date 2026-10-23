@@ -1,0 +1,264 @@
+import { and, desc, eq, sql } from 'drizzle-orm';
+import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
+import { Effect, Schema } from 'effect';
+
+import type { ActionHandlerContext } from '../../actions/context.ts';
+import { defineAction } from '../../actions/definition.ts';
+import {
+  IdentityLifecycleConflictError,
+  IdentityPersistenceUnavailableError,
+  IdentityTargetInvalidError,
+  PrincipalManagementErrorSchema,
+} from '../../auth/principal-management-errors.ts';
+import { auditEvents, principalCompanyMemberships, principals } from '../../db/schema.ts';
+import type { ScopedTransactionExecutor } from '../../db/scoped-transaction.ts';
+import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
+import { AgentGrantAccessSchema, AgentGrantWritePolicySchema } from '../../install/agent-entity-grants.ts';
+import { principalLifecycleDomainEvents, recordPrincipalLifecycleChange } from './principal-lifecycle-event.ts';
+
+const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('AgentProfilePrincipalId'),
+  Schema.decodeTo(Schema.String),
+);
+const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand('AgentProfileLegalEntityId'),
+  Schema.decodeTo(Schema.String),
+);
+const AgentProfileModuleIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(120)).pipe(
+  Schema.brand('AgentProfileModuleId'),
+  Schema.decodeTo(Schema.String),
+);
+const AgentModuleGrantSchema = Schema.Struct({ access: AgentGrantAccessSchema, moduleId: AgentProfileModuleIdSchema });
+const displayName = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(200),
+  Schema.isPattern(/^\S(?:.*\S)?$/u),
+);
+export const AgentProfileSchema = Schema.Struct({
+  // oxlint-disable-next-line effect-native/no-nullable-schema-field -- Public profile payload and audited evidence encode explicit clearing as null.
+  description: Schema.NullOr(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500))),
+  displayName,
+  modules: Schema.Array(AgentModuleGrantSchema).check(Schema.isMaxLength(100)),
+  // oxlint-disable-next-line effect-native/no-nullable-schema-field -- Null explicitly removes the responsible principal in the external Action contract.
+  ownerPrincipalId: Schema.NullOr(PrincipalIdSchema),
+  writePolicy: AgentGrantWritePolicySchema,
+});
+export const ConfigureAgentPayloadSchema = Schema.Struct({
+  ...AgentProfileSchema.fields,
+  operation: Schema.Literals(['create-agent', 'configure-agent']),
+  principalId: PrincipalIdSchema,
+});
+export type ConfigureAgentPayload = typeof ConfigureAgentPayloadSchema.Type;
+export const ConfigureAgentResultSchema = Schema.Struct({
+  operation: ConfigureAgentPayloadSchema.fields.operation,
+  principalId: PrincipalIdSchema,
+  revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  status: Schema.Literals(['active', 'disabled']),
+});
+export const ConfigureAgentAuditEvidenceSchema = Schema.Struct({
+  ...AgentProfileSchema.fields,
+  legalEntityId: LegalEntityIdSchema,
+  operation: ConfigureAgentPayloadSchema.fields.operation,
+  // oxlint-disable-next-line effect-native/no-nullable-schema-field -- Null records that no previous audited profile existed; it is not a default profile.
+  previousProfile: Schema.NullOr(AgentProfileSchema),
+  revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  targetPrincipalId: PrincipalIdSchema,
+});
+const actionKey = 'core.identity.configure-agent';
+const invalid = (reason: string) => new IdentityTargetInvalidError({ code: 'identity_target_invalid', reason });
+const conflict = (reason: string) =>
+  new IdentityLifecycleConflictError({ code: 'identity_lifecycle_conflict', reason });
+const persistenceFailure = (cause: EffectDrizzleQueryError) =>
+  Object.defineProperty(
+    new IdentityPersistenceUnavailableError({
+      code: 'identity_persistence_unavailable',
+      reason: 'The agent profile could not be persisted',
+    }),
+    'cause',
+    { value: cause },
+  );
+interface Services {
+  readonly transaction: Pick<ScopedTransactionExecutor, 'select' | 'insert' | 'update'>;
+}
+
+const handle = Effect.fn('ConfigureAgentAction.handle')(function* configureAgent(
+  payload: ConfigureAgentPayload,
+  context: ActionHandlerContext<typeof principalLifecycleDomainEvents, Services>,
+) {
+  const { legalEntityId, tenantId } = context.scope;
+  if (legalEntityId === undefined) {
+    return yield* invalid('An exact company context is required');
+  }
+  if (new Set(payload.modules.map((module) => module.moduleId)).size !== payload.modules.length) {
+    return yield* invalid('An agent module may occur only once');
+  }
+  const { transaction } = context.services;
+  if (payload.ownerPrincipalId !== null) {
+    const [owner] = yield* transaction
+      .select({ principalId: principals.principalId })
+      .from(principals)
+      .innerJoin(
+        principalCompanyMemberships,
+        and(
+          eq(principalCompanyMemberships.tenantId, principals.tenantId),
+          eq(principalCompanyMemberships.principalId, principals.principalId),
+        ),
+      )
+      .where(
+        and(
+          eq(principals.tenantId, tenantId),
+          eq(principals.principalId, payload.ownerPrincipalId),
+          eq(principals.status, 'active'),
+          eq(principalCompanyMemberships.legalEntityId, legalEntityId),
+          eq(principalCompanyMemberships.status, 'active'),
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError(persistenceFailure));
+    if (owner === undefined) {
+      return yield* invalid('The responsible principal must be an active member of this company');
+    }
+  }
+  const [target] = yield* transaction
+    .select({ displayName: principals.displayName, kind: principals.kind, status: principals.status })
+    .from(principals)
+    .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, payload.principalId)))
+    .limit(1)
+    .for('update')
+    .pipe(Effect.mapError(persistenceFailure));
+  let revision = 1;
+  let previousProfile: typeof AgentProfileSchema.Type | null = null;
+  if (payload.operation === 'create-agent') {
+    if (target !== undefined) {
+      return yield* conflict('The agent principal already exists');
+    }
+    yield* transaction
+      .insert(principals)
+      .values({
+        displayName: payload.displayName,
+        kind: 'agent',
+        principalId: payload.principalId,
+        status: 'active',
+        tenantId,
+      })
+      .pipe(Effect.mapError(persistenceFailure));
+    yield* transaction
+      .insert(principalCompanyMemberships)
+      .values({ affiliation: null, legalEntityId, principalId: payload.principalId, status: 'active', tenantId })
+      .pipe(Effect.mapError(persistenceFailure));
+  } else {
+    if (target === undefined || target.kind !== 'agent' || target.status === 'archived') {
+      return yield* invalid('The target must be an existing, non-archived agent');
+    }
+    const [membership] = yield* transaction
+      .select({ affiliation: principalCompanyMemberships.affiliation, status: principalCompanyMemberships.status })
+      .from(principalCompanyMemberships)
+      .where(
+        and(
+          eq(principalCompanyMemberships.tenantId, tenantId),
+          eq(principalCompanyMemberships.legalEntityId, legalEntityId),
+          eq(principalCompanyMemberships.principalId, payload.principalId),
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError(persistenceFailure));
+    if (membership?.status !== 'active' || membership.affiliation !== null) {
+      return yield* invalid('The agent must have an active membership of this exact company');
+    }
+    const [previous] = yield* transaction
+      .select({ evidence: auditEvents.evidenceJson })
+      .from(auditEvents)
+      .where(
+        and(
+          eq(auditEvents.tenantId, tenantId),
+          eq(auditEvents.legalEntityId, legalEntityId),
+          eq(auditEvents.eventType, 'action.executed'),
+          eq(auditEvents.outcome, 'succeeded'),
+          sql`${auditEvents.evidenceJson}->>'actionKey' = ${actionKey}`,
+          sql`${auditEvents.evidenceJson}->>'targetPrincipalId' = ${payload.principalId}`,
+        ),
+      )
+      .orderBy(
+        sql`(${auditEvents.evidenceJson}->>'revision')::integer desc`,
+        desc(auditEvents.occurredAt),
+        desc(auditEvents.auditEventId),
+      )
+      .limit(1)
+      .pipe(Effect.mapError(persistenceFailure));
+    if (previous !== undefined) {
+      const previousEvidence = yield* Schema.decodeUnknownEffect(ConfigureAgentAuditEvidenceSchema)(
+        previous.evidence,
+      ).pipe(
+        Effect.mapError((cause) =>
+          Object.defineProperty(
+            new IdentityPersistenceUnavailableError({
+              code: 'identity_persistence_unavailable',
+              reason: 'The previous audited agent profile is invalid',
+            }),
+            'cause',
+            { value: cause },
+          ),
+        ),
+      );
+      previousProfile = {
+        description: previousEvidence.description,
+        displayName: previousEvidence.displayName,
+        modules: previousEvidence.modules,
+        ownerPrincipalId: previousEvidence.ownerPrincipalId,
+        writePolicy: previousEvidence.writePolicy,
+      };
+      revision = previousEvidence.revision + 1;
+    }
+    yield* transaction
+      .update(principals)
+      .set({ displayName: payload.displayName })
+      .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, payload.principalId)))
+      .pipe(Effect.mapError(persistenceFailure));
+  }
+  yield* context.recordAuditEvidence({
+    description: payload.description,
+    displayName: payload.displayName,
+    legalEntityId,
+    modules: payload.modules,
+    operation: payload.operation,
+    ownerPrincipalId: payload.ownerPrincipalId,
+    previousProfile,
+    revision,
+    targetPrincipalId: payload.principalId,
+    writePolicy: payload.writePolicy,
+  });
+  yield* recordPrincipalLifecycleChange(context, payload.principalId);
+  return {
+    operation: payload.operation,
+    principalId: payload.principalId,
+    revision,
+    status: target?.status === 'disabled' ? ('disabled' as const) : ('active' as const),
+  };
+});
+
+export const configureAgentAction = defineAction(
+  {
+    accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'core.identity.configure-agent.access.v1' },
+    actionKey,
+    auditEvidenceSchema: ConfigureAgentAuditEvidenceSchema,
+    auditProfile: 'sensitive',
+    domainErrorSchema: PrincipalManagementErrorSchema,
+    domainEvents: principalLifecycleDomainEvents,
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      entrypointKey: actionKey,
+      moduleKey: 'core.identity',
+      role: 'action',
+    }),
+    idempotency: 'required',
+    legalEntityScope: 'required',
+    owningModuleKey: 'core.identity',
+    payloadSchema: ConfigureAgentPayloadSchema,
+    policies: [],
+    resultSchema: ConfigureAgentResultSchema,
+    schemaVersion: '1',
+  },
+  handle,
+  (transaction) => Effect.succeed({ transaction }),
+);

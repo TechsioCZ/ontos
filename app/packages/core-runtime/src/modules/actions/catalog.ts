@@ -6,6 +6,7 @@ import { bindSelfApiKeyAction } from './bind-self-api-key.action.ts';
 import { changePrincipalBindingStatusAction } from './change-principal-binding-status.action.ts';
 import { changePrincipalStatusAction } from './change-principal-status.action.ts';
 import { changeTenantModuleStateAction } from './change-tenant-module-state.action.ts';
+import { configureAgentAction } from './configure-agent.action.ts';
 import { configureDemoCompaniesAction } from './configure-demo-companies.action.ts';
 import { createNonHumanPrincipalAction } from './create-non-human-principal.action.ts';
 import { invitePersonAction } from './invite-person.action.ts';
@@ -28,6 +29,7 @@ export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze(
   changePrincipalBindingStatusAction.descriptor,
   changePrincipalStatusAction.descriptor,
   changeTenantModuleStateAction.descriptor,
+  configureAgentAction.descriptor,
   configureDemoCompaniesAction.descriptor,
   createNonHumanPrincipalAction.descriptor,
   invitePersonAction.descriptor,

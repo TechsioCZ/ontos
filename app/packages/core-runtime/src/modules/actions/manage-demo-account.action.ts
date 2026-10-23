@@ -10,7 +10,8 @@
  * Unlike `core.identity.change-principal-status`, which is limited to non-human principals, this Action targets
  * human principals, so the deactivated person is rejected by the principal resolver on the next request.
  *
- * Agent entities (kind `agent`): `create-agent` / `configure-agent` store write policy, module access, description and owner in the audit evidence; `change-status` (de)activates agents; `archive-agent` deletes an agent (status `archived`, kept for the audit trail).
+ * Agent profile creation/configuration belongs to the governed configure-agent Action.
+ * This development helper still handles demo human accounts and agent status/archive operations.
  */
 import { and, eq } from 'drizzle-orm';
 import { Config, DateTime, Effect, Schema } from 'effect';
@@ -33,8 +34,6 @@ const uuid = Schema.String.check(Schema.isUUID());
 const text = (maximum: number) => Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(maximum));
 const roleKey = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64));
 const status = Schema.Literals(['active', 'disabled']);
-const writePolicy = Schema.Literals(['read_only', 'direct', 'approval']);
-const modulesJson = text(8000);
 
 export const ManageDemoAccountPayloadSchema = Schema.Union([
   Schema.Struct({
@@ -63,26 +62,6 @@ export const ManageDemoAccountPayloadSchema = Schema.Union([
     reason: Schema.optionalKey(text(500)),
   }),
   Schema.Struct({
-    description: Schema.NullOr(text(500)),
-    displayName: text(200),
-    modulesJson,
-    operation: Schema.Literal('create-agent'),
-    ownerPrincipalId: Schema.NullOr(uuid),
-    principalId: uuid,
-    writePolicy,
-  }),
-  Schema.Struct({
-    description: Schema.NullOr(text(500)),
-    displayName: text(200),
-    modulesJson,
-    operation: Schema.Literal('configure-agent'),
-    ownerPrincipalId: Schema.NullOr(uuid),
-    previousModulesJson: Schema.NullOr(modulesJson),
-    previousWritePolicy: Schema.NullOr(writePolicy),
-    principalId: uuid,
-    writePolicy,
-  }),
-  Schema.Struct({
     expectedStatus: status,
     operation: Schema.Literal('archive-agent'),
     principalId: uuid,
@@ -92,14 +71,7 @@ export const ManageDemoAccountPayloadSchema = Schema.Union([
 export type ManageDemoAccountPayload = typeof ManageDemoAccountPayloadSchema.Type;
 
 export const ManageDemoAccountResultSchema = Schema.Struct({
-  operation: Schema.Literals([
-    'create',
-    'change-role',
-    'change-status',
-    'create-agent',
-    'configure-agent',
-    'archive-agent',
-  ]),
+  operation: Schema.Literals(['create', 'change-role', 'change-status', 'archive-agent']),
   principalId: uuid,
   status: Schema.Literals(['active', 'disabled', 'archived']),
 });
@@ -108,24 +80,18 @@ export type ManageDemoAccountResult = typeof ManageDemoAccountResultSchema.Type;
 const nullableText = Schema.NullOr(Schema.String);
 /** Stored in `core.audit_events.evidence_json`; the admin UI renders the audit trail from it. */
 export const ManageDemoAccountAuditEvidenceSchema = Schema.Struct({
-  description: nullableText,
   displayName: nullableText,
   email: nullableText,
-  modulesJson: nullableText,
   newRoleKey: nullableText,
   newRoleLabel: nullableText,
   newStatus: nullableText,
   operation: Schema.String,
-  ownerPrincipalId: nullableText,
-  previousModulesJson: nullableText,
   previousRoleKey: nullableText,
   previousRoleLabel: nullableText,
   previousStatus: nullableText,
-  previousWritePolicy: nullableText,
   principalKind: nullableText,
   reason: nullableText,
   targetPrincipalId: Schema.String,
-  writePolicy: nullableText,
 });
 type AuditEvidence = typeof ManageDemoAccountAuditEvidenceSchema.Type;
 
@@ -160,24 +126,18 @@ const loadManagedPrincipal = (transaction: Transaction, tenantId: string, princi
     );
 
 const emptyEvidence = (principalId: string, operation: string): AuditEvidence => ({
-  description: null,
   displayName: null,
   email: null,
-  modulesJson: null,
   newRoleKey: null,
   newRoleLabel: null,
   newStatus: null,
   operation,
-  ownerPrincipalId: null,
-  previousModulesJson: null,
   previousRoleKey: null,
   previousRoleLabel: null,
   previousStatus: null,
-  previousWritePolicy: null,
   principalKind: null,
   reason: null,
   targetPrincipalId: principalId,
-  writePolicy: null,
 });
 
 interface Services {
@@ -243,39 +203,6 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
     yield* recordPrincipalLifecycleChange(context, payload.principalId);
     return { operation: 'create' as const, principalId: payload.principalId, status: 'active' as const };
   }
-  if (payload.operation === 'create-agent') {
-    const existing = yield* transaction
-      .select({ principalId: principals.principalId })
-      .from(principals)
-      .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, payload.principalId)))
-      .limit(1)
-      .pipe(Effect.mapError(persistenceFailure));
-    if (existing.length > 0) {
-      return yield* conflict('The agent entity already exists');
-    }
-    yield* transaction
-      .insert(principals)
-      .values({
-        displayName: payload.displayName,
-        kind: 'agent',
-        principalId: payload.principalId,
-        status: 'active',
-        tenantId,
-      })
-      .pipe(Effect.mapError(persistenceFailure));
-    yield* context.recordAuditEvidence({
-      ...emptyEvidence(payload.principalId, 'create-agent'),
-      description: payload.description,
-      displayName: payload.displayName,
-      modulesJson: payload.modulesJson,
-      newStatus: 'active',
-      ownerPrincipalId: payload.ownerPrincipalId,
-      principalKind: 'agent',
-      writePolicy: payload.writePolicy,
-    });
-    yield* recordPrincipalLifecycleChange(context, payload.principalId);
-    return { operation: 'create-agent' as const, principalId: payload.principalId, status: 'active' as const };
-  }
   const target = yield* loadManagedPrincipal(transaction, tenantId, payload.principalId);
   if (payload.principalId === context.scope.principalId) {
     return yield* invalid('An administrator cannot change their own account');
@@ -302,34 +229,6 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
     });
     yield* recordPrincipalLifecycleChange(context, payload.principalId);
     return { operation: 'archive-agent' as const, principalId: payload.principalId, status: 'archived' as const };
-  }
-  if (payload.operation === 'configure-agent') {
-    if (target.kind !== 'agent') {
-      return yield* invalid('The target is not an agent entity');
-    }
-    if (target.displayName !== payload.displayName) {
-      yield* transaction
-        .update(principals)
-        .set({ displayName: payload.displayName })
-        .where(and(eq(principals.tenantId, tenantId), eq(principals.principalId, payload.principalId)))
-        .pipe(Effect.mapError(persistenceFailure));
-    }
-    yield* context.recordAuditEvidence({
-      ...emptyEvidence(payload.principalId, 'configure-agent'),
-      description: payload.description,
-      displayName: payload.displayName,
-      modulesJson: payload.modulesJson,
-      ownerPrincipalId: payload.ownerPrincipalId,
-      previousModulesJson: payload.previousModulesJson,
-      previousWritePolicy: payload.previousWritePolicy,
-      principalKind: 'agent',
-      writePolicy: payload.writePolicy,
-    });
-    return {
-      operation: 'configure-agent' as const,
-      principalId: payload.principalId,
-      status: target.status === 'active' ? ('active' as const) : ('disabled' as const),
-    };
   }
   if (payload.operation === 'change-role') {
     if (target.kind !== 'human') {

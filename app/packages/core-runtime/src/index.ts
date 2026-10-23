@@ -981,3 +981,12 @@ export type {
 
 // <generated-global-policy-exports>
 // </generated-global-policy-exports>
+
+export {
+  configureAgentAction,
+  ConfigureAgentPayloadSchema,
+  ConfigureAgentResultSchema,
+  ConfigureAgentAuditEvidenceSchema,
+  AgentProfileSchema,
+} from './modules/actions/configure-agent.action.ts';
+export type { ConfigureAgentPayload } from './modules/actions/configure-agent.action.ts';
