@@ -32,6 +32,7 @@ import {
 import { preloadAgendaRecords, useAgendaRecords } from '../../../../ui/use-agenda.ts';
 import { exportCsv } from '../../../../ui/ops-agenda/ui-bits.tsx';
 import { LinkedDocuments } from '../../../../ui/linked-documents.tsx';
+import { LoadingSkeleton } from '../../../../ui/loading-skeleton.tsx';
 import { useTaskOptions } from '../../../../ui/task-options.ts';
 import { FinanceFilesList, financeFileText, financeInvoiceLabel, useFinanceFiles } from '../../../../ui/finance-files.tsx';
 import type { FinanceFileRow } from '../../../../ui/finance-files.tsx';
@@ -515,9 +516,7 @@ const DocumentsView = () => {
                   Doklady a přílohy nahrané k fakturám ve Financích. Zobrazují se jen ke čtení podle vašeho oprávnění
                   ve Financích; nahrávají a mění se u faktury.
                 </p>
-                {financeFiles.status === 'loading' && (
-                  <p className="text-fg-secondary text-sm">{t('facility-operations.common.loading')}</p>
-                )}
+                {financeFiles.status === 'loading' && <LoadingSkeleton rows={2} />}
                 {financeFiles.status === 'unavailable' && (
                   <p className="text-fg-secondary text-sm">Soubory z Financí jsou teď nedostupné. Zkuste stránku obnovit.</p>
                 )}

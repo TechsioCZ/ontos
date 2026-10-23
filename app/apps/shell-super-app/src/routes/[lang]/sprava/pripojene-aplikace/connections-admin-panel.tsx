@@ -9,11 +9,13 @@ import type {
   ConnectionSummary,
 } from '@app/shared-contracts/agent-access';
 import type { ChangeEvent } from 'react';
-import { useEffect, useState } from 'react';
+import { pageDataPending } from '@app/shared-contracts/page-data';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { loadCompanyConnections, revokeConnection } from '../../profile/connected-apps-client.ts';
-import type { ConnectionsFailure } from '../../profile/connected-apps-client.ts';
+import { revokeConnection } from '../../profile/connected-apps-client.ts';
+import { ModulePageSkeleton } from '../../../module-page-skeleton.tsx';
+import { DEFAULT_CONNECTIONS_FILTER, companyConnectionsData } from './connections-admin-data.ts';
 import {
   accessSummary,
   actingAdminLabel,
@@ -28,11 +30,6 @@ import {
 } from '../../profile/connected-apps-model.ts';
 
 type FilterKey = 'actingPrincipalId' | 'clientId' | 'status' | 'userPrincipalId';
-
-type PanelState =
-  | { readonly status: 'loading' }
-  | { readonly response: ConnectionAdminListResponse; readonly status: 'ready' }
-  | { readonly detail: string | null; readonly reason: ConnectionsFailure; readonly status: 'failed' };
 
 const statusOptions: readonly { readonly value: ConnectionStatus; readonly label: string }[] = [
   { label: 'Aktivní', value: 'active' },
@@ -56,9 +53,6 @@ const tiles = (stats: ConnectionAdminListResponse['stats']) => [
 const selectClass = 'w-full min-w-0 max-w-full truncate rounded-md border border-border-primary bg-base p-100';
 const labelClass = 'grid min-w-0 gap-50 text-sm';
 
-/** The list opens on active connections; history (Odpojené, Nahrazené, …) is one filter away. */
-const DEFAULT_FILTER: ConnectionAdminFilter = { status: 'active' };
-
 const EndedDetail = ({ connection }: { readonly connection: ConnectionSummary }) => {
   const detail = endedDetail(connection);
   if (detail === undefined) {
@@ -73,31 +67,29 @@ const EndedDetail = ({ connection }: { readonly connection: ConnectionSummary })
 };
 
 export const ConnectionsAdminPanel = () => {
-  const [filter, setFilter] = useState<ConnectionAdminFilter>(DEFAULT_FILTER);
-  const [state, setState] = useState<PanelState>({ status: 'loading' });
-  const [version, setVersion] = useState(0);
+  const [filter, setFilter] = useState<ConnectionAdminFilter>(DEFAULT_CONNECTIONS_FILTER);
   const [notice, setNotice] = useState('');
   const [target, setTarget] = useState<ConnectionSummary | undefined>(undefined);
   const [reason, setReason] = useState('');
   const [revokeError, setRevokeError] = useState('');
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    let current = true;
-    browserRuntime.runPromise(loadCompanyConnections({ filter })).then((outcome) => {
-      if (!current) {
-        return;
-      }
-      setState(
-        outcome.status === 'ok'
-          ? { response: outcome.value, status: 'ready' }
-          : { detail: outcome.detail, reason: outcome.reason, status: 'failed' },
-      );
-    });
-    return () => {
-      current = false;
-    };
-  }, [filter, version]);
+  // The Shell prepared the default list before it revealed the page; another filter loads on demand.
+  const snapshot = useSyncExternalStore(
+    companyConnectionsData.subscribe,
+    () => companyConnectionsData.snapshot(filter),
+    () => pageDataPending,
+  );
+  useEffect(() => companyConnectionsData.ensure(filter), [filter]);
+  // While another filter loads, the last settled list stays on screen.
+  const [settled, setSettled] = useState(snapshot);
+  if (snapshot.state !== 'pending' && snapshot !== settled) {
+    setSettled(snapshot);
+  }
+  const state = snapshot.state === 'pending' ? settled : snapshot;
+  const reload = () => {
+    browserRuntime.runFork(companyConnectionsData.refresh(filter));
+  };
 
   const closeRevoke = () => {
     setTarget(undefined);
@@ -121,13 +113,13 @@ export const ConnectionsAdminPanel = () => {
       if (outcome.status === 'ok') {
         setNotice(`Připojení ${target.client.name} je odpojené.`);
         closeRevoke();
-        setVersion((count) => count + 1);
+        reload();
         return;
       }
       if (isStale(outcome.reason)) {
         setNotice(`${failureText(outcome.reason, outcome.detail)} Seznam je znovu načtený.`);
         closeRevoke();
-        setVersion((count) => count + 1);
+        reload();
         return;
       }
       setRevokeError(failureText(outcome.reason, outcome.detail));
@@ -139,18 +131,18 @@ export const ConnectionsAdminPanel = () => {
     setFilter((current) => withFilterValue(current, key, value));
   };
 
-  if (state.status === 'loading') {
-    return <p className="text-fg-secondary text-sm">Načítám připojení…</p>;
+  if (state.state === 'pending') {
+    return <ModulePageSkeleton />;
   }
-  if (state.status === 'failed') {
+  if (state.state === 'failed') {
     return (
       <StatusText aria-live="polite" showIcon status="error">
-        {failureText(state.reason, state.detail)}
+        {failureText(state.error.reason, state.error.detail)}
       </StatusText>
     );
   }
 
-  const { company, connections, filterOptions, stats } = state.response;
+  const { company, connections, filterOptions, stats } = state.value;
   const filterKeys = Object.keys(filter);
   let emptyText = 'Filtru neodpovídá žádné připojení.';
   if (filterKeys.length === 0) {

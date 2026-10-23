@@ -5,10 +5,14 @@ import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { agentItemStatusLabel, agentRiskLabel } from '@app/shared-contracts/agent-proposals';
-import type { AgentQueueBatch, AgentQueueItem, AgentQueueResponse } from '@app/shared-contracts/agent-proposals';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import type { AgentQueueBatch, AgentQueueItem } from '@app/shared-contracts/agent-proposals';
+import { pageDataPending } from '@app/shared-contracts/page-data';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
-import { decideAgentItems, formatAgentTime, loadAgentQueue, revertAgentBatch } from './agent-platform-client.ts';
+import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
+import { ModulePageSkeleton } from '../module-page-skeleton.tsx';
+import { decideAgentItems, formatAgentTime, revertAgentBatch } from './agent-platform-client.ts';
+import { agentQueueData } from './platform-page-data.ts';
 import { batchKeyFromSearch } from './batch-link.ts';
 
 type Decision = 'approve' | 'reject';
@@ -25,11 +29,6 @@ const itemBadgeVariant = (status: AgentQueueItem['status']) =>
       : status === 'failed' || status === 'revert_failed'
         ? 'danger'
         : 'outline';
-type QueueState =
-  | { readonly status: 'loading' }
-  | { readonly response: AgentQueueResponse; readonly status: 'ready' }
-  | { readonly httpStatus: number; readonly status: 'failed' };
-
 const queueFailureText = (httpStatus: number): string => {
   if (httpStatus === 401) {
     return 'Přihlaste se prosím znovu.';
@@ -319,8 +318,18 @@ const BatchCard = ({
   );
 };
 
+/** Reloads the queue in place: the current batches stay on screen until the new list arrives. */
+const refresh = () => {
+  browserRuntime.runFork(agentQueueData.refresh('queue'));
+};
+
 export const ApprovalsPanel = () => {
-  const [queue, setQueue] = useState<QueueState>({ status: 'loading' });
+  // The Shell prepared the queue before it revealed the page.
+  const queue = useSyncExternalStore(
+    agentQueueData.subscribe,
+    () => agentQueueData.snapshot('queue'),
+    () => pageDataPending,
+  );
   const [filter, setFilter] = useState<'all' | 'pending'>('pending');
   const [shownCount, setShownCount] = useState(HISTORY_PAGE);
   const [moduleFilter, setModuleFilter] = useState('');
@@ -330,20 +339,7 @@ export const ApprovalsPanel = () => {
   const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
   const touch = (batchKey: string) => setTouched((previous) => new Set([...previous, batchKey]));
 
-  const refresh = useCallback(() => {
-    setQueue((previous) => (previous.status === 'ready' ? previous : { status: 'loading' }));
-    void loadAgentQueue().then((result) => {
-      setQueue(
-        result.status === 'ok'
-          ? { response: result.value, status: 'ready' }
-          : { httpStatus: result.httpStatus, status: 'failed' },
-      );
-    });
-  }, []);
-
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
+  useEffect(() => agentQueueData.ensure('queue'), []);
 
   /** `?davka=<batchId>` from an MCP review link: show that batch, scroll to it once and highlight it. */
   const [targetKey, setTargetKey] = useState<string | undefined>(undefined);
@@ -352,11 +348,11 @@ export const ApprovalsPanel = () => {
     setTargetKey(batchKeyFromSearch(window.location.search));
   }, []);
   useEffect(() => {
-    if (queue.status !== 'ready' || targetKey === undefined || scrolledTo.current === targetKey) {
+    if (queue.state !== 'ready' || targetKey === undefined || scrolledTo.current === targetKey) {
       return;
     }
-    const index = queue.response.batches.findIndex((batch) => batch.key === targetKey);
-    const target = queue.response.batches[index];
+    const index = queue.value.batches.findIndex((batch) => batch.key === targetKey);
+    const target = queue.value.batches[index];
     if (target === undefined) {
       return;
     }
@@ -425,16 +421,16 @@ export const ApprovalsPanel = () => {
     });
   };
 
-  if (queue.status === 'loading') {
-    return <StatusText status="default">Načítání návrhů…</StatusText>;
+  if (queue.state === 'pending') {
+    return <ModulePageSkeleton />;
   }
-  if (queue.status === 'failed') {
+  if (queue.state === 'failed') {
     return (
       <div className="ai-review">
         <StatusText aria-live="polite" showIcon status="error">
-          {queueFailureText(queue.httpStatus)}
+          {queueFailureText(queue.error.httpStatus)}
         </StatusText>
-        {queue.httpStatus !== 401 && queue.httpStatus !== 403 && (
+        {queue.error.httpStatus !== 401 && queue.error.httpStatus !== 403 && (
           <Button onClick={refresh} size="sm" theme="outlined" variant="secondary">
             Zkusit znovu
           </Button>
@@ -443,7 +439,7 @@ export const ApprovalsPanel = () => {
     );
   }
 
-  const { response } = queue;
+  const response = queue.value;
   const moduleLabels = Array.from(new Set(response.batches.flatMap((batch) => batch.moduleLabels)));
   const visibleBatches = response.batches.filter(
     (batch) =>

@@ -4,15 +4,14 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { agentActivityKindLabel } from '@app/shared-contracts/agent-proposals';
-import type { AgentActivityKind, AgentActivityResponse } from '@app/shared-contracts/agent-proposals';
-import { useEffect, useState } from 'react';
+import type { AgentActivityKind, AgentActivityRequest } from '@app/shared-contracts/agent-proposals';
+import { pageDataPending } from '@app/shared-contracts/page-data';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 
-import { formatAgentTime, loadAgentActivity } from './agent-platform-client.ts';
-
-type ActivityState =
-  | { readonly status: 'loading' }
-  | { readonly httpStatus: number; readonly status: 'failed' }
-  | { readonly response: AgentActivityResponse; readonly status: 'ready' };
+import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
+import { ModulePageSkeleton } from '../module-page-skeleton.tsx';
+import { formatAgentTime } from './agent-platform-client.ts';
+import { DEFAULT_ACTIVITY_REQUEST, agentActivityData } from './platform-page-data.ts';
 
 type BadgeVariant = 'secondary' | 'success' | 'warning' | 'info' | 'outline';
 
@@ -41,38 +40,33 @@ export const ActivityPanel = () => {
   const [agent, setAgent] = useState('');
   const [moduleKey, setModuleKey] = useState('');
   const [kind, setKind] = useState<'' | AgentActivityKind>('');
-  const [reloadToken, setReloadToken] = useState(0);
-  const [state, setState] = useState<ActivityState>({ status: 'loading' });
-  const [options, setOptions] = useState<Pick<AgentActivityResponse, 'agents' | 'modules'>>({
-    agents: [],
-    modules: [],
-  });
-
-  useEffect(() => {
-    let active = true;
-    setState({ status: 'loading' });
-    void loadAgentActivity({
+  const request = useMemo(
+    (): AgentActivityRequest => ({
+      ...DEFAULT_ACTIVITY_REQUEST,
       ...(agent === '' ? {} : { agentPrincipalId: agent }),
       ...(moduleKey === '' ? {} : { moduleKey }),
       ...(kind === '' ? {} : { kind }),
-      limit: 150,
-    }).then((result) => {
-      if (!active) {
-        return;
-      }
-      if (result.status === 'ok') {
-        setOptions({ agents: result.value.agents, modules: result.value.modules });
-        setState({ response: result.value, status: 'ready' });
-        return;
-      }
-      setState({ httpStatus: result.httpStatus, status: 'failed' });
-    });
-    return () => {
-      active = false;
-    };
-  }, [agent, moduleKey, kind, reloadToken]);
+    }),
+    [agent, moduleKey, kind],
+  );
+  // The Shell prepared the default list before it revealed the page; another filter loads on demand.
+  const snapshot = useSyncExternalStore(
+    agentActivityData.subscribe,
+    () => agentActivityData.snapshot(request),
+    () => pageDataPending,
+  );
+  useEffect(() => agentActivityData.ensure(request), [request]);
+  // While another filter loads, the last settled list stays on screen.
+  const [settled, setSettled] = useState(snapshot);
+  if (snapshot.state !== 'pending' && snapshot !== settled) {
+    setSettled(snapshot);
+  }
+  const state = snapshot.state === 'pending' ? settled : snapshot;
+  const options = state.state === 'ready' ? state.value : { agents: [], modules: [] };
 
-  const reload = () => setReloadToken((value) => value + 1);
+  const reload = () => {
+    browserRuntime.runFork(agentActivityData.refresh(request));
+  };
 
   return (
     <div className="ai-review">
@@ -117,21 +111,21 @@ export const ActivityPanel = () => {
           Obnovit
         </Button>
       </div>
-      {state.status === 'loading' && <StatusText status="default">Načítání aktivity…</StatusText>}
-      {state.status === 'failed' && (
+      {state.state === 'pending' && <ModulePageSkeleton />}
+      {state.state === 'failed' && (
         <>
           <StatusText aria-live="polite" showIcon status="error">
-            {activityFailureText(state.httpStatus)}
+            {activityFailureText(state.error.httpStatus)}
           </StatusText>
-          {state.httpStatus !== 401 && state.httpStatus !== 403 && (
+          {state.error.httpStatus !== 401 && state.error.httpStatus !== 403 && (
             <Button onClick={reload} size="sm" theme="outlined" variant="secondary">
               Zkusit znovu
             </Button>
           )}
         </>
       )}
-      {state.status === 'ready' &&
-        (state.response.entries.length === 0 ? (
+      {state.state === 'ready' &&
+        (state.value.entries.length === 0 ? (
           <StatusText status="default">Žádná aktivita pro zvolený filtr.</StatusText>
         ) : (
           <>
@@ -143,7 +137,7 @@ export const ActivityPanel = () => {
                 <span role="columnheader">Akce</span>
                 <span role="columnheader">Výsledek</span>
               </div>
-              {state.response.entries.map((entry) => (
+              {state.value.entries.map((entry) => (
                 <div key={entry.id} role="row">
                   <span role="cell">{formatAgentTime(entry.occurredAt)}</span>
                   <span role="cell">{entry.agentName}</span>
@@ -160,9 +154,7 @@ export const ActivityPanel = () => {
                 </div>
               ))}
             </div>
-            <p className="text-fg-secondary text-xs">
-              {`Zobrazeno ${state.response.entries.length} posledních záznamů.`}
-            </p>
+            <p className="text-fg-secondary text-xs">{`Zobrazeno ${state.value.entries.length} posledních záznamů.`}</p>
           </>
         ))}
       <div>
