@@ -1,10 +1,10 @@
+import { parseLegacyKey } from '@app/shared-contracts/agent-proposals';
 import { expect, test } from 'effect-rstest';
 
 import {
   legacyBatchKey,
   normalizeLegacySlice,
   moduleActivityFromRecords,
-  parseLegacyKey,
   sliceFromRecords,
 } from '../../../api/agent-platform/legacy-normalize.ts';
 import type { LegacyEngineModule } from '../../../api/agent-platform/legacy-normalize.ts';

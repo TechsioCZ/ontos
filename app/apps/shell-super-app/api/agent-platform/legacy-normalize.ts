@@ -7,6 +7,8 @@ import type {
   AgentRisk,
 } from '@app/shared-contracts/agent-proposals';
 
+import { parseLegacyKey } from '@app/shared-contracts/agent-proposals';
+
 import type { McpModule } from '../mcp/catalog.ts';
 
 type Rec = Readonly<Record<string, unknown>>;
@@ -39,16 +41,6 @@ const CONTACT_FIELDS = [
 export const legacyBatchKey = (appId: string, batchId: string) => `legacy:${appId}:${batchId}`;
 
 export const legacyItemKey = (appId: string, changeId: string) => `legacy:${appId}:${changeId}`;
-
-/** Splits `legacy:<appId>:<id>`; the id may itself contain colons. */
-export const parseLegacyKey = (key: string): { readonly appId: string; readonly id: string } | undefined => {
-  if (!key.startsWith('legacy:')) return undefined;
-  const rest = key.slice('legacy:'.length);
-  const separator = rest.indexOf(':');
-  if (separator <= 0) return undefined;
-  const id = rest.slice(separator + 1);
-  return id === '' ? undefined : { appId: rest.slice(0, separator), id };
-};
 
 /** Finds the `aiChanges` slice in a records response: top-level (sales, merchandise) or under `state` (CRM). */
 export const sliceFromRecords = (body: unknown): unknown => {

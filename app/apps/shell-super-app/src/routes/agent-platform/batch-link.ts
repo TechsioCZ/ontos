@@ -1,4 +1,4 @@
-import { parseLegacyKey } from '../../../api/agent-platform/legacy-normalize.ts';
+import { parseLegacyKey } from '@app/shared-contracts/agent-proposals';
 
 const CORE_KEY = /^core:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const BATCH_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
