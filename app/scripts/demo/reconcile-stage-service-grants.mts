@@ -219,10 +219,10 @@ const reportFailure = (error: ReconciliationFailure) =>
 const command = Command.make(
   'reconcile-stage-service-grants',
   {
-    apply: Flag.Boolean('apply'),
-    check: Flag.Boolean('check'),
-    verify: Flag.Boolean('verify'),
-    zerops: Flag.Boolean('zerops'),
+    apply: Flag.Boolean('apply').pipe(Flag.withDefault(false)),
+    check: Flag.Boolean('check').pipe(Flag.withDefault(false)),
+    verify: Flag.Boolean('verify').pipe(Flag.withDefault(false)),
+    zerops: Flag.Boolean('zerops').pipe(Flag.withDefault(false)),
   },
   ({ apply, check, verify, zerops }) =>
     Effect.scoped(
