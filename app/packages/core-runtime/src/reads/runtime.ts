@@ -80,6 +80,9 @@ import {
 } from './errors.ts';
 import { persistReadEvidence } from './repository.ts';
 import type { PersistReadEvidenceInput } from './repository.ts';
+import { observeReadPhase } from './diagnostics.ts';
+import type { ReadPhase, ReadTiming } from './diagnostics.ts';
+import type { Ref } from 'effect';
 
 const withOptionalProperty = <
   const Base extends object,
@@ -1200,9 +1203,12 @@ const readRuntimeFromDependencies = <
         Requirements,
         DomainErrorSchema
       >;
+      /** Request-owned timing collector; never derived from the read payload. */
+      readonly timings?: Ref.Ref<readonly ReadTiming[]>;
       readonly transport: unknown;
     } & ReadRuntimeInput<InputSchema>,
   ): Effect.fn.Return<ResultSchema['Type'], ReadCoreError | DomainErrorSchema['Type'], Requirements> {
+    const observe = (phase: ReadPhase) => observeReadPhase(phase, input.timings);
     const decodedInput = yield* decodeReadRuntimeInput(input.registration.descriptor.inputSchema, input).pipe(
       Effect.mapError((parseIssue) =>
         preserveFailureCause(
@@ -1304,6 +1310,7 @@ const readRuntimeFromDependencies = <
             if (compositionRevision !== undefined) {
               yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'read').pipe(
                 Effect.mapError(compositionNoLongerAdmits),
+                observe('read-authority'),
               );
             }
             // Between BEGIN and COMMIT nothing reaches SpiceDB, a module, the network, or a second pooled connection.
@@ -1311,6 +1318,7 @@ const readRuntimeFromDependencies = <
           }),
         )
         .pipe(
+          observe('read-transaction'),
           Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
           Effect.tapError((failure) =>
             Schema.is(SqlError)(failure)
@@ -1340,6 +1348,7 @@ const readRuntimeFromDependencies = <
     if (compositionRevision !== undefined) {
       yield* precheckApplicationCompositionAdmission(database.executor, compositionRevision, 'read').pipe(
         Effect.mapError(compositionNoLongerAdmits),
+        observe('read-admission'),
       );
     }
     // Revalidate scope, fetch module state, and check the static module permission independently.
@@ -1365,10 +1374,14 @@ const readRuntimeFromDependencies = <
     );
     const [scope, snapshotExit, moduleAccessPrefetch] = yield* Effect.all(
       [
-        resolveScope,
+        resolveScope.pipe(observe('read-scope')),
         // Preserve scope-validation failure precedence; consume a snapshot failure only after scope succeeds.
-        Effect.exit(gateway.prepareSnapshot(principal, [input.registration.descriptor.entrypoint])),
-        prefetchEntrypointModuleAccess(contextAccess, principal, input.registration.descriptor.entrypoint),
+        Effect.exit(
+          gateway.prepareSnapshot(principal, [input.registration.descriptor.entrypoint]).pipe(observe('read-module')),
+        ),
+        prefetchEntrypointModuleAccess(contextAccess, principal, input.registration.descriptor.entrypoint).pipe(
+          observe('read-permission'),
+        ),
       ],
       { concurrency: 3 },
     );
@@ -1578,12 +1591,14 @@ const readRuntimeFromDependencies = <
           ),
         ],
         { concurrency: 2 },
-      );
+      ).pipe(observe('read-prepare'));
       // Owner work: the transaction holds only the scope installation, owner authorization state, and `load`.
       // Remote I/O and a second pooled connection refuse to run inside it (`insideDatabaseTransaction`).
       const finishOwner = yield* admittedTransaction(
         Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBody(transaction: CoreTransaction) {
-          const { operationAt, scoped } = yield* installOperationalScopeAt(transaction, scope);
+          const { operationAt, scoped } = yield* installOperationalScopeAt(transaction, scope).pipe(
+            observe('read-rls'),
+          );
           stage('scope_installed');
           const ownerAuthorizationDecision = yield* ownerAuthorizationCheck(scoped, operationAt);
           if (ownerAuthorizationDecision === 'denied') {
@@ -1599,7 +1614,7 @@ const readRuntimeFromDependencies = <
             });
           }
           const services = yield* getReadServiceFactory(input.registration)(scoped, scope, compositionRevision);
-          const finish = yield* loadWith(services).pipe(sanitizeOwnerFailure);
+          const finish = yield* loadWith(services).pipe(sanitizeOwnerFailure, observe('read-owner'));
           stage('handler_executed');
           // @effect-diagnostics-next-line returnEffectInGen:off -- The after-commit step leaves the transaction unevaluated.
           return finish;
@@ -1619,6 +1634,7 @@ const readRuntimeFromDependencies = <
             parseIssue,
           ),
         ),
+        observe('read-validation'),
       );
       stage('result_decoded');
       const resultPermissionResolver = getReadResultPermissionTargetResolver(input.registration);
@@ -1687,7 +1703,7 @@ const readRuntimeFromDependencies = <
             ...evidenceTarget,
           },
         ),
-      );
+      ).pipe(observe('read-audit'));
       stage('evidence_persisted');
       return result;
     });

@@ -1,7 +1,8 @@
 import { Cause, Effect, Exit, Logger, Redacted, Schema } from 'effect';
 // @effect-diagnostics strictEffectProvide:off -- Test-owned logger capture entrypoint; expires: 2026-12-31.
 import { expect, it } from 'effect-rstest';
-import { Headers, HttpServerRequest } from 'effect/unstable/http';
+import { TestClock } from 'effect/testing';
+import { Headers, HttpEffect, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { classifyReadCoreError, makeGovernedReadHttpHandler } from '../../src/http/governed-read.ts';
@@ -195,6 +196,48 @@ const readRuntime = {
 } as ReadRuntimeService;
 const requestService = HttpServerRequest.fromWeb(new Request('https://ontos.test/reads/fixture'));
 
+it.effect('reports authentication and response encoding separately without exposing request values', () =>
+  Effect.gen(function* encodedResponseTiming() {
+    const entries: string[] = [];
+    const responses: HttpServerResponse.HttpServerResponse[] = [];
+    const handler = makeGovernedReadHttpHandler({
+      authenticatePrincipal: () => TestClock.adjust('3 millis').pipe(Effect.as(principal)),
+      problems,
+      registration,
+    });
+    const response = handler({
+      payload: { query: 'private-query' },
+      request: {
+        headers: Headers.fromInput({
+          authorization: 'Bearer private-token',
+          'x-correlation-id': 'private-correlation',
+        }),
+      },
+    }).pipe(
+      Effect.flatMap((result) =>
+        TestClock.adjust('7 millis').pipe(
+          Effect.as(HttpServerResponse.jsonUnsafe(result, { headers: { 'server-timing': 'existing;dur=1' } })),
+        ),
+      ),
+    );
+    yield* HttpEffect.toHandled(response, (_request, value) =>
+      Effect.sync(() => {
+        responses.push(value);
+      }),
+    ).pipe(
+      Effect.provideService(ReadRuntime, readRuntime),
+      Effect.provideService(
+        HttpServerRequest.HttpServerRequest,
+        HttpServerRequest.fromWeb(new Request('https://ontos.test/reads/timing')),
+      ),
+      Effect.provide(capturedLoggerLayer(entries)),
+    );
+    expect(responses[0]?.headers['server-timing']).toBe('existing;dur=1, read-authentication;dur=3, read-encode;dur=7');
+    expect(entries.join('\n')).toContain('Governed read phases completed');
+    expect(entries.join('\n')).not.toMatch(/private-|better-auth|00000000/u);
+  }),
+);
+
 it.effect('validates correlation before authentication or ReadRuntime acquisition', () =>
   Effect.gen(function* validateCorrelationFirst() {
     let authenticationCalls = 0;
@@ -319,6 +362,7 @@ it.effect('passes only payload, trusted principal, registration, and correlation
         inputFormat: 'decoded',
         principal,
         registration,
+        timings: expect.any(Object),
         transport: { correlationId: 'correlation-test' },
       },
     ]);
