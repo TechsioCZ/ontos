@@ -1,3 +1,4 @@
+import { normalizePhone } from '@app/party-registry/api';
 import { Effect, Schema } from 'effect';
 
 import {
@@ -10,6 +11,7 @@ import {
 } from '../../../shared/enrollment-contracts.ts';
 import type { StartPortalEnrollmentPayload } from '../../../shared/actions/start-portal-enrollment.ts';
 import { PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY } from '../../../src/enrollment/journeys/existing-account.ts';
+import { withCause } from '../../../src/enrollment/attempts/errors.ts';
 import { retailSelfEnrollmentEvidenceReference } from '../../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
 import {
   PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
@@ -17,6 +19,25 @@ import {
 } from '../../../src/enrollment/orchestration/prepared-owner-authority.ts';
 import { commercePortalAuthEnrollmentInvitationId } from './contracts.ts';
 import type { CommercePortalAuthEnrollmentStartInput } from './contracts.ts';
+
+class CommercePortalAuthEnrollmentPhoneInvalid extends Schema.TaggedError<CommercePortalAuthEnrollmentPhoneInvalid>()(
+  'CommercePortalAuthEnrollmentPhoneInvalid',
+  {},
+) {}
+
+/** Party owns phone rules. Canonicalize before any budget, Attempt or provider write. */
+export const normalizeCommercePortalAuthEnrollmentPhone = (
+  input: CommercePortalAuthEnrollmentStartInput,
+): Effect.Effect<CommercePortalAuthEnrollmentStartInput, CommercePortalAuthEnrollmentPhoneInvalid> => {
+  if (input.journey !== 'RETAIL_SELF_ENROLLMENT' || input.phone === undefined) {
+    return Effect.succeed(input);
+  }
+  const { phone } = input;
+  return Effect.try({
+    catch: (cause) => withCause(new CommercePortalAuthEnrollmentPhoneInvalid({}), cause),
+    try: () => ({ ...input, phone: normalizePhone(phone, phone.startsWith('+') ? undefined : 'CZ').lookupValue }),
+  });
+};
 
 /**
  * The credential-free half of a start request.

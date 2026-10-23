@@ -64,6 +64,7 @@ import {
   commercePortalAuthEnrollmentAccountCreationClaim,
   commercePortalAuthEnrollmentAccountVerificationClaim,
   commercePortalAuthEnrollmentIntent,
+  normalizeCommercePortalAuthEnrollmentPhone,
 } from './intent.ts';
 import type { CommercePortalAuthEnrollmentTransitionClaim } from './intent.ts';
 import { commercePortalAuthEnrollmentSessionSubject } from './session-subject.ts';
@@ -640,7 +641,10 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
   const input: CommercePortalAuthEnrollmentStartInput = yield* Schema.decodeEffect(
     CommercePortalAuthEnrollmentStartInputSchema,
     { onExcessProperty: 'error' },
-  )(payload).pipe(Effect.mapError(commercePortalAuthEnrollmentInvalidProblem));
+  )(payload).pipe(
+    Effect.flatMap(normalizeCommercePortalAuthEnrollmentPhone),
+    Effect.mapError(commercePortalAuthEnrollmentInvalidProblem),
+  );
   const email = input.email.trim().toLowerCase();
   // Verified before any budget is spent; every budget below is keyed by the Principal it names, not
   // the assertion, so a caller can't exhaust another Principal's budget by naming it or replaying a

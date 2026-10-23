@@ -81,7 +81,6 @@ describe("owner-backed customer account transport", () => {
     { password: "short", passwordConfirmation: "short" },
     { passwordConfirmation: "different-password" },
     { termsAccepted: false },
-    { phone: "---" },
     { requestId: "-".repeat(36) },
   ])("rejects invalid registration before any owner call (%j)", async (invalid) => {
     expect((await submit({ ...registration, ...invalid })).status).toBe(400);
@@ -267,4 +266,14 @@ describe("verification resend transport", () => {
     });
     expect(response.headers.getSetCookie()).toEqual([]);
   });
+});
+
+it("lets the owner apply Party phone rules and preserves invalid-number rejection", async () => {
+  vi.mocked(ownerRequest).mockResolvedValue(
+    Response.json({ code: "invalid_request" }, { status: 400 }),
+  );
+  const response = await submit({ ...registration, phone: "---" });
+  expect(response.status).toBe(400);
+  expect(ownerRequest).toHaveBeenCalledOnce();
+  expect(JSON.parse(String(vi.mocked(ownerRequest).mock.calls[0]![2].body)).phone).toBe("---");
 });
