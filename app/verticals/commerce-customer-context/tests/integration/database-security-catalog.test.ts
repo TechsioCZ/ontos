@@ -105,6 +105,7 @@ const grantedRoutines = [
   'read_counterparty_invitation_claimability',
   'read_current_purchase_approval_revalidation',
   'read_current_purchase_proposal_revision',
+  'read_customer_consent_receipt',
   'read_customer_group',
   'read_customer_group_history',
   'read_customer_group_members',
@@ -156,9 +157,11 @@ const grantedRoutines = [
   'verify_address_book_reconciliation',
   'verify_invitation_claim_authority',
   'verify_payment_terms_reconciliation_owner',
+  'write_customer_consent_receipt',
 ] as const;
 
 const appendOnlyTriggers = [
+  ['customer_consent_receipts', 'ccc_consent_receipts_append_only'],
   ['access_mutation_journal', 'ccc_access_journal_append_only'],
   ['address_book_reconciliation_receipts', 'ccc_address_reconciliation_receipts_append_only_trg'],
   ['counterparty_access_invitations', 'ccc_invitation_claim_proofs_lifecycle_trg'],

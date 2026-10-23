@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { AccountShell } from "@/components/account-shell";
+import { CustomerNewsletterConsentForm } from "./customer-newsletter-consent";
 import type { CustomerAccount } from "@/ontos/account";
 import { isCustomerProfile } from "@/ontos/profile-model";
 import type { CustomerProfile } from "@/ontos/profile-model";
@@ -164,6 +165,7 @@ export function AccountProfilePage({
         {saved && <output>Údaje byly uloženy v OntOS a znovu načteny.</output>}
         {error && <p role="alert">{error}</p>}
       </form>
+      <CustomerNewsletterConsentForm />
     </AccountShell>
   );
 }

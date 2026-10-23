@@ -8,6 +8,9 @@ export const COMMERCE_PORTAL_AUTH_AUDIT_SCHEMA_VERSION = 1;
 
 const CommercePortalAuthAuditEventTypeSchema = Schema.Literals([
   'commerce.portal-auth.account-disabled.v1',
+  'commerce.portal-auth.consent-requested.v1',
+  'commerce.portal-auth.consent-failed.v1',
+  'commerce.portal-auth.consent-recorded.v1',
   'commerce.portal-auth.email-verification-consumed.v1',
   'commerce.portal-auth.email-verification-requested.v1',
   'commerce.portal-auth.mfa-backup-codes-regenerated.v1',

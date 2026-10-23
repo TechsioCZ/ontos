@@ -30,6 +30,7 @@ import {
 export const demoModuleIds = [
   'commerce.customer-context',
   'party.registry',
+  'privacy.core',
   'work.tasks',
   'finance.billing',
   'demo.workforce',
@@ -129,7 +130,7 @@ export const demoRoles = {
       'work.tasks': 'write',
     },
   },
-  headOfSales: { identityAdmin: true, label: 'Vedoucí obchodu', modules: everything },
+  headOfSales: { identityAdmin: true, label: 'Vedoucí obchodu', modules: { ...everything, 'privacy.core': 'write' } },
   salesRep: {
     identityAdmin: false,
     label: 'Obchodník',
@@ -490,7 +491,12 @@ export const eshopDemoRoles = {
       ],
     },
     contextPermissions: {
-      'commerce.customer-context': ['customer.profile.read_own', 'customer.profile.update_own'],
+      'commerce.customer-context': [
+        'customer.profile.read_own',
+        'customer.profile.update_own',
+        'customer.consent.read_own',
+        'customer.consent.update_own',
+      ],
     },
     identityAdmin: false,
     label: 'AKROS storefront (API)',

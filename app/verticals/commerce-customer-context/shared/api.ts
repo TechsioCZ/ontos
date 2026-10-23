@@ -1,3 +1,5 @@
+import { CommerceConsentAuthorityApi, CommerceConsentNoticeAuthorityApi } from '@app/consent-authority-contracts/api';
+import { CustomerOwnConsentReadApi, CustomerOwnConsentUpdateApi } from './portal-auth/consent-api.ts';
 import { identity } from 'effect';
 import {
   MicroVerticalBuildMarkerSchema,
@@ -170,6 +172,10 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(CommercePortalAuthStepUpApi)
   .addHttpApi(CommercePortalAuthEnrollmentApi)
   .addHttpApi(CommercePortalAuthVerificationApi)
+  .addHttpApi(CommerceConsentAuthorityApi)
+  .addHttpApi(CommerceConsentNoticeAuthorityApi)
+  .addHttpApi(CustomerOwnConsentReadApi)
+  .addHttpApi(CustomerOwnConsentUpdateApi)
   .addHttpApi(CustomerOwnProfileReadApi)
   .addHttpApi(CustomerOwnProfileUpdateApi)
   // <generated-governed-http-api-additions>

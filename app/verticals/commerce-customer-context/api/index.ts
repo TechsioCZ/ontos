@@ -1,3 +1,9 @@
+import {
+  customerOwnConsentReadApiLive,
+  customerOwnConsentUpdateApiLive,
+  commerceConsentAuthorityApiLive,
+  commerceConsentNoticeAuthorityApiLive,
+} from './portal-auth/consent/http.ts';
 import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
@@ -824,6 +830,10 @@ export const makeCommerceCustomerContextApiRuntime = (
     portalAuthStepUpApiLive,
     portalAuthEnrollmentApiLive,
     commercePortalAuthVerificationApiLive,
+    customerOwnConsentReadApiLive,
+    customerOwnConsentUpdateApiLive,
+    commerceConsentAuthorityApiLive,
+    commerceConsentNoticeAuthorityApiLive,
     customerOwnProfileReadApiLive,
     customerOwnProfileUpdateApiLive,
     // <generated-governed-http-handler-layers>

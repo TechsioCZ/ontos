@@ -38,6 +38,7 @@ type DatabaseJsonObject = Readonly<Record<string, DatabaseJsonValue>>;
 
 export const COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY = [
   'access_mutation_journal',
+  'customer_consent_receipts',
   'address_book_reconciliation_receipts',
   'portal_enrollment_attempts',
   'portal_enrollment_owner_operations',
@@ -233,6 +234,24 @@ const policyRevisionConstraints = (
     trimmed(`${prefix}_reason_ck`, table.reason),
     ...scopedPolicies(`${prefix}_rls`, table),
   ] as const;
+
+/** Immutable, explicit notice acknowledgement; no provider token or customer email is retained. */
+export const customerConsentReceipts = commerceCustomerContextSchema.table.withRLS(
+  'customer_consent_receipts',
+  {
+    ...scopeColumns(),
+    receipt: jsonb('receipt').$type<DatabaseJsonObject>().notNull(),
+    receiptId: uuid('receipt_id').primaryKey(),
+  },
+  (table) => [
+    unique('ccc_consent_receipt_scope_identity_uk').on(table.tenantId, table.legalEntityId, table.receiptId),
+    check(
+      'ccc_consent_receipt_object_ck',
+      sql`jsonb_typeof(${table.receipt}) = 'object' and length(${table.receipt}::text) <= 12000 and ${table.receipt}->>'requestId' = ${table.receiptId}::text`,
+    ),
+    ...scopedPolicies('ccc_consent_receipt_scope', table),
+  ],
+);
 
 /** Durable Tenant-scoped correlation for one exact Commerce Portal onboarding intent. */
 export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.withRLS(
@@ -2670,6 +2689,7 @@ const commerceCustomerContextDatabaseSchema = {
   counterpartyPurchasingProfiles,
   customerAddressDefaults,
   customerCommercePolicyCompletenessGenerations,
+  customerConsentReceipts,
   customerGroupLifecyclePeriods,
   customerGroupMemberships,
   customerGroupRevisions,
@@ -2709,6 +2729,7 @@ const commerceCustomerContextDatabaseSchema = {
 export const COMMERCE_CUSTOMER_CONTEXT_TABLES = [
   accessMutationJournal,
   addressBookReconciliationReceipts,
+  customerConsentReceipts,
   portalEnrollmentAttempts,
   portalEnrollmentOwnerOperations,
   counterpartyAccessInvitations,
