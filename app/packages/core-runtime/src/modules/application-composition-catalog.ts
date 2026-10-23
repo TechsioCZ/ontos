@@ -88,7 +88,7 @@ const buildCatalog = Effect.fn('ApplicationComposition.buildCatalog')(function* 
   const catalog = yield* Effect.try({
     catch: (cause) =>
       invalid(
-        cause instanceof OntosModuleCatalogValidationError
+        Schema.is(OntosModuleCatalogValidationError)(cause)
           ? `Application Composition contracts do not form one complete installed catalog: ${cause.reason}`
           : 'Application Composition contracts do not form one complete installed catalog',
         cause,
