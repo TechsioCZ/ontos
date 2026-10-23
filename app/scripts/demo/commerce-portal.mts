@@ -51,7 +51,7 @@ import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } fro
 import { writeAiRelationships } from './ai-profiles.mts';
 import type { AiRelationship } from './ai-profiles.mts';
 import { akrosDemoLegalEntityId, demoId, demoTenantId } from './fixture-ids.mts';
-import { principalRelationships } from './permissions.mts';
+import { principalRelationships, privacyReadContextPermissions } from './permissions.mts';
 import type { DemoRole } from './permissions.mts';
 
 const COMMERCE_PORTAL = 'commerce-portal';
@@ -76,8 +76,9 @@ const SHELL_AUDIENCE = 'shell-super-app';
 const GATEWAY_CONTEXT_AUDIENCES = ['commerce-customer-context', 'party-registry', 'privacy'] as const;
 const BINDING_OPERATIONS = ['activate', 'read', 'reserve', 'resolve', 'status'] as const;
 
-/** Module access only; the Actions below are granted one by one. */
+/** Exact company-scoped native reads; the Actions below are granted one by one. */
 const commercePortalRole: DemoRole = {
+  contextPermissions: { 'privacy.core': privacyReadContextPermissions },
   identityAdmin: false,
   label: 'Commerce portal (service)',
   modules: { 'commerce.customer-context': 'read', 'party.registry': 'read', 'privacy.core': 'read' },

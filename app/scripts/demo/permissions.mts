@@ -72,6 +72,14 @@ export const contextPermissionKey = (moduleId: DemoModuleId, access: ModuleAcces
 const moduleReadPermissions = (moduleId: DemoModuleId): readonly string[] =>
   moduleId === 'commerce.customer-context' ? ['customer.group.read'] : [];
 
+/** Native Privacy reads are separate company-scoped grants, not implied by module access. */
+export const privacyReadContextPermissions = [
+  'privacy.processing_catalog.read',
+  'privacy.notice.read',
+  'privacy.subjects.read',
+  'privacy.consent.read',
+] as const;
+
 const everything = {
   'commerce.customer-context': 'write',
   'demo.merchandise': 'write',
