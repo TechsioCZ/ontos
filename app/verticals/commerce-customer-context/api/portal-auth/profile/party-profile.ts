@@ -21,6 +21,7 @@ import type { CustomerOwnProfile, UpdateCustomerOwnProfile } from '../../../shar
 import { profileConflict, profileUnavailable } from './problems.ts';
 
 type Contact = PartyContactPointsResponse['items'][number];
+type ProfileCommandError = Effect.Error<ReturnType<typeof updatePartyWithAuthorization>>;
 export interface CustomerPartyProfileScope extends Omit<RetailPartyCandidateOwnerInput, 'candidate'> {
   readonly partyId: string;
 }
@@ -126,7 +127,7 @@ export const updateCustomerPartyProfile = Effect.fn('CustomerOwnProfile.updatePa
     execute: (
       authorization: Redacted.Redacted,
       options: Parameters<typeof updatePartyWithAuthorization>[2],
-    ) => Effect.Effect<unknown, unknown>,
+    ) => Effect.Effect<unknown, ProfileCommandError>,
   ) {
     const gateway = yield* acquireRetailPartyGateway(scope).pipe(Effect.mapError(profileUnavailable));
     return yield* execute(gateway.credential, {
@@ -140,7 +141,7 @@ export const updateCustomerPartyProfile = Effect.fn('CustomerOwnProfile.updatePa
     );
   });
   if (input.displayName !== before.profile.displayName) {
-    const payload = yield* Schema.decodeUnknownEffect(UpdatePartyPayloadSchema)({
+    const payload = yield* Schema.decodeEffect(UpdatePartyPayloadSchema)({
       displayName: input.displayName,
       expectedRevision: before.detail.party.revision,
       partyRef: before.partyRef,
@@ -168,7 +169,7 @@ export const updateCustomerPartyProfile = Effect.fn('CustomerOwnProfile.updatePa
         verification: { state: 'UNVERIFIED' },
       };
       if (current === undefined) {
-        if (!value) {
+        if (value === '') {
           return;
         }
         const payload = yield* Schema.decodeUnknownEffect(AddContactPointPayloadSchema)({
@@ -185,7 +186,7 @@ export const updateCustomerPartyProfile = Effect.fn('CustomerOwnProfile.updatePa
           type: 'CORRECT_CONTACT_POINT',
         } as const;
         const payload = yield* Schema.decodeUnknownEffect(UpdateContactPointPayloadSchema)({
-          change: value ? { ...correction, replacement } : correction,
+          change: value === '' ? correction : { ...correction, replacement },
           contactPointRef: current.contactPointRef,
           expectedRevision: current.revision,
           provenance,
