@@ -162,7 +162,7 @@ const cachedCategoryPage = cache((categorySlug: string): Promise<CategoryPage> =
  * tree also carries the content of that category and its direct children (category page heading/grid);
  * that read also returns the category's first listing page.
  */
-export const getCategoryTree = cache(async (categorySlug?: string): Promise<CatalogCategory[]> =>
+const cachedCategoryTree = cache(async (categorySlug: string): Promise<CatalogCategory[]> =>
   categorySlug
     ? await Promise.all([
         categoryTrees.get("", loadRootTree),
@@ -170,6 +170,11 @@ export const getCategoryTree = cache(async (categorySlug?: string): Promise<Cata
       ]).then(([tree, { categories }]) => withCategoryContent(tree, categories))
     : await categoryTrees.get("", loadRootTree),
 );
+
+export async function getCategoryTree(categorySlug = ""): Promise<CatalogCategory[]> {
+  // React distinguishes no arguments from one undefined argument. Layout and page must use one key.
+  return await cachedCategoryTree(categorySlug);
+}
 
 const isFirstCategoryPage = (query: CatalogQuery) => {
   const { categorySlug, page = 1, pageSize, sort = "name", ...filters } = compact(query);

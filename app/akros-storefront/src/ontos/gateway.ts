@@ -8,6 +8,7 @@ import "server-only";
 //      Actions: POST {shell}{apiBaseUrl}/{vertical}/actions/{slug} with an `idempotency-key`.
 // Core evaluates permissions and legal-entity scope on every call; the key is never sent to the browser.
 import { randomUUID } from "node:crypto";
+import { cache } from "react";
 import { getConfig } from "./config";
 import { readActiveRevision } from "./composition-revision";
 import { shellFetch } from "./shell-fetch";
@@ -154,6 +155,10 @@ const mintContext = async (audience: string): Promise<GatewayContext> => {
   };
 };
 
+// React owns this map for one server render only. Never share pending I/O across Worker requests;
+// outside a render `cache` does not retain it, so API routes keep independent request-owned mints.
+const requestMints = cache(() => new Map<string, Promise<GatewayContext>>());
+
 /** The isolate's current assertion for `audience`, minted when missing, outdated or close to expiry. */
 const gatewayContext = async (audience: string): Promise<GatewayContext> => {
   const held = assertions.get(audience);
@@ -163,10 +168,20 @@ const gatewayContext = async (audience: string): Promise<GatewayContext> => {
     (liveRevision === undefined || held.compositionRevision === liveRevision)
   )
     return held;
-  // Only settled assertions are shared: a request never awaits another request's I/O on Workers.
-  const context = await mintContext(audience);
-  assertions.set(audience, context);
-  return context;
+  const pending = requestMints();
+  let mint = pending.get(audience);
+  if (mint === undefined) {
+    mint = mintContext(audience);
+    pending.set(audience, mint);
+  }
+  try {
+    const context = await mint;
+    assertions.set(audience, context);
+    return context;
+  } finally {
+    // A failed mint must not poison retries, nor may a rejected assertion reuse a settled promise.
+    if (pending.get(audience) === mint) pending.delete(audience);
+  }
 };
 
 /** Drops a rejected or outdated assertion, so the next call mints a new one. */

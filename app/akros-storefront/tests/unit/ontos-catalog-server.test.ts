@@ -1,6 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readRecords } from "@/ontos/gateway";
 
+const { renderCache } = await vi.hoisted(async () => {
+  const { AsyncLocalStorage } = await import("node:async_hooks");
+  return { renderCache: new AsyncLocalStorage<Map<unknown, Map<string, unknown>>>() };
+});
+
+// These cached functions take primitive arguments. Like React, preserve argument count in the key.
+vi.mock("react", () => ({
+  cache:
+    <Args extends unknown[], Value>(load: (...args: Args) => Value) =>
+    (...args: Args): Value => {
+      const values = renderCache.getStore();
+      if (values === undefined) return load(...args);
+      let entries = values.get(load);
+      if (entries === undefined) {
+        entries = new Map();
+        values.set(load, entries);
+      }
+      const key = JSON.stringify(args);
+      if (!entries.has(key)) entries.set(key, load(...args));
+      return entries.get(key) as Value;
+    },
+}));
 vi.mock("server-only", () => ({}));
 vi.mock("@/ontos/gateway", () => ({ readRecords: vi.fn() }));
 
@@ -110,6 +132,20 @@ describe("OntOS catalog server reads", () => {
     expect(calls.filter((call) => call.includeCategories === false)).toHaveLength(2);
     expect(server.CATEGORY_CACHE_MS).toBe(60_000);
   });
+  it("joins layout and page tree reads with omitted, undefined and empty arguments", async () => {
+    await renderCache.run(new Map(), () =>
+      Promise.all([
+        server.getShellSnapshot(),
+        server.getCategoryTree(undefined),
+        server.getCategoryTree(""),
+        server.getCatalogPage({ slug: "p1", pageSize: 1 }, { fields: "full" }),
+        server.getCatalog(),
+      ]),
+    );
+    const calls = vi.mocked(readRecords).mock.calls.map(catalogOf);
+    expect(calls.filter((call) => call.includeCategories)).toHaveLength(1);
+    expect(calls).toHaveLength(3);
+  });
   it("adds the content of the requested category from its own detail read", async () => {
     const model = await server.getCatalog("srouby");
     expect(vi.mocked(readRecords).mock.calls.map(catalogOf)).toContainEqual({
@@ -184,6 +220,18 @@ describe("OntOS catalog server reads", () => {
     // A page view of a warmed category needs no owner read.
     await server.getCatalog("srouby");
     expect(readRecords).toHaveBeenCalledTimes(4);
+    // Product layout and recommendations use those same warmed keys; only detail reads the owner.
+    vi.mocked(readRecords).mockClear();
+    await renderCache.run(new Map(), () =>
+      Promise.all([
+        server.getShellSnapshot(),
+        server.getCatalog(),
+        server.getCatalogPage({ slug: "p1", pageSize: 1 }, { fields: "full" }),
+      ]),
+    );
+    expect(vi.mocked(readRecords).mock.calls.map(catalogOf)).toEqual([
+      { slug: "p1", pageSize: 1, fields: "full", includeCategories: false },
+    ]);
   });
   it("reads product detail in full and listings as cards", async () => {
     await server.getCatalogPage({ slug: "p1", pageSize: 1 }, { fields: "full" });
