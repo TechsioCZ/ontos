@@ -6,15 +6,21 @@ import { createElement, Suspense, useEffect } from 'react';
 import type { ComponentType } from 'react';
 import { createRoot } from 'react-dom/client';
 
+import type { ShellNavigationItem } from '../../shared/api.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
+import { awaitModuleTrafficQuiet } from './browser-request-cache.ts';
+import { loadRemotePage } from './remote-page-loader.ts';
 
 interface PreloadableNavigationItem {
   readonly enabled: boolean;
   readonly href?: string;
+  readonly remote?: ShellNavigationItem['remote'];
 }
 
 /** Let the foreground page load its own chunks first. */
 const SETTLE_DELAY = '5 seconds';
+/** Remote containers loaded at once while idle. */
+const REMOTE_WARM_CONCURRENCY = 3;
 /** Long enough for a preloaded route chunk to resolve its lazy component. */
 const LAZY_WARM_WINDOW = '2 seconds';
 const ignoreRenderError = () => {
@@ -61,13 +67,29 @@ const pageRouteComponents = (router: ReturnType<typeof useRouter>, language: str
 };
 
 /**
- * Shortly after each navigation settles, resolves the Shell's own lazy route components for the menu destinations.
- * It never runs route loaders or calls an API: resolving a module target, loading a remote page module, issuing a
- * gateway assertion or prefetching a page's reads happens only for the page being opened or on hover/focus intent
- * (`ShellRouteLink` preloads on intent). Idle warming of every menu destination used to issue about 50 Shell and
- * owner requests per page view, which multiplied the load on a pool-bound Shell.
+ * Code only: loads the remote page module of every enabled menu destination, so opening one waits only for its
+ * data. Each item carries its remote from the composition, so this reads nothing (no API, assertion or module read)
+ * and runs no `preloadPage`.
  */
-export const useIdleRoutePreload = (navigation: readonly PreloadableNavigationItem[]) => {
+const warmRemotePages = (compositionRevision: string, navigation: readonly PreloadableNavigationItem[]) =>
+  Effect.forEach(
+    navigation.flatMap((item) => (item.enabled && item.remote !== undefined ? [item.remote] : [])),
+    (federation) => loadRemotePage({ compositionRevision, federation }),
+    { concurrency: REMOTE_WARM_CONCURRENCY, discard: true },
+  );
+
+/**
+ * Shortly after each navigation settles and module traffic goes quiet, resolves the Shell's own lazy route components
+ * for the menu destinations and loads their remote page code. It never runs route loaders or calls an API: resolving
+ * a module target, issuing a gateway assertion, preparing a page's data or prefetching its reads happens only for the
+ * page being opened or on hover/focus intent (`ShellRouteLink` preloads on intent). Idle warming of every menu
+ * destination used to issue about 50 Shell and owner requests per page view, which multiplied the load on a
+ * pool-bound Shell.
+ */
+export const useIdleRoutePreload = (
+  navigation: readonly PreloadableNavigationItem[],
+  compositionRevision: string | undefined,
+) => {
   const router = useRouter();
   const { language } = useModernI18n();
   const settledPath = useRouterState({ select: ({ resolvedLocation }) => resolvedLocation?.pathname });
@@ -78,8 +100,17 @@ export const useIdleRoutePreload = (navigation: readonly PreloadableNavigationIt
       __ONTOS_BROWSER_BUILD__ && settledPath !== undefined && language !== undefined
         ? browserRuntime.runFork(
             Effect.sleep(SETTLE_DELAY).pipe(
+              Effect.andThen(awaitModuleTrafficQuiet),
               Effect.andThen(
-                Effect.suspend(() => warmLazyRouteComponents(pageRouteComponents(router, language, hrefs))),
+                Effect.all(
+                  [
+                    Effect.suspend(() => warmLazyRouteComponents(pageRouteComponents(router, language, hrefs))),
+                    compositionRevision === undefined
+                      ? Effect.void
+                      : Effect.suspend(() => warmRemotePages(compositionRevision, navigation)),
+                  ],
+                  { concurrency: 2, discard: true },
+                ),
               ),
             ),
           )
@@ -89,5 +120,5 @@ export const useIdleRoutePreload = (navigation: readonly PreloadableNavigationIt
         browserRuntime.runFork(Fiber.interrupt(fiber));
       }
     };
-  }, [hrefs, language, router, settledPath]);
+  }, [compositionRevision, hrefs, language, navigation, router, settledPath]);
 };

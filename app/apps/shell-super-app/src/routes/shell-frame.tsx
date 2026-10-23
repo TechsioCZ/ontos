@@ -736,7 +736,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
   const pageLanguage = language ?? '';
   const pendingHref = pendingPath === undefined ? undefined : navigationHrefFromPath(pendingPath, pageLanguage);
   const model = buildShellNavigation({ ...props, language: pageLanguage, pendingHref }, t);
-  useIdleRoutePreload(props.navigation);
+  useIdleRoutePreload(props.navigation, props.compositionRevision);
 
   // Back after sign-out or a tenant switch can restore this page from the back/forward cache with the old session's
   // navigation on screen. Hide it before the browser paints and load the document again, so the server decides.

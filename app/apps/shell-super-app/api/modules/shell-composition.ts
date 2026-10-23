@@ -496,6 +496,25 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
     const { catalog, deniedEntrypoints, permissionByModule } = authorization;
     const { excludedEntrypoints, states } = data;
     const pages = pageByContributionKey(catalog);
+    const approvedModules = new Map(catalog.composition.modules.map((module) => [module.moduleId, module] as const));
+    /** The page's approved remote, when it is browser code whose exposure the catalog confirms. */
+    const pageRemote = (contract: (typeof catalog.contracts)[number], page: ShellRenderableContribution | undefined) => {
+      const approvedModule = approvedModules.get(contract.manifest.module.id);
+      const component =
+        page === undefined
+          ? undefined
+          : contract.manifest.publicSurface.components.find(({ key }) => key === page.componentKey);
+      return page === undefined ||
+        component === undefined ||
+        approvedModule?.federation.execution !== 'browser' ||
+        !matchesComponentExposure(component, approvedModule.federation, page.expose)
+        ? undefined
+        : {
+            expose: page.expose,
+            manifest: { sha256: approvedModule.federation.manifest.sha256, url: approvedModule.federation.manifest.url },
+            remoteName: approvedModule.federation.remoteName,
+          };
+    };
     const navigation = catalog.contracts.flatMap((contract) => {
       const moduleId = contract.manifest.module.id;
       const state = states.get(moduleId);
@@ -514,6 +533,7 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
         }
         const page = pages.get(contribution.pageKey);
         const unavailable = permission === 'unavailable' || page === undefined;
+        const remote = unavailable ? undefined : pageRemote(contract, page);
         return [
           withOptionalProperty(
             {
@@ -535,6 +555,7 @@ export const makeShellCompositionAccess = (sources: ShellCompositionAccessSource
               state,
               unavailable,
               writable: state === 'active',
+              ...(remote === undefined ? {} : { remote }),
             },
           ),
         ];

@@ -447,6 +447,16 @@ export type ShellLabel = typeof ShellLabelSchema.Type;
 /** Platform capability a destination needs beyond module access; the Shell decides it per person. */
 export const ShellNavigationCapabilitySchema = Schema.Literals(['people_administration']);
 
+/** Where a page's code lives: the approved remote container and the exposed module. */
+export const ModuleFederationTargetSchema = Schema.Struct({
+  expose: Schema.NonEmptyString,
+  manifest: Schema.Struct({
+    sha256: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
+    url: Schema.NonEmptyString,
+  }),
+  remoteName: Schema.NonEmptyString,
+});
+
 export const ShellNavigationItemSchema = Schema.Struct({
   appId: AppIdSchema,
   enabled: Schema.Boolean,
@@ -460,6 +470,8 @@ export const ShellNavigationItemSchema = Schema.Struct({
   label: ShellLabelSchema,
   moduleId: ModuleIdSchema,
   order: Schema.Finite.check(Schema.isInt()),
+  /** The destination page's code, so the browser can load it while idle without reading anything. */
+  remote: Schema.optionalKey(ModuleFederationTargetSchema),
   requiresCapability: Schema.optional(ShellNavigationCapabilitySchema),
   state: Schema.Literals(['active', 'deprecated', 'read_only']),
   unavailable: Schema.Boolean,
@@ -569,14 +581,7 @@ export const ResolvedModuleTargetSchema = Schema.Struct({
   componentKey: ComponentKeySchema,
   compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
   entrypointKey: EntrypointKeySchema,
-  federation: Schema.Struct({
-    expose: Schema.NonEmptyString,
-    manifest: Schema.Struct({
-      sha256: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
-      url: Schema.NonEmptyString,
-    }),
-    remoteName: Schema.NonEmptyString,
-  }),
+  federation: ModuleFederationTargetSchema,
   moduleId: ModuleIdSchema,
   routeParameters: Schema.Record(Schema.String, Schema.String),
   writable: Schema.Boolean,

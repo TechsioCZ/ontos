@@ -282,6 +282,17 @@ it.effect('composes one deterministic state and permission batch with lifecycle 
       navigationExclusions: noExclusions,
     });
     const result = yield* composition.compose(context);
+    // Each destination names its page's approved remote, so the browser can load the code while idle.
+    const approvedRemote = (moduleId: string) => {
+      const approved = approvedCatalog.composition.modules.find((module) => module.moduleId === moduleId);
+      return approved?.federation.execution === 'browser'
+        ? {
+            expose: './PageHome',
+            manifest: { sha256: approved.federation.manifest.sha256, url: approved.federation.manifest.url },
+            remoteName: approved.federation.remoteName,
+          }
+        : undefined;
+    };
     expect(result).toEqual({
       compositionRevision: approvedCatalog.composition.revision,
       deniedAppIds: [],
@@ -298,6 +309,7 @@ it.effect('composes one deterministic state and permission batch with lifecycle 
           label: { cs: 'Documents', en: 'Documents' },
           moduleId: 'documents.center',
           order: 10,
+          remote: approvedRemote('documents.center'),
           state: 'read_only',
           unavailable: false,
           writable: false,
@@ -312,6 +324,7 @@ it.effect('composes one deterministic state and permission batch with lifecycle 
           label: { cs: 'Property', en: 'Property' },
           moduleId: 'property.registry',
           order: 20,
+          remote: approvedRemote('property.registry'),
           state: 'deprecated',
           unavailable: false,
           writable: false,
