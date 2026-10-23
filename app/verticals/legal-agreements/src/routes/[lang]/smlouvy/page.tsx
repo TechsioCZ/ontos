@@ -16,7 +16,10 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { Table } from '@techsio/ui-kit/organisms/table';
+import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { useRecordsPage } from './use-agreements-records.ts';
+import { agreementsInputOf } from './agreements-data.ts';
+import type { AgreementsInput } from './agreements-data.ts';
 import { ContractLinksCard, ContractTermsCard, ContractTermsForm, contractMonthlyTotal } from './contract-terms.tsx';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import csResource from '../../../../locales/cs/legal-agreements.json';
@@ -514,8 +517,8 @@ const AgreementsDraftForm = ({ state }: { readonly state: ReturnType<typeof useR
     </SidePanel>
   );
 };
-const RecordsPageContent = () => {
-  const state = useRecordsPage();
+const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
+  const state = useRecordsPage(input);
   const {
     busy,
     expiringOnly,
@@ -698,8 +701,12 @@ const RecordsPageContent = () => {
     </>
   );
 };
-export const RecordsPage = () => {
+export { preloadPage } from './agreements-data.ts';
+
+/** Rendered by the Shell with the props its `preloadPage` received; standalone it reads the query from the router. */
+export const RecordsPage = (props: Partial<ModulePageProps>) => {
   const search = useRouterState({ select: (state) => state.location.searchStr });
+  const input = agreementsInputOf(props, search);
   return (
     <FederatedI18nBoundary
       defaultNamespace="legal-agreements"
@@ -707,7 +714,7 @@ export const RecordsPage = () => {
       resources={legalAgreementsI18nResources}
       supportedLanguages={['en', 'cs']}
     >
-      <RecordsPageContent key={search} />
+      <RecordsPageContent input={input} key={props.search ?? search} />
     </FederatedI18nBoundary>
   );
 };

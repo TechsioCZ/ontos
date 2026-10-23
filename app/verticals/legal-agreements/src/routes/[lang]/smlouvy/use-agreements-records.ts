@@ -1,22 +1,18 @@
 import { failureFeedback } from '../../../../shared/actions/apply-command.ts';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
-import { executeCounterpartyRead, listCustomers } from '@app/party-registry/api/client';
-import { executeRecords as executePropertyRecords } from '@app/property-portfolio/clients/records';
-import { executeRecords as executeOccupancyRecords } from '@app/property-leasing/clients/records';
+import { pageDataPending } from '@app/shared-contracts/page-data';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { ContractRefSchema } from '../../../../shared/resources/contract.ts';
-import { Crypto, DateTime, Effect, Match, Option, PlatformError, Schema } from 'effect';
-import { useEffect, useEffectEvent, useRef, useState } from 'react';
+import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
+import { Crypto, DateTime, Effect, Match, Option, PlatformError } from 'effect';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { AgreementsCommand, Feedback } from '../../../../shared/actions/apply-command.ts';
-import type { Contract, RecordsResponse } from '../../../../shared/apis/records.ts';
+import type { Contract } from '../../../../shared/apis/records.ts';
 import { executeApplyCommand } from '../../../api/apply-command-action-client.ts';
-import { executeRecords } from '../../../api/records-client.ts';
-import { rentalReferenceAccess } from './rental-reference-access.ts';
+import { agreements, agreementsView, loadRentalReferences } from './agreements-data.ts';
+import type { AgreementsInput, RentalReferences } from './agreements-data.ts';
 import { contractTitle } from './contract-title.ts';
 
-const RecordsSearchSchema = Schema.Struct({ resourceId: Schema.optional(ContractRefSchema.fields.resourceId) });
 const DEFAULT_START_DATE = '2026-10-05';
 const DEFAULT_END_DATE = '2027-10-05';
 const browserCrypto = Crypto.make({
@@ -35,8 +31,6 @@ const browserCrypto = Crypto.make({
   randomBytes: (size) => globalThis.crypto.getRandomValues(new Uint8Array(size)),
 });
 const newUuid = browserCrypto.randomUUIDv4;
-type Properties = Effect.Success<ReturnType<typeof executePropertyRecords>>;
-type Occupancies = Effect.Success<ReturnType<typeof executeOccupancyRecords>>;
 /** The optional commercial terms of a contract, carried over when a draft is edited or a contract renewed. */
 export const contractTerms = (record: Contract) => ({
   ...(record.noticePeriod === undefined ? {} : { noticePeriod: record.noticePeriod }),
@@ -54,27 +48,55 @@ const contractReferenceAudiences = (record: Contract | undefined) => {
   }
   return audiences;
 };
-export const useRecordsPage = () => {
+export const useRecordsPage = (input: AgreementsInput) => {
   const { language, t } = useModernI18n();
-  const { location } = useRouterState();
-  const linkedResourceId = Option.getOrUndefined(Schema.decodeOption(RecordsSearchSchema)(location.search))?.resourceId;
+  const navigate = useNavigate();
   const cancellation = useRef<AbortController | null>(null);
   const run = <A, E>(effect: Effect.Effect<A, E>) => {
     const controller = cancellation.current ?? new AbortController();
     cancellation.current = controller;
     void browserRuntime.runPromiseExit(effect, { signal: controller.signal });
   };
-  const [snapshot, setSnapshot] = useState<RecordsResponse>();
-  const [properties, setProperties] = useState<Properties>();
-  const [occupancies, setOccupancies] = useState<Occupancies>();
-  const [feedback, setFeedback] = useState<Feedback>('loading');
+  const page = useSyncExternalStore(agreements.subscribe, () => agreements.snapshot(input), () => pageDataPending);
+  const { legalEntityId, resourceId: linkedResourceId } = input;
+  useEffect(
+    () => agreements.ensure({ legalEntityId, resourceId: linkedResourceId }),
+    [legalEntityId, linkedResourceId],
+  );
+  useEffect(
+    () => () => {
+      cancellation.current?.abort();
+    },
+    [cancellation],
+  );
+  /** Set when a command was denied or the owner became unavailable; hides the data until the next reload. */
+  const [sensitiveHidden, setSensitiveHidden] = useState(false);
+  const [actionFeedback, setActionFeedback] = useState<Feedback>();
+  /** Rental references read on demand when the person picks a lease and the page did not prepare them. */
+  const [requestedRental, setRequestedRental] = useState<RentalReferences>();
+  const [requestedRentalFeedback, setRequestedRentalFeedback] = useState<Feedback>();
+  const [chosenContractKind, setChosenContractKind] = useState<Contract['kind']>();
+  const view = agreementsView(page, {
+    actionFeedback,
+    chosenContractKind,
+    hidden: sensitiveHidden,
+    requestedRental,
+    requestedRentalFeedback,
+  });
+  const {
+    contractKind,
+    customerName,
+    customerNameFeedback,
+    customers,
+    feedback,
+    occupancies,
+    properties,
+    records: snapshot,
+    rental,
+    rentalFeedback,
+  } = view;
   const [formOpen, setFormOpen] = useState(false);
-  const [customerName, setCustomerName] = useState<string>();
-  const [customerNameFeedback, setCustomerNameFeedback] = useState<Feedback>();
-  const [customers, setCustomers] = useState<Effect.Success<ReturnType<typeof listCustomers>>>([]);
   const [customerId, setCustomerId] = useState('');
-  const [contractKind, setContractKind] = useState<Contract['kind']>('OTHER');
-  const [rentalFeedback, setRentalFeedback] = useState<Feedback>();
   const [signedReference, setSignedReference] = useState('');
   const [signedFileName, setSignedFileName] = useState('');
   const [signedBy, setSignedBy] = useState('');
@@ -95,15 +117,11 @@ export const useRecordsPage = () => {
   });
   const selected = snapshot?.contracts.find((record) => record.contractRef.resourceId === linkedResourceId);
   const clearSensitiveState = () => {
-    setSnapshot(undefined);
-    setCustomers([]);
+    setSensitiveHidden(true);
     setCustomerId('');
-    setRentalFeedback(undefined);
-    setProperties(undefined);
-    setOccupancies(undefined);
+    setRequestedRental(undefined);
+    setRequestedRentalFeedback(undefined);
     setFormOpen(false);
-    setCustomerName(undefined);
-    setCustomerNameFeedback(undefined);
     setSignedReference('');
     setSignedFileName('');
     setSignedBy('');
@@ -121,105 +139,31 @@ export const useRecordsPage = () => {
       cancellation.current = new AbortController();
       clearSensitiveState();
     }
-    setFeedback(nextFeedback);
+    setActionFeedback(nextFeedback);
   };
-  const loadRentalReferences = () =>
-    Effect.all(
-      {
-        occupancies: executeOccupancyRecords({}, 'legal-agreements.occupancies'),
-        properties: executePropertyRecords({}, 'legal-agreements.units'),
-      },
-      { concurrency: 2 },
-    ).pipe(
-      Effect.tap((value) =>
-        Effect.sync(() => {
-          setProperties(value.properties);
-          setOccupancies(value.occupancies);
-          setRentalFeedback(undefined);
-        }),
-      ),
-    );
   const selectContractKind = (kind: Contract['kind']) => {
-    setContractKind(kind);
-    setRentalFeedback(undefined);
-    if (kind === 'LEASE') {
+    setChosenContractKind(kind);
+    setRequestedRentalFeedback(undefined);
+    if (kind === 'LEASE' && rental === undefined) {
       run(
-        loadRentalReferences().pipe(
+        loadRentalReferences.pipe(
           Effect.match({
-            onFailure: (error) => setRentalFeedback(failureFeedback(error)),
-            onSuccess: () => setRentalFeedback(undefined),
+            onFailure: (error) => setRequestedRentalFeedback(failureFeedback(error)),
+            onSuccess: (value) => {
+              setRequestedRental(value);
+              setRequestedRentalFeedback(undefined);
+            },
           }),
         ),
       );
     }
   };
-  const load = () =>
-    Effect.sync(clearSensitiveState).pipe(
-      Effect.flatMap(() =>
-        Effect.all(
-          {
-            customers: listCustomers({ includeArchived: false }),
-            records: executeRecords({}, 'legal-agreements.records'),
-            rentalReadable: rentalReferenceAccess,
-          },
-          { concurrency: 2 },
-        ),
-      ),
-      Effect.tap((value) =>
-        Effect.sync(() => {
-          setSnapshot(value.records);
-          setCustomers(value.customers);
-        }),
-      ),
-      Effect.tap((value) => {
-        const record = value.records.contracts.find((item) => item.contractRef.resourceId === linkedResourceId);
-        if (record === undefined) {
-          return Effect.void;
-        }
-        return executeCounterpartyRead(
-          { counterpartyRef: record.counterpartyRef },
-          'legal-agreements.customer-detail',
-        ).pipe(
-          Effect.match({
-            onFailure: (failure) => setCustomerNameFeedback(failureFeedback(failure)),
-            onSuccess: (customer) => setCustomerName(customer.party.displayName ?? undefined),
-          }),
-        );
-      }),
-      Effect.tap((value) =>
-        value.rentalReadable && value.records.contracts.some((record) => record.kind === 'LEASE')
-          ? loadRentalReferences().pipe(
-              Effect.match({
-                onFailure: (error) => setRentalFeedback(failureFeedback(error)),
-                onSuccess: () => setContractKind('LEASE'),
-              }),
-            )
-          : Effect.void,
-      ),
-    );
+  /** Reloads in place: the current list stays visible until the owners answered. */
   const refresh = () => {
-    cancellation.current?.abort();
-    cancellation.current = new AbortController();
-    clearSensitiveState();
-    setFeedback('loading');
-    run(
-      load().pipe(
-        Effect.match({
-          onFailure: reportFailure,
-          onSuccess: () => setFeedback('ready'),
-        }),
-      ),
-    );
+    setActionFeedback('loading');
+    setSensitiveHidden(false);
+    run(agreements.refresh(input).pipe(Effect.andThen(Effect.sync(() => setActionFeedback(undefined)))));
   };
-  const loadOnMount = useEffectEvent(() => {
-    run(load().pipe(Effect.match({ onFailure: reportFailure, onSuccess: () => setFeedback('ready') })));
-  });
-  useEffect(() => {
-    loadOnMount();
-    return () => {
-      cancellation.current?.abort();
-    };
-  }, []);
   const referenceAudiences = (command: AgreementsCommand): readonly string[] =>
     Match.value(command).pipe(
       Match.tags({
@@ -246,7 +190,7 @@ export const useRecordsPage = () => {
     if (snapshot === undefined) {
       return;
     }
-    setFeedback('saving');
+    setActionFeedback('saving');
     run(
       Effect.all(
         {
@@ -261,21 +205,21 @@ export const useRecordsPage = () => {
             referenceCredentials,
           }),
         ),
-        Effect.flatMap((result) => load().pipe(Effect.map((value) => ({ records: value.records, result })))),
-        Effect.tap(({ records, result }) => {
-          const record = records.contracts.find(
-            (item) => item.contractRef.resourceId === result.resourceRef?.resourceId,
-          );
-          if (record !== undefined && linkedResourceId !== record.contractRef.resourceId) {
-            const url = new URL(window.location.href);
-            url.searchParams.set('resourceId', record.contractRef.resourceId);
-            window.location.assign(url);
-          }
-          return Effect.void;
+        Effect.tap(() => agreements.refresh(input)),
+        Effect.tap((result) => {
+          const latest = agreements.snapshot(input);
+          const record = (
+            latest.state === 'ready' ? Option.getOrUndefined(latest.value) : undefined
+          )?.records.contracts.find((item) => item.contractRef.resourceId === result.resourceRef?.resourceId);
+          return record !== undefined && linkedResourceId !== record.contractRef.resourceId
+            ? Effect.sync(() => {
+                void navigate({ search: { resourceId: record.contractRef.resourceId }, to: '.' });
+              })
+            : Effect.void;
         }),
         Effect.match({
           onFailure: reportFailure,
-          onSuccess: () => setFeedback('ready'),
+          onSuccess: () => setActionFeedback(undefined),
         }),
       ),
     );
@@ -290,7 +234,7 @@ export const useRecordsPage = () => {
       counterpartyRef === undefined ||
       (contractKind === 'LEASE' && (occupancy === undefined || unit === undefined))
     ) {
-      setFeedback('validation');
+      setActionFeedback('validation');
       return;
     }
     run(
@@ -329,7 +273,7 @@ export const useRecordsPage = () => {
     if (selected?.lifecycleState !== 'DRAFT' || selected.signatureState !== 'NOT_SENT') {
       return;
     }
-    setContractKind(selected.kind);
+    setChosenContractKind(selected.kind);
     setStartDate(selected.startDate);
     setEndDate(selected.endDate ?? '');
     setEditingDraft(true);
@@ -345,7 +289,7 @@ export const useRecordsPage = () => {
   };
   const saveDraft = () => {
     if (selected?.lifecycleState !== 'DRAFT' || selected.signatureState !== 'NOT_SENT') {
-      setFeedback('validation');
+      setActionFeedback('validation');
       return;
     }
     runCommand({
@@ -403,7 +347,7 @@ export const useRecordsPage = () => {
         paymentDay < 1 ||
         paymentDay > 31)
     ) {
-      setFeedback('validation');
+      setActionFeedback('validation');
       return;
     }
     const text = (value: string) => (value.trim().length === 0 ? undefined : value.trim());
@@ -424,7 +368,7 @@ export const useRecordsPage = () => {
   };
   const recordSignature = (record: Contract) => {
     if ([signedReference, signedFileName, signedBy, signedOn].some((value) => value.trim().length === 0)) {
-      setFeedback('validation');
+      setActionFeedback('validation');
       return;
     }
     run(
@@ -456,7 +400,7 @@ export const useRecordsPage = () => {
             });
           }),
         ),
-        Effect.match({ onFailure: reportFailure, onSuccess: () => setFeedback('saving') }),
+        Effect.match({ onFailure: reportFailure, onSuccess: () => setActionFeedback('saving') }),
       ),
     );
   };
