@@ -1,6 +1,6 @@
 /**
  * Composition-root wiring of the optional external identity provider. Deployment data (JSON in
- * `ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT`) names the namespace, provider origin, attester and grants; the module
+ * `ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT`) names the namespace, attester and grants; the module
  * that declares that namespace in the active composition supplies the rest. Both layers need the Shell's installed
  * module catalog, which the composition root provides.
  */
@@ -132,7 +132,7 @@ const unableToLoadEnvironment = () =>
 /**
  * Unset in every deployment without an external identity provider, so the runtime keeps the staff-only defaults. A
  * present but malformed value fails. Only the JSON envelope is parsed here; the trusted-boundary decode happens once in
- * `makeExternalIdentityProviderDeployment` (decoding twice would fail on transformed fields such as `providerOrigin`).
+ * `makeExternalIdentityProviderDeployment`.
  */
 const deploymentInputConfig = Config.option(
   Config.schema(Schema.fromJsonString(Schema.Json), EXTERNAL_IDENTITY_PROVIDER_DEPLOYMENT_ENV_KEY),

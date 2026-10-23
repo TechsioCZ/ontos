@@ -21,6 +21,7 @@ const catalog = {
       composition: {
         modules: [
           {
+            backend: { baseUrl: 'https://ontos-provider-release.example.workers.dev/' },
             contractDocument: JSON.stringify({
               manifest: {
                 publicSurface: {
@@ -60,7 +61,6 @@ const rawConfiguration = {
     },
   ],
   providerEndpointAudience: 'example-portal',
-  providerOrigin: 'https://provider.example.test',
 };
 
 it.effect('resolves no deployment input when the environment variable is unset', () =>

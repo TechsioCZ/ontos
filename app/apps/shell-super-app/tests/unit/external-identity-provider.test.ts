@@ -58,6 +58,7 @@ import type {
 
 const PROVIDER_NAMESPACE = 'ontos.example.portal.v1';
 const PROVIDER_APP_ID = 'example-portal';
+const PROVIDER_RELEASE_ORIGIN = 'https://ontos-provider-release.example.workers.dev/';
 const declaration = {
   admissionDeadlineMs: 5000,
   authenticationNamespaceId: PROVIDER_NAMESPACE,
@@ -70,12 +71,13 @@ const catalogDeclaring = (
   providers: readonly OntosExternalIdentityProviderInput[],
 ): ShellInstalledModuleCatalogService => ({
   load: Effect.succeed(
-    // SAFETY: test double; the provider resolution reads only `composition.modules[].{deployment.appId,contractDocument}`.
+    // SAFETY: test double; the provider resolution reads only `composition.modules[].{backend.baseUrl,deployment.appId,contractDocument}`.
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion, anti-slop/no-chained-type-assertions -- Test double of the installed catalog.
     {
       composition: {
         modules: [
           {
+            backend: { baseUrl: PROVIDER_RELEASE_ORIGIN },
             contractDocument: JSON.stringify({ manifest: { publicSurface: { externalIdentityProviders: providers } } }),
             deployment: { appId: PROVIDER_APP_ID },
             moduleId: 'example.portal',
@@ -88,6 +90,7 @@ const catalogDeclaring = (
 const catalog = catalogDeclaring([declaration]);
 const installed: InstalledExternalIdentityProvider = {
   appId: PROVIDER_APP_ID,
+  backendBaseUrl: PROVIDER_RELEASE_ORIGIN,
   declaration: Schema.decodeUnknownSync(OntosExternalIdentityProviderSchema)(declaration),
 };
 
@@ -141,7 +144,6 @@ const rawConfiguration = {
     },
   ],
   providerEndpointAudience,
-  providerOrigin: 'https://provider.example.test',
 };
 const configuration = decode(ExternalIdentityProviderConfigurationSchema, rawConfiguration);
 
@@ -560,7 +562,7 @@ it.effect('routes the production deployment client to the verification path the 
     );
     yield* run;
 
-    expect(outboundUrls).toEqual(['https://provider.example.test/example-portal-api/portal/internal/verify']);
+    expect(outboundUrls).toEqual([`${PROVIDER_RELEASE_ORIGIN}example-portal-api/portal/internal/verify`]);
     expect(outboundOperations).toEqual([declaration.verification.operation]);
     expect(outboundAssertions).toEqual(['Bearer provider-workload-token']);
   }),

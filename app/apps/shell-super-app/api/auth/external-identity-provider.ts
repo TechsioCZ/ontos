@@ -18,24 +18,10 @@ import type { Effect } from 'effect';
 import type { ShellInstalledCatalog } from '../modules/installed-module-catalog.ts';
 import { ExternalIdentityHttpConfigurationSchema } from './external-identity/configuration.ts';
 
-const HttpOriginSchema = Schema.URLFromString.check(
-  Schema.makeFilter((url) =>
-    (url.protocol === 'http:' || url.protocol === 'https:') &&
-    url.username.length === 0 &&
-    url.password.length === 0 &&
-    url.pathname === '/' &&
-    url.search.length === 0 &&
-    url.hash.length === 0
-      ? undefined
-      : 'The provider origin must be an HTTP(S) origin without credentials, path, query, or fragment',
-  ),
-);
-
 export const ExternalIdentityProviderConfigurationSchema = Schema.Struct({
   ...ExternalIdentityHttpConfigurationSchema.fields,
   attesterPrincipalId: PrincipalIdSchema,
   authenticationNamespaceId: AuthenticationNamespaceIdSchema,
-  providerOrigin: HttpOriginSchema,
 });
 export type ExternalIdentityProviderConfiguration = typeof ExternalIdentityProviderConfigurationSchema.Type;
 
@@ -55,6 +41,8 @@ export const decodeExternalIdentityProviderConfiguration = (
 /** The installed module serving the configured namespace, with what its contract declares. */
 export interface InstalledExternalIdentityProvider {
   readonly appId: string;
+  /** The approved release origin of that module in the active composition. */
+  readonly backendBaseUrl: string;
   readonly declaration: OntosExternalIdentityProvider;
 }
 
@@ -81,7 +69,11 @@ export const installedExternalIdentityProviderOf = (
       ),
     );
     if (Option.isSome(declaration)) {
-      return Option.some({ appId: module.deployment.appId, declaration: declaration.value });
+      return Option.some({
+        appId: module.deployment.appId,
+        backendBaseUrl: module.backend.baseUrl,
+        declaration: declaration.value,
+      });
     }
   }
   return Option.none();

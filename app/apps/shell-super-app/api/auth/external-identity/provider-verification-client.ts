@@ -122,7 +122,10 @@ export class ExternalIdentityVerificationClient extends Context.Service<
   '@app/shell-super-app/api/auth/external-identity/provider-verification-client/ExternalIdentityVerificationClient',
 ) {}
 
-/** POSTs to `<providerOrigin>/<appId>-api<declared path>` of the module that declares the namespace. */
+/**
+ * POSTs to `<release origin>/<appId>-api<declared path>` of the module that declares the namespace: the approved
+ * release in the active composition, so verification follows every publication without deployment data.
+ */
 export const ExternalIdentityVerificationClientLive = Layer.effect(
   ExternalIdentityVerificationClient,
   Effect.gen(function* makeExternalIdentityVerificationClient() {
@@ -136,7 +139,7 @@ export const ExternalIdentityVerificationClientLive = Layer.effect(
       const authorization = yield* acquireExternalIdentityWorkloadAssertion(configuration, request);
       const url = new URL(
         `/${installed.appId}-api${installed.declaration.verification.path}`,
-        configuration.providerOrigin,
+        installed.backendBaseUrl,
       );
       return yield* HttpClientRequest.post(url).pipe(
         HttpClientRequest.setHeaders({
