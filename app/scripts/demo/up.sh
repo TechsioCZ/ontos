@@ -112,7 +112,10 @@ if [ ! -f .env ]; then
   sed -e "s#^BETTER_AUTH_SECRET=.*#BETTER_AUTH_SECRET=$(openssl rand -hex 24)#" \
     -e 's#^POSTGRES_DB=.*#POSTGRES_DB=siampark_demo#' \
     -e 's#@localhost:5433/ontos$#@localhost:5433/siampark_demo#' \
-    -e '/^COMMERCE_/d' .env.example >.env
+    -e "s#^COMMERCE_PORTAL_AUTH_URL=.*#COMMERCE_PORTAL_AUTH_URL=http://localhost:3070#" \
+    -e "s#^COMMERCE_PORTAL_AUTH_SECRET=.*#COMMERCE_PORTAL_AUTH_SECRET=$(openssl rand -hex 32)#" \
+    -e 's#^COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS=.*#COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS=http://localhost:3020,http://127.0.0.1:3070#' \
+    -e '/^COMMERCE_CORE_IDENTITY_/d' .env.example >.env
   printf '\nULTRAMODERN_DEPLOYMENT_ENVIRONMENT=development\n' >>.env
   chmod 600 .env
 fi
@@ -269,6 +272,25 @@ step seed-agent-entities env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" 
 step mcp-agent-operators "${WITH_ENV[@]}" node scripts/demo/mcp-agent-operators.mts
 # CRM.md §3: key of the CRM's Party Registry intake principal (read by the crm server per intake, no restart).
 step crm-party-intake pnpm_ demo:crm-party-intake
+# AKROS customer accounts: the Commerce portal's service principal, its managed key and the Shell's provider data
+# land in app/.env; the Shell and the Commerce vertical read them at start, so both restart once with them.
+step commerce-portal pnpm_ demo:commerce-portal
+load_env
+restart_server() { # restart_server <name> <directory>
+  local pid
+  pid="$(cat "$PID_DIR/$1.pid" 2>/dev/null || true)"
+  if [ -n "$pid" ]; then
+    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+    for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; sleep .3; done
+  fi
+  start "$1" "${WITH_ENV[@]}" pnpm --dir "$2" exec modern serve
+}
+restart_server shell-super-app apps/shell-super-app
+wait_http "http://127.0.0.1:$SHELL_PORT/.well-known/ontos-shell-runtime.json" 180 shell-super-app
+if printf '%s\n' "${VERTICALS[@]}" | grep -qx commerce-customer-context; then
+  restart_server commerce-customer-context verticals/commerce-customer-context
+  wait_http "http://127.0.0.1:$(port_of commerce-customer-context)/.well-known/ontos-module-manifest.json" 180 commerce-customer-context
+fi
 # Rental data uses public reads/Actions, so it must run AFTER composition, company setup and grants.
 if [ "${DEMO_RESET:-1}" != 0 ]; then
   step demo-seed-rental env \

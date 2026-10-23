@@ -137,6 +137,7 @@
     "demo:reset:sales": "node scripts/demo/reset-demo.mts",
     "demo:seed:facility-operations": "node scripts/demo/seed-siampark-ops.mts",
     "demo:ai-profiles": "node scripts/demo/ai-profiles.mts",
+    "demo:commerce-portal": "node scripts/demo/commerce-portal.mts",
     "demo:crm-party-intake": "node scripts/demo/crm-party-intake.mts",
     "demo:prove:ai": "node scripts/demo/prove-ai-levels.mts",
     "demo:prove:ai:c": "node scripts/demo/prove-ai-c.mts",
