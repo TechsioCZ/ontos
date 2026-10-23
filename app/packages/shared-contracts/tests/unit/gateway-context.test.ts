@@ -430,7 +430,7 @@ it('lets server API keys bind the active revision without weakening session revi
 
 it('constrains the combined gateway protocol to named reads rather than arbitrary URLs or actions', () => {
   const decode = Schema.decodeUnknownSync(ApiKeyGatewayReadRequestSchema);
-  const payload = { audience: 'merchandise', readName: 'records', query: { view: { storefront: true } } };
+  const payload = { audience: 'merchandise', query: { view: { storefront: true } }, readName: 'records' };
   expect(decode(payload)).toEqual(payload);
   for (const readName of ['../actions/order', 'https://other.test', '%2e%2e', 'records/../../actions']) {
     expect(() => decode({ ...payload, readName })).toThrow();

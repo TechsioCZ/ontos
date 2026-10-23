@@ -101,22 +101,72 @@ beforeEach(async () => {
 afterEach(() => vi.useRealTimers());
 
 describe("OntOS catalog server reads", () => {
-  it("keeps cron-warmed navigation and home fresh for 15 minutes without extending detail prices", async () => {
+  it("keeps price-free navigation fresh for 15 minutes but refreshes home and detail after 10 seconds", async () => {
     vi.useFakeTimers();
     await server.getCatalog();
     await server.readProducts({ slug: "p1", pageSize: 1 }, "full");
     vi.mocked(readRecords).mockClear();
     vi.advanceTimersByTime(14 * 60_000);
     await server.getShellSnapshot();
-    await server.getCatalog();
     expect(readRecords).not.toHaveBeenCalled();
+    await server.getCatalog();
     await server.readProducts({ slug: "p1", pageSize: 1 }, "full");
-    await vi.advanceTimersByTimeAsync(0);
     expect(vi.mocked(readRecords).mock.calls.map(catalogOf)).toEqual([
+      { featured: true, pageSize: 20, fields: "card", includeCategories: false },
       { slug: "p1", pageSize: 1, fields: "full", includeCategories: false },
     ]);
     expect(server.CATALOG_CACHE_MS).toBe(10_000);
   });
+  const pricedViews = [
+    {
+      name: "product detail",
+      read: async () =>
+        (await server.readProducts({ slug: "p1", pageSize: 1 }, "full")).products[0],
+    },
+    {
+      name: "product listing",
+      read: async () => (await server.getCatalogPage({ q: "p1", pageSize: 24 })).products[0],
+    },
+    {
+      name: "category first page",
+      read: async () =>
+        (await server.getCategoryListing({ categorySlug: "srouby", pageSize: 24 })).products[0],
+    },
+    { name: "home selection", read: async () => (await server.getCatalog()).getProducts()[0] },
+  ];
+  it.each(pricedViews)(
+    "shows an admin price and stock edit on the very next $name view after 10 seconds",
+    async ({ read }) => {
+      vi.useFakeTimers();
+      expect(await read()).toMatchObject({ priceMinor: 121, stockCount: 5 });
+      vi.mocked(readRecords).mockResolvedValue({
+        revision: 6,
+        total: 1,
+        page: 1,
+        pageSize: 24,
+        homepageFeaturedProductIds: [],
+        products: [{ ...product("p1"), grossPriceMinor: 242, stockOnHand: 2 }],
+        categories: tree,
+      });
+      const calls = vi.mocked(readRecords).mock.calls.length;
+      vi.advanceTimersByTime(9_999);
+      expect(await read()).toMatchObject({ priceMinor: 121, stockCount: 5 });
+      expect(readRecords).toHaveBeenCalledTimes(calls);
+      vi.advanceTimersByTime(1);
+      expect(await read()).toMatchObject({ priceMinor: 242, stockCount: 2 });
+      expect(readRecords).toHaveBeenCalledTimes(calls + 1);
+    },
+  );
+  it.each(pricedViews)(
+    "rejects expired $name prices when the owner is unavailable instead of rendering old data",
+    async ({ read }) => {
+      vi.useFakeTimers();
+      await read();
+      vi.advanceTimersByTime(10_000);
+      vi.mocked(readRecords).mockRejectedValue(new Error("owner unavailable"));
+      await expect(read()).rejects.toThrow("owner unavailable");
+    },
+  );
   it("reads products as bounded cards without the category tree and without unset keys", async () => {
     await server.readProducts(
       { categorySlug: "srouby", page: 2, pageSize: 24, q: "", minMinor: undefined },
@@ -222,26 +272,13 @@ describe("OntOS catalog server reads", () => {
       { page: undefined, sort: "price-asc", includeCategories: false },
     ]);
   });
-  it("warms the tree, the homepage selection and every sidebar category, then skips young values", async () => {
-    expect(await server.warmCatalog(60_000)).toEqual({ fresh: 0, refreshed: 4, failed: 0 });
-    const calls = vi.mocked(readRecords).mock.calls.map(catalogOf);
-    expect(calls).toContainEqual({ pageSize: 1, fields: "card", includeCategories: true });
-    expect(calls).toContainEqual({
-      featured: true,
-      pageSize: 20,
-      fields: "card",
-      includeCategories: false,
-    });
-    expect(calls.map((call) => call.categorySlug).filter(Boolean)).toEqual([
-      "nerezovy-spojovaci-material",
-      "srouby",
+  it("warms only price-free navigation, skips young values, and leaves product reads to shoppers", async () => {
+    expect(await server.warmCatalog(60_000)).toEqual({ fresh: 0, refreshed: 1, failed: 0 });
+    expect(vi.mocked(readRecords).mock.calls.map(catalogOf)).toEqual([
+      { pageSize: 1, fields: "card", includeCategories: true },
     ]);
-    expect(await server.warmCatalog(60_000)).toEqual({ fresh: 4, refreshed: 0, failed: 0 });
-    expect(readRecords).toHaveBeenCalledTimes(4);
-    // A page view of a warmed category needs no owner read.
-    await server.getCatalog("srouby");
-    expect(readRecords).toHaveBeenCalledTimes(4);
-    // Product layout and recommendations use those same warmed keys; only detail reads the owner.
+    expect(await server.warmCatalog(60_000)).toEqual({ fresh: 1, refreshed: 0, failed: 0 });
+    expect(readRecords).toHaveBeenCalledTimes(1);
     vi.mocked(readRecords).mockClear();
     await renderCache.run(new Map(), () =>
       Promise.all([
@@ -251,7 +288,20 @@ describe("OntOS catalog server reads", () => {
       ]),
     );
     expect(vi.mocked(readRecords).mock.calls.map(catalogOf)).toEqual([
+      { featured: true, pageSize: 20, fields: "card", includeCategories: false },
       { slug: "p1", pageSize: 1, fields: "full", includeCategories: false },
+    ]);
+    vi.mocked(readRecords).mockClear();
+    await server.getCategoryListing({ categorySlug: "srouby", pageSize: 24 });
+    expect(vi.mocked(readRecords).mock.calls.map(catalogOf)).toEqual([
+      {
+        categorySlug: "srouby",
+        page: 1,
+        pageSize: 24,
+        sort: "name",
+        fields: "card",
+        includeCategories: true,
+      },
     ]);
   });
   it("reads product detail in full and listings as cards", async () => {

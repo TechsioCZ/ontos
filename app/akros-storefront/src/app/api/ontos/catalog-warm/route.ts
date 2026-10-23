@@ -2,9 +2,9 @@ import "server-only";
 import { warmCatalog } from "@/ontos/catalog-server";
 
 /**
- * Reads what first views need (navigation tree, homepage selection, every sidebar category with its first
- * listing page) into the shared catalog cache: called by the scheduled trigger and after a deploy. Values
- * younger than this are skipped, so repeated calls within the window cost no OntOS reads.
+ * Warms only the price-free navigation tree, on the scheduled trigger and after a deploy.
+ * Product prices and stock are read on demand, never warmed for a 15-minute schedule.
+ * Repeated calls within this window cost no OntOS reads.
  */
 const WARM_MIN_AGE_MS = 12 * 60_000;
 

@@ -275,10 +275,10 @@ export const shellGatewayContextContract = {
   apiPrefix: '/shell-super-app-api',
   documentContextPath: '/shell-super-app-api/shell/document-context',
   issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context',
-  readWithApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-read',
   issueDocumentGatewayContextsPath: '/shell-super-app-api/auth/gateway-contexts',
   issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
   ownerId: 'shell-super-app',
+  readWithApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-read',
 } as const;
 
 export const gatewayContextAuthorizationEntrypoints = [

@@ -106,6 +106,55 @@ describe("catalog stale-while-revalidate cache", () => {
       "503",
     );
   });
+  it("does not retain a value that expires while a failed owner read is pending", async () => {
+    vi.useFakeTimers();
+    const cache = catalogCache<string>("pending-expiry", options);
+    await cache.get("k", async () => "v1");
+    vi.advanceTimersByTime(options.keepMs - 1);
+    const pending = deferred<string>();
+    const page = cache.get("k", () => pending.promise);
+    const rejected = expect(page).rejects.toThrow("owner unavailable");
+    await vi.advanceTimersByTimeAsync(2);
+    pending.reject(new Error("owner unavailable"));
+    await rejected;
+  });
+  it("rejects expired shared prices even when KV retains them for its minimum 60-second TTL", async () => {
+    vi.useFakeTimers();
+    vi.mocked(after).mockClear();
+    const strict = { ...options, staleMs: options.freshMs, keepMs: options.freshMs };
+    const waits: Promise<unknown>[] = [];
+    const at = Date.now() - 11_000;
+    const store = {
+      getWithMetadata: vi.fn(async () => ({
+        value: JSON.stringify({ at, value: "old-price" }),
+        metadata: { at },
+      })),
+      put: vi.fn(async () => undefined),
+    };
+    vi.mocked(getCloudflareContext).mockReturnValue({
+      env: { STOREFRONT_CATALOG_CACHE: store },
+      ctx: { waitUntil: (promise: Promise<unknown>) => waits.push(promise) },
+    } as unknown as ReturnType<typeof getCloudflareContext>);
+    const cache = catalogCache<string>("prices", strict);
+    const load = vi.fn(async () => "new-price");
+    expect(await cache.get("k", load)).toBe("new-price");
+    await Promise.all(waits);
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(store.put).toHaveBeenCalledWith(
+      expect.stringMatching(/^prices\//u),
+      expect.any(String),
+      {
+        expirationTtl: 60,
+        metadata: { at: Date.now() },
+      },
+    );
+    await expect(
+      cache.get("other", async () => {
+        throw new Error("owner unavailable");
+      }),
+    ).rejects.toThrow("owner unavailable");
+    expect(after).not.toHaveBeenCalled();
+  });
   it("warms only values older than the given age", async () => {
     vi.useFakeTimers();
     const cache = catalogCache<string>("t", options);

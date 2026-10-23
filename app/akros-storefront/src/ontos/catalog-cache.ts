@@ -4,7 +4,9 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { after } from "next/server";
 
 /**
- * Stale-while-revalidate cache for public catalog reads (never for carts, quotes or orders).
+ * Public catalog cache (never for carts, quotes or orders). Price/stock-bearing entries set
+ * freshMs = staleMs = keepMs, so they never render after the fresh window or on owner failure.
+ * Only price-free category/navigation entries allow stale-while-revalidate and failure retention.
  *
  * Level 1 is the isolate's bounded map. On Workers, level 2 is the colo's Cache API (every isolate of the
  * storefront in that data center) and level 3 the storefront's catalog KV namespace (every data center, so
@@ -168,7 +170,9 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
     if (store !== undefined)
       waitUntil(
         store
-          .put(id, body, { expirationTtl: keepS, metadata: { at: entry.at } })
+          // KV requires at least 60 seconds of storage. The entry timestamp, not its storage TTL,
+          // governs whether a price may render; a retained copy past freshMs is never served.
+          .put(id, body, { expirationTtl: Math.max(60, keepS), metadata: { at: entry.at } })
           .catch(() => undefined),
       );
   };
@@ -215,7 +219,7 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
       try {
         return await read(key, load, context);
       } catch (error) {
-        if (entry !== undefined) return entry.value;
+        if (entry !== undefined && age(entry) < options.keepMs) return entry.value;
         throw error;
       }
     },

@@ -442,8 +442,9 @@ jobs:
           mise exec -- npm ci --no-audit --no-fund
           mise exec -- npm run cloudflare:deploy
 
-      # One call (~30 owner reads, values younger than 12 min skipped) refreshes the shared catalog cache
-      # after the composition switch; the storefront's 15-minute Cron Trigger keeps it warm afterwards.
+      # One price-free navigation read after the composition switch (skipped while younger than 12 min).
+      # The 15-minute cron warms only this tree too; price/stock entries are read on demand and expire
+      # after 10 s, so no periodic owner reads are wasted warming short-lived product values.
       - name: Warm the AKROS storefront catalog cache
         continue-on-error: true
         run: curl -sS --max-time 60 -X POST -w ' -> %{http_code} %{time_total}s\n' "$STAGE_STOREFRONT_URL/api/ontos/catalog-warm"
