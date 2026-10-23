@@ -18,7 +18,7 @@ export pnpm_config_verify_deps_before_run=false
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$APP"
 
-DEFAULT_VERTICALS="party-registry property-portfolio property-leasing legal-agreements work-tasks finance-billing commerce-customer-context workforce tagging sales-pipeline merchandise sales-insights crm facility-operations"
+DEFAULT_VERTICALS="party-registry privacy property-portfolio property-leasing legal-agreements work-tasks finance-billing commerce-customer-context workforce tagging sales-pipeline merchandise sales-insights crm facility-operations"
 read -r -a VERTICALS <<<"$(printf '%s' "${DEMO_VERTICALS:-$DEFAULT_VERTICALS}" | tr ',' ' ')"
 SCRATCH="$APP/.scratch"
 LOG_DIR="$SCRATCH/demo-logs"
@@ -71,6 +71,13 @@ load_env() {
     export "$key=$value"
   done <"$APP/.env"
   export MISE_ARGV0=
+}
+# Only generated, explicitly owned configuration may replace an already exported value.
+# Missing file values stay unset rather than retaining a stale credential/reference.
+reload_env_keys() {
+  local key
+  for key in "$@"; do unset "$key"; done
+  load_env
 }
 
 # Native release identity hashes the clean Git HEAD into every build marker, so a commit made while the
@@ -277,10 +284,11 @@ step seed-agent-entities env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" 
 step mcp-agent-operators "${WITH_ENV[@]}" node scripts/demo/mcp-agent-operators.mts
 # CRM.md §3: key of the CRM's Party Registry intake principal (read by the crm server per intake, no restart).
 step crm-party-intake pnpm_ demo:crm-party-intake
-# AKROS customer accounts: the Commerce portal's service principal, its managed key and the Shell's provider data
-# land in app/.env; the Shell and the Commerce vertical read them at start, so both restart once with them.
+# AKROS customer accounts: publish the two workload identities/keys and Shell provider configuration first.
 step commerce-portal pnpm_ demo:commerce-portal
-load_env
+reload_env_keys COMMERCE_CORE_IDENTITY_BASE_URL COMMERCE_CORE_IDENTITY_API_KEY \
+  ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT \
+  COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS ONTOS_PRIVACY_GATEWAY_API_KEY COMMERCE_MARKETING_ACTOR_PRINCIPAL_ID
 restart_server() { # restart_server <name> <directory>
   local pid
   pid="$(cat "$PID_DIR/$1.pid" 2>/dev/null || true)"
@@ -292,7 +300,23 @@ restart_server() { # restart_server <name> <directory>
 }
 restart_server shell-super-app apps/shell-super-app
 wait_http "http://127.0.0.1:$SHELL_PORT/.well-known/ontos-shell-runtime.json" 180 shell-super-app
+# Privacy reads its Commerce authority callback key at startup too; it must not retain the old credential.
+if printf '%s\n' "${VERTICALS[@]}" | grep -qx privacy; then
+  restart_server privacy verticals/privacy
+  wait_http "http://127.0.0.1:$(port_of privacy)/.well-known/ontos-module-manifest.json" 180 privacy
+fi
 if printf '%s\n' "${VERTICALS[@]}" | grep -qx commerce-customer-context; then
+  if printf '%s\n' "${VERTICALS[@]}" | grep -qx privacy; then
+    # The declared AKROS human operator has only two Privacy setup Actions and two catalog reads.
+    # COMPLETE checkpoints re-read native records only; unknown writes stop for governed reconciliation.
+    step privacy-marketing env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" \
+      "ONTOS_DEMO_SEED_PASSWORD=${ONTOS_DEMO_PASSWORD:-password1234}" \
+      "${WITH_ENV[@]}" node scripts/demo/privacy-marketing.mts --apply \
+      --checkpoint "$SCRATCH/privacy-marketing.json" --env-file "$APP/.env"
+    reload_env_keys COMMERCE_MARKETING_PURPOSE_ID COMMERCE_MARKETING_PURPOSE_VERSION_ID \
+      COMMERCE_MARKETING_NOTICE_ID COMMERCE_MARKETING_NOTICE_VERSION_ID COMMERCE_MARKETING_CONTROLLER_REF
+  fi
+  # Start Commerce only after all owner-returned catalog references and workload credentials are reloaded.
   restart_server commerce-customer-context verticals/commerce-customer-context
   wait_http "http://127.0.0.1:$(port_of commerce-customer-context)/.well-known/ontos-module-manifest.json" 180 commerce-customer-context
 fi

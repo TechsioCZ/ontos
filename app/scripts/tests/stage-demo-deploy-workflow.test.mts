@@ -28,6 +28,7 @@ const readJobs = () =>
     parse(readFileSync(new URL('../../../.github/workflows/stage-demo-deploy.yml', import.meta.url), 'utf-8')),
   ).jobs;
 
+const localBootstrapScript = new URL('../demo/up.sh', import.meta.url);
 const MIGRATE = 'Migrate every owner schema';
 const ORIGINAL_SHARED_SOURCE = 'export const value = 1;';
 const secretReference = (name: string) => ['${{', `secrets.${name}`, '}}'].join(' ');
@@ -115,7 +116,7 @@ it.effect('hashes shared build sources by exact content and path, without Git or
 );
 
 it('rejects missing or stale shared-source stamps before honoring DEMO_SKIP_BUILD', () => {
-  const script = readFileSync(new URL('../demo/up.sh', import.meta.url), 'utf-8');
+  const script = readFileSync(localBootstrapScript, 'utf-8');
   const selection = script.slice(script.indexOf('needs_build()'), script.indexOf('# The package'));
   const digestCheck = selection.indexOf('cat "$dir/dist/.ontos-shared-source-digest"');
   const skip = selection.indexOf(['[ "$', '{DEMO_SKIP_BUILD:-0}" = 1 ]'].join(''));
@@ -149,7 +150,7 @@ it.effect('a real MCP schema source change forces the native Bash build selector
       const root = yield* sharedSourceFixture;
       yield* fs.makeDirectory(`${root}/unit/dist`, { recursive: true });
       yield* fs.writeFileString(`${root}/unit/dist/contract.json`, '{}');
-      const script = readFileSync(new URL('../demo/up.sh', import.meta.url), 'utf-8');
+      const script = readFileSync(localBootstrapScript, 'utf-8');
       const selector = script.slice(script.indexOf('needs_build()'), script.indexOf('# The package'));
       const command = [
         'set -eu',
@@ -181,4 +182,80 @@ it.effect('a real MCP schema source change forces the native Bash build selector
       expect(yield* select(changed)).toBe('rebuild');
     }),
   ).pipe(Effect.provide(OpsShellLive.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it('bootstraps native Privacy after workload configuration and publishes returned refs before Commerce restart', () => {
+  const script = readFileSync(localBootstrapScript, 'utf-8');
+  const defaults = /^DEFAULT_VERTICALS="(?<owners>[^"]+)"/mu.exec(script)?.groups?.owners?.split(' ');
+  expect(defaults).toContain('privacy');
+  const portal = script.indexOf('step commerce-portal');
+  const callbackReload = script.indexOf('ONTOS_PRIVACY_GATEWAY_API_KEY', portal);
+  const privacyRestart = script.indexOf('restart_server privacy verticals/privacy', callbackReload);
+  const seed = script.indexOf('step privacy-marketing env', privacyRestart);
+  const refsReload = script.indexOf('reload_env_keys COMMERCE_MARKETING_PURPOSE_ID', seed);
+  const commerceRestart = script.indexOf('restart_server commerce-customer-context', refsReload);
+  expect(portal).toBeGreaterThan(0);
+  expect(callbackReload).toBeGreaterThan(portal);
+  expect(privacyRestart).toBeGreaterThan(callbackReload);
+  expect(seed).toBeGreaterThan(privacyRestart);
+  expect(refsReload).toBeGreaterThan(seed);
+  expect(commerceRestart).toBeGreaterThan(refsReload);
+  expect(script.slice(seed, refsReload)).toContain('scripts/demo/privacy-marketing.mts --apply');
+  expect(script.slice(seed, refsReload)).toContain(
+    '--checkpoint "$SCRATCH/privacy-marketing.json" --env-file "$APP/.env"',
+  );
+  expect(script.slice(refsReload, commerceRestart)).toContain('COMMERCE_MARKETING_NOTICE_VERSION_ID');
+  const setup = readFileSync(new URL('../demo/privacy-marketing.mts', import.meta.url), 'utf-8');
+  expect(setup).toContain('const { email, principalId: governanceOwnerId } = privacyMarketingOperator');
+  expect(setup).toContain('const target = { legalEntityId: akrosDemoLegalEntityId, shellUrl, tenantId: demoTenantId }');
+  expect(setup).not.toContain('ONTOS_DEMO_SEED_EMAIL');
+  expect(setup).not.toContain('ONTOS_DEMO_SEED_GOVERNANCE_OWNER_ID');
+  expect(setup).toContain("checkpoint.phase === 'PURPOSE_PENDING' || checkpoint.phase === 'NOTICE_PENDING'");
+  expect(setup).toContain("if (checkpoint.phase === 'EMPTY')");
+  expect(setup).toContain("if (checkpoint.phase === 'PURPOSE_CREATED')");
+  expect(setup).toContain('return yield* verifyRecords(client, checkpoint)');
+  expect(setup).not.toContain('record-consent-decision');
+  expect(setup).not.toContain('writeAiRelationships');
+});
+
+it.effect(
+  'reloads only generated owner refs and callback credentials in real Bash without retaining removed values',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* reloadGeneratedConfiguration() {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: 'demo-privacy-config-' });
+        yield* fs.writeFileString(
+          `${root}/.env`,
+          [
+            'COMMERCE_MARKETING_PURPOSE_ID=current-owner-purpose',
+            'ONTOS_PRIVACY_GATEWAY_API_KEY=current-callback',
+            'UNRELATED_CONFIGURATION=file-value',
+          ].join('\n'),
+        );
+        const script = readFileSync(localBootstrapScript, 'utf-8');
+        const functions = script.slice(script.indexOf('load_env()'), script.indexOf('# Native release identity'));
+        const command = [
+          'set -euo pipefail',
+          'APP="$1"',
+          functions,
+          'export COMMERCE_MARKETING_PURPOSE_ID=previous-purpose ONTOS_PRIVACY_GATEWAY_API_KEY=previous-callback',
+          'export COMMERCE_MARKETING_NOTICE_ID=removed-notice UNRELATED_CONFIGURATION=operator-value',
+          'load_env',
+          '[ "$COMMERCE_MARKETING_PURPOSE_ID" = previous-purpose ]',
+          'reload_env_keys COMMERCE_MARKETING_PURPOSE_ID ONTOS_PRIVACY_GATEWAY_API_KEY COMMERCE_MARKETING_NOTICE_ID',
+          '[ "$COMMERCE_MARKETING_PURPOSE_ID" = current-owner-purpose ]',
+          '[ "$ONTOS_PRIVACY_GATEWAY_API_KEY" = current-callback ]',
+          ['[ -z "$', '{COMMERCE_MARKETING_NOTICE_ID+x}" ]'].join(''),
+          '[ "$UNRELATED_CONFIGURATION" = operator-value ]',
+          'reload_env_keys COMMERCE_MARKETING_PURPOSE_ID ONTOS_PRIVACY_GATEWAY_API_KEY',
+          '[ "$COMMERCE_MARKETING_PURPOSE_ID" = current-owner-purpose ]',
+          '[ "$ONTOS_PRIVACY_GATEWAY_API_KEY" = current-callback ]',
+          'printf verified',
+        ].join('\n');
+        expect(
+          yield* runCommand({ args: ['-c', command, 'privacy-config-test', root], command: 'bash', cwd: root }),
+        ).toBe('verified');
+      }),
+    ).pipe(Effect.provide(OpsShellLive.pipe(Layer.provideMerge(NodeServices.layer)))),
 );

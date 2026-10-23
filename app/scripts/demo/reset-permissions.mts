@@ -56,7 +56,7 @@ import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } fro
 import type { DemoResetChildEnvironment } from '../siampark/reset-configuration.mts';
 import { setupAiProfiles } from './ai-profiles.mts';
 import { setupCrmPartyIntake } from './crm-party-intake.mts';
-import { demoLegalEntityId, demoTenantId, eshopDemoLegalEntityId } from './fixture-ids.mts';
+import { demoId, demoLegalEntityId, demoTenantId, eshopDemoLegalEntityId } from './fixture-ids.mts';
 import {
   akrosStorefrontPrincipal,
   agentBotPrincipal,
@@ -84,6 +84,10 @@ const crmModuleState = { moduleId: 'demo.crm', stateId: '78000000-0000-4000-8000
 const facilityOperationsModuleState = {
   moduleId: 'facility.operations',
   stateId: '78000000-0000-4000-8000-000000000202',
+} as const;
+const privacyModuleState = {
+  moduleId: 'privacy.core',
+  stateId: demoId('core.tenant-module-state', 'privacy.core'),
 } as const;
 /** Managed API keys that run unlimited (each request exchanges the key for a single-use gateway assertion). */
 const unlimitedKeyNames = [
@@ -264,7 +268,7 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
       registrationCountry: 'CZ',
       registrationNumber: 'DEMO-SIAMPARK',
     },
-    modules: [crmModuleState, facilityOperationsModuleState],
+    modules: [crmModuleState, facilityOperationsModuleState, privacyModuleState],
     relationships,
     tenant: { defaultLocale: 'cs', displayName: 'OntOS DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
   });
