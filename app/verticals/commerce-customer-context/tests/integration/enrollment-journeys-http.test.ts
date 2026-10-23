@@ -13,7 +13,7 @@ import {
   CorePersistenceLive,
   DatabaseConfigLive,
 } from '@app/core-runtime';
-import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
+import { ResendEmailDeliveryConfig, ResendEmailDeliveryLive } from '@app/email-delivery/resend';
 import { FetchHttpClient } from 'effect/unstable/http';
 import { eq, like, sql } from 'drizzle-orm';
 import { Config, Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
@@ -198,7 +198,12 @@ const configuredRealmLive = Effect.fnUntraced(function* configuredRealmLive(
     COMMERCE_PORTAL_AUTH_URL: ORIGIN,
   });
   return commercePortalAuthRealmLive.pipe(
-    Layer.provide(emailDeliveryConfigurationFor(deliveryFetch)),
+    Layer.provide(
+      ResendEmailDeliveryLive.pipe(
+        Layer.provide(FetchHttpClient.layer),
+        Layer.provide(emailDeliveryConfigurationFor(deliveryFetch)),
+      ),
+    ),
     Layer.provideMerge(Layer.succeed(CommercePortalAuthConfig, configuration)),
   );
 });

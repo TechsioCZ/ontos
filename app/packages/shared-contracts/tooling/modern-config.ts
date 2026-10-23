@@ -403,24 +403,32 @@ export const createCloudflareWorkerConfig = (
 const createCloudflareDeployment = (
   build: ModernBuildContext,
   worker: {
+    /** The unit sends its own transactional mail through the Cloudflare Email Service binding. */
+    readonly email: boolean;
     readonly name: string;
   },
-) =>
-  build.cloudflareDeployEnabled
-    ? {
-        deploy: {
-          worker: {
-            ...createCloudflareWorkerConfig(build.envValue, {
-              publicUrlVariable: build.cloudflarePublicUrlEnvironmentVariable,
-            }),
-            compatibilityDate: '2026-06-02',
-            name: worker.name,
-            security: createCloudflareWorkerSecurity(),
-            ssr: true,
-          },
-        },
-      }
-    : undefined;
+) => {
+  if (!build.cloudflareDeployEnabled) {
+    return {};
+  }
+  const workerConfig = createCloudflareWorkerConfig(build.envValue, {
+    publicUrlVariable: build.cloudflarePublicUrlEnvironmentVariable,
+  });
+  return {
+    deploy: {
+      worker: {
+        ...workerConfig,
+        compatibilityDate: '2026-06-02',
+        name: worker.name,
+        security: createCloudflareWorkerSecurity(),
+        ssr: true,
+        wrangler: worker.email
+          ? { ...workerConfig.wrangler, ...createCloudflareEmailBindings(build.envValue) }
+          : workerConfig.wrangler,
+      },
+    },
+  };
+};
 
 interface RspackConfiguration {
   externals?: unknown;
@@ -488,6 +496,7 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
   build,
   builderPlugins,
   chunkLoadingGlobal,
+  cloudflareEmail = false,
   cloudflareWorkerName,
   moduleUrl,
   plugins,
@@ -500,6 +509,7 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
   build: ModernBuildContext;
   builderPlugins?: BuilderPlugin[];
   chunkLoadingGlobal: string;
+  cloudflareEmail?: boolean;
   cloudflareWorkerName: string;
   moduleUrl: string;
   plugins: Plugin[];
@@ -528,6 +538,7 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
     // oxlint-disable-next-line anti-slop/no-conditional-empty-object-spread -- This generic optional field retains the public factory's inferred return shape and its position in the emitted configuration.
     ...(builderPlugins === undefined ? {} : { builderPlugins }),
     ...createCloudflareDeployment(build, {
+      email: cloudflareEmail,
       name: cloudflareWorkerName,
     }),
     dev: {

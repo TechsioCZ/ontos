@@ -1,3 +1,4 @@
+import { databaseRuntime } from '@app/core-runtime';
 import { Config, ConfigProvider, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
 import { CommercePortalAuthConfig } from './config-service.ts';
@@ -312,6 +313,36 @@ const parseOptionalCommercePortalAuthConfigFromProvider = optionalConfigReader(
   malformedConfiguration,
 );
 
+const namedValue = (provider: ConfigProvider.ConfigProvider, key: string) =>
+  Config.option(Config.String(key))
+    .parse(provider)
+    .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+
+/**
+ * The process environment the realm is read from. A Worker reaches PostgreSQL only through its `HYPERDRIVE`
+ * binding (the `ontos_runtime` role, as `.env.example` configures the realm), so once a host names the realm its
+ * runtime connection is that binding's; Node keeps `COMMERCE_PORTAL_AUTH_DATABASE_URL`.
+ */
+const portalAuthEnvironment: Effect.Effect<ConfigProvider.ConfigProvider> = Effect.gen(
+  function* portalAuthEnvironmentEffect() {
+    const environment = ConfigProvider.fromEnv({ preserveEmptyStrings: true });
+    if (Option.isNone(yield* namedValue(environment, 'COMMERCE_PORTAL_AUTH_URL'))) {
+      return environment;
+    }
+    const runtime = yield* databaseRuntime
+      .runtimeDatabaseProvider(ConfigProvider.fromUnknown({}))
+      .pipe(Effect.orElseSucceed(() => ConfigProvider.fromUnknown({})));
+    return Option.match(yield* namedValue(runtime, 'DATABASE_URL'), {
+      onNone: () => environment,
+      onSome: (connectionString) =>
+        ConfigProvider.orElse(
+          ConfigProvider.fromUnknown({ COMMERCE_PORTAL_AUTH_DATABASE_URL: connectionString }),
+          environment,
+        ),
+    });
+  },
+);
+
 /** `Option.none()` only when the supplied environment names no portal-realm value at all. */
 export const parseOptionalCommercePortalAuthConfig = (
   environment: CommercePortalAuthEnvironment,
@@ -324,7 +355,7 @@ export const parseOptionalCommercePortalAuthConfig = (
 export const optionalCommercePortalAuthConfig: Effect.Effect<
   Option.Option<CommercePortalAuthConfigValue>,
   CommercePortalAuthConfigError
-> = parseOptionalCommercePortalAuthConfigFromProvider(ConfigProvider.fromEnv({ preserveEmptyStrings: true }));
+> = portalAuthEnvironment.pipe(Effect.flatMap(parseOptionalCommercePortalAuthConfigFromProvider));
 
 /**
  * The one fail-closed availability read every consumer that must keep serving shares. A realm
@@ -348,5 +379,5 @@ export const portalAuthRealmConfigured: Effect.Effect<boolean> = optionalCommerc
 
 export const CommercePortalAuthConfigLive = Layer.effect(
   CommercePortalAuthConfig,
-  parseCommercePortalAuthConfigFromProvider(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
+  portalAuthEnvironment.pipe(Effect.flatMap(parseCommercePortalAuthConfigFromProvider)),
 );

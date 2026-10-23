@@ -53,6 +53,7 @@ import {
 import { commercePortalAuthRealmUnavailableLive } from './portal-auth/realm-unavailable.ts';
 import type { CommercePortalAuthHandlerServices } from './portal-auth/realm-unavailable.ts';
 import { CommercePortalAuthEmailDeliveryLive } from './portal-auth/provider/recovery/email-delivery.ts';
+import { CommercePortalAuthPlatformEmailDeliveryLive } from './portal-auth/provider/platform-email-delivery.ts';
 import { CommercePortalAuthRecoveryStoreLive } from '../src/portal-auth/persistence/portal-auth-recovery-store.ts';
 import { CommercePortalAuthTransactionalEmailLive } from './portal-auth/provider/transactional-email.ts';
 import { portalAuthMfaApiLive } from './portal-auth/provider/mfa/http.ts';
@@ -94,7 +95,6 @@ import { CommercePortalAuthSessionProviderLive } from './portal-auth/session/pro
 import { CommercePortalAuthSessionStoreLive } from '../src/portal-auth/persistence/portal-auth-session-store.ts';
 import { CommercePortalAuthServiceLive, portalAuthSessionApiLive } from './portal-auth/session/http.ts';
 import { commercePortalAuthPlatformCryptoLive } from './portal-auth/deployment.ts';
-import { ResendEmailDeliveryConfigLive, ResendEmailDeliveryLive } from '@app/email-delivery/resend';
 import { FetchHttpClient } from 'effect/unstable/http';
 import {
   CommerceEnrollmentOwnerTransitionPreparation,
@@ -272,10 +272,8 @@ export const commercePortalAuthProviderLive = CommercePortalAuthLive.pipe(
  * — `Layer.mergeAll` builds its operands in parallel and would not satisfy a dependency declared
  * beside it.
  */
-const commercePortalAuthEmailTransportLive = ResendEmailDeliveryLive.pipe(Layer.provide(FetchHttpClient.layer));
 const commercePortalAuthProviderRealmLive = commercePortalAuthProviderLive.pipe(
   Layer.provideMerge(commercePortalAuthPlatformCryptoLive),
-  Layer.provideMerge(commercePortalAuthEmailTransportLive),
 );
 const commercePortalAuthRealmPortsLive = Layer.mergeAll(
   CommercePortalAuthAuditLive,
@@ -323,7 +321,7 @@ const commercePortalAuthAccountCreationReconciliationRealmLive =
         CommercePortalAuthAccountCreationProviderLive.pipe(Layer.provide(commercePortalAuthProviderRealmLive)),
       ),
     ),
-    Layer.provide(Layer.mergeAll(CommercePortalAuthConfigLive, ResendEmailDeliveryConfigLive)),
+    Layer.provide(Layer.mergeAll(CommercePortalAuthConfigLive, CommercePortalAuthPlatformEmailDeliveryLive)),
   );
 /**
  * The private provider account-creation capability the enrollment start route dispatches through.
@@ -519,7 +517,9 @@ const commerceEnrollmentOwnerTransitionPreparationUnavailableLive = Layer.succee
 );
 /** The realm a host that opted in gets, with both operator configurations supplied. */
 const portalAuthConfiguredRuntimeLive = commercePortalAuthRealmLive.pipe(
-  Layer.provideMerge(Layer.mergeAll(CommercePortalAuthConfigLive, ResendEmailDeliveryConfigLive)),
+  Layer.provideMerge(CommercePortalAuthConfigLive),
+  // The deployment's installed mail transport; a test composition provides its own.
+  Layer.provide(CommercePortalAuthPlatformEmailDeliveryLive),
 );
 
 /**

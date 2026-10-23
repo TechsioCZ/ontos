@@ -36,6 +36,8 @@ export default defineConfig(
         bffPrefix: COMMERCE_CUSTOMER_CONTEXT_API_PREFIX,
         build,
         chunkLoadingGlobal: '__ULTRAMODERN_VERTICAL_COMMERCE_CUSTOMER_CONTEXT_LOADED_CHUNKS__',
+        // Portal verification, recovery and step-up mail.
+        cloudflareEmail: true,
         cloudflareWorkerName,
         moduleUrl: import.meta.url,
         plugins: [

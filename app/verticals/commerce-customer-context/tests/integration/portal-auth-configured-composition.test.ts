@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { ContextAccessLive, DatabaseConfigLive } from '@app/core-runtime';
-import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
+import { ResendEmailDeliveryConfig, ResendEmailDeliveryLive } from '@app/email-delivery/resend';
+import { FetchHttpClient } from 'effect/unstable/http';
 import { Config, Effect, Layer, Redacted } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -59,7 +60,13 @@ const configuredRuntime = Effect.acquireRelease(
       ),
       commercePortalAuthRealmLive.pipe(
         Layer.provideMerge(
-          Layer.mergeAll(Layer.succeed(CommercePortalAuthConfig, configuration), emailDeliveryConfiguration),
+          Layer.mergeAll(
+            Layer.succeed(CommercePortalAuthConfig, configuration),
+            ResendEmailDeliveryLive.pipe(
+              Layer.provide(FetchHttpClient.layer),
+              Layer.provide(emailDeliveryConfiguration),
+            ),
+          ),
         ),
       ),
       Layer.empty,
