@@ -85,6 +85,8 @@ const everything = {
 } as const satisfies Readonly<Partial<Record<DemoModuleId, ModuleAccess>>>;
 
 export interface DemoRole {
+  /** Exact per-module Actions, replacing the automatic all-Actions grant for that module. */
+  readonly actionKeys?: Readonly<Partial<Record<DemoModuleId, readonly string[]>>>;
   /** Extra owner-declared context permissions (e.g. `demo.crm.read_assigned`) granted on top of module access. */
   readonly contextPermissions?: Readonly<Partial<Record<DemoModuleId, readonly string[]>>>;
   /** Tenant `identity_admin` plus the core identity Actions needed to create the bot and its API key. */
@@ -260,12 +262,16 @@ export const principalRelationships = (
     }
     add('module_access', moduleAccess(moduleId), 'legal_entity', 'legal_entity', legal);
     add('module_access', moduleAccess(moduleId), 'accessor', 'principal', principalId);
-    if (contextPermissionModules.has(moduleId) && !(role.restrictedModules ?? []).includes(moduleId)) {
+    const restricted = (role.restrictedModules ?? []).includes(moduleId);
+    if (contextPermissionModules.has(moduleId) && !restricted) {
       for (const level of access === 'write' ? (['read', 'write'] as const) : (['read'] as const)) {
         grantContextPermission(moduleId, contextPermissionKey(moduleId, level));
       }
     }
-    for (const permission of [...moduleReadPermissions(moduleId), ...(role.contextPermissions?.[moduleId] ?? [])]) {
+    for (const permission of [
+      ...(restricted ? [] : moduleReadPermissions(moduleId)),
+      ...(role.contextPermissions?.[moduleId] ?? []),
+    ]) {
       grantContextPermission(moduleId, permission);
     }
     if (moduleId === 'party.registry') {
@@ -277,8 +283,9 @@ export const principalRelationships = (
         add('legal_entity', legal, relation, 'principal', principalId);
       }
     }
-    if (access === 'write') {
-      for (const action of moduleActions(actions, moduleId)) {
+    const actionKeys = role.actionKeys?.[moduleId];
+    for (const action of moduleActions(actions, moduleId)) {
+      if (actionKeys === undefined ? access === 'write' : actionKeys.includes(action.actionKey)) {
         grantAction(action);
       }
     }
@@ -476,9 +483,19 @@ export const crmDemoRoles = {
 /** E-shop company „Kavárna Doma s.r.o.“ (0023). */
 export const eshopDemoRoles = {
   akrosStorefront: {
+    actionKeys: {
+      'commerce.customer-context': [
+        'commerce.customer-context.start-portal-enrollment',
+        'commerce.customer-context.claim-portal-enrollment-transition',
+      ],
+    },
+    contextPermissions: {
+      'commerce.customer-context': ['customer.profile.read_own', 'customer.profile.update_own'],
+    },
     identityAdmin: false,
     label: 'AKROS storefront (API)',
-    modules: { 'demo.merchandise': 'write', 'work.tasks': 'write' },
+    modules: { 'commerce.customer-context': 'read', 'demo.merchandise': 'write', 'work.tasks': 'write' },
+    restrictedModules: ['commerce.customer-context'],
   },
   akrosAdmin: {
     identityAdmin: true,
