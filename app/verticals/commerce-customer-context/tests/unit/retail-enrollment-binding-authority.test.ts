@@ -25,6 +25,7 @@ const profileId = '70000000-0000-4000-8000-000000000001';
 const partyId = '80000000-0000-4000-8000-000000000001';
 const invocationId = '90000000-0000-4000-8000-000000000001';
 const otherId = '90000000-0000-4000-8000-000000000002';
+const storefrontId = '90000000-0000-4000-8000-000000000003';
 const effectiveAt = '2026-10-23T12:00:00.000Z';
 const principal = Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
   authBindingId: otherId,
@@ -75,7 +76,7 @@ const attempt = Schema.decodeUnknownSync(EnrollmentAttemptSnapshotSchema)({
   },
   compositionRevision: 'a'.repeat(64),
   createdAt: effectiveAt,
-  createdByPrincipalId: actorId,
+  createdByPrincipalId: storefrontId,
   intentDigest: 'b'.repeat(64),
   intentKey: 'retail-binding-proof',
   journey: 'RETAIL_SELF_ENROLLMENT',
@@ -149,14 +150,14 @@ const prepareFor = (mode: Mode) =>
           Effect.succeed(
             Schema.decodeUnknownSync(Schema.toType(EnrollmentAttemptSnapshotSchema))({
               ...attempt,
-              createdByPrincipalId: mode === 'wrong-actor' ? otherId : actorId,
+              createdByPrincipalId: mode === 'wrong-actor' ? otherId : storefrontId,
               portalEnrollmentAttemptId: mode === 'wrong-attempt' ? otherId : attemptId,
             }),
           ),
         readOwnerOperation: (request) =>
           Effect.succeed(
             Schema.decodeUnknownSync(EnrollmentOwnerOperationSnapshotSchema)({
-              actorPrincipalId: actorId,
+              actorPrincipalId: storefrontId,
               createdAt: effectiveAt,
               ownerInvocationId: invocationId,
               ownerModuleKey: request.ownerModuleKey,

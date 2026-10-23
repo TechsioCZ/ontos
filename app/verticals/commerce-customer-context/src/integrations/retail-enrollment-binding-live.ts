@@ -80,7 +80,6 @@ const attemptMatchesRequest = (
     attempt.journey !== 'RETAIL_SELF_ENROLLMENT' ||
     attempt.state === 'TERMINATED' ||
     attempt.state === 'COMPLETE' ||
-    attempt.createdByPrincipalId !== input.principal.principalId ||
     attempt.targetLegalEntityId !== legalEntityId ||
     subject === undefined ||
     subject.authenticationNamespaceId !== COMMERCE_AUTHENTICATION_NAMESPACE_ID ||
@@ -97,7 +96,7 @@ const journalMatchesRequest = (
     readonly party: OwnerOperation;
     readonly provider: OwnerOperation;
   },
-  input: ActionAuthorizationPreflightInput,
+  attempt: EnrollmentAttemptSnapshot,
   payload: RetailPortalBindingPayload,
 ): boolean => {
   const { binding, ensured, party, provider } = operations;
@@ -107,7 +106,9 @@ const journalMatchesRequest = (
     party.resultReference !== undefined &&
     ensured.status === 'SUCCEEDED' &&
     ensured.resultReference === payload.profileRef.resourceId &&
-    binding.actorPrincipalId === input.principal.principalId &&
+    // Original journal authority is the storefront creator; the separately authorized transport
+    // workload executes and audits the owner command without becoming that original Actor.
+    Object.values(operations).every((operation) => operation.actorPrincipalId === attempt.createdByPrincipalId) &&
     ['IN_PROGRESS', 'INDETERMINATE', 'RECONCILIATION_REQUIRED'].includes(binding.status)
   );
 };
@@ -146,7 +147,7 @@ export const retailEnrollmentBindingForPorts = (ports: RetailEnrollmentBindingPo
         },
         { concurrency: 1 },
       );
-      if (!journalMatchesRequest({ binding, ensured, party, provider }, input, payload)) {
+      if (!journalMatchesRequest({ binding, ensured, party, provider }, attempt, payload)) {
         return Option.none();
       }
       const profile = yield* ports.profile({ legalEntityId, partyId: String(party.resultReference), tenantId });
