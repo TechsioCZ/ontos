@@ -1584,9 +1584,9 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
               { baseUrl: credential.apiBaseUrl, compositionRevision: credential.compositionRevision },
             ).pipe(Effect.mapError(referenceUnavailable));
             const now = DateTime.formatIso(yield* DateTime.now);
-            if (!orderCustomerReferenceEligible(customerLink, customer, store, now)) {
-              yield* conflict('Zákazník není aktivním zákazníkem této firmy');
-            }
+            return yield* orderCustomerReferenceEligible(customerLink, customer, store, now)
+              ? Effect.void
+              : Effect.fail(conflict('Zákazník není aktivním zákazníkem této firmy'));
           }),
         ),
         Match.orElse(() => Effect.void),
