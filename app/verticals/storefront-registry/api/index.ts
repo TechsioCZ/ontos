@@ -24,7 +24,10 @@ import { storefrontRegistryApi, storefrontRegistryOperationContexts } from '../s
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
-import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+} from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 // <generated-governed-http-handler-imports>
 import { currentStorefrontApplicationReadApiLive } from './current-storefront-application-read-server.ts';
@@ -91,9 +94,17 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(DatabaseConfigLive),
 );
 
+const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
+  Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+  Layer.provide(DatabaseConfigLive),
+);
+
 type StorefrontRegistryApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
-  gatewayAssertionRedemption: Layer.Layer<GatewayAssertionRedemptionService>,
+  gatewayAssertionRedemption: Layer.Layer<
+    GatewayAssertionRedemptionService,
+    Layer.Error<typeof productionGatewayAssertionRedemptionLive>
+  >,
 ];
 
 export const makeStorefrontRegistryApiRuntime = (
@@ -139,6 +150,9 @@ export const makeStorefrontRegistryApiRuntime = (
   });
 };
 
-const apiRuntime = makeStorefrontRegistryApiRuntime(productionReadRuntimeLive, GovernedGatewayAssertionRedemptionLive);
+const apiRuntime = makeStorefrontRegistryApiRuntime(
+  productionReadRuntimeLive,
+  productionGatewayAssertionRedemptionLive,
+);
 
 export default apiRuntime;

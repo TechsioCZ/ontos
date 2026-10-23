@@ -1,16 +1,44 @@
 /* oxlint-disable perfectionist/sort-objects -- Drizzle declaration order is the physical owner contract; expires: 2027-03-31. */
 import { tenantRlsPolicies } from '@app/core-runtime';
-import { sql } from 'drizzle-orm';
-import { check, foreignKey, index, integer, jsonb, pgSchema, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
+import { defineRelations, sql } from 'drizzle-orm';
+import {
+  check,
+  foreignKey,
+  index,
+  integer,
+  jsonb,
+  pgSchema,
+  primaryKey,
+  text,
+  timestamp,
+  unique,
+  uuid,
+} from 'drizzle-orm/pg-core';
 
 export const STOREFRONT_REGISTRY_SCHEMA_NAME = 'storefront_registry';
 export const STOREFRONT_REGISTRY_TABLE_INVENTORY = [
+  'gateway_assertion_redemptions',
   'storefront_applications',
   'storefront_application_revisions',
   'storefront_registry_generations',
 ] as const;
 
 export const storefrontRegistrySchema = pgSchema(STOREFRONT_REGISTRY_SCHEMA_NAME);
+
+// Replay evidence is consumed before tenant/business scope is installed.
+export const gatewayAssertionRedemptions = storefrontRegistrySchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: text('jti').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.issuer, table.audience, table.jti] }),
+    index('storefront_registry_redemption_expiry').on(table.expiresAt),
+  ],
+);
 
 export const storefrontApplications = storefrontRegistrySchema.table.withRLS(
   'storefront_applications',
@@ -100,7 +128,10 @@ export const storefrontRegistryGenerations = storefrontRegistrySchema.table.with
 );
 
 export const STOREFRONT_REGISTRY_TABLES = [
+  gatewayAssertionRedemptions,
   storefrontApplicationRevisions,
   storefrontApplications,
   storefrontRegistryGenerations,
 ] as const;
+
+export const storefrontRegistryRelations = defineRelations({ gatewayAssertionRedemptions });

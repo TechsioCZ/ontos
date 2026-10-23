@@ -18,6 +18,7 @@ interface InfrastructureRow {
   readonly journal_count: number;
   readonly policy_count: number;
   readonly raw_runtime_privilege_count: number;
+  readonly redemption_safe: boolean;
   readonly runtime_routine_count: number;
   readonly runtime_schema_create: boolean;
   readonly runtime_schema_usage: boolean;
@@ -100,6 +101,14 @@ const verification = Effect.gen(function* verifyStorefrontRegistryDatabase() {
   const infrastructure = yield* client
     .unsafe<InfrastructureRow>(
       `select
+      exists (select 1 from pg_catalog.pg_class redemption
+        join pg_catalog.pg_namespace redemption_namespace on redemption_namespace.oid = redemption.relnamespace
+        where redemption_namespace.nspname = 'storefront_registry' and redemption.relname = 'gateway_assertion_redemptions'
+          and not redemption.relrowsecurity and not redemption.relforcerowsecurity
+          and has_table_privilege('ontos_runtime', redemption.oid, 'SELECT')
+          and has_table_privilege('ontos_runtime', redemption.oid, 'INSERT')
+          and has_table_privilege('ontos_runtime', redemption.oid, 'DELETE')
+          and not has_table_privilege('ontos_runtime', redemption.oid, 'UPDATE')) as redemption_safe,
            has_schema_privilege('ontos_runtime', $1, 'USAGE') as runtime_schema_usage,
            has_schema_privilege('ontos_runtime', $1, 'CREATE') as runtime_schema_create,
            (select count(*)::integer
@@ -127,6 +136,7 @@ const verification = Effect.gen(function* verifyStorefrontRegistryDatabase() {
               from pg_catalog.pg_class as relation
               join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
              where namespace.nspname = $1 and relation.relkind in ('r', 'p')
+               and relation.relname <> 'gateway_assertion_redemptions'
                and (has_table_privilege('ontos_runtime', relation.oid, 'SELECT')
                  or has_table_privilege('ontos_runtime', relation.oid, 'INSERT')
                  or has_table_privilege('ontos_runtime', relation.oid, 'UPDATE')
@@ -170,8 +180,9 @@ const verification = Effect.gen(function* verifyStorefrontRegistryDatabase() {
   );
   if (
     row === undefined ||
+    !row.redemption_safe ||
     row.append_only_trigger_count !== 1 ||
-    row.forced_rls_count !== STOREFRONT_REGISTRY_TABLES.length ||
+    row.forced_rls_count !== STOREFRONT_REGISTRY_TABLES.length - 1 ||
     row.journal_count !== 1 ||
     row.policy_count !== expectedPolicyCount ||
     row.raw_runtime_privilege_count !== 0 ||

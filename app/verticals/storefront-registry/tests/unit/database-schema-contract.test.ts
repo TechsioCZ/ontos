@@ -11,7 +11,7 @@ import {
 } from '../../src/database/schema.ts';
 
 describe('Storefront Registry database contract', () => {
-  it('owns only the tenant application identity, immutable revisions, and owner generation', () => {
+  it('owns tenant applications, immutable revisions, owner generation, and pre-scope replay evidence', () => {
     const qualified = STOREFRONT_REGISTRY_TABLES.map((table) => {
       const config = getTableConfig(table);
       return `${config.schema}.${config.name}`;
@@ -21,6 +21,9 @@ describe('Storefront Registry database contract', () => {
       STOREFRONT_REGISTRY_TABLE_INVENTORY.map((name) => `storefront_registry.${name}`).toSorted(),
     );
     for (const table of STOREFRONT_REGISTRY_TABLES) {
+      if (getTableConfig(table).name === 'gateway_assertion_redemptions') {
+        continue;
+      }
       const config = getTableConfig(table);
       expect(config.enableRLS).toBe(true);
       expect(config.columns.some(({ name, notNull }) => name === 'tenant_id' && notNull)).toBe(true);
@@ -77,4 +80,20 @@ describe('Storefront Registry database contract', () => {
     );
     expect(migration).not.toMatch(/grant\s+(?:select|insert|update|delete)\s+on/iu);
   });
+});
+
+it('owns pre-scope replay evidence with an atomic issuer/audience/jti identity', () => {
+  const table = STOREFRONT_REGISTRY_TABLES.find(
+    (candidate) => getTableConfig(candidate).name === 'gateway_assertion_redemptions',
+  );
+  expect(table).toBeDefined();
+  if (table === undefined) {
+    throw new Error('Missing gateway assertion redemption table');
+  }
+  const config = getTableConfig(table);
+  expect(config.schema).toBe('storefront_registry');
+  expect(config.enableRLS).toBe(false);
+  expect(config.policies).toEqual([]);
+  expect(config.primaryKeys.map((key) => key.columns.map(({ name }) => name))).toEqual([['issuer', 'audience', 'jti']]);
+  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['storefront_registry_redemption_expiry']);
 });
