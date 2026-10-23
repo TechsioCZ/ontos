@@ -220,19 +220,29 @@ it.effect('reports authentication and response encoding separately without expos
         ),
       ),
     );
-    yield* HttpEffect.toHandled(response, (_request, value) =>
-      Effect.sync(() => {
-        responses.push(value);
-      }),
-    ).pipe(
-      Effect.provideService(ReadRuntime, readRuntime),
-      Effect.provideService(
-        HttpServerRequest.HttpServerRequest,
-        HttpServerRequest.fromWeb(new Request('https://ontos.test/reads/timing')),
-      ),
-      Effect.provide(capturedLoggerLayer(entries)),
-    );
-    expect(responses[0]?.headers['server-timing']).toBe('existing;dur=1, read-authentication;dur=3, read-encode;dur=7');
+    for (let requestIndex = 0; requestIndex < 2; requestIndex += 1) {
+      yield* HttpEffect.toHandled(response, (_request, value) =>
+        Effect.sync(() => {
+          responses.push(value);
+        }),
+      ).pipe(
+        Effect.provideService(ReadRuntime, readRuntime),
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(new Request('https://ontos.test/reads/timing')),
+        ),
+        Effect.provide(capturedLoggerLayer(entries)),
+      );
+    }
+    const timings = responses.map((value) => value.headers['server-timing'] ?? '');
+    const isolate = timings.map((header) => /owner-isolate;desc="(?<id>[a-z0-9]+):(?<ordinal>\d+)"/u.exec(header));
+    expect(isolate[0]?.groups?.['id']).toMatch(/^[a-z0-9]+$/u);
+    expect(isolate[1]?.groups?.['id']).toBe(isolate[0]?.groups?.['id']);
+    expect(Number(isolate[1]?.groups?.['ordinal'])).toBe(Number(isolate[0]?.groups?.['ordinal']) + 1);
+    for (const header of timings) {
+      expect(header).toContain('existing;dur=1, owner-isolate;desc=');
+      expect(header).toContain(', read-authentication;dur=3, read-encode;dur=7');
+    }
     expect(entries.join('\n')).toContain('Governed read phases completed');
     expect(entries.join('\n')).not.toMatch(/private-|better-auth|00000000/u);
   }),

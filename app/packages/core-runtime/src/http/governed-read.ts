@@ -1,5 +1,5 @@
 /* oxlint-disable anti-slop/no-unknown-parameters -- The HTTP mapper is a schema-decoded generic boundary and revalidates every value before release; expires: 2027-03-31. */
-import { Cause, Clock, Effect, Match, Option, Redacted, Ref, Schema } from 'effect';
+import { Cause, Clock, Effect, Match, Option, Random, Redacted, Ref, Schema } from 'effect';
 import { HttpEffect, HttpServerResponse } from 'effect/unstable/http';
 import type { HttpServerRequest } from 'effect/unstable/http';
 
@@ -11,6 +11,20 @@ import { isReadCoreError } from '../reads/errors.ts';
 import { ReadRuntime } from '../reads/runtime.ts';
 import { observeReadPhase, readServerTiming, recordReadTiming } from '../reads/diagnostics.ts';
 import type { ReadTiming } from '../reads/diagnostics.ts';
+
+// Opaque diagnostics only: no services, sockets, identities or request data survive a request.
+const isolateReads = Ref.makeUnsafe<{ readonly id: string | null; readonly ordinal: number }>({
+  id: null,
+  ordinal: 0,
+});
+const nextIsolateRead = Random.nextInt.pipe(
+  Effect.flatMap((random) =>
+    Ref.modify(isolateReads, (previous) => {
+      const next = { id: previous.id ?? Math.abs(random).toString(36), ordinal: previous.ordinal + 1 };
+      return [next, next];
+    }),
+  ),
+);
 
 interface HttpProblem<Status extends number> {
   readonly status: Status;
@@ -472,6 +486,7 @@ export function makeGovernedReadHttpHandler<
     payload,
     request,
   }: GovernedReadRequest<Schema.Schema.Type<InputSchema>>) {
+    const isolate = yield* nextIsolateRead;
     const timings = yield* Ref.make<readonly ReadTiming[]>([]);
     let encodeStartedAt: bigint | undefined;
     yield* HttpEffect.appendPreResponseHandler(
@@ -484,10 +499,10 @@ export function makeGovernedReadHttpHandler<
         }
         const entries = yield* Ref.get(timings);
         yield* Effect.logInfo('Governed read phases completed').pipe(
-          Effect.annotateLogs({ readKey: options.registration.descriptor.readKey, timings: entries }),
+          Effect.annotateLogs({ isolate, readKey: options.registration.descriptor.readKey, timings: entries }),
         );
         const previous = response.headers['server-timing'];
-        const header = readServerTiming(entries);
+        const header = `owner-isolate;desc="${isolate.id}:${isolate.ordinal}", ${readServerTiming(entries)}`;
         return HttpServerResponse.setHeader(
           response,
           'server-timing',
