@@ -1,3 +1,5 @@
+"use client";
+
 import StoreLink from "@/components/store-link";
 import { Table } from "@techsio/ui-kit/organisms/table";
 import { AccountHeading, AccountPanel } from "./account-content";
