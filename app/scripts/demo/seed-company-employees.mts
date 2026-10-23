@@ -145,7 +145,10 @@ if (import.meta.main) {
         const password = yield* Config.Redacted('ONTOS_DEMO_SEED_PASSWORD').pipe(
           Config.withDefault(Redacted.make('password1234')),
         );
-        const client = yield* connectSeedClient(target, companies[companyKey].email, password, checkpoint);
+        const email = yield* Config.String('ONTOS_DEMO_SEED_EMAIL').pipe(
+          Config.withDefault(companies[companyKey].email),
+        );
+        const client = yield* connectSeedClient(target, email, password, checkpoint);
         yield* Console.log(yield* seedCompanyEmployees(client, companyKey, apply));
       }),
   );

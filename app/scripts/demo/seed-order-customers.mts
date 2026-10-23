@@ -10,7 +10,7 @@ import {
   resolvePartyCommandCommitWithAuthorization,
 } from '@app/party-registry/api/client';
 import type { PartyCommandOptions } from '@app/party-registry/api/client';
-import { Config, Console, Effect, Exit, Layer, Redacted, Schema } from 'effect';
+import { Config, Console, Effect, Exit, FileSystem, Layer, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { FetchHttpClient } from 'effect/unstable/http';
 import { MerchandiseCommandSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
@@ -20,6 +20,7 @@ import { orderCustomerSeedEligible } from '../../verticals/merchandise/scripts/o
 import { akrosDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
 import { connectSeedClient, DemoSeedError, validateSeedTarget } from './seed-client.mts';
 import type { SeedClient } from './seed-client.mts';
+import { seedCheckpointDirectory, seedWriteCheckpoint } from './seed-checkpoint.mts';
 
 type WriteOptions = Pick<PartyCommandOptions, 'correlationId' | 'idempotencyKey'>;
 interface Routing {
@@ -81,10 +82,13 @@ const main = (apply: boolean, includeRealOrders: boolean) =>
       shellUrl: yield* Config.String('ONTOS_DEMO_SEED_URL'),
       tenantId: demoTenantId,
     };
-    yield* validateSeedTarget(target);
+    const origin = yield* validateSeedTarget(target);
     const email = yield* Config.String('ONTOS_DEMO_SEED_EMAIL').pipe(Config.withDefault('eshop@akros.demo'));
     const password = yield* Config.Redacted('ONTOS_DEMO_SEED_PASSWORD');
-    const client = yield* connectSeedClient(target, email, password);
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* Config.String('ONTOS_DEMO_SEED_CHECKPOINT_DIR').pipe(Config.withDefault('.scratch/demo-seed'));
+    const checkpoint = seedWriteCheckpoint(fs, seedCheckpointDirectory({ ...target, shellUrl: origin }, root));
+    const client = yield* connectSeedClient(target, email, password, checkpoint);
     const owners = ownersFor(client);
     type OwnerEffect =
       | ReturnType<Exclude<(typeof owners)[keyof typeof owners], typeof owners.customers>>
@@ -94,7 +98,7 @@ const main = (apply: boolean, includeRealOrders: boolean) =>
         'merchandise',
         '/reads/records',
         RecordsRequestSchema,
-        { view: { limit: 0, ordersLimit: 250 } },
+        { view: { limit: 1, ordersLimit: 250 } },
         Schema.toEncoded(RecordsResponseSchema),
       )
       .pipe(Effect.flatMap(Schema.decodeEffect(RecordsResponseSchema)));

@@ -1,3 +1,4 @@
+import { cancelStageQaOrder } from '../demo/cancel-stage-qa-order.mts';
 import { MerchandiseCommandSchema } from '../../verticals/merchandise/shared/actions/apply-command.ts';
 import {
   MerchandiseStateSchema,
@@ -856,5 +857,94 @@ it.effect('repairs every stock page through native updates and reruns without mo
     expect(state.movements).toEqual(originalMovements);
     expect(state.products.map((product) => product.currentPriceMinor)).toEqual(originalPrices);
     expect(state.orders).toHaveLength(0);
+  }),
+);
+
+it.effect('cancels only the exact QA order through native staff status change, without adding a demo flag', () =>
+  Effect.gen(function* nativeQaCancellation() {
+    const actor = { principalId: demoId('test', 'qa-cancel-owner'), tenantId: target.tenantId };
+    let state = Schema.decodeUnknownSync(MerchandiseStateSchema)({
+      movements: [],
+      orders: [
+        {
+          channel: 'STOREFRONT',
+          contact: { email: 'stage.qa.20261022@example.invalid', name: 'Stage QA' },
+          createdAt: seedTestInstant,
+          id: demoId('test', 'qa-order'),
+          lines: [
+            { productId: 'qa-product', productName: 'Test', quantity: 1, sku: 'QA', unitPriceMinor: 100, vatRate: 21 },
+          ],
+          number: 'OBJ-2026-0007',
+          partyId: 'qa-party',
+          status: 'NEW',
+          totalMinor: 100,
+          totalVatMinor: 21,
+          updatedAt: seedTestInstant,
+        },
+      ],
+      products: [],
+    });
+    let revision = 0;
+    const http = HttpClient.make((request, url) =>
+      Effect.gen(function* cancellationOwner() {
+        if (url.pathname === gatewayPath) {
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({ apiBaseUrl: ownerApi, compositionRevision: revisionFixture, token: 'cancel-test' }),
+          );
+        }
+        if (url.pathname.endsWith(recordsPath)) {
+          return HttpClientResponse.fromWeb(
+            request,
+            Response.json({
+              ...Schema.encodeSync(MerchandiseStateSchema)(state),
+              actorPrincipalRef: actor,
+              canWrite: true,
+              indicators: {
+                lowStockCount: 0,
+                openOrderValueMinor: 100,
+                orderCount: 1,
+                productCount: 0,
+                stockValueMinor: 0,
+              },
+              revision,
+            }),
+          );
+        }
+        if (url.pathname.endsWith(applyCommandPath)) {
+          const body = Match.value(request.body).pipe(
+            Match.tag('Uint8Array', ({ body: bytes }) => new TextDecoder().decode(bytes)),
+            Match.orElse(() => '{}'),
+          );
+          const payload = decodeSeedBody(
+            Schema.Struct({ command: MerchandiseCommandSchema, expectedRevision: Schema.Int }),
+            body,
+          );
+          expect(payload.expectedRevision).toBe(revision);
+          const result = yield* evolveMerchandiseState(state, payload.command, {
+            actor,
+            now: DateTime.makeUnsafe(seedTestInstant),
+            resourceId: `cancel-${revision}`,
+          });
+          ({ state } = result);
+          revision += 1;
+          return HttpClientResponse.fromWeb(request, Response.json({ revision }));
+        }
+        return HttpClientResponse.fromWeb(request, sessionResponse(url.pathname));
+      }).pipe(Effect.orDie),
+    );
+    yield* Effect.gen(function* cancelAndRepeat() {
+      const client = yield* connect();
+      expect(yield* cancelStageQaOrder(client, false)).toBe(1);
+      expect(revision).toBe(0);
+      expect(yield* cancelStageQaOrder(client, true)).toBe(1);
+      expect(yield* cancelStageQaOrder(client, true)).toBe(0);
+    }).pipe(Effect.provideService(HttpClient.HttpClient, http));
+    expect(state.orders[0]?.status).toBe('CANCELLED');
+    expect(state.orders[0]?.demo).toBeUndefined();
+    expect(state.orders[0]?.demoCleanup).toBeUndefined();
+    expect(state.orders[0]?.history).toHaveLength(1);
+    expect(state.orders[0]?.history?.[0]?.reason).toBe('Testovací objednávka');
+    expect(revision).toBe(1);
   }),
 );
