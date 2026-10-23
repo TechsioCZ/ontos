@@ -1,3 +1,5 @@
+import { privacySubjectRefForParty } from '@app/privacy/domain/privacy-subject-identity';
+import { CreatePrivacySubjectPayloadSchema } from '@app/privacy/api';
 import { ConsentSelfServiceRequestSchema, RecordNoticeProvisionPayloadSchema } from '@app/consent-authority-contracts';
 import type { ConsentSelfServiceRequest } from '@app/consent-authority-contracts';
 import { Result, Schema } from 'effect';
@@ -134,7 +136,7 @@ it('projects native notice proof only from the durable interactive acknowledgeme
     claimRef: requestId,
     controllerRef,
     noticeVersionRef: noticeVersionId,
-    privacySubjectRef: `retail-party:${partyId}`,
+    privacySubjectRef: scope.privacySubjectRef.resourceId,
     processingPurposeRef: purposeId,
     processingScopeRef: scope.scopeRef,
     providedLanguage: 'cs',
@@ -167,4 +169,26 @@ it('rejects browser authority, missing acknowledgement and invented consent choi
   ]) {
     expect(Result.isFailure(decode({ ...input, ...change }))).toBe(true);
   }
+});
+
+it('uses the Privacy-owned UUID contract while keeping Party identity a typed external reference', () => {
+  const partyRef = {
+    moduleId: 'party.registry',
+    resourceId: partyId,
+    resourceType: 'party.registry.party',
+    tenantId,
+  } as const;
+  const expected = privacySubjectRefForParty(partyRef);
+  expect(scope.privacySubjectRef).toEqual(expected);
+  expect(scope.privacySubjectRef.resourceId).not.toBe(partyId);
+  expect(
+    Result.isSuccess(
+      Schema.decodeUnknownResult(CreatePrivacySubjectPayloadSchema)({
+        subject: { kind: 'DATA_SUBJECT', partyRef },
+        subjectRef: scope.privacySubjectRef,
+      }),
+    ),
+  ).toBe(true);
+  expect(customerNewsletterScope({ ...scopeInput, tenantId: otherId }).privacySubjectRef).not.toEqual(expected);
+  expect(customerNewsletterScope({ ...scopeInput, partyId: otherId }).privacySubjectRef).not.toEqual(expected);
 });
