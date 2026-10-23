@@ -1,6 +1,6 @@
 import { and, eq, ne, or } from 'drizzle-orm';
 import { v1 } from '@authzed/authzed-node';
-import { Config, DateTime, Effect, Option, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, DateTime, Effect, Option, Redacted, Schema } from 'effect';
 import { isSqlError } from 'effect/unstable/sql/SqlError';
 
 // This installer composes the privileged database used only for stage initialization.
@@ -139,25 +139,27 @@ const tryBootstrapPromise = <Value>(
     }),
   );
 
-const loadConfiguration = (): Effect.Effect<StageContextBootstrapConfiguration, StageContextBootstrapError> =>
-  Effect.gen(function* loadStageContextBootstrapConfiguration() {
+const loadConfiguration = Effect.fn('StageContextBootstrap.loadConfiguration')(
+  function* loadStageContextBootstrapConfiguration(
+    provider: ConfigProvider.ConfigProvider,
+  ): Effect.fn.Return<StageContextBootstrapConfiguration, StageContextBootstrapError> {
     const source = yield* Effect.all(
       {
-        databaseAdminUrl: Config.schema(Schema.Redacted(TrimmedNonEmptyString), 'DATABASE_ADMIN_URL').pipe(
-          Effect.mapError((cause) => failure('DATABASE_ADMIN_URL is required', cause)),
-        ),
-        deploymentEnvironment: Config.schema(StageEnvironmentSchema, 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
-          Effect.mapError((cause) => failure('The Core installation bootstrap can run only in stage', cause)),
-        ),
-        spiceDbCaCertificate: Config.schema(TrimmedNonEmptyString, 'SPICEDB_CA_CERT').pipe(
-          Effect.mapError((cause) => failure('SPICEDB_CA_CERT is required', cause)),
-        ),
-        spiceDbEndpoint: Config.schema(TrimmedNonEmptyString, 'SPICEDB_ENDPOINT').pipe(
-          Effect.mapError((cause) => failure('SPICEDB_ENDPOINT is required', cause)),
-        ),
-        spiceDbPreSharedKey: Config.Redacted('SPICEDB_PRESHARED_KEY').pipe(
-          Effect.mapError((cause) => failure('SPICEDB_PRESHARED_KEY is required', cause)),
-        ),
+        databaseAdminUrl: Config.schema(Schema.Redacted(TrimmedNonEmptyString), 'DATABASE_ADMIN_URL')
+          .parse(provider)
+          .pipe(Effect.mapError((cause) => failure('DATABASE_ADMIN_URL is required', cause))),
+        deploymentEnvironment: Config.schema(StageEnvironmentSchema, 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')
+          .parse(provider)
+          .pipe(Effect.mapError((cause) => failure('The Core installation bootstrap can run only in stage', cause))),
+        spiceDbCaCertificate: Config.schema(TrimmedNonEmptyString, 'SPICEDB_CA_CERT')
+          .parse(provider)
+          .pipe(Effect.mapError((cause) => failure('SPICEDB_CA_CERT is required', cause))),
+        spiceDbEndpoint: Config.schema(TrimmedNonEmptyString, 'SPICEDB_ENDPOINT')
+          .parse(provider)
+          .pipe(Effect.mapError((cause) => failure('SPICEDB_ENDPOINT is required', cause))),
+        spiceDbPreSharedKey: Config.Redacted('SPICEDB_PRESHARED_KEY')
+          .parse(provider)
+          .pipe(Effect.mapError((cause) => failure('SPICEDB_PRESHARED_KEY is required', cause))),
       },
       { concurrency: 5 },
     );
@@ -179,7 +181,8 @@ const loadConfiguration = (): Effect.Effect<StageContextBootstrapConfiguration, 
       spiceDbEndpoint: spiceDb.endpoint,
       spiceDbPreSharedKey: Redacted.make(spiceDb.preSharedKey),
     };
-  });
+  },
+);
 
 const classifyExactRecord = <Expected extends ExactRecord>(
   label: string,
@@ -564,7 +567,7 @@ export const reconcileStageContextBootstraps = Effect.fn('StageContextBootstrap.
     if (new Set(accounts.map(({ providerUserId }) => providerUserId)).size !== accounts.length) {
       return yield* failure('The stage contexts require distinct Better Auth provider user IDs');
     }
-    const configuration = yield* loadConfiguration();
+    const configuration = yield* loadConfiguration(yield* ConfigProvider.ConfigProvider);
     const retiredAt = yield* DateTime.nowAsDate;
     yield* Effect.scoped(
       Effect.gen(function* reconcileStageDatabase() {
@@ -610,5 +613,143 @@ export const reconcileStageContextBootstraps = Effect.fn('StageContextBootstrap.
       principalId,
       tenantId,
     }));
+  },
+);
+
+const ServiceTenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
+const ServiceLegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('LegalEntityId'));
+const ServicePrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId'));
+const StageServicePrincipalSchema = Schema.Struct({
+  displayName: Schema.Trim.check(Schema.isNonEmpty()),
+  legalEntityId: ServiceLegalEntityIdSchema,
+  principalId: ServicePrincipalIdSchema,
+  tenantId: ServiceTenantIdSchema,
+});
+export type StageServicePrincipal = typeof StageServicePrincipalSchema.Encoded;
+type StageServicePrincipalRecord = Pick<
+  typeof principals.$inferSelect,
+  'displayName' | 'kind' | 'principalId' | 'status' | 'tenantId'
+>;
+const stageServicePrincipalRecord = (service: StageServicePrincipal) => ({
+  displayName: service.displayName,
+  kind: 'service' as const,
+  principalId: service.principalId,
+  status: 'active' as const,
+  tenantId: service.tenantId,
+});
+
+/** Never reactivate, rename, move or convert an existing principal during stage provisioning. */
+export const classifyStageServicePrincipal = (
+  existing: StageServicePrincipalRecord | undefined,
+  service: StageServicePrincipal,
+) => classifyExactRecord('service principal', existing, stageServicePrincipalRecord(service));
+
+/** Native nonhuman counterpart of the account bootstrap: no Better Auth users, bindings or keys. */
+export const reconcileStageServicePrincipals = Effect.fn('StageContextBootstrap.reconcileServicePrincipals')(
+  function* reconcileStageServicePrincipals(
+    services: readonly StageServicePrincipal[],
+    provider: ConfigProvider.ConfigProvider,
+  ) {
+    const validated = yield* Schema.decodeEffect(Schema.Array(StageServicePrincipalSchema))(services).pipe(
+      Effect.mapError((cause) => failure('Invalid stage service principal definition', cause)),
+    );
+    if (validated.length === 0 || new Set(validated.map(({ principalId }) => principalId)).size !== validated.length) {
+      return yield* failure('Stage service principals must have distinct identities');
+    }
+    const configuration = yield* loadConfiguration(provider);
+    const relationships: StageContextBootstrapRelationship[] = [];
+    for (const service of validated) {
+      const legal = toLegalEntityAccessObjectId(service.tenantId, service.legalEntityId);
+      if (legal === undefined) {
+        return yield* failure('Invalid stage service company scope');
+      }
+      relationships.push(
+        {
+          relation: 'member',
+          resourceId: service.tenantId,
+          resourceType: 'tenant',
+          subjectId: service.principalId,
+          subjectType: 'principal',
+        },
+        {
+          relation: 'member',
+          resourceId: legal,
+          resourceType: 'legal_entity',
+          subjectId: service.principalId,
+          subjectType: 'principal',
+        },
+      );
+    }
+    return yield* Effect.scoped(
+      Effect.gen(function* reconcileServiceDatabase() {
+        const databaseConfiguration = yield* parseDatabaseConfig({
+          DATABASE_URL: Redacted.value(configuration.databaseAdminUrl),
+        }).pipe(Effect.mapError(bootstrapFailureFromCause));
+        const { executor } = yield* makeCoreDatabase(databaseConfiguration).pipe(
+          Effect.mapError(bootstrapFailureFromCause),
+        );
+        const transactionBody = Effect.fn('StageContextBootstrap.reconcileServiceTransaction')(
+          function* reconcileServicesTransaction(transaction: CoreTransaction) {
+            // Validate the entire set before the first insert; any SQL conflict rolls back every insert.
+            const candidates = yield* Effect.forEach(
+              validated,
+              Effect.fn('StageContextBootstrap.validateServicePrincipal')(function* validateServicePrincipal(service) {
+                const [tenant] = yield* transaction
+                  .select({ status: tenants.status })
+                  .from(tenants)
+                  .where(eq(tenants.tenantId, service.tenantId))
+                  .limit(1);
+                if (tenant?.status !== 'active') {
+                  return yield* failure('The stage service tenant must already exist and be active');
+                }
+                const [company] = yield* transaction
+                  .select({
+                    legalEntityId: legalEntities.legalEntityId,
+                    status: legalEntities.status,
+                    tenantId: legalEntities.tenantId,
+                  })
+                  .from(legalEntities)
+                  .where(eq(legalEntities.legalEntityId, service.legalEntityId))
+                  .limit(1);
+                if (company === undefined) {
+                  return yield* failure('The stage service company must already exist');
+                }
+                yield* classifyExactRecord('service company', company, {
+                  legalEntityId: service.legalEntityId,
+                  status: 'active',
+                  tenantId: service.tenantId,
+                });
+                const [existing] = yield* transaction
+                  .select({
+                    displayName: principals.displayName,
+                    kind: principals.kind,
+                    principalId: principals.principalId,
+                    status: principals.status,
+                    tenantId: principals.tenantId,
+                  })
+                  .from(principals)
+                  .where(eq(principals.principalId, service.principalId))
+                  .limit(1);
+                return (yield* classifyStageServicePrincipal(existing, service)) === 'create'
+                  ? [stageServicePrincipalRecord(service)]
+                  : [];
+              }),
+              { concurrency: 1 },
+            );
+            const missing = candidates.flat();
+            if (missing.length > 0) {
+              yield* transaction.insert(principals).values(missing);
+            }
+            return missing.length;
+          },
+        );
+        const created = yield* executor.transaction(transactionBody).pipe(
+          Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
+          Effect.mapError(bootstrapFailureFromCause),
+        );
+        yield* writeRelationships(configuration, bootstrapRelationshipRequest(relationships));
+        return created;
+      }),
+    );
   },
 );

@@ -43,7 +43,7 @@ export function LoginForm() {
       const result = await submitAccount(form, "login");
       if (result.outcome !== "SESSION_CREATED") throw new Error("Přihlášení nebylo potvrzeno.");
       form.reset();
-      router.push("/muj-ucet");
+      router.push("/dokonceni-registrace");
       router.refresh();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Přihlášení se nepodařilo.");
@@ -190,7 +190,8 @@ export function RegistrationForm() {
       {submitted && (
         <output className="akros-form-success">
           Registrace byla přijata. Potvrďte svůj e-mail odkazem v doručené zprávě. Přihlášení bude
-          dostupné po dokončení registrace.
+          dostupné po ověření e-mailu. Po přihlášení můžete zkontrolovat stav a obnovit
+          rozpracovanou registraci.
         </output>
       )}
     </form>

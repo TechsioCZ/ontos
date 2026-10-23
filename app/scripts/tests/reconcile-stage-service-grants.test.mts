@@ -4,9 +4,11 @@ import { expect, it } from 'effect-rstest';
 
 import {
   ServiceGrantError,
+  assertServiceMembershipsCompatible,
   desiredServiceGrants,
   reconcileServiceGrants,
   serviceGrantMemberships,
+  stageServicePrincipals,
 } from '../demo/reconcile-stage-service-grants.mts';
 import type { ServiceGrantRpc } from '../demo/reconcile-stage-service-grants.mts';
 
@@ -106,4 +108,49 @@ it.effect('rejects malformed desired relationships instead of issuing a broad au
     expect(Schema.is(ServiceGrantError)(error)).toBe(true);
     expect(state.writes).toHaveLength(0);
   }),
+);
+
+it.effect('check reports initially absent service memberships without blocking apply; verify still fails closed', () =>
+  Effect.gen(function* reportsUnprovisionedServices() {
+    const state = memoryRelationships([]);
+    expect((yield* reconcileServiceGrants(state.rpc, desired, 'check')).missing).toBeGreaterThan(0);
+    const error = yield* reconcileServiceGrants(state.rpc, desired, 'verify').pipe(Effect.flip);
+    expect(Schema.is(ServiceGrantError)(error)).toBe(true);
+    if (Schema.is(ServiceGrantError)(error)) {
+      expect(error.reason).toContain('membership is missing');
+    }
+    expect(state.writes).toHaveLength(0);
+    expect(stageServicePrincipals()).toHaveLength(3);
+    expect(
+      stageServicePrincipals().every(
+        ({ legalEntityId, tenantId }) =>
+          legalEntityId === '71000000-0000-4000-8000-000000000024' &&
+          tenantId === '70000000-0000-4000-8000-000000000020',
+      ),
+    ).toBe(true);
+    expect(
+      stageServicePrincipals().some(({ principalId }) => principalId === '563dd03a-7c67-5f4a-94eb-a4e42fe09919'),
+    ).toBe(true);
+  }),
+);
+
+it.effect(
+  'allows missing memberships but rejects caveated membership before native provisioning can overwrite it',
+  () =>
+    Effect.gen(function* protectsExistingConstraints() {
+      const missing = memoryRelationships([]);
+      yield* assertServiceMembershipsCompatible(missing.rpc);
+      expect(missing.writes).toHaveLength(0);
+      const conditional = memoryRelationships(
+        serviceGrantMemberships().map((membership) =>
+          v1.Relationship.create({ ...membership, optionalCaveat: { caveatName: 'must-not-remove' } }),
+        ),
+      );
+      const error = yield* assertServiceMembershipsCompatible(conditional.rpc).pipe(Effect.flip);
+      expect(Schema.is(ServiceGrantError)(error)).toBe(true);
+      if (Schema.is(ServiceGrantError)(error)) {
+        expect(error.reason).toContain('caveat or expiration');
+      }
+      expect(conditional.writes).toHaveLength(0);
+    }),
 );

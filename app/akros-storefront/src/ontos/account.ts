@@ -66,12 +66,7 @@ export const registrationInput = (input: Record<string, unknown>) => {
     !input.lastName.trim() ||
     !text(input.email, 320) ||
     !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.email.trim()) ||
-    (input.phone !== undefined &&
-      input.phone !== "" &&
-      (!text(input.phone, 100) ||
-        !/^\+?[()0-9 .-]{3,100}$/.test(input.phone.trim()) ||
-        input.phone.replace(/\D/g, "").length < 6 ||
-        input.phone.replace(/\D/g, "").length > 15)) ||
+    (input.phone !== undefined && input.phone !== "" && !text(input.phone, 100)) ||
     !text(input.password, 128) ||
     input.password.length < 12 ||
     input.password !== input.passwordConfirmation ||

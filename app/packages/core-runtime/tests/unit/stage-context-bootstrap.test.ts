@@ -1,8 +1,10 @@
-import { Effect } from 'effect';
+import { ConfigProvider, Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { STAGE_GRANTABLE_TENANT_RELATIONS, parseStageAccountsFile } from '../../src/install/stage-accounts-file.ts';
 import {
+  classifyStageServicePrincipal,
+  reconcileStageServicePrincipals,
   buildRetiredStageContextRelationships,
   buildStageContextRelationships,
   stageContextsFromAccountsFile,
@@ -138,5 +140,56 @@ it.effect('deletes every relationship a bootstrap can have written for a retired
     expect(
       relationships.filter(({ resourceType }) => resourceType === 'tenant').map(({ relation }) => relation),
     ).toEqual(['member', ...STAGE_GRANTABLE_TENANT_RELATIONS]);
+  }),
+);
+
+const service = {
+  displayName: 'Native service',
+  legalEntityId: '11000000-0000-4000-8000-0000000000a0',
+  principalId: '20000000-0000-4000-8000-0000000000a1',
+  tenantId: '10000000-0000-4000-8000-0000000000a0',
+};
+const serviceRow = {
+  displayName: service.displayName,
+  kind: 'service',
+  principalId: service.principalId,
+  status: 'active',
+  tenantId: service.tenantId,
+} as const;
+it.effect('creates missing service principals and treats exact existing records as idempotent', () =>
+  Effect.gen(function* classifiesService() {
+    expect(yield* classifyStageServicePrincipal(undefined, service)).toBe('create');
+    expect(yield* classifyStageServicePrincipal(serviceRow, service)).toBe('existing');
+  }),
+);
+it.effect('refuses to rename, reactivate, move or convert conflicting service identities', () =>
+  Effect.gen(function* rejectsConflicts() {
+    for (const conflict of [
+      { displayName: 'Other service' },
+      { kind: 'human' },
+      { status: 'disabled' },
+      { status: 'archived' },
+      { tenantId: '10000000-0000-4000-8000-0000000000b0' },
+    ] as const) {
+      const error = yield* classifyStageServicePrincipal({ ...serviceRow, ...conflict }, service).pipe(Effect.flip);
+      expect(error.reason).toContain('conflicts');
+    }
+  }),
+);
+it.effect('requires distinct service IDs and the native stage guard before opening a database', () =>
+  Effect.gen(function* guardsServiceInstaller() {
+    const provider = ConfigProvider.fromUnknown({
+      DATABASE_ADMIN_URL: 'postgresql://operator:unused@localhost/test',
+      SPICEDB_CA_CERT: 'unused',
+      SPICEDB_ENDPOINT: 'spicedb:50051',
+      SPICEDB_PRESHARED_KEY: 'unused',
+      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'development',
+    });
+    expect((yield* reconcileStageServicePrincipals([service, service], provider).pipe(Effect.flip)).reason).toContain(
+      'distinct',
+    );
+    expect((yield* reconcileStageServicePrincipals([service], provider).pipe(Effect.flip)).reason).toContain(
+      'only in stage',
+    );
   }),
 );

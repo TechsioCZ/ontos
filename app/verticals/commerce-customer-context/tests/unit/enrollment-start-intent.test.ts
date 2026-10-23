@@ -12,6 +12,7 @@ import {
   commercePortalAuthEnrollmentAccountCreationClaim,
   commercePortalAuthEnrollmentAccountVerificationClaim,
   commercePortalAuthEnrollmentIntent,
+  normalizeCommercePortalAuthEnrollmentPhone,
 } from '../../api/portal-auth/enrollment/intent.ts';
 import {
   PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY,
@@ -77,7 +78,10 @@ const decodeStart = (payload: EnrollmentStartRequestBody) =>
   Schema.decodeUnknownEffect(CommercePortalAuthEnrollmentStartInputSchema)(payload);
 
 const intentFor = (payload: EnrollmentStartRequestBody) =>
-  decodeStart(payload).pipe(Effect.flatMap(commercePortalAuthEnrollmentIntent));
+  decodeStart(payload).pipe(
+    Effect.flatMap(normalizeCommercePortalAuthEnrollmentPhone),
+    Effect.flatMap(commercePortalAuthEnrollmentIntent),
+  );
 
 const declaresPortalTransition = (definition: JourneyDefinition, transitionKey: string): boolean =>
   definition.requiredTransitions.some(
@@ -284,5 +288,38 @@ it.effect('mints the same owner invocation identity for every retry of one start
     // replaying — so every field this start hands the Action has to be a derivation, not a draw.
     expect(retry).toStrictEqual(first);
     expect(otherAttempt.ownerInvocationId).not.toBe(first.ownerInvocationId);
+  }),
+);
+
+it.effect('Party normalizes national and formatted international phones to the same durable intent', () =>
+  Effect.gen(function* canonicalPhoneIntent() {
+    const national = yield* intentFor(startPayload({ journey: 'RETAIL_SELF_ENROLLMENT', phone: '777 123 456' }));
+    const international = yield* intentFor(
+      startPayload({ journey: 'RETAIL_SELF_ENROLLMENT', phone: '+420 (777) 123-456' }),
+    );
+    expect(national.retailRegistration?.phone).toBe('+420777123456');
+    expect(international).toEqual(national);
+  }),
+);
+
+it.effect('invalid Party phones fail before any Attempt or provider dispatch can run', () =>
+  Effect.gen(function* noInvalidPhoneWrites() {
+    for (const phone of ['---', '+0001234567', '+123', '123456', '1234567890', '+1234567890123456', 'not-a-number']) {
+      let attempts = 0;
+      let providers = 0;
+      const result = yield* decodeStart(startPayload({ journey: 'RETAIL_SELF_ENROLLMENT', phone })).pipe(
+        Effect.flatMap(normalizeCommercePortalAuthEnrollmentPhone),
+        Effect.tap(() =>
+          Effect.sync(() => {
+            attempts += 1;
+            providers += 1;
+          }),
+        ),
+        Effect.result,
+      );
+      expect(result._tag).toBe('Failure');
+      expect(attempts).toBe(0);
+      expect(providers).toBe(0);
+    }
   }),
 );

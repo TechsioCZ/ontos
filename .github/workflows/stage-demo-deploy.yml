@@ -351,8 +351,13 @@ jobs:
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
           BETTER_AUTH_URL: ${{ env.STAGE_SHELL_URL }}
-          BETTER_AUTH_SECRET: ${{ fromJSON(secrets.DEMO_IMMUTABLE_RELEASE_SECRETS)['shell-super-app'].BETTER_AUTH_SECRET }}
+          # Only whole secrets are masked; a field read with fromJSON would print in the step's env block.
+          ALL_RELEASE_SECRETS: ${{ secrets.DEMO_IMMUTABLE_RELEASE_SECRETS }}
         run: |
+          BETTER_AUTH_SECRET="$(jq -er '."shell-super-app".BETTER_AUTH_SECRET' <<<"$ALL_RELEASE_SECRETS")"
+          echo "::add-mask::$BETTER_AUTH_SECRET"
+          export BETTER_AUTH_SECRET
+          unset ALL_RELEASE_SECRETS
           mise exec -- pnpm exec node scripts/demo/reconcile-stage-service-grants.mts --zerops --check
           mise exec -- pnpm exec node scripts/demo/reconcile-stage-service-grants.mts --zerops --apply
           mise exec -- pnpm exec node scripts/demo/reconcile-stage-service-grants.mts --zerops --verify

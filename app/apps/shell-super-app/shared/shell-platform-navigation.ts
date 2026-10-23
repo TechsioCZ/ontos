@@ -1,5 +1,5 @@
-import type { ShellNavigationItem } from '../../shared/api.ts';
-import { AppIdSchema, EntrypointKeySchema, GroupKeySchema, ModuleIdSchema } from '../../shared/api.ts';
+import type { ShellNavigationItem } from './api.ts';
+import { AppIdSchema, EntrypointKeySchema, GroupKeySchema, ModuleIdSchema } from './api.ts';
 
 /**
  * Navigation section of in-module AI approval pages. They stay in their modules but leave the sidebar: the platform
@@ -93,3 +93,18 @@ export const withConnectedAppsNavigation = (
   items: readonly ShellNavigationItem[],
   show: boolean,
 ): readonly ShellNavigationItem[] => (show ? [...items, connectedAppsItem] : items);
+
+/** The same presented module set drives both document Home selection and the browser's sidebar. */
+export const presentedShellNavigationItems = (
+  navigation: readonly ShellNavigationItem[],
+  canManagePeople: boolean,
+): readonly ShellNavigationItem[] => {
+  const presentable = withPeopleAdministration(navigation, canManagePeople);
+  return withConnectedAppsNavigation(
+    withAgentPlatformNavigation(
+      withoutModuleAiApprovals(presentable),
+      canManagePeople || hasModuleAiApprovals(presentable),
+    ),
+    canManagePeople,
+  );
+};

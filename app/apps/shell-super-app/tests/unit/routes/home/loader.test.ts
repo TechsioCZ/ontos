@@ -495,6 +495,7 @@ const availableComposition = <Overrides extends object>(overrides: Overrides) =>
 const documentContextOf = <Overrides extends object>(overrides: Overrides) => ({
   canManagePeople: false,
   composition: availableComposition({}),
+  home: { contribution: { state: 'forbidden' as const } },
   legalEntities: {
     legalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
     selectedLegalEntityId: 'legal-1',
@@ -520,7 +521,7 @@ it.effect('server rendering reads the whole document context in one request', ()
       compositionRevision,
       contextState: 'authenticated',
       gatewayAudiences: [],
-      homeCandidates: [],
+      homeContribution: { state: 'forbidden' },
       identity,
       legalEntities: {
         items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
@@ -539,7 +540,7 @@ it.effect('server rendering reads the whole document context in one request', ()
       tenants: { items: [{ name: 'Alpha tenant', tenantId: 'tenant-1' }], state: 'available' },
     });
     expect(documentContextMock).toHaveBeenCalledTimes(1);
-    expect(documentContextMock.mock.calls[0]?.[0]).toEqual({});
+    expect(documentContextMock.mock.calls[0]?.[0]).toEqual({ home: true });
     for (const separateRead of [
       currentSessionMock,
       shellCompositionMock,
@@ -645,38 +646,43 @@ it.effect('server rendering offers people administration from the context capabi
   }),
 );
 
-it.effect('server rendering leaves the Home component to the browser and keeps its candidates', () =>
-  Effect.gen(function* serverDefersHome() {
-    const homeComponents = [
-      {
-        entrypointKey: 'fixture.summary.component.home',
-        moduleId: 'fixture.summary',
-        order: 100,
-        requiresModules: ['fixture.summary', 'fixture.unlisted'],
-      },
-      {
-        entrypointKey: 'fixture.dashboard.component.home',
-        moduleId: 'fixture.dashboard',
-        order: 200,
-        requiresModules: ['fixture.dashboard'],
-      },
-    ];
-    documentContextMock.mockReturnValue(
+it.effect('server rendering embeds the admitted Home target without a separate request', () =>
+  Effect.gen(function* serverAdmitsHome() {
+    const contribution = {
+      state: 'ready' as const,
+      target: { compositionRevision, moduleId: 'fixture.dashboard' },
+    };
+    documentContextMock.mockReturnValue(Effect.succeed(documentContextOf({ home: { contribution } })));
+    expect(yield* serverModel()).toMatchObject({ homeContribution: contribution, state: 'authenticated' });
+    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
+    expect(executeLegalEntityDetailMock).not.toHaveBeenCalled();
+    yield* serverModel('https://shell.example.test/en/ukoly');
+    expect(documentContextMock.mock.calls.at(-1)?.[0]).toEqual({});
+  }),
+);
+
+it.effect('server rendering preserves the company welcome and unavailable Home outcomes', () =>
+  Effect.gen(function* serverHomeOutcomes() {
+    documentContextMock.mockReturnValueOnce(
       Effect.succeed(
         documentContextOf({
-          composition: availableComposition({
-            homeComponents,
-            navigation: [{ ...navigation[0], moduleId: 'fixture.dashboard' }],
-          }),
+          home: { contribution: { state: 'forbidden' }, welcome: 'Firemní přivítání' },
         }),
       ),
     );
-    const model = yield* serverModel();
-    expect(model).toMatchObject({ homeCandidates: [homeComponents[1]], state: 'authenticated' });
-    expect(model).not.toHaveProperty('homeContribution');
-    expect(resolveModuleTargetMock).not.toHaveBeenCalled();
+    expect(yield* serverModel()).toMatchObject({
+      companyWelcome: 'Firemní přivítání',
+      homeContribution: { state: 'forbidden' },
+    });
+    documentContextMock.mockReturnValueOnce(
+      Effect.succeed(
+        documentContextOf({
+          home: { contribution: { state: 'unavailable' } },
+        }),
+      ),
+    );
+    expect(yield* serverModel()).toMatchObject({ homeContribution: { state: 'unavailable' } });
     expect(executeLegalEntityDetailMock).not.toHaveBeenCalled();
-    expect(yield* serverModel('https://shell.example.test/en/ukoly')).not.toHaveProperty('homeCandidates');
   }),
 );
 

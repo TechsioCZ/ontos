@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /** Stage-only additive service grants and native isolated verification account provisioning. */
+import { reconcileStageServicePrincipals } from '@app/core-runtime/install/stage-context-bootstrap';
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { Config, Console, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, Console, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { FetchHttpClient } from 'effect/unstable/http';
 
@@ -85,6 +86,16 @@ const isPresent = (rows: readonly v1.ReadRelationshipsResponse[], expected: v1.R
       tupleKey(relationship) === tupleKey(expected),
   );
 
+export const stageServicePrincipals = () =>
+  [akrosStorefrontPrincipal, commercePortalPrincipal, privacyConsentPrincipal].map(
+    ({ displayName, legalEntityId, principalId }) => ({
+      displayName,
+      legalEntityId,
+      principalId,
+      tenantId: demoTenantId,
+    }),
+  );
+
 export const serviceGrantMemberships = (): readonly v1.Relationship[] => {
   const legalEntity = toLegalEntityAccessObjectId(demoTenantId, akrosDemoLegalEntityId);
   if (legalEntity === undefined) {
@@ -94,6 +105,28 @@ export const serviceGrantMemberships = (): readonly v1.Relationship[] => {
     relationshipFrom('legal_entity', legalEntity, 'member', 'principal', principalId),
   );
 };
+/** Missing memberships may be provisioned; conditional/expiring memberships must never be overwritten. */
+export const assertServiceMembershipsCompatible = Effect.fn('Stage.assertServiceMembershipsCompatible')(
+  function* assertServiceMembershipsCompatible(rpc: ServiceGrantRpc) {
+    for (const membership of serviceGrantMemberships()) {
+      const rows = yield* rpc.readRelationships(yield* requestFor(membership));
+      if (
+        rows.some(
+          ({ relationship }) =>
+            relationship !== undefined &&
+            tupleKey(relationship) === tupleKey(membership) &&
+            (relationship.optionalCaveat !== undefined || relationship.optionalExpiresAt !== undefined),
+        )
+      ) {
+        return yield* new ServiceGrantError({
+          reason: 'Existing service membership has a caveat or expiration; no grants changed',
+        });
+      }
+    }
+    return yield* Effect.void;
+  },
+);
+
 export const desiredServiceGrants = (actions: readonly DemoAction[]): readonly v1.Relationship[] => {
   const source = [
     ...principalRelationships(
@@ -126,16 +159,19 @@ export const reconcileServiceGrants = Effect.fn('Stage.reconcileServiceGrants')(
   desired: readonly v1.Relationship[],
   mode: ServiceGrantMode,
 ) {
+  yield* assertServiceMembershipsCompatible(rpc);
   const memberships = serviceGrantMemberships();
   if (memberships.length !== 3) {
     return yield* new ServiceGrantError({ reason: 'Invalid service company scope' });
   }
-  // Fail before any writes if an existing service principal has no unconditional company membership.
+  // Check reports gaps so a first deployment can reach native provisioning in apply.
   for (const membership of memberships) {
     if (!isPresent(yield* rpc.readRelationships(yield* requestFor(membership)), membership)) {
-      return yield* new ServiceGrantError({
-        reason: `Initial service membership is missing for ${membership.subject?.object?.objectId}; no grants changed`,
-      });
+      const reason = `Initial service membership is missing for ${membership.subject?.object?.objectId}; no grants changed`;
+      if (mode !== 'check') {
+        return yield* new ServiceGrantError({ reason });
+      }
+      yield* Console.log(reason);
     }
   }
   const missing: v1.Relationship[] = [];
@@ -208,6 +244,7 @@ type ReconciliationFailure =
   | Effect.Error<typeof zeropsConfiguration>
   | Effect.Error<typeof environmentConfiguration>
   | Effect.Error<ReturnType<typeof discoverCurrentActions>>
+  | Effect.Error<ReturnType<typeof reconcileStageServicePrincipals>>
   | Effect.Error<ReturnType<typeof ensureStageVerification>>
   | Effect.Error<ReturnType<typeof verificationContext>>;
 const reportFailure = (error: ReconciliationFailure) =>
@@ -250,8 +287,17 @@ const command = Command.make(
         } else if (verify) {
           mode = 'verify';
         }
+        yield* assertServiceMembershipsCompatible(rpc);
         // Check/verify stay read-only; only apply invokes the guarded native stage installer.
         if (mode === 'apply') {
+          const inherited = yield* ConfigProvider.ConfigProvider;
+          const provider = ConfigProvider.fromUnknown({
+            SPICEDB_CA_CERT: configuration.caCertificate,
+            SPICEDB_ENDPOINT: configuration.endpoint,
+            SPICEDB_PRESHARED_KEY: configuration.preSharedKey,
+            ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: configuration.deploymentEnvironment,
+          }).pipe(ConfigProvider.orElse(inherited));
+          yield* reconcileStageServicePrincipals(stageServicePrincipals(), provider);
           yield* ensureStageVerification(configuration);
         }
         const verification = yield* verificationContext();

@@ -490,6 +490,13 @@ export const ShellCompositionRequestSchema = Schema.Struct({
   compositionRevision: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u))),
 });
 
+export const ShellDocumentContextRequestSchema = Schema.Struct({
+  ...ShellCompositionRequestSchema.fields,
+  /** Only Home documents need their first authorized component resolved. */
+  home: Schema.optionalKey(Schema.Literal(true)),
+});
+export type ShellDocumentContextRequest = typeof ShellDocumentContextRequestSchema.Type;
+
 /** A Shell document's tenant choices; when they cannot be read, only the current tenant is shown. */
 export const ShellDocumentTenantsSchema = Schema.Union([
   Schema.Struct({ state: Schema.Literal('available'), tenants: Schema.Array(AvailableTenantSchema) }),
@@ -501,23 +508,6 @@ export const ShellDocumentCompositionSchema = Schema.Union([
   ShellCompositionSchema,
   Schema.Struct({ state: Schema.Literals(['reload_required', 'unavailable']) }),
 ]);
-
-/**
- * What server rendering of a Shell document reads, from one resolution of the session's context: the session, its
- * legal entities and tenants, the composition, the people-administration navigation hint and the gateway assertions
- * of the composition's audiences. Each part carries its own outcome, so a failing part degrades only itself.
- * Signed-out sessions get the session only; sessions without a selected legal entity get no composition data,
- * capability or assertions.
- */
-export const ShellDocumentContextSchema = Schema.Struct({
-  canManagePeople: Schema.optionalKey(Schema.Boolean),
-  composition: Schema.optionalKey(ShellDocumentCompositionSchema),
-  gatewayAssertions: Schema.optionalKey(Schema.Array(DocumentGatewayAssertionSchema)),
-  legalEntities: Schema.optionalKey(AvailableLegalEntitiesResponseSchema),
-  session: CurrentSessionSchema,
-  tenants: Schema.optionalKey(ShellDocumentTenantsSchema),
-});
-export type ShellDocumentContext = typeof ShellDocumentContextSchema.Type;
 
 export const ResolveModuleTargetPayloadSchema = Schema.Struct({
   canonicalPath: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(40_000))),
@@ -544,6 +534,34 @@ export const ResolvedModuleTargetSchema = Schema.Struct({
   routeParameters: Schema.Record(Schema.String, Schema.String),
   writable: Schema.Boolean,
 });
+
+export const ShellHomeContributionSchema = Schema.Union([
+  Schema.Struct({ state: Schema.Literal('ready'), target: ResolvedModuleTargetSchema }),
+  Schema.Struct({ state: Schema.Literals(['forbidden', 'unavailable']) }),
+]);
+export type ShellHomeContribution = typeof ShellHomeContributionSchema.Type;
+
+export const ShellDocumentHomeSchema = Schema.Struct({
+  contribution: ShellHomeContributionSchema,
+  welcome: Schema.optionalKey(Schema.String),
+});
+export type ShellDocumentHome = typeof ShellDocumentHomeSchema.Type;
+
+/**
+ * One session resolution supplies a document's context and assertions. Home additionally receives its governed
+ * component target (or welcome), so hydration can load the remote without another authenticated BFF request.
+ * Each part keeps its own outcome. Signed-out or unselected sessions get no Home target or assertions.
+ */
+export const ShellDocumentContextSchema = Schema.Struct({
+  canManagePeople: Schema.optionalKey(Schema.Boolean),
+  composition: Schema.optionalKey(ShellDocumentCompositionSchema),
+  gatewayAssertions: Schema.optionalKey(Schema.Array(DocumentGatewayAssertionSchema)),
+  home: Schema.optionalKey(ShellDocumentHomeSchema),
+  legalEntities: Schema.optionalKey(AvailableLegalEntitiesResponseSchema),
+  session: CurrentSessionSchema,
+  tenants: Schema.optionalKey(ShellDocumentTenantsSchema),
+});
+export type ShellDocumentContext = typeof ShellDocumentContextSchema.Type;
 
 export const ResourceRefSchema = Schema.Struct({
   moduleId: ModuleIdSchema,
@@ -727,7 +745,7 @@ export const ShellDocumentContextApiGroup = HttpApiGroup.make('documentContext')
       AuthenticationUnavailableProblemSchema,
       AuthenticationInternalProblemSchema,
     ],
-    payload: ShellCompositionRequestSchema,
+    payload: ShellDocumentContextRequestSchema,
     success: ShellDocumentContextSchema,
   }),
 );

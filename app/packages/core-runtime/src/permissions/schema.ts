@@ -84,6 +84,8 @@ definition resource {
 
 // Named permissions explicitly declare their read/write scope; auditor rights
 // never depend on guessing a permission name or copying another person's grants.
+// Customer self-service grants name one exact profile without conferring company membership.
+// A Price Group may inherit the same permission from its exact containing catalog.
 definition business_permission {
   relation tenant: tenant
   relation legal_entity: legal_entity
@@ -92,9 +94,11 @@ definition business_permission {
   relation role_grantee: scoped_role#member
   relation read_scope: tenant | legal_entity
   relation write_scope: tenant | legal_entity
+  // Written only for exact customer-profile grants; it does not confer tenant/company membership.
+  relation self_service_grantee: principal
   permission role_use = role_grantee & (tenant->access + legal_entity->access)
   permission direct_use = (grantee + role_use + read_scope->read_all + write_scope->write_all) & (tenant->access + legal_entity->access)
-  permission use = direct_use + (tenant->access & containing_catalog->direct_use)
+  permission use = self_service_grantee + direct_use + (tenant->access & containing_catalog->direct_use)
 }
 
 // Direct grants are retired at each owner's role cutover. Role grants always

@@ -286,20 +286,33 @@ it('reconciles service grants and the isolated verification context after migrat
   expect(reconcile?.['continue-on-error']).toBeUndefined();
   expect(reconcile?.env?.ZEROPS_TOKEN).toBe(secretReference('ZEROPS_TOKEN'));
   expect(reconcile?.env?.BETTER_AUTH_URL).toBe(['${{', 'env.STAGE_SHELL_URL', '}}'].join(' '));
-  expect(reconcile?.env?.BETTER_AUTH_SECRET).toContain(
-    "fromJSON(secrets.DEMO_IMMUTABLE_RELEASE_SECRETS)['shell-super-app'].BETTER_AUTH_SECRET",
-  );
   expect(reconcile?.run?.match(/--zerops --(?:check|apply|verify)/gu)).toEqual([
     '--zerops --check',
     '--zerops --apply',
     '--zerops --verify',
   ]);
   const script = readFileSync(new URL('../demo/reconcile-stage-service-grants.mts', import.meta.url), 'utf-8');
-  expect(script).toContain("if (mode === 'apply') {\n          yield* ensureStageVerification(configuration);");
+  const apply = script.indexOf("if (mode === 'apply') {");
+  const native = script.indexOf('yield* reconcileStageServicePrincipals(stageServicePrincipals(), provider)', apply);
+  const verification = script.indexOf('yield* ensureStageVerification(configuration)', apply);
+  expect(native).toBeGreaterThan(apply);
+  expect(verification).toBeGreaterThan(native);
   expect(script).toContain('...verificationGrants');
   const bootstrap = readFileSync(new URL('../demo/ensure-stage-verification.mts', import.meta.url), 'utf-8');
   expect(bootstrap).toContain('apps/shell-super-app/scripts/bootstrap-stage-accounts.mts');
   expect(bootstrap).toContain('mode: 0o600');
   expect(bootstrap).toContain('makeTempDirectoryScoped');
   expect(bootstrap).not.toContain('bootstrap-context.mts');
+});
+
+it('never extracts a secret into the step environment and masks its value before any command', () => {
+  const reconcile = readJobs().release.steps.find(
+    ({ name }) => name === 'Reconcile storefront, Commerce and Privacy service grants',
+  );
+  expect(reconcile?.env?.BETTER_AUTH_SECRET).toBeUndefined();
+  expect(reconcile?.env?.ALL_RELEASE_SECRETS).toBe(secretReference('DEMO_IMMUTABLE_RELEASE_SECRETS'));
+  expect(Object.values(reconcile?.env ?? {}).some((value) => value.includes('fromJSON'))).toBe(false);
+  expect(reconcile?.run).toContain('echo "::add-mask::$BETTER_AUTH_SECRET"');
+  expect(reconcile?.run).toContain('export BETTER_AUTH_SECRET');
+  expect(reconcile?.run?.indexOf('::add-mask::')).toBeLessThan(reconcile?.run?.indexOf('mise exec') ?? 0);
 });

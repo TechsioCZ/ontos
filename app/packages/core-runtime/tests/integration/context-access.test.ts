@@ -17,6 +17,11 @@ import {
   toResourceAccessObjectId,
 } from '../../src/permissions/context-access.ts';
 import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
+import {
+  BusinessPermissionMutationUnavailable,
+  makeBusinessPermissionRelationshipMutation,
+  migrateRetailSelfServiceGrant,
+} from '../../src/permissions/business-permission-mutation.ts';
 
 const spiceDbEffect = <Value>(operation: PromiseLike<Value>) => Effect.tryPromise(() => operation);
 
@@ -81,6 +86,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     ],
     { concurrency: 'unbounded' },
   );
+  const customerId = yield* crypto.randomUUIDv4;
   const moduleId = 'property.registry';
   const resource = { moduleId, resourceId, resourceType: 'property.unit' };
   const legalObjectId = toLegalEntityAccessObjectId(tenantId, legalEntityId);
@@ -148,7 +154,24 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
   ) {
     throw new Error('Expected valid SpiceDB object identifiers');
   }
+  const retailPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('retail.profile.read');
+  const retailTarget = {
+    permission: retailPermission,
+    target: { kind: 'retail_profile' as const, legalEntityId, profileId: resourceId, tenantId },
+  };
+  const retailObjectId = toBusinessPermissionAccessObjectId(retailPermission, retailTarget.target);
+  if (retailObjectId === undefined) {
+    throw new Error('Expected exact retail permission object');
+  }
   const client = newSpiceDbGrpcClient(configuration);
+  const mutation = makeBusinessPermissionRelationshipMutation({
+    writeRelationships: (request) =>
+      spiceDbEffect(client.promises.writeRelationships(request)).pipe(
+        Effect.mapError(
+          (cause) => new BusinessPermissionMutationUnavailable({ cause, reason: 'Native test mutation failed' }),
+        ),
+      ),
+  });
   const bootstrap = yield* fileSystem.readFileString(new URL('../../spicedb/bootstrap.yaml', import.meta.url).pathname);
   const bootstrapLines = bootstrap.split('\n');
   const schemaStart = bootstrapLines.indexOf('schema: |-') + 1;
@@ -283,6 +306,117 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
         { decision: 'allowed', key: `${moduleId}:property.unit:${resource.resourceId}` },
       ]);
       const checkBusinessPermissions = requireBusinessPermissions(access);
+      const customer = { principalId: customerId, tenantId };
+      const customerDecision = (target = retailTarget) =>
+        checkBusinessPermissions({ principal: customer, targets: [target] });
+      expect(yield* customerDecision()).toEqual([
+        { decision: 'denied', key: toBusinessPermissionAccessKey(retailTarget) },
+      ]);
+      yield* mutation.mutate({
+        operation: 'grant',
+        permission: retailPermission,
+        principal: customer,
+        target: retailTarget.target,
+      });
+      expect(yield* customerDecision()).toEqual([
+        { decision: 'allowed', key: toBusinessPermissionAccessKey(retailTarget) },
+      ]);
+      // A self-service grant conveys neither Tenant/company membership nor staff/module access.
+      expect(yield* access.tenants({ permission: 'access', principalId: customerId, tenantIds: [tenantId] })).toEqual([
+        { decision: 'denied', key: tenantId },
+      ]);
+      expect(
+        yield* access.legalEntities({ legalEntityIds: [legalEntityId], principalId: customerId, tenantId }),
+      ).toEqual([{ decision: 'denied', key: legalEntityId }]);
+      expect(
+        yield* access.modules({ legalEntityId, moduleIds: [moduleId], principalId: customerId, tenantId }),
+      ).toEqual([{ decision: 'denied', key: moduleId }]);
+      for (const isolated of [
+        { ...retailTarget, target: { ...retailTarget.target, profileId: otherPriceGroupId } },
+        { ...retailTarget, target: { ...retailTarget.target, legalEntityId: otherLegalEntityId } },
+        { ...retailTarget, target: { ...retailTarget.target, tenantId: otherTenantId } },
+        {
+          ...retailTarget,
+          permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('retail.profile.edit'),
+        },
+      ]) {
+        const principal = { ...customer, tenantId: isolated.target.tenantId };
+        expect(yield* checkBusinessPermissions({ principal, targets: [isolated] })).toEqual([
+          { decision: 'denied', key: toBusinessPermissionAccessKey(isolated) },
+        ]);
+      }
+      expect(
+        yield* checkBusinessPermissions({ principal: { principalId, tenantId }, targets: [retailTarget] }),
+      ).toEqual([{ decision: 'denied', key: toBusinessPermissionAccessKey(retailTarget) }]);
+      yield* mutation.mutate({
+        operation: 'revoke',
+        permission: retailPermission,
+        principal: customer,
+        target: retailTarget.target,
+      });
+      expect(yield* customerDecision()).toEqual([
+        { decision: 'denied', key: toBusinessPermissionAccessKey(retailTarget) },
+      ]);
+      // A one-time graph migration moves only a pre-existing exact grant. No signup or Action replay.
+      yield* spiceDbEffect(
+        client.promises.writeRelationships(
+          v1.WriteRelationshipsRequest.create({
+            updates: [
+              v1.RelationshipUpdate.create({
+                operation: v1.RelationshipUpdate_Operation.TOUCH,
+                relationship: relationship('business_permission', retailObjectId, 'grantee', 'principal', customerId),
+              }),
+            ],
+          }),
+        ),
+      );
+      expect(yield* customerDecision()).toEqual([
+        { decision: 'denied', key: toBusinessPermissionAccessKey(retailTarget) },
+      ]);
+      const migrationInput = {
+        operation: 'grant' as const,
+        permission: retailPermission,
+        principal: customer,
+        target: retailTarget.target,
+      };
+      expect(yield* migrateRetailSelfServiceGrant(client.promises, migrationInput, false)).toEqual({
+        existing: 1,
+        migrated: 0,
+      });
+      expect(yield* customerDecision()).toEqual([
+        { decision: 'denied', key: toBusinessPermissionAccessKey(retailTarget) },
+      ]);
+      expect(
+        yield* migrateRetailSelfServiceGrant(
+          client.promises,
+          { ...migrationInput, principal: { principalId, tenantId } },
+          true,
+        ),
+      ).toEqual({
+        existing: 0,
+        migrated: 0,
+      });
+      expect(yield* migrateRetailSelfServiceGrant(client.promises, migrationInput, true)).toEqual({
+        existing: 1,
+        migrated: 1,
+      });
+      expect(yield* migrateRetailSelfServiceGrant(client.promises, migrationInput, true)).toEqual({
+        existing: 0,
+        migrated: 0,
+      });
+      expect(yield* customerDecision()).toEqual([
+        { decision: 'allowed', key: toBusinessPermissionAccessKey(retailTarget) },
+      ]);
+      yield* mutation.mutate({
+        operation: 'revoke',
+        permission: retailPermission,
+        principal: customer,
+        target: retailTarget.target,
+      });
+      expect(yield* customerDecision()).toEqual([
+        { decision: 'denied', key: toBusinessPermissionAccessKey(retailTarget) },
+      ]);
+
       expect(
         yield* checkBusinessPermissions({
           principal: { principalId, tenantId },
@@ -344,6 +478,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
     Effect.ensuring(
       Effect.forEach(
         [
+          ['business_permission', retailObjectId],
           ['context_permission', contextPermissionObjectId],
           ['business_permission', crossTenantPriceGroupObjectId],
           ['business_permission', priceGroupObjectId],
@@ -373,7 +508,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
 
 it.layer(NodeServices.layer, { excludeTestServices: true })('context-access', (suite) => {
   suite.effect(
-    'isolates live legal-entity, module, and resource batches by tenant and entity',
+    'isolates native business and customer self-service permissions without granting membership',
     () => contextAccessProgram,
   );
 });
