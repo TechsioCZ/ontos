@@ -37,7 +37,7 @@ export const draftFromAgent = (agent: AgentEntity): AgentDraft => ({
   modules: Object.fromEntries(agent.modules.map((module) => [module.moduleId, module.access])),
   operatorPrincipalIds: agent.operators.map((person) => person.principalId),
   ownerPrincipalId: agent.owner?.principalId ?? null,
-  writePolicy: agent.writePolicy,
+  writePolicy: agent.hasProfile ? agent.writePolicy : emptyAgentDraft.writePolicy,
 });
 
 const capped = (choice: ModuleChoice, option: AgentModuleOption): ModuleChoice =>

@@ -516,6 +516,8 @@
         "reads": "Čte: {{modules}}",
         "writes": "Zapisuje přímo: {{modules}}",
         "proposes": "Navrhuje ke schválení: {{modules}}",
+        "noProfile": "Bez profilu",
+        "noProfileDescription": "Agent dosud nemá auditovaný profil oprávnění. Nastavte jej pomocí Upravit.",
         "noWrites": "Nic nezapisuje",
         "disabledNotice": "Agent je deaktivovaný. Jeho připojení byla odpojena; po aktivaci ho je potřeba připojit znovu.",
         "edit": "Upravit",

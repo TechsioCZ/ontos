@@ -392,7 +392,7 @@ const AgentCard = ({
             {t(`${connectionsKey}.status.${agent.status}`)}
           </Badge>
           <Badge size="sm" variant="outline">
-            {t(`${connectionsKey}.policy.${agent.writePolicy}`)}
+            {agent.hasProfile ? t(`${connectionsKey}.policy.${agent.writePolicy}`) : t(`${key}.noProfile`)}
           </Badge>
         </div>
         <div className="flex flex-wrap gap-100">
@@ -425,10 +425,14 @@ const AgentCard = ({
         {agent.owner === null ? t(`${key}.noOwner`) : t(`${key}.owner`, { name: agent.owner.displayName })}
       </p>
 
-      <div className="flex min-w-0 flex-col gap-50">
-        {readable !== '' && <p className="text-sm">{t(`${key}.reads`, { modules: readable })}</p>}
-        <p className="text-sm">{writeLine}</p>
-      </div>
+      {agent.hasProfile ? (
+        <div className="flex min-w-0 flex-col gap-50">
+          {readable !== '' && <p className="text-sm">{t(`${key}.reads`, { modules: readable })}</p>}
+          <p className="text-sm">{writeLine}</p>
+        </div>
+      ) : (
+        <p className="text-fg-secondary text-sm">{t(`${key}.noProfileDescription`)}</p>
+      )}
 
       {agent.status === 'disabled' && (
         <StatusText showIcon status="warning">

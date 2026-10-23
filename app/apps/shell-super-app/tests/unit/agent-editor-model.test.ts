@@ -20,11 +20,11 @@ const agent: AgentEntity = {
   connections: [],
   description: null,
   displayName: 'Asistent provozu',
+  hasProfile: true,
   modules: [{ access: 'write', moduleId: 'work.tasks' }],
   operators: [{ displayName: 'Vedení', principalId: 'p1' }],
   owner: { displayName: 'Provoz', principalId: 'p2' },
   principalId: 'a1',
-  seeded: false,
   status: 'active',
   writePolicy: 'approval',
 };
@@ -68,6 +68,9 @@ it('reports missing name, owner and modules in order', () => {
 it('trims the name and turns a blank description into null', () => {
   const draft = { ...emptyAgentDraft, description: '   ', displayName: '  Asistent  ', ownerPrincipalId: 'p2' };
   const request = createRequest({ ...draft, modules: { 'work.tasks': 'read' } }, options);
+  if (request.operation !== 'create') {
+    throw new Error('Expected the create command');
+  }
   expect(request.displayName).toBe('Asistent');
   expect(request.description).toBeNull();
   expect(configureRequest({ ...draft, modules: { 'work.tasks': 'read' } }, options, 'a1')).toMatchObject({
@@ -80,4 +83,11 @@ it('ignores write modules only under the read-only policy', () => {
   const modules = { 'work.tasks': 'write' } as const;
   expect(writeIgnored({ ...emptyAgentDraft, modules, writePolicy: 'read_only' })).toBe(true);
   expect(writeIgnored({ ...emptyAgentDraft, modules, writePolicy: 'approval' })).toBe(false);
+});
+
+it('starts an unprofiled agent with an explicit new-draft policy instead of a reported fallback', () => {
+  const draft = draftFromAgent({ ...agent, hasProfile: false, modules: [], owner: null, writePolicy: 'read_only' });
+  expect(draft.writePolicy).toBe('approval');
+  expect(draft.modules).toEqual({});
+  expect(draft.ownerPrincipalId).toBeNull();
 });

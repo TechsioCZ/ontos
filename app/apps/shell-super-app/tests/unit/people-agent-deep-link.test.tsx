@@ -10,11 +10,11 @@ const { fixture } = rstest.hoisted(() => ({
       connections: [],
       description: null,
       displayName: 'Asistent provozu',
+      hasProfile: true,
       modules: [],
       operators: [],
       owner: null,
       principalId: '00000000-0000-4000-8000-000000000003',
-      seeded: false,
       status: 'active',
       writePolicy: 'approval',
     },
@@ -50,7 +50,10 @@ rstest.mock('../../src/routes/people/agent-editor-panel.tsx', () => ({
     <div data-testid="agent-editor">{agent?.displayName}</div>
   ),
 }));
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  fixture.agent.hasProfile = true;
+});
 
 // oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library uses Promise-based DOM interactions at the test boundary; remove-when: rule recognizes Rstest callbacks.
 it('opens the linked real agent editor in-place, without a workforce route or redirect', async () => {
@@ -58,4 +61,13 @@ it('opens the linked real agent editor in-place, without a workforce route or re
   render(<AgentEntitiesSection legalEntityId="company" onNotify={() => {}} />);
   const editor = await screen.findByTestId('agent-editor');
   expect(editor.textContent).toBe('Asistent provozu');
+});
+
+it('shows an absent profile honestly instead of claiming a configured write policy', () => {
+  fixture.agent.hasProfile = false;
+  render(<AgentEntitiesSection legalEntityId="company" onNotify={() => {}} />);
+  expect(screen.getByText('shell.agents.section.noProfile')).toBeTruthy();
+  expect(screen.getByText('shell.agents.section.noProfileDescription')).toBeTruthy();
+  expect(screen.queryByText('shell.agents.connections.policy.approval')).toBeNull();
+  expect(screen.queryByText('shell.agents.section.noWrites')).toBeNull();
 });

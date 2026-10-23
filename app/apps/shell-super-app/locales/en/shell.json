@@ -516,6 +516,8 @@
         "reads": "Reads: {{modules}}",
         "writes": "Writes directly: {{modules}}",
         "proposes": "Proposes for approval: {{modules}}",
+        "noProfile": "No profile",
+        "noProfileDescription": "This agent has no audited permission profile yet. Configure it with Edit.",
         "noWrites": "Writes nothing",
         "disabledNotice": "The agent is deactivated. Its connections were revoked; after activation it has to be connected again.",
         "edit": "Edit",

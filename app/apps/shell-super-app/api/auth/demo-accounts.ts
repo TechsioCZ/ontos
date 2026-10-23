@@ -55,6 +55,7 @@ const coreAuditEventsWrite = core.table('audit_events', {
 });
 
 const ACTION_KEY = 'core.identity.manage-demo-account';
+const CONFIGURE_AGENT_ACTION_KEY = 'core.identity.configure-agent';
 
 interface DemoRole {
   readonly administrator: boolean;
@@ -236,6 +237,24 @@ const principalNames = Effect.fn('DemoAccounts.principalNames')(function* princi
 });
 
 /** Audit of the people (`subjects: 'people'`) or the agent entities (`subjects: 'agents'`) of one company. */
+export const demoAccountAuditActionRows = (legalEntityId: string, subjects: 'agents' | 'people') =>
+  and(
+    eq(coreAuditEvents.legalEntityId, legalEntityId),
+    sql`${coreAuditEvents.eventType} in ('action.executed', 'action.rejected')`,
+    subjects === 'agents'
+      ? or(
+          sql`${coreAuditEvents.evidenceJson}->>'actionKey' = ${CONFIGURE_AGENT_ACTION_KEY}`,
+          and(
+            sql`${coreAuditEvents.evidenceJson}->>'actionKey' = ${ACTION_KEY}`,
+            sql`${coreAuditEvents.evidenceJson}->>'principalKind' = 'agent'`,
+          ),
+        )
+      : and(
+          sql`${coreAuditEvents.evidenceJson}->>'actionKey' = ${ACTION_KEY}`,
+          sql`coalesce(${coreAuditEvents.evidenceJson}->>'principalKind', 'human') <> 'agent'`,
+        ),
+  );
+
 export const auditTrail = Effect.fn('DemoAccounts.auditTrail')(function* auditTrail(
   tenantId: string,
   legalEntityId: string,
@@ -243,14 +262,7 @@ export const auditTrail = Effect.fn('DemoAccounts.auditTrail')(function* auditTr
   subjects: 'agents' | 'people',
 ) {
   const { executor } = yield* AuthDatabase;
-  const actionRows = and(
-    eq(coreAuditEvents.legalEntityId, legalEntityId),
-    sql`${coreAuditEvents.evidenceJson}->>'actionKey' = ${ACTION_KEY}`,
-    sql`${coreAuditEvents.eventType} in ('action.executed', 'action.rejected')`,
-    subjects === 'agents'
-      ? sql`${coreAuditEvents.evidenceJson}->>'principalKind' = 'agent'`
-      : sql`coalesce(${coreAuditEvents.evidenceJson}->>'principalKind', 'human') <> 'agent'`,
-  );
+  const actionRows = demoAccountAuditActionRows(legalEntityId, subjects);
   const otherRows =
     subjects === 'agents'
       ? and(
