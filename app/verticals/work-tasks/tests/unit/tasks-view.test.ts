@@ -8,7 +8,6 @@ import {
   filterTasks,
   formatDueDate,
   initialTaskFilters,
-  newerTaskList,
   opportunityOptionItems,
   storedTaskViewServerSnapshot,
   storedTaskViewSnapshot,
@@ -124,7 +123,7 @@ it("lists the chosen customer's opportunities by folded title and keeps the sele
   expect(values('c1', '', 'o2')).toStrictEqual(['o1', 'o2', 'o3']);
 });
 
-it('puts a saved task in place or appends a new one, and keeps rows newer than a late reload', () => {
+it('puts a saved task in place or appends a new one', () => {
   const saved = makeTask({ title: 'upraveno' });
   const other = Schema.decodeUnknownSync(TaskSchema)({
     ...Schema.encodeSync(TaskSchema)(makeTask({ title: 'jiný' })),
@@ -136,9 +135,6 @@ it('puts a saved task in place or appends a new one, and keeps rows newer than a
   expect(edited.items.map((task) => task.title)).toEqual(['upraveno', 'jiný']);
   const created = withSavedTask({ items: [other], revision: 4 }, saved, 5);
   expect(created.items.map((task) => task.title)).toEqual(['jiný', 'upraveno']);
-  expect(newerTaskList(edited, list)).toBe(edited);
-  expect(newerTaskList(list, edited)).toBe(edited);
-  expect(newerTaskList(undefined, list)).toBe(list);
 });
 
 it('applies only the changed rows of a bulk command, as the server did', () => {

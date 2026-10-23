@@ -385,10 +385,6 @@ export const withBulkResult = <List extends TaskList>(
   };
 };
 
-/** A reload answered before a newer command never replaces the rows that command already saved. */
-export const newerTaskList = <List extends TaskList>(current: List | undefined, fresh: List): List =>
-  current !== undefined && current.revision > fresh.revision ? current : fresh;
-
 /** References navigate to the registered owning page, never a guessed contract route. */
 export const taskContextHref = (ref: ContextRef) =>
   `/cs/${ref.moduleId === 'legal.agreements' ? 'smlouvy' : 'nemovitosti'}?resourceId=${encodeURIComponent(ref.resourceId)}`;

@@ -3,6 +3,8 @@ import { listCustomers } from '@app/party-registry/api/client';
 import { listOpportunities } from '@app/sales-pipeline/clients/records';
 import { executeRecords as propertyRecords } from '@app/property-portfolio/clients/records';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
+import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
+import type { ModulePageProps, PageData, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { listEmployees } from '@app/workforce/clients/records';
 import type { Employee } from '@app/workforce/contracts/records';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -26,7 +28,7 @@ import type {
 } from '../../../../shared/actions/apply-command.ts';
 import { canTransition, isClosedTaskState } from '../../../../shared/actions/task-transitions.ts';
 import { EmployeeIdSchema, PartyIdSchema } from '../../../../shared/apis/records.ts';
-import type { RecordsResponse, Task, TaskState } from '../../../../shared/apis/records.ts';
+import type { LookupAccess, RecordsResponse, Task, TaskState } from '../../../../shared/apis/records.ts';
 import { UltramodernRouteHead } from '../../ultramodern-route-head';
 import { buildTaskColumns } from './tasks-columns.tsx';
 import type { LookupState } from './tasks-columns.tsx';
@@ -41,7 +43,6 @@ import {
   employeeIdOf,
   filterTasks,
   initialTaskFilters,
-  newerTaskList,
   overdueCount,
   storedTaskViewServerSnapshot,
   storedTaskViewSnapshot,
@@ -137,136 +138,129 @@ const useNarrowViewport = () =>
 
 const formatCount = (value: number | undefined) => (value === undefined ? '—' : count.format(value));
 
-interface RecordsSetters {
-  readonly setLoadState: (state: LoadState) => void;
-  readonly setRecords: (records: RecordsResponse) => void;
-}
-
-interface EmployeeSetters {
-  readonly setEmployees: (employees: readonly Employee[]) => void;
-  readonly setEmployeesFailed: (failed: boolean) => void;
-  readonly settle: (name: keyof LookupState) => void;
-}
-
-// Module-scope loaders take the state setters as arguments, so the mount effect needs no dependencies.
 const recordsRequest = (partyId: typeof PartyIdSchema.Type | undefined, includeArchived: boolean) => ({
   ...(partyId === undefined ? {} : { partyId }),
   ...(includeArchived ? { includeArchived } : {}),
 });
 
-const loadRecords = (
-  { setLoadState, setRecords }: RecordsSetters,
-  partyId: typeof PartyIdSchema.Type | undefined,
-  includeArchived: boolean,
-) => {
-  browserRuntime.runFork(
+/** The task list a page shows: the person's legal entity, the optional `partyId` filter and the archive toggle. */
+interface TasksInput {
+  readonly includeArchived: boolean;
+  readonly legalEntityId: string;
+  readonly partyId: typeof PartyIdSchema.Type | undefined;
+}
+
+/** The page's primary data: loaded before the Shell reveals the page, kept per document, revalidated after writes. */
+const taskRecords = definePageData({
+  key: ({ includeArchived, legalEntityId, partyId }: TasksInput) =>
+    `${legalEntityId}|${partyId ?? ''}|${includeArchived ? 'archived' : 'current'}`,
+  load: ({ includeArchived, partyId }: TasksInput) =>
     requestId.pipe(
       Effect.flatMap((id) => executeRecords(recordsRequest(partyId, includeArchived), id)),
       retryTransient,
-      Effect.match({
-        onFailure: (error) =>
-          setLoadState(
-            Match.value(error).pipe(
-              Match.tag('RecordsForbiddenProblem', () => 'forbidden' as const),
-              Match.orElse(() => 'error' as const),
-            ),
-          ),
-        onSuccess: (result) => {
-          setRecords(result);
-          setLoadState('ready');
-        },
-      }),
     ),
-  );
-};
+  runtime: browserRuntime,
+});
 
-const loadEmployees = ({ setEmployees, setEmployeesFailed, settle }: EmployeeSetters) => {
-  browserRuntime.runFork(
+// Names for the table and the pickers, one entry per legal entity. Each is read only when the task list allows that
+// directory, so a denied one never sends a doomed BFF read. A failed load leaves the ids visible as muted placeholders.
+const employeeDirectory = definePageData({
+  key: (legalEntityId: string) => legalEntityId,
+  load: () =>
     listEmployees().pipe(
       retryTransient,
-      Effect.matchEffect({
-        onFailure: (error) =>
-          Effect.logWarning('Employee list unavailable.', error).pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                setEmployeesFailed(true);
-                settle('employees');
-              }),
-            ),
-          ),
-        onSuccess: (items) =>
-          Effect.sync(() => {
-            setEmployees(items);
-            setEmployeesFailed(false);
-            settle('employees');
-          }),
-      }),
+      Effect.tapError((failure) => Effect.logWarning('Employee list unavailable.', failure)),
     ),
-  );
-};
+  runtime: browserRuntime,
+});
 
-interface ReferenceSetters {
-  readonly setCustomers: (customers: readonly CustomerOption[]) => void;
-  readonly setOpportunities: (opportunities: readonly OpportunityOption[]) => void;
-  readonly setReferenceFailed: (failed: boolean) => void;
-  readonly settle: (name: keyof LookupState) => void;
-}
-
-// Names for the table and the pickers. A failed load leaves the ids visible as muted placeholders.
-const loadCustomerNames = ({ setCustomers, setReferenceFailed, settle }: ReferenceSetters) => {
-  browserRuntime.runFork(
+const customerDirectory = definePageData({
+  key: (legalEntityId: string) => legalEntityId,
+  load: () =>
     listCustomers().pipe(
       retryTransient,
-      Effect.matchEffect({
-        onFailure: (error) =>
-          Effect.logWarning('Customer list unavailable.', error).pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                if (
-                  !['CustomerListForbiddenProblem', 'RecordsForbiddenProblem', 'GatewayForbiddenProblem'].includes(
-                    error._tag,
-                  )
-                )
-                  setReferenceFailed(true);
-                settle('customers');
-              }),
-            ),
-          ),
-        onSuccess: (items) =>
-          Effect.sync(() => {
-            setCustomers(items);
-            settle('customers');
-          }),
-      }),
+      Effect.tapError((failure) => Effect.logWarning('Customer list unavailable.', failure)),
     ),
-  );
-};
+  runtime: browserRuntime,
+});
 
-const loadOpportunityNames = ({ setOpportunities, setReferenceFailed, settle }: ReferenceSetters) => {
-  browserRuntime.runFork(
+const opportunityDirectory = definePageData({
+  key: (legalEntityId: string) => legalEntityId,
+  load: () =>
     requestId.pipe(
       Effect.flatMap((id) => listOpportunities({}, id)),
+      Effect.map((result) => result.items),
       retryTransient,
-      Effect.matchEffect({
-        onFailure: (error) =>
-          Effect.logWarning('Opportunity list unavailable.', error).pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                if (!['RecordsForbiddenProblem', 'GatewayForbiddenProblem'].includes(error._tag))
-                  setReferenceFailed(true);
-                settle('opportunities');
-              }),
-            ),
-          ),
-        onSuccess: (result) =>
-          Effect.sync(() => {
-            setOpportunities(result.items);
-            settle('opportunities');
-          }),
+      Effect.tapError((failure) => Effect.logWarning('Opportunity list unavailable.', failure)),
+    ),
+  runtime: browserRuntime,
+});
+
+/** A denied directory is not a task failure, so it is not reported as unavailable. */
+const forbiddenLookupTags: ReadonlySet<string> = new Set([
+  'CustomerListForbiddenProblem',
+  'GatewayForbiddenProblem',
+  'RecordsForbiddenProblem',
+]);
+const lookupFailed = <E extends { readonly _tag: string }>(snapshot: PageDataSnapshot<unknown, E>) =>
+  snapshot.state === 'failed' && !forbiddenLookupTags.has(snapshot.error._tag);
+
+const preloadDirectories = (legalEntityId: string, access: LookupAccess | undefined) =>
+  Effect.all(
+    [
+      access?.employees === 'allowed' ? employeeDirectory.preload(legalEntityId) : Effect.void,
+      access?.customers === 'allowed' ? customerDirectory.preload(legalEntityId) : Effect.void,
+      access?.opportunities === 'allowed' ? opportunityDirectory.preload(legalEntityId) : Effect.void,
+    ],
+    { concurrency: 3, discard: true },
+  );
+
+/** The task list, then the name directories it allows, so the table shows names in its first commit. */
+const preloadTasks = (input: TasksInput) =>
+  taskRecords.preload(input).pipe(
+    Effect.andThen(
+      Effect.suspend(() => {
+        const snapshot = taskRecords.snapshot(input);
+        return snapshot.state === 'ready'
+          ? preloadDirectories(input.legalEntityId, snapshot.value.lookupAccess)
+          : Effect.void;
       }),
     ),
   );
+
+/** Decodes a raw query string (`?partyId=…`, the shape the Shell passes as `search`); none when the filter is invalid. */
+const partySearchCodec = Schema.toCodecJson(
+  Schema.fromURLSearchParams(Schema.Struct({ partyId: Schema.optional(PartyIdSchema) })),
+);
+const requestedParty = (search: string) =>
+  Schema.decodeOption(partySearchCodec)(search).pipe(Option.map((decoded) => decoded.partyId));
+
+export const preloadPage = modulePagePreload((props) =>
+  Option.match(requestedParty(props.search), {
+    onNone: () => Effect.void,
+    onSome: (partyId) =>
+      preloadTasks({ includeArchived: false, legalEntityId: props.context?.legalEntityId ?? '', partyId }),
+  }),
+);
+
+/** One name directory of the page: read synchronously, loaded on a cold mount once the task list allows it. */
+const useDirectory = <A, E>(directory: PageData<string, A, E>, legalEntityId: string, allowed: boolean) => {
+  const snapshot = useSyncExternalStore(
+    directory.subscribe,
+    () => directory.snapshot(legalEntityId),
+    () => pageDataPending,
+  );
+  useEffect(() => {
+    if (allowed) {
+      directory.ensure(legalEntityId);
+    }
+  }, [allowed, directory, legalEntityId]);
+  return snapshot;
 };
+
+const noEmployees: readonly Employee[] = [];
+const noCustomers: readonly CustomerOption[] = [];
+const noOpportunities: readonly OpportunityOption[] = [];
 
 /** Properties and units for the Objekt filter and the history names. Units sort under their property. */
 const loadObjects = (setObjects: (objects: readonly ObjectOption[] | undefined) => void) => {
@@ -373,19 +367,62 @@ const useTaskView = (partyId: typeof PartyIdSchema.Type | undefined, invalidFilt
   return { filters, setFilters: setFiltersOverride, setTab: setTabOverride, tab };
 };
 
-const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFilter: boolean) => {
+const loadStateOf = (snapshot: PageDataSnapshot<RecordsResponse, { readonly _tag: string }>): LoadState => {
+  if (snapshot.state === 'ready') {
+    return 'ready';
+  }
+  if (snapshot.state === 'pending' || snapshot.refreshing) {
+    return 'loading';
+  }
+  return snapshot.error._tag === 'RecordsForbiddenProblem' ? 'forbidden' : 'error';
+};
+
+const useTasksPage = (
+  legalEntityId: string,
+  partyId: typeof PartyIdSchema.Type | undefined,
+  invalidFilter: boolean,
+) => {
   const { t } = useModernI18n();
   const toaster = useToast();
-  const [records, setRecords] = useState<RecordsResponse>();
-  const [loadState, setLoadState] = useState<LoadState>('loading');
-  const [employees, setEmployees] = useState<readonly Employee[]>([]);
-  const [employeesFailed, setEmployeesFailed] = useState(false);
-  const [customers, setCustomers] = useState<readonly CustomerOption[]>([]);
-  const [opportunities, setOpportunities] = useState<readonly OpportunityOption[]>([]);
-  const [referenceFailed, setReferenceFailed] = useState(false);
-  const [lookups, setLookups] = useState<LookupState>({ customers: false, employees: false, opportunities: false });
-  const [objects, setObjects] = useState<readonly ObjectOption[]>();
   const [showHidden, setShowHidden] = useState(false);
+  const input: TasksInput = { includeArchived: showHidden, legalEntityId, partyId };
+  const recordsSnapshot = useSyncExternalStore(
+    taskRecords.subscribe,
+    () => taskRecords.snapshot(input),
+    () => pageDataPending,
+  );
+  useEffect(() => {
+    if (!invalidFilter) {
+      taskRecords.ensure({ includeArchived: showHidden, legalEntityId, partyId });
+    }
+  }, [invalidFilter, legalEntityId, partyId, showHidden]);
+  const records = recordsSnapshot.state === 'ready' ? recordsSnapshot.value : undefined;
+  const loadState = loadStateOf(recordsSnapshot);
+  const lookupAccess = records?.lookupAccess;
+  const employeesAllowed = lookupAccess?.employees === 'allowed';
+  const customersAllowed = lookupAccess?.customers === 'allowed';
+  const opportunitiesAllowed = lookupAccess?.opportunities === 'allowed';
+  const employeesSnapshot = useDirectory(employeeDirectory, legalEntityId, employeesAllowed);
+  const customersSnapshot = useDirectory(customerDirectory, legalEntityId, customersAllowed);
+  const opportunitiesSnapshot = useDirectory(opportunityDirectory, legalEntityId, opportunitiesAllowed);
+  const employees = employeesAllowed && employeesSnapshot.state === 'ready' ? employeesSnapshot.value : noEmployees;
+  const customers = customersAllowed && customersSnapshot.state === 'ready' ? customersSnapshot.value : noCustomers;
+  const opportunities =
+    opportunitiesAllowed && opportunitiesSnapshot.state === 'ready' ? opportunitiesSnapshot.value : noOpportunities;
+  const employeesFailed =
+    lookupAccess?.employees === 'unavailable' || (employeesAllowed && employeesSnapshot.state === 'failed');
+  const referenceFailed =
+    lookupAccess?.customers === 'unavailable' ||
+    lookupAccess?.opportunities === 'unavailable' ||
+    (customersAllowed && lookupFailed(customersSnapshot)) ||
+    (opportunitiesAllowed && lookupFailed(opportunitiesSnapshot));
+  // A directory the list does not allow is settled at once; an allowed one once it loaded or failed.
+  const lookups: LookupState = {
+    customers: !customersAllowed || customersSnapshot.state !== 'pending',
+    employees: !employeesAllowed || employeesSnapshot.state !== 'pending',
+    opportunities: !opportunitiesAllowed || opportunitiesSnapshot.state !== 'pending',
+  };
+  const [loadedObjects, setLoadedObjects] = useState<readonly ObjectOption[]>();
   const { filters: storedFilters, setFilters, setTab, tab } = useTaskView(partyId, invalidFilter);
   // A saved filter from a broader role cannot silently hide rows when its directory is no longer available.
   const filters = records?.lookupAccess?.employees === 'allowed' ? storedFilters : { ...storedFilters, assignee: ALL };
@@ -422,40 +459,14 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     });
   };
 
+  // The Objekt filter and the history names are secondary, so they load after the page shows.
+  const propertiesAccess = lookupAccess?.properties;
   useEffect(() => {
-    if (invalidFilter) {
-      return;
+    if (propertiesAccess === 'allowed') {
+      loadObjects(setLoadedObjects);
     }
-    loadRecords({ setLoadState, setRecords }, partyId, showHidden);
-  }, [invalidFilter, partyId, showHidden]);
-
-  const lookupAccess = records?.lookupAccess;
-  useEffect(() => {
-    if (records === undefined) return;
-    const settle = (name: keyof LookupState) => setLookups((current) => ({ ...current, [name]: true }));
-    // A denied optional directory is not a task failure. Do not send a doomed BFF read or disclose its names.
-    if (lookupAccess?.employees === 'allowed') loadEmployees({ setEmployees, setEmployeesFailed, settle });
-    else {
-      setEmployees([]);
-      setEmployeesFailed(lookupAccess?.employees === 'unavailable');
-      settle('employees');
-    }
-    if (lookupAccess?.customers === 'allowed')
-      loadCustomerNames({ setCustomers, setOpportunities, setReferenceFailed, settle });
-    else {
-      setCustomers([]);
-      settle('customers');
-    }
-    if (lookupAccess?.opportunities === 'allowed')
-      loadOpportunityNames({ setCustomers, setOpportunities, setReferenceFailed, settle });
-    else {
-      setOpportunities([]);
-      settle('opportunities');
-    }
-    setReferenceFailed(lookupAccess?.customers === 'unavailable' || lookupAccess?.opportunities === 'unavailable');
-    if (lookupAccess?.properties === 'allowed') loadObjects(setObjects);
-    else setObjects(undefined);
-  }, [lookupAccess, records === undefined]);
+  }, [propertiesAccess]);
+  const objects = propertiesAccess === 'allowed' ? loadedObjects : undefined;
 
   const linkedTaskOpened = useRef(false);
   useEffect(() => {
@@ -546,33 +557,17 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     filters.dueFrom !== '' ||
     filters.dueTo !== '';
 
-  const showFreshRecords = (fresh: RecordsResponse) => setRecords((current) => newerTaskList(current, fresh));
   const showSavedTask = (saved: Task, revision: number) => {
-    setRecords((current) => (current === undefined ? current : withSavedTask(current, saved, revision)));
+    taskRecords.update(input, (current) => withSavedTask(current, saved, revision));
     setEditor((current) =>
       current?.mode === 'edit' && current.task.ref.resourceId === saved.ref.resourceId
         ? { mode: 'edit', task: saved }
         : current,
     );
   };
-  const reloadRecords = requestId.pipe(
-    Effect.flatMap((id) => executeRecords(recordsRequest(partyId, showHidden), id)),
-    Effect.tap((fresh) => Effect.sync(() => showFreshRecords(fresh))),
-  );
-
-  // The list reloads behind a result that is already shown. A failed reload leaves the rows stale, so it is reported.
-  const refreshInBackground = () =>
-    browserRuntime.runFork(
-      reloadRecords.pipe(
-        Effect.matchEffect({
-          onFailure: (error) =>
-            Effect.logWarning('Task list reload failed.', error).pipe(
-              Effect.andThen(Effect.sync(() => setActionError(t(`${key}.unavailable`)))),
-            ),
-          onSuccess: () => Effect.void,
-        }),
-      ),
-    );
+  // The list re-reads behind a result that is already shown; a failed re-read keeps the rows on screen. The newest
+  // re-read wins, so one answered before a later command never replaces the rows that command saved.
+  const refreshInBackground = () => browserRuntime.runFork(taskRecords.refresh(input));
 
   // A single command returns the saved task, so its row updates in place. A bulk command returns which ids changed,
   // so those rows take the change it applied. Either way the next command is checked against the returned revision.
@@ -581,11 +576,9 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
     if (task !== undefined) {
       showSavedTask(task, revision);
     } else if (Schema.is(BulkWorkCommandSchema)(command)) {
-      setRecords((current) =>
-        current === undefined ? current : withBulkResult(current, command, results ?? [], revision),
-      );
+      taskRecords.update(input, (current) => withBulkResult(current, command, results ?? [], revision));
     } else {
-      setRecords((current) => (current === undefined ? current : { ...current, revision }));
+      taskRecords.update(input, (current) => ({ ...current, revision }));
     }
     refreshInBackground();
   };
@@ -763,7 +756,7 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
       return;
     }
     const putRow = (row: Task) =>
-      setRecords((current) => (current === undefined ? current : withSavedTask(current, row, current.revision)));
+      taskRecords.update(input, (current) => withSavedTask(current, row, current.revision));
     setActionError(undefined);
     setRowBusy(true);
     putRow({ ...task, state: toState });
@@ -796,8 +789,7 @@ const useTasksPage = (partyId: typeof PartyIdSchema.Type | undefined, invalidFil
   };
 
   const handleReload = () => {
-    setLoadState('loading');
-    loadRecords({ setLoadState, setRecords }, partyId, showHidden);
+    refreshInBackground();
   };
 
   const handleOpenCreate = () => {
@@ -899,12 +891,14 @@ const taskStatCount = (records: RecordsResponse | undefined, countRows: (items: 
 
 const TasksPageContent = ({
   invalidFilter,
+  legalEntityId,
   partyId,
 }: {
   readonly invalidFilter: boolean;
+  readonly legalEntityId: string;
   readonly partyId: typeof PartyIdSchema.Type | undefined;
 }) => {
-  const model = useTasksPage(partyId, invalidFilter);
+  const model = useTasksPage(legalEntityId, partyId, invalidFilter);
   const { t } = model;
   const { records } = model;
   const columns = buildTaskColumns({
@@ -1161,24 +1155,14 @@ const TasksPageContent = ({
   );
 };
 
-// One Toaster for the whole page tree: the shell mounts none, and ui-kit's toast store is per remote.
-const customerSearchSchema = Schema.Struct({ partyId: Schema.optional(PartyIdSchema) });
-
-export const RecordsPage = () => {
-  const search = useRouterState({
-    select: (state) => {
-      const rawSearch: unknown = state.location.search;
-      return Schema.decodeUnknownOption(Schema.toEncoded(customerSearchSchema))(rawSearch).pipe(
-        Option.map((value) => ({ partyId: value.partyId ?? null })),
-        Option.getOrElse(() => null),
-      );
-    },
-  });
+/**
+ * Rendered by the Shell with the props its `preloadPage` received; standalone it reads the query from the router.
+ * One Toaster for the whole page tree: the shell mounts none, and ui-kit's toast store is per remote.
+ */
+export const RecordsPage = (props: Partial<ModulePageProps>) => {
+  const routerSearch = useRouterState({ select: (state) => state.location.searchStr });
   const href = useRouterState({ select: (state) => state.location.href });
-  const requested =
-    search === null
-      ? Option.none()
-      : Schema.decodeOption(customerSearchSchema)(search.partyId === null ? {} : { partyId: search.partyId });
+  const requested = requestedParty(props.search ?? routerSearch);
   return (
     <FederatedI18nBoundary
       defaultNamespace="work-tasks"
@@ -1190,7 +1174,8 @@ export const RecordsPage = () => {
       <TasksPageContent
         invalidFilter={Option.isNone(requested)}
         key={href}
-        partyId={Option.getOrUndefined(requested)?.partyId}
+        legalEntityId={props.context?.legalEntityId ?? ''}
+        partyId={Option.getOrUndefined(requested)}
       />
     </FederatedI18nBoundary>
   );
