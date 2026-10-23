@@ -58,12 +58,18 @@ export const TimelineEntryIdSchema = Schema.String.check(Schema.isMinLength(1), 
   Schema.brand('TimelineEntryId'),
 );
 
+// The creatable/assignable non-human principal kinds, declared once: `system` is reserved for
+// Core-attested workloads and is not expressible from a tenant request body or an administration read.
+const nonHumanPrincipalKind = Schema.Literals(['service', 'integration']);
+
 export const IdentityRequestHeadersSchema = Schema.Struct({
   'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
 });
 export const CreateNonHumanPrincipalPayloadSchema = Schema.Struct({
   displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  kind: Schema.Literals(['service', 'integration', 'system']),
+  // `system` is reserved for Core-attested workloads: it is not creatable from a tenant request body, because
+  // a persisted kind is never evidence of Core attestation.
+  kind: nonHumanPrincipalKind,
 });
 const principalStatus = Schema.Literals(['active', 'disabled', 'archived']);
 const identityReason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
@@ -152,7 +158,7 @@ export const SelfApiKeyListResponseSchema = Schema.Struct({
 export const ManagedApiKeyListItemSchema = Schema.Struct({
   displayName: Schema.String,
   key: Schema.Union([Schema.Null, ApiKeyLifecycleResponseSchema]),
-  kind: Schema.Literals(['service', 'integration']),
+  kind: nonHumanPrincipalKind,
   principalId: PrincipalIdSchema,
   principalStatus,
 });
