@@ -42,7 +42,7 @@ export const DeadlineSchema = Schema.Struct({
   ownerPrincipalId: Schema.optionalKey(Schema.String),
   /** Completed / cancelled / paid in the source: shown, never notified, never overdue. */
   done: Schema.Boolean,
-  amountMinor: Schema.optionalKey(Schema.Number),
+  amountMinor: Schema.optionalKey(Schema.Finite),
   location: Schema.optionalKey(Schema.String),
   /** Ops agenda record field that produced the date (generic scanner). */
   field: Schema.optionalKey(Schema.String),

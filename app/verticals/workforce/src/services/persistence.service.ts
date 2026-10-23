@@ -534,9 +534,9 @@ export const persistenceService = Effect.fn('Workforce.persistenceService')(
       // The activity feed is best-effort: an unreadable audit table never breaks the employee list.
       const activity =
         request.includeAiActivity === true
-          ? yield* aiActivity().pipe(Effect.catchCause(() => Effect.succeed(undefined)))
+          ? yield* aiActivity().pipe(Effect.catchCause(() => Effect.void))
           : undefined;
-      return { aiActivity: activity, row } satisfies LoadedRecords;
+      return { aiActivity: activity ?? undefined, row } satisfies LoadedRecords;
     });
     return { apply, loadRecords };
   },
