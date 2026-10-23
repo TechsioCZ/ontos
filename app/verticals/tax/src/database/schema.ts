@@ -8,6 +8,7 @@ import {
   integer,
   jsonb,
   pgSchema,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -22,6 +23,7 @@ import type { TaxOutcomeSuccessSchema } from '../../shared/domain/tax-kernel/tax
 export const TAX_SCHEMA_NAME = 'tax';
 
 export const TAX_TABLE_INVENTORY = [
+  'gateway_assertion_redemptions',
   'tax_rules',
   'tax_rule_revisions',
   'tax_rule_revision_end_facts',
@@ -31,6 +33,21 @@ export const TAX_TABLE_INVENTORY = [
 ] as const;
 
 export const taxSchema = pgSchema(TAX_SCHEMA_NAME);
+
+// Replay evidence is consumed before tenant/business scope is installed.
+export const gatewayAssertionRedemptions = taxSchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: text('jti').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.issuer, table.audience, table.jti] }),
+    index('tax_redemption_expiry').on(table.expiresAt),
+  ],
+);
 
 type ScopedTable = Readonly<Record<'legalEntityId' | 'tenantId', AnyPgColumn>>;
 
@@ -325,6 +342,7 @@ export const taxOrderTaxFinalizations = taxSchema.table.withRLS(
 );
 
 const databaseSchema = {
+  gatewayAssertionRedemptions,
   taxOrderTaxFinalizations,
   taxRuleCorrections,
   taxRuleRevisionEndFacts,
@@ -334,6 +352,7 @@ const databaseSchema = {
 } as const;
 
 export const TAX_TABLES = [
+  gatewayAssertionRedemptions,
   taxRules,
   taxRuleRevisions,
   taxRuleRevisionEndFacts,

@@ -32,9 +32,11 @@ const uniqueColumns = (table: (typeof TAX_TABLES)[number]) =>
 /** `tax_seller_vat_regime_declarations` is merchant-attributed, not Core-governance-attributed (F2-F4); it has no
  * `provenance_ref` and its `reason` is nullable (backdated effect only), so it is exempt from the generic
  * governance-attribution shape checked below. */
-const GOVERNANCE_ATTRIBUTED_TABLES = TAX_TABLES.filter((table) => table !== taxSellerVatRegimeDeclarations);
+const GOVERNANCE_ATTRIBUTED_TABLES = TAX_TABLES.filter(
+  (table) => table !== taxSellerVatRegimeDeclarations && getTableConfig(table).name !== 'gateway_assertion_redemptions',
+);
 
-it('owns only the private, tenant and Selling Legal Entity scoped TAX governance catalog', () => {
+it('owns the TAX governance catalog and scopes every business table with RLS', () => {
   const names = EffectArray.sort(
     TAX_TABLES.map((table) => {
       const config = getTableConfig(table);
@@ -50,6 +52,9 @@ it('owns only the private, tenant and Selling Legal Entity scoped TAX governance
     ),
   );
   for (const table of TAX_TABLES) {
+    if (getTableConfig(table).name === 'gateway_assertion_redemptions') {
+      continue;
+    }
     const config = getTableConfig(table);
     expect(config.enableRLS, `${config.name} enables RLS`).toBe(true);
     expect(config.columns.some(({ name, notNull }) => name === 'tenant_id' && notNull)).toBe(true);
@@ -98,6 +103,9 @@ it.layer(NodeFileSystem.layer)('TAX migrations as checked in', (suite) => {
           '"tax_rule_revisions_period_ck" CHECK ("effective_to" is null or "effective_to" > "effective_from")',
         );
         for (const name of TAX_TABLE_INVENTORY) {
+          if (name === 'gateway_assertion_redemptions') {
+            continue;
+          }
           expect(sql).toContain(`ALTER TABLE "tax"."${name}" FORCE ROW LEVEL SECURITY`);
           expect(sql).toContain(`CREATE TRIGGER "${name}_append_only" BEFORE UPDATE OR DELETE ON "tax"."${name}"`);
         }
@@ -196,4 +204,18 @@ it.layer(NodeFileSystem.layer)('TAX migrations as checked in', (suite) => {
       );
     }),
   );
+});
+
+it('owns pre-scope replay evidence with an atomic issuer/audience/jti identity', () => {
+  const table = TAX_TABLES.find((candidate) => getTableConfig(candidate).name === 'gateway_assertion_redemptions');
+  expect(table).toBeDefined();
+  if (table === undefined) {
+    throw new Error('Missing gateway assertion redemption table');
+  }
+  const config = getTableConfig(table);
+  expect(config.schema).toBe('tax');
+  expect(config.enableRLS).toBe(false);
+  expect(config.policies).toEqual([]);
+  expect(config.primaryKeys.map((key) => key.columns.map(({ name }) => name))).toEqual([['issuer', 'audience', 'jti']]);
+  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['tax_redemption_expiry']);
 });
