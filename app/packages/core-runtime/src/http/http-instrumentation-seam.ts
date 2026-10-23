@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Schema } from 'effect';
+import { Cause, Effect, Exit, Result, Schema } from 'effect';
 import type { Redacted } from 'effect';
 import type { Headers } from 'effect/http';
 
@@ -231,11 +231,11 @@ export const runGovernedActionHttp = <
       return yield* Effect.fail(input.invalidCorrelationProblem());
     }
     // The correlation identifier is written verbatim into the invocation row and log annotations, so an
-    // unbounded caller-chosen value must be refused here rather than persisted.
-    yield* Schema.decodeEffect(ActionCorrelationIdSchema)(correlationId).pipe(
-      // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Invalid-input diagnostics are deliberately sanitized at the transport boundary; remove-when: the rule supports security-boundary sanitizers.
-      Effect.mapError(() => input.invalidCorrelationProblem()),
-    );
+    // unbounded caller-chosen value must be refused here rather than persisted. Branching on the decode result
+    // keeps the schema's diagnostic out of the response shape without discarding it in an error callback.
+    if (Result.isFailure(Schema.decodeUnknownResult(ActionCorrelationIdSchema)(correlationId))) {
+      return yield* Effect.fail(input.invalidCorrelationProblem());
+    }
 
     const principal = yield* input.principal.authenticate(input.requestHeaders.authorization);
     const encodedPayload = yield* Schema.encodeEffect(input.registration.descriptor.payloadSchema)(input.payload).pipe(
