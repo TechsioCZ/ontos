@@ -1,5 +1,7 @@
 import { ActivityRefSchema } from '../../../../shared/resources/activity.ts';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
+import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
+import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import type { Types } from 'effect';
 import type { ActivityCommand } from '../../../../shared/actions/apply-command.ts';
 import { Link } from '@techsio/ui-kit/atoms/link';
@@ -9,7 +11,7 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { Table } from '@techsio/ui-kit/organisms/table';
 import { Select } from '@techsio/ui-kit/molecules/select';
 import { DateTime, Effect, Match, Option, Random, Schema } from 'effect';
-import { useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { browserRuntime } from '../../../runtime/browser-effect-runtime.ts';
 import { loadCounterpartiesClient, executeCounterpartyRead } from '@app/party-registry/api/client';
@@ -35,12 +37,58 @@ type FollowUpFields = Types.Mutable<Pick<ActivityCommand, 'followUpTaskRef'>>;
 type Counterparties = Effect.Success<ReturnType<typeof loadCounterpartiesClient>>;
 type Tasks = Effect.Success<ReturnType<typeof executeWorkRecords>>['items'];
 type Card = Effect.Success<ReturnType<typeof executeCounterpartyRead>>;
-const useRelationshipsRecords = () => {
+
+/** The activity list a page shows: the person's legal entity and the optional `resourceId` from the query. */
+interface ActivitiesInput {
+  readonly legalEntityId: string;
+  readonly resourceId: string | undefined;
+}
+
+const requestId = Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
+  Effect.map(([first, second]) => `crm-activities:${first}:${second}`),
+);
+
+/** Decodes a raw query string (`?resourceId=…`, the shape the Shell passes as `search`). */
+const searchCodec = Schema.toCodecJson(Schema.fromURLSearchParams(searchSchema));
+
+const resourceIdOf = (search: string): string | undefined =>
+  Option.getOrUndefined(Schema.decodeOption(searchCodec)(search))?.resourceId;
+
+/** The page's primary data: loaded before the Shell reveals the page, kept per document, revalidated after writes. */
+const activities = definePageData({
+  key: (input: ActivitiesInput) => `${input.legalEntityId}|${input.resourceId ?? ''}`,
+  load: (input: ActivitiesInput) =>
+    requestId.pipe(
+      Effect.flatMap((id) =>
+        executeRecords(input.resourceId === undefined ? {} : { resourceId: input.resourceId }, id),
+      ),
+    ),
+  runtime: browserRuntime,
+});
+
+export const preloadPage = modulePagePreload((props) =>
+  activities.preload({ legalEntityId: props.context?.legalEntityId ?? '', resourceId: resourceIdOf(props.search) }),
+);
+
+const useRelationshipsRecords = (input: ActivitiesInput) => {
   const { language, t } = useModernI18n();
-  const search = Schema.decodeUnknownOption(searchSchema)(useRouterState().location.search);
-  const resourceId = Option.getOrUndefined(search)?.resourceId;
   const key = 'crm-activities.pages.records';
-  const [records, setRecords] = useState<RecordsResponse>();
+  const snapshot = useSyncExternalStore(
+    activities.subscribe,
+    () => activities.snapshot(input),
+    () => pageDataPending,
+  );
+  const { legalEntityId, resourceId } = input;
+  useEffect(() => activities.ensure({ legalEntityId, resourceId }), [legalEntityId, resourceId]);
+  const records: RecordsResponse | undefined = snapshot.state === 'ready' ? snapshot.value : undefined;
+  const refreshing = snapshot.state !== 'pending' && snapshot.refreshing;
+  const loadFailure =
+    snapshot.state === 'failed'
+      ? Match.value(snapshot.error).pipe(
+          Match.tag('RecordsForbiddenProblem', () => t(`${key}.forbidden`)),
+          Match.orElse(() => t(`${key}.unavailable`)),
+        )
+      : '';
   const [summary, setSummary] = useState('');
   const [query, setQuery] = useState('');
   const [counterparties, setCounterparties] = useState<Counterparties>([]);
@@ -50,38 +98,9 @@ const useRelationshipsRecords = () => {
   const [card, setCard] = useState<Card>();
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState('');
-  const requestId = Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
-    Effect.map(([first, second]) => `crm-activities:${first}:${second}`),
-  );
   const refresh = () => {
-    setPending(true);
-    void browserRuntime.runPromise(
-      requestId.pipe(
-        Effect.flatMap((id) => executeRecords(resourceId === undefined ? {} : { resourceId }, id)),
-        Effect.match({
-          onFailure: (error) => {
-            setRecords(undefined);
-            setCard(undefined);
-            setCounterparties([]);
-            setTasks([]);
-            setCounterpartyId([]);
-            setTaskId([]);
-            setPending(false);
-            setMessage(
-              Match.value(error).pipe(
-                Match.tag('RecordsForbiddenProblem', () => t(`${key}.forbidden`)),
-                Match.orElse(() => t(`${key}.unavailable`)),
-              ),
-            );
-          },
-          onSuccess: (result) => {
-            setRecords(result);
-            setPending(false);
-            setMessage('');
-          },
-        }),
-      ),
-    );
+    setMessage('');
+    void browserRuntime.runPromise(activities.refresh(input));
   };
   const findCounterparty = () => {
     setPending(true);
@@ -203,7 +222,7 @@ const useRelationshipsRecords = () => {
             { idempotencyKey: id, referenceCredentials },
           ),
         ),
-        Effect.flatMap(() => requestId.pipe(Effect.flatMap((id) => executeRecords({}, id)))),
+        Effect.andThen(activities.refresh(input)),
         Effect.match({
           onFailure: (error) => {
             setPending(false);
@@ -214,8 +233,7 @@ const useRelationshipsRecords = () => {
               ),
             );
           },
-          onSuccess: (result) => {
-            setRecords(result);
+          onSuccess: () => {
             setSummary('');
             setPending(false);
             setMessage(t(`${key}.saved`));
@@ -233,9 +251,9 @@ const useRelationshipsRecords = () => {
     key,
     language,
     loadTasks,
-    message,
+    message: message === '' ? loadFailure : message,
     partyItems,
-    pending,
+    pending: pending || refreshing,
     query,
     records,
     refresh,
@@ -252,7 +270,7 @@ const useRelationshipsRecords = () => {
   };
 };
 
-const RecordsPageContent = () => {
+const RecordsPageContent = ({ input }: { readonly input: ActivitiesInput }) => {
   const {
     card,
     counterpartyId,
@@ -276,7 +294,7 @@ const RecordsPageContent = () => {
     t,
     taskId,
     taskItems,
-  } = useRelationshipsRecords();
+  } = useRelationshipsRecords(input);
   return (
     <>
       <UltramodernRouteHead />
@@ -529,8 +547,14 @@ const RecordsPageContent = () => {
   );
 };
 
-export const RecordsPage = () => {
+/** Rendered by the Shell with the props its `preloadPage` received; standalone it reads the query from the router. */
+export const RecordsPage = (props: Partial<ModulePageProps>) => {
   const location = useRouterState({ select: (state) => state.location.href });
+  const routerSearch = useRouterState({ select: (state) => state.location.searchStr });
+  const input = {
+    legalEntityId: props.context?.legalEntityId ?? '',
+    resourceId: resourceIdOf(props.search ?? routerSearch),
+  };
   return (
     <FederatedI18nBoundary
       defaultNamespace="crm-activities"
@@ -538,7 +562,7 @@ export const RecordsPage = () => {
       resources={crmActivitiesI18nResources}
       supportedLanguages={['en', 'cs']}
     >
-      <RecordsPageContent key={location} />
+      <RecordsPageContent input={input} key={location} />
     </FederatedI18nBoundary>
   );
 };
