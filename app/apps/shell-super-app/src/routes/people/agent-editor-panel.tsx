@@ -15,6 +15,7 @@ import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Effect, Option, Schema } from 'effect';
 import { useState } from 'react';
+import { AgentApiKeys } from './agent-api-keys.tsx';
 import { runAgentCommand } from './agent-entities-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { newRequestToken } from './people-client.ts';
@@ -292,6 +293,9 @@ export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
           </section>
         )}
       </form>
+      {agent !== null && (
+        <AgentApiKeys agent={agent} key={`${agent.principalId}:${agent.status}:${agent.hasProfile}`} />
+      )}
     </SidePanel>
   );
 };

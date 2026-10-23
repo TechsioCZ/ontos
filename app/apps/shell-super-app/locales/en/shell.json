@@ -454,6 +454,43 @@
           "revoked": "{{client}} disconnected"
         }
       },
+      "keys": {
+        "title": "API keys",
+        "description": "Native credentials for this agent in the selected company. Keys do not grant additional rights; the agent's audited profile and scoped roles still apply.",
+        "requiresProfile": "Save an audited profile and activate the agent before managing its keys.",
+        "show": "Show keys",
+        "refresh": "Refresh keys",
+        "issue": "Issue key",
+        "working": "Processing…",
+        "failed": "The result could not be confirmed. Refresh the key list before another change. A one-time secret cannot be recovered.",
+        "conflict": "This request was already accepted or the key changed. Refresh the list; do not repeat the command.",
+        "cleanupPending": "Credential cleanup is pending. The previous key may still be usable; do not treat it as revoked yet.",
+        "updated": "The command was accepted and the current list confirmed the expected key state.",
+        "projectionPending": "The command was accepted, but the list has not confirmed the expected key state. Refresh or load more keys; do not repeat the command.",
+        "refreshRequired": "Refresh the list before another command. No command will be retried automatically.",
+        "oneTime": "This secret is shown only once. Select and copy it to your secure credential manager, not a chat. Closing the panel or hiding it removes it from this view.",
+        "secret": "One-time secret",
+        "selectSecret": "Select secret",
+        "hideSecret": "I saved it — hide",
+        "empty": "This agent has no unrevoked API keys in this company.",
+        "unnamed": "Unnamed key",
+        "status": {
+          "active": "Active",
+          "disabled": "Disabled"
+        },
+        "noExpiry": "No expiry reported by the credential provider",
+        "expires": "Expires: {{date}}",
+        "rotate": "Rotate key",
+        "disable": "Disable key",
+        "enable": "Enable key",
+        "revoke": "Revoke key",
+        "more": "More keys",
+        "cancel": "Cancel",
+        "confirm": "Confirm once",
+        "confirmDescription": "This changes a real credential for this agent in the selected company. Rotation replaces the old key; revocation is permanent. The command is audited and is never retried automatically.",
+        "name": "Key name",
+        "reason": "Reason"
+      },
       "editor": {
         "createTitle": "New agent",
         "editTitle": "Edit agent {{name}}",
@@ -505,7 +542,7 @@
       },
       "section": {
         "title": "Agent entities",
-        "description": "An agent is a separate identity of the company with its own permissions. It connects to ChatGPT or Claude through OntOS by choosing “As the agent”; no keys or tokens are issued here.",
+        "description": "An agent is a separate identity of the company with its own permissions. It connects to ChatGPT or Claude through OntOS by choosing “As the agent”. API keys for automation are managed in the agent detail.",
         "create": "New agent",
         "loading": "Loading agents…",
         "retry": "Try again",

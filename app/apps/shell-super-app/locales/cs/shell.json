@@ -454,6 +454,43 @@
           "revoked": "{{client}} je odpojený"
         }
       },
+      "keys": {
+        "title": "API klíče",
+        "description": "Nativní přihlašovací údaje tohoto agenta ve vybrané firmě. Klíč nepřidává oprávnění; nadále platí auditovaný profil a role ve zvoleném rozsahu.",
+        "requiresProfile": "Nejprve uložte auditovaný profil a aktivujte agenta. Poté můžete spravovat jeho klíče.",
+        "show": "Zobrazit klíče",
+        "refresh": "Obnovit klíče",
+        "issue": "Vydat klíč",
+        "working": "Zpracovává se…",
+        "failed": "Výsledek se nepodařilo potvrdit. Před další změnou obnovte seznam klíčů. Jednorázové tajemství nelze znovu získat.",
+        "conflict": "Požadavek už byl přijat nebo se klíč změnil. Obnovte seznam; příkaz neopakujte.",
+        "cleanupPending": "Dokončení odebrání přihlašovacích údajů čeká na zpracování. Původní klíč může stále fungovat; nepovažujte jej ještě za zrušený.",
+        "updated": "Příkaz byl přijat a aktuální seznam potvrdil očekávaný stav klíče.",
+        "projectionPending": "Příkaz byl přijat, ale seznam zatím nepotvrzuje očekávaný stav klíče. Obnovte seznam nebo načtěte další klíče; příkaz neopakujte.",
+        "refreshRequired": "Před dalším příkazem obnovte seznam. Žádný příkaz se automaticky neopakuje.",
+        "oneTime": "Tajemství se zobrazí pouze jednou. Označte a zkopírujte jej do bezpečného správce přihlašovacích údajů, ne do chatu. Zavřením panelu nebo skrytím z tohoto pohledu zmizí.",
+        "secret": "Jednorázové tajemství",
+        "selectSecret": "Označit tajemství",
+        "hideSecret": "Mám uloženo — skrýt",
+        "empty": "Agent v této firmě nemá žádné nezrušené API klíče.",
+        "unnamed": "Klíč bez názvu",
+        "status": {
+          "active": "Aktivní",
+          "disabled": "Pozastavený"
+        },
+        "noExpiry": "Poskytovatel přihlašovacích údajů neuvádí konec platnosti",
+        "expires": "Platnost do: {{date}}",
+        "rotate": "Obměnit klíč",
+        "disable": "Pozastavit klíč",
+        "enable": "Aktivovat klíč",
+        "revoke": "Zrušit klíč",
+        "more": "Další klíče",
+        "cancel": "Zrušit",
+        "confirm": "Jednou potvrdit",
+        "confirmDescription": "Změníte skutečné přihlašovací údaje tohoto agenta ve vybrané firmě. Obměna nahradí původní klíč; zrušení je trvalé. Příkaz je auditovaný a nikdy se automaticky neopakuje.",
+        "name": "Název klíče",
+        "reason": "Důvod"
+      },
       "editor": {
         "createTitle": "Nový agent",
         "editTitle": "Upravit agenta {{name}}",
@@ -505,7 +542,7 @@
       },
       "section": {
         "title": "Agentní entity",
-        "description": "Agent je samostatná identita firmy s vlastními oprávněními. K ChatGPT nebo Claude se připojuje přes OntOS volbou „Za agenta“; žádné klíče ani tokeny se tu nevydávají.",
+        "description": "Agent je samostatná identita firmy s vlastními oprávněními. K ChatGPT nebo Claude jej připojíte přes OntOS volbou „Jako agent“. API klíče pro automatizaci spravujete v detailu agenta.",
         "create": "Nový agent",
         "loading": "Načítám agenty…",
         "retry": "Zkusit znovu",

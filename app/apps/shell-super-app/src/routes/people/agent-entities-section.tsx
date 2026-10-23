@@ -4,6 +4,7 @@ import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import type {
   AgentAuditEntry,
   AgentEntity,
+  AgentEntityOverview,
   AgentModuleOption,
   ConnectionSummary,
   ManageAgentEntityRequest,
@@ -691,6 +692,20 @@ const AuditBlock = ({ audit }: { readonly audit: readonly AgentAuditEntry[] }) =
     </section>
   );
 };
+const resolvedAgentEditor = (
+  legalEntityId: string,
+  editing: EditingState | null,
+  overview: AgentEntityOverview | null,
+) => {
+  if (overview === null || editing === null) {
+    return null;
+  }
+  if (editing.mode === 'create') {
+    return { agent: null, key: `${legalEntityId}:new`, overview };
+  }
+  const agent = overview.agents.find((candidate) => candidate.principalId === editing.agent.principalId);
+  return agent === undefined ? null : { agent, key: `${legalEntityId}:${agent.principalId}`, overview };
+};
 /** Agents of the selected company: list, create/edit panel, activate/deactivate/delete, operators, connections and history. */
 export const AgentEntitiesSection = ({ legalEntityId, onNotify }: AgentEntitiesSectionProps) => {
   const { t } = useModernI18n();
@@ -709,6 +724,7 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify }: AgentEntitiesS
   };
 
   const overview = state.state === 'ready' ? state.value : null;
+  const editor = resolvedAgentEditor(legalEntityId, editing, overview);
 
   useEffect(() => {
     if (linkedAgent === null || state.state !== 'ready') {
@@ -802,18 +818,19 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify }: AgentEntitiesS
         </div>
       </SectionCard>
 
-      {overview !== null && editing !== null && (
+      {editor !== null && (
         <AgentEditorPanel
-          agent={editing.mode === 'edit' ? editing.agent : null}
-          members={overview.members}
-          modules={overview.modules}
+          agent={editor.agent}
+          key={editor.key}
+          members={editor.overview.members}
+          modules={editor.overview.modules}
           onClose={() => setEditing(null)}
           onSaved={(message) => {
             setEditing(null);
             onNotify(message);
             fetchOverview();
           }}
-          presets={overview.presets}
+          presets={editor.overview.presets}
         />
       )}
 

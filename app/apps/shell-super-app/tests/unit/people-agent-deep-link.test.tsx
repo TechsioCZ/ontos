@@ -53,6 +53,7 @@ rstest.mock('../../src/routes/people/agent-editor-panel.tsx', () => ({
 afterEach(() => {
   cleanup();
   fixture.agent.hasProfile = true;
+  fixture.agent.principalId = fixture.target;
 });
 
 // oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library uses Promise-based DOM interactions at the test boundary; remove-when: rule recognizes Rstest callbacks.
@@ -70,4 +71,14 @@ it('shows an absent profile honestly instead of claiming a configured write poli
   expect(screen.getByText('shell.agents.section.noProfileDescription')).toBeTruthy();
   expect(screen.queryByText('shell.agents.connections.policy.approval')).toBeNull();
   expect(screen.queryByText('shell.agents.section.noWrites')).toBeNull();
+});
+
+// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library uses Promise-based DOM interactions at the test boundary; remove-when: rule recognizes Rstest callbacks.
+it('drops an old agent detail when the selected company no longer admits that principal', async () => {
+  HTMLElement.prototype.scrollIntoView = rstest.fn<HTMLElement['scrollIntoView']>();
+  const view = render(<AgentEntitiesSection legalEntityId="company" onNotify={() => {}} />);
+  await screen.findByTestId('agent-editor');
+  fixture.agent = { ...fixture.agent, principalId: '00000000-0000-4000-8000-000000000009' };
+  view.rerender(<AgentEntitiesSection legalEntityId="other-company" onNotify={() => {}} />);
+  expect(screen.queryByTestId('agent-editor')).toBeNull();
 });
