@@ -121,11 +121,13 @@ const buildCatalog = Effect.fn('ApplicationComposition.buildCatalog')(function* 
   if (routeIssue !== undefined) {
     return yield* invalid(routeIssue);
   }
-  const canonicalBytes = utf8.encode(canonicalizeApplicationComposition(composition));
+  // Both revisions are schema-checked 64-character ASCII hex strings, so zeroing the
+  // revision preserves the canonical byte length. Encode once for size and digest.
+  const canonicalBytes = utf8.encode(canonicalizeApplicationComposition({ ...composition, revision: '0'.repeat(64) }));
   if (canonicalBytes.byteLength > ONTOS_APPLICATION_COMPOSITION_MAX_BYTES) {
     return yield* invalid('Application Composition exceeds its encoded byte budget');
   }
-  if ((yield* applicationCompositionContentRevision(composition)) !== composition.revision) {
+  if ((yield* sha256Hex(canonicalBytes)) !== composition.revision) {
     return yield* invalid('Application Composition revision does not match its immutable content');
   }
   const evidence: ApplicationCompositionCandidateEvidence = {

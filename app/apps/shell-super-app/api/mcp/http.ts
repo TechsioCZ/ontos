@@ -4,10 +4,8 @@
  * sessions, no URL tokens, no API keys: every request carries its own OAuth access token and is verified, described
  * and served from scratch.
  */
-import { createMcpHandler } from '@modelcontextprotocol/server';
 import { Duration, Effect } from 'effect';
 
-import { buildMcpServer } from './server-factory.ts';
 import type { ToolSpec } from './types.ts';
 
 export const OAUTH_SCOPE = 'ontos';
@@ -149,15 +147,25 @@ export const serveMcp =
       if (authentication.kind === 'unavailable') {
         return unavailableResponse();
       }
+      // Only an authenticated MCP request evaluates the SDK and its protocol schemas. Gateway,
+      // metadata, preflight, landing-page and rejected requests do not need that runtime.
+      // This is local module loading, not external I/O; its Promise stays at the Effect adapter boundary.
+      // oxlint-disable-next-line effect-native/require-timeout-on-external-effect, typescript/promise-function-async
+      const [sdk, { buildMcpServer }] = yield* Effect.promise(() =>
+        Promise.all([import('@modelcontextprotocol/server'), import('./server-factory.ts')]),
+      );
       // The SDK calls back with Promises; tools and logs run with the services of this request.
       const services = yield* Effect.context<never>();
-      const handler = createMcpHandler(() => buildMcpServer(authentication.tools(), Effect.runPromiseWith(services)), {
-        // Current MCP revision only: 2025-era requests get the unsupported-version error naming 2026-07-28.
-        legacy: 'reject',
-        onerror: (error) => {
-          Effect.runForkWith(services)(Effect.logError(`mcp handler error: ${error.message}`));
+      const handler = sdk.createMcpHandler(
+        () => buildMcpServer(authentication.tools(), { run: Effect.runPromiseWith(services), sdk }),
+        {
+          // Current MCP revision only: 2025-era requests get the unsupported-version error naming 2026-07-28.
+          legacy: 'reject',
+          onerror: (error) => {
+            Effect.runForkWith(services)(Effect.logError(`mcp handler error: ${error.message}`));
+          },
         },
-      });
+      );
       const [elapsed, response] = yield* Effect.timed(
         Effect.promise(() =>
           handler.fetch(request, {

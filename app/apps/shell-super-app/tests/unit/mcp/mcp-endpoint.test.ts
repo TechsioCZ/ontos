@@ -8,6 +8,7 @@ import {
 } from '@modelcontextprotocol/client';
 import { describe, expect, it } from '@rstest/core';
 import { Crypto, Effect } from 'effect';
+import { it as effectIt } from 'effect-rstest';
 
 import { ShellCryptoLive } from '../../../api/auth/gateway-issuer.ts';
 import { serveMcp, serveMcpMetadata } from '../../../api/mcp/http.ts';
@@ -182,6 +183,44 @@ describe('Protected Resource Metadata and challenges', () => {
 });
 
 describe('current stateless Streamable HTTP revision', () => {
+  effectIt.effect('rechecks authentication after the lazy SDK has been loaded', () =>
+    Effect.gen(function* rechecksMcpAuthentication() {
+      let active = true;
+      let authenticationCalls = 0;
+      const tools = () =>
+        buildConnectionTools({
+          backend: fakeBackend([]),
+          catalog: fixtureCatalog(),
+          crypto: shellCrypto,
+          description: connectionDescription(),
+          prmUrl: CONFIG.prmUrl,
+          publicOrigin: CONFIG.publicOrigin,
+        });
+      const serve = serveMcp({
+        authenticate: () =>
+          Effect.sync(() => {
+            authenticationCalls += 1;
+            return active
+              ? {
+                  clientId: 'client',
+                  grantId: 'grant',
+                  kind: 'ok' as const,
+                  tools,
+                }
+              : { kind: 'invalid' as const };
+          }),
+        config: Effect.succeed(CONFIG),
+      });
+      const accepted = yield* serve(toolsListRequest('good'));
+      expect(accepted.status).toBe(200);
+      active = false;
+      const revoked = yield* serve(toolsListRequest('good'));
+      expect(revoked.status).toBe(401);
+      expect(revoked.headers.get('www-authenticate')).toContain('error="invalid_token"');
+      expect(authenticationCalls).toBe(2);
+    }),
+  );
+
   it('serves a self-contained tools/list request without an initialize handshake or session', async () => {
     const handler = endpoint({ backend: fakeBackend([]), description: connectionDescription() });
     const response = await handler(toolsListRequest('good'));

@@ -158,6 +158,32 @@ it.effect('accepts an intentionally empty approved inventory', () =>
   }),
 );
 
+it.effect('checks the canonical byte length and digest with the same zero-revision encoding', () =>
+  Effect.gen(function* canonicalSizeAndDigest() {
+    const document = contract();
+    const input = composition([
+      moduleFromContract({
+        ...document,
+        manifest: {
+          ...document.manifest,
+          module: { ...document.manifest.module, description: 'Příliš žluťoučký kůň' },
+        },
+      }),
+    ]);
+    const bytes = new TextEncoder().encode(canonicalizeApplicationComposition(input));
+    const revisionBytes = new TextEncoder().encode(
+      canonicalizeApplicationComposition({ ...input, revision: '0'.repeat(64) }),
+    );
+    expect(revisionBytes.byteLength).toBe(bytes.byteLength);
+    expect(revisionBytes.byteLength).toBeGreaterThan(canonicalizeApplicationComposition(input).length);
+    const digestSpy = rstest.spyOn(globalThis.crypto.subtle, 'digest');
+    yield* Effect.addFinalizer(() => Effect.sync(() => digestSpy.mockRestore()));
+    yield* buildApplicationCompositionCatalog(input);
+    expect(digestSpy).toHaveBeenCalledTimes(2);
+    expect(digestSpy.mock.calls.at(-1)?.[1]).toEqual(revisionBytes);
+  }),
+);
+
 it.effect('reuses a catalog only for the same deeply frozen approved artifact', () =>
   Effect.gen(function* reuseImmutableCatalog() {
     const input = freezeApplicationCompositionArtifact(composition([moduleFromContract(contract())]));

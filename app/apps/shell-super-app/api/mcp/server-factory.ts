@@ -1,5 +1,7 @@
-import { fromJsonSchema, McpServer } from '@modelcontextprotocol/server';
+import type * as McpSdk from '@modelcontextprotocol/server';
 import type {
+  fromJsonSchema as makeJsonSchema,
+  McpServer,
   CallToolResult,
   JsonSchemaType,
   JsonSchemaValidator,
@@ -38,7 +40,7 @@ export const PASS_THROUGH_VALIDATOR: jsonSchemaValidator = {
 };
 
 /** Catalog schemas are draft 2020-12 documents; drop $schema and fall back to a permissive object. */
-export const toolInputSchema = (schema: Readonly<Record<string, unknown>>) => {
+const toolInputSchema = (schema: Readonly<Record<string, unknown>>, fromJsonSchema: typeof makeJsonSchema) => {
   const { $schema: _dialect, ...rest } = schema;
   const candidate = rest['type'] === 'object' ? rest : PERMISSIVE_OBJECT;
   try {
@@ -70,7 +72,19 @@ const toCallToolResult = (result: ToolResult): CallToolResult => ({
 export type McpToolRunner = <A>(effect: Effect.Effect<A>) => Promise<A>;
 
 /** One McpServer per request: the tool list always reflects the current grant (no list_changed needed). */
-export const buildMcpServer = (tools: readonly ToolSpec[], run: McpToolRunner): McpServer => {
+export const buildMcpServer = (
+  tools: readonly ToolSpec[],
+  {
+    run,
+    sdk,
+  }: {
+    readonly run: McpToolRunner;
+    readonly sdk: Pick<typeof McpSdk, 'fromJsonSchema' | 'McpServer'>;
+  },
+): McpServer => {
+  // The HTTP adapter loads SDK values only for this request. A static value import here
+  // would be hoisted by Rspack even when the factory itself is imported lazily.
+  const { fromJsonSchema, McpServer } = sdk;
   const server = new McpServer({ ...SERVER_INFO }, { instructions: SERVER_INSTRUCTIONS });
   for (const tool of tools) {
     server.registerTool(
@@ -79,8 +93,10 @@ export const buildMcpServer = (tools: readonly ToolSpec[], run: McpToolRunner): 
         _meta: { securitySchemes: CHATGPT_SECURITY_SCHEMES },
         annotations: { ...tool.annotations, title: tool.title },
         description: tool.description,
-        inputSchema: toolInputSchema(tool.inputSchema),
-        ...(tool.outputSchema === undefined ? {} : { outputSchema: toolInputSchema(tool.outputSchema) }),
+        inputSchema: toolInputSchema(tool.inputSchema, fromJsonSchema),
+        ...(tool.outputSchema === undefined
+          ? {}
+          : { outputSchema: toolInputSchema(tool.outputSchema, fromJsonSchema) }),
         title: tool.title,
       },
       // The SDK awaits a Promise; the tool handler never fails (failures are `isError` results).
