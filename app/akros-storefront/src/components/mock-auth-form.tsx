@@ -11,15 +11,18 @@ export function MockLoginForm() {
 
   return (
     <form
+      action="/prihlaseni"
       className="akros-auth-form"
+      method="post"
       onSubmit={(event) => {
         event.preventDefault();
         router.push("/muj-ucet");
       }}
     >
       <FormInput
-        autoComplete="email"
+        autoComplete="username"
         id="login-email"
+        name="email"
         label="Přihlašovací e-mail"
         required
         size="sm"
@@ -28,13 +31,14 @@ export function MockLoginForm() {
       <FormInput
         autoComplete="current-password"
         id="login-password"
+        name="password"
         label="Heslo"
         required
         size="sm"
         type="password"
       />
       <div className="akros-auth-form__row">
-        <FormCheckbox label="Zapamatovat si mě" size="sm" />
+        <FormCheckbox name="rememberMe" label="Zapamatovat si mě" size="sm" />
         <a href="#login-password">Zapomenuté heslo?</a>
       </div>
       <Button block size="md" type="submit" variant="primary">
@@ -49,7 +53,9 @@ export function MockRegistrationForm() {
 
   return (
     <form
+      action="/registrace"
       className="akros-auth-form"
+      method="post"
       onSubmit={(event) => {
         event.preventDefault();
         setSubmitted(true);
@@ -59,20 +65,25 @@ export function MockRegistrationForm() {
         <FormInput
           autoComplete="given-name"
           id="register-first-name"
+          name="firstName"
           label="Jméno"
           required
           size="sm"
+          type="text"
         />
         <FormInput
           autoComplete="family-name"
           id="register-last-name"
+          name="lastName"
           label="Příjmení"
           required
           size="sm"
+          type="text"
         />
         <FormInput
-          autoComplete="email"
+          autoComplete="username"
           id="register-email"
+          name="email"
           label="E-mailová adresa"
           required
           size="sm"
@@ -81,6 +92,7 @@ export function MockRegistrationForm() {
         <FormInput
           autoComplete="tel"
           id="register-phone"
+          name="phone"
           label="Telefonní číslo"
           required
           size="sm"
@@ -89,8 +101,10 @@ export function MockRegistrationForm() {
         <FormInput
           autoComplete="new-password"
           id="register-password"
-          label="Heslo (minimálně 8 znaků)"
-          minLength={8}
+          name="password"
+          label="Heslo (minimálně 12 znaků)"
+          minLength={12}
+          {...{ passwordrules: "minlength: 12;" }}
           required
           size="sm"
           type="password"
@@ -98,19 +112,23 @@ export function MockRegistrationForm() {
         <FormInput
           autoComplete="new-password"
           id="register-password-confirm"
+          name="passwordConfirmation"
           label="Potvrzení hesla"
-          minLength={8}
+          minLength={12}
+          {...{ passwordrules: "minlength: 12;" }}
           required
           size="sm"
           type="password"
         />
       </div>
       <FormCheckbox
+        name="privacyConsent"
         label="Souhlasím s obchodními podmínkami a zásadami zpracování osobních údajů"
         required
         size="sm"
       />
       <FormCheckbox
+        name="newsletter"
         label="Chci odebírat newsletter s akčními nabídkami nerezového materiálu"
         size="sm"
       />

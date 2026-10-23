@@ -1,0 +1,133 @@
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
+import { PathnameContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
+
+import { MockLoginForm, MockRegistrationForm } from "@/components/mock-auth-form";
+import { AccountProfilePage } from "@/features/account/account-profile-page";
+import { CartProvider } from "@/features/cart/cart-provider";
+
+// These markup tests never navigate. Fail if a form unexpectedly invokes the router.
+function unexpectedNavigation(): never {
+  throw new Error("Unexpected navigation");
+}
+const router = {
+  bfcacheId: "auth-form-attributes",
+  back: unexpectedNavigation,
+  forward: unexpectedNavigation,
+  refresh: unexpectedNavigation,
+  hmrRefresh: unexpectedNavigation,
+  push: unexpectedNavigation,
+  replace: unexpectedNavigation,
+  prefetch: unexpectedNavigation,
+};
+
+afterEach(cleanup);
+
+function expectInput(id: string, attributes: Record<string, string>) {
+  const input = document.getElementById(id);
+  expect(input).toBeInstanceOf(HTMLInputElement);
+  for (const [name, value] of Object.entries(attributes)) {
+    expect(input?.getAttribute(name), `${id}: ${name}`).toBe(value);
+  }
+  return input as HTMLInputElement;
+}
+
+function expectForm(input: HTMLInputElement, action: string) {
+  expect(input.form?.getAttribute("method")).toBe("post");
+  expect(input.form?.getAttribute("action")).toBe(action);
+}
+
+function expectNewPasswords(firstId: string, confirmationId: string) {
+  const attributes = {
+    type: "password",
+    autocomplete: "new-password",
+    minlength: "12",
+    passwordrules: "minlength: 12;",
+  };
+  const first = expectInput(firstId, { ...attributes, name: "password" });
+  const confirmation = expectInput(confirmationId, {
+    ...attributes,
+    name: "passwordConfirmation",
+  });
+  expect(first.form).not.toBeNull();
+  expect(first.form).toBe(confirmation.form);
+  expect(first.form?.querySelectorAll('input[autocomplete="new-password"]')).toHaveLength(2);
+  return first;
+}
+
+describe("password-manager form semantics with the published UI-kit", () => {
+  it("names registration fields and keeps both generated-password targets in one POST form", () => {
+    render(<MockRegistrationForm />);
+
+    expectInput("register-first-name", {
+      name: "firstName",
+      type: "text",
+      autocomplete: "given-name",
+    });
+    expectInput("register-last-name", {
+      name: "lastName",
+      type: "text",
+      autocomplete: "family-name",
+    });
+    // WHATWG permits one field-name token: username identifies this email as the credential.
+    expectInput("register-email", { name: "email", type: "email", autocomplete: "username" });
+    expectInput("register-phone", { name: "phone", type: "tel", autocomplete: "tel" });
+    const password = expectNewPasswords("register-password", "register-password-confirm");
+    expectForm(password, "/registrace");
+    expect(password.required).toBe(true);
+    expect(
+      (document.getElementById("register-password-confirm") as HTMLInputElement).required,
+    ).toBe(true);
+    expect(screen.getByRole("checkbox", { name: /Souhlasím/ }).getAttribute("name")).toBe(
+      "privacyConsent",
+    );
+    expect(screen.getByRole("checkbox", { name: /newsletter/ }).getAttribute("name")).toBe(
+      "newsletter",
+    );
+    expect(screen.getByRole("button", { name: "Vytvořit účet" }).getAttribute("type")).toBe(
+      "submit",
+    );
+  });
+
+  it("identifies the login email as username and password as current-password", () => {
+    render(
+      <AppRouterContext.Provider value={router}>
+        <MockLoginForm />
+      </AppRouterContext.Provider>,
+    );
+
+    const email = expectInput("login-email", {
+      name: "email",
+      type: "email",
+      autocomplete: "username",
+    });
+    const password = expectInput("login-password", {
+      name: "password",
+      type: "password",
+      autocomplete: "current-password",
+    });
+    expectForm(password, "/prihlaseni");
+    expect(email.form).toBe(password.form);
+    expect(screen.getByRole("checkbox", { name: "Zapamatovat si mě" }).getAttribute("name")).toBe(
+      "rememberMe",
+    );
+  });
+
+  it("marks both optional account-change passwords as new-password, not current-password", () => {
+    render(
+      <AppRouterContext.Provider value={router}>
+        <PathnameContext.Provider value="/muj-ucet">
+          <CartProvider storage={null}>
+            <AccountProfilePage />
+          </CartProvider>
+        </PathnameContext.Provider>
+      </AppRouterContext.Provider>,
+    );
+
+    const password = expectNewPasswords("account-password", "account-password-confirmation");
+    expectForm(password, "/muj-ucet");
+    expect(password.required).toBe(false);
+    expectInput("account-email", { name: "email", type: "email", autocomplete: "username" });
+  });
+});

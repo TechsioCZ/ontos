@@ -92,6 +92,7 @@ export function AccountProfilePage() {
     >
       <FormInput
         id={`account-${key}`}
+        name={key}
         label={label}
         size="sm"
         type={type}
@@ -151,6 +152,8 @@ export function AccountProfilePage() {
         <output>Načítám údaje…</output>
       ) : (
         <form
+          action="/muj-ucet"
+          method="post"
           ref={formRef}
           noValidate
           onSubmit={(event) => {
@@ -207,10 +210,13 @@ export function AccountProfilePage() {
             <ProfileSection value="contact" title="Kontaktní údaje" id="kontaktni-udaje">
               <div className="grid max-w-(--akros-account-form-width) gap-(--dimension-24) md:grid-cols-2">
                 <div className="grid gap-(--dimension-32)">
-                  {input("email", "Email", "email", "email")}
+                  {input("email", "Email", "username", "email")}
                   <div id="zmena-hesla">
                     <FormInput
                       id="account-password"
+                      name="password"
+                      minLength={12}
+                      {...{ passwordrules: "minlength: 12;" }}
                       label="Heslo"
                       size="sm"
                       type="password"
@@ -221,6 +227,9 @@ export function AccountProfilePage() {
                   </div>
                   <FormInput
                     id="account-password-confirmation"
+                    name="passwordConfirmation"
+                    minLength={12}
+                    {...{ passwordrules: "minlength: 12;" }}
                     label="Potvrdit heslo"
                     size="sm"
                     type="password"
