@@ -1,8 +1,9 @@
 // Browser data access for every CRM page (owned by crm-scaffold). One governed records read returns the
 // ACL-projected aggregate; one governed apply-command Action changes it. Pages never filter for security.
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
+import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
 import { Effect, Random } from 'effect';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import type { CrmCommand } from '../../shared/actions/apply-command.ts';
 import { partyLinksOf } from '../../shared/commands/index.ts';
 import type { RecordsResponse } from '../../shared/apis/records.ts';
@@ -75,27 +76,61 @@ export interface CrmCommandOutcome {
   readonly message?: string;
 }
 
+export interface CrmRecordsInput {
+  readonly clientId?: string;
+}
+
+const allRecords: CrmRecordsInput = {};
+
+const recordsInput = (clientId: string | undefined): CrmRecordsInput =>
+  clientId === undefined ? allRecords : { clientId };
+
+/**
+ * The governed records read of the signed-in principal, one entry per client filter ('all' without one). The Shell
+ * fills it through `preloadPage` before it reveals a CRM page, so the page renders real data in its first commit.
+ */
+export const crmRecordsData = definePageData({
+  key: ({ clientId }: CrmRecordsInput) => clientId ?? 'all',
+  load: ({ clientId }: CrmRecordsInput) => loadCrmRecords(clientId),
+  runtime: browserRuntime,
+});
+
+/** `preloadPage` of every exposed CRM page: all of them open on the full records read. */
+export const preloadCrmRecords = modulePagePreload(() => crmRecordsData.preload(allRecords));
+
+type CrmRecordsSnapshot = ReturnType<typeof crmRecordsData.snapshot>;
+
+const stateOf = (snapshot: CrmRecordsSnapshot): CrmRecordsState => {
+  if (snapshot.state === 'pending') {
+    return { kind: 'loading' };
+  }
+  if (snapshot.state === 'failed') {
+    return { kind: isForbidden(snapshot.error) ? 'forbidden' : 'error' };
+  }
+  return { kind: 'ready', records: snapshot.value };
+};
+
+const serverSnapshot = (): CrmRecordsSnapshot => pageDataPending;
+
 /**
  * The CRM records of the signed-in principal plus `submit`, which runs a command against the current revision and
- * reloads on success. Use `state.kind === 'ready'` and `state.records.state` / `state.records.viewer`.
+ * re-reads on success while the current records stay visible. Use `state.kind === 'ready'` and
+ * `state.records.state` / `state.records.viewer`.
  */
 export const useCrmRecords = (clientId?: string) => {
-  const [state, setState] = useState<CrmRecordsState>({ kind: 'loading' });
+  const snapshot = useSyncExternalStore(
+    crmRecordsData.subscribe,
+    () => crmRecordsData.snapshot(recordsInput(clientId)),
+    serverSnapshot,
+  );
   const [busy, setBusy] = useState(false);
+  useEffect(() => crmRecordsData.ensure(recordsInput(clientId)), [clientId]);
   const load = useCallback(() => {
-    void browserRuntime.runPromise(
-      loadCrmRecords(clientId).pipe(
-        Effect.match({
-          onFailure: (error) => setState({ kind: isForbidden(error) ? 'forbidden' : 'error' }),
-          onSuccess: (records) => setState({ kind: 'ready', records }),
-        }),
-      ),
-    );
+    browserRuntime.runFork(crmRecordsData.refresh(recordsInput(clientId)));
   }, [clientId]);
-  useEffect(load, [load]);
+  const revision = snapshot.state === 'ready' ? snapshot.value.revision : 0;
   const submit = useCallback(
     (command: CrmCommand): Promise<CrmCommandOutcome> => {
-      const revision = state.kind === 'ready' ? state.records.revision : 0;
       setBusy(true);
       return browserRuntime
         .runPromise(
@@ -112,17 +147,17 @@ export const useCrmRecords = (clientId?: string) => {
               },
               onSuccess: (result): CrmCommandOutcome => ({ entityIds: result.entityIds, ok: true }),
             }),
+            Effect.tap(() => crmRecordsData.refresh(recordsInput(clientId))),
           ),
         )
         .then((outcome) => {
           setBusy(false);
-          load();
           return outcome;
         });
     },
-    [load, state],
+    [clientId, revision],
   );
-  return { busy, load, state, submit };
+  return { busy, load, state: stateOf(snapshot), submit };
 };
 
 /** Display name of a salesperson id, or undefined. */

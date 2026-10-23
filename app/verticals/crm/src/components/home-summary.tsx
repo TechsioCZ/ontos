@@ -124,4 +124,6 @@ export const HomeSummary = () => (
     <HomeSummaryContent />
   </FederatedI18nBoundary>
 );
+/** The Shell awaits this before it reveals Home, so the summary renders with its facts. */
+export { preloadCrmRecords as preloadPage } from '../crm/records.ts';
 export default HomeSummary;

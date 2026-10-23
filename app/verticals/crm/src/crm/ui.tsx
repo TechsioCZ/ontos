@@ -2,7 +2,6 @@
 import { EmptyState, PageHeader, dataTableRowLabels, paginationTranslations, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
-import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import type { DataTableTranslations } from '@techsio/ui-kit/organisms/data-table';
 import type { ReactNode } from 'react';
 import type { RecordsResponse } from '../../shared/apis/records.ts';
@@ -24,20 +23,16 @@ export const CrmStateGate = ({
 }) => {
   const { t } = useModernI18n();
   if (state.kind === 'loading') {
+    // Only reached on a cold mount the Shell could not prepare: one quiet skeleton, no loading text chain.
     return (
       <div aria-busy="true" className="flex min-w-0 flex-col gap-250">
+        <span className="sr-only">{t('crm.common.loading')}</span>
         {loadingTitle !== undefined && <PageHeader title={loadingTitle} />}
-        <StatusText status="default">{t('crm.common.loading')}</StatusText>
-        {loadingTitle !== undefined && (
-          <div
-            aria-hidden="true"
-            className={`${surfaceTileClassName} flex flex-col gap-150 p-250`}
-          >
-            {[0, 1, 2, 3, 4].map((row) => (
-              <div className="crm-loading-skeleton-row" key={row} />
-            ))}
-          </div>
-        )}
+        <div aria-hidden="true" className={`${surfaceTileClassName} flex flex-col gap-150 p-250`}>
+          {[0, 1, 2, 3, 4].map((row) => (
+            <div className="crm-loading-skeleton-row" key={row} />
+          ))}
+        </div>
       </div>
     );
   }

@@ -498,4 +498,6 @@ export const PlanPage = () => (
   </CrmPage>
 );
 
+/** The Shell awaits this before it reveals the page, so the first render already has the records. */
+export { preloadCrmRecords as preloadPage } from '../../../../crm/records.ts';
 export default PlanPage;
