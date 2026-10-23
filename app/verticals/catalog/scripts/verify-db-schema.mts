@@ -98,12 +98,21 @@ const verification = Effect.gen(function* verifyCatalogDatabase() {
     foreign_key_count: number;
     journal_count: number;
     policy_count: number;
+    redemption_safe: boolean;
     result_snapshot_guard_count: number;
     trigger_count: number;
     validated_combination_count: number;
   }>(
     'Unable to inspect Catalog security metadata',
     `select
+      exists (select 1 from pg_catalog.pg_class redemption
+        join pg_catalog.pg_namespace redemption_namespace on redemption_namespace.oid = redemption.relnamespace
+        where redemption_namespace.nspname = 'catalog' and redemption.relname = 'gateway_assertion_redemptions'
+          and not redemption.relrowsecurity and not redemption.relforcerowsecurity
+          and has_table_privilege('ontos_runtime', redemption.oid, 'SELECT')
+          and has_table_privilege('ontos_runtime', redemption.oid, 'INSERT')
+          and has_table_privilege('ontos_runtime', redemption.oid, 'DELETE')
+          and not has_table_privilege('ontos_runtime', redemption.oid, 'UPDATE')) as redemption_safe,
       (select count(*)::integer from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='catalog' and c.relkind='r' and c.relrowsecurity and c.relforcerowsecurity) forced_rls,
       (select count(*)::integer from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='drizzle' and c.relname='__drizzle_migrations_catalog') journal_count,
       (select count(*)::integer from pg_policy p join pg_class c on c.oid=p.polrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='catalog') policy_count,
@@ -123,8 +132,11 @@ const verification = Effect.gen(function* verifyCatalogDatabase() {
   );
   // 78 existing triggers plus accepted-source and override-ledger guards and the mutable-head identity guard.
   const expectedTriggerCount = 81;
+  if (!row?.redemption_safe) {
+    yield* new CatalogSchemaVerificationError({ reason: 'Gateway assertion redemption security mismatch' });
+  }
   const expectedInfrastructure = [
-    CATALOG_TABLES.length,
+    CATALOG_TABLES.length - 1,
     1,
     expectedPolicyCount,
     1,

@@ -87,7 +87,7 @@ import {
   variantLocalizedFacts,
 } from '../../src/database/schema.ts';
 
-it('owns eighty tenant-scoped Catalog tables with RLS and immutable history', () => {
+it('owns the complete Catalog inventory and scopes every business table with RLS', () => {
   const qualifiedNames = EffectArray.sort(
     CATALOG_TABLES.map((table) => {
       const config = getTableConfig(table);
@@ -121,6 +121,7 @@ it('owns eighty tenant-scoped Catalog tables with RLS and immutable history', ()
     'configuration_units',
     'controlled_attribute_value_revisions',
     'controlled_attribute_values',
+    'gateway_assertion_redemptions',
     'manufacturer_relation_revisions',
     'manufacturer_relations',
     'package_content_revisions',
@@ -181,6 +182,9 @@ it('owns eighty tenant-scoped Catalog tables with RLS and immutable history', ()
   ]);
   expect(qualifiedNames).toEqual(CATALOG_TABLE_INVENTORY.map((name) => `catalog.${name}`));
   for (const table of CATALOG_TABLES) {
+    if (getTableConfig(table).name === 'gateway_assertion_redemptions') {
+      continue;
+    }
     const config = getTableConfig(table);
     expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
     expect(config.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);
@@ -753,6 +757,9 @@ it('checks migration hardening for force-RLS, append-only history, and stable id
     .join('\n');
 
   for (const table of CATALOG_TABLE_INVENTORY) {
+    if (table === 'gateway_assertion_redemptions') {
+      continue;
+    }
     expect(combined).toContain(`ALTER TABLE "catalog"."${table}" FORCE ROW LEVEL SECURITY`);
   }
   expect(combined).toContain('catalog_product_revisions_append_only');
@@ -836,4 +843,18 @@ it('checks migration hardening for force-RLS, append-only history, and stable id
     expect(combined).toContain(trigger);
   }
   expect(combined).toContain("'commerce.catalog.product-unit') NOT VALID");
+});
+
+it('owns pre-scope replay evidence with an atomic issuer/audience/jti identity', () => {
+  const table = CATALOG_TABLES.find((candidate) => getTableConfig(candidate).name === 'gateway_assertion_redemptions');
+  expect(table).toBeDefined();
+  if (table === undefined) {
+    throw new Error('Missing gateway assertion redemption table');
+  }
+  const config = getTableConfig(table);
+  expect(config.schema).toBe('catalog');
+  expect(config.enableRLS).toBe(false);
+  expect(config.policies).toEqual([]);
+  expect(config.primaryKeys.map((key) => key.columns.map(({ name }) => name))).toEqual([['issuer', 'audience', 'jti']]);
+  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['catalog_redemption_expiry']);
 });
