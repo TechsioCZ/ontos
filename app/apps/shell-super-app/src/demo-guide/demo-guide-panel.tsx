@@ -263,10 +263,7 @@ const StepCard = ({
           </Badge>
         ) : null}
       </div>
-      <div className="grid gap-50 rounded-md bg-surface p-150">
-        <span className="font-medium text-fg-secondary text-xs uppercase tracking-wide">Co říct</span>
-        <p className="text-fg-primary text-sm">{`„${step.say}“`}</p>
-      </div>
+      <p className="rounded-md bg-surface p-150 text-fg-primary text-sm">{`„${step.say}“`}</p>
       <PersonaLine persona={step.persona} signedIn={step.persona !== null && identityEmail === step.persona.email} />
       {step.click === undefined ? null : (
         <p className="flex items-start gap-100 text-fg-secondary text-xs">
@@ -414,7 +411,9 @@ export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) =>
               className="justify-self-start"
               icon="icon-[mdi--information-outline]"
               onClick={() => {
-                document.getElementById('demo-guide-boundaries')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                document
+                  .getElementById('demo-guide-boundaries')
+                  ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
               }}
               size="sm"
               theme="borderless"

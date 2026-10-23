@@ -33,7 +33,7 @@ export interface DemoGuideStep {
   /** Unique within its guide, kebab-case, prefixed with the guide id, e.g. `siampark-r101`. */
   readonly id: string;
   readonly title: string;
-  /** "Co říct": 1–2 Czech sentences, without surrounding quotation marks. */
+  /** Quoted talking point: 1–2 Czech sentences, without surrounding quotation marks. */
   readonly say: string;
   /** Account to be signed in as; `null` = anonymous storefront customer (no staff sign-in). */
   readonly persona: DemoGuidePersona | null;
