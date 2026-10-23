@@ -1,8 +1,4 @@
-import {
-  RetailEnrollmentEvidenceSchema,
-  PartyCommandNotFoundProblemSchema,
-  PartyCommandUnavailableProblemSchema,
-} from '@app/party-registry/api';
+import { RetailEnrollmentEvidenceSchema, PartyCommandUnavailableProblemSchema } from '@app/party-registry/api';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -58,10 +54,7 @@ import type {
 } from '../../src/enrollment/journeys/retail-self-enrollment-profile-owners.ts';
 import { CommerceEnrollmentOwnerTransitionSchema } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
 import type { CommerceEnrollmentOwnerReconciliationInput } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
-import {
-  CommerceEnrollmentOwnerEffectRejected,
-  CommerceEnrollmentOwnerEffectUnavailable,
-} from '../../src/enrollment/orchestration/owner-transition-errors.ts';
+import { CommerceEnrollmentOwnerEffectUnavailable } from '../../src/enrollment/orchestration/owner-transition-errors.ts';
 import type { CommerceEnrollmentPreparedOwnerBinding } from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
 
 const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)('10000000-0000-4000-8000-000000000001');
@@ -275,32 +268,26 @@ it.effect('never resubmits a Party create while the original invocation is still
               _tag: 'PartyCommandCommitResolution',
               invocationId: ownerInvocationId,
               retryCommand: false,
-              state: 'OPEN',
+              state: 'RUNNING',
             },
           }),
       }),
     )
       .reconcile(reconciliationInput)
       .pipe(Effect.flip);
-    expect(Schema.is(CommerceEnrollmentOwnerEffectRejected)(error)).toBe(true);
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(error)).toBe(true);
   }),
 );
 
-/**
- * The match is the first Party Registry call this transition makes and it is read-only, so a match
- * outage fences the transition indeterminate without any Create having been dispatched. The Party
- * Registry then holds no invocation of that identity at all and answers the commit resolution with
- * its 404: that absence is the proof nothing committed.
- */
-const commitResolutionNotFound = () =>
-  Effect.fail(
-    PartyCommandNotFoundProblemSchema.make({
-      detail: 'The Party Registry holds no invocation of this identity.',
-      status: 404,
-      title: 'Not found',
-      type: 'https://ontos.dev/problems/party-command-not-found',
-    }),
-  );
+const commitResolutionNotStarted = () =>
+  Effect.succeed({
+    _tag: 'PartyCreateRecoveryPending' as const,
+    resolution: {
+      _tag: 'PartyCommandCommitResolution' as const,
+      retryCommand: true as const,
+      state: 'NOT_STARTED' as const,
+    },
+  });
 
 it.effect('submits the same canonical Create only when native recovery proves no invocation', () =>
   Effect.gen(function* reconcileAfterMatchOutage() {
@@ -314,12 +301,11 @@ it.effect('submits the same canonical Create only when native recovery proves no
             return { decisionRef, outcome: 'CREATED' as const, partyRef };
           }),
 
-        recoverPartyCreate: commitResolutionNotFound,
+        recoverPartyCreate: commitResolutionNotStarted,
       }),
     ).reconcile(reconciliationInput);
 
-    // Without this, the 404 is read as "the commit resolution is unavailable" and the transition
-    // stays indeterminate on every later pass: the Party is never submitted and the journey stalls.
+    // Native absence authorizes only the same immutable original request/key.
     expect(resolution.status).toBe('SUCCEEDED');
     expect(resolution.outcomeCode).toBe(PARTY_CANDIDATE_CREATED_OUTCOME_CODE);
     expect(resolution.resultReference).toBe(partyRef.resourceId);
@@ -454,15 +440,15 @@ it.effect('reconciles an indeterminate profile ensure through its committed invo
   }),
 );
 
-it.effect('leaves an uncommitted profile ensure to a later retry', () =>
+it.effect('leaves a running profile ensure to later reconciliation', () =>
   Effect.gen(function* openEnsure() {
     const error = yield* retailCustomerProfileOwnerEffect(
       profileOwnerInput,
-      profileExecutors({ commitResolution: () => Effect.succeed({ state: 'OPEN' }) }),
+      profileExecutors({ commitResolution: () => Effect.succeed({ state: 'RUNNING' }) }),
     )
       .reconcile(reconciliationInput)
       .pipe(Effect.flip);
-    expect(Schema.is(CommerceEnrollmentOwnerEffectRejected)(error)).toBe(true);
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(error)).toBe(true);
   }),
 );
 
@@ -690,3 +676,84 @@ it.effect('rejects a recovered decision owned by another Tenant before producing
     expect(failure.reason).toContain('original Attempt Tenant');
   }),
 );
+
+for (const state of ['NOT_STARTED', 'RETRYABLE'] as const) {
+  it.effect(`recovers ${state} profile and binding with the exact original payload and owner key`, () =>
+    Effect.gen(function* originalKeyRetry() {
+      const profileRequests: unknown[] = [];
+      const bindingRequests: unknown[] = [];
+      const profile = retailCustomerProfileOwnerEffect(
+        profileOwnerInput,
+        profileExecutors({
+          commitResolution: () => Effect.succeed({ state }),
+          ensureProfile: (payload, correlation, options) =>
+            Effect.sync(() => {
+              profileRequests.push({ correlation, options, payload });
+              return ensureResult('ACTIVE');
+            }),
+        }),
+      );
+      const binding = retailPortalBindingOwnerEffect(
+        bindingOwnerInput,
+        bindingExecutors({
+          bindProfile: (payload, correlation, options) =>
+            Effect.sync(() => {
+              bindingRequests.push({ correlation, options, payload });
+              return bindingResult(true);
+            }),
+          commitResolution: () => Effect.succeed({ state }),
+        }),
+      );
+      yield* profile.dispatch(transition);
+      expect((yield* profile.reconcile(reconciliationInput)).status).toBe('SUCCEEDED');
+      expect(profileRequests).toHaveLength(2);
+      expect(profileRequests[0]).toEqual(profileRequests[1]);
+      yield* binding.dispatch(transition);
+      expect((yield* binding.reconcile(reconciliationInput)).status).toBe('SUCCEEDED');
+      expect(bindingRequests).toHaveLength(2);
+      expect(bindingRequests[0]).toEqual(bindingRequests[1]);
+      expect(bindingRequests[1]).toMatchObject({ options: { idempotencyKey: ownerInvocationId } });
+    }),
+  );
+}
+for (const state of ['COMMITTED', 'RUNNING', 'REJECTED'] as const) {
+  it.effect(`never redispatches profile or binding in ${state} state`, () =>
+    Effect.gen(function* noNativeReplay() {
+      const profile = retailCustomerProfileOwnerEffect(
+        profileOwnerInput,
+        profileExecutors({
+          commitResolution: () =>
+            Effect.succeed(state === 'COMMITTED' ? { result: ensureResult('ACTIVE'), state } : { state }),
+          ensureProfile: () => Effect.die('A nonretryable profile was dispatched'),
+        }),
+      );
+      const binding = retailPortalBindingOwnerEffect(
+        bindingOwnerInput,
+        bindingExecutors({
+          bindProfile: () => Effect.die('A nonretryable binding was dispatched'),
+          commitResolution: () =>
+            Effect.succeed(state === 'COMMITTED' ? { result: bindingResult(true), state } : { state }),
+        }),
+      );
+      if (state === 'RUNNING') {
+        expect(
+          Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(
+            yield* profile.reconcile(reconciliationInput).pipe(Effect.flip),
+          ),
+        ).toBe(true);
+        expect(
+          Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(
+            yield* binding.reconcile(reconciliationInput).pipe(Effect.flip),
+          ),
+        ).toBe(true);
+      } else {
+        const profileResult = yield* profile.reconcile(reconciliationInput);
+        const bindingResultValue = yield* binding.reconcile(reconciliationInput);
+        expect(profileResult.status).toBe(state === 'COMMITTED' ? 'SUCCEEDED' : 'FAILED');
+        expect(bindingResultValue.status).toBe(state === 'COMMITTED' ? 'SUCCEEDED' : 'FAILED');
+        expect(profileResult.nextState).toBeUndefined();
+        expect(bindingResultValue.nextState).toBeUndefined();
+      }
+    }),
+  );
+}

@@ -398,9 +398,16 @@ export type {
   GlobalActionPolicy,
   MicroverticalActionPolicy,
 } from './actions/policy.ts';
-export { ActionRuntime, makeActionRuntimeLive, resolveActionCommit, runAction } from './actions/runtime.ts';
+export {
+  ActionExecutionResolutionSchema,
+  ActionRuntime,
+  makeActionRuntimeLive,
+  resolveActionCommit,
+  runAction,
+} from './actions/runtime.ts';
 export type {
   ActionCommitOpen,
+  ActionExecutionResolution,
   ActionRuntimeService,
   ResolveActionCommitInput,
   RunActionInput,

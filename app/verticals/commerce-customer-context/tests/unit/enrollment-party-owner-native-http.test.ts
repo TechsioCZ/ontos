@@ -12,10 +12,7 @@ import { retailCustomerDirectoryOwnerEffect } from '../../src/enrollment/journey
 import { retailPartyCandidateOwnerEffect } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import type { RetailPartyCandidateOwnerInput } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import { CommerceEnrollmentOwnerTransitionSchema } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
-import {
-  CommerceEnrollmentOwnerEffectRejected,
-  CommerceEnrollmentOwnerEffectUnavailable,
-} from '../../src/enrollment/orchestration/owner-transition-errors.ts';
+import { CommerceEnrollmentOwnerEffectUnavailable } from '../../src/enrollment/orchestration/owner-transition-errors.ts';
 
 const compositionRevision = 'c'.repeat(64);
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -241,7 +238,7 @@ it.effect('scheduled reconciliation reads the original invocation through native
                 _tag: 'PartyCommandCommitResolution',
                 invocationId: ownerInvocationId,
                 retryCommand: false,
-                state: 'OPEN',
+                state: 'RUNNING',
               },
         ),
       );
@@ -253,7 +250,7 @@ it.effect('scheduled reconciliation reads the original invocation through native
         ownerOperationRevision: 1,
       })
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration), Effect.flip);
-    expect(Schema.is(CommerceEnrollmentOwnerEffectRejected)(failure)).toBe(true);
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
     expect(requests).toHaveLength(2);
     expect(requests[1]?.url).toBe(
       'https://shell.example.test/api/approved/party-registry/party-registry/action-commits/resolve',
@@ -365,7 +362,7 @@ const customerCommandPayloadSchema = Schema.Union([
   Schema.toEncoded(CounterpartyCustomerOnboardPayloadSchema),
 ]);
 
-const customerDirectoryTransport = (state: 'ABSENT' | 'OPEN' | 'COMMITTED', failCommand = false) => {
+const customerDirectoryTransport = (state: 'ABSENT' | 'RUNNING' | 'COMMITTED', failCommand = false) => {
   const requests: Request[] = [];
   const commands: (typeof customerCommandPayloadSchema.Type)[] = [];
   let issued = 0;
@@ -379,16 +376,7 @@ const customerDirectoryTransport = (state: 'ABSENT' | 'OPEN' | 'COMMITTED', fail
     if (request.url.endsWith('/action-commits/resolve')) {
       return Promise.resolve(
         state === 'ABSENT'
-          ? Response.json(
-              {
-                _tag: 'PartyCommandNotFoundProblem',
-                detail: 'Unknown scoped command',
-                status: 404,
-                title: 'Not found',
-                type: 'urn:test:not-found',
-              },
-              { status: 404 },
-            )
+          ? Response.json({ _tag: 'PartyCommandCommitResolution', retryCommand: true, state: 'NOT_STARTED' })
           : Response.json({
               _tag: 'PartyCommandCommitResolution',
               invocationId: '99000000-0000-4000-8000-000000000001',
@@ -518,7 +506,7 @@ it.effect('reconciles committed customer commands without replaying any mutation
 
 it.effect('halts on an OPEN customer command without dispatching a duplicate', () =>
   Effect.gen(function* openCustomerDirectory() {
-    const transport = customerDirectoryTransport('OPEN');
+    const transport = customerDirectoryTransport('RUNNING');
     const failure = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
       .dispatch(transition)
       .pipe(

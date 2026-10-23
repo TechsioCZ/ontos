@@ -1,19 +1,20 @@
-import {
-  AddContactPointPayloadSchema,
-  CounterpartyCustomerOnboardPayloadSchema,
-  PartyCommandNotFoundProblemSchema,
-} from '@app/party-registry/api';
+import { AddContactPointPayloadSchema, CounterpartyCustomerOnboardPayloadSchema } from '@app/party-registry/api';
 import {
   addContactPointWithAuthorization,
   counterpartyCustomerOnboardWithAuthorization,
   resolvePartyCommandCommitWithAuthorization,
 } from '@app/party-registry/api/client';
 import type { PartyRef } from '@app/party-registry/resources/party';
-import { Effect, Option, Redacted, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 
 import { EnrollmentActionInvocationIdSchema } from '../../../shared/enrollment-contracts.ts';
 import type { RetailEnrollmentRegistration } from '../../../shared/enrollment-contracts.ts';
-import { decodeOwnerOutcome, decodeOwnerResolution, ownerUnavailable } from '../orchestration/owner-effect-codec.ts';
+import {
+  decodeOwnerOutcome,
+  decodeOwnerResolution,
+  ownerRejected,
+  ownerUnavailable,
+} from '../orchestration/owner-effect-codec.ts';
 import type { CommerceEnrollmentOwnerEffect } from '../orchestration/owner-transition-driver.ts';
 import { acquireRetailPartyGateway } from './retail-self-enrollment-party-owner.ts';
 import type { RetailPartyCandidateOwnerInput } from './retail-self-enrollment-party-owner.ts';
@@ -54,16 +55,20 @@ const runCommand = Effect.fn('RetailCustomerDirectory.runCommand')(function* run
     { actionKey: command.actionKey, idempotencyKey },
     Redacted.value(recoveryGateway.credential),
     { ...recoveryGateway.options, correlationId: input.requestCorrelation },
-  ).pipe(
-    Effect.asSome,
-    Effect.catchIf(Schema.is(PartyCommandNotFoundProblemSchema), () => Effect.succeedNone),
-    Effect.mapError((cause) => unavailable('The customer command commit could not be resolved', cause)),
-  );
-  if (Option.isSome(resolution)) {
-    if (resolution.value.state !== 'COMMITTED') {
-      return yield* unavailable('The customer command has an unresolved invocation; no duplicate was dispatched');
-    }
-  } else {
+  ).pipe(Effect.mapError((cause) => unavailable('The customer command state could not be resolved', cause)));
+  if (resolution.state === 'COMMITTED') {
+    return yield* Effect.void;
+  }
+  if (resolution.state === 'REJECTED') {
+    return yield* ownerRejected(
+      'retail_customer_command_rejected',
+      'The original customer directory command was terminally rejected',
+    );
+  }
+  if (!resolution.retryCommand) {
+    return yield* unavailable('The original customer command is still running or indeterminate');
+  }
+  {
     const gateway = yield* acquireRetailPartyGateway(input);
     const options = { ...gateway.options, correlationId: input.requestCorrelation, idempotencyKey };
     const failed = (cause: unknown) =>
@@ -187,6 +192,23 @@ export const retailCustomerDirectoryOwnerEffect = (
             },
             'retail_customer_directory_unavailable',
             'The customer directory reconciliation is invalid',
+          ),
+        ),
+        Effect.catchTag('CommerceEnrollmentOwnerEffectRejected', (failure) =>
+          decodeOwnerResolution(
+            {
+              actorPrincipalId: reconciliation.actorPrincipalId,
+              failureCode: 'owner_rejected',
+              failureReason: failure.reason,
+              outcomeCode: failure.code,
+              reconciliationRef: retailSelfEnrollmentEvidenceReference([
+                'retail-customer-directory-rejected',
+                reconciliation.ownerInvocationId,
+              ]),
+              status: 'FAILED',
+            },
+            'retail_customer_directory_unavailable',
+            'The customer directory rejection is invalid',
           ),
         ),
       ),

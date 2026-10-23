@@ -81,6 +81,7 @@ it.live('routes an authenticated recovery request with both governed runtimes av
         Effect.fail(
           new ActionAlreadyCommitted({ code: 'action_already_committed', invocationId, reason: 'committed' }),
         ),
+      resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
       runAction: () => Effect.die('unused'),
     };
     const assembled = makeCatalogApiRuntime(

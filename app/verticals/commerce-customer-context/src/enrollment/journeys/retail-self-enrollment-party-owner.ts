@@ -1,4 +1,4 @@
-import { PartyCommandAlreadyCommittedProblemSchema, PartyCommandNotFoundProblemSchema } from '@app/party-registry/api';
+import { PartyCommandAlreadyCommittedProblemSchema } from '@app/party-registry/api';
 import {
   acceptRetailEnrollmentEvidenceWithAuthorization,
   createPartyWithAuthorization,
@@ -8,15 +8,10 @@ import {
 import type { acceptRetailEnrollmentEvidence, createParty, recoverPartyCreate } from '@app/party-registry/api/client';
 import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
-import { Config, Effect, Encoding, Match, Option, Redacted, Schema } from 'effect';
+import { Config, Effect, Encoding, Match, Redacted, Schema } from 'effect';
 
 import type { ReconcileEnrollmentResolution } from '../../../shared/enrollment-contracts.ts';
-import {
-  decodeOwnerOutcome,
-  decodeOwnerResolution,
-  ownerRejected,
-  ownerUnavailable,
-} from '../orchestration/owner-effect-codec.ts';
+import { decodeOwnerOutcome, decodeOwnerResolution, ownerUnavailable } from '../orchestration/owner-effect-codec.ts';
 import type { OwnerOutcomeDraft, OwnerResolutionDraft } from '../orchestration/owner-effect-codec.ts';
 import type {
   CommerceEnrollmentOwnerEffect,
@@ -270,8 +265,6 @@ interface PartySubmission {
   readonly verdict: PartyVerdict;
 }
 
-const isCommitResolutionNotFound = Schema.is(PartyCommandNotFoundProblemSchema);
-
 /**
  * Build the Party Registry owner effect for one Attempt.  `input` carries the business candidate;
  * `executors` defaults to the published client and is replaced by doubles in unit tests.
@@ -352,27 +345,39 @@ export const retailPartyCandidateOwnerEffect = (
   const reconcile = Effect.fn('RetailPartyCandidateOwnerEffect.reconcile')(function* reconcileCandidate(
     reconciliation: CommerceEnrollmentOwnerReconciliationInput,
   ): Effect.fn.Return<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> {
-    // Only the native missing-invocation result permits submission with the original immutable key.
+    // Only native NOT_STARTED or RETRYABLE permits submission with the original immutable key.
     const recovery = yield* executors
       .recoverPartyCreate(
         { actionKey: 'party.registry.create-party', idempotencyKey: reconciliation.ownerInvocationId },
         { correlationId: requestCorrelation },
       )
-      .pipe(
-        Effect.asSome,
-        Effect.catchIf(isCommitResolutionNotFound, () => Effect.succeedNone),
-        Effect.mapError((cause) => unavailable('The Party Registry commit resolution is unavailable', cause)),
-      );
-    if (Option.isNone(recovery)) {
-      return yield* resolutionFor(reconciliation, yield* submit(reconciliation.ownerInvocationId));
+      .pipe(Effect.mapError((cause) => unavailable('The Party Registry commit resolution is unavailable', cause)));
+    const pending = Match.value(recovery).pipe(
+      Match.tag('PartyCreateRecoveryPending', ({ resolution }) => resolution),
+      Match.orElse(() => null),
+    );
+    if (pending !== null) {
+      const resolution = pending;
+      if (resolution.retryCommand) {
+        return yield* resolutionFor(reconciliation, yield* submit(reconciliation.ownerInvocationId));
+      }
+      if (resolution.state === 'REJECTED') {
+        return yield* decodeResolution({
+          actorPrincipalId: reconciliation.actorPrincipalId,
+          failureCode: 'owner_rejected',
+          failureReason: 'The original Party Create command was terminally rejected',
+          outcomeCode: 'party_registry_command_rejected',
+          reconciliationRef: evidenceFor(reconciliation.ownerInvocationId, resolution.invocationId),
+          status: 'FAILED',
+        });
+      }
     }
-
-    const recovered = Match.value(recovery.value).pipe(
+    const recovered = Match.value(recovery).pipe(
       Match.tag('PartyCreateRecovered', ({ result }) => result),
       Match.orElse(() => null),
     );
     if (recovered === null) {
-      return yield* ownerRejected(
+      return yield* ownerUnavailable(
         'party_registry_commit_open',
         'The Party Registry invocation has not committed yet and must be retried',
       );

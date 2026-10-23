@@ -79,6 +79,7 @@ import { portalAuthMfaApiLive } from './portal-auth/provider/mfa/http.ts';
 import { CommercePortalAuthMfaProviderLive } from './portal-auth/provider/mfa/better-auth-provider.ts';
 import { CommercePortalAuthMfaServiceLive } from './portal-auth/provider/mfa/service.ts';
 import { CommercePortalAuthMfaStepUpCodeVerifierLive } from './portal-auth/provider/mfa/step-up-verifier.ts';
+import { enrollmentCommandRecoveryLive } from './enrollment-command-recovery.ts';
 import { portalAuthEnrollmentApiLive } from './portal-auth/enrollment/http.ts';
 import { customerOwnProfileReadApiLive, customerOwnProfileUpdateApiLive } from './portal-auth/profile/http.ts';
 import {
@@ -526,7 +527,7 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
             );
         }),
       );
-    return { resolveActionCommit: existingRuntime.resolveActionCommit, runAction };
+    return { ...existingRuntime, runAction };
   }),
 );
 
@@ -891,6 +892,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     portalAuthRecoveryApiLive,
     portalAuthStepUpApiLive,
     portalAuthEnrollmentApiLive,
+    enrollmentCommandRecoveryLive,
     commercePortalAuthVerificationApiLive,
     customerOwnConsentReadApiLive,
     customerOwnConsentUpdateApiLive,

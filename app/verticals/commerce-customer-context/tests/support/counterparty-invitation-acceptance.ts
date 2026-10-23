@@ -561,7 +561,7 @@ const claimAnswerLoss = function* claimAnswerLoss(droppedAnswers: string[]) {
         return Effect.succeed(result);
       }),
     );
-  return { resolveActionCommit: runtime.resolveActionCommit, runAction };
+  return { ...runtime, runAction };
 };
 
 /**

@@ -1613,6 +1613,23 @@ const testProgram12 = () =>
         .where(eq(tenantModuleStates.moduleKey, moduleStateKey));
 
       const keyedLookup = { actionKey: 'shell.test.lost-ack', idempotencyKey: key, principal };
+      expect(yield* resolvingRuntime.resolveActionExecution(keyedLookup)).toEqual({
+        invocationId,
+        retryCommand: false,
+        state: 'COMMITTED',
+      });
+      expect(yield* resolvingRuntime.resolveActionExecution({ invocationId, principal })).toEqual({
+        invocationId,
+        retryCommand: false,
+        state: 'COMMITTED',
+      });
+      const unavailableExecution = yield* resolvingRuntime.resolveActionExecution({
+        ...keyedLookup,
+        idempotencyKey: 'never-dispatched',
+      });
+      expect(unavailableExecution).toEqual({ retryCommand: true, state: 'NOT_STARTED' });
+      const executionFailure = yield* unavailableRuntime.resolveActionExecution(keyedLookup).pipe(Effect.flip);
+      expect(Schema.is(ActionInvocationPersistenceError)(executionFailure)).toBe(true);
       const keyedCommitted = yield* Effect.flip(resolvingRuntime.resolveActionCommit(keyedLookup));
       expect(Predicate.isTagged(keyedCommitted, 'ActionAlreadyCommitted')).toBe(true);
       if (Predicate.isTagged(keyedCommitted, 'ActionAlreadyCommitted')) {
@@ -1639,8 +1656,17 @@ const testProgram12 = () =>
           },
         },
       ]) {
+        expect(yield* resolvingRuntime.resolveActionExecution(outsideScope)).toEqual({
+          retryCommand: true,
+          state: 'NOT_STARTED',
+        });
+        if (outsideScope.principal !== principal) {
+          expect(
+            yield* resolvingRuntime.resolveActionExecution({ invocationId, principal: outsideScope.principal }),
+          ).toEqual({ retryCommand: true, state: 'NOT_STARTED' });
+        }
         const deniedLookup = yield* Effect.flip(resolvingRuntime.resolveActionCommit(outsideScope));
-        expect(deniedLookup._tag).toBe('ActionInvocationNotFound');
+        expect(Predicate.isTagged(deniedLookup, 'ActionInvocationNotFound')).toBe(true);
       }
       expect(hasFailure(committedResolution, 'ActionAlreadyCommitted')).toBe(true);
       expect(hasFailure(unauthorizedResolution, 'ActionInvocationNotFound')).toBe(true);
@@ -1699,6 +1725,23 @@ const testProgram12 = () =>
         principal,
       });
       expect(keyedOpen.invocationId).toBe(openInvocationId);
+      expect(
+        yield* resolvingRuntime.resolveActionExecution({
+          actionKey: 'shell.test.lost-ack-open',
+          idempotencyKey: openKey,
+          principal,
+        }),
+      ).toEqual({ invocationId: openInvocationId, retryCommand: true, state: 'RETRYABLE' });
+      expect(openInvocations[0]?.status).toBe('received');
+      const changedPayload = yield* resolvingRuntime
+        .runAction({
+          payload: { value: 'changed-original-payload' },
+          principal,
+          registration: openRegistration,
+          transport: transport(openKey, openModuleStateKey),
+        })
+        .pipe(Effect.exit);
+      expect(hasFailure(changedPayload, 'ActionRequestHashConflict')).toBe(true);
       const openResolved = yield* resolvingRuntime.runAction({
         payload: { value: 'rolled-back-with-lost-ack' },
         principal,

@@ -58,6 +58,7 @@ import type { RetailPartyCandidateOwnerInput } from '../journeys/retail-self-enr
 import type { RetailSelfEnrollmentPreparationSubject } from '../journeys/retail-self-enrollment-preparation.ts';
 import {
   CommerceActionCommitResolutionFailed,
+  resolveRetailOwnerCommand,
   retailCustomerProfileActionExecutor,
   retailCustomerProfileOwnerEffect,
   retailPortalBindingActionExecutor,
@@ -446,16 +447,7 @@ const commitResolutionUnavailable = (reason: string, cause: unknown): CommerceAc
     cause,
   );
 
-/**
- * One SELECT-only owner read, in its own transaction, under the Tenant and Selling Legal Entity the
- * durable Attempt already verified — the very scope the governed Action wrote under.
- *
- * These two transitions are the ones Commerce owns itself: the owner routines and the Commerce
- * Action commit in the same database and the same transaction. So the owner's durable state *is*
- * this invocation's commit resolution, and the one thing the Action runtime cannot republish — the
- * result reference — is read back from the row the Action wrote. A row the owner does not hold is a
- * transition that never committed, and the driver may dispatch it again.
- */
+/** Read owner result only after exact native caller-owned command commit is proven. */
 const ownerReadFor =
   (run: CommerceEnrollmentOwnerTransactionRun, context: CommerceEnrollmentOwnerEffectContext) =>
   <Value>(
@@ -486,17 +478,36 @@ const ensureProfileCommitResolution = (
 ): RetailCustomerProfileOwnerExecutors['commitResolution'] =>
   Option.isNone(run)
     ? actionResultNotRepublished
-    : () =>
-        ownerReadFor(
+    : Effect.fn('RetailOwnerEffectRegistry.resolveExactCommand')(function* resolveExactCommand(idempotencyKey) {
+        const resolution = yield* resolveRetailOwnerCommand(
+          {
+            compositionRevision: context.attempt.compositionRevision,
+            legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
+            requestCorrelation: context.requestCorrelation,
+            tenantId: context.attempt.tenantId,
+          },
+          { actionKey: 'commerce.customer-context.ensure-retail-customer-profile', idempotencyKey },
+        ).pipe(
+          Effect.mapError((cause) =>
+            commitResolutionUnavailable('The exact native Commerce command could not be resolved', cause),
+          ),
+        );
+        if (resolution.state !== 'COMMITTED') {
+          return { state: resolution.state };
+        }
+        return yield* ownerReadFor(
           run.value,
           context,
         )((invoker) => readRetailProfileByParty(invoker, partyResourceId)).pipe(
-          Effect.map((found) =>
+          Effect.flatMap((found) =>
             Option.isNone(found)
-              ? ({ state: 'OPEN' } as const)
-              : ({ result: found.value, state: 'COMMITTED' } as const),
+              ? Effect.fail(
+                  commitResolutionUnavailable('The committed command has no retained owner result', resolution),
+                )
+              : Effect.succeed({ result: found.value, state: 'COMMITTED' as const }),
           ),
         );
+      });
 
 /**
  * The binding Action's own result, rebuilt from the Retail Portal Profile Binding the owner holds
@@ -510,8 +521,24 @@ const bindProfileCommitResolution = (
 ): RetailPortalBindingOwnerExecutors['commitResolution'] =>
   Option.isNone(run)
     ? actionResultNotRepublished
-    : () =>
-        ownerReadFor(
+    : Effect.fn('RetailOwnerEffectRegistry.resolveExactCommand')(function* resolveExactCommand(idempotencyKey) {
+        const resolution = yield* resolveRetailOwnerCommand(
+          {
+            compositionRevision: context.attempt.compositionRevision,
+            legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
+            requestCorrelation: context.requestCorrelation,
+            tenantId: context.attempt.tenantId,
+          },
+          { actionKey: 'commerce.customer-context.bind-retail-portal-profile', idempotencyKey },
+        ).pipe(
+          Effect.mapError((cause) =>
+            commitResolutionUnavailable('The exact native Commerce command could not be resolved', cause),
+          ),
+        );
+        if (resolution.state !== 'COMMITTED') {
+          return { state: resolution.state };
+        }
+        return yield* ownerReadFor(
           run.value,
           context,
         )((invoker) =>
@@ -525,12 +552,15 @@ const bindProfileCommitResolution = (
             profileResourceId,
           ),
         ).pipe(
-          Effect.map((found) =>
+          Effect.flatMap((found) =>
             Option.isNone(found)
-              ? ({ state: 'OPEN' } as const)
-              : ({ result: found.value, state: 'COMMITTED' } as const),
+              ? Effect.fail(
+                  commitResolutionUnavailable('The committed command has no retained owner result', resolution),
+                )
+              : Effect.succeed({ result: found.value, state: 'COMMITTED' as const }),
           ),
         );
+      });
 
 const ensureProfileEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): RegistryEntry =>
   Effect.fn('CommerceEnrollmentOwnerEffectRegistry.ensureProfile')(function* ensureProfileEntryEffect(

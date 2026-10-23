@@ -229,18 +229,19 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
     rejectPermissionDenied: (_executor, input) => recordRejection(input, permissionDenials),
     resolveInvocation: (_executor, input) =>
       Effect.suspend(() => {
-        const invocation =
-          input.invocationId !== undefined
-            ? invocations.get(input.invocationId)
-            : [...invocations.values()].find(
-                (candidate) =>
-                  candidate.actionKey === input.actionKey &&
-                  candidate.idempotencyKey === input.idempotencyKey &&
-                  candidate.legalEntityId === input.principal.legalEntityId &&
-                  candidate.tenantId === input.principal.tenantId &&
-                  candidate.principalId === input.principal.principalId,
-              );
+        const hasInvocationId = input.invocationId !== undefined;
+        const invocation = hasInvocationId
+          ? invocations.get(input.invocationId)
+          : [...invocations.values()].find(
+              (candidate) =>
+                candidate.actionKey === input.actionKey &&
+                candidate.idempotencyKey === input.idempotencyKey &&
+                candidate.legalEntityId === input.principal.legalEntityId &&
+                candidate.tenantId === input.principal.tenantId &&
+                candidate.principalId === input.principal.principalId,
+            );
         return invocation?.tenantId === input.principal.tenantId &&
+          invocation.legalEntityId === input.principal.legalEntityId &&
           invocation.principalId === input.principal.principalId
           ? Effect.succeed(invocation)
           : Effect.fail(

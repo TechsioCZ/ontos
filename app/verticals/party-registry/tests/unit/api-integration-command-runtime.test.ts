@@ -449,7 +449,7 @@ const expectCommitResolution = Effect.fn('Test.expectCommitResolution')(function
   app: ReturnType<typeof mounted>,
   invocationId: string,
   token: string,
-  state: 'OPEN' | 'COMMITTED',
+  state: 'RETRYABLE' | 'RUNNING' | 'COMMITTED',
 ) {
   const resolution = yield* handle(app, recoveryRequest(invocationId, token));
   expect(resolution.status).toBe(200);
@@ -457,7 +457,7 @@ const expectCommitResolution = Effect.fn('Test.expectCommitResolution')(function
   expect(Schema.is(ResolvePartyCommandCommitResultSchema)(resolutionBody)).toBe(true);
   expect(Struct.omit(resolutionBody, ['_tag', 'createResult'])).toEqual({
     invocationId,
-    retryCommand: false,
+    retryCommand: state === 'RETRYABLE',
     state,
   });
 });
@@ -987,6 +987,7 @@ it.live('correlation and idempotency are mandatory before the Core Action lifecy
     const harness = yield* makeActionTestHarness();
     let runtimeCalls = 0;
     const observingRuntime: ActionRuntimeService = {
+      resolveActionExecution: harness.runtime.resolveActionExecution,
       resolveActionCommit: harness.runtime.resolveActionCommit,
       runAction: (input) => {
         runtimeCalls += 1;
@@ -1068,6 +1069,7 @@ it.live('a decoded relationship timestamp reaches the Action runtime exactly onc
     });
     let runtimeCalls = 0;
     const actionRuntime: ActionRuntimeService = {
+      resolveActionExecution: harness.runtime.resolveActionExecution,
       resolveActionCommit: harness.runtime.resolveActionCommit,
       runAction: () => {
         runtimeCalls += 1;
@@ -1093,6 +1095,7 @@ it.live('an unexpected runtime defect is sanitized by the governed outer HTTP se
     const assertion = yield* makeAssertion();
     const harness = yield* makeActionTestHarness();
     const defectiveRuntime: ActionRuntimeService = {
+      resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
       resolveActionCommit: () => Effect.die('private resolution defect'),
       runAction: () => Effect.die('private governed runner defect'),
     };
@@ -1240,6 +1243,7 @@ it.live('the endpoint-owned mapper preserves representative Core failure semanti
       Effect.gen(function* verifyActionFailureMapping() {
         const harness = yield* makeActionTestHarness();
         const failingRuntime: ActionRuntimeService = {
+          resolveActionExecution: harness.runtime.resolveActionExecution,
           resolveActionCommit: harness.runtime.resolveActionCommit,
           runAction: () => Effect.fail(failure),
         };
@@ -1266,6 +1270,7 @@ it.live('endpoint-local mappings keep declared not-found capability distinct ove
       reason: 'endpoint capability fixture',
     });
     const actionRuntime: ActionRuntimeService = {
+      resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
       resolveActionCommit: () => Effect.die('commit recovery is outside the fixture'),
       runAction: () => Effect.fail(failure),
     };
@@ -1608,12 +1613,16 @@ it.live('commit resolution requires authentication and a valid invocation withou
     const malformedBody = yield* Effect.promise(() => malformed.json());
     expect(Predicate.isTagged(malformedBody, 'PartyCommandInvalidRequestProblem')).toBe(true);
     const absent = yield* handle(app, recoveryRequest(randomUUID(), assertion.token));
-    expect(absent.status).toBe(404);
+    expect(absent.status).toBe(200);
+    expect(Struct.omit(yield* Effect.promise(() => absent.json()), ['_tag'])).toEqual({
+      state: 'NOT_STARTED',
+      retryCommand: true,
+    });
     expect(harness.snapshot().invocations.length).toBe(0);
   }),
 );
 
-it.live('an open invocation resolves explicitly without authorizing automatic command retry', () =>
+it.live('a still-running invocation resolves without authorizing duplicate dispatch', () =>
   Effect.gen(function* resolveOpenInvocationWithoutRetry() {
     const assertion = yield* makeAssertion();
     const harness = yield* makeActionTestHarness({
@@ -1643,7 +1652,7 @@ it.live('an open invocation resolves explicitly without authorizing automatic co
     if (invocationId === undefined || invocationId.length === 0) {
       throw new Error('Expected truthy value');
     }
-    yield* expectCommitResolution(app, invocationId, assertion.token, 'OPEN');
+    yield* expectCommitResolution(app, invocationId, assertion.token, 'RUNNING');
     expect(harness.snapshot().invocations.length).toBe(1);
     expect(harness.snapshot().committed.length).toBe(0);
   }),
@@ -1774,7 +1783,11 @@ it.live(
       expect(harness.snapshot().committed.length).toBe(1);
       const committedSnapshot = harness.snapshot();
       const deniedRecovery = yield* handle(app, recoveryRequest(invocationId, assertion.otherToken));
-      expect(deniedRecovery.status).toBe(404);
+      expect(deniedRecovery.status).toBe(200);
+      expect(Struct.omit(yield* Effect.promise(() => deniedRecovery.json()), ['_tag'])).toEqual({
+        state: 'NOT_STARTED',
+        retryCommand: true,
+      });
       yield* expectCommitResolution(app, invocationId, assertion.token, 'COMMITTED');
       const missingReadAuth = yield* handle(app, decisionRequest(invocationId));
       expect(missingReadAuth.status).toBe(401);

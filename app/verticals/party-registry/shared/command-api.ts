@@ -298,12 +298,28 @@ export const ResolvePartyCommandCommitPayloadSchema = Schema.Union([
 ]);
 export type ResolvePartyCommandCommitPayload = typeof ResolvePartyCommandCommitPayloadSchema.Type;
 
-export const ResolvePartyCommandCommitResultSchema = Schema.TaggedStruct('PartyCommandCommitResolution', {
-  invocationId: ActionInvocationIdSchema,
-  retryCommand: Schema.Literal(false),
-  state: Schema.Literals(['OPEN', 'COMMITTED']),
-  createResult: Schema.optionalKey(PartyCreateOutcomeSchema),
-});
+export const ResolvePartyCommandCommitResultSchema = Schema.Union([
+  Schema.TaggedStruct('PartyCommandCommitResolution', {
+    state: Schema.Literal('NOT_STARTED'),
+    retryCommand: Schema.Literal(true),
+  }),
+  Schema.TaggedStruct('PartyCommandCommitResolution', {
+    invocationId: ActionInvocationIdSchema,
+    state: Schema.Literal('RETRYABLE'),
+    retryCommand: Schema.Literal(true),
+  }),
+  Schema.TaggedStruct('PartyCommandCommitResolution', {
+    invocationId: ActionInvocationIdSchema,
+    state: Schema.Literals(['RUNNING', 'REJECTED']),
+    retryCommand: Schema.Literal(false),
+  }),
+  Schema.TaggedStruct('PartyCommandCommitResolution', {
+    invocationId: ActionInvocationIdSchema,
+    state: Schema.Literal('COMMITTED'),
+    retryCommand: Schema.Literal(false),
+    createResult: Schema.optionalKey(PartyCreateOutcomeSchema),
+  }),
+]);
 export type ResolvePartyCommandCommitResult = typeof ResolvePartyCommandCommitResultSchema.Type;
 
 export const PartyCommandInternalProblemSchema = makeProblemDetailsSchema('PartyCommandInternalProblem', 500);

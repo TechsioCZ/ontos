@@ -145,7 +145,7 @@ const privacyConsentAuthorityActionRuntimeLive: Layer.Layer<
             );
         }),
       );
-    return { resolveActionCommit: existing.resolveActionCommit, runAction };
+    return { ...existing, runAction };
   }),
 );
 

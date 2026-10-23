@@ -88,6 +88,7 @@ describe('Decide Product Type unnecessary HTTP Action', () => {
       let denied = false;
       const actionRuntime: ActionRuntimeService = {
         resolveActionCommit: () => Effect.die('No commit resolution expected'),
+        resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
         runAction: (input) => {
           calls += 1;
           expect(input.registration).toBe(decideProductTypeUnnecessaryAction);

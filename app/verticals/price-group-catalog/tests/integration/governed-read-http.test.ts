@@ -324,6 +324,7 @@ const nonPersistingRedemption: GatewayAssertionRedemption = {
 };
 const unusedActionRuntime: ActionRuntimeService = {
   resolveActionCommit: () => Effect.die('Action runtime is outside this governed Read proof'),
+  resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
   runAction: () => Effect.die('Action runtime is outside this governed Read proof'),
 };
 const emptyRequestContext = Context.makeUnsafe<unknown>(new Map());

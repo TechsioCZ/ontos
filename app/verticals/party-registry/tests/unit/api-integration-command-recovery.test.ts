@@ -228,7 +228,7 @@ it.effect('recovery is separate from the unchanged set of explicit mutation endp
   Effect.gen(function* decodeContract3() {
     const endpoint = partyRegistryCommandRecoveryApi.groups.partyCommandRecovery.endpoints.resolve;
     expect(endpoint.path).toBe('/party-registry/action-commits/resolve');
-    for (const state of ['OPEN', 'COMMITTED']) {
+    for (const state of ['RUNNING', 'COMMITTED']) {
       const resolution = yield* Schema.decodeUnknownEffect(ResolvePartyCommandCommitResultSchema)({
         _tag: 'PartyCommandCommitResolution',
         invocationId,
@@ -396,9 +396,9 @@ it.effect('browser recovery uses the same owned invocation result, not reviewer 
   }),
 );
 
-for (const state of ['OPEN', 'COMMITTED'] as const) {
+for (const state of ['RUNNING', 'COMMITTED'] as const) {
   it.effect(
-    `native recovery ${state === 'OPEN' ? 'waits for an open commit' : 'rejects an unproven committed result'}`,
+    `native recovery ${state === 'RUNNING' ? 'waits for an open commit' : 'rejects an unproven committed result'}`,
     () =>
       Effect.gen(function* missingResult() {
         const { acquire, acquisitions } = makeNativeRecoveryAcquirer();
@@ -409,7 +409,7 @@ for (const state of ['OPEN', 'COMMITTED'] as const) {
           compositionRevision,
           correlationId: 'missing-result',
         }).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-        if (state === 'OPEN') {
+        if (state === 'RUNNING') {
           expect(
             Result.isSuccess(result) &&
               Match.value(result.success).pipe(

@@ -242,8 +242,8 @@ export interface RunActionInput<
 }
 
 export type ResolveActionCommitInput = { readonly principal: unknown } & (
-  | { readonly invocationId: unknown; readonly actionKey?: never; readonly idempotencyKey?: never }
-  | { readonly invocationId?: never; readonly actionKey: unknown; readonly idempotencyKey: unknown }
+  | { readonly actionKey?: never; readonly idempotencyKey?: never; readonly invocationId: unknown }
+  | { readonly actionKey: unknown; readonly idempotencyKey: unknown; readonly invocationId?: never }
 );
 
 const ActionInvocationIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('ActionInvocationId'));
@@ -253,6 +253,45 @@ const ActionCommitOpenSchema = Schema.TaggedStruct('ActionCommitOpen', {
 });
 
 export type ActionCommitOpen = typeof ActionCommitOpenSchema.Type;
+
+export const ActionExecutionResolutionSchema = Schema.Union([
+  Schema.Struct({ retryCommand: Schema.Literal(true), state: Schema.Literal('NOT_STARTED') }),
+  Schema.Struct({
+    invocationId: ActionInvocationIdSchema,
+    retryCommand: Schema.Literal(true),
+    state: Schema.Literal('RETRYABLE'),
+  }),
+  Schema.Struct({
+    invocationId: ActionInvocationIdSchema,
+    retryCommand: Schema.Literal(false),
+    state: Schema.Literals(['RUNNING', 'COMMITTED', 'REJECTED']),
+  }),
+]);
+export type ActionExecutionResolution = typeof ActionExecutionResolutionSchema.Type;
+
+const ActionCommitActionKeySchema = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isMinLength(1),
+  Schema.isMaxLength(300),
+).pipe(Schema.brand('ActionCommitActionKey'));
+const ActionCommitIdempotencyKeySchema = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isMinLength(1),
+  Schema.isMaxLength(200),
+).pipe(Schema.brand('ActionCommitIdempotencyKey'));
+
+const ActionCommitIdentitySchema = Schema.Union([
+  Schema.Struct({
+    actionKey: Schema.optionalKey(Schema.Never),
+    idempotencyKey: Schema.optionalKey(Schema.Never),
+    invocationId: ActionInvocationIdSchema,
+  }),
+  Schema.Struct({
+    actionKey: ActionCommitActionKeySchema,
+    idempotencyKey: ActionCommitIdempotencyKeySchema,
+    invocationId: Schema.optionalKey(Schema.Never),
+  }),
+]);
 
 export interface ActionRuntimeService {
   readonly resolveActionCommit: (
@@ -266,6 +305,13 @@ export interface ActionRuntimeService {
     | ActionInvocationStateError
     | ActionPayloadValidationError
     | ActionTrustedContextValidationError
+  >;
+
+  readonly resolveActionExecution: (
+    input: ResolveActionCommitInput,
+  ) => Effect.Effect<
+    ActionExecutionResolution,
+    ActionInvocationPersistenceError | ActionPayloadValidationError | ActionTrustedContextValidationError
   >;
   readonly runAction: <
     PayloadSchema extends Schema.ConstraintDecoder<unknown>,
@@ -1751,9 +1797,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       });
       // MCP OAuth connections: the grant's write scope is a policy every Action must pass (ONTOS-MCP-AUTH-DESIGN.md §4.3).
       const connectionPolicies: readonly ActionPolicy<typeof payload, Owner>[] =
-        principal.authMethod === 'oauth_connection'
-          ? [connectionScopePolicy as ActionPolicy<typeof payload, Owner>]
-          : [];
+        principal.authMethod === 'oauth_connection' ? [connectionScopePolicy] : [];
       const allowedPolicies = yield* Effect.forEach(
         [...connectionPolicies, ...input.registration.descriptor.policies],
         evaluateActionPolicy,
@@ -2076,24 +2120,48 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     return yield* executeTransactionAndHandleExit();
   });
 
+  /** Exact caller-owned execution state. Received rows may be retried only through native same-key execution. */
+  const resolveActionExecution: ActionRuntimeService['resolveActionExecution'] = Effect.fn(
+    'ActionRuntime.resolveActionExecution',
+  )(function* resolveActionExecutionEffect(input: ResolveActionCommitInput) {
+    const principal = yield* validatePrincipal(input.principal);
+    const identity = yield* Schema.decodeUnknownEffect(ActionCommitIdentitySchema)(input).pipe(
+      Effect.mapError((cause) =>
+        attachFailureCause(
+          new ActionPayloadValidationError({
+            code: 'action_payload_invalid',
+            reason: 'The Action execution lookup identity is invalid',
+          }),
+          cause,
+        ),
+      ),
+    );
+    const invocation = yield* repository.resolveInvocation(database.executor, { ...identity, principal }).pipe(
+      Effect.asSome,
+      Effect.catchTag('ActionInvocationNotFound', () => Effect.succeedNone),
+    );
+    if (Option.isNone(invocation)) {
+      return { retryCommand: true, state: 'NOT_STARTED' } as const;
+    }
+    const record = invocation.value;
+    const invocationId = ActionInvocationIdSchema.make(record.actionInvocationId);
+    if (record.status === 'succeeded') {
+      return { invocationId, retryCommand: false, state: 'COMMITTED' } as const;
+    }
+    if (record.status === 'received' && record.completedAt === null) {
+      return { invocationId, retryCommand: true, state: 'RETRYABLE' } as const;
+    }
+    if ((record.status === 'running' || record.status === 'indeterminate') && record.completedAt === null) {
+      return { invocationId, retryCommand: false, state: 'RUNNING' } as const;
+    }
+    return { invocationId, retryCommand: false, state: 'REJECTED' } as const;
+  });
+
   const resolveActionCommit: ActionRuntimeService['resolveActionCommit'] = Effect.fn(
     'ActionRuntime.resolveActionCommit',
   )(function* resolveActionCommitEffect(input: ResolveActionCommitInput) {
     const principal = yield* validatePrincipal(input.principal);
-    const identity = yield* Schema.decodeUnknownEffect(
-      Schema.Union([
-        Schema.Struct({
-          invocationId: ActionInvocationIdSchema,
-          actionKey: Schema.optionalKey(Schema.Never),
-          idempotencyKey: Schema.optionalKey(Schema.Never),
-        }),
-        Schema.Struct({
-          invocationId: Schema.optionalKey(Schema.Never),
-          actionKey: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(300)),
-          idempotencyKey: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(200)),
-        }),
-      ]),
-    )(input).pipe(
+    const identity = yield* Schema.decodeUnknownEffect(ActionCommitIdentitySchema)(input).pipe(
       Effect.mapError((cause) =>
         attachFailureCause(
           new ActionPayloadValidationError({
@@ -2108,11 +2176,16 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     const invocation = yield* repository.resolveInvocation(database.executor, { ...identity, principal }).pipe(
       Effect.tapError((error) =>
         Schema.is(ActionInvocationPersistenceError)(error)
-          ? logInvocationPersistenceFailure(error, {
-              ...(requestedInvocationId === undefined ? {} : { invocationId: requestedInvocationId }),
-              principalId: principal.principalId,
-              tenantId: principal.tenantId,
-            })
+          ? logInvocationPersistenceFailure(
+              error,
+              withOptionalProperty(
+                { principalId: principal.principalId, tenantId: principal.tenantId },
+                requestedInvocationId !== undefined,
+                'invocationId',
+                requestedInvocationId,
+                {},
+              ),
+            )
           : Effect.void,
       ),
       Effect.mapError((error) =>
@@ -2144,7 +2217,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
     });
   });
 
-  return Object.freeze({ resolveActionCommit, runAction });
+  return Object.freeze({ resolveActionCommit, resolveActionExecution, runAction });
 };
 
 export class ActionRuntime extends Context.Service<ActionRuntime, ActionRuntimeService>()(
