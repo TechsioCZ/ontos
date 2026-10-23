@@ -364,3 +364,47 @@ it('accepts declared external identity providers and rejects malformed or duplic
     ),
   ).toThrow();
 });
+
+it('accepts exact isolated API cookies and rejects reserved, foreign or ambiguous credential policies', () => {
+  const policy = {
+    cookieNames: ['example-portal.session_token', '__Secure-example-portal.session_token'],
+    realmPrefix: 'example-portal',
+    routes: [{ method: 'GET', path: '/api/customer-account' }],
+  } as const;
+  const withPolicy = (
+    apiCookieTransport: readonly {
+      cookieNames: readonly string[];
+      realmPrefix: string;
+      routes: readonly { method: 'GET'; path: string }[];
+    }[],
+  ) => ({
+    ...emptyManifestInput(),
+    publicSurface: { ...emptyManifestInput().publicSurface, apiCookieTransport },
+  });
+  const accepted = defineOntosModuleManifest({
+    ...emptyManifestInput(),
+    publicSurface: { ...emptyManifestInput().publicSurface, apiCookieTransport: [policy] },
+  });
+  expect(accepted.publicSurface.apiCookieTransport).toEqual([policy]);
+  expect(Object.isFrozen(accepted.publicSurface.apiCookieTransport?.[0]?.routes)).toBe(true);
+  const invalidPolicies: Parameters<typeof withPolicy>[0] = [
+    ...['better-auth', 'shell', 'staff', 'ontos'].map((realmPrefix) => ({
+      ...policy,
+      cookieNames: [`${realmPrefix}.session_token`],
+      realmPrefix,
+    })),
+    { ...policy, cookieNames: ['better-auth.session_token'] },
+    { ...policy, cookieNames: ['__Secure-better-auth.session_token'] },
+    { ...policy, cookieNames: ['__Host-better-auth.session_token'] },
+    { ...policy, cookieNames: ['another-portal.session_token'] },
+    { ...policy, cookieNames: ['example-portal.session_token', 'example-portal.session_token'] },
+    { ...policy, cookieNames: ['example-portal.*'] },
+    { ...policy, routes: [{ method: 'GET', path: '/api/customer-account/../staff' }] },
+    { ...policy, routes: [{ method: 'GET', path: '/api/customer-account?scope=staff' }] },
+    { ...policy, routes: [policy.routes[0], policy.routes[0]] },
+  ];
+  for (const invalidPolicy of invalidPolicies) {
+    expect(() => defineOntosModuleManifest(withPolicy([invalidPolicy]))).toThrow();
+  }
+  expect(() => defineOntosModuleManifest(withPolicy([policy, policy]))).toThrow();
+});

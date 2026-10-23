@@ -437,7 +437,7 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
         }),
     });
     const mcp = yield* Effect.try({
-      catch: (cause) => failure(cause instanceof Error ? cause.message : 'MCP contribution is invalid', cause),
+      catch: (cause) => failure(Predicate.isError(cause) ? cause.message : 'MCP contribution is invalid', cause),
       try: () =>
         deriveOntosMcpContribution({
           actions: owner.manifest.publicSurface.actions,
@@ -461,10 +461,6 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
           businessPermissions: owner.manifest.publicSurface.businessPermissions ?? [],
           components: sorted(components, (left, right) => left.key.localeCompare(right.key)),
           events: sorted(events, (left, right) => left.key.localeCompare(right.key)),
-          ...(owner.manifest.publicSurface.externalIdentityProviders === undefined
-            ? {}
-            : { externalIdentityProviders: owner.manifest.publicSurface.externalIdentityProviders }),
-          ...(mcp === undefined ? {} : { mcp: mcp.contribution }),
           reports: owner.manifest.publicSurface.reports,
           resourceTypes: owner.manifest.publicSurface.resourceTypes,
           search: owner.manifest.publicSurface.search,
@@ -474,6 +470,19 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
       runtime: { outboxSubscriptions: safeRuntime.outboxSubscriptions },
       schemaVersion: ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
     } as const;
+    if (owner.manifest.publicSurface.apiCookieTransport !== undefined) {
+      Object.assign(contract.manifest.publicSurface, {
+        apiCookieTransport: owner.manifest.publicSurface.apiCookieTransport,
+      });
+    }
+    if (owner.manifest.publicSurface.externalIdentityProviders !== undefined) {
+      Object.assign(contract.manifest.publicSurface, {
+        externalIdentityProviders: owner.manifest.publicSurface.externalIdentityProviders,
+      });
+    }
+    if (mcp !== undefined) {
+      Object.assign(contract.manifest.publicSurface, { mcp: mcp.contribution });
+    }
     const decoded = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema, {
       onExcessProperty: 'error',
     })(contract).pipe(Effect.mapError((cause) => failure('derived OntOS module contract is invalid', cause)));

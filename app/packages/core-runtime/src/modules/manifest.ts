@@ -149,9 +149,44 @@ export const OntosOutboxSubscriptionContractSchema = Schema.Struct({
   workerKey: OntosModuleIdSchema,
 });
 
+const reservedAuthenticationCookieRealms = new Set(['better-auth', 'shell', 'staff', 'ontos']);
+const unprefixedCookieName = (name: string): string => name.replace(/^__(?:Secure|Host)-/u, '');
+
+/** Reviewed credential transport, limited to exact cookie names and exact owner-relative API routes. */
+export const OntosApiCookieTransportSchema = Schema.Struct({
+  cookieNames: Schema.Array(
+    Schema.String.check(Schema.isPattern(/^(?:__(?:Secure|Host)-)?[a-z][a-z0-9-]*\.[a-z][a-z0-9_.-]*$/u)),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
+  realmPrefix: Schema.String.check(
+    Schema.isPattern(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u),
+    Schema.makeFilter((value) =>
+      reservedAuthenticationCookieRealms.has(value) ? 'Shell and staff cookie realms are reserved' : undefined,
+    ),
+  ),
+  routes: Schema.Array(
+    Schema.Struct({
+      method: Schema.Literals(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
+      path: Schema.String.check(Schema.isPattern(/^\/api\/[a-z0-9]+(?:[/-][a-z0-9]+)*$/u)),
+    }),
+  ).check(Schema.isMinLength(1), Schema.isMaxLength(64)),
+}).check(
+  Schema.makeFilter(({ cookieNames, realmPrefix, routes }) => {
+    if (cookieNames.some((name) => !unprefixedCookieName(name).startsWith(`${realmPrefix}.`))) {
+      return 'Every declared cookie must belong to its isolated realm prefix';
+    }
+    if (new Set(cookieNames).size !== cookieNames.length) {
+      return 'Cookie transport must not repeat cookie names';
+    }
+    return new Set(routes.map(({ method, path }) => `${method} ${path}`)).size === routes.length
+      ? undefined
+      : 'Cookie transport must not repeat routes';
+  }),
+);
+
 export const OntosSerializedPublicSurfaceSchema = Schema.Struct({
   actions: Schema.Array(OntosActionContractSchema),
   api: Schema.Array(OntosApiContractSchema),
+  apiCookieTransport: Schema.optionalKey(Schema.Array(OntosApiCookieTransportSchema)),
   businessPermissions: Schema.optionalKey(Schema.Array(BusinessPermissionDescriptorSchema)),
   components: Schema.Array(OntosComponentContractSchema),
   events: Schema.Array(OntosPublicEventContractSchema),
@@ -220,6 +255,7 @@ export interface OntosAuthoredPublicEvent<
 export interface OntosAuthoredPublicSurface {
   readonly actions: readonly OntosManifestActionValue[];
   readonly api: Readonly<Record<string, HttpApi.Constraint>>;
+  readonly apiCookieTransport?: readonly (typeof OntosApiCookieTransportSchema.Type)[];
   readonly businessPermissions?: readonly BusinessPermissionDescriptor[];
   readonly components: Readonly<Record<string, OntosManifestComponentValue>>;
   readonly events: readonly OntosAuthoredPublicEvent[];
@@ -303,6 +339,7 @@ export const validateOntosModuleManifestFields = <Input extends object, PublicSu
     [
       'actions',
       'api',
+      'apiCookieTransport',
       'businessPermissions',
       'components',
       'events',
@@ -444,6 +481,14 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
     'external identity provider namespace',
   );
 
+  const apiCookieTransport = input.publicSurface.apiCookieTransport?.map((policy) =>
+    exactDecode(OntosApiCookieTransportSchema, policy),
+  );
+  assertUnique(
+    (apiCookieTransport ?? []).map(({ realmPrefix }) => realmPrefix),
+    'API cookie realm',
+  );
+
   const search = input.publicSurface.search.map((descriptor) => exactDecode(OntosSearchDescriptorSchema, descriptor));
   assertUnique(
     search.map(({ key }) => key),
@@ -520,6 +565,11 @@ export const defineOntosModuleManifest = <const Input extends OntosModuleManifes
       }),
     },
   };
+  if (apiCookieTransport !== undefined) {
+    Object.assign(manifest.publicSurface, {
+      apiCookieTransport: Object.freeze(apiCookieTransport.map((policy) => freezePlain(policy))),
+    });
+  }
   return Object.freeze(manifest);
 };
 
