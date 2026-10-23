@@ -238,9 +238,13 @@ it.effect('reuses exact configured bytes across request Layers but never skips t
     available = true;
     yield* TestClock.setTime(Date.parse(validUntil));
     expect(yield* Effect.flip(load)).toBeInstanceOf(ActiveApplicationCompositionUnavailableError);
+    const digest = rstest.spyOn(globalThis.crypto.subtle, 'digest');
+    yield* Effect.addFinalizer(() => Effect.sync(() => digest.mockRestore()));
     current = yield* encode({ ...input, validUntil: DateTime.makeUnsafe(Date.parse(validUntil) + 1000) });
     const renewed = yield* load;
     expect(renewed).not.toBe(first);
+    expect(renewed.composition).toBe(first.composition);
+    expect(digest).not.toHaveBeenCalled();
     expect(renewed.composition.revision).toBe(first.composition.revision);
     expect(yield* load).toBe(renewed);
     expect(reads).toBe(7);
