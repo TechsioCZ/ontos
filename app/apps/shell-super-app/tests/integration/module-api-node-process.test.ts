@@ -338,7 +338,9 @@ it.live('forwards POST with dotted owner path, query, body and headers to an ind
     expect(fixture.server.ingress[0]?.connection).toBe('x-connection-secret');
     expect(response.status).toBe(201);
     expect(response.headers['content-type']).toBe('application/vnd.ontos-owner-fixture+json');
-    expect(response.headers['x-owner-process-pid']).toBe(String(fixture.owner.pid));
+    // The relay allow-lists content headers only, so an owner diagnostic header does not cross it; the body
+    // assertions below are the proof that the request reached the owner process.
+    expect(response.headers['x-owner-process-pid']).toBeUndefined();
     expect(body).toEqual({
       authorization,
       body: 'write payload',
@@ -389,14 +391,16 @@ it.live('returns owner redirects without following them or exposing signed crede
       fixture.server.handler(fixture.request('redirect-external', authorization)),
     );
     expect(externalResponse.status).toBe(307);
-    expect(externalResponse.headers.get('location')).toBe(externalLocation);
+    // The relay only forwards a Location that resolves to the Shell origin, so a cross-origin owner redirect is
+    // dropped rather than turned into an off-origin navigation from the staff-session origin.
+    expect(externalResponse.headers.get('location')).toBeNull();
     expect(fixture.owner.events.filter((event) => event.event === 'received')).toHaveLength(2);
     expect(fixture.owner.events.filter((event) => event.event === 'business')).toHaveLength(2);
     expect(outside.ingress).toEqual([]);
   }).pipe(Effect.scoped),
 );
 
-it.live('preserves binary response bytes and separate Set-Cookie headers through the native router', () =>
+it.live('preserves binary response bytes while stripping owner Set-Cookie headers at the relay', () =>
   Effect.gen(function* preservesBinaryResponse() {
     const fixture = yield* createFixture();
     const authorization = yield* fixture.authorize();
@@ -404,17 +408,17 @@ it.live('preserves binary response bytes and separate Set-Cookie headers through
     const bytes = yield* Effect.promise(() => response.arrayBuffer());
     expect([...new Uint8Array(bytes)]).toEqual([0, 255, 1, 128]);
     expect(response.headers.get('content-type')).toBe('application/octet-stream');
-    expect(response.headers.getSetCookie()).toEqual(['ownerA=1; Path=/', 'ownerB=2; HttpOnly']);
+    expect(response.headers.getSetCookie()).toEqual([]);
   }).pipe(Effect.scoped),
 );
 
-it.live('preserves cookies with the same name and different paths through the pinned Node adapter', () =>
+it.live('strips owner cookies even when they share a name across paths', () =>
   Effect.gen(function* preservesDuplicateCookieNames() {
     const fixture = yield* createFixture();
     const authorization = yield* fixture.authorize();
     const response = yield* Effect.promise(() => fixture.server.handler(fixture.request('cookies', authorization)));
     expect(response.status).toBe(200);
-    expect(response.headers.getSetCookie()).toEqual(['sid=root; Path=/', 'sid=module; Path=/module']);
+    expect(response.headers.getSetCookie()).toEqual([]);
     expect(yield* Effect.promise(() => response.text())).toBe('cookies preserved');
   }).pipe(Effect.scoped),
 );
