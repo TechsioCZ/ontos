@@ -78,7 +78,7 @@ export function ContactForm({
   };
   if (taskId !== null)
     return (
-      <output className="akros-form-success" role="status">
+      <output className="akros-form-success">
         Děkujeme. Dotaz je uložen v OntOS pro tým AKROS k vyřízení. Číslo požadavku: {taskId}.
       </output>
     );
