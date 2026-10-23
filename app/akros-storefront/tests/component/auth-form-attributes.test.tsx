@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { PathnameContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime";
 
-import { MockLoginForm, MockRegistrationForm } from "@/components/mock-auth-form";
+import { LoginForm, RegistrationForm } from "@/components/auth-form";
 import { AccountProfilePage } from "@/features/account/account-profile-page";
 import { CartProvider } from "@/features/cart/cart-provider";
 
@@ -58,7 +58,7 @@ function expectNewPasswords(firstId: string, confirmationId: string) {
 
 describe("password-manager form semantics with the published UI-kit", () => {
   it("names registration fields and keeps both generated-password targets in one POST form", () => {
-    render(<MockRegistrationForm />);
+    render(<RegistrationForm />);
 
     expectInput("register-first-name", {
       name: "firstName",
@@ -74,7 +74,7 @@ describe("password-manager form semantics with the published UI-kit", () => {
     expectInput("register-email", { name: "email", type: "email", autocomplete: "username" });
     expectInput("register-phone", { name: "phone", type: "tel", autocomplete: "tel" });
     const password = expectNewPasswords("register-password", "register-password-confirm");
-    expectForm(password, "/registrace");
+    expectForm(password, "/api/ontos/account");
     expect(password.required).toBe(true);
     expect(
       (document.getElementById("register-password-confirm") as HTMLInputElement).required,
@@ -82,9 +82,7 @@ describe("password-manager form semantics with the published UI-kit", () => {
     expect(screen.getByRole("checkbox", { name: /Souhlasím/ }).getAttribute("name")).toBe(
       "privacyConsent",
     );
-    expect(screen.getByRole("checkbox", { name: /newsletter/ }).getAttribute("name")).toBe(
-      "newsletter",
-    );
+    expect(screen.queryByRole("checkbox", { name: /newsletter/ })).toBeNull();
     expect(screen.getByRole("button", { name: "Vytvořit účet" }).getAttribute("type")).toBe(
       "submit",
     );
@@ -93,7 +91,7 @@ describe("password-manager form semantics with the published UI-kit", () => {
   it("identifies the login email as username and password as current-password", () => {
     render(
       <AppRouterContext.Provider value={router}>
-        <MockLoginForm />
+        <LoginForm />
       </AppRouterContext.Provider>,
     );
 
@@ -107,7 +105,7 @@ describe("password-manager form semantics with the published UI-kit", () => {
       type: "password",
       autocomplete: "current-password",
     });
-    expectForm(password, "/prihlaseni");
+    expectForm(password, "/api/ontos/account");
     expect(email.form).toBe(password.form);
     expect(screen.getByRole("checkbox", { name: "Zapamatovat si mě" }).getAttribute("name")).toBe(
       "rememberMe",

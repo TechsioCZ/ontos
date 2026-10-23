@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import StoreLink from "@/components/store-link";
 
-import { MockRegistrationForm } from "@/components/mock-auth-form";
+import { RegistrationForm } from "@/components/auth-form";
 import { StorefrontWideShell } from "@/components/storefront-shell";
 
 export const metadata: Metadata = { title: "Registrace" };
@@ -30,7 +30,7 @@ export default function RegistrationPage() {
               Vytvořte si profesionální účet a získejte okamžitý přístup k velkoobchodním výhodám.
             </p>
           </header>
-          <MockRegistrationForm />
+          <RegistrationForm />
           <p>
             Již jste registrováni? <StoreLink href="/prihlaseni">Přihlaste se zde</StoreLink>
           </p>

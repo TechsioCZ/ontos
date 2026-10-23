@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import StoreLink from "@/components/store-link";
 
-import { MockLoginForm } from "@/components/mock-auth-form";
+import { LoginForm } from "@/components/auth-form";
 import { StorefrontWideShell } from "@/components/storefront-shell";
 
 export const metadata: Metadata = { title: "Přihlášení" };
@@ -15,7 +15,7 @@ export default function LoginPage() {
             <h1>Přihlášení partnera</h1>
             <p>Vítejte zpět v e-shopu AKROS</p>
           </header>
-          <MockLoginForm />
+          <LoginForm />
           <div className="akros-auth-divider">
             <span>nebo</span>
           </div>
