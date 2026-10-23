@@ -58,6 +58,7 @@ export interface ActivityLinkAccess {
   readonly agentExists: boolean;
   readonly identityPage: string | undefined;
   readonly module: McpModule | undefined;
+  readonly personExists: boolean;
   readonly records: unknown;
   readonly grants: readonly {
     readonly actingKind: string;
@@ -77,17 +78,15 @@ export const resolveActivityLinks = (entry: AgentActivityEntry, access: Activity
       : resolveActivityRecord(module.recordLinks ?? [], entry.recordReference, access.records);
   const actionPath = access.canReviewProposals ? proposalActivityPath(entry.proposal) : undefined;
   const grants = access.canManageAgents
-    ? access.grants.filter(
-        (grant) => grant.actingKind === 'agent' && grant.actingPrincipalId === entry.agentPrincipalId,
-      )
+    ? access.grants.filter((grant) => grant.actingPrincipalId === entry.agentPrincipalId)
     : [];
-  const identityPage = access.canManageAgents && access.agentExists ? access.identityPage : undefined;
+  // OAuth may act as a person, not a standalone agent. Link that real identity, never an unrelated agent by name.
+  const personKind = access.personExists ? 'person' : undefined;
+  const identityKind = access.agentExists ? 'agent' : personKind;
   const agentPath =
-    identityPage !== undefined
-      ? `${identityPage}?agent=${encodeURIComponent(entry.agentPrincipalId)}`
-      : grants.length === 0
-        ? undefined
-        : `/sprava/pripojene-aplikace?agent=${encodeURIComponent(entry.agentPrincipalId)}`;
+    access.canManageAgents && access.identityPage !== undefined && identityKind !== undefined
+      ? `${access.identityPage}?${identityKind}=${encodeURIComponent(entry.agentPrincipalId)}`
+      : undefined;
   return {
     ...entry,
     ...(actionPath === undefined ? {} : { actionPath }),

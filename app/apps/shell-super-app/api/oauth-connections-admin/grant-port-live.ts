@@ -93,7 +93,8 @@ const limitsOf = (rows: readonly GrantRow[]) =>
             ] as const satisfies readonly [string, ConnectionLimits],
         ),
       ),
-    { concurrency: 4 },
+    // Each authority opens two SpiceDB reads; reserve a Worker connection for PostgreSQL.
+    { concurrency: 2 },
   ).pipe(Effect.map((entries) => new Map<string, ConnectionLimits>(entries)));
 
 const toAdminSummary = (

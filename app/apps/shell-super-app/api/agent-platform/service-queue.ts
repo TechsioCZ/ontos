@@ -412,15 +412,21 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
     Effect.map((capability) => capability.canManage),
     Effect.orElseSucceed(() => false),
   );
-  const visibleAgents = canManage
+  const visiblePrincipals = canManage
     ? yield* companyDirectoryLive.members(tenantId, legalEntityId).pipe(
-        Effect.flatMap((members) => companyDirectoryLive.agents(tenantId, members)),
-        Effect.map(
-          (agents) => new Set(agents.filter((agent) => agent.status !== 'archived').map((agent) => agent.principalId)),
+        Effect.flatMap((members) =>
+          Effect.all(
+            [companyDirectoryLive.agents(tenantId, members), companyDirectoryLive.people(tenantId, members)],
+            { concurrency: 1 },
+          ),
         ),
-        Effect.orElseSucceed(() => new Set<string>()),
+        Effect.map(([agents, people]) => ({
+          agents: new Set(agents.filter((agent) => agent.status !== 'archived').map((agent) => agent.principalId)),
+          people: new Set(people.map((person) => person.principalId)),
+        })),
+        Effect.orElseSucceed(() => ({ agents: new Set<string>(), people: new Set<string>() })),
       )
-    : new Set<string>();
+    : { agents: new Set<string>(), people: new Set<string>() };
   const grants = canManage ? yield* listGrants({ tenantId, legalEntityId }).pipe(Effect.orElseSucceed(() => [])) : [];
   const identityPage = canManage
     ? composed.all.find((module) => module.agentAdministrationPage !== undefined && modules.access.has(module.moduleId))
@@ -435,13 +441,14 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
     entries: combined.entries.map((entry) => {
       const module = entry.moduleKey === null ? undefined : composed.byModuleId(entry.moduleKey);
       return resolveActivityLinks(entry, {
-        agentExists: visibleAgents.has(entry.agentPrincipalId),
+        agentExists: visiblePrincipals.agents.has(entry.agentPrincipalId),
         canManageAgents: canManage,
         canOpenModule: module !== undefined && modules.access.has(module.moduleId),
         canReviewProposals: true,
         grants,
         identityPage,
         module,
+        personExists: visiblePrincipals.people.has(entry.agentPrincipalId),
         records: entry.moduleKey === null ? undefined : records.get(entry.moduleKey),
       });
     }),

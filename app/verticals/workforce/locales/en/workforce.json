@@ -430,6 +430,7 @@
         "description": "An agent is a separate identity of the company with its own permissions. It connects to ChatGPT or Claude through OntOS by choosing “As the agent”; no keys or tokens are issued here.",
         "create": "New agent",
         "loading": "Loading agents…",
+        "loadError": "Could not load agents. Please try again.",
         "retry": "Try again",
         "empty": "The company has no agent yet.",
         "emptyHint": "Create an agent with New agent and set its permissions.",

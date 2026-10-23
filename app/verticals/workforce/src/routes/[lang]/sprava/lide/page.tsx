@@ -25,7 +25,7 @@ import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { CellContext, ColumnDef, DataTableTranslations, Row } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
-import { Effect } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import type { ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { useState } from 'react';
 import { runPeopleCommand } from '../../../../api/people-admin-client.ts';
@@ -59,6 +59,7 @@ const key = 'workforce.people';
 const RESIZE_LABEL_KEY = 'workforce.sidePanel.resize';
 const selectLabelProps = { className: 'text-label-md' };
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/u;
+const PersonDetailSearchSchema = Schema.Struct({ person: Schema.optionalKey(Schema.String) });
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -670,13 +671,29 @@ const RolesCard = ({ data }: { readonly data: PeopleOverview }) => {
   );
 };
 
+const usePersonSelection = () => {
+  const linkedPerson = useRouterState({
+    select: (routerState) =>
+      Option.getOrUndefined(Schema.decodeOption(PersonDetailSearchSchema)(routerState.location.search))?.person ?? null,
+  });
+  const [selection, setSelection] = useState({ linkedPerson, openId: linkedPerson });
+  // A new activity link replaces the selection; closing the panel does not reopen the same link on refresh.
+  if (selection.linkedPerson !== linkedPerson) {
+    setSelection({ linkedPerson, openId: linkedPerson });
+  }
+  return {
+    openId: selection.openId,
+    selectPerson: (openId: string | null) => setSelection({ linkedPerson, openId }),
+  };
+};
+
 const PeoplePageContent = ({ legalEntityId }: { readonly legalEntityId: string }) => {
   const { t } = useModernI18n();
   const toaster = useToast();
   const snapshot = usePageData(peopleData, legalEntityId);
   const state = loadStateOf(snapshot);
   const [creating, setCreating] = useState(false);
-  const [openId, setOpenId] = useState<string | null>(null);
+  const { openId, selectPerson } = usePersonSelection();
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('active');
   const [allAudit, setAllAudit] = useState(false);
@@ -857,7 +874,7 @@ const PeoplePageContent = ({ legalEntityId }: { readonly legalEntityId: string }
           getRowLabel={(row) => row.original.displayName}
           loading={state.status === 'loading'}
           loadingRowCount={6}
-          onRowClick={(row: { readonly original: Person }) => setOpenId(row.original.principalId)}
+          onRowClick={(row: { readonly original: Person }) => selectPerson(row.original.principalId)}
           paginationProps={{ translations: paginationTranslations }}
           size="sm"
           tableLayout="fixed"
@@ -913,7 +930,7 @@ const PeoplePageContent = ({ legalEntityId }: { readonly legalEntityId: string }
             crmToast(crm);
             reload();
           }}
-          onClose={() => setOpenId(null)}
+          onClose={() => selectPerson(null)}
           person={opened}
           roles={data.roles}
         />

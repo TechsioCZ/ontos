@@ -138,7 +138,9 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify, personLabel }: A
           {state.state === 'failed' && (
             <div className="flex flex-wrap items-center gap-150">
               <StatusText showIcon status="error">
-                {state.error.detail ?? t(`${PEOPLE_ERROR_KEY}.${state.error.reason}`)}
+                {state.error.reason === 'error'
+                  ? t(`${key}.loadError`)
+                  : (state.error.detail ?? t(`${PEOPLE_ERROR_KEY}.${state.error.reason}`))}
               </StatusText>
               <Button
                 disabled={state.refreshing}
