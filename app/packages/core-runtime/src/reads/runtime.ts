@@ -67,6 +67,7 @@ import {
 } from './definition.ts';
 import type { ReadCoreError } from './errors.ts';
 import {
+  ReadEvidenceValidationError,
   ReadHandlerExecutionError,
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
@@ -1628,13 +1629,36 @@ const readRuntimeFromDependencies = <
         input.registration.descriptor.evidencePolicy.captureMode,
         handlerResult.evidence,
       );
+      const ownerResource = evidence.targetResource;
+      if (
+        ownerResource !== undefined &&
+        ((permissionTargetMetadata.targetResourceId !== undefined &&
+          permissionTargetMetadata.targetResourceId !== ownerResource.resourceId) ||
+          (permissionTargetMetadata.targetResourceType !== undefined &&
+            permissionTargetMetadata.targetResourceType !== ownerResource.resourceType) ||
+          (permissionTargetMetadata.targetModuleKey !== undefined &&
+            permissionTargetMetadata.targetModuleKey !== input.registration.descriptor.owningModuleKey))
+      ) {
+        return yield* new ReadEvidenceValidationError({
+          code: 'read_evidence_invalid',
+          reason: 'Owner read evidence conflicts with the declared resource target',
+        });
+      }
+      const evidenceTarget =
+        ownerResource === undefined
+          ? permissionTargetMetadata
+          : {
+              targetModuleKey: input.registration.descriptor.owningModuleKey,
+              targetResourceId: ownerResource.resourceId,
+              targetResourceType: ownerResource.resourceType,
+            };
       yield* persistReadEvidence(
         database.executor,
         withOptionalProperty(
           withOptionalProperty(
             withOptionalProperty(
               {
-                accessKind: input.registration.descriptor.accessKind,
+                accessKind: ownerResource === undefined ? input.registration.descriptor.accessKind : 'detail',
                 captureMode: input.registration.descriptor.evidencePolicy.captureMode,
                 outcome: 'allowed',
                 outcomeCode: 'read_allowed',
@@ -1660,7 +1684,7 @@ const readRuntimeFromDependencies = <
           {
             scope,
             servingModuleKey: input.registration.descriptor.owningModuleKey,
-            ...permissionTargetMetadata,
+            ...evidenceTarget,
           },
         ),
       );

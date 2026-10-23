@@ -44,6 +44,7 @@ import {
   ReadPolicyDenied,
 } from '../../src/reads/errors.ts';
 import type { ReadFinishContext, ReadHandlerResult } from '../../src/reads/context.ts';
+import { validateReadEvidenceMetadata } from '../../src/reads/context.ts';
 import { makeReadRuntime, READ_RUNTIME_STAGES } from '../../src/reads/runtime.ts';
 import { guardSpiceDbRpc } from '../../src/permissions/spicedb-transaction-guard.ts';
 import { guardPoolAcquisition, IoInsideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
@@ -3296,5 +3297,141 @@ it.effect('accepts already-decoded DateTime input without running its wire trans
     );
     expect(Schema.is(ReadInputValidationError)(failure)).toBe(true);
     expect(received).toHaveLength(2);
+  }),
+);
+
+for (const targeted of [false, true]) {
+  it.effect(
+    `persists ${targeted ? 'the exact owner record on a single read' : 'a one-result list without a record target'}`,
+    () =>
+      Effect.gen(function* ownerRecordReadEvidence() {
+        const harness = yield* makeHarness({ permissionDecision: 'allowed' });
+        const evidence = targeted
+          ? { resultCount: 1, targetResource: { resourceId: 'record-1', resourceType: 'fixture.record' } }
+          : { resultCount: 1 };
+        const read = defineRead(
+          registration().descriptor,
+          { load: () => Effect.succeed({ evidence, result: ['visible'] }) },
+          () => Effect.succeed({}),
+          () => ({ kind: 'module', moduleId: 'core.shell' }),
+        );
+        expect(
+          yield* harness.runtime.runRead({
+            input: {},
+            principal: scope,
+            registration: read,
+            transport: { correlationId: scope.correlationId },
+          }),
+        ).toEqual(['visible']);
+        const [persisted] = harness.evidenceParameterRows();
+        expect(persisted).toContain(targeted ? 'read' : 'list');
+        expect(persisted?.includes('record-1')).toBe(targeted);
+        expect(persisted?.includes('fixture.record')).toBe(targeted);
+        expect(harness.permissionChecks().resourcePermissionChecks).toBe(0);
+      }),
+  );
+}
+
+it.effect('never discloses a single record or records its owner evidence when authorization denies the read', () =>
+  Effect.gen(function* deniedOwnerRecordEvidence() {
+    let loaded = false;
+    const legalEntityId = '00000000-0000-4000-8000-000000000004';
+    const harness = yield* makeHarness({
+      modulePermissionDecision: 'denied',
+      resolvedScope: { ...scope, legalEntityId },
+    });
+    const read = defineRead(
+      {
+        ...registration().descriptor,
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'read',
+          authorization: { kind: 'context_permission', permission: 'module.access' },
+          entrypointKey: 'fixture.records.read',
+          moduleKey: 'fixture.records',
+          role: 'api',
+        }),
+        legalEntityScope: 'required',
+        owningModuleKey: 'fixture.records',
+      },
+      {
+        load: () => {
+          loaded = true;
+          return Effect.succeed({
+            evidence: {
+              resultCount: 1,
+              targetResource: { resourceId: 'private-record', resourceType: 'fixture.record' },
+            },
+            result: ['private'],
+          });
+        },
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'fixture.records' }),
+    );
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: counterpartyReadPrincipal(legalEntityId),
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ReadPermissionDenied')).toBe(true);
+    expect(loaded).toBe(false);
+    expect(harness.evidenceParameterRows().flat()).not.toContain('private-record');
+  }),
+);
+
+for (const evidence of [
+  { resultCount: 0, targetResource: { resourceId: 'record-1', resourceType: 'fixture.record' } },
+  { resultCount: 2, targetResource: { resourceId: 'record-1', resourceType: 'fixture.record' } },
+  { resultCount: 1, targetResource: { resourceId: '', resourceType: 'fixture.record' } },
+  { resultCount: 1, targetResource: { resourceId: 'record-1', resourceType: '' } },
+  { resultCount: 1, targetResource: { resourceId: 1, resourceType: 'fixture.record' } },
+  {
+    resultCount: 1,
+    targetResource: { moduleId: 'forged.module', resourceId: 'record-1', resourceType: 'fixture.record' },
+  },
+]) {
+  it.effect(`rejects invalid or non-single-record evidence ${JSON.stringify(evidence)}`, () =>
+    Effect.gen(function* invalidOwnerResourceEvidence() {
+      const failure = yield* Effect.flip(validateReadEvidenceMetadata('metadata_only', evidence));
+      expect(Predicate.isTagged(failure, 'ReadEvidenceValidationError')).toBe(true);
+    }),
+  );
+}
+
+it.effect('refuses owner evidence that replaces a declared authorized resource', () =>
+  Effect.gen(function* conflictingOwnerResourceEvidence() {
+    const legalEntityId = '00000000-0000-4000-8000-000000000004';
+    const harness = yield* makeHarness({ permissionDecision: 'allowed', resolvedScope: { ...scope, legalEntityId } });
+    const read = defineRead(
+      { ...registration().descriptor, legalEntityScope: 'required', permissionTarget: 'resource' },
+      {
+        load: () =>
+          Effect.succeed({
+            evidence: {
+              resultCount: 1,
+              targetResource: { resourceId: 'other-record', resourceType: 'fixture.record' },
+            },
+            result: ['visible'],
+          }),
+      },
+      () => Effect.succeed({}),
+      () => ({
+        kind: 'resource',
+        resource: { moduleId: 'core.shell', resourceId: 'authorized-record', resourceType: 'fixture.record' },
+      }),
+    );
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: counterpartyReadPrincipal(legalEntityId),
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ReadEvidenceValidationError')).toBe(true);
+    expect(harness.evidence()).toBe(0);
   }),
 );

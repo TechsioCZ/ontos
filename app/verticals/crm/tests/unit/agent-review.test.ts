@@ -1,9 +1,16 @@
 import { expect, it } from 'effect-rstest';
+import type { AgentCommand } from '@app/shared-contracts/agent-proposals';
 
-import { reviewCrmProposal, seesAllClients } from '../../src/api/agent-review.ts';
+import { clientReadEvidence, reviewCrmProposal, seesAllClients } from '../../src/api/agent-review.ts';
 import type { CrmReviewViewer } from '../../src/api/agent-review.ts';
 
-const clientOfJan = { id: 'c-jan', name: 'Pekárna Jan', ownerSalespersonId: 'sp-jan', phone: '+420 541 100 200', segment: 'retail' };
+const clientOfJan = {
+  id: 'c-jan',
+  name: 'Pekárna Jan',
+  ownerSalespersonId: 'sp-jan',
+  phone: '+420 541 100 200',
+  segment: 'retail',
+};
 const salesperson = (viewer: Partial<CrmReviewViewer>): CrmReviewViewer => ({
   assign: false,
   readAll: false,
@@ -12,7 +19,7 @@ const salesperson = (viewer: Partial<CrmReviewViewer>): CrmReviewViewer => ({
   ...viewer,
 });
 const updateJansClient = { _tag: 'UpdateClient', id: 'c-jan', patch: { phone: '+420 541 100 299', segment: 'bakery' } };
-const request = (command: Record<string, unknown>, stage: 'history' | 'proposed' | 'undo' = 'proposed') => ({
+const request = (command: AgentCommand, stage: 'history' | 'proposed' | 'undo' = 'proposed') => ({
   actionSlug: 'apply-command',
   command,
   key: 'k',
@@ -27,21 +34,29 @@ it('a salesperson does not see proposals about a colleague client, not even in h
 });
 
 it('only the owning salesperson or a manager may carry out a client change', () => {
-  expect(reviewCrmProposal(request(updateJansClient), salesperson({ salespersonId: 'sp-jan' }), [clientOfJan])).toMatchObject({
+  expect(
+    reviewCrmProposal(request(updateJansClient), salesperson({ salespersonId: 'sp-jan' }), [clientOfJan]),
+  ).toMatchObject({
     visible: true,
   });
   expect(
     reviewCrmProposal(request(updateJansClient), salesperson({ salespersonId: 'sp-jan' }), [clientOfJan]).blockedReason,
   ).toBeUndefined();
   expect(
-    reviewCrmProposal(request(updateJansClient), salesperson({ readAll: true, salespersonId: 'sp-petra' }), [clientOfJan]),
-  ).toMatchObject({ blockedReason: 'Tohoto klienta nemůžete upravovat, změnu schválí jeho obchodník nebo vedoucí.', visible: true });
+    reviewCrmProposal(request(updateJansClient), salesperson({ readAll: true, salespersonId: 'sp-petra' }), [
+      clientOfJan,
+    ]),
+  ).toMatchObject({
+    blockedReason: 'Tohoto klienta nemůžete upravovat, změnu schválí jeho obchodník nebo vedoucí.',
+    visible: true,
+  });
   expect(
     reviewCrmProposal(request(updateJansClient), salesperson({ writeAll: true }), [clientOfJan]).blockedReason,
   ).toBeUndefined();
   expect(
-    reviewCrmProposal(request({ _tag: 'AssignClient', clientId: 'c-jan' }), salesperson({ writeAll: true }), [clientOfJan])
-      .blockedReason,
+    reviewCrmProposal(request({ _tag: 'AssignClient', clientId: 'c-jan' }), salesperson({ writeAll: true }), [
+      clientOfJan,
+    ]).blockedReason,
   ).toBe('Přidělit klienta jinému obchodníkovi může jen správce nebo vedoucí.');
 });
 
@@ -58,8 +73,9 @@ it('a client edit shows Czech labels with the live value before and is undone to
   expect(item.targetName).toBe('Pekárna Jan');
   expect(item.revertUnavailableReason).toBeUndefined();
   expect(
-    reviewCrmProposal(request({ _tag: 'RecordVisit', clientId: 'c-jan' }), salesperson({ writeAll: true }), [clientOfJan])
-      .revertUnavailableReason,
+    reviewCrmProposal(request({ _tag: 'RecordVisit', clientId: 'c-jan' }), salesperson({ writeAll: true }), [
+      clientOfJan,
+    ]).revertUnavailableReason,
   ).toBe('Tuto změnu nelze automaticky vrátit.');
 });
 
@@ -86,4 +102,18 @@ it('only readers of every client see all CRM agent activity', () => {
   expect(seesAllClients(salesperson({}))).toBe(false);
   expect(seesAllClients(salesperson({ readAll: true }))).toBe(true);
   expect(seesAllClients(salesperson({ writeAll: true }))).toBe(true);
+});
+
+it('records the exact visible client in single-record read evidence', () => {
+  expect(clientReadEvidence(1, clientOfJan)).toEqual({
+    resultCount: 1,
+    targetResource: { resourceId: 'c-jan', resourceType: 'demo.crm.client' },
+  });
+});
+
+it('does not invent a target for a list, hidden client, empty read or review batch', () => {
+  expect(clientReadEvidence(1)).toEqual({ resultCount: 1 });
+  expect(clientReadEvidence(0)).toEqual({ resultCount: 0 });
+  expect(clientReadEvidence(0, clientOfJan)).toEqual({ resultCount: 0 });
+  expect(clientReadEvidence(2, clientOfJan)).toEqual({ resultCount: 2 });
 });
