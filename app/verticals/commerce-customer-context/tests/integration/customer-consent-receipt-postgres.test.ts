@@ -1,8 +1,19 @@
-import { findPostgresFailure, loadDatabaseConnectionPair } from '@app/core-runtime';
-import { Effect, Option, Result } from 'effect';
+import {
+  ActionAuthorizationPreflightDatabaseLive,
+  findPostgresFailure,
+  loadDatabaseConnectionPair,
+} from '@app/core-runtime';
+import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { makeTestPgClient } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { customerNewsletterScope } from '../../api/portal-auth/consent/model.ts';
+import { CoreDatabase, makeCoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
+import { CommerceEnrollmentOwnerTransactionRunnerLive } from '../../src/enrollment/orchestration/owner-transaction-runner.ts';
+import { CustomerConsentReceiptSchema, customerNewsletterScope } from '../../api/portal-auth/consent/model.ts';
+import {
+  readCustomerConsentReceipt,
+  recordCustomerConsentReceipt,
+} from '../../api/portal-auth/consent/receipt-persistence.ts';
+import { ConsentConflictProblemSchema } from '../../shared/portal-auth/consent-api.ts';
 
 const tenantId = 'e1000000-0000-4000-8000-000000000001';
 const legalEntityId = 'e2000000-0000-4000-8000-000000000002';
@@ -107,5 +118,50 @@ it.live(
       select relrowsecurity, relforcerowsecurity from pg_class
       where oid = 'commerce_customer_context.customer_consent_receipts'::regclass`;
     expect(security).toEqual([{ relforcerowsecurity: true, relrowsecurity: true }]);
+  }),
+);
+
+it.live(
+  'round-trips JSON receipt timestamps through the production owner runner and scoped routine decoder',
+  Effect.fn('CustomerConsentReceipt.adapterPostgres')(function* receiptAdapterPostgres() {
+    const connections = yield* loadDatabaseConnectionPair();
+    const admin = yield* makeTestPgClient(connections.admin.connectionString);
+    const database = yield* makeCoreDatabase(connections.runtime);
+    const cleanup = admin.withTransaction(
+      Effect.gen(function* cleanAdapterReceipt() {
+        yield* admin`set local session_replication_role = 'replica'`;
+        yield* admin`delete from commerce_customer_context.customer_consent_receipts where receipt_id = ${receiptId}::uuid`;
+      }),
+    );
+    yield* cleanup;
+    yield* Effect.addFinalizer(() => cleanup.pipe(Effect.orDie));
+    const productionRunner = CommerceEnrollmentOwnerTransactionRunnerLive.pipe(
+      Layer.provide(ActionAuthorizationPreflightDatabaseLive),
+      Layer.provide(Layer.succeed(CoreDatabase, database)),
+    );
+    const scope = {
+      compositionRevision: 'receipt-adapter-proof',
+      legalEntityId,
+      partyId,
+      requestCorrelation: 'receipt-adapter-proof',
+      tenantId,
+    };
+    yield* Effect.gen(function* roundTripReceipt() {
+      expect(Option.isNone(yield* readCustomerConsentReceipt(scope, receiptId))).toBe(true);
+      const acknowledged = yield* Schema.decodeUnknownEffect(CustomerConsentReceiptSchema)(receipt);
+      const retained = yield* recordCustomerConsentReceipt(scope, acknowledged);
+      expect(DateTime.formatIso(retained.acknowledgedAt)).toBe(receipt.acknowledgedAt);
+      expect(retained).toEqual(acknowledged);
+      const replay = yield* recordCustomerConsentReceipt(scope, {
+        ...acknowledged,
+        acknowledgedAt: yield* Schema.decodeEffect(Schema.DateTimeUtcFromString)('2026-10-24T12:00:00.000Z'),
+      });
+      expect(replay).toEqual(retained);
+      expect(Option.getOrThrow(yield* readCustomerConsentReceipt(scope, receiptId))).toEqual(retained);
+      const conflict = yield* Effect.flip(
+        recordCustomerConsentReceipt(scope, { ...acknowledged, sessionRef: 'different-session' }),
+      );
+      expect(Schema.is(ConsentConflictProblemSchema)(conflict)).toBe(true);
+    }).pipe(Effect.provide(productionRunner));
   }),
 );
