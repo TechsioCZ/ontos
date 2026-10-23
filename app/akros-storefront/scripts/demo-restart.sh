@@ -14,7 +14,7 @@ if [ ! -d node_modules ] || [ "$(cat "$stamp" 2>/dev/null || true)" != "$lock" ]
   (cd "$ROOT" && mise exec -- pnpm install --frozen-lockfile)
   printf '%s' "$lock" > "$stamp"
 fi
-mise exec -- node scripts/with-demo-env.mjs build > "$ROOT/.scratch/demo-logs/build-akros-storefront.log" 2>&1 || { tail -70 "$ROOT/.scratch/demo-logs/build-akros-storefront.log"; exit 1; }
+mise exec -- node scripts/with-demo-env.mjs build --webpack > "$ROOT/.scratch/demo-logs/build-akros-storefront.log" 2>&1 || { tail -70 "$ROOT/.scratch/demo-logs/build-akros-storefront.log"; exit 1; }
 # Check the actual secret without echoing it; a leaked key makes startup fail closed.
 mise exec -- node --input-type=module - "$ROOT/.env.demo.local" <<'NODE'
 import {existsSync,readdirSync,readFileSync} from 'node:fs';

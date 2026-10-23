@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev --turbopack",
-    "build": "next build",
+    "dev": "next dev --webpack",
+    "build": "next build --webpack",
     "cloudflare:configure": "node scripts/cloudflare-config.mjs",
     "cloudflare:build": "pnpm run cloudflare:configure && AKROS_CLOUDFLARE_BUILD=1 opennextjs-cloudflare build --config .wrangler.generated.json",
     "cloudflare:deploy": "pnpm run cloudflare:configure && opennextjs-cloudflare deploy --config .wrangler.generated.json",
