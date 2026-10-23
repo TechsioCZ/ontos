@@ -24,8 +24,7 @@ const reset = Effect.fn('ResetDemo.reset')(function* resetDemo(fixturePath: stri
         (activity.partyRef !== undefined && activity.partyRef.tenantId !== input.tenantId) ||
         (activity.counterpartyRef !== undefined && activity.counterpartyRef.tenantId !== input.tenantId) ||
         (activity.followUpTaskRef !== undefined && activity.followUpTaskRef.tenantId !== input.tenantId),
-    ) ||
-    input.state.emailObservations.some((observation) => observation.ownerResourceRef.tenantId !== input.tenantId)
+    )
   ) {
     return yield* new ResetInputError({ reason: 'Fixture references must match the fixed demo tenant' });
   }

@@ -1,6 +1,6 @@
 {
   "title": "My agenda",
-  "description": "Shared calendar of deadlines from contracts, leases, tasks, invoices, assets and operations, your notifications and own events (S13).",
+  "description": "Shared calendar of deadlines from contracts, leases, tasks, invoices, assets and operations, your notifications and own events.",
   "open": "Open",
   "tabs": {
     "kalendar": "Calendar",
@@ -358,7 +358,7 @@
   },
   "overview": {
     "title": "Operations overview",
-    "description": "Key figures from governed sources, upcoming deadlines and search across the records you may read (S15).",
+    "description": "Key figures from governed sources, upcoming deadlines and search across the records you may read.",
     "refresh": "Refresh data",
     "openCalendar": "Calendar",
     "dataAt": "Data as of {{time}}",

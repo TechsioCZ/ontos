@@ -20,7 +20,7 @@
     "pages": {
       "records": {
         "title": "Invoices and finance",
-        "description": "Demo reference date: 5 October 2026. Accounting receipts and payments are simulated."
+        "description": "Invoices, payments, receivables and accounting handover."
       }
     },
     "faktury": {
@@ -181,7 +181,6 @@
       "clearRelatedFilter": "Show all customers"
     },
     "demo": {
-      "simulation": "Demo reference date: 5 October 2026. Accounting receipts and payments are simulated.",
       "summary": "Revenue {{revenue}} · Costs {{cost}} · Outstanding {{outstanding}} · Overdue {{overdue}}",
       "variance": "Revenue variance {{revenue}} · Cost variance {{cost}}",
       "direction": "Direction",
@@ -251,7 +250,6 @@
         "PLANNED": "Planned",
         "CANCELLED": "Cancelled"
       },
-      "paymentHistory": "Confirmed payment outcomes (simulation)",
       "observedAt": "Observation time",
       "correlation": "Correlation",
       "resultId": "Result identifier",

@@ -184,8 +184,6 @@ const main = Effect.gen(function* verifyFinanceDatabase() {
       invoice.taskRef,
     ]),
     ...state.financialPlanEntries.flatMap((entry) => [entry.ref, entry.propertyRef]),
-    ...state.accountingObservations.map((observation) => observation.invoiceRef),
-    ...state.paymentObservations.map((observation) => observation.invoiceRef),
   ];
   if (references.some((ref) => ref !== undefined && ref.tenantId !== DEMO_TENANT)) {
     return yield* failure('Finance persisted state contains a reference outside its tenant scope');

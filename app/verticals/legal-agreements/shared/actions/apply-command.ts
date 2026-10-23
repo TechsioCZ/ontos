@@ -16,15 +16,6 @@ export const AgreementsCommandSchema = Schema.Union([
   Schema.TaggedStruct('SetContractTerms', { contractRef: ContractRefSchema, ...ContractTermsFields }),
   Schema.TaggedStruct('TerminateContract', { contractRef: ContractRefSchema }),
   Schema.TaggedStruct('RenewContract', { contractRef: ContractRefSchema, successor: ContractSchema }),
-  Schema.TaggedStruct('SendSignature', {
-    contractRef: ContractRefSchema,
-    signerContact: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
-  }),
-  Schema.TaggedStruct('ObserveSignature', {
-    contractRef: ContractRefSchema,
-    document: Schema.toEncoded(Schema.OptionFromNullOr(DocumentSchema)),
-    outcome: Schema.Literals(['SIGNED', 'DECLINED']),
-  }),
   Schema.TaggedStruct('RecordSignedDocument', {
     contractRef: ContractRefSchema,
     document: DocumentSchema,

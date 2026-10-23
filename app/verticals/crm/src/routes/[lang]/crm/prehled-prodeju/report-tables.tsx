@@ -1,5 +1,5 @@
 // Tables of the sales report (crm-reports lane): grouped summary, order rows, status mapping, items by SKU.
-import { EmptyState, SectionCard, formatDate, formatNumber, surfaceTileClassName } from '@app/admin-ui';
+import { EmptyState, SectionCard, formatDate, formatNumber } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { DataTable } from '@techsio/ui-kit/organisms/data-table';
@@ -17,14 +17,9 @@ import {
   orderMoney,
   ordersCsv,
   toCsv,
-  rawStatusesInUse,
-  reportMappingApproved,
-  reportStatusMeaning,
-  statusMapping,
   statusMeaningLabels,
   unitsToDecimal,
 } from '../../../../../shared/domain/reports.ts';
-import { customerInputOf, customerInputStatusLabels } from '../../../../../shared/domain/customer-inputs.ts';
 import { crmPaginationProps, crmTableTranslations } from '../../../../crm/ui.tsx';
 import { orderStatusLabel } from '../../../../crm/order-status-presentation.ts';
 import { downloadCsv, formatDecimalMoney, totalIn } from './report-format.ts';
@@ -124,10 +119,7 @@ export const SummaryTable = ({
     <SectionCard
       actions={
         <>
-          <fieldset
-            aria-label="Seskupit podle"
-            className="inline-flex flex-wrap rounded-button-sm bg-surface p-50"
-          >
+          <fieldset aria-label="Seskupit podle" className="inline-flex flex-wrap rounded-button-sm bg-surface p-50">
             {(Object.keys(groupingLabels) as GroupingKey[]).map((key) => (
               <Button
                 aria-pressed={key === grouping}
@@ -345,14 +337,7 @@ const orderColumns = (lang: string): ColumnDef<ReportOrderRow>[] => [
     cell: (info) => (
       <span className="flex flex-wrap items-center gap-100">
         <span>{orderStatusLabel(info.getValue<string>())}</span>
-        {info.row.original.meaning === 'unmapped' &&
-        reportStatusMeaning(info.row.original.order.rawStatus) !== 'unmapped' ? (
-          <Badge size="sm" variant="outline">
-            {`návrh: ${statusMeaningLabels[reportStatusMeaning(info.row.original.order.rawStatus)]} (neschváleno)`}
-          </Badge>
-        ) : (
-          <MeaningBadge meaning={info.row.original.meaning} />
-        )}
+        {info.row.original.meaning !== 'unmapped' && <MeaningBadge meaning={info.row.original.meaning} />}
         {info.row.original.order.statusHistory.some((event) => event.review === true) && (
           <Badge size="sm" variant="warning">
             Sporná změna stavu
@@ -360,7 +345,7 @@ const orderColumns = (lang: string): ColumnDef<ReportOrderRow>[] => [
         )}
       </span>
     ),
-    header: 'Stav ze zdroje → význam',
+    header: 'Stav objednávky',
     id: 'status',
     meta: { type: 'string', width: 280 },
   },
@@ -429,115 +414,6 @@ export const OrdersTable = ({
     }}
   />
 );
-
-// ---------------------------------------------------------------------------------------------------------------
-
-/** The raw -> meaning mapping for the statuses that really occur, plus the metric definition. */
-export const StatusMappingCard = ({
-  onOpenInputs,
-  state,
-}: {
-  readonly onOpenInputs?: () => void;
-  readonly state: CrmState;
-}) => {
-  const statuses = rawStatusesInUse(state);
-  const approved = reportMappingApproved(state);
-  const r04 = customerInputOf(state.customerInputs, 'R04');
-  return (
-    <SectionCard
-      title={`Význam stavů a definice metrik (mapování ${statusMapping.version} – ${
-        approved ? `schváleno ${formatDate(r04.sampleApprovedAt)}` : 'návrh, neschváleno'
-      })`}
-    >
-      <div
-        className={`${surfaceTileClassName} mb-200 flex flex-wrap items-center justify-between gap-150 p-150 text-sm`}
-      >
-        <span>
-          <strong>R04 – význam stavů:</strong> {customerInputStatusLabels[r04.status]}.{' '}
-          {approved
-            ? 'Statistiky podle významu (storno, dodáno, uhrazeno) jsou zapnuté pro tuto verzi mapování.'
-            : 'Dokud zákazník mapování neodsouhlasí, přehled filtruje a seskupuje jen podle stavu ze zdroje a nepočítá stornované, dodané ani uhrazené částky.'}
-        </span>
-        {onOpenInputs !== undefined && (
-          <Button
-            icon="icon-[mdi--clipboard-list-outline]"
-            onClick={onOpenInputs}
-            size="sm"
-            theme="outlined"
-            variant="secondary"
-          >
-            Vstupy od zákazníka (R01–R08)
-          </Button>
-        )}
-      </div>
-      <div className="grid min-w-0 grid-cols-1 gap-250 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        {statuses.length === 0 ? (
-          <p className="text-fg-secondary text-sm">Zatím nebyla importována žádná objednávka — bez dat.</p>
-        ) : (
-          <table className="w-full border-collapse text-sm">
-            <caption className="sr-only">Mapování surových stavů ze zdroje na význam pro přehled</caption>
-            <thead>
-              <tr className="border-border-primary border-b text-left text-fg-secondary">
-                <th className="py-100 pr-200 font-medium" scope="col">
-                  Surový stav
-                </th>
-                <th className="py-100 pr-200 font-medium" scope="col">
-                  Zdroj
-                </th>
-                <th className="py-100 font-medium" scope="col">
-                  {approved ? 'Význam pro přehled' : 'Navržený význam (neschválený)'}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {statuses.map((status) => (
-                <tr className="border-border-primary/60 border-b last:border-b-0" key={status.raw}>
-                  <th className="py-100 pr-200 text-left font-normal" scope="row">
-                    <code className="rounded-sm bg-surface-secondary px-50 text-xs">{status.raw}</code>
-                  </th>
-                  <td className="py-100 pr-200 text-fg-secondary">{status.sources.join(', ')}</td>
-                  <td className="py-100">
-                    <MeaningBadge meaning={status.meaning} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        <dl className="flex flex-col gap-150 text-sm">
-          <div>
-            <dt className="font-medium">Evidované objednávky</dt>
-            <dd className="text-fg-secondary">
-              Importované objednávky spárované s klientem, bez nepotvrzených duplicit ze dvou zdrojů. Objednávky „k
-              napárování“, „vyžaduje kontrolu“ a možné duplikáty jsou mimo přehled a uvedeny bokem.
-            </dd>
-          </div>
-          <div>
-            <dt className="font-medium">Hodnota objednávek</dt>
-            <dd className="text-fg-secondary">
-              Součet importovaných částek tak, jak je poslal zdroj, zvlášť pro každou měnu (žádný přepočet). Není to
-              realizovaná tržba, zisk ani částka bez DPH.
-            </dd>
-          </div>
-          <div>
-            <dt className="font-medium">Obchodník</dt>
-            <dd className="text-fg-secondary">
-              Aktuálně přidělený obchodník klienta. Po převodu klienta se souhrn odvozuje z nové platné vazby.
-            </dd>
-          </div>
-          <div>
-            <dt className="font-medium">Význam stavů</dt>
-            <dd className="text-fg-secondary">
-              {approved
-                ? `Mapování ${statusMapping.version} odsouhlasil zákazník (R04, ${formatDate(r04.sampleApprovedAt)}). Stav ze zdroje zůstává vždy viditelný; stav mimo tabulku je „bez schváleného významu“.`
-                : `Mapování ${statusMapping.version} je jen návrh dodavatele. Statistiky podle významu se zapnou až po odsouhlasení R04 zákazníkem (v registru vstupů s verzí ${statusMapping.version} a datem odsouhlasení). Stav ze zdroje zůstává vždy viditelný.`}
-            </dd>
-          </div>
-        </dl>
-      </div>
-    </SectionCard>
-  );
-};
 
 // ---------------------------------------------------------------------------------------------------------------
 

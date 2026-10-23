@@ -10,12 +10,7 @@ import { expect, it } from 'effect-rstest';
 import { ContextAccess } from '@app/core-runtime';
 import type { ContextAccessService, OperationalScope } from '@app/core-runtime';
 import { ActivityRefSchema } from '../../shared/resources/activity.ts';
-import { EmailObservationSchema, RelationshipsStateSchema } from '../../shared/apis/records.ts';
-import {
-  evolveRelationshipsState,
-  visibleActivities,
-  visibleEmailObservations,
-} from '../../src/services/persistence.service.ts';
+import { evolveRelationshipsState, visibleActivities } from '../../src/services/persistence.service.ts';
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const partyRef = {
@@ -42,7 +37,7 @@ const command = {
 it.effect('records canonical identity and the existing follow-up Task without creating another Task', () =>
   Effect.gen(function* case1() {
     const decoded = yield* Schema.decodeEffect(ActivityCommandSchema)(command);
-    const change = yield* evolveRelationshipsState({ activities: [], emailObservations: [] }, decoded, input);
+    const change = yield* evolveRelationshipsState({ activities: [] }, decoded, input);
     expect(change.state.activities).toHaveLength(1);
     expect(change.activity.followUpTaskRef).toEqual(command.followUpTaskRef);
     expect(change.activity.partyRef).toEqual(partyRef);
@@ -53,7 +48,7 @@ it.effect('records canonical identity and the existing follow-up Task without cr
       ActivityRevisionConflict,
     );
     expect(
-      yield* evolveRelationshipsState({ activities: [], emailObservations: [] }, decoded, {
+      yield* evolveRelationshipsState({ activities: [] }, decoded, {
         ...input,
         partyRef: { ...partyRef, resourceId: 'unrelated' },
       }).pipe(Effect.flip),
@@ -68,7 +63,7 @@ it.effect('refuses missing identity and foreign tenant references', () =>
     expect(yield* Schema.decodeEffect(ActivityCommandSchema)(noIdentity).pipe(Effect.isFailure)).toBe(true);
     expect(
       yield* evolveRelationshipsState(
-        { activities: [], emailObservations: [] },
+        { activities: [] },
         yield* Schema.decodeEffect(ActivityCommandSchema)({
           ...command,
           followUpTaskRef: { ...command.followUpTaskRef, tenantId: '30000000-0000-4000-8000-000000000001' },
@@ -113,109 +108,17 @@ const fakeAccess = (wrongDecisionKey = false): ContextAccessService => ({
 it.effect('an assigned Activity grant exposes only that Activity and rejects a mismatched authorization result', () =>
   Effect.gen(function* filteredActivities() {
     const decoded = yield* Schema.decodeEffect(ActivityCommandSchema)(command);
-    const change = yield* evolveRelationshipsState({ activities: [], emailObservations: [] }, decoded, input);
+    const change = yield* evolveRelationshipsState({ activities: [] }, decoded, input);
     const otherRef = yield* Schema.decodeEffect(ActivityRefSchema)({ ...change.activity.ref, resourceId: 'other' });
     const records = [change.activity, { ...change.activity, ref: otherRef }];
-    expect(yield* visibleActivities(records, scope).pipe(Effect.provideService(ContextAccess, fakeAccess()))).toEqual([
-      change.activity,
-    ]);
     expect(
-      yield* visibleActivities(records, scope).pipe(
+      yield* visibleActivities(records, scope, false).pipe(Effect.provideService(ContextAccess, fakeAccess())),
+    ).toEqual([change.activity]);
+    expect(
+      yield* visibleActivities(records, scope, false).pipe(
         Effect.provideService(ContextAccess, fakeAccess(true)),
         Effect.flip,
       ),
     ).toBeInstanceOf(ActivityReferenceUnavailable);
-  }),
-);
-
-const emailObservationWire = {
-  attemptedAt: '2026-10-05T09:00:00Z',
-  completedAt: '2026-10-05T09:00:01Z',
-  correlation: 'email:followup:demo',
-  integrationKind: 'EMAIL',
-  mode: 'SIMULATED',
-  observationId: '20000000-0000-4000-8000-000000000005',
-  ownerResourceRef: {
-    moduleId: 'crm.activities',
-    resourceId: 'activity',
-    resourceType: 'crm.activities.activity',
-    tenantId,
-  },
-  providerLabel: 'DEMO',
-  receipt: 'SIMULATED:email:followup:receipt',
-  requestSummary: 'Simulated follow-up notification for the recorded Activity',
-  resultSummary: 'Demo provider accepted the synthetic notification; no message sent',
-  status: 'SUCCESS',
-} as const;
-
-it.effect('requires an explicit simulated provider receipt, stable UUID and valid completion chronology', () =>
-  Effect.gen(function* emailObservationValidation() {
-    const observation = yield* Schema.decodeEffect(EmailObservationSchema)(emailObservationWire);
-    expect(observation.integrationKind).toBe('EMAIL');
-    expect(observation.mode).toBe('SIMULATED');
-    for (const invalid of [
-      { ...emailObservationWire, observationId: 'unstable-id' },
-      { ...emailObservationWire, receipt: '' },
-      { ...emailObservationWire, providerLabel: 'SMTP' },
-      { ...emailObservationWire, mode: 'LIVE' },
-      { ...emailObservationWire, completedAt: '2026-10-05T08:59:59Z' },
-    ]) {
-      expect(yield* Schema.decodeUnknownEffect(EmailObservationSchema)(invalid).pipe(Effect.isFailure)).toBe(true);
-    }
-  }),
-);
-
-it.effect(
-  'rejects orphan or foreign-tenant observation owners and preserves observations when recording Activity',
-  () =>
-    Effect.gen(function* emailOwnerIntegrity() {
-      const decoded = yield* Schema.decodeEffect(ActivityCommandSchema)(command);
-      const change = yield* evolveRelationshipsState({ activities: [], emailObservations: [] }, decoded, input);
-      const activity = yield* Schema.encodeEffect(RelationshipsStateSchema)({
-        activities: [change.activity],
-        emailObservations: [],
-      });
-      const state = yield* Schema.decodeUnknownEffect(RelationshipsStateSchema)({
-        ...activity,
-        emailObservations: [emailObservationWire],
-      });
-      for (const ownerResourceRef of [
-        { ...emailObservationWire.ownerResourceRef, resourceId: 'orphan' },
-        { ...emailObservationWire.ownerResourceRef, tenantId: '30000000-0000-4000-8000-000000000001' },
-      ]) {
-        expect(
-          yield* Schema.decodeUnknownEffect(RelationshipsStateSchema)({
-            ...activity,
-            emailObservations: [{ ...emailObservationWire, ownerResourceRef }],
-          }).pipe(Effect.isFailure),
-        ).toBe(true);
-      }
-      const next = yield* evolveRelationshipsState(state, decoded, { ...input, resourceId: 'new-activity' });
-      expect(next.state.emailObservations).toEqual(state.emailObservations);
-      expect(next.state.activities).toHaveLength(2);
-    }),
-);
-
-it.effect('filters email attempts by the complete authorized owner Activity reference without leaking counts', () =>
-  Effect.gen(function* visibleEmailAttempts() {
-    const decoded = yield* Schema.decodeEffect(ActivityCommandSchema)(command);
-    const change = yield* evolveRelationshipsState({ activities: [], emailObservations: [] }, decoded, input);
-    const authorized = yield* visibleActivities([change.activity], scope).pipe(
-      Effect.provideService(ContextAccess, fakeAccess()),
-    );
-    const observation = yield* Schema.decodeEffect(EmailObservationSchema)(emailObservationWire);
-    const hidden = yield* Schema.decodeUnknownEffect(EmailObservationSchema)({
-      ...emailObservationWire,
-      ownerResourceRef: { ...emailObservationWire.ownerResourceRef, resourceId: 'hidden' },
-    });
-    const foreign = yield* Schema.decodeUnknownEffect(EmailObservationSchema)({
-      ...emailObservationWire,
-      ownerResourceRef: {
-        ...emailObservationWire.ownerResourceRef,
-        tenantId: '30000000-0000-4000-8000-000000000001',
-      },
-    });
-    expect(visibleEmailObservations([observation, hidden, foreign], authorized)).toEqual([observation]);
-    expect(visibleEmailObservations([observation, hidden, foreign], [])).toEqual([]);
   }),
 );

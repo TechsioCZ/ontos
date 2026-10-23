@@ -54,7 +54,7 @@ const unavailable = (reason: string, cause?: unknown) =>
   });
 
 const registryDown = (cause: unknown) =>
-  unavailable('Party Registry je dočasně nedostupný; klienta teď nelze zapsat s ověřenou identitou', cause);
+  unavailable('Evidence zákazníků je dočasně nedostupná; klienta teď nelze zapsat s ověřenou identitou', cause);
 
 const fold = (value: string) =>
   value
@@ -220,7 +220,10 @@ export const linkClientsInBatch = Effect.fn('Crm.partyIntake.linkBatch')(functio
     items.flatMap((client) =>
       client.partyRef === undefined
         ? []
-        : [client.partyRef.partyId, ...(client.partyRef.counterpartyId === undefined ? [] : [client.partyRef.counterpartyId])],
+        : [
+            client.partyRef.partyId,
+            ...(client.partyRef.counterpartyId === undefined ? [] : [client.partyRef.counterpartyId]),
+          ],
     ),
   );
   const linkedByIco = new Map<string, VerifiedParty>();
@@ -235,12 +238,12 @@ export const linkClientsInBatch = Effect.fn('Crm.partyIntake.linkBatch')(functio
       Effect.flatMap((verified) =>
         Option.isNone(verified)
           ? Effect.succeed(Option.none<{ readonly party: VerifiedParty; readonly revision: number }>())
-          : steps.link(client.id, verified.value, revision).pipe(
-              Effect.map((next) => Option.some({ party: verified.value, revision: next })),
-            ),
+          : steps
+              .link(client.id, verified.value, revision)
+              .pipe(Effect.map((next) => Option.some({ party: verified.value, revision: next }))),
       ),
       Effect.catch((error) =>
-        Effect.logWarning('CRM Party Registry intake skipped a client', client.id, error).pipe(
+        Effect.logWarning('CRM Evidence zákazníků intake skipped a client', client.id, error).pipe(
           Effect.as(Option.none<{ readonly party: VerifiedParty; readonly revision: number }>()),
         ),
       ),
@@ -334,7 +337,7 @@ export const makePartyIntake = (scope: {
       const key = yield* localSetting(KEY_VARIABLE);
       if (Option.isNone(key)) {
         return yield* unavailable(
-          'Zápis klientů do Party Registry není nastaven (chybí klíč služby CRM); požádejte správce systému',
+          'Zápis klientů do evidence zákazníků není nastaven (chybí klíč služby CRM); požádejte správce systému',
         );
       }
       const gatewayBase = yield* Config.String('ONTOS_SHELL_GATEWAY_BASE_URL').pipe(
@@ -374,15 +377,13 @@ export const makePartyIntake = (scope: {
       correlationId,
       options,
     ).pipe(Effect.mapError(registryDown));
-    return list.items.map(
-      (item): RegistryCustomer => ({
-        companyId: item.companyId,
-        counterpartyId: item.counterpartyId,
-        displayName: item.displayName,
-        partyId: item.partyId,
-        status: item.status,
-      }),
-    );
+    return list.items.map((item): RegistryCustomer => ({
+      companyId: item.companyId,
+      counterpartyId: item.counterpartyId,
+      displayName: item.displayName,
+      partyId: item.partyId,
+      status: item.status,
+    }));
   });
 
   const createCustomer = Effect.fn('Crm.partyIntake.create')(function* createCustomer(
@@ -444,7 +445,8 @@ export const makePartyIntake = (scope: {
         {
           caseRef: created.caseRef,
           expectedRevision: detail.revision,
-          reason: 'New CRM client; the candidate Parties share only a lookalike name or contact, no official identifier',
+          reason:
+            'New CRM client; the candidate Parties share only a lookalike name or contact, no official identifier',
         },
         third.credential,
         { ...third.options, correlationId, idempotencyKey: `${operationKey}:resolve-create` },
@@ -486,7 +488,12 @@ export const makePartyIntake = (scope: {
         contactPoint,
         partyRef,
         privacyClassification: 'BUSINESS_SENSITIVE',
-        provenance: { authoritative: false, evidenceReference, method: 'MANUAL_CONFIRMATION', source: 'USER_ASSERTION' },
+        provenance: {
+          authoritative: false,
+          evidenceReference,
+          method: 'MANUAL_CONFIRMATION',
+          source: 'USER_ASSERTION',
+        },
         validFrom: now,
         verification: { state: 'UNVERIFIED' },
       }).pipe(
@@ -550,10 +557,14 @@ export const makePartyIntake = (scope: {
   /** The company's CRM clients as the intake principal sees them (read_all). */
   const crmRecords = Effect.gen(function* readCrmRecords() {
     const crm = yield* assertion(CRM);
-    const response = yield* postJson(`${crm.options.baseUrl}/reads/records`, {}, {
-      authorization: crm.authorization,
-      'x-ontos-composition-revision': crm.options.compositionRevision,
-    });
+    const response = yield* postJson(
+      `${crm.options.baseUrl}/reads/records`,
+      {},
+      {
+        authorization: crm.authorization,
+        'x-ontos-composition-revision': crm.options.compositionRevision,
+      },
+    );
     if (response.status !== 200) {
       return yield* registryDown(new Error(`intake CRM records HTTP ${response.status}`));
     }
@@ -604,7 +615,9 @@ export const makePartyIntake = (scope: {
     const records = yield* crmRecords;
     const items = records.state.clients.items;
     const targets = items
-      .filter((client) => client.partyRef === undefined && (client.status === 'active' || clientIds.includes(client.id)))
+      .filter(
+        (client) => client.partyRef === undefined && (client.status === 'active' || clientIds.includes(client.id)),
+      )
       .slice(0, BATCH);
     return yield* linkClientsInBatch(items, targets, records.revision, {
       identify: (client, taken, crmClients) =>

@@ -1,6 +1,6 @@
 {
   "title": "Security devices",
-  "description": "Cameras, access systems and alarms, service dates and faults (S11).",
+  "description": "Cameras, access systems and alarms, service dates and faults.",
   "evidenceOnly": "Records only",
   "evidenceOnlyHint": "OntOS never controls devices: no camera streams, alarm, reader or door control.",
   "restrictedHint": "Sensitive agenda: internal roles only.",

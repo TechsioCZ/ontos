@@ -55,7 +55,7 @@ const registryUnavailable = (cause?: unknown) =>
   withCause(
     new CrmReferenceUnavailable({
       code: 'crm_reference_unavailable',
-      reason: 'Party Registry je dočasně nedostupný; vazbu na zákazníka teď nelze ověřit',
+      reason: 'Evidence zákazníků je dočasně nedostupná; vazbu na zákazníka teď nelze ověřit',
     }),
     cause,
   );
@@ -89,16 +89,16 @@ export const verifiedPartyOf = (
   today: string,
 ): VerifiedParty | string => {
   if (counterparty.legalEntityRef.resourceId !== legalEntityId) {
-    return 'Zákazník v Party Registry patří jiné firmě';
+    return 'Zákazník v evidenci zákazníků patří jiné firmě';
   }
   if (counterparty.party.archived) {
-    return 'Záznam v Party Registry je archivovaný';
+    return 'Záznam v evidenci zákazníků je archivovaný';
   }
   if (
     counterparty.party.canonicalPartyRef.resourceId !== link.partyId &&
     counterparty.party.storedPartyRef.resourceId !== link.partyId
   ) {
-    return 'Party a Counterparty v Party Registry k sobě nepatří';
+    return 'Údaje o firmě a zákazníkovi k sobě nepatří';
   }
   const customer = counterparty.currentRoles.some(
     (role) =>
@@ -108,7 +108,7 @@ export const verifiedPartyOf = (
       (role.validTo === null || role.validTo.slice(0, 10) > today),
   );
   if (!customer) {
-    return 'Firma nemá v Party Registry platnou roli zákazníka';
+    return 'Firma nemá v evidenci zákazníků platnou roli zákazníka';
   }
   return {
     counterpartyId: link.counterpartyId,
@@ -216,7 +216,7 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
         ).pipe(
           Effect.mapError((failure) =>
             isNotVisible(failure)
-              ? partyIneligible('Zákazník v Party Registry neexistuje nebo k němu nemáte přístup')
+              ? partyIneligible('Zákazník v evidenci zákazníků neexistuje nebo k němu nemáte přístup')
               : registryUnavailable(failure),
           ),
         );

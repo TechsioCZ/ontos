@@ -1,6 +1,6 @@
 {
   "title": "Moje agenda",
-  "description": "Společný kalendář termínů ze smluv, nájmů, úkolů, faktur, majetku a provozu, vaše upozornění a vlastní události (S13).",
+  "description": "Společný kalendář termínů ze smluv, nájmů, úkolů, faktur, majetku a provozu, vaše upozornění a vlastní události.",
   "open": "Otevřít",
   "tabs": {
     "kalendar": "Kalendář",
@@ -376,7 +376,7 @@
   },
   "overview": {
     "title": "Přehled provozu",
-    "description": "Klíčové ukazatele z řízených zdrojů, nejbližší termíny a vyhledávání napříč záznamy, ke kterým máte oprávnění (S15).",
+    "description": "Klíčové ukazatele z řízených zdrojů, nejbližší termíny a vyhledávání napříč záznamy, ke kterým máte oprávnění.",
     "refresh": "Obnovit data",
     "openCalendar": "Kalendář",
     "dataAt": "Data k {{time}}",

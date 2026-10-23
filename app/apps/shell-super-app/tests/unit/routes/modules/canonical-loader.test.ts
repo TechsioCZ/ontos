@@ -153,7 +153,6 @@ it.effect('the generated catchall renders shell recovery for an unknown target',
 it.effect.each([
   ['/siampark/overview', '/nemovitosti/prehled'],
   ['/siampark/properties', '/nemovitosti'],
-  ['/siampark/integrations', '/nemovitosti/integrace'],
   ['/siampark/occupancy', '/najmy'],
   ['/siampark/agreements', '/smlouvy'],
   ['/siampark/finance', '/finance'],
@@ -186,6 +185,7 @@ it.effect.each([
 it('maps every legacy path exactly once', () => {
   expect(legacyCanonicalRedirects.get('/siampark/work')).toBe('/ukoly');
   expect(legacyCanonicalRedirects.has('/siampark')).toBe(false);
+  expect(legacyCanonicalRedirects.has('/siampark/integrations')).toBe(false);
 });
 
 it.effect('redirects a legacy path without a query string to the bare domain path', () =>

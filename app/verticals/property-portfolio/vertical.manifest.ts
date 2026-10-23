@@ -10,7 +10,6 @@ import { Result, Schema } from 'effect';
 // <generated-module-manifest-imports>
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
 import { assetResourceDescriptor } from './shared/resources/asset.ts';
-import { IntegrationsPage } from './src/routes/[lang]/nemovitosti/integrace/page.tsx';
 import { OverviewPage } from './src/routes/[lang]/nemovitosti/prehled/page.tsx';
 import { propertyResourceDescriptor } from './shared/resources/property.ts';
 import { RecordsApi } from './shared/apis/records.ts';
@@ -29,7 +28,6 @@ const pageContribution = (value: PageContributionInput) =>
 
 const moduleKey = 'property.portfolio';
 const accessPermission = 'module.access';
-const integrationsPageKey = 'property.portfolio.page.integrations';
 const overviewPageKey = 'property.portfolio.page.overview';
 const recordsPageKey = 'property.portfolio.page.records';
 
@@ -64,7 +62,6 @@ export const propertyPortfolioManifest = defineOntosModuleManifest({
     ],
     components: {
       // <generated-module-manifest-components>
-      'page-integrations': IntegrationsPage,
       'page-overview': OverviewPage,
       'page-records': RecordsPage,
       // </generated-module-manifest-components>
@@ -90,22 +87,6 @@ export const propertyPortfolioManifest = defineOntosModuleManifest({
       mediaAttachments: [],
       navigation: [
         // <generated-module-shell-navigation>
-        navigationContribution({
-          contributionKey: 'property.portfolio.navigation.integrations',
-          entrypoint: {
-            access: 'read',
-            authorization: { kind: 'context_permission', permission: accessPermission },
-            entrypointKey: integrationsPageKey,
-            moduleKey,
-            role: 'page',
-            scope: 'tenant',
-          },
-          groupKey: 'shell.navigation.settings',
-          icon: 'icon-[mdi--connection]',
-          label: { cs: 'Integrace', en: 'Integrations' },
-          order: 720,
-          pageKey: integrationsPageKey,
-        }),
         navigationContribution({
           contributionKey: 'property.portfolio.navigation.overview',
           entrypoint: {
@@ -143,20 +124,6 @@ export const propertyPortfolioManifest = defineOntosModuleManifest({
       ],
       pages: [
         // <generated-module-shell-pages>
-        pageContribution({
-          componentKey: 'property.portfolio.page-integrations',
-          contributionKey: integrationsPageKey,
-          entrypoint: {
-            access: 'read',
-            authorization: { kind: 'context_permission', permission: accessPermission },
-            entrypointKey: integrationsPageKey,
-            moduleKey,
-            role: 'page',
-            scope: 'tenant',
-          },
-          expose: './PageIntegrations',
-          routePath: '/nemovitosti/integrace',
-        }),
         pageContribution({
           componentKey: 'property.portfolio.page-overview',
           contributionKey: overviewPageKey,

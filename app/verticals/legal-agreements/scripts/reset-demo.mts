@@ -35,13 +35,6 @@ const cli = Command.make(
         row.supersedesContractRef,
       ]),
       ...input.state.documents.flatMap((row) => [row.documentRef, row.contractRef]),
-      ...input.state.signatureObservations.flatMap((row) => [
-        row.contractRef,
-        row.documentRef,
-        row.ownerResourceRef,
-        row.signer.counterpartyRef,
-        row.signer.partyRef,
-      ]),
     ];
     if (refs.some((ref) => ref !== null && ref.tenantId !== input.tenantId)) {
       return yield* new ResetInputError({ reason: 'All fixture references must match the fixed demo tenant' });

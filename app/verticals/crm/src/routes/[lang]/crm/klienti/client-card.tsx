@@ -207,7 +207,7 @@ const CardBody = ({
               theme="outlined"
               variant="secondary"
             >
-              Propojit s Party Registry
+              Propojit s evidencí zákazníků
             </Button>
           )}
           {writable &&
@@ -298,7 +298,7 @@ const CardBody = ({
           <Fact icon="icon-[mdi--web]" label="Web">
             {client.website ?? <Missing />}
           </Fact>
-          <Fact icon="icon-[mdi--database-check-outline]" label="Identita v Party Registry">
+          <Fact icon="icon-[mdi--database-check-outline]" label="Identita v evidenci zákazníků">
             {partyLinked(client) ? (
               <span className="flex flex-col">
                 <span>{client.partyRef?.registryName ?? client.name}</span>

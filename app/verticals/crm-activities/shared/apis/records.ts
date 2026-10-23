@@ -1,5 +1,5 @@
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
-import { DateTime, Schema } from 'effect';
+import { Schema } from 'effect';
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
 import { PartyRefSchema } from '@app/party-registry/resources/party';
@@ -30,46 +30,7 @@ export const ActivitySchema = Schema.Struct({
   ),
 );
 export type Activity = typeof ActivitySchema.Type;
-const EmailObservationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand('crm.activities.EmailObservationId'),
-);
-export const EmailObservationSchema = Schema.Struct({
-  attemptedAt: Schema.DateTimeUtcFromString,
-  completedAt: Schema.DateTimeUtcFromString,
-  correlation: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
-  integrationKind: Schema.Literal('EMAIL'),
-  mode: Schema.Literal('SIMULATED'),
-  observationId: EmailObservationIdSchema,
-  ownerResourceRef: ActivityRefSchema,
-  providerLabel: Schema.Literal('DEMO'),
-  receipt: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
-  requestSummary: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
-  resultSummary: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1000)),
-  status: Schema.Literal('SUCCESS'),
-}).check(
-  Schema.makeFilter((observation) =>
-    DateTime.toEpochMillis(observation.completedAt) >= DateTime.toEpochMillis(observation.attemptedAt)
-      ? undefined
-      : 'Email completion cannot precede its attempt',
-  ),
-);
-export type EmailObservation = typeof EmailObservationSchema.Type;
-export const RelationshipsStateSchema = Schema.Struct({
-  activities: Schema.Array(ActivitySchema),
-  emailObservations: Schema.Array(EmailObservationSchema),
-}).check(
-  Schema.makeFilter((state) =>
-    state.emailObservations.every((observation) =>
-      state.activities.some(
-        ({ ref }) =>
-          ref.resourceId === observation.ownerResourceRef.resourceId &&
-          ref.tenantId === observation.ownerResourceRef.tenantId,
-      ),
-    )
-      ? undefined
-      : 'Email observations must identify an existing Activity in the same tenant',
-  ),
-);
+export const RelationshipsStateSchema = Schema.Struct({ activities: Schema.Array(ActivitySchema) });
 export type RelationshipsState = typeof RelationshipsStateSchema.Type;
 export const RecordsRequestSchema = Schema.Struct({
   counterpartyId: Schema.optionalKey(CounterpartyRefSchema.fields.resourceId),
@@ -81,7 +42,6 @@ export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
 export const RecordsResponseSchema = Schema.Struct({
   actorPrincipalRef: PrincipalRefSchema,
   canWrite: Schema.Boolean,
-  emailObservations: Schema.Array(EmailObservationSchema),
   items: Schema.Array(ActivitySchema),
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });

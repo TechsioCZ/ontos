@@ -26,7 +26,6 @@
     "demo": {
       "feedback": {
         "loading": "Načítání…",
-        "ready": "Připraveno",
         "saving": "Ukládání…",
         "forbidden": "Pro tuto oblast nemáte oprávnění.",
         "conflict": "Stav se změnil. Obnovte data a zkuste operaci znovu.",
@@ -40,7 +39,6 @@
       "detail": "Detail",
       "openEnd": "Bez konce",
       "customer": "Nájemce",
-      "simulated": "Simulace poskytovatele",
       "activate": "Aktivovat",
       "choose": "Vyberte záznam",
       "startDate": "Začátek",
@@ -58,11 +56,6 @@
         "COMPLETED": "Dokončeno",
         "CANCELLED": "Zrušeno"
       },
-      "bookingStates": {
-        "SUCCESS": "Úspěšně přijato",
-        "FAILED": "Přijetí selhalo",
-        "CONFLICT": "Kolize termínu"
-      },
       "attempts": "Pokusů: {{attemptCount}}",
       "contract": "Smlouva",
       "confirm": "Potvrdit",
@@ -71,14 +64,9 @@
       "create": "Vytvořit návrh nájmu",
       "customerSearch": "Vyhledat zákazníka",
       "search": "Vyhledat",
-      "bookingObservations": "Pozorování rezervační simulace",
       "list": "Nájmy a pobyty",
-      "importBooking": "Import krátkodobého pobytu",
-      "bookingFormContext": "Vyberte jednotku, termín a hosta. Simulace pobytu je pro dvě osoby.",
       "guestSearch": "Vyhledat hosta",
       "guest": "Host",
-      "simulateImport": "Simulovat úspěšný import",
-      "simulateFailure": "Simulovat selhání importu",
       "retry": "Opakovat import se zvolenými údaji",
       "provider": "Poskytovatel",
       "attemptedAt": "Čas pokusu",

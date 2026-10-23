@@ -19,7 +19,6 @@ export const retireLegacyRental = (
   const isLegacy = (id: string | undefined) => id !== undefined && legacyContractIds.has(id);
   const contracts = state.contracts.filter((row) => isLegacy(row.contractRef.resourceId));
   const documents = state.documents.filter((row) => isLegacy(row.contractRef?.resourceId));
-  const observations = state.signatureObservations.filter((row) => isLegacy(row.contractRef.resourceId));
   if (
     state.contracts.some(
       (row) => !isLegacy(row.contractRef.resourceId) && isLegacy(row.supersedesContractRef?.resourceId),
@@ -29,16 +28,14 @@ export const retireLegacyRental = (
   }
   if (
     contracts.some((row) => !baseline.contracts.some((original) => isDeepStrictEqual(row, original))) ||
-    documents.some((row) => !baseline.documents.some((original) => isDeepStrictEqual(row, original))) ||
-    observations.some((row) => !baseline.signatureObservations.some((original) => isDeepStrictEqual(row, original)))
+    documents.some((row) => !baseline.documents.some((original) => isDeepStrictEqual(row, original)))
   ) {
     throw new Error('Legacy rental fixture was edited; no records removed');
   }
-  if (contracts.length + documents.length + observations.length === 0) return state;
+  if (contracts.length + documents.length === 0) return state;
   return {
     ...state,
     contracts: state.contracts.filter((row) => !isLegacy(row.contractRef.resourceId)),
     documents: state.documents.filter((row) => !isLegacy(row.contractRef?.resourceId)),
-    signatureObservations: state.signatureObservations.filter((row) => !isLegacy(row.contractRef.resourceId)),
   };
 };

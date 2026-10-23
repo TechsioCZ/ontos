@@ -152,6 +152,7 @@ export const modulePageProps = (
   shell.state === 'authenticated' && shell.selectedLegalEntityId !== undefined
     ? {
         context: {
+          displayName: shell.identity.displayName,
           legalEntityId: shell.selectedLegalEntityId,
           principalId: shell.identity.principalId,
           tenantId: shell.identity.tenantId,

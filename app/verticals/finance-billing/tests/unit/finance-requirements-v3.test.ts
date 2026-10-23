@@ -65,10 +65,8 @@ const invoice = (id: string, overrides: Partial<Invoice> = {}): Invoice => ({
   ...overrides,
 });
 const empty: FinanceState = {
-  accountingObservations: [],
   financialPlanEntries: [],
   invoices: [],
-  paymentObservations: [],
 };
 let counter = 0;
 const run = (state: FinanceState, command: FinanceCommand) => {
@@ -230,7 +228,11 @@ describe('S07.R5 lifecycle and S07.R3 bulk preparation', () => {
       const refused = yield* Effect.exit(run(state, { _tag: 'ConfirmInvoice', invoiceRef: state.invoices[0]!.ref }));
       expect(failsWith(refused, 'confirm_requires_prepared')).toBe(true);
       expect(failsWith(refused, 'Připraveno ke schválení')).toBe(true);
-      const prepared = yield* run(state, { _tag: 'MarkInvoicesPrepared', actorLabel: 'Finance', invoiceRefs: [state.invoices[0]!.ref] });
+      const prepared = yield* run(state, {
+        _tag: 'MarkInvoicesPrepared',
+        actorLabel: 'Finance',
+        invoiceRefs: [state.invoices[0]!.ref],
+      });
       const returned = yield* run(prepared.state, { _tag: 'ReturnInvoiceToDraft', invoiceRef: state.invoices[0]!.ref });
       const refusedAgain = yield* Effect.exit(
         run(returned.state, { _tag: 'ConfirmInvoice', invoiceRef: state.invoices[0]!.ref }),
@@ -266,7 +268,10 @@ describe('S07.R5 lifecycle and S07.R3 bulk preparation', () => {
       );
       expect(failsWith(early, 'export_requires_handover')).toBe(true);
       const handed = yield* run(created.state, { _tag: 'HandOverAccountingExport', actorLabel: 'Finance', exportId });
-      expect(handed.state.accountingExports?.[0]).toMatchObject({ handedOverByLabel: 'Finance', status: 'HANDED_OVER' });
+      expect(handed.state.accountingExports?.[0]).toMatchObject({
+        handedOverByLabel: 'Finance',
+        status: 'HANDED_OVER',
+      });
       const failed = yield* run(handed.state, {
         _tag: 'MarkAccountingExportFailed',
         exportId,
@@ -378,7 +383,12 @@ describe('S09 plan items, object budgets, skonto and late interest', () => {
       const base = { category: 'Energie', kind: 'COST' as const, period: '2026-10' };
       const invoices = [
         invoice('e-1', { budgetCategory: 'Energie', direction: 'INCOMING', propertyRef, totalMinor: 10_000 }),
-        invoice('e-2', { budgetCategory: 'Energie', costCenter: 'Ubytování', direction: 'INCOMING', totalMinor: 5_000 }),
+        invoice('e-2', {
+          budgetCategory: 'Energie',
+          costCenter: 'Ubytování',
+          direction: 'INCOMING',
+          totalMinor: 5_000,
+        }),
       ];
       expect(invoiceActualMinor(base, invoices)).toBe(15_000);
       expect(invoiceActualMinor({ ...base, propertyRef }, invoices)).toBe(10_000);

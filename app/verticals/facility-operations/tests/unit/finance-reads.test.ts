@@ -29,7 +29,6 @@ const response = {
   referenceDate: '2026-10-05',
   revision: 42,
   state: {
-    accountingObservations: [],
     documents: [
       {
         actorLabel: 'Finance (finance@siampark.demo)',
@@ -44,7 +43,6 @@ const response = {
     ],
     financialPlanEntries: [],
     invoices: [invoice],
-    paymentObservations: [],
   },
 };
 

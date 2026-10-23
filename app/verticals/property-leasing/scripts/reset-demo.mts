@@ -33,7 +33,6 @@ const cli = Command.make(
         row.customerCounterpartyRef,
         row.guestPartyRef,
       ]),
-      ...input.state.bookingObservations.flatMap((row) => [row.occupancyRef, row.ownerResourceRef]),
     ];
     if (refs.some((ref) => ref !== null && ref.tenantId !== input.tenantId)) {
       return yield* new ResetInputError({ reason: 'All fixture references must match the fixed demo tenant' });

@@ -10,7 +10,7 @@ import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-ver
 import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/api/client';
 import { executeRecordsWithAuthorization as executePropertyRecords } from '@app/property-portfolio/clients/records';
 import { and, eq } from 'drizzle-orm';
-import { Crypto, DateTime, Effect, Match, Schema } from 'effect';
+import { DateTime, Effect, Match, Schema } from 'effect';
 
 import {
   AgreementsConflict,
@@ -58,7 +58,6 @@ export interface AgreementsValidators {
     AgreementsError
   >;
 
-  readonly signatureRequestId: Effect.Effect<string, AgreementsError>;
   readonly unit: (ref: UnitRef) => Effect.Effect<
     {
       readonly legalEntityId: string;
@@ -84,12 +83,6 @@ export const unavailableAgreementsValidators: AgreementsValidators = {
         reason: 'Occupancy validation is unavailable',
       }),
     ),
-  signatureRequestId: Effect.fail(
-    new AgreementsPersistenceUnavailable({
-      code: 'agreements_persistence_unavailable',
-      reason: 'Signature request identity is unavailable',
-    }),
-  ),
   unit: () =>
     Effect.fail(
       new AgreementsPersistenceUnavailable({
@@ -386,67 +379,6 @@ export const transitionAgreements = (
       }),
     ),
     Match.tag(
-      'SendSignature',
-      Effect.fn('Agreements.SendSignature')(function* sendSignature({
-        contractRef,
-        signerContact,
-      }: Extract<AgreementsCommand, { readonly _tag: 'SendSignature' }>) {
-        const record = yield* findContract(state, contractRef, scope);
-        if (
-          record.lifecycleState !== 'DRAFT' ||
-          (record.signatureState !== 'NOT_SENT' && record.signatureState !== 'DECLINED')
-        ) {
-          return yield* conflict('signature_send_requires_unsigned_draft');
-        }
-        const customer = yield* validators.counterparty(record.counterpartyRef);
-        if (
-          customer.archived ||
-          !customer.activeCustomer ||
-          customer.legalEntityId !== scope.legalEntityId ||
-          !refMatches(customer.counterpartyRef, record.counterpartyRef) ||
-          customer.partyRef.tenantId !== scope.tenantId
-        ) {
-          return yield* rejected('signature_signer_projection_mismatch');
-        }
-        const contact = yield* Schema.decodeEffect(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500)))(
-          signerContact,
-        ).pipe(Effect.mapError((error) => rejected('signature_contact_required', error)));
-        const observationId = yield* validators.signatureRequestId;
-        const attemptedAt = DateTime.formatIso(yield* DateTime.now);
-        const changed = replaceContract(state, { ...record, signatureState: 'SENT' });
-        return {
-          ...changed,
-          snapshot: {
-            ...changed.snapshot,
-            signatureObservations: [
-              ...state.signatureObservations,
-              {
-                attemptedAt,
-                completedAt: null,
-                contractRef,
-                correlation: `signature:${observationId}`,
-                documentRef: null,
-                integrationKind: 'ELECTRONIC_SIGNATURE' as const,
-                mode: 'SIMULATED' as const,
-                observationId,
-                ownerResourceRef: contractRef,
-                providerLabel: 'DEMO',
-                requestSummary: `Contract ${contractRef.resourceId}; canonical signer ${customer.partyRef.resourceId}`,
-                resultSummary: 'SIMULATED: signature request submitted',
-                signer: {
-                  contact,
-                  counterpartyRef: customer.counterpartyRef,
-                  displayName: customer.displayName,
-                  partyRef: customer.partyRef,
-                },
-                state: 'SENT' as const,
-              },
-            ],
-          },
-        };
-      }),
-    ),
-    Match.tag(
       'RecordSignedDocument',
       Effect.fn('Agreements.RecordSignedDocument')(function* recordSignedDocument({
         contractRef,
@@ -485,64 +417,6 @@ export const transitionAgreements = (
           snapshot: {
             ...changed.snapshot,
             documents: [...state.documents, { ...document, createdAt: now, signedBy, signedOn, updatedAt: now }],
-          },
-        };
-      }),
-    ),
-    Match.tag(
-      'ObserveSignature',
-      Effect.fn('Agreements.ObserveSignature')(function* observeSignature({
-        contractRef,
-        document,
-        outcome,
-      }: Extract<AgreementsCommand, { readonly _tag: 'ObserveSignature' }>) {
-        const record = yield* findContract(state, contractRef, scope);
-        if (record.lifecycleState !== 'DRAFT' || record.signatureState !== 'SENT') {
-          return yield* conflict('signature_result_requires_sent');
-        }
-        if (outcome === 'SIGNED') {
-          if (
-            document === null ||
-            document.contractRef === null ||
-            !refMatches(document.contractRef, contractRef) ||
-            document.lifecycleState !== 'FINAL' ||
-            document.signedDocumentReference === null
-          ) {
-            return yield* rejected('signed_result_requires_final_document');
-          }
-          yield* validateDocument(state, document, scope);
-          if (state.documents.some((value) => refMatches(value.documentRef, document.documentRef))) {
-            return yield* conflict('signed_document_already_exists');
-          }
-        } else if (document !== null) {
-          return yield* rejected('declined_result_has_no_signed_document');
-        }
-        const pending = state.signatureObservations.findLast(
-          (value) => refMatches(value.contractRef, contractRef) && value.state === 'SENT',
-        );
-        if (pending === undefined) {
-          return yield* conflict('signature_pending_observation_required');
-        }
-        const observedAt = DateTime.formatIso(yield* DateTime.now);
-        const stampedDocument =
-          document === null ? null : { ...document, createdAt: observedAt, updatedAt: observedAt };
-        const changed = replaceContract(state, { ...record, signatureState: outcome });
-        return {
-          ...changed,
-          snapshot: {
-            ...changed.snapshot,
-            documents: stampedDocument === null ? state.documents : [...state.documents, stampedDocument],
-            signatureObservations: state.signatureObservations.map((value) =>
-              value.observationId === pending.observationId
-                ? {
-                    ...value,
-                    completedAt: observedAt,
-                    documentRef: document?.documentRef ?? null,
-                    resultSummary: `SIMULATED: ${outcome}`,
-                    state: outcome,
-                  }
-                : value,
-            ),
           },
         };
       }),
@@ -677,9 +551,6 @@ export const filterAgreementsRecords = (
     contracts,
     documents,
     revision,
-    signatureObservations: state.signatureObservations.filter((observation) =>
-      contracts.some((record) => refMatches(record.contractRef, observation.contractRef)),
-    ),
   };
 };
 export type AgreementsPersistence = Readonly<{
@@ -714,7 +585,7 @@ export const persistenceService = (
             row === undefined
               ? Effect.succeed({
                   revision: 0,
-                  snapshot: { contracts: [], documents: [], signatureObservations: [] } satisfies AgreementsState,
+                  snapshot: { contracts: [], documents: [] } satisfies AgreementsState,
                 })
               : Schema.decodeEffect(AgreementsStateSchema)(row.snapshot).pipe(
                   Effect.mapError(unavailable),
@@ -758,7 +629,6 @@ export const makeAgreementsValidators = Effect.fn('Agreements.validators')(funct
   }
   const { legalEntityId } = scope;
   const source = yield* makeReferenceGatewayCredentialSource(scope).pipe(Effect.mapError(unavailable));
-  const crypto = yield* Crypto.Crypto;
   return {
     counterparty: Effect.fn('Agreements.counterpartyProjection')(function* counterpartyProjection(
       ref: CounterpartyRef,
@@ -810,7 +680,6 @@ export const makeAgreementsValidators = Effect.fn('Agreements.validators')(funct
         ),
       ),
     ),
-    signatureRequestId: crypto.randomUUIDv4.pipe(Effect.mapError(unavailable)),
     unit: Effect.fn('Agreements.unitProjection')(function* unitProjection(ref: UnitRef) {
       const target = yield* source.issue('property-portfolio').pipe(Effect.mapError(unavailable));
       const value = yield* executePropertyRecords(

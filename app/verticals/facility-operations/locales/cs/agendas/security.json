@@ -1,6 +1,6 @@
 {
   "title": "Bezpečnostní zařízení",
-  "description": "Soupis kamer, přístupových systémů a alarmů, servisní termíny a poruchy (S11).",
+  "description": "Soupis kamer, přístupových systémů a alarmů, servisní termíny a poruchy.",
   "evidenceOnly": "Pouze evidence",
   "evidenceOnlyHint": "OntOS zařízení neovládá: žádné streamování kamer, ovládání alarmů, čteček ani dveří.",
   "restrictedHint": "Citlivá agenda: dostupná jen interním rolím správce.",

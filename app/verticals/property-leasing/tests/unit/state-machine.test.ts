@@ -54,7 +54,7 @@ const draft: Occupancy = {
   state: 'DRAFT',
   unitRef,
 };
-const empty: OccupancyState = { bookingObservations: [], occupancies: [] };
+const empty: OccupancyState = { occupancies: [] };
 const validators: OccupancyValidators = {
   contract: (ref) =>
     Effect.succeed({
@@ -289,100 +289,6 @@ describe('Occupancy state transitions', () => {
       }
     }),
   );
-  it.effect('records a simulated failed booking and retry correlation without inventing a booking master', () =>
-    Effect.gen(function* testEffect() {
-      const guestPartyRef = {
-        moduleId: 'party.registry',
-        resourceId: '77777777-7777-4777-8777-777777777777',
-        resourceType: 'party.registry.party',
-        tenantId,
-      } as const;
-      const record: Occupancy = {
-        ...draft,
-        customerCounterpartyRef: null,
-        endDate: '2026-10-10',
-        guestPartyRef,
-        kind: 'SHORT_STAY',
-        peopleCount: 2,
-        state: 'CONFIRMED',
-      };
-      const observationId = '88888888-8888-4888-8888-888888888888';
-      const failed = yield* transitionOccupancy(
-        empty,
-        { _tag: 'ImportBooking', correlation: 'booking:A103', observationId, outcome: 'FAILED', record },
-        scope,
-        validators,
-      );
-      expect(failed.snapshot.occupancies).toEqual([]);
-      expect(failed.resourceRef).toBeNull();
-      expect(failed.snapshot.bookingObservations[0]).toMatchObject({
-        integrationKind: 'BOOKING',
-        observationId,
-        occupancyRef: null,
-        ownerResourceRef: record.unitRef,
-        providerLabel: 'DEMO',
-      });
-      expect(failed.snapshot.bookingObservations[0]?.attemptedAt).toBe(
-        failed.snapshot.bookingObservations[0]?.completedAt,
-      );
-      expect(failed.snapshot.bookingObservations[0]?.resultSummary).toContain('SIMULATED: FAILED');
-      yield* rejected(
-        transitionOccupancy(
-          failed.snapshot,
-          {
-            _tag: 'RetryBooking',
-            observationId,
-            record: { ...record, unitRef: { ...record.unitRef, resourceId: '99999999-9999-4999-8999-999999999999' } },
-          },
-          scope,
-          validators,
-        ),
-      );
-      yield* rejected(
-        transitionOccupancy(
-          empty,
-          { _tag: 'ImportBooking', correlation: 'booking:unavailable', observationId, outcome: 'FAILED', record },
-          scope,
-          unavailableOccupancyValidators,
-        ),
-      );
-      const conflicting = yield* transitionOccupancy(
-        {
-          ...empty,
-          occupancies: [
-            { ...record, occupancyRef: { ...record.occupancyRef, resourceId: '99999999-9999-4999-8999-999999999999' } },
-          ],
-        },
-        { _tag: 'ImportBooking', correlation: 'booking:conflict', observationId, outcome: 'SUCCESS', record },
-        scope,
-        validators,
-      );
-      expect(conflicting.snapshot.occupancies).toHaveLength(1);
-      expect(conflicting.snapshot.bookingObservations[0]).toMatchObject({
-        occupancyRef: null,
-        ownerResourceRef: unitRef,
-        state: 'CONFLICT',
-      });
-      const retried = yield* transitionOccupancy(
-        failed.snapshot,
-        { _tag: 'RetryBooking', observationId, record },
-        scope,
-        validators,
-      );
-      expect(retried.snapshot.bookingObservations[0]).toMatchObject({
-        attempts: 2,
-        correlation: 'booking:A103',
-        mode: 'SIMULATED',
-        observationId,
-        ownerResourceRef: record.occupancyRef,
-        state: 'SUCCESS',
-      });
-      expect(retried.snapshot.occupancies[0]?.externalBookingCorrelation).toBe('booking:A103');
-      yield* rejected(
-        transitionOccupancy(retried.snapshot, { _tag: 'RetryBooking', observationId, record }, scope, validators),
-      );
-    }),
-  );
   it.effect('rejects impossible calendar dates structurally', () =>
     rejected(Schema.decodeEffect(OccupancySchema)({ ...draft, startDate: '2026-02-31' })),
   );
@@ -393,7 +299,7 @@ it.effect(
   () =>
     Effect.gen(function* tenantDossierLifecycle() {
       const actor = { ...scope, principalId: '72000000-0000-4000-8000-000000000021' };
-      const initial = { bookingObservations: [], occupancies: [draft] };
+      const initial = { occupancies: [draft] };
       const contacts = [
         {
           id: '81000000-0000-4000-8000-000000000001',
@@ -457,7 +363,7 @@ it.effect(
 
 it.effect('rejects dossier updates without trusted author, for another tenant and with duplicate contacts', () =>
   Effect.gen(function* tenantDossierGuard() {
-    const initial = { bookingObservations: [], occupancies: [draft] };
+    const initial = { occupancies: [draft] };
     const command = {
       _tag: 'UpdateTenantDossier' as const,
       occupancyRef,
@@ -589,7 +495,6 @@ it.effect('manually reserves a stay with people and note without creating integr
       state: 'COMPLETED',
       externalBookingCorrelation: null,
     });
-    expect(completed.snapshot.bookingObservations).toEqual([]);
     const cancelled = yield* transitionOccupancy(
       confirmed.snapshot,
       { _tag: 'Cancel', occupancyRef },

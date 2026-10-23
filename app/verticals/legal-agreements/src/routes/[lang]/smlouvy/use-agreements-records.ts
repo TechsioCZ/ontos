@@ -57,7 +57,11 @@ export const useRecordsPage = (input: AgreementsInput) => {
     cancellation.current = controller;
     void browserRuntime.runPromiseExit(effect, { signal: controller.signal });
   };
-  const page = useSyncExternalStore(agreements.subscribe, () => agreements.snapshot(input), () => pageDataPending);
+  const page = useSyncExternalStore(
+    agreements.subscribe,
+    () => agreements.snapshot(input),
+    () => pageDataPending,
+  );
   const { legalEntityId, resourceId: linkedResourceId } = input;
   useEffect(
     () => agreements.ensure({ legalEntityId, resourceId: linkedResourceId }),
@@ -175,10 +179,8 @@ export const useRecordsPage = (input: AgreementsInput) => {
         CreateContract: ({ record }) => contractReferenceAudiences(record),
         CreateDocument: () => [],
         FinalizeDocument: () => [],
-        ObserveSignature: () => [],
         RecordSignedDocument: () => [],
         RenewContract: ({ successor }) => contractReferenceAudiences(successor),
-        SendSignature: () => ['party-registry'],
         SetContractTerms: () => [],
         TerminateContract: () => [],
         UpdateContract: ({ record }) => contractReferenceAudiences(record),
@@ -467,10 +469,6 @@ export const useRecordsPage = (input: AgreementsInput) => {
     canRenew: selected?.lifecycleState === 'ACTIVE',
     documents:
       snapshot?.documents.filter((record) => record.contractRef?.resourceId === selected?.contractRef.resourceId) ?? [],
-    signatureObservations:
-      snapshot?.signatureObservations.filter(
-        (record) => record.contractRef.resourceId === selected?.contractRef.resourceId,
-      ) ?? [],
   };
   return {
     busy,

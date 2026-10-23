@@ -83,11 +83,7 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
         </LinkButton>
         <PageHeader title={t(LABEL_DETAIL)} />
         <output aria-live="polite">
-          {t(
-            feedback === 'ready'
-              ? 'legal-agreements.detail.notFound'
-              : `legal-agreements.demo.feedback.${feedback}`,
-          )}
+          {t(feedback === 'ready' ? 'legal-agreements.detail.notFound' : `legal-agreements.demo.feedback.${feedback}`)}
         </output>
       </>
     );
@@ -220,35 +216,6 @@ const AgreementsDetail = ({ state }: { readonly state: ReturnType<typeof useReco
               </Button>
             </form>
           )}
-
-          {state.detailView.signatureObservations.map((record) => (
-            <p
-              className={`${surfaceTileClassName} legalagreements:space-y-2 legalagreements:break-words legalagreements:p-4 legalagreements:text-sm legalagreements:text-(--color-fg-secondary)`}
-              key={record.observationId}
-            >
-              <Badge variant="info">{t('legal-agreements.demo.simulated')}</Badge> {record.correlation} ·{' '}
-              {t(`legal-agreements.demo.signatureLabels.${record.state}`)}
-              <br />
-              {t('legal-agreements.demo.provider')}: {record.providerLabel} · {record.integrationKind}
-              <br />
-              {t('legal-agreements.demo.attemptedAt')}: {record.attemptedAt}
-              {record.completedAt !== null && (
-                <>
-                  <br />
-                  {t('legal-agreements.demo.completedAt')}: {record.completedAt}
-                </>
-              )}
-              <br />
-              {t('legal-agreements.demo.ownerReference')}: {record.ownerResourceRef.resourceId}
-              <br />
-              {t('legal-agreements.demo.signer')}: {record.signer.displayName ?? record.signer.partyRef.resourceId} ·{' '}
-              {record.signer.contact}
-              <br />
-              {t('legal-agreements.demo.requestSummary')}: {record.requestSummary}
-              <br />
-              {t('legal-agreements.demo.resultSummary')}: {record.resultSummary}
-            </p>
-          ))}
         </div>
         <div className="legalagreements:min-w-0 legalagreements:space-y-6">
           <SectionCard title={t('legal-agreements.detail.status')}>
@@ -400,9 +367,7 @@ const AgreementsDraftForm = ({ state }: { readonly state: ReturnType<typeof useR
       title={t(formLabel)}
     >
       <div className="legalagreements:space-y-4 legalagreements:py-2">
-        {feedback !== 'ready' && (
-          <output aria-live="polite">{t(`legal-agreements.demo.feedback.${feedback}`)}</output>
-        )}
+        {feedback !== 'ready' && <output aria-live="polite">{t(`legal-agreements.demo.feedback.${feedback}`)}</output>}
         {!editingDraft && (
           <Select
             items={(['OTHER', 'LEASE'] as const).map((value) => ({
@@ -528,7 +493,6 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
 
     snapshot,
     t,
-    unitName,
     visible,
   } = state;
   return (
@@ -599,7 +563,9 @@ const RecordsPageContent = ({ input }: { readonly input: AgreementsInput }) => {
               </Button>
             </div>
             {snapshot !== undefined && visible.length === 0 && (
-              <p className={`${surfaceTileClassName} legalagreements:p-5 legalagreements:text-sm legalagreements:text-(--color-fg-secondary)`}>
+              <p
+                className={`${surfaceTileClassName} legalagreements:p-5 legalagreements:text-sm legalagreements:text-(--color-fg-secondary)`}
+              >
                 {t('legal-agreements.demo.empty')}
               </p>
             )}

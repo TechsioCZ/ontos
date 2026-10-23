@@ -21,25 +21,37 @@ import { isOpenSalesCase } from './sales-source.ts';
 import { sourceKeys } from './sources.ts';
 import type { RentalOverviewSources, SourceKey, SourceStatus } from './sources.ts';
 
-export const agendaStateOf = (sources: RentalOverviewSources): AgendaState | undefined => sources.ops.data?.agenda?.state;
+export const agendaStateOf = (sources: RentalOverviewSources): AgendaState | undefined =>
+  sources.ops.data?.agenda?.state;
 
 /** Retain the audit history in storage, but do not present removed, completed or superseded dates as live alerts. */
-export const currentAgendaState = (sources: RentalOverviewSources, deadlines: readonly Deadline[], today: string): AgendaState | undefined => {
+export const currentAgendaState = (
+  sources: RentalOverviewSources,
+  deadlines: readonly Deadline[],
+  today: string,
+): AgendaState | undefined => {
   const state = agendaStateOf(sources);
   if (state === undefined) return undefined;
-  const currentKeys = new Set(deadlines.filter((row) => !row.done).map((row) =>
-    `${row.key}:${row.date < today ? 'OVERDUE' : 'DEADLINE'}`,
-  ));
-  const assignments = new Set((sources.work.data?.items ?? []).filter((task) => task.state !== 'DONE' && task.state !== 'CANCELLED')
-    .map((task) => `task-assigned:${task.ref.resourceId}:${task.ownerPrincipalRef?.principalId ?? ''}`));
+  const currentKeys = new Set(
+    deadlines.filter((row) => !row.done).map((row) => `${row.key}:${row.date < today ? 'OVERDUE' : 'DEADLINE'}`),
+  );
+  const assignments = new Set(
+    (sources.work.data?.items ?? [])
+      .filter((task) => task.state !== 'DONE' && task.state !== 'CANCELLED')
+      .map((task) => `task-assigned:${task.ref.resourceId}:${task.ownerPrincipalRef?.principalId ?? ''}`),
+  );
   return {
     ...state,
     notifications: (state.notifications ?? []).filter((entry) => {
       const source = sourceKeys.find((key) => key === entry.source);
       if (source !== undefined && sources[source].status === 'forbidden') return false;
-      if (entry.eventKey.startsWith('task-assigned:') && sources.work.status === 'ready') return assignments.has(entry.eventKey);
+      if (entry.eventKey.startsWith('task-assigned:') && sources.work.status === 'ready')
+        return assignments.has(entry.eventKey);
       if (entry.category !== 'DEADLINE' && entry.category !== 'OVERDUE') return true;
-      if (!/^(contract-|lease-|task-due:|invoice-due:|asset-service:|agenda-event:|ops:|project-)/u.test(entry.eventKey)) return true;
+      if (
+        !/^(contract-|lease-|task-due:|invoice-due:|asset-service:|agenda-event:|ops:|project-)/u.test(entry.eventKey)
+      )
+        return true;
       return source === undefined || sources[source].status !== 'ready' || currentKeys.has(entry.eventKey);
     }),
   };
@@ -135,7 +147,12 @@ const kpiBase = (sources: RentalOverviewSources, id: KpiId, keys: readonly Sourc
   return { id, sources: keys, status: combinedStatus(sources, keys), ...(loadedAt === undefined ? {} : { loadedAt }) };
 };
 
-const unavailable = (sources: RentalOverviewSources, id: KpiId, keys: readonly SourceKey[], kind: Kpi['kind'] = 'count'): Kpi => ({
+const unavailable = (
+  sources: RentalOverviewSources,
+  id: KpiId,
+  keys: readonly SourceKey[],
+  kind: Kpi['kind'] = 'count',
+): Kpi => ({
   ...kpiBase(sources, id, keys),
   kind,
   rows: [],
@@ -146,11 +163,17 @@ type UnitAvailability = 'OCCUPIED' | 'RESERVED' | 'AVAILABLE';
 
 export const unitAvailability = (
   unitId: string,
-  occupancies: readonly { readonly unitRef: { readonly resourceId: string }; readonly startDate: string; readonly endDate: string | null; readonly state: string }[],
+  occupancies: readonly {
+    readonly unitRef: { readonly resourceId: string };
+    readonly startDate: string;
+    readonly endDate: string | null;
+    readonly state: string;
+  }[],
   today: string,
 ): UnitAvailability => {
   const current = occupancies.filter(
-    (item) => item.unitRef.resourceId === unitId && item.startDate <= today && (item.endDate === null || today < item.endDate),
+    (item) =>
+      item.unitRef.resourceId === unitId && item.startDate <= today && (item.endDate === null || today < item.endDate),
   );
   if (current.some((item) => item.state === 'ACTIVE')) {
     return 'OCCUPIED';
@@ -158,7 +181,11 @@ export const unitAvailability = (
   return current.some((item) => item.state === 'CONFIRMED') ? 'RESERVED' : 'AVAILABLE';
 };
 
-const availabilityTone: Record<UnitAvailability, Tone> = { AVAILABLE: 'success', OCCUPIED: 'primary', RESERVED: 'warning' };
+const availabilityTone: Record<UnitAvailability, Tone> = {
+  AVAILABLE: 'success',
+  OCCUPIED: 'primary',
+  RESERVED: 'warning',
+};
 
 export const buildKpis = (
   sources: RentalOverviewSources,
@@ -193,7 +220,9 @@ export const buildKpis = (
     kpis.push({
       ...kpiBase(sources, 'occupancy', ['property', 'occupancy']),
       kind: 'percent',
-      rows: rows.toSorted((left, right) => (left.status ?? '').localeCompare(right.status ?? '') || left.title.localeCompare(right.title)),
+      rows: rows.toSorted(
+        (left, right) => (left.status ?? '').localeCompare(right.status ?? '') || left.title.localeCompare(right.title),
+      ),
       secondary: { free: units.length - occupied - reserved, occupied, reserved, total: units.length },
       tone: 'primary',
       ...(units.length === 0 ? {} : { value: occupied / units.length }),
@@ -217,7 +246,9 @@ export const buildKpis = (
         tone: 'success',
       })),
       secondary: {
-        disposed: property.properties.filter((entry) => entry.lifecycleState === 'DISPOSED' || entry.lifecycleState === 'INACTIVE').length,
+        disposed: property.properties.filter(
+          (entry) => entry.lifecycleState === 'DISPOSED' || entry.lifecycleState === 'INACTIVE',
+        ).length,
         units: property.units.filter((unit) => unit.lifecycleState === 'ACTIVE').length,
       },
       tone: 'success',
@@ -230,7 +261,8 @@ export const buildKpis = (
   // Active leases: occupancies in state ACTIVE today; CONFIRMED (future) shown separately.
   if (occupancy !== undefined) {
     const active = occupancy.occupancies.filter(
-      (entry) => entry.state === 'ACTIVE' && entry.startDate <= today && (entry.endDate === null || today < entry.endDate),
+      (entry) =>
+        entry.state === 'ACTIVE' && entry.startDate <= today && (entry.endDate === null || today < entry.endDate),
     );
     const confirmed = occupancy.occupancies.filter((entry) => entry.state === 'CONFIRMED' && entry.startDate > today);
     kpis.push({
@@ -241,7 +273,8 @@ export const buildKpis = (
         href: `/najmy?resourceId=${encodeURIComponent(entry.occupancyRef.resourceId)}`,
         id: entry.occupancyRef.resourceId,
         status: `lease.${entry.state}`,
-        subtitle: entry.customerCounterpartyRef === null ? undefined : names.get(entry.customerCounterpartyRef.resourceId),
+        subtitle:
+          entry.customerCounterpartyRef === null ? undefined : names.get(entry.customerCounterpartyRef.resourceId),
         title: names.get(entry.unitRef.resourceId) ?? entry.unitRef.resourceId,
         tone: entry.state === 'ACTIVE' ? 'success' : 'warning',
       })),
@@ -295,7 +328,12 @@ export const buildKpis = (
           status: `task.${task.state}`,
           subtitle: task.contextRefs.map((ref) => names.get(ref.resourceId)).find((label) => label !== undefined),
           title: task.title,
-          tone: task.dueDate !== undefined && task.dueDate < today ? 'danger' : task.priority === 'HIGH' ? 'warning' : 'neutral',
+          tone:
+            task.dueDate !== undefined && task.dueDate < today
+              ? 'danger'
+              : task.priority === 'HIGH'
+                ? 'warning'
+                : 'neutral',
         })),
       secondary: { overdue: overdue.length },
       tone: overdue.length > 0 ? 'warning' : 'primary',
@@ -443,7 +481,9 @@ export const buildKpis = (
       ...kpiBase(sources, 'planActual', ['finance']),
       kind: 'percent',
       rows: lines
-        .toSorted((left, right) => right.period.localeCompare(left.period) || left.category.localeCompare(right.category))
+        .toSorted(
+          (left, right) => right.period.localeCompare(left.period) || left.category.localeCompare(right.category),
+        )
         .map((line) => {
           const actual = actualOf(line);
           const difference = actual - line.plannedMinor;
@@ -458,13 +498,7 @@ export const buildKpis = (
               .filter((part) => part !== undefined)
               .join(' · '),
             tone:
-              line.kind === 'COST'
-                ? difference > 0
-                  ? 'danger'
-                  : 'success'
-                : difference < 0
-                  ? 'warning'
-                  : 'success',
+              line.kind === 'COST' ? (difference > 0 ? 'danger' : 'success') : difference < 0 ? 'warning' : 'success',
           };
         }),
       secondary: {
@@ -509,10 +543,13 @@ export interface SearchRow {
 
 const row = (entry: Omit<SearchRow, 'text'>, ...extra: readonly (string | null | undefined)[]): SearchRow => ({
   ...entry,
-  text: foldSearchText([entry.title, entry.subtitle, entry.id, ...extra].filter((part) => typeof part === 'string').join(' ')),
+  text: foldSearchText(
+    [entry.title, entry.subtitle, entry.id, ...extra].filter((part) => typeof part === 'string').join(' '),
+  ),
 });
 
-const opt = (key: 'subtitle', value: string | null | undefined) => (value === null || value === undefined || value === '' ? {} : { [key]: value });
+const opt = (key: 'subtitle', value: string | null | undefined) =>
+  value === null || value === undefined || value === '' ? {} : { [key]: value };
 
 /** Index of every record the person can read. Unreadable sources contribute nothing (and are reported). */
 export const buildSearchIndex = (sources: RentalOverviewSources, names: ReadonlyMap<string, string>): SearchRow[] => {
@@ -522,7 +559,14 @@ export const buildSearchIndex = (sources: RentalOverviewSources, names: Readonly
     for (const entry of property.properties) {
       rows.push(
         row(
-          { href: `/nemovitosti?resourceId=${entry.propertyRef.resourceId}`, id: entry.propertyRef.resourceId, kind: 'property', source: 'property', title: entry.name, ...opt('subtitle', entry.address) },
+          {
+            href: `/nemovitosti?resourceId=${entry.propertyRef.resourceId}`,
+            id: entry.propertyRef.resourceId,
+            kind: 'property',
+            source: 'property',
+            title: entry.name,
+            ...opt('subtitle', entry.address),
+          },
           entry.code,
         ),
       );
@@ -530,7 +574,14 @@ export const buildSearchIndex = (sources: RentalOverviewSources, names: Readonly
     for (const unit of property.units) {
       rows.push(
         row(
-          { href: `/nemovitosti?resourceId=${unit.unitRef.resourceId}`, id: unit.unitRef.resourceId, kind: 'unit', source: 'property', title: `${unit.name} (${unit.code})`, ...opt('subtitle', names.get(unit.propertyRef.resourceId)) },
+          {
+            href: `/nemovitosti?resourceId=${unit.unitRef.resourceId}`,
+            id: unit.unitRef.resourceId,
+            kind: 'unit',
+            source: 'property',
+            title: `${unit.name} (${unit.code})`,
+            ...opt('subtitle', names.get(unit.propertyRef.resourceId)),
+          },
           unit.unitKind,
         ),
       );
@@ -538,7 +589,14 @@ export const buildSearchIndex = (sources: RentalOverviewSources, names: Readonly
     for (const asset of property.assets) {
       rows.push(
         row(
-          { href: `/nemovitosti?resourceId=${asset.propertyRef.resourceId}`, id: asset.assetRef.resourceId, kind: 'asset', source: 'property', title: `${asset.name} (${asset.code})`, ...opt('subtitle', names.get(asset.propertyRef.resourceId)) },
+          {
+            href: `/nemovitosti?resourceId=${asset.propertyRef.resourceId}`,
+            id: asset.assetRef.resourceId,
+            kind: 'asset',
+            source: 'property',
+            title: `${asset.name} (${asset.code})`,
+            ...opt('subtitle', names.get(asset.propertyRef.resourceId)),
+          },
           asset.category,
           asset.serialNumber,
         ),
@@ -555,7 +613,12 @@ export const buildSearchIndex = (sources: RentalOverviewSources, names: Readonly
           kind: 'contract',
           source: 'agreements',
           title: party ?? contract.subject ?? contract.contractRef.resourceId,
-          ...opt('subtitle', [contract.unitRef === null ? undefined : names.get(contract.unitRef.resourceId), contract.subject].filter(Boolean).join(' · ')),
+          ...opt(
+            'subtitle',
+            [contract.unitRef === null ? undefined : names.get(contract.unitRef.resourceId), contract.subject]
+              .filter(Boolean)
+              .join(' · '),
+          ),
         },
         contract.subject,
         contract.responsiblePerson,
@@ -571,7 +634,15 @@ export const buildSearchIndex = (sources: RentalOverviewSources, names: Readonly
           kind: 'lease',
           source: 'occupancy',
           title: names.get(entry.unitRef.resourceId) ?? entry.unitRef.resourceId,
-          ...opt('subtitle', [entry.customerCounterpartyRef === null ? undefined : names.get(entry.customerCounterpartyRef.resourceId), `${entry.startDate} – ${entry.endDate ?? '…'}`].filter(Boolean).join(' · ')),
+          ...opt(
+            'subtitle',
+            [
+              entry.customerCounterpartyRef === null ? undefined : names.get(entry.customerCounterpartyRef.resourceId),
+              `${entry.startDate} – ${entry.endDate ?? '…'}`,
+            ]
+              .filter(Boolean)
+              .join(' · '),
+          ),
         },
         entry.note,
       ),
@@ -580,7 +651,14 @@ export const buildSearchIndex = (sources: RentalOverviewSources, names: Readonly
   for (const task of sources.work.data?.items ?? []) {
     rows.push(
       row(
-        { href: `/ukoly?resourceId=${task.ref.resourceId}`, id: task.ref.resourceId, kind: 'task', source: 'work', title: task.title, ...opt('subtitle', task.dueDate) },
+        {
+          href: `/ukoly?resourceId=${task.ref.resourceId}`,
+          id: task.ref.resourceId,
+          kind: 'task',
+          source: 'work',
+          title: task.title,
+          ...opt('subtitle', task.dueDate),
+        },
         task.description,
       ),
     );
@@ -627,9 +705,26 @@ export const buildSearchIndex = (sources: RentalOverviewSources, names: Readonly
 
 /** Diacritics- and case-insensitive AND match of all query words. */
 export const searchRows = (index: readonly SearchRow[], query: string, limit = 60) => {
-  const words = foldSearchText(query).split(/\s+/u).filter((word) => word !== '');
+  const words = foldSearchText(query)
+    .split(/\s+/u)
+    .filter((word) => word !== '');
   if (words.length === 0) {
     return [];
   }
   return index.filter((entry) => words.every((word) => entry.text.includes(word))).slice(0, limit);
+};
+
+/** Session names that only identify a role do not identify a person for a personal greeting. */
+export const personalGreetingName = (displayName: string | undefined): string | undefined => {
+  const name = displayName?.trim();
+  if (
+    name === undefined ||
+    name === '' ||
+    /^(?:vedení|provoz|účetní|externí|správce|admin|management|operations|finance|sales|expedice|e-shop|obchodník|moje úkoly)(?:\s|$)/iu.test(
+      name,
+    )
+  ) {
+    return undefined;
+  }
+  return name;
 };

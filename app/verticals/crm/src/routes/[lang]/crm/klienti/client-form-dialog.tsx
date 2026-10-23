@@ -192,7 +192,7 @@ export const ClientFormDialog = ({
       }
       toaster.create({
         ...(mode === 'create'
-          ? { description: 'Identitu firmy v Party Registry zapsal systém; najdete ji na kartě klienta.' }
+          ? { description: 'Identitu firmy v evidenci zákazníků zapsal systém; najdete ji na kartě klienta.' }
           : {}),
         title: mode === 'create' ? `Klient ${draft.name.trim()} založen` : 'Změny klienta uloženy',
         type: 'success',

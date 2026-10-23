@@ -54,7 +54,7 @@ const program = Effect.gen(function* seed() {
   const existing = rows[0];
   let state: FinanceState =
     existing === undefined
-      ? { accountingObservations: [], financialPlanEntries: [], invoices: [], paymentObservations: [] }
+      ? { financialPlanEntries: [], invoices: [] }
       : yield* Schema.decodeUnknownEffect(FinanceStateSchema)(existing.state);
   if (!FORCE && state.invoices.some((invoice) => invoice.note?.includes(MARKER) === true)) {
     console.log(`Finance demo-v2 seed already present in ${LEGAL_ENTITY}; use --force to add it again.`);
@@ -285,7 +285,9 @@ const program = Effect.gen(function* seed() {
       ),
     };
     yield* apply({ _tag: 'MarkInvoicesPrepared', actorLabel: ACTOR, invoiceRefs: [draft.ref] });
-    const confirmed = yield* invoiceOf(yield* apply({ _tag: 'ConfirmInvoice', actorLabel: ACTOR, invoiceRef: draft.ref }));
+    const confirmed = yield* invoiceOf(
+      yield* apply({ _tag: 'ConfirmInvoice', actorLabel: ACTOR, invoiceRef: draft.ref }),
+    );
     if (entry.paid !== 'NONE') {
       yield* apply({
         _tag: 'RecordManualPayment',

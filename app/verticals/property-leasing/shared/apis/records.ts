@@ -40,22 +40,6 @@ export const OccupancySchema = Schema.Struct({
   unitRef: UnitRefSchema,
 });
 export type Occupancy = typeof OccupancySchema.Type;
-export const BookingObservationSchema = Schema.Struct({
-  attemptedAt: Schema.toEncoded(Schema.DateTimeUtcFromString),
-  attempts: Schema.Int.check(Schema.isGreaterThan(0)),
-  completedAt: Schema.toEncoded(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
-  correlation: TextSchema,
-  integrationKind: Schema.Literal('BOOKING'),
-  mode: Schema.Literal('SIMULATED'),
-  observationId: Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('ResourceId'))),
-  occupancyRef: Schema.toEncoded(Schema.OptionFromNullOr(OccupancyRefSchema)),
-  ownerResourceRef: Schema.Union([OccupancyRefSchema, UnitRefSchema]),
-  providerLabel: TextSchema,
-  requestSummary: TextSchema,
-  resultSummary: TextSchema,
-  state: Schema.Literals(['SUCCESS', 'FAILED', 'CONFLICT']),
-});
-export type BookingObservation = typeof BookingObservationSchema.Type;
 /** Siampark tenant relationship evidence, scoped with the same company as the lease aggregate. */
 export const TenantContactSchema = Schema.Struct({
   id: Schema.String.check(Schema.isUUID()),
@@ -161,7 +145,6 @@ export const OccupancyStateSchema = Schema.Struct({
   occupancyHistory: Schema.optionalKey(Schema.Array(OccupancyHistoryEntrySchema)),
   registrationSheets: Schema.optionalKey(Schema.Array(RegistrationSheetSchema)),
   preparedNotices: Schema.optionalKey(Schema.Array(PreparedNoticeSchema)),
-  bookingObservations: Schema.Array(BookingObservationSchema),
   occupancies: Schema.Array(OccupancySchema),
 });
 export type OccupancyState = typeof OccupancyStateSchema.Type;

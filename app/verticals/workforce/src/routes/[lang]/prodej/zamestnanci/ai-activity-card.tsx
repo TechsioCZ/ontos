@@ -137,16 +137,16 @@ export const AiActivityCard = ({ legalEntityId }: { readonly legalEntityId: stri
                     </td>
                     <td className="px-150 py-100">
                       {entry.actionKey === null
-                        ? label('modules', moduleOf(entry), moduleOf(entry) || '—')
-                        : `${label('modules', moduleOf(entry), moduleOf(entry))} · ${t(`${key}.write`)}`}
+                        ? label('modules', moduleOf(entry), t(`${key}.otherModule`))
+                        : `${label('modules', moduleOf(entry), t(`${key}.otherModule`))} · ${t(`${key}.write`)}`}
                     </td>
                     <td className="px-150 py-100">
                       <Badge size="sm" variant={outcomeVariant[entry.outcome] ?? 'outline'}>
-                        {label('outcomes', entry.outcome, entry.outcome)}
+                        {label('outcomes', entry.outcome, t(`${key}.otherOutcome`))}
                       </Badge>
                     </td>
                     <td className="px-150 py-100 text-fg-secondary">
-                      {label('codes', entry.outcomeCode, entry.outcomeCode)}
+                      {label('codes', entry.outcomeCode, t(`${key}.otherCode`))}
                     </td>
                   </tr>
                 );

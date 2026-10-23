@@ -36,7 +36,7 @@ export const statusMeaningLabels: Record<StatusMeaningOrUnmapped, string> = {
   fulfilled: 'Vyřízená / dodaná',
   open: 'Přijatá / rozpracovaná',
   paid: 'Uhrazená',
-  unmapped: 'Bez schváleného významu',
+  unmapped: 'Bez zařazení',
 };
 
 export interface StatusMappingEntry {

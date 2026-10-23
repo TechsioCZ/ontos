@@ -268,6 +268,18 @@ export const filterTasks = (
   );
 };
 
+/** Selects only between rows already authorized by the owner; never grants access to team tasks. */
+export const defaultTaskTab = (
+  tasks: readonly Task[],
+  mineEmployeeId: string | undefined,
+  minePrincipalId: string | undefined,
+): TaskTab =>
+  filterTasks(tasks, { filters: initialTaskFilters, mineEmployeeId, minePrincipalId, tab: 'mine' }).some(
+    (task) => task.state !== 'DONE' && task.state !== 'CANCELLED',
+  )
+    ? 'mine'
+    : 'all';
+
 /**
  * The Úkoly view (tab and filters) survives a reload within the browser session. React reads the serialized
  * snapshot as an external store; its server snapshot uses defaults. Missing or full storage keeps the defaults.

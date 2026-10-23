@@ -37,7 +37,6 @@ export const canonicalPathFromRequest = (request: Request, language: string): st
 export const legacyCanonicalRedirects: ReadonlyMap<string, string> = new Map([
   ['/siampark/overview', '/nemovitosti/prehled'],
   ['/siampark/properties', '/nemovitosti'],
-  ['/siampark/integrations', '/nemovitosti/integrace'],
   ['/siampark/occupancy', '/najmy'],
   ['/siampark/agreements', '/smlouvy'],
   ['/siampark/finance', '/finance'],
@@ -82,9 +81,7 @@ export const loader = ({
   }
   return browserRuntime
     .runPromise(
-      loadModulePageModel({ canonicalPath, request }).pipe(
-        Effect.tap((model) => prepareModuleTarget(model, request)),
-      ),
+      loadModulePageModel({ canonicalPath, request }).pipe(Effect.tap((model) => prepareModuleTarget(model, request))),
       { signal: request.signal },
     )
     .then((model) => requireSignedIn(request, model));

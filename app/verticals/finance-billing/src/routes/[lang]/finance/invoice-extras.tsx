@@ -2,7 +2,14 @@
 // @effect-diagnostics newPromise:off
 // @effect-diagnostics globalTimers:off
 // @effect-diagnostics globalDate:off
-import { dialogCloseLabel, formatDate, formatDateTime, formatMoney, SectionCard, surfaceTileClassName } from '@app/admin-ui';
+import {
+  dialogCloseLabel,
+  formatDate,
+  formatDateTime,
+  formatMoney,
+  SectionCard,
+  surfaceTileClassName,
+} from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -22,7 +29,6 @@ import {
   parseAmountMinor,
   previewUrl,
   readUpload,
-  SimulationBadge,
 } from './finance-ui.tsx';
 import type { FinanceViewModel } from './finance-ui.tsx';
 import { ReminderEmailStatus, useEmailProvider, useReminderEmailReceipts } from './reminder-email-receipts.tsx';
@@ -32,7 +38,10 @@ import type { AccountingExportStatus } from '../../../../shared/apis/records.ts'
 
 /** S08 handover package states as the finance screens show them. */
 export const EXPORT_STATUS: Readonly<
-  Record<AccountingExportStatus, { readonly label: string; readonly variant: 'danger' | 'info' | 'success' | 'warning' }>
+  Record<
+    AccountingExportStatus,
+    { readonly label: string; readonly variant: 'danger' | 'info' | 'success' | 'warning' }
+  >
 > = {
   CONFIRMED_BY_ACCOUNTANT: { label: 'Potvrzeno účetní', variant: 'success' },
   FAILED: { label: 'Chyba předání', variant: 'danger' },
@@ -310,9 +319,9 @@ export const InvoicePayments = ({ invoice, vm }: { readonly invoice: Invoice; re
                       {`Zohledněno z ${invoice.priorSettlement?.entries[Number(event.id.split(':').at(-1))]?.number ?? 'zálohy'} · bez pohybu peněz`}
                     </Badge>
                   ) : (
-                    <SimulationBadge>
-                      {event.source === 'SIMULATED' ? 'SIMULACE – bankovní výpis' : 'Převzato z importu'}
-                    </SimulationBadge>
+                    <Badge size="sm" variant="outline">
+                      Převzato z importu
+                    </Badge>
                   )}
                   {payment !== undefined && (
                     <span className="text-fg-secondary text-xs">
@@ -485,11 +494,17 @@ export const InvoiceReminders = ({
     link.download = `upominka-${invoice.number ?? invoice.documentNumber}.txt`;
     link.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setMessage({ kind: 'success', text: 'Návrh upomínky stažen jako textový soubor. Upomínka se jako odeslaná nezaznamenala.' });
+    setMessage({
+      kind: 'success',
+      text: 'Návrh upomínky stažen jako textový soubor. Upomínka se jako odeslaná nezaznamenala.',
+    });
   };
   const send = async () => {
     if (!canSendEmail) {
-      setMessage({ kind: 'error', text: 'Odeslání e-mailem není dostupné – e-mailový poskytovatel není nastaven. Nic se neodeslalo.' });
+      setMessage({
+        kind: 'error',
+        text: 'Odeslání e-mailem není dostupné – e-mailový poskytovatel není nastaven. Nic se neodeslalo.',
+      });
       return;
     }
     if (!/^\S+@\S+\.\S+$/u.test(recipient.trim())) {
@@ -633,11 +648,7 @@ export const InvoiceReminders = ({
                     Zkušební adresa – nejde o upomínku zákazníkovi
                   </Badge>
                 )}
-                {reminder.deliveryMode === 'EMAIL' ? (
-                  <ReminderEmailStatus receipts={receipts} reminderId={reminder.id} />
-                ) : (
-                  <SimulationBadge>SIMULACE – starší záznam, neodesláno</SimulationBadge>
-                )}
+                <ReminderEmailStatus receipts={receipts} reminderId={reminder.id} />
                 <span className="text-fg-secondary text-xs">
                   {actorText(reminder.actorLabel, reminder.actorPrincipalId)}
                 </span>

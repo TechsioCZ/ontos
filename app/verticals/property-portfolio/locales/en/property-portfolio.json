@@ -18,39 +18,6 @@
     "title": "Property Portfolio",
     "widgetBody": "Owns a vertical route surface.",
     "pages": {
-      "integrations": {
-        "title": "Integrations",
-        "description": "Demo accounting, booking and signature outcomes.",
-        "refresh": "Load outcomes",
-        "unavailable": "Unable to load outcomes. Please try again.",
-        "simulation": "SIMULATED · DEMO — outcomes are simulated without sending to external providers.",
-        "accounting": "Accounting",
-        "booking": "Bookings",
-        "signature": "Electronic signatures",
-        "correlation": "Correlation",
-        "state": "Outcome",
-        "attempt": "Attempt",
-        "summary": "Description",
-        "empty": "No outcomes yet.",
-        "retry": "Retry failed accounting from the corresponding invoice in Finance.",
-        "finance": "Open finance",
-        "occupancy": "Open occupancy",
-        "agreements": "Open agreements",
-        "other": "Other services",
-        "email": "Email notifications",
-        "payroll": "Payroll: placeholder; a data flow is outside this demonstration.",
-        "forbidden": "You do not have access to these integration outcomes.",
-        "attemptedAt": "Attempt time",
-        "states": {
-          "SUCCESS": "Success",
-          "FAILED": "Failed",
-          "CONFLICT": "Conflict",
-          "PENDING": "Pending",
-          "SENT": "Sent",
-          "SIGNED": "Signed",
-          "DECLINED": "Declined"
-        }
-      },
       "overview": {
         "title": "Rental overview",
         "referenceDate": "Business reference date",
@@ -95,8 +62,7 @@
           "occupancy": "Occupancy",
           "finance": "Finance",
           "work": "Tasks",
-          "relationships": "Relationships",
-          "integrations": "Integrations"
+          "relationships": "Relationships"
         },
         "forbidden": "You do not have permission to view this overview.",
         "sourceRecords": "Source records",

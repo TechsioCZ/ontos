@@ -9,10 +9,8 @@ interface Row {
   readonly state: EncodedState;
 }
 const empty: FinanceState = {
-  accountingObservations: [],
   financialPlanEntries: [],
   invoices: [],
-  paymentObservations: [],
 };
 const fixture = (initial?: Row, conflictOnInsert = false) => {
   const calls: string[] = [];
@@ -58,7 +56,7 @@ it.effect('uses optimistic update for an existing revision zero row without inse
   Effect.gen(function* existingCompanyWrite() {
     const { calls, repository } = fixture({
       revision: 0,
-      state: { accountingObservations: [], financialPlanEntries: [], invoices: [], paymentObservations: [] },
+      state: { financialPlanEntries: [], invoices: [] },
     });
     expect(yield* repository.save(empty, 0)).toBe(1);
     expect(calls).toEqual(['update']);

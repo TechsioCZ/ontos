@@ -4,7 +4,6 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
-import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
 import { OccupancyRefSchema } from '@app/property-leasing/resources/occupancy';
 import { PropertyRefSchema } from '@app/property-portfolio/resources/property';
@@ -65,32 +64,9 @@ export const DocumentSchema = Schema.Struct({
   updatedAt: Schema.toEncoded(Schema.DateTimeUtcFromString),
 });
 export type Document = typeof DocumentSchema.Type;
-export const SignatureSignerSchema = Schema.Struct({
-  contact: TextSchema,
-  counterpartyRef: CounterpartyRefSchema,
-  displayName: Schema.toEncoded(Schema.OptionFromNullOr(TextSchema)),
-  partyRef: PartyRefSchema,
-});
-export const SignatureObservationSchema = Schema.Struct({
-  attemptedAt: Schema.toEncoded(Schema.DateTimeUtcFromString),
-  completedAt: Schema.toEncoded(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
-  contractRef: ContractRefSchema,
-  correlation: TextSchema,
-  documentRef: Schema.toEncoded(Schema.OptionFromNullOr(DocumentRefSchema)),
-  integrationKind: Schema.Literal('ELECTRONIC_SIGNATURE'),
-  mode: Schema.Literal('SIMULATED'),
-  observationId: Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('ResourceId'))),
-  ownerResourceRef: ContractRefSchema,
-  providerLabel: TextSchema,
-  requestSummary: TextSchema,
-  resultSummary: TextSchema,
-  signer: SignatureSignerSchema,
-  state: Schema.Literals(['SENT', 'SIGNED', 'DECLINED']),
-});
 export const AgreementsStateSchema = Schema.Struct({
   contracts: Schema.Array(ContractSchema),
   documents: Schema.Array(DocumentSchema),
-  signatureObservations: Schema.Array(SignatureObservationSchema),
 });
 export type AgreementsState = typeof AgreementsStateSchema.Type;
 export const RecordsRequestSchema = Schema.Struct({
@@ -112,7 +88,6 @@ export const RecordsResponseSchema = Schema.Struct({
   contracts: Schema.Array(ContractPresentationSchema),
   documents: Schema.Array(DocumentSchema),
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  signatureObservations: Schema.Array(SignatureObservationSchema),
 });
 export type RecordsResponse = typeof RecordsResponseSchema.Type;
 

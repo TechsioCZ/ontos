@@ -51,7 +51,11 @@ it('SetRentTerms restores the previous rent terms', () => {
 
 it('UpdateDraft restores the dates and rent terms of the draft', () => {
   expect(
-    occupancyRevert({ _tag: 'UpdateDraft', occupancyRef, startDate: '2026-02-01' }, { startDate: '2026-01-01' }, tenantId),
+    occupancyRevert(
+      { _tag: 'UpdateDraft', occupancyRef, startDate: '2026-02-01' },
+      { startDate: '2026-01-01' },
+      tenantId,
+    ),
   ).toEqual({
     commands: [{ _tag: 'UpdateDraft', endDate: null, occupancyRef, startDate: '2026-01-01' }],
     kind: 'commands',
@@ -88,10 +92,6 @@ it('occupancy state changes are not automatically revertible', () => {
     });
     expect(revertUnavailableReasonOf({ _tag: tag })).toBe('Změnu stavu nájmu nelze automaticky vrátit.');
   }
-  expect(occupancyRevert({ _tag: 'ImportBooking' }, undefined, tenantId)).toEqual({
-    kind: 'none',
-    reason: 'Tuto změnu nelze automaticky vrátit.',
-  });
 });
 
 it('pending proposals report undo support from the command alone', () => {
@@ -113,7 +113,9 @@ it('detects rent terms or a start date a person changed after the approval', () 
 });
 
 it('a pending rent change carries its undo plan and no lines of its own', () => {
-  expect(review({ command: { _tag: 'SetRentTerms', occupancyRef, rentTerms: {} } }, { occupancyRef, rentTerms })).toEqual({
+  expect(
+    review({ command: { _tag: 'SetRentTerms', occupancyRef, rentTerms: {} } }, { occupancyRef, rentTerms }),
+  ).toEqual({
     key: 'k',
     revert: { commands: [{ _tag: 'SetRentTerms', occupancyRef, rentTerms }], kind: 'commands' },
     visible: true,

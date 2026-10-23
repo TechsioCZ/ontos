@@ -159,7 +159,8 @@
             "demo_workforce": "Zaměstnanci",
             "party_registry": "Zákazníci",
             "finance_billing": "Faktury",
-            "demo_crm": "CRM"
+            "demo_crm": "CRM",
+            "core_identity": "Účty a přihlášení"
           },
           "outcomes": {
             "succeeded": "Provedeno",
@@ -174,8 +175,13 @@
             "action_policy_denied": "zamítnuto pravidlem",
             "action_revision_conflict": "souběžná změna",
             "spicedb_permission_denied": "chybí oprávnění k zápisu",
-            "action_executed": "uloženo"
-          }
+            "action_executed": "uloženo",
+            "policy_allowed": "Pravidla splněna",
+            "connector_exchange": "Připojení aplikace"
+          },
+          "otherModule": "Správa aplikace",
+          "otherOutcome": "Zpracováno",
+          "otherCode": "Záznam zpracování"
         }
       },
       "people": {

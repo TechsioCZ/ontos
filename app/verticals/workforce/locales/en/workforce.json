@@ -159,7 +159,8 @@
             "demo_workforce": "Employees",
             "party_registry": "Customers",
             "finance_billing": "Invoices",
-            "demo_crm": "CRM"
+            "demo_crm": "CRM",
+            "core_identity": "Accounts and sign-in"
           },
           "outcomes": {
             "succeeded": "Executed",
@@ -174,8 +175,13 @@
             "action_policy_denied": "denied by policy",
             "action_revision_conflict": "concurrent change",
             "spicedb_permission_denied": "no write permission",
-            "action_executed": "saved"
-          }
+            "action_executed": "saved",
+            "policy_allowed": "Policy checks passed",
+            "connector_exchange": "Application connected"
+          },
+          "otherModule": "Application management",
+          "otherOutcome": "Processed",
+          "otherCode": "Processing record"
         }
       },
       "people": {

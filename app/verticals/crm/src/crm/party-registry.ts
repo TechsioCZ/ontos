@@ -26,9 +26,10 @@ const failureOf = (error: unknown): RegistryFailure => {
 
 export const registryFailureMessage: Record<RegistryFailure, string> = {
   ambiguous:
-    'V Party Registry je firma se stejným názvem. Rozhodněte shodu v Prodej › Zákazníci, nebo vyberte existujícího zákazníka.',
-  forbidden: 'Zakládat firmy v Party Registry smí jen správce. Vyberte existujícího zákazníka, nebo požádejte správce.',
-  unavailable: 'Party Registry je dočasně nedostupný. Zkuste to prosím za chvíli.',
+    'V Evidence zákazníků je firma se stejným názvem. Rozhodněte shodu v Prodej › Zákazníci, nebo vyberte existujícího zákazníka.',
+  forbidden:
+    'Zakládat firmy v evidenci zákazníků smí jen správce. Vyberte existujícího zákazníka, nebo požádejte správce.',
+  unavailable: 'Evidence zákazníků je dočasně nedostupná. Zkuste to prosím za chvíli.',
 };
 
 /** "Ulice 12, 602 00 Brno" -> street / postal code / city for the registry address Contact Point. */
