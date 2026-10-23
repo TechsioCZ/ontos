@@ -4,7 +4,6 @@ import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import type {
   AgentAuditEntry,
   AgentEntity,
-  AgentEntityOverview,
   AgentModuleOption,
   ConnectionSummary,
   ManageAgentEntityRequest,
@@ -18,18 +17,18 @@ import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { Effect, Option, Schema } from 'effect';
-import { useCallback, useEffect, useState } from 'react';
-import { revokeAgentConnection, runAgentCommand, saveAgentOperators } from '../../../../api/agent-entities-client.ts';
-import type { AgentFailure } from '../../../../api/agent-entities-client.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { usePageData } from '../../../../runtime/use-page-data.ts';
-import { newRequestToken } from '../../prodej/zamestnanci/employee-model.ts';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { revokeAgentConnection, runAgentCommand, saveAgentOperators } from './agent-entities-client.ts';
+import type { AgentFailure } from './agent-entities-client.ts';
+import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
+import { usePageData } from './use-agent-page-data.ts';
+import { newRequestToken } from './people-client.ts';
 import { AgentEditorPanel } from './agent-editor-panel.tsx';
-import { agentEntitiesData } from './people-data.ts';
+import { agentEntitiesData } from './agent-data.ts';
 
-const key = 'workforce.agents.section';
-const connectionsKey = 'workforce.agents.connections';
-const PEOPLE_KEY = 'workforce.people';
+const key = 'shell.agents.section';
+const connectionsKey = 'shell.agents.connections';
+const PEOPLE_KEY = 'shell.agents';
 const PEOPLE_ERROR_KEY = `${PEOPLE_KEY}.errors`;
 const AUDIT_LIMIT = 8;
 const AgentDetailSearchSchema = Schema.Struct({ agent: Schema.optionalKey(Schema.String) });
@@ -46,41 +45,16 @@ interface AgentStatusAction {
 }
 
 export interface AgentEntitiesSectionProps {
-  /** Key of the prepared agent dataset (see `people-data.ts`). */
+  /** Key of the prepared agent dataset (see `agent-data.ts`). */
   readonly legalEntityId: string;
   readonly onNotify: (title: string, description?: string) => void;
-  /** Person name as the people table shows it (Lidé a role labels some demo principals in Czech). */
-  readonly personLabel: (displayName: string) => string;
 }
-
-/** Same person names as the people table for owners, operators, members, connections and history. */
-const labelled = (overview: AgentEntityOverview, label: (name: string) => string): AgentEntityOverview => {
-  const ref = (person: PrincipalRef): PrincipalRef => ({ ...person, displayName: label(person.displayName) });
-  return {
-    ...overview,
-    agents: overview.agents.map((agent) => ({
-      ...agent,
-      connections: agent.connections.map((connection) => ({
-        ...connection,
-        delegatedBy: connection.delegatedBy === null ? null : ref(connection.delegatedBy),
-        user: ref(connection.user),
-      })),
-      operators: agent.operators.map(ref),
-      owner: agent.owner === null ? null : ref(agent.owner),
-    })),
-    audit: overview.audit.map((entry) => ({
-      ...entry,
-      actorName: entry.actorName === null ? null : label(entry.actorName),
-    })),
-    members: overview.members.map(ref),
-  };
-};
 
 const sameIds = (left: readonly string[], right: readonly string[]) =>
   left.length === right.length && left.every((id) => right.includes(id));
 
 /** Agents of the selected company: list, create/edit panel, activate/deactivate/delete, operators, connections and history. */
-export const AgentEntitiesSection = ({ legalEntityId, onNotify, personLabel }: AgentEntitiesSectionProps) => {
+export const AgentEntitiesSection = ({ legalEntityId, onNotify }: AgentEntitiesSectionProps) => {
   const { t } = useModernI18n();
   // Prepared with the page; a change re-reads it while the current agents stay on screen.
   const state = usePageData(agentEntitiesData, legalEntityId);
@@ -89,22 +63,28 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify, personLabel }: A
     select: (routerState) =>
       Option.getOrUndefined(Schema.decodeOption(AgentDetailSearchSchema)(routerState.location.search))?.agent ?? null,
   });
+  const openedAgent = useRef<string | null>(null);
   const [statusAction, setStatusAction] = useState<AgentStatusAction | null>(null);
 
   const fetchOverview = useCallback(() => {
     void browserRuntime.runPromise(agentEntitiesData.refresh(legalEntityId));
   }, [legalEntityId]);
 
-  const overview = state.state === 'ready' ? labelled(state.value, personLabel) : null;
+  const overview = state.state === 'ready' ? state.value : null;
 
   useEffect(() => {
     if (linkedAgent === null || state.state !== 'ready') {
       return;
     }
+    const agent = state.value.agents.find((item) => item.principalId === linkedAgent);
+    if (agent !== undefined && openedAgent.current !== linkedAgent) {
+      openedAgent.current = linkedAgent;
+      setEditing({ agent, mode: 'edit' });
+    }
     const element = document.querySelector<HTMLElement>(`#${CSS.escape(`agent-${linkedAgent}`)}`);
     element?.scrollIntoView({ block: 'start' });
     element?.focus({ preventScroll: true });
-  }, [linkedAgent, state.state]);
+  }, [linkedAgent, state]);
 
   return (
     <>
@@ -138,7 +118,9 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify, personLabel }: A
           {state.state === 'failed' && (
             <div className="flex flex-wrap items-center gap-150">
               <StatusText showIcon status="error">
-                {state.error.detail ?? t(`${PEOPLE_ERROR_KEY}.${state.error.reason}`)}
+                {state.error.reason === 'error'
+                  ? t(`${key}.loadError`)
+                  : (state.error.detail ?? t(`${PEOPLE_ERROR_KEY}.${state.error.reason}`))}
               </StatusText>
               <Button
                 disabled={state.refreshing}
@@ -165,8 +147,8 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify, personLabel }: A
             overview.agents.map((agent) => (
               <AgentCard
                 agent={agent}
-                highlighted={agent.principalId === linkedAgent}
                 company={overview.company.legalName.replace(/\.$/u, '')}
+                highlighted={agent.principalId === linkedAgent}
                 key={agent.principalId}
                 members={overview.members}
                 modules={overview.modules}
@@ -209,9 +191,9 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify, personLabel }: A
 };
 
 interface AgentCardProps {
-  readonly highlighted: boolean;
   readonly agent: AgentEntity;
   readonly company: string;
+  readonly highlighted: boolean;
   readonly members: readonly PrincipalRef[];
   readonly modules: readonly AgentModuleOption[];
   readonly onChanged: () => void;
@@ -222,8 +204,8 @@ interface AgentCardProps {
 
 const AgentCard = ({
   agent,
-  highlighted,
   company,
+  highlighted,
   members,
   modules,
   onChanged,
@@ -248,10 +230,10 @@ const AgentCard = ({
 
   return (
     <article
-      id={`agent-${agent.principalId}`}
-      tabIndex={highlighted ? -1 : undefined}
       aria-current={highlighted ? 'true' : undefined}
       className={`${surfaceTileClassName} flex flex-col gap-200 p-250 scroll-mt-20 ${highlighted ? 'ring-2 ring-primary' : ''}`}
+      id={`agent-${agent.principalId}`}
+      tabIndex={highlighted ? -1 : undefined}
     >
       <header className="flex flex-wrap items-start justify-between gap-150">
         <div className="flex min-w-0 flex-wrap items-center gap-100">
@@ -290,7 +272,7 @@ const AgentCard = ({
       {agent.description !== null && <p className="text-sm">{agent.description}</p>}
 
       <p className="text-fg-secondary text-xs">
-        {agent.owner !== null ? t(`${key}.owner`, { name: agent.owner.displayName }) : t(`${key}.noOwner`)}
+        {agent.owner === null ? t(`${key}.noOwner`) : t(`${key}.owner`, { name: agent.owner.displayName })}
       </p>
 
       <div className="flex min-w-0 flex-col gap-50">
@@ -306,10 +288,10 @@ const AgentCard = ({
 
       <div className="grid grid-cols-1 gap-200 lg:grid-cols-2">
         <OperatorsBlock
-          // Remount when the server-side operator set changes, so the selection restarts from it.
-          key={agent.operators.map((operator) => operator.principalId).join(',')}
           agent={agent}
           company={company}
+          // Remount when the server-side operator set changes, so the selection restarts from it.
+          key={agent.operators.map((operator) => operator.principalId).join(',')}
           members={members}
           onChanged={onChanged}
           onNotify={onNotify}
@@ -781,18 +763,23 @@ const AuditBlock = ({ audit }: { readonly audit: readonly AgentAuditEntry[] }) =
         : t(`${key}.audit.operators`, { target });
     }
     switch (entry.details['operation']) {
-      case 'create-agent':
+      case 'create-agent': {
         return t(`${key}.audit.created`, { target });
-      case 'configure-agent':
+      }
+      case 'configure-agent': {
         return t(`${key}.audit.configured`, { target });
-      case 'archive-agent':
+      }
+      case 'archive-agent': {
         return t(`${key}.audit.deleted`, { target });
-      case 'change-status':
+      }
+      case 'change-status': {
         return entry.details['newStatus'] === 'disabled'
           ? t(`${key}.audit.deactivated`, { target })
           : t(`${key}.audit.activated`, { target });
-      default:
+      }
+      default: {
         return entry.eventType;
+      }
     }
   };
 

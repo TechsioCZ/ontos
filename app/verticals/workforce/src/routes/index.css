@@ -17,34 +17,9 @@
   white-space: nowrap;
 }
 
-.workforce-people-filters {
-  display: grid;
-  grid-template-columns: minmax(0, 24rem) minmax(0, 14rem);
-  align-items: end;
-  gap: var(--spacing-150);
-}
-
-.workforce-people-filters > * {
-  min-width: 0;
-}
-
-.workforce-people-filters label {
-  font-size: 0.875rem;
-}
-
 @media (max-width: 639px) {
   .workforce-employee-form-actions > button {
     width: 100%;
-    font-size: 1rem;
-  }
-
-  .workforce-people-filters {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .workforce-people-filters input,
-  .workforce-people-filters [data-part='trigger'] {
-    min-height: 48px;
     font-size: 1rem;
   }
 }

@@ -36,6 +36,7 @@
     "test:unit": "rstest --project unit"
   },
   "dependencies": {
+    "@app/admin-ui": "workspace:*",
     "@app/assortment": "workspace:*",
     "@app/better-auth-effect-drizzle": "workspace:*",
     "@app/catalog": "workspace:*",

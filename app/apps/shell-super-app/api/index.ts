@@ -71,8 +71,6 @@ import {
   CurrentSessionSchema,
   ConfigureDemoCompaniesResponseSchema,
   DemoAccountCapabilitySchema,
-  DemoAccountListResponseSchema,
-  ManageDemoAccountResponseSchema,
   ManagedApiKeyListResponseSchema,
   MediaAttachmentResponseSchema,
   PrincipalMutationResponseSchema,
@@ -114,6 +112,18 @@ import type {
   TenantInternalProblem,
 } from '../shared/api.ts';
 import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
+import {
+  invitePeoplePerson,
+  listPeople,
+  setPeopleCompanyMembership,
+  setPeopleScopedRole,
+} from './auth/people-administration.ts';
+import {
+  InvitePeopleResponseSchema,
+  PeopleListResponseSchema,
+  SetPeopleCompanyMembershipResponseSchema,
+  SetPeopleRoleResponseSchema,
+} from '../shared/people-api.ts';
 // @ontos-codesmith-core-read-server-imports:start
 
 // @ontos-core-read legal-entity-detail
@@ -145,13 +155,7 @@ import {
 import { ExternalIdentityNotInstalledLive } from './auth/external-identity-runtime.ts';
 import type { ExternalIdentityDeploymentLayer } from './auth/external-identity-runtime.ts';
 import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
-import { demoAccountCapability, listDemoAccounts, manageDemoAccount } from './auth/demo-accounts.ts';
-import type {
-  DemoAccountConflict,
-  DemoAccountForbidden,
-  DemoAccountInvalid,
-  DemoAccountUnavailable,
-} from './auth/demo-accounts.ts';
+import { demoAccountCapability } from './auth/demo-accounts.ts';
 import { listAgentEntities, manageAgentEntity } from './auth/agent-entities.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
 import type { IdentityLifecycleError } from './auth/identity-lifecycle.ts';
@@ -163,7 +167,8 @@ import {
 import type { SupportImpersonationError } from './auth/impersonation-service.ts';
 import type { LegalEntitySelectionForbiddenError } from './auth/legal-entity-selection.ts';
 import { canSelectTenantContext, validateAuthorizedLegalEntity } from './auth/legal-entity-selection.ts';
-import { AuthPersistenceLive } from './auth/runtime-infrastructure.ts';
+import { InvitationTransportLive } from './auth/invitation/transport.ts';
+import { AuthPersistenceLive, BetterAuthPersonInvitationIdentityProviderLive } from './auth/runtime-infrastructure.ts';
 import { AuthenticationService, AuthenticationServiceLive } from './auth/service.ts';
 import { forwardOAuthRequest } from './auth/oauth-server/forward.ts';
 import { oauthNotFoundResponse } from './auth/oauth-server/policy.ts';
@@ -1566,23 +1571,6 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       principal: { ...session.principal, legalEntityId },
     };
   });
-  const demoAccountFailure = (
-    error:
-      | DemoAccountConflict
-      | DemoAccountForbidden
-      | DemoAccountInvalid
-      | DemoAccountUnavailable
-      | IdentityRuntimeError,
-  ) =>
-    failIdentityProblem(
-      Match.value(error).pipe(
-        Match.tag('DemoAccountForbidden', () => shellTargetForbiddenProblem()),
-        Match.tag('DemoAccountInvalid', () => shellPolicyUnprocessableProblem()),
-        Match.tag('DemoAccountConflict', () => shellPolicyConflictProblem()),
-        Match.tag('DemoAccountUnavailable', () => shellCapabilityUnavailableProblem()),
-        Match.orElse((other) => identityProblem(other)),
-      ),
-    );
   return handlers
     .handle('configureDemoCompanies', ({ headers, payload, request }) =>
       safeIdentity(
@@ -1601,34 +1589,9 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
         request,
         Effect.gen(function* demoAccountCapabilityHandler() {
           const caller = yield* demoAccountCaller(request);
-          const response = yield* demoAccountCapability(caller).pipe(Effect.catch(demoAccountFailure));
+          const response = yield* demoAccountCapability(caller);
           yield* noStore;
           return yield* decodeResponse(DemoAccountCapabilitySchema, response, shellInternalProblem);
-        }),
-      ),
-    )
-    .handle('listDemoAccounts', ({ request }) =>
-      safeIdentity(
-        request,
-        Effect.gen(function* listDemoAccountsHandler() {
-          const caller = yield* demoAccountCaller(request);
-          const response = yield* listDemoAccounts(caller).pipe(Effect.catch(demoAccountFailure));
-          yield* noStore;
-          return yield* decodeResponse(DemoAccountListResponseSchema, response, shellInternalProblem);
-        }),
-      ),
-    )
-    .handle('manageDemoAccount', ({ headers, payload, request }) =>
-      safeIdentity(
-        request,
-        Effect.gen(function* manageDemoAccountHandler() {
-          const caller = yield* demoAccountCaller(request);
-          const idempotencyKey = yield* requiredIdempotencyKey(headers);
-          const response = yield* manageDemoAccount(caller, payload, {
-            correlationId: correlationFromRequest(request),
-            idempotencyKey,
-          }).pipe(Effect.catch(demoAccountFailure));
-          return yield* decodeResponse(ManageDemoAccountResponseSchema, response, shellInternalProblem);
         }),
       ),
     )
@@ -2185,7 +2148,7 @@ const documentGatewayGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'd
 // Platform approval layer for AI agents (lane approvals-platform). Agents use their API key; people their session.
 const agentPlatformFailure = (error: AgentPlatformForbidden | AgentPlatformInvalid | AgentStoreUnavailable) => {
   switch (error._tag) {
-    case 'AgentPlatformForbidden':
+    case 'AgentPlatformForbidden': {
       return failIdentityProblem(
         problemDetails(
           'ShellTargetForbiddenProblem',
@@ -2195,7 +2158,8 @@ const agentPlatformFailure = (error: AgentPlatformForbidden | AgentPlatformInval
           'https://ontos.dev/problems/module-target-forbidden',
         ),
       );
-    case 'AgentPlatformInvalid':
+    }
+    case 'AgentPlatformInvalid': {
       return failIdentityProblem(
         problemDetails(
           'ShellPolicyUnprocessableProblem',
@@ -2205,8 +2169,10 @@ const agentPlatformFailure = (error: AgentPlatformForbidden | AgentPlatformInval
           'https://ontos.dev/problems/policy-violation',
         ),
       );
-    default:
+    }
+    default: {
       return failIdentityProblem(shellCapabilityUnavailableProblem());
+    }
   }
 };
 
@@ -2340,7 +2306,7 @@ const causeChain = (cause: unknown): string[] => {
 // "Připojené aplikace" management (lane mcp-connections-ui): session callers; grants via connection-grants services.
 const connectionsAdminFailure = (error: ConnectionsAdminError) => {
   switch (error._tag) {
-    case 'ConnectionsForbidden':
+    case 'ConnectionsForbidden': {
       return failIdentityProblem(
         problemDetails(
           'ShellTargetForbiddenProblem',
@@ -2350,7 +2316,8 @@ const connectionsAdminFailure = (error: ConnectionsAdminError) => {
           'https://ontos.dev/problems/module-target-forbidden',
         ),
       );
-    case 'ConnectionsInvalid':
+    }
+    case 'ConnectionsInvalid': {
       return failIdentityProblem(
         problemDetails(
           'ShellPolicyUnprocessableProblem',
@@ -2360,7 +2327,8 @@ const connectionsAdminFailure = (error: ConnectionsAdminError) => {
           'https://ontos.dev/problems/policy-violation',
         ),
       );
-    case 'ConnectionsGone':
+    }
+    case 'ConnectionsGone': {
       return failIdentityProblem(
         problemDetails(
           'ShellPolicyConflictProblem',
@@ -2370,7 +2338,8 @@ const connectionsAdminFailure = (error: ConnectionsAdminError) => {
           'https://ontos.dev/problems/policy-conflict',
         ),
       );
-    case 'ConnectionsNotFound':
+    }
+    case 'ConnectionsNotFound': {
       return failIdentityProblem(
         problemDetails(
           'ShellTargetNotFoundProblem',
@@ -2380,11 +2349,13 @@ const connectionsAdminFailure = (error: ConnectionsAdminError) => {
           'https://ontos.dev/problems/target-not-found',
         ),
       );
-    default:
+    }
+    default: {
       // Unavailability is retryable for the caller, but the operator needs the underlying cause.
       return Effect.logWarning('Connections administration unavailable', causeChain(error.cause)).pipe(
         Effect.andThen(failIdentityProblem(shellCapabilityUnavailableProblem())),
       );
+    }
   }
 };
 
@@ -2428,16 +2399,109 @@ const requireShellOrigin = Effect.fn('shell.connectionsAdmin.requireShellOrigin'
   }
 });
 
+const connectionsAdminDefect = (request: RequestWithHeaders) =>
+  recoverUnexpectedDefect(request, 'Unexpected connections admin defect', () =>
+    failIdentityProblem(shellInternalProblem()),
+  );
+
+const peopleAdministrationGroupLive = HttpApiBuilder.group(
+  ShellAuthenticationApi,
+  'peopleAdministration',
+  (handlers) => {
+    const principalFor = (request: RequestWithHeaders, scope: 'company' | 'tenant') =>
+      Effect.gen(function* peoplePrincipal() {
+        yield* noStore;
+        const authentication = yield* AuthenticationService;
+        if (scope === 'company') {
+          const session = yield* authentication
+            .resolveShellContext(requestHeaders(request.headers))
+            .pipe(Effect.catch((error) => failIdentityProblem(identityProblem(error))));
+          yield* forwardSetCookieHeaders(session.setCookieHeaders);
+          if (session.state !== 'authenticated') {
+            return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+          }
+          return { ...session.principal, legalEntityId: session.identity.legalEntityId };
+        }
+        const session = yield* authentication
+          .resolveTenantContext(requestHeaders(request.headers))
+          .pipe(Effect.catch((error) => failIdentityProblem(identityProblem(error))));
+        yield* forwardSetCookieHeaders(session.setCookieHeaders);
+        if (session.state !== 'authenticated') {
+          return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+        }
+        // Explicit tenant endpoint: never let a selected company leak into a tenant role's scope.
+        const { legalEntityId: _selectedCompany, ...principal } = session.principal;
+        return principal;
+      });
+    const commandContext = (request: RequestWithHeaders, headers: RequestHeaders, scope: 'company' | 'tenant') =>
+      Effect.gen(function* peopleCommandContext() {
+        yield* requireShellOrigin(request);
+        const idempotencyKey = headerValue(headers, 'idempotency-key');
+        if (idempotencyKey === undefined) {
+          return yield* failIdentityProblem(shellPreconditionRequiredProblem());
+        }
+        const principal = yield* principalFor(request, scope);
+        return { principal, transport: { correlationId: correlationFromRequest(request), idempotencyKey } };
+      });
+    const failure = (error: IdentityRuntimeError | Schema.SchemaError) =>
+      Schema.isSchemaError(error)
+        ? failIdentityProblem(shellInternalProblem())
+        : failIdentityProblem(identityProblem(error));
+    return handlers
+      .handle('invitePerson', ({ headers, payload, request }) =>
+        Effect.gen(function* invitePersonHandler() {
+          const context = yield* commandContext(request, headers, 'company');
+          const result = yield* invitePeoplePerson(context, payload).pipe(Effect.catch(failure));
+          return yield* decodeResponse(InvitePeopleResponseSchema, result, shellInternalProblem);
+        }).pipe(connectionsAdminDefect(request)),
+      )
+      .handle('listCompanyPeople', ({ payload, request }) =>
+        Effect.gen(function* listCompanyPeopleHandler() {
+          const principal = yield* principalFor(request, 'company');
+          const result = yield* listPeople(principal, payload, correlationFromRequest(request)).pipe(
+            Effect.catch(failure),
+          );
+          return yield* decodeResponse(PeopleListResponseSchema, result, shellInternalProblem);
+        }).pipe(connectionsAdminDefect(request)),
+      )
+      .handle('listTenantPeople', ({ payload, request }) =>
+        Effect.gen(function* listTenantPeopleHandler() {
+          const principal = yield* principalFor(request, 'tenant');
+          const result = yield* listPeople(principal, payload, correlationFromRequest(request)).pipe(
+            Effect.catch(failure),
+          );
+          return yield* decodeResponse(PeopleListResponseSchema, result, shellInternalProblem);
+        }).pipe(connectionsAdminDefect(request)),
+      )
+      .handle('setPeopleCompanyMembership', ({ headers, payload, request }) =>
+        Effect.gen(function* setCompanyMembershipHandler() {
+          const context = yield* commandContext(request, headers, 'company');
+          const result = yield* setPeopleCompanyMembership(context, payload).pipe(Effect.catch(failure));
+          return yield* decodeResponse(SetPeopleCompanyMembershipResponseSchema, result, shellInternalProblem);
+        }).pipe(connectionsAdminDefect(request)),
+      )
+      .handle('setPeopleCompanyRole', ({ headers, payload, request }) =>
+        Effect.gen(function* setCompanyRoleHandler() {
+          const context = yield* commandContext(request, headers, 'company');
+          const result = yield* setPeopleScopedRole(context, payload).pipe(Effect.catch(failure));
+          return yield* decodeResponse(SetPeopleRoleResponseSchema, result, shellInternalProblem);
+        }).pipe(connectionsAdminDefect(request)),
+      )
+      .handle('setPeopleTenantRole', ({ headers, payload, request }) =>
+        Effect.gen(function* setTenantRoleHandler() {
+          const context = yield* commandContext(request, headers, 'tenant');
+          const result = yield* setPeopleScopedRole(context, payload).pipe(Effect.catch(failure));
+          return yield* decodeResponse(SetPeopleRoleResponseSchema, result, shellInternalProblem);
+        }).pipe(connectionsAdminDefect(request)),
+      );
+  },
+);
+
 const connectionsAdminDeps = Effect.map(mcpResourceUrl, (mcpUrl) => ({
   directory: companyDirectoryLive,
   grants: grantAdminPortLive,
   mcpUrl,
 }));
-
-const connectionsAdminDefect = (request: RequestWithHeaders) =>
-  recoverUnexpectedDefect(request, 'Unexpected connections admin defect', () =>
-    failIdentityProblem(shellInternalProblem()),
-  );
 
 const oauthConnectionsAdminGroupLive = HttpApiBuilder.group(
   ShellAuthenticationApi,
@@ -2657,6 +2721,7 @@ export const makeShellAuthenticationApiRuntime = (
         activeApplicationCompositionLive,
         ActionRepositoryLive,
         ActionPermissionLive,
+        BetterAuthPersonInvitationIdentityProviderLive,
       ),
     ),
   );
@@ -2749,6 +2814,7 @@ export const makeShellAuthenticationApiRuntime = (
       )
     : Layer.empty;
   const handlerDependenciesLive = Layer.mergeAll(
+    BetterAuthPersonInvitationIdentityProviderLive,
     authenticationLayer,
     authPersistenceLive,
     actionRuntimeLayer,
@@ -2787,6 +2853,7 @@ export const makeShellAuthenticationApiRuntime = (
     // @ontos-codesmith-core-read-server-layers:end
     externalIdentityGroupLive,
     oauthConnectionsAdminGroupLive,
+    peopleAdministrationGroupLive,
     agentPlatformGroupLive,
   );
   // Workers build these services for each request; handlers and transport routes share that request context.
@@ -2808,6 +2875,7 @@ export const makeShellAuthenticationApiRuntime = (
       EmailTransportLive,
       // Resolves the same per-request authentication service as the handlers, backed by the isolate's Better Auth instance.
       OAuthServerTransportLive,
+      InvitationTransportLive,
       // The MCP endpoint runs tools as the connection's principal, with the agent platform's request services.
       McpTransportLive,
     ),
@@ -2836,13 +2904,15 @@ let rootRouteHandler: ReturnType<typeof apiRuntime.createHandler> | undefined;
  * Node: the root `/mcp` and `/.well-known/oauth-protected-resource[/mcp]` middleware serves the canonical BFF route
  * in-process (the request path is already rewritten to the BFF route without its prefix).
  */
-export const handleRootRoute = (request: Request): Promise<Response> => {
+// @effect-diagnostics-next-line asyncFunction:off -- Required Node HTTP middleware Promise adapter; application work stays in the scoped BFF runtime.
+export const handleRootRoute = async (request: Request): Promise<Response> => {
   rootRouteHandler ??= apiRuntime.createHandler();
   return rootRouteHandler.handler(request);
 };
 
 /** The Node root aliases use the same scoped Better Auth service as the canonical BFF route. */
-export const handleOAuthMetadata = (request: Request): Promise<Response> =>
+// @effect-diagnostics-next-line asyncFunction:off -- Required Node HTTP middleware Promise adapter; the service program remains an Effect.
+export const handleOAuthMetadata = async (request: Request): Promise<Response> =>
   Effect.runPromise(
     Effect.scoped(
       AuthenticationService.pipe(

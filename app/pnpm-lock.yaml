@@ -522,6 +522,9 @@ importers:
 
   apps/shell-super-app:
     dependencies:
+      '@app/admin-ui':
+        specifier: workspace:*
+        version: link:../../packages/admin-ui
       '@app/assortment':
         specifier: workspace:*
         version: link:../../verticals/assortment

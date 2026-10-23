@@ -4,7 +4,7 @@
  * origin, so the session cookie authenticates the call; the shell resolves the selected company and the Core
  * Action authorizes and audits every change. Failures carry the shell's Czech problem detail (403/404/409/422).
  */
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import {
   AGENT_ACCESS_PATHS,
@@ -23,9 +23,10 @@ import type {
   ManageAgentEntityRequest,
   ManageAgentEntityResponse,
 } from '@app/shared-contracts/agent-access';
-import type { PeopleFailure } from './people-admin-client.ts';
 
-export type AgentFailure = PeopleFailure;
+const AgentFailureSchema = Schema.Literals(['conflict', 'error', 'forbidden', 'invalid', 'signedOut']);
+export type AgentFailure = typeof AgentFailureSchema.Type;
+const ProblemDetailSchema = Schema.Struct({ detail: Schema.String });
 export type AgentOutcome<Value> =
   | { readonly detail: string | null; readonly reason: AgentFailure; readonly status: 'failed' }
   | { readonly status: 'ok'; readonly value: Value };
@@ -47,29 +48,30 @@ const failureOf = (status: number): AgentFailure => {
 };
 
 /** POSTs one JSON body to a full shell path; a 200 answer is returned as raw JSON for the caller's schema. */
-const post = (path: string, body: unknown, idempotencyKey?: string) =>
-  Effect.gen(function* agentEntitiesCall() {
-    const client = yield* HttpClient.HttpClient;
-    const base = HttpClientRequest.post(path).pipe(HttpClientRequest.setHeader('accept', 'application/json'));
-    const withKey =
-      idempotencyKey === undefined ? base : HttpClientRequest.setHeader(base, 'idempotency-key', idempotencyKey);
-    const request = yield* HttpClientRequest.bodyJson(withKey, body);
-    const response = yield* client.execute(request);
-    if (response.status !== 200) {
-      const body: unknown = yield* response.json.pipe(Effect.orElseSucceed(() => null));
-      const detail =
-        [403, 404, 409, 422].includes(response.status) &&
-        typeof body === 'object' &&
-        body !== null &&
-        'detail' in body &&
-        typeof body.detail === 'string'
-          ? body.detail
-          : null;
-      return { detail, reason: failureOf(response.status), status: 'failed' as const };
-    }
-    const json: unknown = yield* response.json;
-    return { json, status: 'ok' as const };
-  });
+const post = Effect.fn('AgentEntitiesClient.post')(function* (
+  path: string,
+  body: ManageAgentEntityRequest | AgentOperatorsRequest | ConnectionRevokeRequest | Readonly<Record<string, never>>,
+  idempotencyKey?: string,
+) {
+  const client = yield* HttpClient.HttpClient;
+  const base = HttpClientRequest.post(path).pipe(HttpClientRequest.setHeader('accept', 'application/json'));
+  const withKey =
+    idempotencyKey === undefined ? base : HttpClientRequest.setHeader(base, 'idempotency-key', idempotencyKey);
+  const request = yield* HttpClientRequest.bodyJson(withKey, body);
+  const response = yield* client.execute(request);
+  if (response.status !== 200) {
+    const problem = yield* response.json.pipe(
+      Effect.map(Schema.decodeUnknownOption(ProblemDetailSchema)),
+      Effect.orElseSucceed(() => Option.none()),
+    );
+    const detail = [403, 404, 409, 422].includes(response.status)
+      ? Option.getOrNull(Option.map(problem, (value) => value.detail))
+      : null;
+    return { detail, reason: failureOf(response.status), status: 'failed' as const };
+  }
+  const json = yield* response.json;
+  return { json, status: 'ok' as const };
+}, Effect.timeout('30 seconds'));
 
 const failed = (reason: AgentFailure, detail: string | null = null) => ({
   detail,

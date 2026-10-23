@@ -25,7 +25,6 @@ import type { DocumentGatewayAssertion } from '../../../shared/document-gateway-
 import { warmDocumentGatewayAssertions } from '../document-gateway-assertions.ts';
 import {
   hasModuleAiApprovals,
-  offersPeopleAdministration,
   withAgentPlatformNavigation,
   withConnectedAppsNavigation,
   withoutModuleAiApprovals,
@@ -269,7 +268,7 @@ const companyWelcomeFor = (identity: HomeCompanyContext, options: ShellAuthentic
     options,
   ).pipe(
     Effect.map(({ welcome }) => welcome),
-    Effect.orElseSucceed(() => undefined),
+    Effect.orElseSucceed(() => {}),
   );
 
 export interface ResolvedHomeContribution {
@@ -501,9 +500,7 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
     if ('document' in globalThis) {
       yield* pinDocumentCompositionRevision(compositionRevision, globalThis.document);
     }
-    const canManagePeople = offersPeopleAdministration(composition.navigation)
-      ? yield* peopleCapabilityFor(session.identity, options)
-      : false;
+    const canManagePeople = yield* peopleCapabilityFor(session.identity, options);
     const navigation = presentedNavigation(composition, canManagePeople);
     const homeCandidates = homeContributionCandidates(
       request,

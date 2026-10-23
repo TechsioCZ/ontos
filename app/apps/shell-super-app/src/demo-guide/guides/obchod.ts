@@ -164,12 +164,12 @@ export const obchodGuide: DemoGuide = {
         },
         {
           click:
-            'Nastavení › Lidé a role › Agenti a jejich připojení › Kdo smí agenta připojit: vyberte člověka a Uložit.',
+            'Nastavení › Lidé a role: vyberte firmu nebo tenant, u agenta otevřete Spravovat role a zadejte přesný klíč již zavedené role a důvod.',
           id: 'obchod-mcp-agent',
           persona: vedeni,
-          say: 'Agenta připojí jen člověk, kterému to správce povolí. Změny se zapíšou jako agent s poznámkou, kdo ho připojil.',
-          target: { kind: 'app', path: '/sprava/lide' },
-          title: 'Kdo smí připojit agenta',
+          say: 'Agent má vlastní přihlášení. Přístup určují výhradně přiřazené role v daném rozsahu, ne druh účtu ani pracovní pozice.',
+          target: { kind: 'app', path: '/sprava/lide-a-role' },
+          title: 'Role agenta v konkrétním rozsahu',
         },
         {
           click: 'Nastavení › Připojené aplikace: dlaždice, filtry a u připojení Odpojit s důvodem.',

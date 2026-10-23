@@ -423,8 +423,8 @@ it.effect.each([false, true])(
           deniedAppIds: [],
           items: allowed
             ? [
-                expect.objectContaining({ href: '/fixture/people' }),
                 expect.objectContaining({ href: '/fixture/clients' }),
+                expect.objectContaining({ href: '/sprava/lide-a-role' }),
                 expect.objectContaining({ href: '/sprava/ke-schvaleni' }),
                 expect.objectContaining({ href: '/sprava/aktivita-agentu' }),
                 expect.objectContaining({ href: '/sprava/pripojene-aplikace' }),
@@ -632,8 +632,8 @@ it.effect('server rendering offers people administration from the context capabi
         navigation: {
           items: canManagePeople
             ? [
-                expect.objectContaining({ href: '/fixture/people' }),
                 expect.objectContaining({ href: '/fixture/clients' }),
+                expect.objectContaining({ href: '/sprava/lide-a-role' }),
                 expect.objectContaining({ href: '/sprava/ke-schvaleni' }),
                 expect.objectContaining({ href: '/sprava/aktivita-agentu' }),
                 expect.objectContaining({ href: '/sprava/pripojene-aplikace' }),

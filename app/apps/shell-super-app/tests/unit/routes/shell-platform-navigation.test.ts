@@ -5,7 +5,6 @@ import { AppIdSchema, EntrypointKeySchema, GroupKeySchema, ModuleIdSchema } from
 import {
   hasModuleAiApprovals,
   moduleAgentApprovalsGroupKey,
-  offersPeopleAdministration,
   withAgentPlatformNavigation,
   withConnectedAppsNavigation,
   withoutModuleAiApprovals,
@@ -43,10 +42,12 @@ it('moves in-module AI approval pages out of the sidebar and reports that they e
 });
 
 it('lists destinations needing people administration only to people who have it', () => {
-  expect(offersPeopleAdministration([clients, people])).toBe(true);
-  expect(offersPeopleAdministration([clients])).toBe(false);
   expect(withPeopleAdministration([clients, people], false)).toEqual([clients]);
-  expect(withPeopleAdministration([clients, people], true)).toEqual([clients, people]);
+  expect(withPeopleAdministration([clients, people], true).map(({ href }) => href)).toEqual([
+    '/fixture/clients',
+    '/sprava/lide-a-role',
+  ]);
+  expect(withPeopleAdministration([], true).map(({ href }) => href)).toEqual(['/sprava/lide-a-role']);
 });
 
 it('adds the platform approval and connection pages to Settings only when shown', () => {

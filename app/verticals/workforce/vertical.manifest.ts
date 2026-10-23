@@ -11,7 +11,6 @@ import { Result, Schema } from 'effect';
 import { applyCommandAction } from './src/actions/apply-command.action.ts';
 import { RecordsApi } from './shared/apis/records.ts';
 import { RecordsPage } from './src/routes/[lang]/prodej/zamestnanci/page.tsx';
-import { PeoplePage } from './src/routes/[lang]/sprava/lide/page.tsx';
 import { workforceReadAllPermission } from './shared/permissions/workforce-read-all.ts';
 import { workforceWriteAllPermission } from './shared/permissions/workforce-write-all.ts';
 import { employeeCollectionResourceDescriptor } from './shared/resources/employee-collection.ts';
@@ -29,7 +28,6 @@ const pageContribution = (value: PageContributionInput) =>
 
 const moduleKey = 'demo.workforce';
 const recordsPageKey = 'demo.workforce.page.records';
-const peoplePageKey = 'demo.workforce.page.people';
 
 export const workforceManifest = defineOntosModuleManifest({
   activation: {
@@ -64,7 +62,6 @@ export const workforceManifest = defineOntosModuleManifest({
     ],
     components: {
       // <generated-module-manifest-components>
-      'page-people': PeoplePage,
       'page-records': RecordsPage,
       // </generated-module-manifest-components>
     },
@@ -104,23 +101,6 @@ export const workforceManifest = defineOntosModuleManifest({
           order: 610,
           pageKey: recordsPageKey,
         }),
-        navigationContribution({
-          contributionKey: 'demo.workforce.navigation.people',
-          entrypoint: {
-            access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: peoplePageKey,
-            moduleKey,
-            role: 'page',
-            scope: 'tenant',
-          },
-          groupKey: 'shell.navigation.settings',
-          icon: 'icon-[mdi--account-key-outline]',
-          label: { cs: 'Lidé a role', en: 'People and roles' },
-          order: 710,
-          pageKey: peoplePageKey,
-          requiresCapability: 'people_administration',
-        }),
         // </generated-module-shell-navigation>
       ],
       pages: [
@@ -138,20 +118,6 @@ export const workforceManifest = defineOntosModuleManifest({
           },
           expose: './PageRecords',
           routePath: '/prodej/zamestnanci',
-        }),
-        pageContribution({
-          componentKey: 'demo.workforce.page-people',
-          contributionKey: peoplePageKey,
-          entrypoint: {
-            access: 'read',
-            authorization: { kind: 'context_permission', permission: 'module.access' },
-            entrypointKey: peoplePageKey,
-            moduleKey,
-            role: 'page',
-            scope: 'tenant',
-          },
-          expose: './PagePeople',
-          routePath: '/sprava/lide',
         }),
         // </generated-module-shell-pages>
       ],

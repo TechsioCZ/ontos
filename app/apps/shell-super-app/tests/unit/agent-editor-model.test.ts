@@ -9,7 +9,7 @@ import {
   emptyAgentDraft,
   withPreset,
   writeIgnored,
-} from '../../src/routes/[lang]/sprava/lide/agent-editor-model.ts';
+} from '../../src/routes/people/agent-editor-model.ts';
 
 const options: readonly AgentModuleOption[] = [
   { label: 'Provoz', maxAccess: 'read', moduleId: 'facility.operations' },
@@ -54,7 +54,7 @@ it('copies a role preset and drops modules the company does not offer', () => {
 });
 
 it('lists chosen modules in option order with write capped to the company maximum', () => {
-  const draft = { ...emptyAgentDraft, modules: { 'work.tasks': 'write', 'facility.operations': 'write' } } as const;
+  const draft = { ...emptyAgentDraft, modules: { 'facility.operations': 'write', 'work.tasks': 'write' } } as const;
   expect(draftModules(draft, options)).toEqual([
     { access: 'read', moduleId: 'facility.operations' },
     { access: 'write', moduleId: 'work.tasks' },
@@ -70,7 +70,10 @@ it('trims the name and turns a blank description into null', () => {
   const request = createRequest({ ...draft, modules: { 'work.tasks': 'read' } }, options);
   expect(request.displayName).toBe('Asistent');
   expect(request.description).toBeNull();
-  expect(configureRequest({ ...draft, modules: { 'work.tasks': 'read' } }, options, 'a1').principalId).toBe('a1');
+  expect(configureRequest({ ...draft, modules: { 'work.tasks': 'read' } }, options, 'a1')).toMatchObject({
+    operation: 'configure',
+    principalId: 'a1',
+  });
 });
 
 it('ignores write modules only under the read-only policy', () => {

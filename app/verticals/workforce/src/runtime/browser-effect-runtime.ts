@@ -7,7 +7,6 @@ export const browserRuntime = ManagedRuntime.make(
     Logger.layer([Logger.defaultLogger]),
     Layer.succeed(Tracer.Tracer, browserTracer),
     Layer.succeed(References.MinimumLogLevel, 'Info'),
-    // Same-origin fetch for the shell's people administration endpoints (`api/people-admin-client.ts`).
     FetchHttpClient.layer,
   ),
 );

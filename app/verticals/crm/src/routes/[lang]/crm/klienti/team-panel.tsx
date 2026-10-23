@@ -1,6 +1,5 @@
-// Obchodníci (CRM.md §8, C00): správce / vedoucí see the CRM salespeople, register company accounts with the
-// Obchodník role as salespeople and retire them. Accounts themselves (sign-in, role, deactivation) are managed in
-// Nastavení › Lidé a role; the list of accounts comes from that page's shell endpoint (company administrators only).
+// Explicit CRM assignment, independent of kind, affiliation or role names. The governed people directory
+// supplies existing principals; account access remains in Lidé a role.
 import { SidePanel, dialogCloseLabel, formatDate, formatNumber, surfaceTileClassName } from '@app/admin-ui';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -16,38 +15,50 @@ import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
 const AccountSchema = Schema.Struct({
   displayName: Schema.String,
-  email: Schema.NullOr(Schema.String),
-  principalId: Schema.String,
-  roleKey: Schema.NullOr(Schema.String),
-  roleLabel: Schema.NullOr(Schema.String),
-  status: Schema.String,
+  kind: Schema.Literals(['human', 'agent']),
+  principalRef: Schema.Struct({ principalId: Schema.String, tenantId: Schema.String }),
+  principalStatus: Schema.Literals(['active', 'disabled', 'archived']),
+  selectedCompanyMembership: Schema.NullOr(
+    Schema.Struct({ status: Schema.Literals(['invited', 'active', 'disabled', 'departed']) }),
+  ),
 });
-const AccountListSchema = Schema.Struct({ accounts: Schema.Array(AccountSchema) });
+const AccountListSchema = Schema.Struct({
+  items: Schema.Array(AccountSchema),
+  nextOffset: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+});
 type Account = typeof AccountSchema.Type;
 
 type Accounts =
   | { readonly kind: 'loading' }
-  | { readonly kind: 'unavailable'; readonly forbidden: boolean }
+  | { readonly forbidden: boolean; readonly kind: 'unavailable' }
   | { readonly accounts: readonly Account[]; readonly kind: 'ready' };
-
-/** Roles whose holders work as salespeople (Hanák „Obchodník“, Siampark „Externí partner“ / obchod). */
-const salesRole = (account: Account) =>
-  account.roleKey === 'crmRep' || /obchodn|extern/iu.test(account.roleLabel ?? '');
 
 const loadAccounts = Effect.gen(function* loadAccounts() {
   const client = yield* HttpClient.HttpClient;
-  const request = yield* HttpClientRequest.bodyJson(
-    HttpClientRequest.post('/shell-super-app-api/auth/identity/demo-accounts/list').pipe(
-      HttpClientRequest.setHeader('accept', 'application/json'),
-    ),
-    {},
-  );
-  const response = yield* client.execute(request);
-  if (response.status !== 200) {
-    return { forbidden: response.status === 403, kind: 'unavailable' } satisfies Accounts;
+  const accounts: Account[] = [];
+  let offset = 0;
+  while (true) {
+    const request = yield* HttpClientRequest.bodyJson(
+      HttpClientRequest.post('/shell-super-app-api/auth/identity/people/list').pipe(
+        HttpClientRequest.setHeader('accept', 'application/json'),
+      ),
+      { limit: 100, offset },
+    );
+    const response = yield* client.execute(request);
+    if (response.status !== 200) {
+      return { forbidden: response.status === 403, kind: 'unavailable' } satisfies Accounts;
+    }
+    const list = yield* Schema.decodeUnknownEffect(AccountListSchema)(yield* response.json);
+    accounts.push(...list.items);
+    if (list.nextOffset === null) {
+      break;
+    }
+    if (list.nextOffset <= offset) {
+      return { forbidden: false, kind: 'unavailable' } satisfies Accounts;
+    }
+    offset = list.nextOffset;
   }
-  const list = yield* Schema.decodeUnknownEffect(AccountListSchema)(yield* response.json);
-  return { accounts: list.accounts, kind: 'ready' } satisfies Accounts;
+  return { accounts, kind: 'ready' } satisfies Accounts;
 }).pipe(Effect.orElseSucceed((): Accounts => ({ forbidden: false, kind: 'unavailable' })));
 
 export const TeamPanel = ({
@@ -78,7 +89,10 @@ export const TeamPanel = ({
   const candidates =
     accounts.kind === 'ready'
       ? accounts.accounts.filter(
-          (account) => account.status === 'active' && salesRole(account) && !registered.has(account.principalId),
+          (account) =>
+            account.principalStatus === 'active' &&
+            account.selectedCompanyMembership?.status === 'active' &&
+            !registered.has(account.principalRef.principalId),
         )
       : [];
   const clientCount = (id: string) =>
@@ -93,7 +107,7 @@ export const TeamPanel = ({
         </Button>
       }
       closeLabel={dialogCloseLabel}
-      description="Jen zařazení obchodníci mohou mít přidělené klienty. Účty, role a deaktivaci přihlášení spravuje správce v Nastavení › Lidé a role."
+      description="Přiřazení do CRM je samostatné rozhodnutí. Lze zařadit člověka i agenta; druh přihlášení ani pracovní pozice nepřidělují práva."
       onOpenChange={(open) => {
         if (!open) {
           onClose();
@@ -150,7 +164,7 @@ export const TeamPanel = ({
           })}
         </ul>
         <section className="flex flex-col gap-100">
-          <h3 className="font-semibold text-sm">Účty s rolí obchodníka, které ještě nejsou zařazené</h3>
+          <h3 className="font-semibold text-sm">Aktivní lidé a agenti, kteří ještě nejsou zařazení</h3>
           {accounts.kind === 'loading' && <p className="text-fg-secondary text-sm">Načítám účty firmy…</p>}
           {accounts.kind === 'unavailable' && (
             <StatusText showIcon status="warning">
@@ -161,19 +175,17 @@ export const TeamPanel = ({
           )}
           {accounts.kind === 'ready' && candidates.length === 0 && (
             <p className="text-fg-secondary text-sm">
-              Všechny aktivní účty s rolí obchodníka jsou zařazené. Nový účet založíte v Nastavení › Lidé a role.
+              Všichni aktivní členové firmy jsou zařazení. Členství spravuje správce v Nastavení › Lidé a role.
             </p>
           )}
           {candidates.map((account) => (
             <div
               className="flex flex-wrap items-center justify-between gap-100 rounded-lg border border-border-primary border-dashed p-150"
-              key={account.principalId}
+              key={account.principalRef.principalId}
             >
               <span className="flex min-w-0 flex-col">
                 <span className="font-medium">{account.displayName}</span>
-                <span className="text-fg-secondary text-xs">
-                  {[account.email, account.roleLabel].filter((part) => part !== null).join(' · ')}
-                </span>
+                <span className="text-fg-secondary text-xs">{account.kind === 'agent' ? 'AI agent' : 'Člověk'}</span>
               </span>
               <Button
                 disabled={busy}
@@ -183,8 +195,7 @@ export const TeamPanel = ({
                     {
                       _tag: 'RegisterSalesperson',
                       name: account.displayName,
-                      principalId: account.principalId,
-                      ...(account.email === null ? {} : { email: account.email }),
+                      principalId: account.principalRef.principalId,
                     },
                     `${account.displayName} zařazen mezi obchodníky`,
                   )

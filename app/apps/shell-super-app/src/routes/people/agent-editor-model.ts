@@ -1,3 +1,4 @@
+import { Schema } from 'effect';
 /** Pure draft model of the agent editor side panel: module choices, role presets, validation and request bodies. */
 import type {
   AgentEntity,
@@ -9,7 +10,8 @@ import type {
 } from '@app/shared-contracts/agent-access';
 import { AGENT_DESCRIPTION_MAX, AGENT_NAME_MAX } from '@app/shared-contracts/agent-access';
 
-export type ModuleChoice = 'none' | 'read' | 'write';
+export const ModuleChoiceSchema = Schema.Literals(['none', 'read', 'write']);
+export type ModuleChoice = typeof ModuleChoiceSchema.Type;
 
 export interface AgentDraft {
   readonly description: string;
@@ -67,12 +69,14 @@ export const draftModules = (draft: AgentDraft, options: readonly AgentModuleOpt
     return choice === 'none' ? [] : [{ access: choice, moduleId: option.moduleId }];
   });
 
-export type AgentDraftError =
-  | 'descriptionTooLong'
-  | 'modulesRequired'
-  | 'nameRequired'
-  | 'nameTooLong'
-  | 'ownerRequired';
+const AgentDraftErrorSchema = Schema.Literals([
+  'descriptionTooLong',
+  'modulesRequired',
+  'nameRequired',
+  'nameTooLong',
+  'ownerRequired',
+]);
+export type AgentDraftError = typeof AgentDraftErrorSchema.Type;
 
 /** In this order: name, description, owner, modules. */
 export const draftErrors = (draft: AgentDraft, options: readonly AgentModuleOption[]): readonly AgentDraftError[] => {

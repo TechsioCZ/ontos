@@ -2,15 +2,27 @@
 import { routeMeta as route0 } from './[lang]/$/route.meta';
 import { routeMeta as route1 } from './[lang]/login/route.meta';
 import { routeMeta as route2 } from './[lang]/modules/[moduleId]/route.meta';
-import { routeMeta as route3 } from './[lang]/resources/[moduleId]/[resourceType]/[resourceId]/route.meta';
-import { routeMeta as route4 } from './[lang]/route.meta';
-import { routeMeta as route5 } from './[lang]/search/route.meta';
-import { routeMeta as route6 } from './[lang]/profile/route.meta';
-import { routeMeta as route7 } from './[lang]/pripojit/route.meta';
-import { routeMeta as route8 } from './[lang]/pripojit/souhlas/route.meta';
+import { routeMeta as route3 } from './[lang]/pripojit/route.meta';
+import { routeMeta as route4 } from './[lang]/pripojit/souhlas/route.meta';
+import { routeMeta as route5 } from './[lang]/profile/route.meta';
+import { routeMeta as route6 } from './[lang]/resources/[moduleId]/[resourceType]/[resourceId]/route.meta';
+import { routeMeta as route7 } from './[lang]/route.meta';
+import { routeMeta as route8 } from './[lang]/search/route.meta';
+import { routeMeta as route9 } from './[lang]/set-password/route.meta';
 
 export const ultramodernRouteNamespace = route0.namespace;
-export const ultramodernRouteMetadata = [route0, route1, route2, route3, route4, route5, route6, route7, route8] as const;
+export const ultramodernRouteMetadata = [
+  route0,
+  route1,
+  route2,
+  route3,
+  route4,
+  route5,
+  route6,
+  route7,
+  route8,
+  route9,
+] as const;
 export const ultramodernLocalisedUrls = Object.fromEntries(
   ultramodernRouteMetadata
     .filter((route: { canonicalPath: string }) => route.canonicalPath !== '/')

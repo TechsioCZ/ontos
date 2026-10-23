@@ -412,6 +412,173 @@
           "step3": "In a new Agent chat, ask it to verify the connected company and modules by calling read-only ontos tools. Inspect the actual tool result."
         }
       }
+    },
+    "agents": {
+      "connections": {
+        "policy": {
+          "read_only": "Read only",
+          "approval": "Needs approval",
+          "direct": "Direct"
+        },
+        "status": {
+          "active": "Active",
+          "disabled": "Deactivated",
+          "archived": "Archived"
+        },
+        "operators": {
+          "title": "Who may connect the agent",
+          "hint": "Only people of {{company}} can be chosen.",
+          "empty": "Nobody may connect this agent yet.",
+          "save": "Save",
+          "saving": "Saving…",
+          "saved": "People for {{name}} saved",
+          "revoked": "Disconnected connections: {{count}}",
+          "confirmTitle": "Remove and disconnect?",
+          "confirmDescription": "People you are removing have the agent connected: {{names}}. Saving disconnects these connections ({{count}}) at once.",
+          "confirm": "Save and disconnect",
+          "cancel": "Cancel"
+        },
+        "list": {
+          "title": "Agent connections",
+          "empty": "The agent is not connected to any app yet.",
+          "connectedBy": "connected by {{name}}",
+          "lastUsed": "Last used {{date}}",
+          "neverUsed": "Not used yet",
+          "revoke": "Disconnect",
+          "dialogTitle": "Disconnect {{client}}?",
+          "dialogDescription": "The app loses access as the agent on its next request. The reason is written to the audit log.",
+          "reason": "Reason",
+          "reasonRequired": "Enter a reason.",
+          "confirm": "Disconnect",
+          "cancel": "Cancel",
+          "revoked": "{{client}} disconnected"
+        }
+      },
+      "editor": {
+        "createTitle": "New agent",
+        "editTitle": "Edit agent {{name}}",
+        "createDescription": "The agent acts only in the modules and with the rights you give it here. Only the people you choose may connect it.",
+        "name": "Agent name",
+        "description": "What the agent is for",
+        "owner": "Responsible person",
+        "modulesTitle": "Module permissions",
+        "modulesHint": "The same rights as people have: read, or read and write.",
+        "preset": "Copy permissions from a role",
+        "choice": {
+          "none": "No access",
+          "read": "Read",
+          "write": "Read and write"
+        },
+        "policyTitle": "How the agent may write",
+        "policy": {
+          "read_only": {
+            "label": "Read only",
+            "description": "The agent changes nothing, it only reads."
+          },
+          "approval": {
+            "label": "Through approval",
+            "description": "The agent only proposes changes; a person carries them out in Settings › Approvals."
+          },
+          "direct": {
+            "label": "Directly",
+            "description": "The agent writes on its own in modules with write access. Every change is audited."
+          }
+        },
+        "readOnlyIgnoresWrite": "In Read only mode the agent writes nothing, not even in modules with write access.",
+        "operatorsTitle": "Who may connect the agent",
+        "operatorsHint": "These people can connect it to ChatGPT or Claude by choosing “As the agent”. No keys are copied.",
+        "errors": {
+          "nameRequired": "Enter the agent name.",
+          "nameTooLong": "The name can have at most 200 characters.",
+          "descriptionTooLong": "The description can have at most 500 characters.",
+          "ownerRequired": "Choose who is responsible for the agent.",
+          "modulesRequired": "Choose at least one module."
+        },
+        "cancel": "Cancel",
+        "create": "Create agent",
+        "save": "Save changes",
+        "saving": "Saving…",
+        "toast": {
+          "created": "Agent {{name}} was created",
+          "saved": "Changes to agent {{name}} were saved"
+        }
+      },
+      "section": {
+        "title": "Agent entities",
+        "description": "An agent is a separate identity of the company with its own permissions. It connects to ChatGPT or Claude through OntOS by choosing “As the agent”; no keys or tokens are issued here.",
+        "create": "New agent",
+        "loading": "Loading agents…",
+        "retry": "Try again",
+        "empty": "The company has no agent yet.",
+        "emptyHint": "Create an agent with New agent and set its permissions.",
+        "owner": "Responsible: {{name}}",
+        "noOwner": "Responsible: nobody",
+        "reads": "Reads: {{modules}}",
+        "writes": "Writes directly: {{modules}}",
+        "proposes": "Proposes for approval: {{modules}}",
+        "noWrites": "Writes nothing",
+        "disabledNotice": "The agent is deactivated. Its connections were revoked; after activation it has to be connected again.",
+        "edit": "Edit",
+        "deactivate": "Deactivate",
+        "activate": "Activate",
+        "delete": "Delete",
+        "dialog": {
+          "deactivateTitle": "Deactivate agent {{name}}?",
+          "deactivateDescription": "The agent loses access immediately and all its connections are revoked. The reason is written to the audit trail.",
+          "deactivateReason": "Reason for deactivation",
+          "deactivateConfirm": "Deactivate",
+          "activateTitle": "Activate agent {{name}}?",
+          "activateDescription": "The agent gets its permissions back. It has to be connected again.",
+          "activateConfirm": "Activate",
+          "deleteTitle": "Delete agent {{name}}?",
+          "deleteDescription": "The agent loses all permissions, connections and the list of people who may connect it, and leaves the list. Audit records stay.",
+          "deleteReason": "Reason for deletion",
+          "deleteConfirm": "Delete agent",
+          "cancel": "Cancel",
+          "reasonRequired": "Enter a reason."
+        },
+        "toast": {
+          "deactivated": "Agent {{name}} was deactivated",
+          "activated": "Agent {{name}} is active again",
+          "deleted": "Agent {{name}} was deleted",
+          "revoked": "Revoked connections: {{count}}"
+        },
+        "audit": {
+          "title": "Agent change history",
+          "empty": "No changes yet.",
+          "created": "created agent {{target}}",
+          "configured": "edited agent {{target}}",
+          "deactivated": "deactivated agent {{target}}",
+          "activated": "activated agent {{target}}",
+          "deleted": "deleted agent {{target}}",
+          "operators": "changed who may connect agent {{target}}",
+          "denied": "tried to {{action}}, but only the company administrator manages agents",
+          "reason": "Reason: {{reason}}",
+          "system": "System",
+          "unknownAgent": "agent",
+          "operatorsRevoked": "changed who may connect agent {{target}} and so disconnected its connections: {{count}}",
+          "operatorsCreated": "set who may connect agent {{target}}",
+          "deniedAction": {
+            "create": "create an agent",
+            "configure": "edit agent {{target}}",
+            "change-status": "change the status of agent {{target}}",
+            "delete": "delete agent {{target}}",
+            "other": "change agent {{target}}"
+          }
+        }
+      },
+      "errors": {
+        "forbidden": "Only the company administrator may do this. The attempt was audited.",
+        "conflict": "Conflict: the e-mail is taken or the account changed meanwhile. Refresh the list.",
+        "invalid": "The request cannot be performed (e.g. changing your own account).",
+        "error": "Saving failed. Try again.",
+        "signedOut": "Your session expired, sign in again."
+      },
+      "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width."
+    },
+    "invitation": {
+      "title": "Set your password",
+      "description": "Set your own password using your invitation."
     }
   }
 }

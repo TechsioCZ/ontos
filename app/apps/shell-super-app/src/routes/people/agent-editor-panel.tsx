@@ -15,13 +15,10 @@ import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Effect } from 'effect';
 import { useState } from 'react';
-import { runAgentCommand } from '../../../../api/agent-entities-client.ts';
-import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
-import { newRequestToken } from '../../prodej/zamestnanci/employee-model.ts';
+import { runAgentCommand } from './agent-entities-client.ts';
+import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
+import { newRequestToken } from './people-client.ts';
 import {
-  type AgentDraft,
-  type AgentDraftError,
-  type ModuleChoice,
   configureRequest,
   createRequest,
   draftErrors,
@@ -31,6 +28,7 @@ import {
   withPreset,
   writeIgnored,
 } from './agent-editor-model.ts';
+import type { AgentDraft, AgentDraftError, ModuleChoice } from './agent-editor-model.ts';
 
 export interface AgentEditorPanelProps {
   readonly agent: AgentEntity | null;
@@ -41,8 +39,8 @@ export interface AgentEditorPanelProps {
   readonly presets: readonly AgentRolePreset[];
 }
 
-const key = 'workforce.agents.editor';
-const RESIZE_LABEL_KEY = 'workforce.sidePanel.resize';
+const key = 'shell.agents.editor';
+const RESIZE_LABEL_KEY = 'shell.agents.resize';
 const selectLabelProps = { className: 'text-label-md' };
 const policies: readonly AgentWritePolicy[] = ['read_only', 'approval', 'direct'];
 

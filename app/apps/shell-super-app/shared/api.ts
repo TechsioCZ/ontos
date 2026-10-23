@@ -28,6 +28,17 @@ import {
 } from '@app/shared-contracts/agent-access';
 import { DocumentGatewayApiGroup, DocumentGatewayAssertionSchema } from './document-gateway-api.ts';
 import { OAuthConnectApiGroup } from './oauth-connect-api.ts';
+import {
+  PEOPLE_PATHS,
+  InvitePeopleRequestSchema,
+  InvitePeopleResponseSchema,
+  PeopleListRequestSchema,
+  PeopleListResponseSchema,
+  SetPeopleCompanyMembershipRequestSchema,
+  SetPeopleCompanyMembershipResponseSchema,
+  SetPeopleRoleRequestSchema,
+  SetPeopleRoleResponseSchema,
+} from './people-api.ts';
 // @ontos-codesmith-core-read-contract-imports:start
 
 // @ontos-core-read legal-entity-detail
@@ -98,75 +109,8 @@ export const ConfigureDemoCompaniesResponseSchema = Schema.Struct({
   ),
 });
 
-/** Sales-demo people administration of the current company (accounts-admin lane). */
-const demoAccountText = (maximum: number) => Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(maximum));
-const DemoAccountStatusSchema = Schema.Literals(['active', 'disabled']);
 export const DemoAccountListPayloadSchema = Schema.Struct({});
-export const ManageDemoAccountRequestSchema = Schema.Union([
-  Schema.Struct({
-    displayName: demoAccountText(200),
-    email: demoAccountText(320).check(Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/u)),
-    operation: Schema.Literal('create'),
-    roleKey: demoAccountText(64),
-  }),
-  Schema.Struct({
-    operation: Schema.Literal('change-role'),
-    principalId: Schema.String.check(Schema.isUUID()),
-    roleKey: demoAccountText(64),
-  }),
-  Schema.Struct({
-    expectedStatus: DemoAccountStatusSchema,
-    newStatus: DemoAccountStatusSchema,
-    operation: Schema.Literal('change-status'),
-    principalId: Schema.String.check(Schema.isUUID()),
-    reason: Schema.optionalKey(demoAccountText(500)),
-  }),
-]);
-export const DemoAccountRoleSchema = Schema.Struct({
-  administrator: Schema.Boolean,
-  description: Schema.String,
-  key: Schema.String,
-  label: Schema.String,
-});
-export const DemoAccountSchema = Schema.Struct({
-  displayName: Schema.String,
-  editable: Schema.Boolean,
-  email: Schema.NullOr(Schema.String),
-  otherCompanies: Schema.Array(Schema.String),
-  principalId: Schema.String,
-  roleKey: Schema.NullOr(Schema.String),
-  roleLabel: Schema.NullOr(Schema.String),
-  self: Schema.Boolean,
-  status: Schema.Literals(['active', 'disabled', 'archived']),
-});
-export const DemoAccountAuditEntrySchema = Schema.Struct({
-  actorName: Schema.NullOr(Schema.String),
-  auditEventId: Schema.String,
-  details: Schema.Record(Schema.String, Schema.NullOr(Schema.String)),
-  eventType: Schema.String,
-  occurredAt: Schema.String,
-  outcome: Schema.String,
-  outcomeCode: Schema.String,
-  targetName: Schema.NullOr(Schema.String),
-});
 export const DemoAccountCapabilitySchema = Schema.Struct({ canManage: Schema.Boolean });
-export const DemoAccountListResponseSchema = Schema.Struct({
-  accounts: Schema.Array(DemoAccountSchema),
-  audit: Schema.Array(DemoAccountAuditEntrySchema),
-  canManage: Schema.Boolean,
-  company: Schema.Struct({ legalEntityId: Schema.String, legalName: Schema.String }),
-  roles: Schema.Array(DemoAccountRoleSchema),
-});
-export const ManageDemoAccountResponseSchema = Schema.Struct({
-  grantsCopied: Schema.Int,
-  grantsRevoked: Schema.Int,
-  operation: Schema.String,
-  principalId: Schema.String,
-  status: DemoAccountStatusSchema,
-});
-export type DemoAccountListResponse = typeof DemoAccountListResponseSchema.Type;
-export type ManageDemoAccountRequest = typeof ManageDemoAccountRequestSchema.Type;
-export type ManageDemoAccountResponse = typeof ManageDemoAccountResponseSchema.Type;
 
 export const CreateNonHumanPrincipalPayloadSchema = Schema.Struct({
   displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
@@ -844,21 +788,6 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
         }),
       )
       .add(
-        HttpApiEndpoint.post('listDemoAccounts', '/auth/identity/demo-accounts/list', {
-          error: identityErrors,
-          payload: DemoAccountListPayloadSchema,
-          success: DemoAccountListResponseSchema,
-        }),
-      )
-      .add(
-        HttpApiEndpoint.post('manageDemoAccount', '/auth/identity/demo-accounts', {
-          error: identityErrors,
-          headers: IdentityRequestHeadersSchema,
-          payload: ManageDemoAccountRequestSchema,
-          success: ManageDemoAccountResponseSchema,
-        }),
-      )
-      .add(
         HttpApiEndpoint.post('createNonHumanPrincipal', '/auth/identity/principals', {
           error: identityErrors,
           headers: IdentityRequestHeadersSchema,
@@ -1158,6 +1087,55 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
           error: identityErrors,
           payload: AgentActivityRequestSchema,
           success: AgentActivityResponseSchema,
+        }),
+      ),
+  )
+  .add(
+    HttpApiGroup.make('peopleAdministration')
+      .add(
+        HttpApiEndpoint.post('invitePerson', PEOPLE_PATHS.companyInvite, {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: InvitePeopleRequestSchema,
+          success: InvitePeopleResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listCompanyPeople', PEOPLE_PATHS.companyList, {
+          error: identityErrors,
+          payload: PeopleListRequestSchema,
+          success: PeopleListResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('listTenantPeople', PEOPLE_PATHS.tenantList, {
+          error: identityErrors,
+          payload: PeopleListRequestSchema,
+          success: PeopleListResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('setPeopleCompanyMembership', PEOPLE_PATHS.companyMembership, {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: SetPeopleCompanyMembershipRequestSchema,
+          success: SetPeopleCompanyMembershipResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('setPeopleCompanyRole', PEOPLE_PATHS.companyRole, {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: SetPeopleRoleRequestSchema,
+          success: SetPeopleRoleResponseSchema,
+        }),
+      )
+      .add(
+        HttpApiEndpoint.post('setPeopleTenantRole', PEOPLE_PATHS.tenantRole, {
+          error: identityErrors,
+          headers: IdentityRequestHeadersSchema,
+          payload: SetPeopleRoleRequestSchema,
+          success: SetPeopleRoleResponseSchema,
         }),
       ),
   )

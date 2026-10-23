@@ -26,10 +26,11 @@ import { loader as loader_4 } from "../../routes/[lang]/resources/[moduleId]/[re
 import component_7 from "../../routes/[lang]/resources/[moduleId]/[resourceType]/[resourceId]/page";
 import { loader as loader_5 } from "../../routes/[lang]/search/page.data";
 import component_8 from "../../routes/[lang]/search/page";
-import component_9 from "../../routes/layout";
+import component_9 from "../../routes/[lang]/set-password/page";
+import component_10 from "../../routes/layout";
 
 export const rootRoute = createRootRouteWithContext<ModernRouterContext>()({
-  component: component_9,
+  component: component_10,
   staticData: createRouteStaticData({
     modernRouteId: "layout",
   }),
@@ -129,7 +130,16 @@ const route__lang__search_page = createRoute({
   }),
 });
 
-export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__$, route__lang__login_page, route__lang__modules__moduleId__page, route__lang__pripojit_page, route__lang__pripojit_souhlas_page, route__lang__profile_page, route__lang__resources__moduleId___resourceType___resourceId__page, route__lang__search_page]);
+const route__lang__setPassword_page = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "$lang/set-password",
+  component: component_9,
+  staticData: createRouteStaticData({
+    modernRouteId: "(lang)/set-password/page",
+  }),
+});
+
+export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__$, route__lang__login_page, route__lang__modules__moduleId__page, route__lang__pripojit_page, route__lang__pripojit_souhlas_page, route__lang__profile_page, route__lang__resources__moduleId___resourceType___resourceId__page, route__lang__search_page, route__lang__setPassword_page]);
 
 export const router = createRouter({
   ...modernTanstackRouterFastDefaults,
