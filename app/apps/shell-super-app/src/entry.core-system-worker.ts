@@ -4,6 +4,8 @@ import {
   CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS,
   coreSystemOutboxWorkers,
   OutboxRuntimeLive,
+  ScopedRoleMembershipLifecycleLive,
+  SpiceDbConfigLive,
 } from '@app/core-runtime/outbox/core-system-worker';
 import {
   ActiveApplicationCompositionConfigLive,
@@ -36,7 +38,10 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
   expectedDeployment: ultramodernDeliveryUnit,
   layer: Layer.mergeAll(
     OutboxRuntimeLive.pipe(Layer.provide(OutboxRepositoryLive)),
-    ActionAuthorizationLifecycleLive,
+    ActionAuthorizationLifecycleLive.pipe(
+      Layer.provide(ScopedRoleMembershipLifecycleLive),
+      Layer.provide(SpiceDbConfigLive),
+    ),
     Reactivity.layer,
   ).pipe(Layer.provideMerge(compositionLive), Layer.provide(CorePersistenceLive), Layer.provide(DatabaseConfigLive)),
   registrations: coreSystemOutboxWorkers,

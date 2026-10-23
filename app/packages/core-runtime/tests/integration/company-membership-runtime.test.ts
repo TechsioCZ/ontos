@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { v1 } from '@authzed/authzed-node';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { DateTime, Effect, Layer, Option, Result, Schema } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { expect, it } from 'effect-rstest';
@@ -34,12 +34,20 @@ import {
 import { buildActionAuthorizationRelationships } from '../../src/install/action-authorization-provisioning.ts';
 import { ActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
 import { setCompanyMembershipAction } from '../../src/modules/actions/set-company-membership.action.ts';
+import { setScopedRoleMembershipAction } from '../../src/modules/actions/set-scoped-role-membership.action.ts';
+import {
+  scopedRoleIdentity,
+  scopedRoleMembershipSubjectId,
+} from '../../src/outbox/core-identity-scoped-role-membership-changed-v1.ts';
+import { ScopedRoleMembershipLifecycleLive } from '../../src/permissions/scoped-role-membership-lifecycle.ts';
+import type { OutboxWorkerSubscription } from '../../src/outbox/definition.ts';
 import { makeModuleEntrypointGateway } from '../../src/modules/module-entrypoint-gateway.ts';
 import { makeModuleStateGate } from '../../src/modules/module-state-gate.ts';
 import { makeTenantModuleStateService } from '../../src/modules/tenant-module-state-service.ts';
 import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../../src/operations/context.ts';
 import {
   corePrincipalLifecycleSubscription,
+  coreScopedRoleMembershipSubscription,
   CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS,
 } from '../../src/outbox/core-system-subscriptions.ts';
 import { coreSystemOutboxWorkers } from '../../src/outbox/core-system-worker-entry.ts';
@@ -50,7 +58,7 @@ import {
   ActionAuthorizationLifecycleLive,
 } from '../../src/permissions/action-authorization-lifecycle.ts';
 import { createSpiceDbPermissionClient, fullyConsistent } from '../../src/permissions/client.ts';
-import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
+import { loadSpiceDbConfig, SpiceDbConfig } from '../../src/permissions/config.ts';
 import { makeContextAccess, toLegalEntityAccessObjectId } from '../../src/permissions/context-access.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
 import { toScopedRoleObjectId } from '../../src/permissions/scoped-role.ts';
@@ -179,20 +187,20 @@ it.live(
         tenantId,
       }));
       yield* admin.executor.insert(principalAuthBindings).values(bindings);
-      const principal = (id: string, legalEntityId = companyId) => {
+      const principal = (id: string, legalEntityId: string | undefined) => {
         const binding = bindings.find((row) => row.principalId === id);
         if (binding === undefined) {
           return expect.unreachable('Missing fixture binding');
         }
-        return {
+        const context = {
           authBindingId: binding.principalAuthBindingId,
           authContextRef: `session:${randomUUID()}`,
           authenticationNamespaceId: registration.authenticationNamespaceId,
           authMethod: 'session' as const,
-          legalEntityId,
           principalId: id,
           tenantId,
         };
+        return legalEntityId === undefined ? context : { ...context, legalEntityId };
       };
       const roles = {
         auditor: toScopedRoleObjectId({ roleKey: 'tenant-auditor', tenantId }),
@@ -215,13 +223,13 @@ it.live(
         relationship('tenant', tenantId, 'superadmin', 'scoped_role', roles.superadmin, 'member'),
         relationship('scoped_role', roles.auditor, 'member', 'principal', auditor),
         relationship('tenant', tenantId, 'auditor', 'scoped_role', roles.auditor, 'member'),
-        ...buildActionAuthorizationRelationships(
-          [companyId, otherCompanyId].map((legalEntityId) => ({
-            actionKey: setCompanyMembershipAction.descriptor.actionKey,
-            legalEntityId,
-            tenantId,
-          })),
-        ),
+        ...buildActionAuthorizationRelationships([
+          ...[companyId, otherCompanyId].flatMap((legalEntityId) => [
+            { actionKey: setCompanyMembershipAction.descriptor.actionKey, legalEntityId, tenantId },
+            { actionKey: setScopedRoleMembershipAction.descriptor.actionKey, legalEntityId, tenantId },
+          ]),
+          { actionKey: setScopedRoleMembershipAction.descriptor.actionKey, tenantId },
+        ]),
       ];
       yield* Effect.promise(() =>
         client.promises.writeRelationships(
@@ -342,43 +350,52 @@ it.live(
       );
       expect(agentMembership.affiliation).toEqual(Option.none());
 
-      const lifecycle = yield* ActionAuthorizationLifecycle.pipe(
-        Effect.provide(
-          ActionAuthorizationLifecycleLive.pipe(
-            Layer.provide(
-              Layer.mergeAll(
-                Layer.succeed(CoreDatabase, database),
-                Layer.succeed(DatabaseConfig, pair.runtime),
-                Layer.succeed(ActiveApplicationCompositionService, authority),
+      const lifecycleForEndpoint = (endpoint: string) =>
+        ActionAuthorizationLifecycle.pipe(
+          Effect.provide(
+            ActionAuthorizationLifecycleLive.pipe(
+              Layer.provide(ScopedRoleMembershipLifecycleLive),
+              Layer.provide(
+                Layer.mergeAll(
+                  Layer.succeed(CoreDatabase, database),
+                  Layer.succeed(DatabaseConfig, pair.runtime),
+                  Layer.succeed(SpiceDbConfig, { ...configuration, endpoint }),
+                  Layer.succeed(ActiveApplicationCompositionService, authority),
+                ),
               ),
             ),
           ),
-        ),
-      );
-      const outbox = makeOutboxRuntime(makeOutboxRepository(database.executor));
-      const workers = coreSystemOutboxWorkers.filter(
-        (worker) => worker.descriptor.workerKey === corePrincipalLifecycleSubscription.workerKey,
-      );
-      const drain = Effect.gen(function* drainMembershipWakeups() {
-        yield* outbox.matchMessages({ compositionRevision: composition.revision });
-        const [clock] = yield* admin.executor.execute<{ readonly now: Date }>(
-          sql`select clock_timestamp() + interval '1 millisecond' as now`,
-          'objects',
         );
-        if (clock === undefined) {
-          return expect.unreachable('Missing database clock');
-        }
-        return yield* outbox
-          .runCycle({
-            claimOwner: 'owned-membership-runtime',
-            compositionRevision: composition.revision,
-            maxDeliveries: 20,
-            now: clock.now,
-            registrations: workers,
-            subscriptions: [corePrincipalLifecycleSubscription],
-          })
-          .pipe(Effect.provideService(ActionAuthorizationLifecycle, lifecycle));
-      });
+      const lifecycle = yield* lifecycleForEndpoint(configuration.endpoint);
+      const outbox = makeOutboxRuntime(makeOutboxRepository(database.executor));
+      const drain = (
+        subscription: OutboxWorkerSubscription = corePrincipalLifecycleSubscription,
+        advanceMs = 1,
+        authorizationLifecycle = lifecycle,
+      ) =>
+        Effect.gen(function* drainMembershipWakeups() {
+          const workers = coreSystemOutboxWorkers.filter(
+            (worker) => worker.descriptor.workerKey === subscription.workerKey,
+          );
+          yield* outbox.matchMessages({ compositionRevision: composition.revision });
+          const [clock] = yield* admin.executor.execute<{ readonly now: Date }>(
+            sql`select clock_timestamp() + ${advanceMs} * interval '1 millisecond' as now`,
+            'objects',
+          );
+          if (clock === undefined) {
+            return expect.unreachable('Missing database clock');
+          }
+          return yield* outbox
+            .runCycle({
+              claimOwner: 'owned-membership-runtime',
+              compositionRevision: composition.revision,
+              maxDeliveries: 20,
+              now: clock.now,
+              registrations: workers,
+              subscriptions: [subscription],
+            })
+            .pipe(Effect.provideService(ActionAuthorizationLifecycle, authorizationLifecycle));
+        });
       const access = (id: string, company = companyId) =>
         Effect.promise(() =>
           client.promises.checkPermission(
@@ -393,7 +410,7 @@ it.live(
           Effect.map((result) => result.permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
         );
       expect(yield* access(human)).toBe(false);
-      const firstDrain = yield* drain;
+      const firstDrain = yield* drain();
       expect(firstDrain.succeeded).toBe(3);
       expect(firstDrain.failed).toBe(0);
       // Queued active wake-ups cannot resurrect the current departed row.
@@ -401,7 +418,7 @@ it.live(
       expect(yield* access(agent, otherCompanyId)).toBe(true);
       const active = yield* invoke(companyAdmin, { ...payload, expectedRevision: 2 });
       expect(active.revision).toBe(3);
-      expect((yield* drain).succeeded).toBe(1);
+      expect((yield* drain()).succeeded).toBe(1);
       expect(yield* access(human)).toBe(true);
       yield* admin.executor.update(principals).set({ status: 'disabled' }).where(eq(principals.principalId, human));
       yield* lifecycle.reconcilePrincipal(tenantId, human, composition.revision);
@@ -417,10 +434,202 @@ it.live(
       expect(retained[0]?.affiliation).toBe('employee');
       const people = yield* admin.executor.select().from(principals).where(eq(principals.principalId, human));
       expect(people).toHaveLength(1);
+      const rolePayload = {
+        operation: 'assign',
+        principalRef: { principalId: agent, tenantId },
+        reason: 'Administrator explicitly selected an exact scoped role',
+        roleKey: 'reader',
+      } satisfies typeof setScopedRoleMembershipAction.descriptor.payloadSchema.Encoded;
+      const invokeRole = (
+        id: string,
+        command: typeof setScopedRoleMembershipAction.descriptor.payloadSchema.Encoded,
+        company?: string,
+        key = randomUUID(),
+      ) =>
+        runtime
+          .runAction({
+            payload: command,
+            principal: principal(id, company),
+            registration: setScopedRoleMembershipAction,
+            transport: { correlationId: randomUUID(), idempotencyKey: key },
+          })
+          .pipe(Effect.provideService(AuthenticationNamespaceRegistry, registry));
+      const tenantContext = (id: string) =>
+        Effect.promise(() =>
+          client.promises.checkPermission(
+            v1.CheckPermissionRequest.create({
+              consistency: fullyConsistent,
+              permission: 'select_context',
+              resource: { objectId: tenantId, objectType: 'tenant' },
+              subject: { object: { objectId: id, objectType: 'principal' } },
+            }),
+          ),
+        ).pipe(
+          Effect.map((result) => result.permissionship === v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+        );
+      const roleMember = (roleKey: string, id: string, company?: string) =>
+        Effect.promise(() =>
+          client.promises.readRelationships(
+            v1.ReadRelationshipsRequest.create({
+              consistency: fullyConsistent,
+              relationshipFilter: {
+                optionalRelation: 'member',
+                optionalResourceId: toScopedRoleObjectId(
+                  company === undefined ? { roleKey, tenantId } : { legalEntityId: company, roleKey, tenantId },
+                ),
+                optionalSubjectFilter: { optionalSubjectId: id, subjectType: 'principal' },
+                resourceType: 'scoped_role',
+              },
+            }),
+          ),
+        ).pipe(Effect.map((rows) => rows.length > 0));
+      yield* Effect.forEach(
+        [ordinaryMember, auditor],
+        Effect.fn(function* rejectRoleMutation(id) {
+          const denied = yield* invokeRole(id, rolePayload, companyId).pipe(Effect.flip);
+          expect(Schema.is(ActionPermissionDenied)(denied)).toBe(true);
+        }),
+        { concurrency: 1 },
+      );
+      const foreignRole = yield* invokeRole(
+        companyAdmin,
+        {
+          ...rolePayload,
+          principalRef: { principalId: foreignHuman, tenantId: foreignTenantId },
+        },
+        companyId,
+      ).pipe(Effect.flip);
+      expect(Schema.is(IdentityTargetInvalidError)(foreignRole)).toBe(true);
+      const technicalRole = yield* invokeRole(
+        companyAdmin,
+        {
+          ...rolePayload,
+          principalRef: { principalId: service, tenantId },
+        },
+        companyId,
+      ).pipe(Effect.flip);
+      expect(Schema.is(IdentityTargetInvalidError)(technicalRole)).toBe(true);
+      const inactiveRole = yield* invokeRole(
+        companyAdmin,
+        {
+          ...rolePayload,
+          principalRef: { principalId: human, tenantId },
+        },
+        companyId,
+      ).pipe(Effect.flip);
+      expect(Schema.is(IdentityTargetInvalidError)(inactiveRole)).toBe(true);
+      const deniedTenantRole = yield* invokeRole(companyAdmin, rolePayload).pipe(Effect.flip);
+      expect(Schema.is(ActionPermissionDenied)(deniedTenantRole)).toBe(true);
+      const deniedCompanyRole = yield* invokeRole(companyAdmin, rolePayload, otherCompanyId).pipe(Effect.flip);
+      expect(Schema.is(OperationContextDenied)(deniedCompanyRole)).toBe(true);
+      const companyRoleKey = randomUUID();
+      const companyRole = yield* invokeRole(
+        companyAdmin,
+        { ...rolePayload, roleKey: 'superadmin' },
+        companyId,
+        companyRoleKey,
+      );
+      expect(companyRole.projection).toBe('pending');
+      expect(scopedRoleIdentity(companyRole.role)).toEqual({
+        legalEntityId: companyId,
+        roleKey: 'superadmin',
+        tenantId,
+      });
+      expect(yield* roleMember('superadmin', agent, companyId)).toBe(false);
+      const roleReplay = yield* invokeRole(
+        companyAdmin,
+        { ...rolePayload, roleKey: 'superadmin' },
+        companyId,
+        companyRoleKey,
+      ).pipe(Effect.flip);
+      expect(Schema.is(ActionAlreadyCommitted)(roleReplay)).toBe(true);
+      yield* invokeRole(superadmin, rolePayload);
+      yield* invokeRole(superadmin, { ...rolePayload, principalRef: { principalId: ordinaryMember, tenantId } });
+      yield* invokeRole(superadmin, { ...rolePayload, operation: 'revoke' });
+      const roleDrain = yield* drain(coreScopedRoleMembershipSubscription);
+      expect(roleDrain.succeeded).toBe(4);
+      expect(roleDrain.failed).toBe(0);
+      expect(yield* roleMember('superadmin', agent, companyId)).toBe(true);
+      expect(yield* roleMember('reader', agent)).toBe(false);
+      expect(yield* tenantContext(agent)).toBe(false);
+      expect(yield* tenantContext(ordinaryMember)).toBe(true);
+      // The old assign delivery applied the newer revoke, and revoking one member
+      // kept the shared role context link for its other explicit assignee.
+      yield* invokeRole(superadmin, rolePayload);
+      expect((yield* drain(coreScopedRoleMembershipSubscription)).succeeded).toBe(1);
+      expect(yield* tenantContext(agent)).toBe(true);
+      yield* invokeRole(superadmin, { ...rolePayload, operation: 'revoke' });
+      const unavailableGraphLifecycle = yield* lifecycleForEndpoint('localhost:1');
+      const graphFailure = yield* drain(coreScopedRoleMembershipSubscription, 1, unavailableGraphLifecycle);
+      expect(graphFailure.retried).toBe(1);
+      expect(graphFailure.succeeded).toBe(0);
+      // A newer committed assignment wins even when the older revoke delivery retries.
+      yield* invokeRole(superadmin, rolePayload);
+      const recovered = yield* drain(coreScopedRoleMembershipSubscription, 2000);
+      expect(recovered.succeeded).toBe(2);
+      expect(recovered.failed).toBe(0);
+      expect(yield* tenantContext(agent)).toBe(true);
+      yield* admin.executor.update(principals).set({ status: 'disabled' }).where(eq(principals.principalId, agent));
+      yield* lifecycle.reconcilePrincipal(tenantId, agent, composition.revision);
+      expect(yield* tenantContext(agent)).toBe(false);
+      expect(yield* roleMember('superadmin', agent, companyId)).toBe(false);
+      yield* invokeRole(superadmin, { ...rolePayload, operation: 'revoke' });
+      expect((yield* drain(coreScopedRoleMembershipSubscription)).succeeded).toBe(1);
+      expect(yield* tenantContext(ordinaryMember)).toBe(true);
+      yield* invokeRole(superadmin, {
+        ...rolePayload,
+        operation: 'revoke',
+        principalRef: { principalId: ordinaryMember, tenantId },
+      });
+      const [latestRoleEvent] = yield* admin.executor
+        .select({ invocationId: domainEvents.actionInvocationId })
+        .from(domainEvents)
+        .where(
+          and(
+            eq(domainEvents.tenantId, tenantId),
+            eq(domainEvents.eventType, coreScopedRoleMembershipSubscription.topic),
+            eq(
+              domainEvents.subjectResourceId,
+              scopedRoleMembershipSubjectId({ roleKey: 'reader', tenantId }, ordinaryMember),
+            ),
+          ),
+        )
+        .orderBy(desc(domainEvents.tenantSequenceNo))
+        .limit(1);
+      if (latestRoleEvent?.invocationId === null || latestRoleEvent === undefined) {
+        return expect.unreachable('Missing committed role invocation');
+      }
+      // A damaged newest audit must fail, never silently fall back to an older grant.
+      yield* admin.executor
+        .update(auditEvents)
+        .set({ eventType: 'owned-fixture-invalid-audit' })
+        .where(
+          and(
+            eq(auditEvents.tenantId, tenantId),
+            eq(auditEvents.actionInvocationId, latestRoleEvent.invocationId),
+            eq(auditEvents.eventType, 'action.executed'),
+          ),
+        );
+      const invalidAudit = yield* drain(coreScopedRoleMembershipSubscription);
+      expect(invalidAudit.retried).toBe(1);
+      expect(invalidAudit.succeeded).toBe(0);
+      yield* admin.executor
+        .update(auditEvents)
+        .set({ eventType: 'action.executed' })
+        .where(
+          and(
+            eq(auditEvents.tenantId, tenantId),
+            eq(auditEvents.actionInvocationId, latestRoleEvent.invocationId),
+            eq(auditEvents.eventType, 'owned-fixture-invalid-audit'),
+          ),
+        );
+      expect((yield* drain(coreScopedRoleMembershipSubscription, 2000)).succeeded).toBe(1);
+      expect(yield* tenantContext(ordinaryMember)).toBe(false);
       // The caller drops the entire owned DB on success or failure; release the
       // singleton here only so another bounded proof can use this same fresh DB.
-      yield* admin.executor
+      return yield* admin.executor
         .delete(applicationCompositionAuthority)
-        .where(eq(applicationCompositionAuthority.revision, composition.revision));
+        .where(eq(applicationCompositionAuthority.revision, composition.revision))
+        .pipe(Effect.asVoid);
     }).pipe(Effect.provide(Reactivity.layer)),
 );

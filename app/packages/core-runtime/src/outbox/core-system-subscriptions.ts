@@ -3,6 +3,7 @@ import type { OutboxWorkerSubscription } from './definition.ts';
 import { outboxProducerModuleKey, outboxTopic } from './core-modules-tenant-module-state-changed-v1.ts';
 
 const consumerModuleKey = 'core.authorization';
+const identityProducerModuleKey = 'core.identity';
 const workerKey = 'core.authorization.reconcile-module-installation';
 
 /** Core-owned lifecycle work is published with the matching authority, not a tenant module contract. */
@@ -30,7 +31,7 @@ export const corePrincipalLifecycleSubscription = Object.freeze({
     moduleKey: consumerModuleKey,
     role: 'worker',
   }),
-  producerModuleKey: 'core.identity',
+  producerModuleKey: identityProducerModuleKey,
   topic: 'core.identity.principal-lifecycle-changed.v1',
   workerKey: principalWorkerKey,
 });
@@ -44,13 +45,29 @@ export const corePrincipalBindingSubscription = Object.freeze({
     moduleKey: consumerModuleKey,
     role: 'worker',
   }),
-  producerModuleKey: 'core.identity',
+  producerModuleKey: identityProducerModuleKey,
   topic: 'core.identity.principal-binding-activated.v1',
   workerKey: bindingWorkerKey,
+});
+
+const scopedRoleWorkerKey = 'core.authorization.reconcile-scoped-role-membership';
+export const coreScopedRoleMembershipSubscription = Object.freeze({
+  consumerModuleKey,
+  entrypoint: defineSystemModuleEntrypoint({
+    access: 'background',
+    authorization: { kind: 'owner_local_background' },
+    entrypointKey: scopedRoleWorkerKey,
+    moduleKey: consumerModuleKey,
+    role: 'worker',
+  }),
+  producerModuleKey: identityProducerModuleKey,
+  topic: 'core.identity.scoped-role-membership-changed.v1',
+  workerKey: scopedRoleWorkerKey,
 });
 
 export const CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS: readonly OutboxWorkerSubscription[] = Object.freeze([
   coreModuleInstallationSubscription,
   corePrincipalBindingSubscription,
   corePrincipalLifecycleSubscription,
+  coreScopedRoleMembershipSubscription,
 ]);

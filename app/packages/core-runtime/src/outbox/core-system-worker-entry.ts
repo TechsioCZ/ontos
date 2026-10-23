@@ -6,14 +6,21 @@ import { OutboxPayloadSchema } from './core-modules-tenant-module-state-changed-
 import { OutboxPayloadSchema as PrincipalLifecyclePayloadSchema } from './core-identity-principal-lifecycle-changed-v1.ts';
 import { OutboxPayloadSchema as PrincipalBindingPayloadSchema } from './core-identity-principal-binding-activated-v1.ts';
 import {
+  OutboxPayloadSchema as ScopedRolePayloadSchema,
+  scopedRoleIdentity,
+} from './core-identity-scoped-role-membership-changed-v1.ts';
+import {
   coreModuleInstallationSubscription,
   corePrincipalLifecycleSubscription,
   corePrincipalBindingSubscription,
+  coreScopedRoleMembershipSubscription,
 } from './core-system-subscriptions.ts';
 import { defineOutboxWorker } from './definition.ts';
 import { isVerifiedOutboxWorkerHandlerContext } from './verified-handler-context.ts';
 
 export { ActionAuthorizationLifecycleLive } from '../permissions/action-authorization-lifecycle.ts';
+export { ScopedRoleMembershipLifecycleLive } from '../permissions/scoped-role-membership-lifecycle.ts';
+export { SpiceDbConfigLive } from '../permissions/config.ts';
 export { CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS } from './core-system-subscriptions.ts';
 export { OutboxRuntimeLive } from './runtime.ts';
 
@@ -82,9 +89,35 @@ const principalBindingWorker = defineOutboxWorker(
   ),
 );
 
+const scopedRoleMembershipWorker = defineOutboxWorker(
+  {
+    ...coreScopedRoleMembershipSubscription,
+    leaseDurationMs: 60_000,
+    legalEntityScope: 'forbidden',
+    payloadSchema: ScopedRolePayloadSchema,
+    retryPolicy: { initialBackoffMs: 1000, maxAttempts: 20, maxBackoffMs: 60_000, multiplier: 2 },
+  },
+  Effect.fn('CoreSystemWorker.reconcileScopedRoleMembership')(
+    function* reconcileScopedRoleMembership(payload, context) {
+      if (!isVerifiedOutboxWorkerHandlerContext(context)) {
+        return yield* new ActionAuthorizationLifecycleError({
+          reason: 'Scoped role membership work requires an attested Outbox claim',
+        });
+      }
+      const lifecycle = yield* ActionAuthorizationLifecycle;
+      return yield* lifecycle.reconcileScopedRoleMembership(
+        scopedRoleIdentity({ ...payload.data, tenantId: context.tenantId }),
+        payload.data.principalId,
+        context.compositionRevision,
+      );
+    },
+  ),
+);
+
 /** The application root supplies persistence, composition authority and process-local resources. */
 export const coreSystemOutboxWorkers = Object.freeze([
   installationWorker,
   principalBindingWorker,
   principalLifecycleWorker,
+  scopedRoleMembershipWorker,
 ] as const);

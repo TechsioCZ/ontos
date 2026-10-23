@@ -1,4 +1,4 @@
-import { Config, ConfigProvider, Effect, Option, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
 import { loadDotEnvProvider } from '../environment/dotenv-provider.ts';
 import { APP_ENV_PATH } from '../environment/workspace-environment.ts';
@@ -34,6 +34,10 @@ const makeSpiceDbConfigValue = (settings: {
  */
 export type SpiceDbConfigValue = ReturnType<typeof makeSpiceDbConfigValue> &
   Partial<Record<'caCertificate' | 'deploymentEnvironment', string>>;
+
+export class SpiceDbConfig extends Context.Service<SpiceDbConfig, SpiceDbConfigValue>()(
+  '@app/core-runtime/permissions/SpiceDbConfig',
+) {}
 
 export type SpiceDbEnvironment = Readonly<
   Partial<
@@ -140,3 +144,5 @@ export const loadSpiceDbConfig = (
     Effect.flatMap((fileProvider) => parseSpiceDbConfigWith(ConfigProvider.orElse(environmentProvider, fileProvider))),
   );
 };
+
+export const SpiceDbConfigLive = Layer.effect(SpiceDbConfig, loadSpiceDbConfig());

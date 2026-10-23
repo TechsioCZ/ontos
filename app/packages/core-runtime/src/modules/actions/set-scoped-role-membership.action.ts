@@ -1,0 +1,103 @@
+import { Effect, Schema } from 'effect';
+
+import type { ActionHandlerContext } from '../../actions/context.ts';
+import { defineAction } from '../../actions/definition.ts';
+import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
+import { scopedRoleMembershipManagementFromTransaction } from '../../auth/scoped-role-membership-management.ts';
+import {
+  OutboxPayloadSchema,
+  ScopedRoleKeySchema,
+  ScopedRoleMembershipAuditEvidenceSchema,
+  ScopedRoleMembershipOperationSchema,
+  ScopedRoleMembershipReasonSchema,
+  ScopedRoleMembershipRoleSchema,
+  outboxProducerModuleKey,
+  outboxTopic,
+  scopedRoleIdentity,
+  scopedRoleMembershipSubjectId,
+} from '../../outbox/core-identity-scoped-role-membership-changed-v1.ts';
+import { PrincipalRefSchema } from '../../permissions/principal-ref.ts';
+import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
+
+const PayloadSchema = Schema.Struct({
+  operation: ScopedRoleMembershipOperationSchema,
+  principalRef: PrincipalRefSchema,
+  reason: ScopedRoleMembershipReasonSchema,
+  roleKey: ScopedRoleKeySchema,
+});
+const ResultSchema = Schema.Struct({
+  operation: ScopedRoleMembershipOperationSchema,
+  principalRef: PrincipalRefSchema,
+  projection: Schema.Literal('pending'),
+  role: ScopedRoleMembershipRoleSchema,
+});
+const domainEvents = Object.freeze({ [outboxTopic]: OutboxPayloadSchema });
+type Services = ReturnType<typeof scopedRoleMembershipManagementFromTransaction>;
+
+const handle = Effect.fn('SetScopedRoleMembershipAction.handle')(function* setScopedRoleMembership(
+  payload: typeof PayloadSchema.Type,
+  context: ActionHandlerContext<typeof domainEvents, Services>,
+) {
+  const role = yield* context.services.prepare(payload);
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `scoped-role-membership-target:${payload.principalRef.principalId}`,
+    resultCount: 1,
+    servingModuleKey: 'core.identity',
+    targetModuleKey: 'core.identity',
+    targetResourceId: payload.principalRef.principalId,
+    targetResourceType: 'principal',
+  });
+  yield* context.recordAuditEvidence({
+    operation: payload.operation,
+    principalRef: payload.principalRef,
+    reason: payload.reason,
+    role,
+  });
+  const wakeup = { data: { principalId: payload.principalRef.principalId, roleKey: role.roleKey, scope: role.scope } };
+  const event = yield* context.addDomainEvent({
+    eventType: outboxTopic,
+    payloadJson: wakeup,
+    producerModuleKey: outboxProducerModuleKey,
+    subjectModuleKey: outboxProducerModuleKey,
+    subjectResourceId: scopedRoleMembershipSubjectId(scopedRoleIdentity(role), payload.principalRef.principalId),
+    subjectResourceType: 'scoped_role_membership',
+  });
+  yield* context.addOutboxMessage(event, {
+    payloadJson: wakeup,
+    producerModuleKey: outboxProducerModuleKey,
+    topic: outboxTopic,
+  });
+  return { operation: payload.operation, principalRef: payload.principalRef, projection: 'pending' as const, role };
+});
+
+/** Role scope comes exclusively from the authorized Action context, never a role label or payload scope. */
+export const setScopedRoleMembershipAction = defineAction(
+  {
+    accessEvidencePolicy: {
+      captureMode: 'metadata_only',
+      policyKey: 'core.identity.set-scoped-role-membership.access.v1',
+    },
+    actionKey: 'core.identity.set-scoped-role-membership',
+    auditEvidenceSchema: ScopedRoleMembershipAuditEvidenceSchema,
+    auditProfile: 'sensitive',
+    domainErrorSchema: PrincipalManagementErrorSchema,
+    domainEvents,
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      entrypointKey: 'core.identity.set-scoped-role-membership',
+      moduleKey: 'core.identity',
+      role: 'action',
+    }),
+    idempotency: 'required',
+    legalEntityScope: 'optional',
+    owningModuleKey: 'core.identity',
+    payloadSchema: PayloadSchema,
+    policies: [],
+    resultSchema: ResultSchema,
+    schemaVersion: '1',
+  },
+  handle,
+  (transaction) => Effect.succeed(scopedRoleMembershipManagementFromTransaction(transaction)),
+);

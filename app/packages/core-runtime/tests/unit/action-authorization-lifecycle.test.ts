@@ -135,9 +135,10 @@ it.effect(
           Effect.sync(() => {
             calls.push([tenantId, principalId, revision]);
           }),
+        reconcileScopedRoleMembership: () => Effect.void,
         reconcileTenant: () => Effect.void,
       };
-      const [, , worker] = coreSystemOutboxWorkers;
+      const { 2: worker } = coreSystemOutboxWorkers;
       const handler = getOutboxWorkerHandler(worker);
       const unauthorized = yield* Effect.result(
         handler(principalWakeUp, lifecycleContext).pipe(

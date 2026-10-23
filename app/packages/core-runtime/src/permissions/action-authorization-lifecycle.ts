@@ -23,6 +23,8 @@ import { buildApplicationCompositionCatalog } from '../modules/application-compo
 import { buildCompanyMembershipUpdates } from './company-membership.ts';
 import { loadSpiceDbConfig } from './config.ts';
 import { openSpiceDbRpc } from './spicedb-transaction-guard.ts';
+import { ScopedRoleMembershipLifecycle } from './scoped-role-membership-lifecycle.ts';
+import type { ScopedRoleIdentity } from './scoped-role.ts';
 
 import { ActionAuthorizationLifecycleError } from './action-authorization-lifecycle-error.ts';
 
@@ -162,6 +164,11 @@ export class ActionAuthorizationLifecycle extends Context.Service<
       principalId: string,
       compositionRevision: string,
     ) => Effect.Effect<void, ActionAuthorizationLifecycleError, Reactivity.Reactivity>;
+    readonly reconcileScopedRoleMembership: (
+      role: ScopedRoleIdentity,
+      principalId: string,
+      compositionRevision: string,
+    ) => Effect.Effect<void, ActionAuthorizationLifecycleError, Reactivity.Reactivity>;
     readonly reconcileTenant: (
       tenantId: string,
       compositionRevision: string,
@@ -175,6 +182,7 @@ export const ActionAuthorizationLifecycleLive = Layer.effect(
     const database = yield* CoreDatabase;
     const configuration = yield* DatabaseConfig;
     const authority = yield* ActiveApplicationCompositionService;
+    const roleLifecycle = yield* ScopedRoleMembershipLifecycle;
     return {
       reconcilePrincipal: Effect.fn('ActionAuthorizationLifecycle.reconcilePrincipal')(function* reconcilePrincipal(
         tenantId: string,
@@ -219,7 +227,7 @@ export const ActionAuthorizationLifecycleLive = Layer.effect(
               Effect.try({ catch: failed, try: () => openSpiceDbRpc(spiceConfiguration, 5000) }),
               (rpc) => Effect.sync(rpc.close),
             );
-            return yield* client
+            yield* client
               .writeRelationships(
                 v1.WriteRelationshipsRequest.create({
                   updates: [
@@ -235,9 +243,11 @@ export const ActionAuthorizationLifecycleLive = Layer.effect(
                 }),
               )
               .pipe(Effect.asVoid);
+            return yield* roleLifecycle.reconcilePrincipal(tenantId, principalId, compositionRevision);
           }),
         ).pipe(Effect.mapError(failed));
       }),
+      reconcileScopedRoleMembership: roleLifecycle.reconcile,
       reconcileTenant: Effect.fn('ActionAuthorizationLifecycle.reconcileTenant')(function* reconcileTenant(
         tenantId: string,
         compositionRevision: string,

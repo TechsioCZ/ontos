@@ -13,6 +13,7 @@ import { recordSupportImpersonationAction } from './record-support-impersonation
 import { reservePrincipalBindingAction } from './reserve-principal-binding.action.ts';
 import { setCompanyMembershipAction } from './set-company-membership.action.ts';
 import { setManagedApiKeyBindingStatusAction } from './set-managed-api-key-binding-status.action.ts';
+import { setScopedRoleMembershipAction } from './set-scoped-role-membership.action.ts';
 import { setSelfApiKeyBindingStatusAction } from './set-self-api-key-binding-status.action.ts';
 // </generated-core-action-catalog-imports>
 
@@ -33,6 +34,7 @@ export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze(
   reservePrincipalBindingAction.descriptor,
   setCompanyMembershipAction.descriptor,
   setManagedApiKeyBindingStatusAction.descriptor,
+  setScopedRoleMembershipAction.descriptor,
   setSelfApiKeyBindingStatusAction.descriptor,
   // </generated-core-action-catalog-values>
 ]);

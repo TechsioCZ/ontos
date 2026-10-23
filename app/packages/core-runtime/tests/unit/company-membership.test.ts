@@ -10,6 +10,15 @@ import {
 } from '../../src/permissions/company-membership.ts';
 import { buildScopedRoleMembershipUpdates, toScopedRoleObjectId } from '../../src/permissions/scoped-role.ts';
 import { toLegalEntityAccessObjectId } from '../../src/permissions/context-access.ts';
+import { createActionCollector } from '../../src/actions/collector.ts';
+import {
+  OutboxPayloadSchema,
+  ScopedRoleMembershipAuditEvidenceSchema,
+  ScopedRoleMembershipRoleSchema,
+  outboxTopic,
+  scopedRoleIdentity,
+  scopedRoleMembershipSubjectId,
+} from '../../src/outbox/core-identity-scoped-role-membership-changed-v1.ts';
 
 const tenantId = '71000000-0000-4000-8000-000000000001';
 const legalEntityId = '72000000-0000-4000-8000-000000000001';
@@ -161,4 +170,56 @@ it.effect('rejects cross-tenant PrincipalRef assignments and revocations before 
       expect(Predicate.isTagged(error, 'ScopedRoleScopeMismatch')).toBe(true);
     }
   }),
+);
+
+it.effect(
+  'collects JSON-safe tenant and company role evidence and identity-only wakeups through the real Action collector',
+  () =>
+    Effect.gen(function* collectScopedRoleCommands() {
+      const scopes = [{ _tag: 'tenant' }, { _tag: 'company', legalEntityId }] as const;
+      for (const scope of scopes) {
+        const role = Schema.decodeUnknownSync(ScopedRoleMembershipRoleSchema)({ roleKey: 'reader', scope, tenantId });
+        const collector = createActionCollector(
+          { [outboxTopic]: OutboxPayloadSchema },
+          'core.identity',
+          { captureMode: 'metadata_only', policyKey: 'role-command-test' },
+          ScopedRoleMembershipAuditEvidenceSchema,
+        );
+        const wakeup = { data: { principalId, roleKey: role.roleKey, scope: role.scope } };
+        yield* collector.recordAuditEvidence({
+          operation: 'assign',
+          principalRef: principal,
+          reason: 'Explicit assignment',
+          role,
+        });
+        const event = yield* collector.addDomainEvent({
+          eventType: outboxTopic,
+          payloadJson: wakeup,
+          producerModuleKey: 'core.identity',
+          subjectModuleKey: 'core.identity',
+          subjectResourceId: scopedRoleMembershipSubjectId(scopedRoleIdentity(role), principalId),
+          subjectResourceType: 'scoped_role_membership',
+        });
+        yield* collector.addOutboxMessage(event, {
+          payloadJson: wakeup,
+          producerModuleKey: 'core.identity',
+          topic: outboxTopic,
+        });
+        const snapshot = collector.snapshot();
+        expect(Schema.is(Schema.Json)(snapshot.auditEvidence)).toBe(true);
+        expect(snapshot.domainEvents[0]?.payloadJson).toEqual(wakeup);
+        expect(snapshot.outboxMessages[0]?.message.payloadJson).toEqual(wakeup);
+        expect(Object.hasOwn(wakeup.data, 'operation')).toBe(false);
+      }
+      expect(() =>
+        Schema.decodeUnknownSync(OutboxPayloadSchema, { onExcessProperty: 'error' })({
+          data: { operation: 'assign', principalId, roleKey: 'reader', scope: { _tag: 'tenant' } },
+        }),
+      ).toThrow();
+      expect(() =>
+        Schema.decodeUnknownSync(OutboxPayloadSchema)({
+          data: { principalId, roleKey: 'reader', scope: { _tag: 'company' } },
+        }),
+      ).toThrow();
+    }),
 );
