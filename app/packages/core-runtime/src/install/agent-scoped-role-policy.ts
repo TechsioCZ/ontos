@@ -173,9 +173,9 @@ const readNamedPermissionScopeLinks = Effect.fn('AgentScopedRolePolicy.readNamed
   },
 );
 
-/** One atomic graph write replaces policy, membership and missing shared scope links. */
-export const replaceAgentScopedRolePolicy = Effect.fn('AgentScopedRolePolicy.replace')(
-  function* replaceAgentScopedRolePolicyEffect(rpc: SpiceDbRpc, input: AgentScopedRoleReplacement) {
+/** Read-only preflight of the complete replacement, shared by reviewed replay and the native writer. */
+export const planAgentScopedRoleReplacement = Effect.fn('AgentScopedRolePolicy.plan')(
+  function* planAgentScopedRoleReplacementEffect(rpc: SpiceDbRpc, input: AgentScopedRoleReplacement) {
     const roleObjectId = agentScopedRoleObjectId(input);
     if (
       input.tenantId.length === 0 ||
@@ -263,11 +263,19 @@ export const replaceAgentScopedRolePolicy = Effect.fn('AgentScopedRolePolicy.rep
     if (updates.length > 1000) {
       return yield* unavailable('Scoped agent policy exceeds the atomic relationship-write limit');
     }
-    if (updates.length > 0) {
+    return { granted: granted.length, revoked: revoked.length, updates };
+  },
+);
+
+/** Revalidates current evidence before one atomic graph write; a prior plan never authorizes stale writes. */
+export const replaceAgentScopedRolePolicy = Effect.fn('AgentScopedRolePolicy.replace')(
+  function* replaceAgentScopedRolePolicyEffect(rpc: SpiceDbRpc, input: AgentScopedRoleReplacement) {
+    const plan = yield* planAgentScopedRoleReplacement(rpc, input);
+    if (plan.updates.length > 0) {
       yield* rpc
-        .writeRelationships(v1.WriteRelationshipsRequest.create({ updates }))
+        .writeRelationships(v1.WriteRelationshipsRequest.create({ updates: plan.updates }))
         .pipe(Effect.mapError(unavailable));
     }
-    return { granted: granted.length, revoked: revoked.length };
+    return { granted: plan.granted, revoked: plan.revoked };
   },
 );

@@ -3,7 +3,10 @@ import { Effect, Option, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { agentGrantRelationships } from '../../src/install/agent-entity-grants.ts';
-import { replaceAgentScopedRolePolicy } from '../../src/install/agent-scoped-role-policy.ts';
+import {
+  planAgentScopedRoleReplacement,
+  replaceAgentScopedRolePolicy,
+} from '../../src/install/agent-scoped-role-policy.ts';
 import {
   toContextPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
@@ -114,6 +117,23 @@ it.effect(
         true,
       );
     }),
+);
+
+it.effect('preflights the exact replacement without writes and the writer rechecks changed evidence', () =>
+  Effect.gen(function* planBeforeReplay() {
+    const desired = policy('read');
+    const previous = policy();
+    const state = graph(previous);
+    const input = { ...scope, currentPrincipalRelationships: directMemberships(previous), desired };
+    const plan = yield* planAgentScopedRoleReplacement(state.rpc, input);
+    expect(plan.updates.length).toBeGreaterThan(0);
+    expect(plan.granted + plan.revoked).toBe(plan.updates.length);
+    expect(state.writes).toHaveLength(0);
+    expect(state.values().map(identity).toSorted()).toEqual(previous.map(identity).toSorted());
+    state.control.failRead = true;
+    expect((yield* Effect.result(replaceAgentScopedRolePolicy(state.rpc, input)))._tag).toBe('Failure');
+    expect(state.writes).toHaveLength(0);
+  }),
 );
 
 it.effect('is idempotent after a successful write whose acknowledgement was lost', () =>
