@@ -16,6 +16,7 @@ import {
   lockApplicationCompositionAuthority,
   precheckApplicationCompositionAdmission,
 } from '../modules/application-composition-authority.ts';
+import type { ModuleEntrypointDescriptor } from '../modules/module-entrypoint.ts';
 import type { ModuleEntrypointGatewayService } from '../modules/module-entrypoint-gateway.ts';
 import { ModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import type { OperationalScope, OperationalScopeResolverService } from '../operations/context.ts';
@@ -748,6 +749,32 @@ const checkPermissionTarget = <AccessValue extends (typeof ContextAccess)['Servi
   );
 };
 
+/** A static module check needs only the verified identity, not owner resolvers or persisted scope state.
+ * Start it beside scope revalidation, but consume it only after that revalidation and module gating succeed.
+ * The decision belongs to this runRead invocation; no gateway-token or cross-request authorization is cached.
+ */
+const prefetchEntrypointModuleAccess = <AccessValue extends (typeof ContextAccess)['Service']>(
+  contextAccess: AccessValue,
+  principal: Pick<OperationalScope, 'legalEntityId' | 'principalId' | 'tenantId'>,
+  entrypoint: ModuleEntrypointDescriptor,
+): Effect.Effect<Option.Option<PermissionDecision>> => {
+  if (
+    entrypoint.authorization.kind !== 'context_permission' ||
+    entrypoint.authorization.permission !== 'module.access' ||
+    principal.legalEntityId === undefined
+  ) {
+    return Effect.succeedNone;
+  }
+  return contextAccess
+    .modules({
+      legalEntityId: principal.legalEntityId,
+      moduleIds: [entrypoint.moduleKey],
+      principalId: principal.principalId,
+      tenantId: principal.tenantId,
+    })
+    .pipe(Effect.map((decisions) => Option.some(decisionFor(decisions, entrypoint.moduleKey))));
+};
+
 const checkEntrypointContextPermission = <AccessValue extends (typeof ContextAccess)['Service']>(
   contextAccess: AccessValue,
   scope: OperationalScope,
@@ -1292,8 +1319,9 @@ const readRuntimeFromDependencies = <
         Effect.mapError(compositionNoLongerAdmits),
       );
     }
-    // Authorization: scope resolution, module state, SpiceDB decisions, and Policies. No transaction is open.
-    const scope = yield* scopeResolver.resolve(
+    // Revalidate scope, fetch module state, and check the static module permission independently.
+    // No owner callback or transaction starts until all admission and authorization gates have succeeded.
+    const resolveScope = scopeResolver.resolve(
       withOptionalProperty(
         withOptionalProperty(
           {
@@ -1312,6 +1340,21 @@ const readRuntimeFromDependencies = <
         {},
       ),
     );
+    const [scope, snapshotExit, moduleAccessPrefetch] = yield* Effect.all(
+      [
+        resolveScope,
+        // Preserve scope-validation failure precedence; consume a snapshot failure only after scope succeeds.
+        Effect.exit(gateway.prepareSnapshot(principal, [input.registration.descriptor.entrypoint])),
+        prefetchEntrypointModuleAccess(contextAccess, principal, input.registration.descriptor.entrypoint),
+      ],
+      { concurrency: 3 },
+    );
+    const prefetchedModuleAccess =
+      scope.tenantId === principal.tenantId &&
+      scope.principalId === principal.principalId &&
+      scope.legalEntityId === principal.legalEntityId
+        ? moduleAccessPrefetch
+        : Option.none<PermissionDecision>();
     stage('scope_validated');
     const { conditionalAdditionalTargets, permissionTarget } = yield* resolveReadPermissionTarget(
       input.registration,
@@ -1343,7 +1386,9 @@ const readRuntimeFromDependencies = <
     const {
       evidencePolicy: { policyKey },
     } = input.registration.descriptor;
-    const snapshot = yield* gateway.prepareSnapshot(scope, [input.registration.descriptor.entrypoint]);
+    const snapshot = yield* scope.tenantId === principal.tenantId
+      ? snapshotExit
+      : gateway.prepareSnapshot(scope, [input.registration.descriptor.entrypoint]);
     yield* gateway.check(snapshot, input.registration.descriptor.entrypoint);
     stage('module_state_checked');
 
@@ -1351,12 +1396,16 @@ const readRuntimeFromDependencies = <
     const [permissionDecision, resourcePermissionDecision, conditionalAdditionalDecisions, entrypointDecision] =
       yield* Effect.all(
         [
-          checkPermissionTarget(
-            contextAccess,
-            scope,
-            permissionTarget,
-            input.registration.descriptor.legalEntityScope === 'forbidden',
-          ),
+          permissionTarget.kind === 'module' &&
+          permissionTarget.moduleId === input.registration.descriptor.entrypoint.moduleKey &&
+          Option.isSome(prefetchedModuleAccess)
+            ? Effect.succeed(prefetchedModuleAccess.value)
+            : checkPermissionTarget(
+                contextAccess,
+                scope,
+                permissionTarget,
+                input.registration.descriptor.legalEntityScope === 'forbidden',
+              ),
           Option.isNone(resourcePermissionTarget)
             ? Effect.succeed<PermissionDecision>('allowed')
             : checkAtomicPermissionTarget(
@@ -1373,12 +1422,14 @@ const readRuntimeFromDependencies = <
             (target) => checkAtomicPermissionTarget(contextAccess, scope, target, false),
             { concurrency: 3 },
           ),
-          checkEntrypointContextPermission(
-            contextAccess,
-            scope,
-            input.registration.descriptor.entrypoint,
-            canonicalPermissionTarget(permissionTarget),
-          ),
+          Option.isSome(prefetchedModuleAccess)
+            ? Effect.succeed(prefetchedModuleAccess)
+            : checkEntrypointContextPermission(
+                contextAccess,
+                scope,
+                input.registration.descriptor.entrypoint,
+                canonicalPermissionTarget(permissionTarget),
+              ),
         ],
         { concurrency: 4 },
       );

@@ -35,8 +35,10 @@ it.effect('owner writes hold native shared publication lock until their transact
     ).toEqual([]);
     expect(statements[0]).toMatch(/begin/iu);
     expect(statements[1]).toContain('transaction_isolation');
-    expect(statements[2]).toContain('pg_advisory_xact_lock_shared');
-    expect(statements[3]).toContain('clock_timestamp()');
+    expect(statements[1]).toContain('pg_advisory_xact_lock_shared');
+    expect(statements[1]).toContain("case when current_setting('transaction_isolation') = $1");
+    expect(statements[2]).toContain('clock_timestamp()');
+    expect(statements).toHaveLength(4);
     expect(statements.at(-1)).toMatch(/commit/iu);
   }),
 );
@@ -94,7 +96,11 @@ it.effect('unsupported transaction snapshots cannot bypass either side of the pu
         const failure = yield* database.transaction(lock).pipe(Effect.flip);
         expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
       }
-      expect(statements.some((statement) => statement.includes('pg_advisory_xact_lock'))).toBe(false);
+      expect(statements.filter((statement) => statement.includes('pg_advisory_xact_lock'))).toHaveLength(2);
+      expect(
+        statements.every((statement) => !statement.includes('from "core"."application_composition_authority"')),
+      ).toBe(true);
+      expect(statements.filter((statement) => /rollback/iu.test(statement))).toHaveLength(2);
     }
   }),
 );

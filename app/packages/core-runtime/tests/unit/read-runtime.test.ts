@@ -115,11 +115,13 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly failEvidence?: boolean;
     readonly failTransactionTimestamp?: boolean;
     readonly modulePermissionDecision?: 'allowed' | 'denied' | 'unavailable';
+    readonly modulePermissionStarted?: Deferred.Deferred<boolean>;
     readonly omitOwnerAuthorizationOverlay?: boolean;
     readonly onBusinessPermissionTarget?: (target: BusinessPermissionAccessTarget) => void;
     readonly onContextPermissionTarget?: (target: { readonly moduleId: string; readonly permission: string }) => void;
     readonly onLegalEntityPermission?: (permission: string | undefined) => void;
     readonly onLegalEntityTarget?: (legalEntityId: string, tenantId: string) => void;
+    readonly onModulePermission?: () => void;
     readonly onResourcePermission?: (permission: 'read' | 'write' | undefined) => void;
     readonly onResourceTarget?: (target: {
       readonly moduleId: string;
@@ -139,6 +141,7 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly resourcePermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly resultPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly resultTenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
+    readonly scopeResolutionAwaits?: Deferred.Deferred<boolean>;
     readonly sqlEvents?: string[];
     readonly tenantPermissionDecision?: 'allowed' | 'denied' | 'unavailable';
     readonly transactionEvents?: string[];
@@ -162,12 +165,13 @@ const makeHarness = Effect.fn(function* makeHarness(
         options.sqlEvents?.push(text);
       }
       if (text.includes("current_setting('transaction_isolation')")) {
-        return [{ isolation: options.compositionIsolation ?? 'read committed' }];
-      }
-      if (text.includes('pg_advisory_xact_lock_shared')) {
+        const isolation = options.compositionIsolation ?? 'read committed';
+        if (isolation !== 'read committed') {
+          return [{ isolation }];
+        }
         authorityLocks += 1;
         options.authorityEvents?.push('authority_locked');
-        return [];
+        return [{ isolation }];
       }
       if (text.includes('application_composition_authority')) {
         authorityReads += 1;
@@ -245,7 +249,13 @@ const makeHarness = Effect.fn(function* makeHarness(
   const runtime = makeReadRuntime(
     database,
     openModuleEntrypointGateway,
-    { resolve: () => Effect.succeed(options.resolvedScope ?? scope) },
+    {
+      resolve: () =>
+        (options.scopeResolutionAwaits === undefined
+          ? Effect.void
+          : Deferred.await(options.scopeResolutionAwaits)
+        ).pipe(Effect.as(options.resolvedScope ?? scope)),
+    },
     {
       assortmentPermissions: ({ legalEntityId, principal, targets }) => {
         assortmentPermissionChecks.push(...targets);
@@ -311,11 +321,18 @@ const makeHarness = Effect.fn(function* makeHarness(
         );
       },
       modules: ({ moduleIds }) =>
-        Effect.succeed(
-          moduleIds.map((key) => ({
-            decision: options.modulePermissionDecision ?? options.permissionDecision ?? ('unavailable' as const),
-            key,
-          })),
+        Effect.sync(() => options.onModulePermission?.()).pipe(
+          Effect.andThen(
+            options.modulePermissionStarted === undefined
+              ? Effect.void
+              : Deferred.succeed(options.modulePermissionStarted, true),
+          ),
+          Effect.as(
+            moduleIds.map((key) => ({
+              decision: options.modulePermissionDecision ?? options.permissionDecision ?? ('unavailable' as const),
+              key,
+            })),
+          ),
         ),
       resources: ({ permission, resources }) => {
         resourcePermissionChecks += 1;
@@ -2865,6 +2882,78 @@ for (const mode of ['local', 'governed'] as const) {
     }),
   );
 }
+
+it.effect('starts static module authorization before scope finishes and reuses it only within that Read', () =>
+  Effect.gen(function* concurrentModuleAdmission() {
+    const legalEntityId = '00000000-0000-4000-8000-000000000004';
+    const moduleStarted = yield* Deferred.make<boolean>();
+    let moduleChecks = 0;
+    let ownerCalls = 0;
+    const moduleRead = defineRead(
+      {
+        ...registration().descriptor,
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'read',
+          authorization: { kind: 'context_permission', permission: 'module.access' },
+          entrypointKey: 'merchandise.items',
+          moduleKey: 'merchandise',
+          role: 'api',
+        }),
+        legalEntityScope: 'required',
+        owningModuleKey: 'merchandise',
+      },
+      {
+        load: () => {
+          ownerCalls += 1;
+          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        },
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'merchandise' }),
+    );
+    const allowed = yield* makeHarness({
+      modulePermissionDecision: 'allowed',
+      modulePermissionStarted: moduleStarted,
+      onModulePermission: () => {
+        moduleChecks += 1;
+      },
+      resolvedScope: { ...scope, legalEntityId },
+      // Deadlocks without parallel prefetch: the scope cannot finish until the module check starts.
+      scopeResolutionAwaits: moduleStarted,
+    });
+    const readInput = {
+      input: {},
+      principal: counterpartyReadPrincipal(legalEntityId),
+      registration: moduleRead,
+      transport: { correlationId: scope.correlationId },
+    };
+    expect(yield* allowed.runtime.runRead(readInput)).toEqual([]);
+    expect(moduleChecks).toBe(1);
+    expect(yield* allowed.runtime.runRead(readInput)).toEqual([]);
+    expect(moduleChecks).toBe(2);
+    expect(ownerCalls).toBe(2);
+    const revoked = yield* makeHarness({
+      modulePermissionDecision: 'denied',
+      resolvedScope: { ...scope, legalEntityId },
+    });
+    expect(Predicate.isTagged(yield* Effect.flip(revoked.runtime.runRead(readInput)), 'ReadPermissionDenied')).toBe(
+      true,
+    );
+    expect(revoked.evidence()).toBe(1);
+    expect(ownerCalls).toBe(2);
+    let changedScopeChecks = 0;
+    const changedScope = yield* makeHarness({
+      modulePermissionDecision: 'allowed',
+      onModulePermission: () => {
+        changedScopeChecks += 1;
+      },
+      resolvedScope: { ...scope, legalEntityId: '00000000-0000-4000-8000-000000000005' },
+    });
+    expect(yield* changedScope.runtime.runRead(readInput)).toEqual([]);
+    // A verified-identity prefetch must not authorize a different resolved operational scope.
+    expect(changedScopeChecks).toBe(2);
+  }),
+);
 
 it.effect('enforces named entrypoint context permission before services and handler', () =>
   Effect.gen(function* enforcesNamedContextPermission() {

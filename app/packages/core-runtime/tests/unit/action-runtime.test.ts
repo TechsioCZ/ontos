@@ -353,6 +353,10 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       return [];
     }
     if (text.includes('pg_advisory_xact_lock_shared')) {
+      const isolation = options.compositionIsolation ?? 'read committed';
+      if (isolation !== 'read committed') {
+        return [{ isolation }];
+      }
       compositionAuthorityLockCount += 1;
       transactionSteps.push('composition_authority_locked');
       if (options.failCompositionAuthorityLock === true) {
@@ -361,7 +365,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         });
       }
       compositionAuthorityLockHeld = true;
-      return [];
+      return [{ isolation }];
     }
     if (text.includes('application_composition_authority')) {
       const authority = options.compositionAuthority ?? {
@@ -379,9 +383,6 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
               unexpired: authority.unexpired,
             },
           ];
-    }
-    if (text.includes("current_setting('transaction_isolation')")) {
-      return [{ isolation: options.compositionIsolation ?? 'read committed' }];
     }
     if (text.includes('current_setting')) {
       return [

@@ -1,4 +1,5 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
 import { DateTime, Effect, Schema } from 'effect';
 
 import {
@@ -26,10 +27,11 @@ export class ApplicationCompositionAuthorityError extends Schema.TaggedError<App
 const unavailable = (reason: string, cause?: unknown) =>
   new ApplicationCompositionAuthorityError({ cause, code: 'application_composition_authority_unavailable', reason });
 
-const requireReadCommitted = Effect.fn('ApplicationCompositionAuthority.requireReadCommitted')(
-  function* requireReadCommittedEffect(transaction: CoreTransaction) {
+/** The CASE prevents acquiring either publication lock under an unsupported snapshot. */
+const lockReadCommitted = Effect.fn('ApplicationCompositionAuthority.lockReadCommitted')(
+  function* lockReadCommittedEffect(transaction: CoreTransaction, acquire: SQL) {
     const [isolation] = yield* transaction.execute<{ readonly isolation: string }>(
-      sql`select current_setting('transaction_isolation') as isolation`,
+      sql`select current_setting('transaction_isolation') as isolation, case when current_setting('transaction_isolation') = ${'read committed'} then ${acquire} end as publication_lock`,
       'objects',
     );
     if (isolation?.isolation !== 'read committed') {
@@ -89,11 +91,12 @@ export const lockApplicationCompositionAuthority = Effect.fn('ApplicationComposi
     expectedRevision: string,
     operation: 'match' | 'read' | 'worker' | 'write',
   ) {
-    yield* requireReadCommitted(transaction);
-    yield* transaction.execute(
-      sql`select pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0))`,
-      'objects',
+    yield* lockReadCommitted(
+      transaction,
+      sql`pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0))`,
     );
+    // This MUST remain a later statement: its READ COMMITTED snapshot is acquired after the lock wait,
+    // so a publisher that committed while we waited cannot leave us admitting its superseded revision.
     const subscriptionsJson = yield* admitAuthority(transaction, expectedRevision, operation);
     if (operation !== 'match') {
       return Object.freeze([]);
@@ -124,13 +127,16 @@ export const lockApplicationCompositionAuthority = Effect.fn('ApplicationComposi
 
 export const lockApplicationCompositionPublication = Effect.fn('ApplicationCompositionAuthority.lockPublication')(
   function* lockApplicationCompositionPublicationEffect(transaction: CoreTransaction) {
-    yield* requireReadCommitted(transaction);
-    return yield* transaction
-      .execute(
-        sql`select pg_advisory_xact_lock(hashtextextended('ontos.application-composition-authority', 0))`,
-        'objects',
-      )
-      .pipe(Effect.mapError((cause) => unavailable('Application Composition publication is unavailable', cause)));
+    return yield* lockReadCommitted(
+      transaction,
+      sql`pg_advisory_xact_lock(hashtextextended('ontos.application-composition-authority', 0))`,
+    ).pipe(
+      Effect.mapError((cause) =>
+        Schema.is(ApplicationCompositionAuthorityError)(cause)
+          ? cause
+          : unavailable('Application Composition publication is unavailable', cause),
+      ),
+    );
   },
 );
 
