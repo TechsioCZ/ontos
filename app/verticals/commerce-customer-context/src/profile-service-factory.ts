@@ -82,6 +82,8 @@ export const profileServicesWithRetailPermissionsForVerifiedScope = (
       tenantId: verifiedScope.tenantId,
     });
     const resolveRetailParty = retailPartyResolverFactory.make({
+      legalEntityId: verifiedScope.legalEntityId,
+      principalId: verifiedScope.principalId,
       requestCorrelation: scope.correlationId,
       tenantId: verifiedScope.tenantId,
     });

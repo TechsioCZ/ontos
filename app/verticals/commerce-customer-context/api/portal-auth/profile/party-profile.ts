@@ -23,7 +23,10 @@ import { profileConflict, profileInvalid, profileUnavailable } from './problems.
 
 type Contact = PartyContactPointsResponse['items'][number];
 type ProfileCommandError = Effect.Error<ReturnType<typeof updatePartyWithAuthorization>>;
-export interface CustomerPartyProfileScope extends Omit<RetailPartyCandidateOwnerInput, 'candidate'> {
+export interface CustomerPartyProfileScope extends Pick<
+  RetailPartyCandidateOwnerInput,
+  'compositionRevision' | 'legalEntityId' | 'requestCorrelation' | 'tenantId'
+> {
   readonly partyId: string;
 }
 const sameParty = (left: PartyRef, right: PartyRef) =>

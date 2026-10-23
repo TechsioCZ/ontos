@@ -203,7 +203,7 @@ interface CreateCounterpartyPurchasingProfileServices {
 interface EnsureRetailCustomerProfileServices {
   readonly ensure: (
     payload: EnsureRetailCustomerProfilePayload,
-    context: ProfileActionContext,
+    context: ProfileActionContext & { readonly compositionRevision: string },
   ) => Effect.Effect<EnsureRetailCustomerProfileResult, EnsureRetailCustomerProfileRejected>;
 }
 
@@ -1254,6 +1254,8 @@ export interface ProfilePersistenceDependencies {
     readonly tenantId: string;
   }) => Effect.Effect<GuestPartyResolutionOutcome, ProfilePersistenceDependencyFailure>;
   readonly resolveRetailParty?: (input: {
+    readonly actionInvocationId: string;
+    readonly compositionRevision: string;
     readonly partyResourceId: string;
     readonly tenantId: string;
   }) => Effect.Effect<
@@ -1298,6 +1300,8 @@ const ensureServices = (
       );
     }
     return resolveParty({
+      actionInvocationId: context.actionInvocationId,
+      compositionRevision: context.compositionRevision,
       partyResourceId: payload.subject.partyRef.resourceId,
       tenantId: scope.tenantId,
     }).pipe(
