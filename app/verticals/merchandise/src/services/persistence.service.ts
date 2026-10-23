@@ -1629,16 +1629,16 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       }
       return yield* applyOnce(command, expectedRevision, resourceId);
     });
-    const storefrontRecords = Effect.fn('Merchandise.storefrontRecords')(function* storefrontRecords(
-      view: RecordsView,
-      revision: number,
-      featuredIds: readonly string[],
-    ) {
+    const storefrontRecords = Effect.fn('Merchandise.storefrontRecords')(function* storefrontRecords(view: RecordsView) {
       const catalogQuery = view.storefrontCatalog;
       const page =
         catalogQuery === undefined
           ? undefined
-          : yield* storefrontProducts(transaction, store, { featuredIds, query: catalogQuery });
+          : yield* storefrontProducts(transaction, store, { query: catalogQuery });
+      // Product pages carry their head in the same statement; an order-status-only read still needs its revision.
+      const head = page?.head ?? (yield* loadHead(transaction, store));
+      if (head === undefined) return yield* unavailable();
+      const { revision, homepageFeaturedProductIds: featuredIds } = head;
       const tree =
         catalogQuery === undefined || catalogQuery.includeCategories === false
           ? undefined
@@ -1691,11 +1691,7 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       const storefront = view.storefront === true;
       const staff = !storefront;
       if (storefrontCatalogView(request)) {
-        const head = yield* loadHead(transaction, store).pipe(Effect.mapError(unavailable));
-        if (head === undefined) return yield* unavailable();
-        return yield* storefrontRecords(view, head.revision, head.homepageFeaturedProductIds).pipe(
-          Effect.mapError(unavailable),
-        );
+        return yield* storefrontRecords(view).pipe(Effect.mapError(unavailable));
       }
       // A read-only or approval-only MCP connection cannot change the catalog directly.
       const canWrite = grants.writeAll && isConnectionWriteAllowed(scope, 'demo.merchandise');

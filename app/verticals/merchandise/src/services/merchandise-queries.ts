@@ -1,6 +1,6 @@
 // Bounded reads over the normalized merchandise tables. Every list is paged and filtered in PostgreSQL; the
 // largest unit a read ever materializes is one page of products (with variants only for detail reads).
-import { and, asc, desc, eq, inArray, like, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, like, mapColumnsInSQLToAlias, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
@@ -20,7 +20,15 @@ import type {
   ProductRecord,
   StockMovement,
 } from '../../shared/domain/merchandise-model.ts';
-import { categories, orders, priceTiers, productVariants, products, stockMovements } from '../database/schema.ts';
+import {
+  catalogHeads,
+  categories,
+  orders,
+  priceTiers,
+  productVariants,
+  products,
+  stockMovements,
+} from '../database/schema.ts';
 import {
   decodeMovementRow,
   decodeOrderDocument,
@@ -77,6 +85,8 @@ const productSelection = {
   stockValueMinor: products.stockValueMinor,
 };
 
+const outerProductId = sql.raw('"products"."id"');
+
 type VariantSummary = NonNullable<ProductRecord['variantSummary']>;
 
 /**
@@ -90,10 +100,16 @@ const variantSummarySql = (scope: StoreScope) => sql<VariantSummary>`(select jso
     'units', coalesce(array_agg(distinct v.unit order by v.unit), '{}'::text[]))
   from ${productVariants} v
   where v.tenant_id = ${scope.tenantId}::uuid and v.legal_entity_id = ${scope.legalEntityId}::uuid
-    and v.product_id = ${sql.raw('"products"."id"')} and v.variant_id is not null and v.price_minor is not null
+    and v.product_id = ${outerProductId} and v.variant_id is not null and v.price_minor is not null
     and v.active)`;
 
+interface StorefrontHead {
+  readonly homepageFeaturedProductIds: readonly string[];
+  readonly revision: number;
+}
+
 interface ProductPage {
+  readonly head: StorefrontHead | null;
   readonly products: readonly ProductRecord[];
   readonly total: number;
 }
@@ -106,6 +122,7 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
   db: MerchandiseDb,
   scope: StoreScope,
   input: {
+    readonly catalogHead?: boolean;
     readonly filters: readonly (SQL | undefined)[];
     readonly limit: number;
     readonly offset: number;
@@ -116,93 +133,101 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
   },
 ) {
   const where = and(whereScope(products, scope), ...input.filters);
-  const [counted] = yield* query(
-    db
-      .select({ total: sql<number>`count(*)::int` })
-      .from(products)
-      .where(where),
-  );
-  const total = counted?.total ?? 0;
-  if (input.limit === 0 || total === 0) return { products: [], total } satisfies ProductPage;
-  const rows = yield* query(
+  // Count and page share one statement/snapshot, including an empty or out-of-range page. Each
+  // relation is aggregated independently, avoiding a variants × tiers join and tunnel round trips.
+  const counted = db
+    .select({
+      head:
+        input.catalogHead === true
+          ? sql<StorefrontHead | null>`(select json_build_object(
+            'revision', ${catalogHeads.revision}, 'homepageFeaturedProductIds', ${catalogHeads.homepageFeaturedProductIds})
+          from ${catalogHeads} where ${whereScope(catalogHeads, scope)})`.as('head')
+          : sql<StorefrontHead | null>`null::json`.as('head'),
+      total: sql<number>`count(*)::int`.as('total'),
+    })
+    .from(products)
+    .where(where)
+    .as('product_total');
+  const tierVariantFilter = input.variants ? sql.empty() : sql`and t.variant_position = -1`;
+  const selected = db
+    .select({
+      ...productSelection,
+      // Outer paging order must survive the join, without a window that hydrates skipped rows.
+      hasPhoto: products.hasPhoto,
+      nameKey: products.nameKey,
+      ordinal: products.ordinal,
+      skuKey: products.skuKey,
+      updatedAt: products.updatedAt,
+      tierRows: sql<Parameters<typeof hydrateProducts>[2]>`(select coalesce(json_agg(json_build_object(
+          'minimumQuantity', t.minimum_quantity, 'position', t.position,
+          'priceExcludingVatMinor', t.price_excluding_vat_minor, 'priceMinor', t.price_minor,
+          'productId', t.product_id, 'variantPosition', t.variant_position)), '[]'::json)
+        from ${priceTiers} t
+        where t.tenant_id = ${scope.tenantId}::uuid and t.legal_entity_id = ${scope.legalEntityId}::uuid
+          and t.product_id = ${outerProductId}
+          ${tierVariantFilter})`.as('tier_rows'),
+      variantCount:
+        input.variantCount === true
+          ? sql<number>`(select count(*)::int from ${productVariants} v
+            where v.tenant_id = ${scope.tenantId}::uuid and v.legal_entity_id = ${scope.legalEntityId}::uuid
+              and v.product_id = ${outerProductId} and v.variant_id is not null
+              and v.price_minor is not null)`.as('variant_count')
+          : sql<number | null>`null::int`.as('variant_count'),
+      variantRows: input.variants
+        ? sql<Parameters<typeof hydrateProducts>[1]>`(select coalesce(json_agg(json_build_object(
+            'document', v.document, 'position', v.position, 'productId', v.product_id,
+            'stockOnHand', v.stock_on_hand, 'variantId', v.variant_id)), '[]'::json)
+          from ${productVariants} v
+          where v.tenant_id = ${scope.tenantId}::uuid and v.legal_entity_id = ${scope.legalEntityId}::uuid
+            and v.product_id = ${outerProductId})`.as('variant_rows')
+        : sql<Parameters<typeof hydrateProducts>[1]>`'[]'::json`.as('variant_rows'),
+      variantSummary:
+        input.variantSummary === true
+          ? variantSummarySql(scope).as('variant_summary')
+          : sql<VariantSummary | null>`null::json`.as('variant_summary'),
+    })
+    .from(products)
+    .where(where)
+    .orderBy(...input.orderBy)
+    .limit(input.limit)
+    .offset(input.offset)
+    .as('product_page');
+  const result = yield* query(
     db
       .select({
-        ...productSelection,
-        ...(input.variantSummary === true ? { variantSummary: variantSummarySql(scope) } : {}),
+        head: counted.head,
+        product: {
+          availability: selected.availability,
+          document: selected.document,
+          grossPriceMinor: selected.grossPriceMinor,
+          id: selected.id,
+          lowStock: selected.lowStock,
+          stockOnHand: selected.stockOnHand,
+          stockValueMinor: selected.stockValueMinor,
+          tierRows: selected.tierRows,
+          variantCount: selected.variantCount,
+          variantRows: selected.variantRows,
+          variantSummary: selected.variantSummary,
+        },
+        total: counted.total,
       })
-      .from(products)
-      .where(where)
-      .orderBy(...input.orderBy)
-      .limit(input.limit)
-      .offset(input.offset),
+      .from(counted)
+      .leftJoin(selected, sql`true`)
+      .orderBy(...input.orderBy.map((order) => mapColumnsInSQLToAlias(order, 'product_page'))),
     'Products could not be read',
   );
-  if (rows.length === 0) return { products: [], total } satisfies ProductPage;
-  const ids = rows.map((row) => row.id);
-  const variantRows = input.variants
-    ? yield* query(
-        db
-          .select({
-            document: productVariants.document,
-            position: productVariants.position,
-            productId: productVariants.productId,
-            stockOnHand: productVariants.stockOnHand,
-            variantId: productVariants.variantId,
-          })
-          .from(productVariants)
-          .where(and(whereScope(productVariants, scope), inArray(productVariants.productId, ids))),
-        'Variants could not be read',
-      )
-    : [];
-  // Staff list rows: sellable variants per product of the page, one grouped count.
-  const variantCounts =
-    input.variantCount === true
-      ? new Map(
-          (yield* query(
-            db
-              .select({ count: sql<number>`count(*)::int`, productId: productVariants.productId })
-              .from(productVariants)
-              .where(
-                and(
-                  whereScope(productVariants, scope),
-                  inArray(productVariants.productId, ids),
-                  sql`${productVariants.variantId} is not null`,
-                  sql`${productVariants.priceMinor} is not null`,
-                ),
-              )
-              .groupBy(productVariants.productId),
-            'Variant counts could not be read',
-          )).map((row) => [row.productId, row.count] as const),
-        )
-      : undefined;
-  const tierRows = yield* query(
-    db
-      .select({
-        minimumQuantity: priceTiers.minimumQuantity,
-        position: priceTiers.position,
-        priceExcludingVatMinor: priceTiers.priceExcludingVatMinor,
-        priceMinor: priceTiers.priceMinor,
-        productId: priceTiers.productId,
-        variantPosition: priceTiers.variantPosition,
-      })
-      .from(priceTiers)
-      .where(
-        and(
-          whereScope(priceTiers, scope),
-          inArray(priceTiers.productId, ids),
-          ...(input.variants ? [] : [eq(priceTiers.variantPosition, -1)]),
-        ),
-      ),
-    'Price tiers could not be read',
-  );
+  const total = result[0]?.total ?? 0;
+  const rows = result.flatMap(({ product }) => (product === null ? [] : [product]));
+  const variantRows = rows.flatMap((row) => row.variantRows);
+  const tierRows = rows.flatMap((row) => row.tierRows);
   const records = yield* Effect.try({
     catch: (cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored rows do not decode' }),
     try: () =>
       hydrateProducts(rows, variantRows, tierRows).map(({ product, stock }, index): ProductRecord => {
         const row = rows[index]!;
         const summary = {
-          ...('variantSummary' in row ? { variantSummary: row.variantSummary as VariantSummary } : {}),
-          ...(variantCounts === undefined ? {} : { variantCount: variantCounts.get(row.id) ?? 0 }),
+          ...(row.variantSummary === null ? {} : { variantSummary: row.variantSummary }),
+          ...(row.variantCount === null ? {} : { variantCount: row.variantCount }),
         };
         if (input.variants) return { ...toProductRecord(product, stock), ...summary };
         const { variants: _variants, ...rest } = product;
@@ -218,7 +243,7 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
         };
       }),
   });
-  return { products: records, total } satisfies ProductPage;
+  return { head: result[0]?.head ?? null, products: records, total } satisfies ProductPage;
 });
 
 const staffProductFilters = (view: RecordsView, storefront: boolean): (SQL | undefined)[] => [
@@ -360,9 +385,11 @@ const IN_STOCK = ['IN_STOCK', 'LOW_STOCK'];
 export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProducts')(function* storefrontProducts(
   db: MerchandiseDb,
   scope: StoreScope,
-  input: { readonly featuredIds: readonly string[]; readonly query: StorefrontCatalogQuery },
+  input: { readonly query: StorefrontCatalogQuery },
 ) {
   const catalog = input.query;
+  const featuredIds = sql`((select h.homepage_featured_product_ids from ${catalogHeads} h
+    where h.tenant_id = ${scope.tenantId}::uuid and h.legal_entity_id = ${scope.legalEntityId}::uuid))::text[]`;
   const categoryId =
     catalog.categorySlug === undefined ? undefined : yield* categoryIdBySlug(db, scope, catalog.categorySlug);
   const words = wordsOf(catalog.q);
@@ -372,7 +399,7 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
     eq(products.active, true),
     eq(products.published, true),
     catalog.featured === true
-      ? or(sql`${products.id} = any(${textArray(input.featuredIds)})`, eq(products.isRecommended, true))
+      ? or(sql`${products.id} = any(${featuredIds})`, eq(products.isRecommended, true))
       : undefined,
     catalog.productIds === undefined ? undefined : idsFilter(products.id, catalog.productIds),
     catalog.slug === undefined ? undefined : eq(products.slug, catalog.slug),
@@ -406,7 +433,7 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
     catalog.productIds !== undefined
       ? [sql`array_position(${textArray(catalog.productIds)}, ${products.id})`]
       : catalog.featured === true
-        ? [sql`array_position(${textArray(input.featuredIds)}, ${products.id}) asc nulls last`, asc(products.ordinal)]
+        ? [sql`array_position(${featuredIds}, ${products.id}) asc nulls last`, asc(products.ordinal)]
         : [asc(products.ordinal)];
   const named = catalog.sort === 'name' || (catalog.sort === undefined && words.length > 0);
   const ranked = named ? [...relevance, asc(products.nameKey), asc(products.ordinal)] : base;
@@ -425,6 +452,7 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
   const page = catalog.page ?? 1;
   const variantIds = catalog.variantIds === undefined ? undefined : new Set(catalog.variantIds);
   const result = yield* productPage(db, scope, {
+    catalogHead: true,
     filters,
     limit: pageSize,
     offset: (page - 1) * pageSize,
@@ -432,7 +460,11 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
     variants: fields === 'full',
     variantSummary: true,
   });
+  if (result.head === null) {
+    return yield* new MerchandiseStoreFailure({ reason: 'The storefront catalog is not initialized' });
+  }
   return {
+    head: result.head,
     page,
     pageSize,
     products: result.products.map((record) =>

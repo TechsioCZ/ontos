@@ -262,7 +262,6 @@ it.live('PlaceStorefrontOrder writes one order, its ORDER movements and stock co
 
       // Reads see the new stock without loading the ledger.
       const card = yield* storefrontProducts(fixture.db, fixture.scope, {
-        featuredIds: [],
         query: { fields: 'card', productIds: ['p1'] },
       });
       expect(card.products[0]?.stockOnHand).toBe(3);

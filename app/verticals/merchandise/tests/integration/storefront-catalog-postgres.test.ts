@@ -20,14 +20,13 @@ import type { MerchandiseFixture } from './support/merchandise-database.ts';
 import { catalogInput, catalogState, decodeState, withMerchandise } from './support/merchandise-database.ts';
 
 const catalogPage = ({ db, scope }: MerchandiseFixture, query: StorefrontCatalogQuery) =>
-  Effect.gen(function* catalogPage() {
-    const head = yield* loadHead(db, scope);
-    return yield* storefrontProducts(db, scope, { featuredIds: head?.homepageFeaturedProductIds ?? [], query });
-  });
+  storefrontProducts(db, scope, { query });
 
 /** Listing ids (cards: a full page holds at most two products). */
 const idsOf = (fixture: MerchandiseFixture, query: StorefrontCatalogQuery) =>
-  catalogPage(fixture, { fields: 'card', ...query }).pipe(Effect.map((page) => page.products.map((product) => product.id)));
+  catalogPage(fixture, { fields: 'card', ...query }).pipe(
+    Effect.map((page) => page.products.map((product) => product.id)),
+  );
 
 const onCatalog = <A, E>(run: (fixture: MerchandiseFixture) => Effect.Effect<A, E>) =>
   withMerchandise(catalogState, run);
@@ -123,9 +122,32 @@ it.live('pages results while keeping the total', () =>
       expect(result.total).toBe(3);
       expect(result.page).toBe(2);
       expect(result.pageSize).toBe(2);
+      expect(result.head).toEqual({ homepageFeaturedProductIds: ['p3'], revision: fixture.revision });
       // A full page never holds more than two products; cards honour the requested size.
       expect((yield* catalogPage(fixture, { pageSize: 10 })).products.length).toBe(2);
       expect((yield* catalogPage(fixture, { fields: 'card', pageSize: 10 })).products.length).toBe(3);
+      const beyondEnd = yield* catalogPage(fixture, { page: 10, pageSize: 2 });
+      expect(beyondEnd.products).toEqual([]);
+      expect(beyondEnd.total).toBe(3);
+      const missing = yield* catalogPage(fixture, { slug: 'not-a-product' });
+      expect(missing.products).toEqual([]);
+      expect(missing.total).toBe(0);
+      const summary = yield* staffProducts(fixture.db, fixture.scope, { limit: 0, summary: true }, false);
+      expect(summary.products).toEqual([]);
+      expect(summary.total).toBe(4);
+    }),
+  ),
+);
+
+it.live('fails closed when the company has no catalog head', () =>
+  onCatalog(({ db, scope }) =>
+    Effect.gen(function* assertMissingHead() {
+      const failure = yield* storefrontProducts(
+        db,
+        { ...scope, legalEntityId: '00000000-0000-4000-8000-000000000001' },
+        { query: { fields: 'card' } },
+      ).pipe(Effect.flip);
+      expect(failure.reason).toBe('The storefront catalog is not initialized');
     }),
   ),
 );
@@ -139,15 +161,53 @@ it.live('returns the full product shape with derived paragraphs, gallery and var
       expect('variants' in (product ?? {})).toBe(false);
       expect('contentHistory' in (product ?? {})).toBe(false);
       expect(product?.priceHistory).toEqual([]);
-      expect(product?.variantRecords?.map((variant) => [variant.id, variant.stockOnHand, variant.grossPriceMinor])).toEqual(
-        [['v1', 5, 121]],
-      );
+      expect(
+        product?.variantRecords?.map((variant) => [variant.id, variant.stockOnHand, variant.grossPriceMinor]),
+      ).toEqual([['v1', 5, 121]]);
       expect(product?.variantRecords?.[0]?.priceHistory).toEqual([]);
       expect(product?.stockOnHand).toBe(5);
       expect(product?.availability).toBe('IN_STOCK');
     }),
   ),
 );
+
+it.live('loads ordered tiers and variant stock without multiplying independent child rows', () => {
+  const tiers = [
+    { minimumQuantity: 1, priceExcludingVatMinor: 100, priceMinor: 121 },
+    { minimumQuantity: 10, priceExcludingVatMinor: 90, priceMinor: 109 },
+  ];
+  const state = decodeState({
+    ...catalogInput,
+    products: catalogInput.products.map((product) => {
+      const priced = { ...product, priceTiers: tiers };
+      if (product.id !== 'p1') {
+        return priced;
+      }
+      return {
+        ...priced,
+        variants: [
+          { attributes: '', id: 'v1', name: 'M8', priceMinor: 100, priceTiers: tiers },
+          { attributes: '', id: 'v2', name: 'M10', priceMinor: 200, priceTiers: tiers.slice(0, 1) },
+          { attributes: 'informational', name: 'Not sellable' },
+        ],
+      };
+    }),
+  });
+  return withMerchandise(state, (fixture) =>
+    Effect.gen(function* assertIndependentChildren() {
+      const page = yield* catalogPage(fixture, { productIds: ['p2', 'p1'] });
+      expect(page.products.map((product) => product.id)).toEqual(['p2', 'p1']);
+      expect(page.products.map((product) => product.priceTiers)).toEqual([tiers, tiers]);
+      const variants = page.products[1]?.variantRecords;
+      expect(variants?.map((variant) => [variant.id, variant.stockOnHand])).toEqual([
+        ['v1', 5],
+        ['v2', 0],
+      ]);
+      expect(variants?.map((variant) => variant.priceTiers)).toEqual([tiers, tiers.slice(0, 1)]);
+      expect(page.products[0]?.variantRecords).toBeUndefined();
+    }),
+  );
+});
 
 it.live('card shape omits variants, description and parameters', () =>
   onCatalog((fixture) =>
@@ -181,8 +241,22 @@ it.live('summarizes active sellable variants on every storefront product', () =>
     ...catalogInput,
     movements: [
       ...catalogInput.movements,
-      { at: catalogInput.movements[0]!.at, delta: 3, id: 'receipt-v2', productId: 'p1', reason: 'RECEIPT', variantId: 'v2' },
-      { at: catalogInput.movements[0]!.at, delta: 7, id: 'receipt-v3', productId: 'p1', reason: 'RECEIPT', variantId: 'v3' },
+      {
+        at: catalogInput.movements[0]!.at,
+        delta: 3,
+        id: 'receipt-v2',
+        productId: 'p1',
+        reason: 'RECEIPT',
+        variantId: 'v2',
+      },
+      {
+        at: catalogInput.movements[0]!.at,
+        delta: 7,
+        id: 'receipt-v3',
+        productId: 'p1',
+        reason: 'RECEIPT',
+        variantId: 'v3',
+      },
     ],
     products: catalogInput.products.map((product) =>
       product.id === 'p1'
@@ -223,9 +297,13 @@ it.live('projects order status only for matching storefront id and clientRequest
         statusLabel: 'Nová',
         updatedAt: DateTime.makeUnsafe(catalogInput.orders[0]!.updatedAt),
       });
-      expect(yield* storefrontOrderStatus(db, scope, { clientRequestId: 'wrong-request-id', orderId: 'o1' })).toBeNull();
+      expect(
+        yield* storefrontOrderStatus(db, scope, { clientRequestId: 'wrong-request-id', orderId: 'o1' }),
+      ).toBeNull();
       // Removed DEMO orders are never shown, even with the right secret.
-      expect(yield* storefrontOrderStatus(db, scope, { clientRequestId: 'secret-request-2', orderId: 'o2' })).toBeNull();
+      expect(
+        yield* storefrontOrderStatus(db, scope, { clientRequestId: 'secret-request-2', orderId: 'o2' }),
+      ).toBeNull();
     }),
   ),
 );
@@ -250,38 +328,47 @@ it.live('ranks exact/name/SKU matches before descriptions and variant-only match
   );
 });
 
-it.live('prefers photography only within the same search relevance tier, not over exact matches or price sorting', () => {
-  const template = catalogInput.products[0]!;
-  const state = decodeState({
-    ...catalogInput,
-    homepageFeaturedProductIds: [],
-    movements: [],
-    orders: [],
-    products: [
-      { id: 'exact', imageSrc: '/akros/products/image-unavailable.svg', name: 'DIN 933' },
-      { id: 'missing', imageSrc: '/akros/products/image-unavailable.svg', name: 'DIN 933 A' },
-      { id: 'photo', imageSrc: '/akros/products/sroub.jpg', name: 'Šroub DIN 933' },
-      { id: 'gallery', images: ['/akros/products/sroub-b.jpg'], name: 'Šroub DIN 933 B' },
-      { id: 'loose', imageSrc: '/akros/products/bity.jpg', name: 'BITY', shortDescription: 'DIN 933' },
-    ].map((product, index) => ({
-      ...template,
-      images: [],
-      ...product,
-      currentPriceMinor: index + 1,
-      sku: product.id,
-    })),
-  });
-  return withMerchandise(state, (fixture) =>
-    Effect.gen(function* () {
-      const ids = (query: StorefrontCatalogQuery) => idsOf(fixture, query);
-      expect(yield* ids({ q: 'DIN 933' })).toEqual(['exact', 'photo', 'gallery', 'missing', 'loose']);
-      expect(yield* ids({ q: 'DIN 933', sort: 'name' })).toEqual(['exact', 'photo', 'gallery', 'missing', 'loose']);
-      expect(yield* ids({ sort: 'name' })).toEqual(['loose', 'exact', 'missing', 'photo', 'gallery']);
-      // Every product's price comes from the same variant, so price order falls back to catalog order.
-      expect(yield* ids({ q: 'DIN 933', sort: 'price-asc' })).toEqual(['exact', 'missing', 'photo', 'gallery', 'loose']);
-    }),
-  );
-});
+it.live(
+  'prefers photography only within the same search relevance tier, not over exact matches or price sorting',
+  () => {
+    const template = catalogInput.products[0]!;
+    const state = decodeState({
+      ...catalogInput,
+      homepageFeaturedProductIds: [],
+      movements: [],
+      orders: [],
+      products: [
+        { id: 'exact', imageSrc: '/akros/products/image-unavailable.svg', name: 'DIN 933' },
+        { id: 'missing', imageSrc: '/akros/products/image-unavailable.svg', name: 'DIN 933 A' },
+        { id: 'photo', imageSrc: '/akros/products/sroub.jpg', name: 'Šroub DIN 933' },
+        { id: 'gallery', images: ['/akros/products/sroub-b.jpg'], name: 'Šroub DIN 933 B' },
+        { id: 'loose', imageSrc: '/akros/products/bity.jpg', name: 'BITY', shortDescription: 'DIN 933' },
+      ].map((product, index) => ({
+        ...template,
+        images: [],
+        ...product,
+        currentPriceMinor: index + 1,
+        sku: product.id,
+      })),
+    });
+    return withMerchandise(state, (fixture) =>
+      Effect.gen(function* () {
+        const ids = (query: StorefrontCatalogQuery) => idsOf(fixture, query);
+        expect(yield* ids({ q: 'DIN 933' })).toEqual(['exact', 'photo', 'gallery', 'missing', 'loose']);
+        expect(yield* ids({ q: 'DIN 933', sort: 'name' })).toEqual(['exact', 'photo', 'gallery', 'missing', 'loose']);
+        expect(yield* ids({ sort: 'name' })).toEqual(['loose', 'exact', 'missing', 'photo', 'gallery']);
+        // Every product's price comes from the same variant, so price order falls back to catalog order.
+        expect(yield* ids({ q: 'DIN 933', sort: 'price-asc' })).toEqual([
+          'exact',
+          'missing',
+          'photo',
+          'gallery',
+          'loose',
+        ]);
+      }),
+    );
+  },
+);
 
 it.live('sorts and filters by gross price and availability', () => {
   const state: MerchandiseState = {
@@ -352,7 +439,9 @@ it.live('staff reads page, filter and sort in SQL and indicators cover the whole
   onCatalog(({ db, scope }) =>
     Effect.gen(function* () {
       const staffIds = (view: RecordsView, storefront = false) =>
-        staffProducts(db, scope, view, storefront).pipe(Effect.map((page) => page.products.map((product) => product.id)));
+        staffProducts(db, scope, view, storefront).pipe(
+          Effect.map((page) => page.products.map((product) => product.id)),
+        );
       expect(yield* staffIds({ summary: true })).toEqual(['p1', 'p2', 'p3', 'p4']);
       expect(yield* staffIds({ summary: true }, true)).toEqual(['p1', 'p2', 'p3']);
       expect(yield* staffIds({ search: 'sroub', summary: true })).toEqual(['p1']);
