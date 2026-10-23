@@ -12,11 +12,11 @@ const states = [
   "FAILED",
 ];
 
-async function progress(request: Request, resume: boolean) {
+async function progress(request: Request, operation: "read" | "resume" | "restart") {
   try {
     const url = new URL(request.url);
     if (url.search) throw new RequestError(400, "Požadavek nesmí obsahovat identifikátor účtu.");
-    if (resume) {
+    if (operation !== "read") {
       guard(request);
       if (request.headers.get("origin") !== url.origin)
         throw new RequestError(403, "Požadavek musí pocházet z tohoto obchodu.");
@@ -43,10 +43,10 @@ async function progress(request: Request, resume: boolean) {
       );
     }
     const response = await portalRequest(
-      resume ? "/enrollment/current/resume" : "/enrollment/current",
+      operation === "read" ? "/enrollment/current" : `/enrollment/current/${operation}`,
       url.origin,
       cookie,
-      resume ? {} : undefined,
+      operation === "read" ? undefined : {},
     );
     if (!response.ok)
       return Response.json(
@@ -70,5 +70,7 @@ async function progress(request: Request, resume: boolean) {
   }
 }
 
-export const GET = (request: Request) => progress(request, false);
-export const POST = (request: Request) => progress(request, true);
+export const GET = (request: Request) => progress(request, "read");
+export const POST = (request: Request) => progress(request, "resume");
+
+export const PUT = (request: Request) => progress(request, "restart");

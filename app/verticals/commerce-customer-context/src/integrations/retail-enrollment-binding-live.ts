@@ -1,5 +1,9 @@
 import type { ActionAuthorizationPreflightInput } from '@app/core-runtime';
-import type { EnrollmentAttemptSnapshot, ReadEnrollmentAttemptInput } from '../../shared/enrollment-contracts.ts';
+import type {
+  EnrollmentAttemptSnapshot,
+  EnrollmentOwnerOperationSnapshot,
+  ReadEnrollmentAttemptInput,
+} from '../../shared/enrollment-contracts.ts';
 import type { RetailPortalBindingPayload } from '../../shared/actions/bind-retail-portal-profile.ts';
 import { ActionPermissionCheckError } from '@app/core-runtime';
 import { ReadPrincipalBindingPayloadSchema } from '@app/core-runtime/auth/external-identity-contracts';
@@ -28,12 +32,21 @@ import {
   CommerceEnrollmentOwnerTransactionRunner,
   commerceEnrollmentOwnerAttemptStoreForRun,
 } from '../enrollment/orchestration/owner-transition-production.ts';
+import {
+  readRetailEnrollmentRestartContext,
+  retailRestartIdentity,
+  RETAIN_RETAIL_RESULTS_TRANSITION,
+} from '../enrollment/journeys/retail-enrollment-restart.ts';
+import type { RetailEnrollmentRestartContext } from '../enrollment/journeys/retail-enrollment-restart.ts';
 import { attemptUnavailable } from '../enrollment/attempts/errors.ts';
 import { readRetailProfileByParty } from '../persistence/profile-persistence.ts';
 import { RetailEnrollmentBindingAuthority } from './retail-enrollment-binding.ts';
 import type { RetailEnrollmentBindingPreparer } from './retail-enrollment-binding.ts';
 
 export interface RetailEnrollmentBindingPorts {
+  readonly predecessor: (
+    attempt: EnrollmentAttemptSnapshot,
+  ) => Effect.Effect<Option.Option<RetailEnrollmentRestartContext>, CommerceEnrollmentAttemptError>;
   readonly profile: (input: {
     readonly legalEntityId: string;
     readonly partyId: string;
@@ -77,7 +90,7 @@ const attemptMatchesRequest = (
   return !(
     attempt.portalEnrollmentAttemptId !== identity.portalEnrollmentAttemptId ||
     attempt.tenantId !== identity.tenantId ||
-    attempt.journey !== 'RETAIL_SELF_ENROLLMENT' ||
+    (attempt.journey !== 'RETAIL_SELF_ENROLLMENT' && Option.isNone(retailRestartIdentity(attempt))) ||
     attempt.state === 'FAILED' ||
     attempt.state === 'TERMINATED' ||
     attempt.state === 'COMPLETE' ||
@@ -89,30 +102,79 @@ const attemptMatchesRequest = (
   );
 };
 
-type OwnerOperation = Effect.Success<ReturnType<CommerceEnrollmentOwnerAttemptStore['readOwnerOperation']>>;
-const journalMatchesRequest = (
-  operations: {
-    readonly binding: OwnerOperation;
-    readonly ensured: OwnerOperation;
-    readonly party: OwnerOperation;
-    readonly provider: OwnerOperation;
-  },
+const CUSTOMER_CONTEXT_OWNER = 'commerce.customer-context';
+const BIND_RETAIL_TRANSITION = 'commerce.customer-context.bind-retail-portal-profile';
+
+const succeededOwnerReference = (value: Option.Option<EnrollmentOwnerOperationSnapshot>, actorId: string) =>
+  Option.isSome(value) && value.value.status === 'SUCCEEDED' && value.value.actorPrincipalId === actorId
+    ? value.value.resultReference
+    : undefined;
+
+const retainedResultsMatch = (
+  retention: Option.Option<EnrollmentOwnerOperationSnapshot>,
   attempt: EnrollmentAttemptSnapshot,
-  payload: RetailPortalBindingPayload,
-): boolean => {
-  const { binding, ensured, party, provider } = operations;
-  return (
-    provider.status === 'SUCCEEDED' &&
-    party.status === 'SUCCEEDED' &&
-    party.resultReference !== undefined &&
-    ensured.status === 'SUCCEEDED' &&
-    ensured.resultReference === payload.profileRef.resourceId &&
-    // Original journal authority is the storefront creator; the separately authorized transport
-    // workload executes and audits the owner command without becoming that original Actor.
-    Object.values(operations).every((operation) => operation.actorPrincipalId === attempt.createdByPrincipalId) &&
-    ['IN_PROGRESS', 'INDETERMINATE', 'RECONCILIATION_REQUIRED'].includes(binding.status)
+  restart: Option.Option<RetailEnrollmentRestartContext>,
+) =>
+  Option.isSome(retention) &&
+  Option.isSome(restart) &&
+  retention.value.status === 'SUCCEEDED' &&
+  retention.value.actorPrincipalId === attempt.createdByPrincipalId &&
+  String(retention.value.resultReference) === String(restart.value.sourceAttemptId);
+
+const bindingOwnerProof = Effect.fn('RetailEnrollmentBinding.ownerProof')(function* bindingOwnerProof(
+  store: CommerceEnrollmentOwnerAttemptStore,
+  identity: ReadEnrollmentAttemptInput,
+  attempt: EnrollmentAttemptSnapshot,
+  restart: Option.Option<RetailEnrollmentRestartContext>,
+) {
+  const operation = (ownerModuleKey: string, transitionKey: string) =>
+    Schema.decodeUnknownEffect(ReadEnrollmentOwnerOperationInputSchema)({
+      ...identity,
+      ownerModuleKey,
+      transitionKey,
+    }).pipe(Effect.flatMap((request) => store.readOwnerOperation(request)));
+  const isRestart = Option.isSome(retailRestartIdentity(attempt));
+  if (isRestart && Option.isNone(restart)) {
+    return Option.none();
+  }
+  const optionalOperation = (owner: string, transition: string) =>
+    operation(owner, transition).pipe(
+      Effect.asSome,
+      Effect.catchTag('CommerceEnrollmentAttemptNotFound', () => Effect.succeedNone),
+    );
+  const { binding, ensured, party, provider, retention } = yield* Effect.all(
+    {
+      binding: operation(CUSTOMER_CONTEXT_OWNER, BIND_RETAIL_TRANSITION),
+      ensured: optionalOperation(CUSTOMER_CONTEXT_OWNER, 'commerce.customer-context.ensure-retail-customer-profile'),
+      party: optionalOperation('party.registry', 'party.candidate.submit'),
+      provider: operation('commerce.portal-auth', isRestart ? 'provider.account.verify' : 'provider.account.create'),
+      retention: isRestart
+        ? optionalOperation(CUSTOMER_CONTEXT_OWNER, RETAIN_RETAIL_RESULTS_TRANSITION)
+        : Effect.succeedNone,
+    },
+    { concurrency: 1 },
   );
-};
+  if (
+    provider.status !== 'SUCCEEDED' ||
+    provider.actorPrincipalId !== attempt.createdByPrincipalId ||
+    binding.actorPrincipalId !== attempt.createdByPrincipalId ||
+    !['IN_PROGRESS', 'INDETERMINATE', 'RECONCILIATION_REQUIRED'].includes(binding.status) ||
+    (isRestart && !retainedResultsMatch(retention, attempt, restart))
+  ) {
+    return Option.none();
+  }
+  const partyId =
+    succeededOwnerReference(party, attempt.createdByPrincipalId) ?? Option.getOrUndefined(restart)?.partyId;
+  const profileId =
+    succeededOwnerReference(ensured, attempt.createdByPrincipalId) ?? Option.getOrUndefined(restart)?.profileId;
+  if (partyId === undefined || profileId === undefined) {
+    return Option.none();
+  }
+  const providerInvocationId = Option.isSome(restart)
+    ? restart.value.providerOwnerInvocationId
+    : provider.ownerInvocationId;
+  return Option.some({ partyId, profileId, providerInvocationId });
+});
 
 export const retailEnrollmentBindingForPorts = (ports: RetailEnrollmentBindingPorts): RetailEnrollmentBindingPreparer =>
   Effect.fn('RetailEnrollmentBinding.verifyAttempt')(
@@ -133,25 +195,13 @@ export const retailEnrollmentBindingForPorts = (ports: RetailEnrollmentBindingPo
       if (!attemptMatchesRequest(attempt, identity, input, payload) || subject === undefined) {
         return Option.none();
       }
-      const operation = (ownerModuleKey: string, transitionKey: string) =>
-        Schema.decodeUnknownEffect(ReadEnrollmentOwnerOperationInputSchema)({
-          ...identity,
-          ownerModuleKey,
-          transitionKey,
-        }).pipe(Effect.flatMap((request) => store.readOwnerOperation(request)));
-      const { binding, ensured, party, provider } = yield* Effect.all(
-        {
-          binding: operation('commerce.customer-context', 'commerce.customer-context.bind-retail-portal-profile'),
-          ensured: operation('commerce.customer-context', 'commerce.customer-context.ensure-retail-customer-profile'),
-          party: operation('party.registry', 'party.candidate.submit'),
-          provider: operation('commerce.portal-auth', 'provider.account.create'),
-        },
-        { concurrency: 1 },
-      );
-      if (!journalMatchesRequest({ binding, ensured, party, provider }, attempt, payload)) {
+      const restart = yield* ports.predecessor(attempt);
+      const proof = yield* bindingOwnerProof(ports.store(identity.tenantId), identity, attempt, restart);
+      if (Option.isNone(proof) || proof.value.profileId !== payload.profileRef.resourceId) {
         return Option.none();
       }
-      const profile = yield* ports.profile({ legalEntityId, partyId: String(party.resultReference), tenantId });
+      const { partyId, providerInvocationId } = proof.value;
+      const profile = yield* ports.profile({ legalEntityId, partyId: String(partyId), tenantId });
       if (
         Option.isNone(profile) ||
         profile.value.profileRef.resourceId !== payload.profileRef.resourceId ||
@@ -161,7 +211,7 @@ export const retailEnrollmentBindingForPorts = (ports: RetailEnrollmentBindingPo
       }
       if (
         !(yield* ports.verifiedEmail({
-          ownerInvocationId: provider.ownerInvocationId,
+          ownerInvocationId: providerInvocationId,
           providerSubjectId: subject.providerSubjectId,
         }))
       ) {
@@ -206,6 +256,12 @@ export const retailEnrollmentBindingAuthorityLive = Layer.effect(
     const configuration = yield* CommerceCoreIdentityClientConfig;
     const accounts = yield* CommercePortalAuthAccountLookupService;
     return retailEnrollmentBindingForPorts({
+      predecessor: (attempt) =>
+        attempt.targetLegalEntityId === undefined || Option.isNone(retailRestartIdentity(attempt))
+          ? Effect.succeedNone
+          : runner.run({ legalEntityId: attempt.targetLegalEntityId, tenantId: attempt.tenantId }, (transaction) =>
+              readRetailEnrollmentRestartContext(transaction, attempt.portalEnrollmentAttemptId, false),
+            ),
       profile: ({ legalEntityId, partyId, tenantId }) =>
         runner.run({ legalEntityId, tenantId }, (transaction) =>
           readRetailProfileByParty(transaction, partyId).pipe(

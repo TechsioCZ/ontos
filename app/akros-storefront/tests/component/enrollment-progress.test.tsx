@@ -46,7 +46,7 @@ it.each(["FAILED", "TERMINATED", "COMPLETE"])(
     expect(screen.queryByRole("button", { name: "Obnovit registraci" })).toBeNull();
     expect(router.replace).not.toHaveBeenCalled();
     expect(screen.getByRole("status").textContent).toContain(
-      state === "COMPLETE" ? "přístup" : "nelze ji obnovit",
+      state === "COMPLETE" ? "přístup" : state === "FAILED" ? "nové přijetí" : "nelze ji obnovit",
     );
   },
 );
@@ -64,5 +64,19 @@ it("shows owner authentication/outage refusals without automatic retry loops", a
   render(<EnrollmentProgress />);
   expect((await screen.findByRole("alert")).textContent).toContain("Přihlaste se");
   expect(fetchProgress).toHaveBeenCalledOnce();
+  expect(router.replace).not.toHaveBeenCalled();
+});
+
+it("starts a new enrollment only on explicit FAILED restart, never repeating signup or the old Attempt", async () => {
+  fetchProgress.mockImplementation(async (_url, init) =>
+    Response.json({ state: init?.method === "PUT" ? "IN_PROGRESS" : "FAILED", revision: 2 }),
+  );
+  render(<EnrollmentProgress />);
+  const restart = await screen.findByRole("button", { name: "Zahájit nové přijetí účtu" });
+  expect(fetchProgress).toHaveBeenCalledOnce();
+  fireEvent.click(restart);
+  await screen.findByRole("button", { name: "Obnovit registraci" });
+  expect(fetchProgress.mock.calls[1]![1]).toMatchObject({ method: "PUT", body: "{}" });
+  expect(screen.queryByRole("button", { name: "Zahájit nové přijetí účtu" })).toBeNull();
   expect(router.replace).not.toHaveBeenCalled();
 });

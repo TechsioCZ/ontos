@@ -9,6 +9,11 @@ import {
   EnrollmentAttemptSnapshotSchema,
   EnrollmentOwnerOperationSnapshotSchema,
 } from '../../shared/enrollment-contracts.ts';
+import { CommerceEnrollmentAttemptNotFound } from '../../src/enrollment/attempts/errors.ts';
+import {
+  RetailEnrollmentRestartContextSchema,
+  RETAIN_RETAIL_RESULTS_TRANSITION,
+} from '../../src/enrollment/journeys/retail-enrollment-restart.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import { prepareRetailEnrollmentBinding } from '../../src/integrations/retail-enrollment-binding.ts';
 import { retailEnrollmentBindingForPorts } from '../../src/integrations/retail-enrollment-binding-live.ts';
@@ -101,9 +106,38 @@ const modes = [
   'disabled',
   'unverified',
 ] as const;
-type Mode = (typeof modes)[number];
-const prepareFor = (mode: Mode) =>
+type Mode = (typeof modes)[number] | 'missing-retention' | 'wrong-source' | 'missing-predecessor' | 'failed-provider';
+const fixtureOwnerReference = (transitionKey: string, mode: Mode) => {
+  if (transitionKey === RETAIN_RETAIL_RESULTS_TRANSITION) {
+    return mode === 'wrong-source' ? attemptId : otherId;
+  }
+  return transitionKey === 'party.candidate.submit' ? partyId : profileId;
+};
+const fixtureOwnerStatus = (transitionKey: string, mode: Mode) => {
+  if (transitionKey === 'provider.account.verify' && mode === 'failed-provider') {
+    return 'FAILED';
+  }
+  return transitionKey === input.actionKey ? 'IN_PROGRESS' : 'SUCCEEDED';
+};
+const prepareFor = (mode: Mode, restart = false) =>
   retailEnrollmentBindingForPorts({
+    predecessor: () =>
+      Effect.succeed(
+        !restart || mode === 'missing-predecessor'
+          ? Option.none()
+          : Option.some(
+              Schema.decodeUnknownSync(RetailEnrollmentRestartContextSchema)({
+                directoryOwnerInvocationIds: [],
+                directoryPartyId: partyId,
+                partyId,
+                profileId,
+                providerOwnerInvocationId: invocationId,
+                registration: { displayName: 'Restart customer', email: 'restart@example.test' },
+                retainedMask: 7,
+                sourceAttemptId: otherId,
+              }),
+            ),
+      ),
     profile: ({ partyId: requestedParty }) => {
       expect(requestedParty).toBe(partyId);
       return Effect.succeed(
@@ -150,12 +184,35 @@ const prepareFor = (mode: Mode) =>
           Effect.succeed(
             Schema.decodeUnknownSync(Schema.toType(EnrollmentAttemptSnapshotSchema))({
               ...attempt,
+              ...(restart
+                ? {
+                    intentKey: `commerce.retail-restart:${otherId}:7`,
+                    journey: 'EXISTING_ACCOUNT',
+                    targetResourceId: otherId,
+                  }
+                : attempt),
               createdByPrincipalId: mode === 'wrong-actor' ? otherId : storefrontId,
               portalEnrollmentAttemptId: mode === 'wrong-attempt' ? otherId : attemptId,
             }),
           ),
-        readOwnerOperation: (request) =>
-          Effect.succeed(
+        readOwnerOperation: (request) => {
+          if (
+            restart &&
+            (['party.candidate.submit', 'commerce.customer-context.ensure-retail-customer-profile'].includes(
+              request.transitionKey,
+            ) ||
+              (mode === 'missing-retention' && request.transitionKey === RETAIN_RETAIL_RESULTS_TRANSITION))
+          ) {
+            return Effect.fail(
+              new CommerceEnrollmentAttemptNotFound({
+                attemptId: attempt.portalEnrollmentAttemptId,
+                code: 'attempt_not_found',
+                reason: 'No current owner work is copied',
+                retryable: false,
+              }),
+            );
+          }
+          return Effect.succeed(
             Schema.decodeUnknownSync(EnrollmentOwnerOperationSnapshotSchema)({
               actorPrincipalId: storefrontId,
               createdAt: effectiveAt,
@@ -165,14 +222,15 @@ const prepareFor = (mode: Mode) =>
               portalEnrollmentOwnerOperationId: otherId,
               requestDigest: 'c'.repeat(64),
               required: true,
-              resultReference: request.transitionKey === 'party.candidate.submit' ? partyId : profileId,
+              resultReference: fixtureOwnerReference(request.transitionKey, mode),
               revision: 1,
-              status: request.transitionKey === input.actionKey ? 'IN_PROGRESS' : 'SUCCEEDED',
+              status: fixtureOwnerStatus(request.transitionKey, mode),
               tenantId,
               transitionKey: request.transitionKey,
               updatedAt: effectiveAt,
             }),
-          ),
+          );
+        },
         reconcileOutcome: unused,
         recordOutcome: unused,
       };
@@ -194,6 +252,25 @@ for (const mode of modes) {
         changed = { ...input, scope: { ...input.scope, legalEntityId: otherId } };
       }
       const result = yield* prepareFor(mode)(changed, payload);
+      expect(Option.isSome(result)).toBe(mode === 'valid');
+      if (Option.isSome(result)) {
+        expect(result.value).toEqual({ authBindingId, principalId: customerId });
+      }
+    }),
+  );
+}
+
+for (const mode of [...modes, 'missing-retention', 'wrong-source', 'missing-predecessor', 'failed-provider'] as const) {
+  it.effect(`requires current native restart authority and genuine retained owner proof: ${mode}`, () =>
+    Effect.gen(function* restartBindingAuthority() {
+      let changed = input;
+      if (mode === 'wrong-tenant') {
+        changed = { ...input, scope: { ...input.scope, tenantId: otherId } };
+      }
+      if (mode === 'wrong-company') {
+        changed = { ...input, scope: { ...input.scope, legalEntityId: otherId } };
+      }
+      const result = yield* prepareFor(mode, true)(changed, payload);
       expect(Option.isSome(result)).toBe(mode === 'valid');
       if (Option.isSome(result)) {
         expect(result.value).toEqual({ authBindingId, principalId: customerId });

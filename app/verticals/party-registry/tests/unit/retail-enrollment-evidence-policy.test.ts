@@ -85,3 +85,16 @@ it('rejects unverified email and another provider namespace at the public schema
     }),
   ).toThrow();
 });
+
+it('accepts missing Party work on an existing-account restart without pretending a new provider account was created', () => {
+  const restart = Schema.decodeUnknownSync(RetailEnrollmentEvidenceSchema)({
+    ...evidence,
+    journey: 'EXISTING_ACCOUNT',
+  });
+  expect(acceptsRetailEnrollmentEvidence(candidate, restart, scope, [])).toBe(true);
+  expect(acceptsRetailEnrollmentEvidence(candidate, restart, scope, [legalEntityId])).toBe(false);
+  expect(acceptsRetailEnrollmentEvidence(candidate, restart, { ...scope, legalEntityId: tenantId }, [])).toBe(false);
+  expect(
+    acceptsRetailEnrollmentEvidence(candidate, { ...restart, providerSubjectId: 'other-subject' }, scope, []),
+  ).toBe(false);
+});

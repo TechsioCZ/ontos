@@ -21,6 +21,7 @@ import {
 } from '../journeys/existing-account.ts';
 import type { JourneyDefinition, JourneyTransitionSpec } from '../journeys/journey-contracts.ts';
 import { JourneyDefinitionSchema, journeyTransitionIdentity } from '../journeys/journey-contracts.ts';
+import { retailRestartTarget } from '../journeys/retail-enrollment-restart.ts';
 import { retailSelfEnrollmentJourneyDefinition } from '../journeys/retail-self-enrollment-contracts.ts';
 
 /**
@@ -161,7 +162,7 @@ export const enrollmentJourneyDefinitionForAttempt = (
   if (attempt.journey === 'COUNTERPARTY_INVITATION') {
     return Effect.succeed(counterpartyInvitationJourneyDefinition);
   }
-  return existingAccountTarget(retailSelfEnrollmentJourneyDefinition).pipe(Effect.flatMap(existingAccountDefinition));
+  return existingAccountTarget(retailRestartTarget(attempt)).pipe(Effect.flatMap(existingAccountDefinition));
 };
 
 /**

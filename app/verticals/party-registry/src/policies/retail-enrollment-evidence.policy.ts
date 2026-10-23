@@ -18,7 +18,7 @@ export const acceptsRetailEnrollmentEvidence = (
     evaluation.typeSupported &&
     candidatePartyIds.length === 0 &&
     evidence.emailOwnership === 'VERIFIED' &&
-    evidence.journey === 'RETAIL_SELF_ENROLLMENT' &&
+    ['RETAIL_SELF_ENROLLMENT', 'EXISTING_ACCOUNT'].includes(evidence.journey) &&
     evidence.tenantId === scope.tenantId &&
     evidence.sellingLegalEntityId === scope.legalEntityId &&
     candidate.evidenceRefs.includes(evidence.candidateEvidenceRef) &&

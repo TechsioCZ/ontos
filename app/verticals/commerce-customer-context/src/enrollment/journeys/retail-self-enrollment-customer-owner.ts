@@ -23,6 +23,7 @@ import { retailSelfEnrollmentEvidenceReference } from './retail-self-enrollment-
 export interface RetailCustomerDirectoryOwnerInput extends Omit<RetailPartyCandidateOwnerInput, 'candidate'> {
   readonly partyRef: PartyRef;
   readonly registration: RetailEnrollmentRegistration;
+  readonly retainedOwnerInvocationIds?: readonly string[] | undefined;
   readonly validFrom: string;
 }
 
@@ -40,6 +41,33 @@ type CustomerCommand =
       readonly payload: typeof AddContactPointPayloadSchema.Type;
     };
 
+const retainedCommandCommitted = Effect.fn('RetailCustomerDirectory.retainedCommandCommitted')(
+  function* retainedCommandCommittedEffect(
+    input: RetailCustomerDirectoryOwnerInput,
+    retainedInvocationId: string,
+    step: string,
+    command: CustomerCommand,
+  ) {
+    const retainedKey = yield* Schema.decodeEffect(EnrollmentActionInvocationIdSchema)(
+      retailSelfEnrollmentEvidenceReference(['retail-customer-directory', retainedInvocationId, step]),
+    ).pipe(Effect.mapError((cause) => unavailable('The retained command identity is invalid', cause)));
+    const gateway = yield* acquireRetailPartyGateway(input);
+    const retained = yield* resolvePartyCommandCommitWithAuthorization(
+      { actionKey: command.actionKey, idempotencyKey: retainedKey },
+      Redacted.value(gateway.credential),
+      { ...gateway.options, correlationId: input.requestCorrelation },
+    ).pipe(Effect.mapError((cause) => unavailable('The retained customer command cannot be resolved', cause)));
+    if (retained.state === 'COMMITTED') {
+      return true;
+    }
+    if (retained.state !== 'REJECTED' && !retained.retryCommand) {
+      return yield* unavailable('The retained customer command remains indeterminate');
+    }
+    // A rejected old key is never retried. Only this new Attempt may dispatch a genuinely new key.
+    return false;
+  },
+);
+
 /** Resolve each independently keyed command before dispatch; never retry an unknown acknowledgement. */
 const runCommand = Effect.fn('RetailCustomerDirectory.runCommand')(function* runCommand(
   input: RetailCustomerDirectoryOwnerInput,
@@ -47,6 +75,15 @@ const runCommand = Effect.fn('RetailCustomerDirectory.runCommand')(function* run
   step: string,
   command: CustomerCommand,
 ) {
+  const retained = yield* Effect.reduce(
+    input.retainedOwnerInvocationIds ?? [],
+    () => false,
+    (committed, invocationId) =>
+      committed ? Effect.succeed(true) : retainedCommandCommitted(input, invocationId, step, command),
+  );
+  if (retained) {
+    return yield* Effect.void;
+  }
   const idempotencyKey = yield* Schema.decodeEffect(EnrollmentActionInvocationIdSchema)(
     retailSelfEnrollmentEvidenceReference(['retail-customer-directory', ownerInvocationId, step]),
   ).pipe(Effect.mapError((cause) => unavailable('The customer command identity is invalid', cause)));
