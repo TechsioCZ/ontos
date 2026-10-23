@@ -2,6 +2,8 @@ import { defineOntosMcpContribution } from '@app/core-runtime';
 
 export const partyRegistryMcpContribution = defineOntosMcpContribution({
   actions: {
+    // Commerce's enrollment workload accepts verified retail evidence; never an agent tool.
+    'accept-retail-enrollment-evidence': 'hidden',
     'add-contact-point': { title: { cs: 'Přidat kontakt subjektu', en: 'Add a party contact' } },
     'add-party-official-identifier': {
       title: { cs: 'Přidat úřední identifikátor subjektu', en: 'Add a party official identifier' },
