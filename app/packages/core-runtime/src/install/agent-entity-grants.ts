@@ -47,7 +47,9 @@ export const relationshipModuleAccess = (relationship: DemoAccountRelationship):
   const parts = demoAccountObjectIdParts(relationship.resourceId);
   if (relationship.resourceType === 'module_access') {
     const moduleId = parts.at(2);
-    return moduleId === undefined ? undefined : { access: 'read', moduleId };
+    return moduleId === undefined
+      ? undefined
+      : { access: relationship.relation === 'writer_role' ? 'write' : 'read', moduleId };
   }
   if (relationship.resourceType === 'context_permission') {
     const moduleId = parts.at(3);
@@ -159,7 +161,7 @@ export const agentGrantRelationships = (input: AgentScopedRolePolicyInput): read
     ) {
       return [policy('legal_entity', relationship.resourceId, relationship.relation)];
     }
-    if (relationship.resourceType === 'context_permission' && relationship.relation === 'grantee') {
+    if (relationship.resourceType === 'context_permission' && relationship.relation === 'role_grantee') {
       const granted = relationshipModuleAccess(relationship);
       if (
         granted !== undefined &&
@@ -180,7 +182,7 @@ export const agentGrantRelationships = (input: AgentScopedRolePolicyInput): read
       (relationship) =>
         relationship.resourceType === 'module_access' &&
         relationship.resourceId === shellId &&
-        relationship.relation === 'accessor',
+        relationship.relation === 'accessor_role',
     )
       ? [policy('module_access', shellId, 'accessor_role')]
       : [];

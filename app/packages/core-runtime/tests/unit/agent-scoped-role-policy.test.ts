@@ -3,6 +3,7 @@ import { Effect, Option, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { agentGrantRelationships } from '../../src/install/agent-entity-grants.ts';
+import { readScopedRoleTemplatePolicy } from '../../src/install/demo-account-administration.ts';
 import {
   planAgentScopedRoleReplacement,
   replaceAgentScopedRolePolicy,
@@ -253,7 +254,7 @@ it.effect('accepts canonical company context permissions and rejects tenant or f
       actions: [],
       legalEntityWriteRelations: new Map(),
       modules: [{ access: 'read', moduleId: 'example.module' }],
-      template: [{ relation: 'grantee', resourceId: contextId, resourceType: 'context_permission' }],
+      template: [{ relation: 'role_grantee', resourceId: contextId, resourceType: 'context_permission' }],
       writePolicy: 'read_only',
     });
     const state = graph();
@@ -367,7 +368,7 @@ it.effect('installs exact shared named-permission scope links atomically and pre
       actions: [],
       legalEntityWriteRelations: new Map(),
       modules: [{ access: 'read', moduleId: 'example.module' }],
-      template: [{ relation: 'grantee', resourceId: contextId, resourceType: 'context_permission' }],
+      template: [{ relation: 'role_grantee', resourceId: contextId, resourceType: 'context_permission' }],
       writePolicy: 'read_only',
     });
     const state = graph();
@@ -427,5 +428,64 @@ it.effect('fails closed without mutation when graph discovery omits a relationsh
     );
     expect(Predicate.isTagged(failure, 'IdentityPersistenceUnavailableError')).toBe(true);
     expect(state.writes).toHaveLength(0);
+  }),
+);
+
+it.effect('reads actual role userset policy without fabricating or copying principal permissions', () =>
+  Effect.gen(function* readsNativeRolePolicy() {
+    const desired = policy();
+    const state = graph([
+      ...desired,
+      v1.Relationship.create({
+        relation: 'grantee',
+        resource: { objectId: 'unowned-direct-permission', objectType: 'context_permission' },
+        subject: { object: { objectId: scope.principalId, objectType: 'principal' } },
+      }),
+    ]);
+    const observed = yield* readScopedRoleTemplatePolicy(state.rpc, scope.principalId);
+    const expected = desired
+      .filter(
+        (item) =>
+          ['tenant', 'legal_entity', 'module_access', 'context_permission'].includes(item.resource?.objectType ?? '') &&
+          item.subject?.object?.objectType === 'scoped_role',
+      )
+      .map((item) => ({
+        relation: item.relation,
+        resourceId: item.resource?.objectId,
+        resourceType: item.resource?.objectType,
+      }));
+    expect(observed).toEqual(expect.arrayContaining(expected));
+    expect(observed).toHaveLength(expected.length);
+    expect(observed.some((item) => item.relation === 'writer_role')).toBe(true);
+    expect(observed.some((item) => item.relation === 'grantee')).toBe(false);
+    expect(state.writes).toHaveLength(0);
+    expect(state.reads.every((request) => request.consistency?.requirement.oneofKind === 'fullyConsistent')).toBe(true);
+  }),
+);
+
+it.effect('refuses conditional or incomplete native template policy instead of weakening evidence', () =>
+  Effect.gen(function* rejectsConditionalRolePolicy() {
+    const membership = policy().find((item) => item.resource?.objectType === 'scoped_role');
+    if (membership === undefined) {
+      return yield* Effect.die('Missing role membership fixture');
+    }
+    const malformed = graph([membership]);
+    const rpc: SpiceDbRpc = {
+      ...malformed.rpc,
+      readRelationships: (request) =>
+        request.relationshipFilter?.resourceType === 'module_access'
+          ? Effect.succeed([v1.ReadRelationshipsResponse.create()])
+          : malformed.rpc.readRelationships(request),
+    };
+    expect((yield* Effect.result(readScopedRoleTemplatePolicy(rpc, scope.principalId)))._tag).toBe('Failure');
+    const conditional = graph([
+      v1.Relationship.create({ ...membership, optionalCaveat: { caveatName: 'not-unconditional' } }),
+    ]);
+    expect((yield* Effect.result(readScopedRoleTemplatePolicy(conditional.rpc, scope.principalId)))._tag).toBe(
+      'Failure',
+    );
+    expect(malformed.writes).toHaveLength(0);
+    expect(conditional.writes).toHaveLength(0);
+    return yield* Effect.void;
   }),
 );

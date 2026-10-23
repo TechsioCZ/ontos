@@ -21,12 +21,12 @@ const otherCompany = '71000000-0000-4000-8000-000000000021';
 const principalId = '72000000-0000-4000-8000-000000000020';
 const scope = { legalEntityId, principalId, tenantId };
 const moduleAccess = (company: string, moduleId: string) => ({
-  relation: 'accessor',
+  relation: 'accessor_role',
   resourceId: toModuleAccessObjectId(tenantId, company, moduleId) ?? '',
   resourceType: 'module_access',
 });
 const permission = (moduleId: string, value: string) => ({
-  relation: 'grantee',
+  relation: 'role_grantee',
   resourceId: toContextPermissionAccessObjectId(tenantId, legalEntityId, { moduleId, permission: value }) ?? '',
   resourceType: 'context_permission',
 });

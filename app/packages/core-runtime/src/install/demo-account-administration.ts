@@ -7,7 +7,8 @@
  */
 import { v1 } from '@authzed/authzed-node';
 import { openSpiceDbRpc } from '../permissions/spicedb-transaction-guard.ts';
-import { Effect, Schema } from 'effect';
+import { Effect, Option, Schema } from 'effect';
+import { fromScopedRoleObjectId } from '../permissions/scoped-role.ts';
 
 import { IdentityPersistenceUnavailableError } from '../auth/principal-management-errors.ts';
 import { loadSpiceDbConfig } from '../permissions/config.ts';
@@ -44,7 +45,7 @@ export const demoAccountObjectIdParts = (objectId: string): readonly string[] =>
   const decoded = Schema.decodeOption(ObjectIdParts)(
     Buffer.from(objectId.slice('ctx_'.length), 'base64url').toString('utf-8'),
   );
-  return decoded._tag === 'Some' ? decoded.value : [];
+  return Option.getOrElse(decoded, () => []);
 };
 
 const belongsToCompany = (relationship: DemoAccountRelationship, legalEntityId: string) =>
@@ -108,6 +109,92 @@ const relationshipsOf = (rpc: SpiceDbRpc, principalId: string) =>
     Effect.mapError(unavailable),
   );
 
+/** Catalog evidence follows actual role memberships and retains native userset relation names. */
+export const readScopedRoleTemplatePolicy = Effect.fn('DemoAccountGrants.readScopedRoleTemplatePolicy')(
+  function* readScopedRoleTemplatePolicy(rpc: SpiceDbRpc, principalId: string) {
+    const memberships = yield* rpc
+      .readRelationships(
+        v1.ReadRelationshipsRequest.create({
+          consistency: fullyConsistent,
+          relationshipFilter: {
+            optionalRelation: 'member',
+            optionalSubjectFilter: { optionalSubjectId: principalId, subjectType: 'principal' },
+            resourceType: 'scoped_role',
+          },
+        }),
+      )
+      .pipe(Effect.mapError(unavailable));
+    const roles = new Set<string>();
+    for (const { relationship } of memberships) {
+      if (
+        relationship?.resource?.objectType !== 'scoped_role' ||
+        Option.isNone(fromScopedRoleObjectId(relationship.resource.objectId)) ||
+        relationship.relation !== 'member' ||
+        relationship.subject?.object?.objectType !== 'principal' ||
+        relationship.subject.object.objectId !== principalId ||
+        relationship.subject.optionalRelation !== '' ||
+        relationship.optionalCaveat !== undefined ||
+        relationship.optionalExpiresAt !== undefined
+      ) {
+        return yield* unavailable('Role membership discovery returned incomplete or conditional evidence');
+      }
+      roles.add(relationship.resource.objectId);
+    }
+    const filters = [...roles].flatMap((roleId) =>
+      ['tenant', 'legal_entity', 'module_access', 'context_permission'].map((resourceType) => ({
+        resourceType,
+        roleId,
+      })),
+    );
+    const groups = yield* Effect.forEach(
+      filters,
+      Effect.fn('DemoAccountGrants.readRolePolicy')(function* readPolicy({ resourceType, roleId }) {
+        const responses = yield* rpc
+          .readRelationships(
+            v1.ReadRelationshipsRequest.create({
+              consistency: fullyConsistent,
+              relationshipFilter: {
+                optionalSubjectFilter: {
+                  optionalRelation: { relation: 'member' },
+                  optionalSubjectId: roleId,
+                  subjectType: 'scoped_role',
+                },
+                resourceType,
+              },
+            }),
+          )
+          .pipe(Effect.mapError(unavailable));
+        return yield* Effect.forEach(
+          responses,
+          ({ relationship }) => {
+            if (
+              relationship?.resource?.objectType !== resourceType ||
+              relationship.subject?.object?.objectType !== 'scoped_role' ||
+              relationship.subject.object.objectId !== roleId ||
+              relationship.subject.optionalRelation !== 'member' ||
+              relationship.optionalCaveat !== undefined ||
+              relationship.optionalExpiresAt !== undefined
+            ) {
+              return unavailable('Role policy discovery returned incomplete or conditional evidence');
+            }
+            return Effect.succeed({
+              relation: relationship.relation,
+              resourceId: relationship.resource.objectId,
+              resourceType,
+            });
+          },
+          { concurrency: 1 },
+        );
+      }),
+      { concurrency: 2 },
+    );
+    const exact = new Map(
+      groups.flat().map((item) => [`${item.resourceType}:${item.resourceId}:${item.relation}`, item]),
+    );
+    return [...exact.values()];
+  },
+);
+
 const write = (
   rpc: SpiceDbRpc,
   operation: v1.RelationshipUpdate_Operation,
@@ -124,17 +211,10 @@ const write = (
           updates: chunk.map((relationship) => update(operation, principalId, relationship)),
         }),
       ),
-    { discard: true },
+    { concurrency: 1, discard: true },
   ).pipe(Effect.mapError(unavailable));
 
 export interface DemoAccountGrants {
-  /** Principals with `member` on the company. */
-  readonly companyMembers: (
-    tenantId: string,
-    legalEntityId: string,
-  ) => Effect.Effect<readonly string[], IdentityPersistenceUnavailableError>;
-  /** Legal entities the principal is a member of (decoded from its `legal_entity#member` grants). */
-  readonly companiesOf: (principalId: string) => Effect.Effect<readonly string[], IdentityPersistenceUnavailableError>;
   /**
    * Gives `principalId` the role of `templatePrincipalId` in `legalEntityId`. With `replace`, the target's
    * previous company-scoped grants are removed first; tenant and Action grants are removed only when the target
@@ -146,6 +226,13 @@ export interface DemoAccountGrants {
     readonly replace: boolean;
     readonly templatePrincipalId: string;
   }) => Effect.Effect<{ readonly granted: number; readonly revoked: number }, IdentityPersistenceUnavailableError>;
+  /** Legal entities the principal is a member of (decoded from its `legal_entity#member` grants). */
+  readonly companiesOf: (principalId: string) => Effect.Effect<readonly string[], IdentityPersistenceUnavailableError>;
+  /** Principals with `member` on the company. */
+  readonly companyMembers: (
+    tenantId: string,
+    legalEntityId: string,
+  ) => Effect.Effect<readonly string[], IdentityPersistenceUnavailableError>;
   /** Role-carrying relationships whose subject is the principal (tenant, company, module, context permission, Action). */
   readonly relationshipsOf: (
     principalId: string,
@@ -157,12 +244,20 @@ export interface DemoAccountGrants {
     readonly principalId: string;
     readonly tenantId: string;
   }) => Effect.Effect<{ readonly granted: number; readonly revoked: number }, IdentityPersistenceUnavailableError>;
+  /** Actual native userset policy reached through explicit role memberships, never synthetic principal grants. */
+  readonly rolePolicyOf: (
+    principalId: string,
+  ) => Effect.Effect<readonly DemoAccountRelationship[], IdentityPersistenceUnavailableError>;
 }
 
 const membershipCompanies = (relationships: readonly DemoAccountRelationship[]) =>
-  relationships
-    .filter((relationship) => relationship.resourceType === 'legal_entity' && relationship.relation === 'member')
-    .flatMap((relationship) => demoAccountObjectIdParts(relationship.resourceId).slice(1, 2));
+  relationships.flatMap((relationship) =>
+    relationship.resourceType === 'legal_entity' && relationship.relation === 'member'
+      ? demoAccountObjectIdParts(relationship.resourceId).slice(1, 2)
+      : [],
+  );
+const policyKey = (relationship: DemoAccountRelationship) =>
+  `${relationship.resourceType}|${relationship.resourceId}|${relationship.relation}`;
 
 const makeGrants = (rpc: SpiceDbRpc): DemoAccountGrants => ({
   assignRole: Effect.fn('DemoAccountGrants.assignRole')(function* assignRole(input) {
@@ -172,13 +267,11 @@ const makeGrants = (rpc: SpiceDbRpc): DemoAccountGrants => ({
         !companyScopedTypes.has(relationship.resourceType) || belongsToCompany(relationship, input.legalEntityId),
     );
     const current = yield* relationshipsOf(rpc, input.principalId);
-    const key = (relationship: DemoAccountRelationship) =>
-      `${relationship.resourceType}|${relationship.resourceId}|${relationship.relation}`;
-    const desiredKeys = new Set(desired.map(key));
+    const desiredKeys = new Set(desired.map(policyKey));
     const otherCompanies = membershipCompanies(current).filter((company) => company !== input.legalEntityId);
     const revoke = input.replace
       ? current.filter((relationship) => {
-          if (desiredKeys.has(key(relationship))) {
+          if (desiredKeys.has(policyKey(relationship))) {
             return false;
           }
           if (companyScopedTypes.has(relationship.resourceType)) {
@@ -197,18 +290,6 @@ const makeGrants = (rpc: SpiceDbRpc): DemoAccountGrants => ({
   }),
   companiesOf: (principalId) =>
     relationshipsOf(rpc, principalId).pipe(Effect.map((relationships) => membershipCompanies(relationships))),
-  relationshipsOf: (principalId) => relationshipsOf(rpc, principalId),
-  replaceAgentGrants: Effect.fn('DemoAccountGrants.replaceAgentGrants')(function* replaceAgentGrants(input) {
-    const current = yield* relationshipsOf(rpc, input.principalId);
-    return yield* replaceAgentScopedRolePolicy(rpc, {
-      ...input,
-      currentPrincipalRelationships: current
-        .map(
-          (relationship) => update(v1.RelationshipUpdate_Operation.TOUCH, input.principalId, relationship).relationship,
-        )
-        .filter((relationship) => relationship !== undefined),
-    });
-  }),
   companyMembers: (tenantId, legalEntityId) =>
     rpc
       .readRelationships(
@@ -230,6 +311,19 @@ const makeGrants = (rpc: SpiceDbRpc): DemoAccountGrants => ({
         ),
         Effect.mapError(unavailable),
       ),
+  relationshipsOf: (principalId) => relationshipsOf(rpc, principalId),
+  replaceAgentGrants: Effect.fn('DemoAccountGrants.replaceAgentGrants')(function* replaceAgentGrants(input) {
+    const current = yield* relationshipsOf(rpc, input.principalId);
+    return yield* replaceAgentScopedRolePolicy(rpc, {
+      ...input,
+      currentPrincipalRelationships: current
+        .map(
+          (relationship) => update(v1.RelationshipUpdate_Operation.TOUCH, input.principalId, relationship).relationship,
+        )
+        .filter((relationship) => relationship !== undefined),
+    });
+  }),
+  rolePolicyOf: (principalId) => readScopedRoleTemplatePolicy(rpc, principalId),
 });
 
 /** Opens one SpiceDB client for the scope of a request (local development SpiceDB from `SPICEDB_*`). */
