@@ -157,7 +157,6 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
       nameKey: products.nameKey,
       ordinal: products.ordinal,
       skuKey: products.skuKey,
-      updatedAt: products.updatedAt,
       tierRows: sql<Parameters<typeof hydrateProducts>[2]>`(select coalesce(json_agg(json_build_object(
           'minimumQuantity', t.minimum_quantity, 'position', t.position,
           'priceExcludingVatMinor', t.price_excluding_vat_minor, 'priceMinor', t.price_minor,
@@ -166,6 +165,7 @@ const productPage = Effect.fn('MerchandiseQueries.productPage')(function* produc
         where t.tenant_id = ${scope.tenantId}::uuid and t.legal_entity_id = ${scope.legalEntityId}::uuid
           and t.product_id = ${outerProductId}
           ${tierVariantFilter})`.as('tier_rows'),
+      updatedAt: products.updatedAt,
       variantCount:
         input.variantCount === true
           ? sql<number>`(select count(*)::int from ${productVariants} v
