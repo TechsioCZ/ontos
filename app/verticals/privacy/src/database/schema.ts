@@ -8,6 +8,7 @@ import {
   integer,
   jsonb,
   pgSchema,
+  primaryKey,
   text,
   timestamp,
   unique,
@@ -34,6 +35,7 @@ export const PRIVACY_TABLE_INVENTORY = [
   'dsr_verifications',
   'eligibility_evidence',
   'external_obligations',
+  'gateway_assertion_redemptions',
   'legal_basis_assignments',
   'legal_holds',
   'notice_provisions',
@@ -56,6 +58,21 @@ export const PRIVACY_TABLE_INVENTORY = [
 ] as const;
 
 export const privacySchema = pgSchema(PRIVACY_SCHEMA_NAME);
+
+// Replay evidence is consumed before tenant/business scope is installed.
+export const gatewayAssertionRedemptions = privacySchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: text('jti').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.issuer, table.audience, table.jti] }),
+    index('privacy_redemption_expiry').on(table.expiresAt),
+  ],
+);
 
 const recordedAt = () => timestamp('recorded_at', { withTimezone: true }).defaultNow().notNull();
 const scopeColumns = () => ({
@@ -1285,6 +1302,7 @@ export const PRIVACY_TABLES = [
   dsrVerifications,
   eligibilityEvidence,
   externalObligations,
+  gatewayAssertionRedemptions,
   legalBasisAssignments,
   legalHolds,
   noticeProvisions,
@@ -1323,6 +1341,7 @@ const privacyDatabaseSchema = {
   dsrVerifications,
   eligibilityEvidence,
   externalObligations,
+  gatewayAssertionRedemptions,
   legalBasisAssignments,
   legalHolds,
   noticeProvisions,

@@ -215,14 +215,15 @@ const verify = Effect.gen(function* verifyPrivacyDatabase() {
       );
     }
     const unsafeTables = catalog.rows.filter((table) => {
+      const redemption = table.table_name === 'gateway_assertion_redemptions';
       const mutable = !IMMUTABLE_TABLE_SET.has(table.table_name);
       return (
         table.owner_name !== connections.admin.user ||
-        !table.rls_enabled ||
-        !table.rls_forced ||
+        table.rls_enabled === redemption ||
+        table.rls_forced === redemption ||
         !table.can_select ||
         !table.can_insert ||
-        table.can_update !== mutable ||
+        table.can_update !== (mutable && !redemption) ||
         table.can_delete !== mutable
       );
     });

@@ -29,7 +29,10 @@ import { Context, Logger, References, Tracer } from 'effect';
 
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
-import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive,
+} from './auth/gateway-assertion-redemption.ts';
 // </generated-governed-http-handler-support-imports>
 
 // <generated-governed-http-handler-imports>
@@ -251,6 +254,11 @@ const productionActionRuntimeLive = privacyConsentAuthorityActionRuntimeLive.pip
   Layer.provideMerge(privacyActionAuthorityUnavailableLive),
 );
 
+const productionGatewayAssertionRedemptionLive = GovernedGatewayAssertionRedemptionLive.pipe(
+  Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+  Layer.provide(DatabaseConfigLive),
+);
+
 type PrivacyApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<
     Layer.Success<typeof productionReadRuntimeLive>,
@@ -260,7 +268,10 @@ type PrivacyApiRuntimeArguments = readonly [
     Layer.Success<typeof productionActionRuntimeLive>,
     Layer.Error<typeof productionActionRuntimeLive>
   >,
-  gatewayAssertionRedemption: Layer.Layer<GatewayAssertionRedemptionService>,
+  gatewayAssertionRedemption: Layer.Layer<
+    GatewayAssertionRedemptionService,
+    Layer.Error<typeof productionGatewayAssertionRedemptionLive>
+  >,
 ];
 
 export const makePrivacyApiRuntime = (
@@ -339,7 +350,7 @@ export const makePrivacyApiRuntime = (
 const apiRuntime = makePrivacyApiRuntime(
   productionReadRuntimeLive,
   productionActionRuntimeLive,
-  GovernedGatewayAssertionRedemptionLive,
+  productionGatewayAssertionRedemptionLive,
 );
 
 export default apiRuntime;
