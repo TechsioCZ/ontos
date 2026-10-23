@@ -31,7 +31,7 @@ take_lock() {
   done
   echo $$ >"$lock/pid"
 }
-# Demo v2: the live demo is served from a separate runtime worktree that only ever contains COMMITTED code
+# Demo v2: the live demo is served from a separate runtime worktree that only ever contains PUSHED code
 # from demo/sales-crm, so half-edited files in the shared development tree never break the running demo.
 RUNTIME_APP="${DEMO_RUNTIME_APP:-/Volumes/TraceDecayKingston/techsio-demo/ontos-runtime/app}"
 if [ "$APP" != "$RUNTIME_APP" ] && [ -d "$RUNTIME_APP" ]; then
@@ -39,10 +39,16 @@ if [ "$APP" != "$RUNTIME_APP" ] && [ -d "$RUNTIME_APP" ]; then
   take_lock "$RUNTIME_APP/.scratch-ff.lock" "runtime fast-forward"
   trap 'rm -rf "$RUNTIME_APP/.scratch-ff.lock"' EXIT
   before="$(git -C "$RUNTIME_APP" rev-parse HEAD:app/pnpm-lock.yaml)"
-  git -C "$RUNTIME_APP" merge -q --ff-only demo/sales-crm || {
-    echo "[rebuild] runtime fast-forward failed" >&2
-    exit 1
-  }
+  # Only pushed code: the runtime follows origin/demo/sales-crm. demo/runtime carries its own merge commits, so a
+  # fast-forward is not always possible; it then merges, and a conflict aborts the merge and stops the rebuild.
+  git -C "$RUNTIME_APP" fetch -q origin demo/sales-crm
+  if ! git -C "$RUNTIME_APP" merge -q --ff-only origin/demo/sales-crm 2>/dev/null; then
+    git -C "$RUNTIME_APP" merge -q --no-edit origin/demo/sales-crm || {
+      git -C "$RUNTIME_APP" merge --abort 2>/dev/null || true
+      echo "[rebuild] runtime merge of origin/demo/sales-crm conflicts; resolve it in the runtime worktree" >&2
+      exit 1
+    }
+  fi
   if [ "$before" != "$(git -C "$RUNTIME_APP" rev-parse HEAD:app/pnpm-lock.yaml)" ]; then
     echo "[rebuild] lockfile changed; installing in runtime"
     (cd "$RUNTIME_APP" && TMPDIR=/Volumes/TraceDecayKingston/techsio-demo/tmp mise exec -- pnpm install --frozen-lockfile >/dev/null)
