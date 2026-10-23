@@ -283,6 +283,30 @@ export const readRecords = async (
   }
 };
 
+/** Owner HTTP surface reached through the same scoped, governed Shell gateway as Actions. */
+export const ownerRequest = async (
+  vertical: string,
+  path: string,
+  init: RequestInit,
+): Promise<Response> => {
+  if (!path.startsWith("/api/") || path.includes("..")) throw new Error("Invalid owner path");
+  // Enrollment redeems its assertion once for its composed Actions. Never lend it an assertion
+  // held by another request (or retry a credential-carrying request after an unknown outcome).
+  const context = await mintContext(vertical);
+  return reach(`${getConfig().shellUrl}${context.apiBaseUrl}${path}`, {
+    ...init,
+    cache: "no-store",
+    redirect: "manual",
+    headers: {
+      ...Object.fromEntries(new Headers(init.headers)),
+      authorization: `Bearer ${context.token}`,
+      "x-correlation-id": randomUUID(),
+      "x-ontos-composition-revision": context.compositionRevision,
+    },
+    signal: AbortSignal.timeout(30_000),
+  });
+};
+
 /** Governed action. `idempotencyKey` must be reused verbatim (with the identical payload) on retries. */
 export const callAction = async (
   vertical: string,
