@@ -22,9 +22,9 @@ const payload = { affiliation: 'external', displayName: 'Invited person', email:
 it.effect(
   'requires an explicit e-mail, display name and human affiliation, with no client scope, credentials or roles',
   () =>
-    Effect.sync(() => {
-      const decode = Schema.decodeUnknownSync(InvitePersonPayloadSchema, { onExcessProperty: 'error' });
-      expect(decode(payload)).toEqual(payload);
+    Effect.gen(function* invitationPayloadCodec() {
+      const decode = Schema.decodeUnknownEffect(InvitePersonPayloadSchema, { onExcessProperty: 'error' });
+      expect(yield* decode(payload)).toEqual(payload);
       for (const invalid of [
         { ...payload, affiliation: null },
         { ...payload, affiliation: 'agent' },
@@ -37,22 +37,22 @@ it.effect(
         { ...payload, password: 'not-an-invitation' },
         { ...payload, roles: ['superadmin'] },
       ]) {
-        expect(() => decode(invalid)).toThrow();
+        expect(yield* decode(invalid).pipe(Effect.flip)).toBeDefined();
       }
     }),
 );
 
 it.effect('returns only durable pending invitation identity and the explicit invited company membership', () =>
-  Effect.sync(() => {
+  Effect.gen(function* invitationResultCodec() {
     const wire = {
       delivery: 'pending',
       invitationId,
       membership: { affiliation: 'external', legalEntityId, principalRef, revision: 1, status: 'invited' },
       principalRef,
     };
-    const decoded = Schema.decodeUnknownSync(InvitePersonResultSchema)(wire);
+    const decoded = yield* Schema.decodeUnknownEffect(InvitePersonResultSchema)(wire);
     expect(decoded.membership.affiliation).toEqual(Option.some('external'));
-    expect(Schema.encodeSync(InvitePersonResultSchema)(decoded)).toEqual(wire);
+    expect(yield* Schema.encodeEffect(InvitePersonResultSchema)(decoded)).toEqual(wire);
     expect(Object.keys(wire).toSorted()).toEqual(['delivery', 'invitationId', 'membership', 'principalRef']);
   }),
 );

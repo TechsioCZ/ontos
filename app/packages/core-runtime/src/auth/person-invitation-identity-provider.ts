@@ -26,4 +26,4 @@ export class PersonInvitationIdentityProvider extends Context.Service<
   {
     readonly fromTransaction: (transaction: ScopedTransactionExecutor) => PersonInvitationIdentityWriter;
   }
->()('@app/core-runtime/auth/PersonInvitationIdentityProvider') {}
+>()('@app/core-runtime/auth/person-invitation-identity-provider/PersonInvitationIdentityProvider') {}
