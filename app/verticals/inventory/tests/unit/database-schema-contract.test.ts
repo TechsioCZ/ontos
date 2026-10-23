@@ -117,7 +117,7 @@ const requireMigrationFolder = (folder: string | undefined, suffix: string): str
   return folder ?? '';
 };
 
-it('owns thirty-five tenant-scoped Inventory tables with row-level security', () => {
+it('owns the complete Inventory catalog and scopes every business table with RLS', () => {
   expect(INVENTORY_SCHEMA_NAME).toBe('inventory');
   expect(INVENTORY_TABLE_INVENTORY).toEqual([
     'backend_configurations',
@@ -129,6 +129,7 @@ it('owns thirty-five tenant-scoped Inventory tables with row-level security', ()
     'effect_ledger',
     'effect_ledger_history',
     'external_stock_correlations',
+    'gateway_assertion_redemptions',
     'obligation_allocations',
     'obligation_requirements',
     'obligations',
@@ -166,6 +167,9 @@ it('owns thirty-five tenant-scoped Inventory tables with row-level security', ()
     ),
   ).toEqual(INVENTORY_TABLE_INVENTORY.map((name) => `inventory.${name}`));
   for (const table of INVENTORY_TABLES) {
+    if (getTableConfig(table).name === 'gateway_assertion_redemptions') {
+      continue;
+    }
     const config = getTableConfig(table);
     expect(config.enableRLS, `${config.name} must enable RLS`).toBe(true);
     expect(config.columns.some((column) => column.name === 'tenant_id' && column.notNull)).toBe(true);
@@ -1214,4 +1218,20 @@ it('exact Inventory catalog comparison rejects missing and unexpected tables', (
     missing: [],
     unexpected: ['inventory.unowned'],
   });
+});
+
+it('owns pre-scope replay evidence with an atomic issuer/audience/jti identity', () => {
+  const table = INVENTORY_TABLES.find(
+    (candidate) => getTableConfig(candidate).name === 'gateway_assertion_redemptions',
+  );
+  expect(table).toBeDefined();
+  if (table === undefined) {
+    throw new Error('Missing gateway assertion redemption table');
+  }
+  const config = getTableConfig(table);
+  expect(config.schema).toBe('inventory');
+  expect(config.enableRLS).toBe(false);
+  expect(config.policies).toEqual([]);
+  expect(config.primaryKeys.map((key) => key.columns.map(({ name }) => name))).toEqual([['issuer', 'audience', 'jti']]);
+  expect(config.indexes.map(({ config: index }) => index.name)).toEqual(['inventory_redemption_expiry']);
 });

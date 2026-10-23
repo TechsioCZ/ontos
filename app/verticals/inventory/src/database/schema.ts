@@ -1,6 +1,8 @@
 import { defineRelations } from 'drizzle-orm';
 import type { EmptyRelations, ExtractTablesFromSchema, ExtractTablesWithRelations } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
+import { index, primaryKey, text, timestamp } from 'drizzle-orm/pg-core';
+import { inventorySchema } from './inventory-schema.ts';
 
 import { inventoryBackendConfigurations } from '../persistence/inventory-backend-configuration-table.ts';
 import { inventoryBindingCorrectionReconciliations } from '../persistence/binding-correction-impact-table.ts';
@@ -111,6 +113,21 @@ export {
   inventoryStockSharingEligibilityHistory,
 } from '../persistence/stock-sharing-eligibility-table.ts';
 
+// Replay evidence is consumed before tenant/business scope is installed.
+export const gatewayAssertionRedemptions = inventorySchema.table(
+  'gateway_assertion_redemptions',
+  {
+    audience: text('audience').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    issuer: text('issuer').notNull(),
+    jti: text('jti').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.issuer, table.audience, table.jti] }),
+    index('inventory_redemption_expiry').on(table.expiresAt),
+  ],
+);
+
 export const INVENTORY_TABLE_INVENTORY = [
   'backend_configurations',
   'binding_correction_reconciliations',
@@ -121,6 +138,7 @@ export const INVENTORY_TABLE_INVENTORY = [
   'effect_ledger',
   'effect_ledger_history',
   'external_stock_correlations',
+  'gateway_assertion_redemptions',
   'obligation_allocations',
   'obligation_requirements',
   'obligations',
@@ -150,6 +168,7 @@ export const INVENTORY_TABLE_INVENTORY = [
 ] as const;
 
 export const INVENTORY_TABLES: readonly PgTable[] = [
+  gatewayAssertionRedemptions,
   inventoryBackendConfigurations,
   inventoryBindingCorrectionReconciliations,
   inventoryCatalogToStockBindingHistory,
@@ -186,6 +205,8 @@ export const INVENTORY_TABLES: readonly PgTable[] = [
   inventoryStockSharingEligibilities,
   inventoryStockSharingEligibilityHistory,
 ] as const;
+
+const inventoryDatabaseSchemaSecurity = { gatewayAssertionRedemptions } as const;
 
 const inventoryDatabaseSchemaIdentity = {
   inventoryBackendConfigurations,
@@ -234,10 +255,12 @@ const inventoryDatabaseSchemaStock = {
   inventoryStockSharingEligibilityHistory,
 } as const;
 
-const inventoryDatabaseSchema: typeof inventoryDatabaseSchemaIdentity &
+const inventoryDatabaseSchema: typeof inventoryDatabaseSchemaSecurity &
+  typeof inventoryDatabaseSchemaIdentity &
   typeof inventoryDatabaseSchemaReservations &
   typeof inventoryDatabaseSchemaEvidence &
   typeof inventoryDatabaseSchemaStock = {
+  ...inventoryDatabaseSchemaSecurity,
   ...inventoryDatabaseSchemaIdentity,
   ...inventoryDatabaseSchemaReservations,
   ...inventoryDatabaseSchemaEvidence,
