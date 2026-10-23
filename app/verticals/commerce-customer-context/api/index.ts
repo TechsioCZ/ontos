@@ -86,6 +86,10 @@ import {
   CommercePortalAuthRecoveryRateLimitLive,
 } from './portal-auth/provider/recovery/provider-service.ts';
 import { CommercePortalAuthRecoveryServiceLive } from './portal-auth/provider/recovery/service.ts';
+import { commercePortalAuthVerificationApiLive } from './portal-auth/verification-http/server.ts';
+import { commercePortalAuthVerificationWorkloadAuthorizationLive } from './portal-auth/verification-http/workload-authorization.ts';
+import { CommercePortalAuthVerificationWorkloadGrantConfigurationLive } from './portal-auth/verification-http/workload-grants.ts';
+import { CommercePortalAuthVerificationServiceLive } from './portal-auth/provider/verification.ts';
 import { CommercePortalAuthSessionReaderLive } from '../src/portal-auth/persistence/portal-auth-session-reader.ts';
 import { portalAuthStepUpApiLive } from './portal-auth/provider/step-up/http.ts';
 import { CommercePortalAuthStepUpHttpProviderUnavailableLive } from './portal-auth/provider/step-up/http-provider-unavailable.ts';
@@ -356,9 +360,17 @@ const commercePortalAuthAccountCreationLive = CommercePortalAuthAccountCreationS
  * Account creation is composed on top of the session-facing services rather than merged beside
  * them because it is built from the very Better Auth instance those services publish.
  */
-export const commercePortalAuthRealmLive = commercePortalAuthAccountCreationLive.pipe(
-  Layer.provideMerge(commercePortalAuthRealmServicesLive),
-);
+export const commercePortalAuthRealmLive = Layer.mergeAll(
+  commercePortalAuthAccountCreationLive,
+  CommercePortalAuthVerificationServiceLive.pipe(
+    Layer.provide(
+      CommerceEnrollmentProofServiceLive.pipe(
+        Layer.provide(commerceEnrollmentOwnerTransactionRunnerProductionLive),
+        Layer.provide(DatabaseConfigLive),
+      ),
+    ),
+  ),
+).pipe(Layer.provideMerge(commercePortalAuthRealmServicesLive));
 
 const commerceCustomerContextReadinessLayer = HttpApiBuilder.group(
   commerceCustomerContextApi,
@@ -811,6 +823,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     portalAuthRecoveryApiLive,
     portalAuthStepUpApiLive,
     portalAuthEnrollmentApiLive,
+    commercePortalAuthVerificationApiLive,
     customerOwnProfileReadApiLive,
     customerOwnProfileUpdateApiLive,
     // <generated-governed-http-handler-layers>
@@ -937,6 +950,8 @@ export const makeCommerceCustomerContextApiRuntime = (
     governedReadRuntimeLive,
     governedActionRuntimeLive,
     portalAuthRuntimeLive,
+    commercePortalAuthVerificationWorkloadAuthorizationLive,
+    CommercePortalAuthVerificationWorkloadGrantConfigurationLive,
     // Converge an uncertain enrollment write from the original invocation, never by re-dispatching it.
     deploymentEnrollmentCommitResolutionLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     // The start route commits the Attempt and account, then hands the remaining journey to the continuation.

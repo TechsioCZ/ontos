@@ -262,8 +262,8 @@ it.effect('mints a fresh provider audience assertion for every exact workload ca
     };
     const request = makeProviderRequest();
     const acquire = Effect.gen(function* acquireAssertion() {
-      const first = yield* acquireExternalIdentityWorkloadAssertion(configuration, request);
-      const second = yield* acquireExternalIdentityWorkloadAssertion(configuration, request);
+      const first = yield* acquireExternalIdentityWorkloadAssertion(configuration, request, 'example-portal');
+      const second = yield* acquireExternalIdentityWorkloadAssertion(configuration, request, 'example-portal');
       return { first, second };
     }).pipe(
       Effect.provideService(ExternalIdentityWorkloadAuthorization, authorization),
@@ -288,12 +288,12 @@ it.effect('mints a fresh provider audience assertion for every exact workload ca
     ]);
     expect(issueCalls).toHaveLength(2);
     expect(issueCalls[0]).toEqual({
-      audience: providerEndpointAudience,
+      audience: 'example-portal',
       compositionRevision,
       principal: workloadPrincipal,
     });
     expect(issueCalls[1]).toEqual({
-      audience: providerEndpointAudience,
+      audience: 'example-portal',
       compositionRevision,
       principal: workloadPrincipal,
     });
@@ -327,7 +327,7 @@ it.effect('admits a gateway-context assertion audienced for the provider verific
       },
     };
     const acquireFor = (request: ExternalIdentityVerificationRequest) =>
-      acquireExternalIdentityWorkloadAssertion(configuration, request).pipe(
+      acquireExternalIdentityWorkloadAssertion(configuration, request, 'example-portal').pipe(
         Effect.provideService(ExternalIdentityWorkloadAuthorization, authorization),
         Effect.provideService(GatewayIssuer, issuer),
         // `targetAudience` is the downstream gateway audience the grant declares.
@@ -336,9 +336,7 @@ it.effect('admits a gateway-context assertion audienced for the provider verific
 
     const admitted = yield* acquireFor(makeProviderRequest(providerEndpointAudience));
     expect(Redacted.value(admitted)).toBe('Bearer provider-gateway-token-1');
-    expect(issueCalls).toEqual([
-      { audience: providerEndpointAudience, compositionRevision, principal: workloadPrincipal },
-    ]);
+    expect(issueCalls).toEqual([{ audience: 'example-portal', compositionRevision, principal: workloadPrincipal }]);
 
     // An assertion minted for any other audience is still refused: the guard is a real check.
     const refused = yield* Effect.result(acquireFor(makeProviderRequest(gatewayAudience)));
@@ -372,7 +370,11 @@ it.effect('refuses a provider workload assertion when its captured composition r
         );
       },
     };
-    const result = yield* acquireExternalIdentityWorkloadAssertion(configuration, makeProviderRequest()).pipe(
+    const result = yield* acquireExternalIdentityWorkloadAssertion(
+      configuration,
+      makeProviderRequest(),
+      'example-portal',
+    ).pipe(
       Effect.provideService(ExternalIdentityWorkloadAuthorization, authorization),
       Effect.provideService(GatewayIssuer, issuer),
       Effect.provideService(ExternalIdentityHttpWorkloadContext, makeContext({ compositionRevision: staleRevision })),

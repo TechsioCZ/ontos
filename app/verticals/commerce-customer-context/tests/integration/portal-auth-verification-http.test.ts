@@ -13,9 +13,10 @@ import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/tes
 import {
   CommercePortalAuthVerificationInvalidRequest,
   CommercePortalAuthVerificationService,
+  CommercePortalAuthVerificationCaller,
 } from '../../api/portal-auth/provider/verification.ts';
 import {
-  commercePortalAuthVerificationApiLive,
+  commercePortalAuthVerificationStandaloneApiLive,
   CommercePortalAuthVerificationWorkloadAuthorization,
   CommercePortalAuthVerificationWorkloadRejected,
   CommercePortalAuthVerificationWorkloadUnavailable,
@@ -99,6 +100,7 @@ type AuthorityMode = typeof AuthorityModeSchema.Type;
 const makeApp = (
   mode: { value: AuthorityMode },
   captures: CommercePortalAuthVerificationWorkloadAuthorizationInput[],
+  provider: CommercePortalAuthVerificationService['Service'] = verification,
 ) =>
   Effect.gen(function* makeAppEffect() {
     const authority: CommercePortalAuthVerificationWorkloadAuthorizationService = {
@@ -118,9 +120,9 @@ const makeApp = (
       },
     };
     const apiLayer = HttpApiBuilder.layer(CommercePortalAuthVerificationApi).pipe(
-      Layer.provide(commercePortalAuthVerificationApiLive),
+      Layer.provide(commercePortalAuthVerificationStandaloneApiLive),
       Layer.provide(Layer.succeed(CommercePortalAuthVerificationWorkloadAuthorization, authority)),
-      Layer.provide(Layer.succeed(CommercePortalAuthVerificationService, verification)),
+      Layer.provide(Layer.succeed(CommercePortalAuthVerificationService, provider)),
       Layer.provide(HttpServer.layerServices),
     );
     return yield* Effect.acquireRelease(
@@ -221,7 +223,7 @@ const makeSignedWorkloadApp = (
   Effect.gen(function* makeSignedWorkloadAppEffect() {
     const authority = makeSignedWorkloadAuthority(environment, snapshot);
     const apiLayer = HttpApiBuilder.layer(CommercePortalAuthVerificationApi).pipe(
-      Layer.provide(commercePortalAuthVerificationApiLive),
+      Layer.provide(commercePortalAuthVerificationStandaloneApiLive),
       Layer.provideMerge(authority),
       Layer.provideMerge(Layer.succeed(Clock.Clock, signedWorkloadClock)),
       Layer.provide(Layer.succeed(CommercePortalAuthVerificationService, verification)),
@@ -361,5 +363,38 @@ it.effect('accepts a signed workload assertion through the real authority and HT
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
 
     expect(result.outcome).toBe('ALLOWED');
+  }),
+);
+
+it.effect('does not delegate workload authority to a different provider subject', () =>
+  Effect.gen(function* requestScopedVerificationAuthority() {
+    const captures: CommercePortalAuthVerificationWorkloadAuthorizationInput[] = [];
+    const provider: CommercePortalAuthVerificationService['Service'] = {
+      verifyExternalAuthentication: (input) =>
+        Effect.gen(function* changedProviderRequest() {
+          const caller = yield* CommercePortalAuthVerificationCaller;
+          yield* caller.authorize({
+            ...Schema.decodeUnknownSync(VerifyExternalAuthenticationRequestSchema)({
+              ...request,
+              providerSubjectId: 'another-subject',
+            }),
+            operation: request.operation,
+          });
+          return yield* verification.verifyExternalAuthentication(input);
+        }),
+    };
+    const app = yield* makeApp({ value: 'allow' }, captures, provider);
+    const response = yield* Effect.promise(() =>
+      app.handler(
+        new Request('https://commerce.ontos.test/portal-auth/internal/verify', {
+          body: JSON.stringify(request),
+          headers: { authorization: 'Bearer workload-secret', 'content-type': 'application/json' },
+          method: 'POST',
+        }),
+        requestContext,
+      ),
+    );
+    expect(response.status).toBe(403);
+    expect(captures).toHaveLength(1);
   }),
 );

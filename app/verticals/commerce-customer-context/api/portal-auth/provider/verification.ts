@@ -1,4 +1,4 @@
-import { Context, DateTime, Effect, Option, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Schema } from 'effect';
 
 import {
   COMMERCE_AUTHENTICATION_NAMESPACE_ID,
@@ -17,6 +17,7 @@ import type { CommercePortalAuthVerificationCallerRejected } from './verificatio
 import type { CommercePortalAuthVerificationCallerUnavailable } from './verification-caller-unavailable.ts';
 import { CommercePortalAuthVerificationInvalidRequest } from './verification-invalid-request.ts';
 import { CommercePortalAuthVerificationCaller } from './verification-caller-service.ts';
+import { CommercePortalAuthSessionReaderService } from './session-reader-service.ts';
 import type { CommercePortalAuthSessionReader } from './session-reader-service.ts';
 
 export { CommercePortalAuthVerificationCallerRejected } from './verification-caller-rejected.ts';
@@ -57,7 +58,11 @@ export class CommercePortalAuthVerificationService extends Context.Service<
   {
     readonly verifyExternalAuthentication: (
       input: CommercePortalAuthVerificationInput,
-    ) => Effect.Effect<VerifyExternalAuthenticationResult, CommercePortalAuthVerificationFailure>;
+    ) => Effect.Effect<
+      VerifyExternalAuthenticationResult,
+      CommercePortalAuthVerificationFailure,
+      CommercePortalAuthVerificationCaller
+    >;
   }
 >()('@app/commerce-customer-context/api/portal-auth/provider/verification/CommercePortalAuthVerificationService') {}
 
@@ -136,17 +141,17 @@ const isLiveSession = (
 export const makeCommercePortalAuthVerificationService = Effect.fn('CommercePortalAuthVerification.make')(
   function* makeCommercePortalAuthVerificationServiceEffect(
     sessionReader: CommercePortalAuthSessionReader,
-  ): Effect.fn.Return<
-    CommercePortalAuthVerificationService['Service'],
-    never,
-    CommercePortalAuthVerificationCaller | CommerceEnrollmentProofService
-  > {
-    const caller = yield* CommercePortalAuthVerificationCaller;
+  ): Effect.fn.Return<CommercePortalAuthVerificationService['Service'], never, CommerceEnrollmentProofService> {
     const enrollmentProof = yield* CommerceEnrollmentProofService;
 
     const verifyExternalAuthentication = Effect.fn('CommercePortalAuthVerification.verify')(function* verify(
       input: CommercePortalAuthVerificationInput,
-    ): Effect.fn.Return<VerifyExternalAuthenticationResult, CommercePortalAuthVerificationFailure> {
+    ): Effect.fn.Return<
+      VerifyExternalAuthenticationResult,
+      CommercePortalAuthVerificationFailure,
+      CommercePortalAuthVerificationCaller
+    > {
+      const caller = yield* CommercePortalAuthVerificationCaller;
       const request = yield* Schema.decodeEffect(VerifyExternalAuthenticationRequestSchema, {
         onExcessProperty: 'error',
       })(input).pipe(
@@ -256,4 +261,13 @@ export const makeCommercePortalAuthVerificationService = Effect.fn('CommercePort
 
     return { verifyExternalAuthentication };
   },
+);
+
+/** Provider state and owner proof are installed at the root; caller authority is scoped by the HTTP boundary. */
+export const CommercePortalAuthVerificationServiceLive = Layer.effect(
+  CommercePortalAuthVerificationService,
+  Effect.gen(function* makeVerificationServiceLive() {
+    const reader = yield* CommercePortalAuthSessionReaderService;
+    return yield* makeCommercePortalAuthVerificationService(reader);
+  }),
 );

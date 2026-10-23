@@ -28,6 +28,7 @@ import {
   commercePortalActionKeys,
   commercePortalPrincipal,
   commercePortalRelationships,
+  commercePortalVerificationWorkloadGrants,
 } from '../demo/commerce-portal.mts';
 import { toIdentityNamespaceAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
 
@@ -239,4 +240,20 @@ it('provisions only the Commerce portal namespace and its three Core binding Act
   }
   expect(rows.filter((row) => row.resourceType === 'action' && row.relation === 'executor')).toHaveLength(3);
   expect(rows.some((row) => row.relation === 'identity_admin')).toBe(false);
+});
+
+it('grants only the exact portal workload on the owner verification audience', () => {
+  expect(commercePortalVerificationWorkloadGrants()).toEqual({
+    grants: [
+      {
+        commerceAuthenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1',
+        operation: 'commerce-portal-authentication.verify-external-authentication.v1',
+        receivingAudience: 'shell-super-app',
+        tenantId: demoTenantId,
+        workloadAuthenticationNamespaceId: 'ontos.staff.better-auth.v1',
+        workloadPrincipalId: commercePortalPrincipal.principalId,
+      },
+    ],
+    providerEndpointAudience: 'commerce-customer-context',
+  });
 });

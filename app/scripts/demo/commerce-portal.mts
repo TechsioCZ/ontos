@@ -172,6 +172,20 @@ export const commercePortalExternalIdentityDeployment = () => {
   };
 };
 
+export const commercePortalVerificationWorkloadGrants = () => ({
+  grants: [
+    {
+      commerceAuthenticationNamespaceId: COMMERCE_PORTAL_NAMESPACE,
+      operation: 'commerce-portal-authentication.verify-external-authentication.v1',
+      receivingAudience: SHELL_AUDIENCE,
+      tenantId: demoTenantId,
+      workloadAuthenticationNamespaceId: STAFF_NAMESPACE,
+      workloadPrincipalId: commercePortalPrincipal.principalId,
+    },
+  ],
+  providerEndpointAudience: GATEWAY_CONTEXT_AUDIENCES[0],
+});
+
 class CommercePortalError extends Schema.TaggedError<CommercePortalError>()('CommercePortalError', {
   reason: Schema.String,
 }) {}
@@ -344,6 +358,9 @@ const main = (envFileOption: string | undefined) =>
     const deployment = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(
       commercePortalExternalIdentityDeployment(),
     );
+    const verificationGrants = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(
+      commercePortalVerificationWorkloadGrants(),
+    );
     yield* writeEnv(
       envFile,
       new Map([
@@ -351,6 +368,7 @@ const main = (envFileOption: string | undefined) =>
         [KEY_VARIABLE, key],
         ['ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY', key],
         ['ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT', deployment],
+        ['COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS', verificationGrants],
       ]),
     );
     yield* Console.log(`commerce-portal: Core identity transport and Shell provider data -> ${envFile}`);

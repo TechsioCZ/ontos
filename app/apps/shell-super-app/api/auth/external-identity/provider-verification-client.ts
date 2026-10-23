@@ -42,6 +42,7 @@ export const acquireExternalIdentityWorkloadAssertion = Effect.fn('ExternalIdent
   function* acquire(
     configuration: ExternalIdentityProviderConfiguration,
     request: ExternalIdentityVerificationRequest,
+    verificationAudience: string,
   ) {
     const context = yield* requireService(
       Effect.serviceOption(ExternalIdentityHttpWorkloadContext),
@@ -94,7 +95,7 @@ export const acquireExternalIdentityWorkloadAssertion = Effect.fn('ExternalIdent
     );
     const response = yield* issuer
       .issue({
-        audience: configuration.providerEndpointAudience,
+        audience: verificationAudience,
         compositionRevision: context.compositionRevision,
         principal: context.principal,
       })
@@ -136,7 +137,7 @@ export const ExternalIdentityVerificationClientLive = Layer.effect(
       request: ExternalIdentityVerificationRequest,
       options: { readonly requestCorrelation: string },
     ) {
-      const authorization = yield* acquireExternalIdentityWorkloadAssertion(configuration, request);
+      const authorization = yield* acquireExternalIdentityWorkloadAssertion(configuration, request, installed.appId);
       const url = new URL(
         `/${installed.appId}-api${installed.declaration.verification.path}`,
         installed.backendBaseUrl,

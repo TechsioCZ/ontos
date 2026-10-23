@@ -1,4 +1,5 @@
-import { Context, Schema } from 'effect';
+import { Config, Context, Effect, Layer, Option, Schema } from 'effect';
+import { ultramodernApiMarker } from '../../../shared/ultramodern-build.ts';
 
 import {
   AuthenticationNamespaceIdSchema,
@@ -33,3 +34,17 @@ export class CommercePortalAuthVerificationWorkloadGrantConfiguration extends Co
 >()(
   '@app/commerce-customer-context/api/portal-auth/verification-http/workload-grants/CommercePortalAuthVerificationWorkloadGrantConfiguration',
 ) {}
+
+/** Absent configuration denies all callers; malformed deployment data fails construction closed. */
+export const CommercePortalAuthVerificationWorkloadGrantConfigurationLive = Layer.effect(
+  CommercePortalAuthVerificationWorkloadGrantConfiguration,
+  Config.option(Config.String('COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS')).pipe(
+    Effect.flatMap((value) =>
+      Option.isSome(value)
+        ? Schema.decodeUnknownEffect(Schema.fromJsonString(CommercePortalAuthVerificationWorkloadGrantsSchema), {
+            onExcessProperty: 'error',
+          })(value.value)
+        : Effect.succeed({ grants: [], providerEndpointAudience: ultramodernApiMarker.appId }),
+    ),
+  ),
+);

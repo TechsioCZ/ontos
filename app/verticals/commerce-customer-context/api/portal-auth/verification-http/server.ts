@@ -1,8 +1,15 @@
 import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
-import { Effect, Redacted } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
+import { CommercePortalAuthVerificationCaller } from '../provider/verification-caller-service.ts';
+import { CommercePortalAuthVerificationCallerRejected } from '../provider/verification-caller-rejected.ts';
+import { VerifyExternalAuthenticationRequestSchema } from '../../../shared/portal-auth-contracts.ts';
 import type { HttpServerRequest } from 'effect/unstable/http';
 import { CommercePortalAuthVerificationService } from '../provider/verification.ts';
-import { CommercePortalAuthVerificationApi } from '../../../shared/portal-auth-verification.ts';
+import { commerceCustomerContextApi } from '../../../shared/api.ts';
+import {
+  CommercePortalAuthVerificationApi,
+  COMMERCE_PORTAL_AUTH_VERIFY_OPERATION,
+} from '../../../shared/portal-auth-verification.ts';
 import type { CommercePortalAuthVerificationRequest } from '../../../shared/portal-auth-verification.ts';
 import {
   commercePortalAuthVerificationForbiddenProblem,
@@ -42,6 +49,8 @@ const providerRequest = (request: CommercePortalAuthVerificationRequest) => {
     : { ...base, enrollmentAttemptId: request.enrollmentAttemptId };
 };
 
+const sameVerifiedRequest = Schema.toEquivalence(VerifyExternalAuthenticationRequestSchema);
+
 const execute = Effect.fn('CommercePortalAuthVerificationHttp.execute')(function* execute(
   payload: CommercePortalAuthVerificationRequest,
   request: HttpServerRequest.HttpServerRequest,
@@ -63,8 +72,21 @@ const execute = Effect.fn('CommercePortalAuthVerificationHttp.execute')(function
       }),
     );
 
+  // Only the request that passed live gateway redemption and exact workload grants may reach
+  // provider state. This delegation is request-local and cannot authorize another subject or nonce.
+  const admitted = providerRequest(payload);
+  const caller: CommercePortalAuthVerificationCaller['Service'] = {
+    authorize: (input) =>
+      input.operation === COMMERCE_PORTAL_AUTH_VERIFY_OPERATION && sameVerifiedRequest(input, admitted)
+        ? Effect.void
+        : Effect.fail(
+            new CommercePortalAuthVerificationCallerRejected({ reason: 'The verified workload request changed' }),
+          ),
+  };
   const verification = yield* CommercePortalAuthVerificationService;
-  return yield* verification.verifyExternalAuthentication(providerRequest(payload)).pipe(
+  return yield* verification.verifyExternalAuthentication(admitted).pipe(
+    // oxlint-disable-next-line effect-native/no-effect-provide-in-library -- The trusted HTTP boundary delegates only its redeemed, exact request; authority must not be global.
+    Effect.provideService(CommercePortalAuthVerificationCaller, caller),
     Effect.catchTags({
       CommercePortalAuthVerificationCallerRejected: providerRejectedProblem,
       CommercePortalAuthVerificationCallerUnavailable: providerUnavailableProblem,
@@ -73,14 +95,14 @@ const execute = Effect.fn('CommercePortalAuthVerificationHttp.execute')(function
   );
 });
 
-/**
- * The standalone mount. The Commerce composition root cannot mount this group yet: the handler's
- * verifier requires `CommercePortalAuthVerificationCaller` and `CommerceEnrollmentProofService`,
- * neither of which has a production layer anywhere in this vertical — both exist only as test
- * doubles. Mounting it before those owner ports land would publish a route that can only answer
- * 503, so the route stays deployment-gated until they do.
- */
+/** The root mounts this private group with the provider reader and durable owner Attempt proof. */
 export const commercePortalAuthVerificationApiLive = HttpApiBuilder.group(
+  commerceCustomerContextApi,
+  'externalAuthenticationVerification',
+  (handlers) => handlers.handle('verifyExternalAuthentication', ({ payload, request }) => execute(payload, request)),
+);
+
+export const commercePortalAuthVerificationStandaloneApiLive = HttpApiBuilder.group(
   CommercePortalAuthVerificationApi,
   'externalAuthenticationVerification',
   (handlers) => handlers.handle('verifyExternalAuthentication', ({ payload, request }) => execute(payload, request)),

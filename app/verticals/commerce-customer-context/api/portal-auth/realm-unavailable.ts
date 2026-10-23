@@ -7,6 +7,8 @@ import { CommercePortalAuthAuditUnavailable } from '../../src/portal-auth/audit/
 import type { CommercePortalAuthOptions } from './provider/auth.ts';
 import { CommercePortalAuthAccountCreationService } from './provider/account-create.ts';
 import { CommercePortalAuthAccountCreationUnavailable } from './provider/account-creation-unavailable.ts';
+import { CommercePortalAuthVerificationService } from './provider/verification.ts';
+import { CommercePortalAuthVerificationCallerUnavailable } from './provider/verification-caller-unavailable.ts';
 import { CommercePortalAuthConfig } from './provider/config-service.ts';
 import type { CommercePortalAuthConfigValue } from './provider/config.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from './provider/config.ts';
@@ -171,6 +173,7 @@ const unavailableAccountCreation: CommercePortalAuthAccountCreationService['Serv
 
 /** Exactly the tags the five portal-auth groups read, with no provider, database or transport. */
 export type CommercePortalAuthHandlerServices =
+  | CommercePortalAuthVerificationService
   | CommercePortalAuthAudit
   | CommercePortalAuthAccountCreationService
   | CommercePortalAuthConfig
@@ -186,6 +189,10 @@ export const commercePortalAuthRealmUnavailableLive = (
   trustedOrigins: readonly string[],
 ): Layer.Layer<CommercePortalAuthHandlerServices> =>
   Layer.mergeAll(
+    Layer.succeed(CommercePortalAuthVerificationService, {
+      verifyExternalAuthentication: () =>
+        Effect.fail(new CommercePortalAuthVerificationCallerUnavailable({ reason: UNAVAILABLE_REASON })),
+    }),
     Layer.succeed(CommercePortalAuthAudit, {
       record: () =>
         Effect.fail(new CommercePortalAuthAuditUnavailable({ operation: 'audit-record', reason: UNAVAILABLE_REASON })),

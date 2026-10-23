@@ -119,3 +119,32 @@ it.effect('fails the portal-auth routes closed with the retryable unavailable pr
     }),
   ),
 );
+
+it.effect('mounts the declared private verification path in the production root and denies anonymous callers', () =>
+  Effect.scoped(
+    Effect.gen(function* privateVerificationReachability() {
+      const runtime = yield* unconfiguredRuntime;
+      const response = yield* send(
+        runtime,
+        new Request(`${ORIGIN}/portal-auth/internal/verify`, {
+          body: JSON.stringify({
+            audience: 'shell-super-app',
+            authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1',
+            nonce: '50000000-0000-4000-8000-000000000011',
+            operation: 'commerce-portal-authentication.verify-external-authentication.v1',
+            operationRef: 'private-verification-root-regression',
+            providerSubjectId: 'absent-subject',
+            sessionRef: 'better-auth-session:ontos.commerce.portal.better-auth.v1:absent-session',
+            subjectType: 'user',
+            tenantId: '10000000-0000-4000-8000-000000000002',
+          }),
+          headers: { 'content-type': 'application/json' },
+          method: 'POST',
+        }),
+      );
+      const body = yield* jsonBody(response);
+      expect(response.status, JSON.stringify(body)).toBe(401);
+      expect(body).toMatchObject({ status: 401 });
+    }),
+  ),
+);

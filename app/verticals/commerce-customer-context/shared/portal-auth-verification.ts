@@ -43,12 +43,21 @@ export const CommercePortalAuthVerificationRequestSchema = Schema.Struct({
 
 export type CommercePortalAuthVerificationRequest = typeof CommercePortalAuthVerificationRequestSchema.Type;
 
-export const CommercePortalAuthVerificationHeadersSchema = Schema.Struct({
-  authorization: Schema.optionalKey(
-    Schema.Redacted(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2000))),
-  ),
-  'x-correlation-id': Schema.optionalKey(boundedReference),
-});
+/** HTTP metadata is open; the two authority headers retain their own codecs. */
+export const CommercePortalAuthVerificationHeadersSchema = Schema.StructWithRest(
+  Schema.Struct({
+    authorization: Schema.optionalKey(
+      Schema.Redacted(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2000))),
+    ),
+    'x-correlation-id': Schema.optionalKey(boundedReference),
+  }),
+  [
+    Schema.Record(
+      Schema.String.check(Schema.isPattern(/^(?!(?:authorization|x-correlation-id)$).+/u)),
+      Schema.Union([Schema.String, Schema.Redacted(Schema.String)]),
+    ),
+  ],
+);
 
 export type CommercePortalAuthVerificationHeaders = typeof CommercePortalAuthVerificationHeadersSchema.Type;
 
@@ -82,7 +91,7 @@ export const commercePortalAuthVerificationProblems = [
  */
 export const CommercePortalAuthVerificationApi = HttpApi.make('CommercePortalAuthVerificationApi').add(
   HttpApiGroup.make('externalAuthenticationVerification').add(
-    HttpApiEndpoint.post('verifyExternalAuthentication', COMMERCE_PORTAL_AUTH_VERIFY_PATH, {
+    HttpApiEndpoint.post('verifyExternalAuthentication', '/portal-auth/internal/verify', {
       error: commercePortalAuthVerificationProblems,
       headers: CommercePortalAuthVerificationHeadersSchema,
       payload: CommercePortalAuthVerificationRequestSchema,

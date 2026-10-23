@@ -123,9 +123,9 @@ const runVerification = (
   proof: CommerceEnrollmentProofService['Service'] = proofUnavailable,
 ) =>
   makeCommercePortalAuthVerificationService(sessionReader).pipe(
-    Effect.provideService(CommercePortalAuthVerificationCaller, caller),
     Effect.provideService(CommerceEnrollmentProofService, proof),
     Effect.flatMap((service) => service.verifyExternalAuthentication(input)),
+    Effect.provideService(CommercePortalAuthVerificationCaller, caller),
   );
 
 const makeAccountGateway = (
