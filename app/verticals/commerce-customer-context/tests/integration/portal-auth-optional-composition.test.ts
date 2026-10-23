@@ -130,6 +130,7 @@ it.effect('mounts the declared private verification path in the production root 
           body: JSON.stringify({
             audience: 'shell-super-app',
             authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1',
+            authenticationOperation: 'resolve',
             nonce: '50000000-0000-4000-8000-000000000011',
             operation: 'commerce-portal-authentication.verify-external-authentication.v1',
             operationRef: 'private-verification-root-regression',

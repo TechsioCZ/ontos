@@ -18,6 +18,7 @@ import {
   commerceCoreIdentityClientOptions,
 } from '../../../api/portal-auth/provider/core-identity-client-config.ts';
 import { EnrollmentDigestSchema } from '../../../shared/enrollment-contracts.ts';
+import { CommerceEnrollmentAuthenticationReferenceJsonSchema } from '../../../shared/portal-auth-enrollment-reference.ts';
 import type {
   EnrollmentAttemptSnapshot,
   EnrollmentOwnerOperationSnapshot,
@@ -153,7 +154,6 @@ export class CommerceEnrollmentOwnerEffectRegistry extends Context.Service<
   '@app/commerce-customer-context/enrollment/orchestration/owner-effect-registry/CommerceEnrollmentOwnerEffectRegistry',
 ) {}
 
-const CORE_BINDING_AUTHENTICATION_REF_PURPOSE = 'commerce.portal-enrollment.core-binding.authentication-ref';
 const CORE_BINDING_RECONCILIATION_PURPOSE = 'commerce.portal-enrollment.core-binding.reconciliation';
 const PARTY_CANDIDATE_EVIDENCE_PURPOSE = 'commerce.portal-enrollment.party-candidate.evidence';
 const RETAIL_PORTAL_BINDING_REASON = 'Retail self-enrollment established the portal profile binding';
@@ -756,12 +756,30 @@ interface CoreIdentitySeam {
   readonly clientOptions: (context: CommerceEnrollmentOwnerEffectContext) => ExternalIdentityClientOptions;
 }
 
-const coreAuthenticationRef = (context: CommerceEnrollmentOwnerEffectContext): string =>
-  retailSelfEnrollmentEvidenceReference([
-    CORE_BINDING_AUTHENTICATION_REF_PURPOSE,
-    context.attempt.tenantId,
-    context.attempt.portalEnrollmentAttemptId,
-  ]);
+const coreAuthenticationRef = (context: CommerceEnrollmentOwnerEffectContext) => {
+  const provider = context.operations.find(
+    (operation) =>
+      operation.ownerModuleKey === PORTAL_AUTH_OWNER_MODULE_KEY &&
+      operation.transitionKey ===
+        (context.attempt.journey === 'EXISTING_ACCOUNT'
+          ? PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY
+          : PORTAL_ACCOUNT_CREATION_TRANSITION_KEY) &&
+      operation.status === 'SUCCEEDED',
+  );
+  return provider === undefined
+    ? Effect.fail(
+        attemptRejected(
+          'The enrollment binding has no original provider proof',
+          context.attempt.portalEnrollmentAttemptId,
+        ),
+      )
+    : Schema.encodeUnknownEffect(CommerceEnrollmentAuthenticationReferenceJsonSchema)({
+        enrollmentAttemptId: context.attempt.portalEnrollmentAttemptId,
+        kind: 'commerce-enrollment-binding.v1',
+        providerOwnerOperationId: provider.portalEnrollmentOwnerOperationId,
+        sellingLegalEntityId: context.subject.sellingLegalEntityRef.resourceId,
+      }).pipe(Effect.mapError(rejectFor(context, 'The enrollment binding reference is invalid')));
+};
 
 const coreIdentityDigest = (
   context: CommerceEnrollmentOwnerEffectContext,
@@ -848,7 +866,7 @@ const coreReserveEntry = (seam: CoreIdentitySeam): RegistryEntry =>
     if (accountSubject === undefined) {
       return none;
     }
-    const authenticationRef = coreAuthenticationRef(context);
+    const authenticationRef = yield* coreAuthenticationRef(context);
     const { readRequest, request, requestDigest } = yield* Effect.all(
       {
         // Reserve has no binding identifier of its own yet, so its reconciliation is the exact
@@ -918,11 +936,12 @@ const coreActivateEntry = (seam: CoreIdentitySeam): RegistryEntry =>
     if (binding.outcome !== 'FOUND') {
       return none;
     }
+    const authenticationRef = yield* coreAuthenticationRef(context);
     const { request, requestDigest } = yield* Effect.all(
       {
         request: existingAccountCoreIdentityActivateRequest({
           authBindingId: reserved.value,
-          authenticationRef: coreAuthenticationRef(context),
+          authenticationRef,
           compositionRevision: context.attempt.compositionRevision,
           expectedRevision: binding.bindingRevision,
         }).pipe(

@@ -41,6 +41,8 @@ export const ExternalIdentityVerificationRequestSchema = Schema.Struct({
   /** The audience the provider endpoint receives the request on. */
   audience: boundedReference,
   authenticationNamespaceId: AuthenticationNamespaceIdSchema,
+  /** The authenticated Shell operation, never a caller-selected provider purpose. */
+  authenticationOperation: Schema.Literals(['activate', 'gateway-context', 'read', 'resolve', 'reserve', 'status']),
   enrollmentAttemptId: Schema.optionalKey(EnrollmentAttemptIdSchema),
   nonce: uuid,
   operation: boundedReference,

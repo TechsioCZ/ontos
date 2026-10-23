@@ -202,6 +202,7 @@ const makeProviderRequest = (audience = providerEndpointAudience): ExternalIdent
   decode(ExternalIdentityVerificationRequestSchema, {
     audience,
     authenticationNamespaceId: namespaceId,
+    authenticationOperation: 'gateway-context',
     nonce: '20000000-0000-4000-8000-000000000001',
     operation: declaration.verification.operation,
     operationRef: 'provider-operation-01',
@@ -343,6 +344,17 @@ it.effect('admits a gateway-context assertion audienced for the provider verific
     expect(Result.isFailure(refused)).toBe(true);
     if (Result.isFailure(refused)) {
       expect(refused.failure.reason).toBe('The external identity receiving audience changed during admission');
+    }
+    expect(issueCalls).toHaveLength(1);
+
+    const substitutedOperation = yield* Effect.result(
+      acquireFor({ ...makeProviderRequest(), authenticationOperation: 'reserve' }),
+    );
+    expect(Result.isFailure(substitutedOperation)).toBe(true);
+    if (Result.isFailure(substitutedOperation)) {
+      expect(substitutedOperation.failure.reason).toBe(
+        'The provider authentication operation changed during admission',
+      );
     }
     expect(issueCalls).toHaveLength(1);
   }),

@@ -61,7 +61,7 @@ const runCommand = Effect.fn('RetailCustomerDirectory.runCommand')(function* run
   );
   if (Option.isSome(resolution)) {
     if (resolution.value.state !== 'COMMITTED') {
-      yield* unavailable('The customer command has an unresolved invocation; no duplicate was dispatched');
+      return yield* unavailable('The customer command has an unresolved invocation; no duplicate was dispatched');
     }
   } else {
     const gateway = yield* acquireRetailPartyGateway(input);
@@ -81,6 +81,7 @@ const runCommand = Effect.fn('RetailCustomerDirectory.runCommand')(function* run
           );
     yield* dispatched;
   }
+  return yield* Effect.void;
 });
 
 const contactPayload = (

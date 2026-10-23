@@ -16,9 +16,13 @@ import {
   commerceCoreIdentityClientOptions,
 } from '../../../api/portal-auth/provider/core-identity-client-config.ts';
 import { SellingLegalEntityRefSchema } from '../../../shared/domain/profile-contracts.ts';
+import { CommerceEnrollmentAuthenticationReferenceJsonSchema } from '../../../shared/portal-auth-enrollment-reference.ts';
+import { PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY } from '../journeys/existing-account.ts';
+import { PORTAL_ACCOUNT_CREATION_TRANSITION_KEY, PORTAL_AUTH_OWNER_MODULE_KEY } from './prepared-owner-authority.ts';
 import {
   EnrollmentModuleKeySchema,
   EnrollmentTransitionKeySchema,
+  ReadEnrollmentOwnerOperationInputSchema,
   isEnrollmentAttemptTerminal,
 } from '../../../shared/enrollment-contracts.ts';
 import type { EnrollmentAttemptSnapshot, ReadEnrollmentAttemptInput } from '../../../shared/enrollment-contracts.ts';
@@ -52,7 +56,6 @@ const LEGAL_ENTITY_RESOURCE_TYPE = 'core.identity.legal-entity';
 const PRINCIPAL_RESOURCE_TYPE = 'core.identity.principal';
 
 /** Namespaces the derived references below so two purposes can never collide on one Attempt. */
-const CORE_BINDING_AUTHENTICATION_REF_PURPOSE = 'commerce.portal-enrollment.core-binding.authentication-ref';
 const CORE_BINDING_RESERVE_PURPOSE = 'commerce.portal-enrollment.core-binding.reserve';
 const CORE_BINDING_ACTIVATE_PURPOSE = 'commerce.portal-enrollment.core-binding.activate';
 const PARTY_CANDIDATE_DIGEST_PURPOSE = 'commerce.portal-enrollment.party-candidate';
@@ -355,9 +358,28 @@ const resolveSubject = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.r
     return yield* rejected(attempt, 'A terminal Enrollment Attempt has no journey subject to prepare');
   }
   const sellingLegalEntityRef = yield* sellingLegalEntityRefFor(attempt);
+  const providerOperationIdentity = yield* Schema.decodeEffect(ReadEnrollmentOwnerOperationInputSchema)({
+    ownerModuleKey: PORTAL_AUTH_OWNER_MODULE_KEY,
+    portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+    tenantId: attempt.tenantId,
+    transitionKey:
+      attempt.journey === 'EXISTING_ACCOUNT'
+        ? PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY
+        : PORTAL_ACCOUNT_CREATION_TRANSITION_KEY,
+  }).pipe(Effect.mapError((cause) => rejected(attempt, 'The original provider operation identity is invalid', cause)));
+  const providerOperation = yield* store.readOwnerOperation(providerOperationIdentity);
+  if (providerOperation.status !== 'SUCCEEDED') {
+    return yield* unavailable(attempt, 'The original provider account proof is not settled');
+  }
+  const authenticationRef = yield* Schema.encodeUnknownEffect(CommerceEnrollmentAuthenticationReferenceJsonSchema)({
+    enrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+    kind: 'commerce-enrollment-binding.v1',
+    providerOwnerOperationId: providerOperation.portalEnrollmentOwnerOperationId,
+    sellingLegalEntityId: sellingLegalEntityRef.resourceId,
+  }).pipe(Effect.mapError((cause) => rejected(attempt, 'The enrollment binding reference is invalid', cause)));
   const call: CoreCall = {
     attempt,
-    authenticationRef: attemptReference(CORE_BINDING_AUTHENTICATION_REF_PURPOSE, attempt),
+    authenticationRef,
     client,
     options: clientOptions(attempt),
   };

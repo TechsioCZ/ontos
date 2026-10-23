@@ -9,7 +9,19 @@ import {
 } from '@app/core-runtime/auth/external-identity-contracts';
 import { Schema } from 'effect';
 
+import {
+  EnrollmentAttemptIdSchema,
+  EnrollmentOwnerOperationIdSchema,
+  EnrollmentLegalEntityIdSchema,
+} from './enrollment-identifiers.ts';
+
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from './portal-auth-contracts.ts';
+
+export {
+  EnrollmentAttemptIdSchema,
+  EnrollmentOwnerOperationIdSchema,
+  EnrollmentLegalEntityIdSchema,
+} from './enrollment-identifiers.ts';
 
 /**
  * Shared, secret-free vocabulary for the Commerce Portal Enrollment Attempt.  This file is
@@ -17,11 +29,8 @@ import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from './portal-auth-contracts.ts
  */
 
 const uuid = Schema.String.check(Schema.isUUID());
-export const EnrollmentAttemptIdSchema = uuid.pipe(Schema.brand('EnrollmentAttemptId'));
 export type EnrollmentAttemptId = typeof EnrollmentAttemptIdSchema.Type;
-export const EnrollmentOwnerOperationIdSchema = uuid.pipe(Schema.brand('EnrollmentOwnerOperationId'));
 export const EnrollmentInvitationIdSchema = uuid.pipe(Schema.brand('EnrollmentInvitationId'));
-export const EnrollmentLegalEntityIdSchema = uuid.pipe(Schema.brand('EnrollmentLegalEntityId'));
 export const EnrollmentActionInvocationIdSchema = ActionInvocationIdSchema;
 export const EnrollmentPrincipalIdSchema = PrincipalIdSchema;
 export const EnrollmentTenantIdSchema = TenantIdSchema;

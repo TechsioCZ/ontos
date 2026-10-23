@@ -161,6 +161,7 @@ const makeProviderRequest = (input: {
     // The request is received by the provider; the Core audience remains bound in the admission below.
     audience: input.configuration.providerEndpointAudience,
     authenticationNamespaceId: input.configuration.authenticationNamespaceId,
+    authenticationOperation: input.context.operation,
     nonce: input.admission.nonce,
     operation: input.installed.declaration.verification.operation,
     operationRef: input.admission.operationRef,
