@@ -11,7 +11,12 @@ import type {
   StorefrontCatalogQuery,
   StorefrontOrderStatus,
 } from '../../shared/apis/records.ts';
-import { CATEGORY_RESULT_LIMIT, categoryQueryWords, rankCategories } from '../../shared/domain/category-search.ts';
+import {
+  CATEGORY_RESULT_LIMIT,
+  categoryQueryWords,
+  normalizeCategoryName,
+  rankCategories,
+} from '../../shared/domain/category-search.ts';
 import { CatalogChangeSchema } from '../../shared/domain/merchandise-model.ts';
 import type {
   CategoryNode,
@@ -93,10 +98,20 @@ type VariantSummary = NonNullable<ProductRecord['variantSummary']>;
  * Active sellable variants of the row's product in aggregate, computed inside the page query (no N+1). The scope
  * is bound as parameters: an unqualified outer column would resolve to the variant row itself.
  */
+// A positive ledger balance is not available stock when it cannot cover one mandatory package.
+// Match order-quantity and the detail purchase constraints, per variant (never pool partial packages).
+const variantMinimumSql = sql`coalesce((v.document->>'minimumQuantity')::numeric,
+  (${sql.raw('"products"."document"')}->>'minimumQuantity')::numeric, 1)`;
+const variantPackageSql = sql`coalesce((v.document->>'packageQuantity')::numeric,
+  (${sql.raw('"products"."document"')}->>'packageQuantity')::numeric)`;
+const variantOrderMinimumSql = sql`case when ${variantPackageSql} > 0
+  then ceil(${variantMinimumSql} / ${variantPackageSql} - 0.000001) * ${variantPackageSql}
+  else ${variantMinimumSql} end`;
 const variantSummarySql = (scope: StoreScope) => sql<VariantSummary>`(select json_build_object(
     'count', count(*)::int,
     'minGrossPriceMinor', min(v.gross_price_minor),
-    'stockOnHand', coalesce(sum(v.stock_on_hand), 0),
+    'stockOnHand', coalesce(sum(case when v.stock_on_hand >= ${variantOrderMinimumSql}
+      then v.stock_on_hand else 0 end), 0),
     'units', coalesce(array_agg(distinct v.unit order by v.unit), '{}'::text[]))
   from ${productVariants} v
   where v.tenant_id = ${scope.tenantId}::uuid and v.legal_entity_id = ${scope.legalEntityId}::uuid
@@ -688,16 +703,16 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
         .map((row): CategoryNode => ({
           hasChildren: row.hasChildren,
           id: row.id,
-          name: row.name,
+          name: normalizeCategoryName(row.name),
           parentId: row.parentId,
           position: row.position,
           slug: row.slug,
           ...(row.published === null ? {} : { published: row.published }),
-          ...(row.heading === null ? {} : { heading: row.heading }),
+          ...(row.heading === null ? {} : { heading: normalizeCategoryName(row.heading) }),
           ...(row.description === null ? {} : { description: row.description }),
           ...(row.longDescription === null ? {} : { longDescription: row.longDescription }),
           ...(row.imageSrc === null ? {} : { imageSrc: row.imageSrc }),
-          ...(row.imageAlt === null ? {} : { imageAlt: row.imageAlt }),
+          ...(row.imageAlt === null ? {} : { imageAlt: normalizeCategoryName(row.imageAlt) }),
           ...(row.history === null || row.history === undefined ? {} : { history: decodeHistory(row.history) }),
         })),
   });

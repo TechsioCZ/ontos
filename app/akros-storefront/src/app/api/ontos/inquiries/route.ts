@@ -70,6 +70,16 @@ export async function POST(request: Request) {
     }
     throw new Error("Inquiry owner is busy");
   } catch (error) {
+    if (error instanceof OntosError && error.status === 403) {
+      console.error("[AKROS] Inquiry owner authorization denied");
+      return Response.json(
+        {
+          message:
+            "Kontaktní formulář je dočasně nedostupný. Dotaz nebyl odeslán. Napište nám prosím na akros@akros.cz nebo zavolejte na 737 591 849.",
+        },
+        { status: 503, headers: { "cache-control": "no-store" } },
+      );
+    }
     return problem(
       error,
       "Přijetí dotazu se nepodařilo potvrdit. Údaje zachovejte a zkuste odeslání znovu.",

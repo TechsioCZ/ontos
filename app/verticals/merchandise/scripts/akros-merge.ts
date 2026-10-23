@@ -1,5 +1,6 @@
 import type { MerchandiseState } from '../shared/apis/records.ts';
 import type { CatalogCategory, Product } from '../shared/domain/merchandise-model.ts';
+import { normalizeCategoryName } from '../shared/domain/category-search.ts';
 import { applyDemoPriceTiers } from './akros-price-tiers.ts';
 
 const namedEntities: Readonly<Record<string, string>> = {
@@ -37,7 +38,12 @@ export const decodeCategoryText = <C extends Partial<Pick<CatalogCategory, (type
     if (typeof value !== 'string') continue;
     // Kai's export writes a missing description as the literal text "NULL"; OntOS stores it as empty.
     if (key !== 'name' && /^\s*(null|undefined)\s*$/iu.test(value)) patch[key] = '';
-    else if (decodeHtmlEntities(value) !== value) patch[key] = decodeHtmlEntities(value);
+    else {
+      const decoded = decodeHtmlEntities(value);
+      const normalized =
+        key === 'name' || key === 'heading' || key === 'imageAlt' ? normalizeCategoryName(decoded) : decoded;
+      if (normalized !== value) patch[key] = normalized;
+    }
   }
   return Object.keys(patch).length === 0 ? category : { ...category, ...patch };
 };

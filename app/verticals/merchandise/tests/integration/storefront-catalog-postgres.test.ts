@@ -764,3 +764,61 @@ it.live(
     );
   },
 );
+
+it.live('counts only independently orderable variant packages in both card and detail summaries', () => {
+  const variant = (id: string, constraints: { minimumQuantity?: number; packageQuantity?: number } = {}) => ({
+    attributes: '',
+    id,
+    name: id,
+    priceMinor: 100,
+    sku: id,
+    ...constraints,
+  });
+  const balances = [
+    ['partial-one', 15],
+    ['partial-two', 40],
+    ['rounded-below', 75],
+    ['rounded-ready', 100],
+    ['fallback', 49],
+  ] as const;
+  const state = decodeState({
+    ...catalogInput,
+    movements: balances.map(([variantId, delta]) => ({
+      at: catalogInput.movements[0].at,
+      delta,
+      id: `receipt-${variantId}`,
+      productId: 'p1',
+      reason: 'RECEIPT',
+      variantId,
+    })),
+    products: [
+      {
+        ...catalogInput.products[0],
+        minimumQuantity: 50,
+        packageQuantity: 50,
+        variants: [
+          variant('partial-one', { minimumQuantity: 50, packageQuantity: 50 }),
+          variant('partial-two', { minimumQuantity: 50, packageQuantity: 50 }),
+          variant('rounded-below', { minimumQuantity: 75, packageQuantity: 50 }),
+          variant('rounded-ready', { minimumQuantity: 75, packageQuantity: 50 }),
+          variant('fallback'),
+        ],
+      },
+    ],
+  });
+  return withMerchandise(state, (fixture) =>
+    Effect.gen(function* () {
+      for (const fields of ['card', 'full'] as const) {
+        const page = yield* catalogPage(fixture, { fields, productIds: ['p1'] });
+        expect(page.products[0]?.variantSummary).toEqual({
+          count: 5,
+          minGrossPriceMinor: 121,
+          stockOnHand: 100,
+          units: ['ks'],
+        });
+        if (fields === 'full')
+          expect(page.products[0]?.variantRecords?.map((row) => row.stockOnHand)).toEqual([15, 40, 75, 100, 49]);
+      }
+    }),
+  );
+});

@@ -4,6 +4,7 @@ import Image from "next/image";
 import { ContactForm } from "@/components/contact-form";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
+import { readProducts } from "@/ontos/catalog-server";
 import { branches } from "@/content/editorial";
 
 export const metadata: Metadata = { title: "Kontakty" };
@@ -14,6 +15,11 @@ export default async function ContactsPage({
   searchParams: Promise<{ productId?: string }>;
 }) {
   const { productId } = await searchParams;
+  const product = productId
+    ? (await readProducts({ productIds: [productId], pageSize: 1 }, "card", true)).products.find(
+        (item) => item.id === productId,
+      )
+    : undefined;
   return (
     <StorefrontShell>
       <StorefrontBreadcrumbs items={[{ href: "/", label: "Domů" }, { label: "Kontakty" }]} />
@@ -56,6 +62,7 @@ export default async function ContactsPage({
           <ContactForm
             kind={productId ? "PRODUCT_QUESTION" : "CONTACT"}
             {...(productId ? { productId } : {})}
+            {...(product ? { productName: product.name } : {})}
           />
         </section>
       </article>

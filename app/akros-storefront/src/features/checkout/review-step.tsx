@@ -71,7 +71,7 @@ export function ReviewStep() {
           </div>
           <div className="flex justify-between gap-4 py-4">
             <dt>Platba</dt>
-            <dd>Online platba není dostupná</dd>
+            <dd>Objednávka bez online platby</dd>
           </div>
           <div className="flex justify-between gap-4 py-4">
             <dt>Cena bez DPH</dt>

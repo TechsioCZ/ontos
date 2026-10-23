@@ -38,6 +38,7 @@ interface CheckoutContextValue {
   methods: DeliveryMethod[];
   methodsError: string;
   accountEmail: string | null;
+  accountReady: boolean;
   ready: boolean;
   storageError: string;
   submitted: boolean;
@@ -102,6 +103,7 @@ function CheckoutCartProvider({
   });
   const [methodsError, setMethodsError] = useState("");
   const [now, setNow] = useState(Date.now);
+  const [accountReady, setAccountReady] = useState(false);
   const [accountEmail, setAccountEmail] = useState<string | null>(null);
   const methods = now - options.loadedAt < 9_750 ? options.methods : [];
   useEffect(() => {
@@ -149,7 +151,10 @@ function CheckoutCartProvider({
   }, []);
   useEffect(() => {
     const controller = new AbortController();
-    fetch("/api/ontos/account", { cache: "no-store", signal: controller.signal })
+    fetch("/api/ontos/account", {
+      cache: "no-store",
+      signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8_000)]),
+    })
       .then(async (response) => {
         if (!response.ok) return;
         const { account } = await response.json();
@@ -160,7 +165,10 @@ function CheckoutCartProvider({
           update: (current) => ({ ...current, email: account.email }),
         });
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        if (!controller.signal.aborted) setAccountReady(true);
+      });
     return () => controller.abort();
   }, []);
   const storageRef = useRef<CheckoutStorage | null>(null);
@@ -273,6 +281,7 @@ function CheckoutCartProvider({
         methods,
         methodsError,
         accountEmail,
+        accountReady,
         ready: hydrated && cartReady,
         submitted,
         storageError: submitError || storageError,

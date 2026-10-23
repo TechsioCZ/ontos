@@ -10,10 +10,12 @@ export function ContactForm({
   compact = false,
   kind = "CONTACT",
   productId,
+  productName,
 }: {
   compact?: boolean;
   kind?: InquiryKind;
   productId?: string;
+  productName?: string;
 }) {
   const [pending, setPending] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(null);
@@ -116,11 +118,17 @@ export function ContactForm({
             type="email"
           />
         </div>
+        {productName && (
+          <p>
+            Dotaz na produkt: <strong>{productName}</strong>
+          </p>
+        )}
         {!compact && (
           <FormInput
             id="contact-subject"
             label="Předmět"
             name="subject"
+            defaultValue={productName ? `Dotaz na produkt: ${productName}`.slice(0, 160) : ""}
             maxLength={160}
             placeholder="S čím vám můžeme pomoci?"
             size="md"

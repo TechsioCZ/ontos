@@ -1,4 +1,5 @@
 "use client";
+import StoreLink from "@/components/store-link";
 import { type ReactNode, useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Steps, useSteps } from "@techsio/ui-kit/molecules/steps";
@@ -23,22 +24,25 @@ export function CheckoutLayout({
   const pathname = usePathname();
   const router = useRouter();
   const { cart } = useCart();
-  const { draft, methods, ready, storageError, submitted } = useCheckout();
+  const { draft, methods, ready, storageError, submitted, accountEmail, accountReady } =
+    useCheckout();
+  const signedIn = accountEmail !== null;
   const step = Math.max(
     0,
     checkoutSteps.findIndex((item) => item.href === pathname),
   );
-  const reachable = getReachableStep(step, cart, draft, methods);
+  const reachable = signedIn ? getReachableStep(step, cart, draft, methods) : 0;
   const steps = useSteps({
     count: 4,
     step,
     onStepChange: ({ step: next }) => {
-      router.push(checkoutSteps[getReachableStep(next, cart, draft, methods)].href);
+      router.push(checkoutSteps[signedIn ? getReachableStep(next, cart, draft, methods) : 0].href);
     },
   });
   useEffect(() => {
-    if (ready && !submitted && reachable !== step) router.replace(checkoutSteps[reachable].href);
-  }, [ready, reachable, router, step, submitted]);
+    if (ready && accountReady && !submitted && reachable !== step)
+      router.replace(checkoutSteps[reachable].href);
+  }, [ready, accountReady, reachable, router, step, submitted]);
   return (
     <div
       data-akros-checkout
@@ -57,7 +61,11 @@ export function CheckoutLayout({
               {checkoutSteps.map((item, index) => (
                 <Steps.Item key={item.href} index={index} className="block min-w-0">
                   <Steps.Trigger
-                    disabled={!ready || getReachableStep(index, cart, draft, methods) !== index}
+                    disabled={
+                      !ready ||
+                      (!signedIn && index > 0) ||
+                      getReachableStep(index, cart, draft, methods) !== index
+                    }
                     className="relative z-1 w-full flex-col justify-center text-center"
                   >
                     <Steps.Indicator>
@@ -90,7 +98,35 @@ export function CheckoutLayout({
                 )}
               </Steps.Content>
             )}
-            {ready && cart.lines.length > 0 && step === 0 && <CartNavigation />}
+            {ready &&
+              cart.lines.length > 0 &&
+              step === 0 &&
+              (!accountReady ? (
+                <output>Ověřuji přihlášení…</output>
+              ) : signedIn ? (
+                <CartNavigation />
+              ) : (
+                <section
+                  className="order-3 mt-6 grid gap-3 rounded-sm bg-(--color-base) p-6"
+                  aria-labelledby="checkout-sign-in"
+                >
+                  <h2 id="checkout-sign-in" className="font-bold">
+                    Nejdřív se přihlaste nebo vytvořte účet
+                  </h2>
+                  <p>
+                    Pro objednání potřebujete zákaznický účet. Poté vyberete dopravu a vyplníte
+                    dodací údaje. Košík i rozpracované údaje zůstanou zachované.
+                  </p>
+                  <div className="flex flex-wrap gap-4">
+                    <StoreLink href="/prihlaseni?returnTo=%2Fkosik" className="underline">
+                      Přihlásit se
+                    </StoreLink>
+                    <StoreLink href="/registrace?returnTo=%2Fkosik" className="underline">
+                      Vytvořit účet
+                    </StoreLink>
+                  </div>
+                </section>
+              ))}
             {ready && cart.lines.length > 0 && step < 3 && (
               <section
                 className="order-4 mt-(--dimension-60) min-w-0"
