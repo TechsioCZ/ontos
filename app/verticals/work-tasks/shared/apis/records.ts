@@ -71,7 +71,21 @@ export const TaskCommentSchema = Schema.Struct({
   createdAt: Schema.DateTimeUtcFromString,
   text: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(2000)),
 });
+/** Customer-authored contact inquiry retained with its actionable staff task. Not a marketing consent or claim case. */
+export const StorefrontInquirySchema = Schema.Struct({
+  requestId: Schema.String.check(Schema.isUUID()),
+  kind: Schema.Literals(['CONTACT', 'PRODUCT_QUESTION', 'COMPLAINT']),
+  name: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(120)),
+  email: Schema.Trim.check(Schema.isMaxLength(254), Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/u)),
+  subject: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(160)),
+  message: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1500)),
+  productId: Schema.optionalKey(Schema.String.check(Schema.isUUID())),
+  productSlug: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
+  productName: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
+});
+export type StorefrontInquiry = typeof StorefrontInquirySchema.Type;
 export const TaskSchema = Schema.Struct({
+  storefrontInquiry: Schema.optionalKey(StorefrontInquirySchema),
   /** Hidden from task lists (still opened by a direct link); only a completed or cancelled task can be hidden. */
   archivedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   comments: Schema.optionalKey(Schema.Array(TaskCommentSchema)),

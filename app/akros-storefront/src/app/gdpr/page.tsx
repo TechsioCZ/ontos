@@ -7,18 +7,18 @@ export default function PrivacyPage() {
   return (
     <SimpleContentPage
       title="Ochrana osobních údajů"
-      lead="Prototyp pracuje pouze s lokálními mock daty."
+      lead="Informace o zpracování údajů v prezentačním prostředí AKROS."
       sections={[
         {
           title: "Jaká data zpracováváme",
           paragraphs: [
-            "Formuláře v této ukázce neposílají data na server a nevytvářejí zákaznický účet. Košík se ukládá pouze lokálně v prohlížeči.",
+            "Kontaktní formulář odesílá jméno, e-mail a zprávu do OntOS, kde vzniká úkol pro tým AKROS. Podněty k reklamaci a dotazy na produkty zpracovává stejný tým. Oznámení o dotazu se zpracovává prostřednictvím e-mailové služby platformy. Košíky se ukládají v prohlížeči.",
           ],
         },
         {
-          title: "Produkční řešení",
+          title: "Marketing a další informace",
           paragraphs: [
-            "Zásady a souhlasy budou navázány na skutečné služby až společně s reálným backendem a právním textem provozovatele.",
+            "Odeslání dotazu není souhlas s marketingem a nepřihlašuje vás k newsletteru. Úplné právní informace včetně dob uchování a uplatnění práv musí dodat provozovatel před produkčním provozem. Do prezentačního prostředí nevkládejte citlivé údaje.",
           ],
         },
       ]}

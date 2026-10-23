@@ -9,7 +9,7 @@ import { Effect, DateTime, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { ContextAccess } from '@app/core-runtime';
 import type { ContextAccessService, OperationalScope } from '@app/core-runtime';
-import { WorkStateSchema, CalendarDateSchema } from '../../shared/apis/records.ts';
+import { type StorefrontInquiry, WorkStateSchema, CalendarDateSchema } from '../../shared/apis/records.ts';
 import {
   evolveWorkState,
   taskIsOverdue,
@@ -249,5 +249,34 @@ it.effect('task property, unit and contract context can be replaced or cleared o
     const due = { ...created.task, dueDate: CalendarDateSchema.make('2026-10-19') };
     expect(taskIsOverdue(due, '2026-10-20')).toBe(true);
     expect(taskIsOverdue(due, '2026-10-19')).toBe(false);
+  }),
+);
+
+it.effect('retains a real storefront inquiry as an actionable task with its product identity', () =>
+  Effect.gen(function* storefrontInquiryTask() {
+    const state = yield* Schema.decodeEffect(WorkStateSchema)(seed);
+    const inquiry = {
+      email: 'pavel@example.com',
+      kind: 'PRODUCT_QUESTION',
+      message: 'Prosím o potvrzení jakosti.',
+      name: 'Pavel Dvořák',
+      productId: '97672670-44ed-4de3-915d-e40e2cebe991',
+      productName: 'Šroub A4',
+      productSlug: 'sroub',
+      requestId: '97672670-44ed-4de3-915d-e40e2cebe99c',
+      subject: 'Jakost materiálu',
+    } satisfies StorefrontInquiry;
+    const command = yield* Schema.decodeEffect(SingleWorkCommandSchema)({
+      _tag: 'CreateTask',
+      description: inquiry.message,
+      storefrontInquiry: inquiry,
+      title: 'Dotaz na produkt: Jakost materiálu',
+    });
+    const change = yield* evolveWorkState(state, command, { now, resourceId: 'inquiry-task', tenantId });
+    const encoded = yield* Schema.encodeEffect(WorkStateSchema)(change.state);
+    const restored = yield* Schema.decodeEffect(WorkStateSchema)(encoded);
+    expect(restored.tasks[0]?.storefrontInquiry).toEqual(inquiry);
+    expect(restored.tasks[0]?.state).toBe('NEW');
+    expect(restored.tasks[0]?.description).toBe(inquiry.message);
   }),
 );

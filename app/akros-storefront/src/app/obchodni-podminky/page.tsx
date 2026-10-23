@@ -18,7 +18,7 @@ export default function TermsPage() {
         {
           title: "Odstoupení a reklamace",
           paragraphs: [
-            "Ukázkový formulář nic neodesílá. Úplná pravidla pro skutečné objednávky, odstoupení a reklamace budou doplněna při napojení na skutečný objednávkový systém.",
+            "Kontaktní formulář předává podnět týmu AKROS jako úkol v OntOS. Podnět k reklamaci není automaticky veden jako reklamační případ. Úplná pravidla pro objednávky, odstoupení a reklamace musí před produkčním provozem dodat provozovatel.",
           ],
         },
       ]}

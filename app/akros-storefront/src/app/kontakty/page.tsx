@@ -1,14 +1,19 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 
-import { MockContactForm } from "@/components/mock-contact-form";
+import { ContactForm } from "@/components/contact-form";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
-import { branches } from "@/mock-storefront/fixtures/content";
+import { branches } from "@/content/editorial";
 
 export const metadata: Metadata = { title: "Kontakty" };
 
-export default function ContactsPage() {
+export default async function ContactsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ productId?: string }>;
+}) {
+  const { productId } = await searchParams;
   return (
     <StorefrontShell>
       <StorefrontBreadcrumbs items={[{ href: "/", label: "Domů" }, { label: "Kontakty" }]} />
@@ -48,7 +53,10 @@ export default function ContactsPage() {
 
         <section className="akros-content-section" id="primy-kontakt">
           <h2>Kontaktní formulář</h2>
-          <MockContactForm />
+          <ContactForm
+            kind={productId ? "PRODUCT_QUESTION" : "CONTACT"}
+            {...(productId ? { productId } : {})}
+          />
         </section>
       </article>
     </StorefrontShell>

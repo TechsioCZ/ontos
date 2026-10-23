@@ -242,6 +242,7 @@ export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWor
           ...Struct.pick(value, [
             'assigneeEmployeeId',
             'description',
+            'storefrontInquiry',
             'dueDate',
             'opportunityId',
             'ownerPrincipalRef',
@@ -967,6 +968,23 @@ export const persistenceService = Effect.fn('Work.persistenceService')(
         }
       }
       const snapshot = yield* load();
+      if (Predicate.isTagged('CreateTask')(command) && command.storefrontInquiry !== undefined) {
+        const inquiry = command.storefrontInquiry;
+        const existing = snapshot.state.tasks.find((task) => task.storefrontInquiry?.requestId === inquiry.requestId);
+        if (existing !== undefined) {
+          if (
+            !(['requestId', 'kind', 'name', 'email', 'subject', 'message', 'productId'] as const).every(
+              (key) => existing.storefrontInquiry?.[key] === inquiry[key],
+            )
+          ) {
+            return yield* new WorkLifecycleConflict({
+              code: 'work_lifecycle_conflict',
+              reason: 'Inquiry request id already belongs to another submission',
+            });
+          }
+          return { revision: snapshot.revision, task: existing };
+        }
+      }
       if (snapshot.revision !== expectedRevision) {
         return yield* new WorkRevisionConflict({
           code: 'work_revision_conflict',

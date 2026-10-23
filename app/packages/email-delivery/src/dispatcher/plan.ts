@@ -1,10 +1,12 @@
 // @effect-diagnostics *:off
+import { DateTime } from 'effect';
 import type {
   AgendaRecipientInput,
   AkrosOrderInput,
   DeliveryOutcome,
   PlannedEmail,
   RentReminderInput,
+  StorefrontInquiryTaskInput,
 } from './contract.ts';
 import { AGENDA_MANDATORY_EMAIL_CATEGORIES, AGENDA_OPTIONAL_EMAIL_CATEGORIES } from './contract.ts';
 import type { AkrosOrderEmailEvent } from './templates.ts';
@@ -180,4 +182,60 @@ export const deliveryOutcomeOf = (error: { readonly _tag: string }): DeliveryOut
     default:
       return { errorTag: error._tag, status: 'UNKNOWN' };
   }
+};
+
+/** One staff notification from committed inquiry task state. Ledger guarantees never-twice submission. */
+export const planStorefrontInquiryEmail = (
+  task: StorefrontInquiryTaskInput,
+  options: {
+    readonly appUrl: string;
+    readonly enabledSince: string;
+    readonly legalEntityId: string;
+    readonly recipient: string;
+    readonly tenantId: string;
+  },
+): PlannedEmail | null => {
+  if (
+    DateTime.toEpochMillis(DateTime.makeUnsafe(task.createdAt)) <
+      DateTime.toEpochMillis(DateTime.makeUnsafe(options.enabledSince)) ||
+    options.recipient.trim() === ''
+  ) {
+    return null;
+  }
+  const inquiry = task.storefrontInquiry;
+  const labels = {
+    COMPLAINT: 'Podnět k reklamaci (zatím ne reklamace)',
+    CONTACT: 'Kontaktní dotaz',
+    PRODUCT_QUESTION: 'Dotaz na produkt',
+  };
+  const text = [
+    task.title,
+    `Kontakt: ${inquiry.name} <${inquiry.email}>`,
+    `Druh: ${labels[inquiry.kind]}`,
+    ...(inquiry.productId !== undefined && inquiry.productId !== ''
+      ? [`Produkt: ${inquiry.productName ?? inquiry.productId} (${inquiry.productId})`]
+      : []),
+    '',
+    inquiry.message,
+    '',
+    `Úkol v OntOS: ${options.appUrl.replace(/\/+$/u, '')}/cs/ukoly`,
+    `ID úkolu: ${task.ref.resourceId}`,
+  ].join('\n');
+  const escapeHtml = (value: string) =>
+    value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+  return {
+    dedupeKey: `storefront-inquiry:${task.ref.resourceId}`,
+    event: 'INQUIRY_RECEIVED',
+    eventAt: task.createdAt,
+    eventLabel: 'Nový dotaz z e-shopu',
+    html: `<pre>${escapeHtml(text)}</pre>`,
+    legalEntityId: options.legalEntityId,
+    recipient: options.recipient.trim(),
+    source: 'storefront-inquiry',
+    subject: `AKROS: ${inquiry.subject}`,
+    subjectId: task.ref.resourceId,
+    subjectNumber: '',
+    tenantId: options.tenantId,
+    text,
+  };
 };

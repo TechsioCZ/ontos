@@ -10,6 +10,7 @@ import { WorkReferenceIneligible } from '../errors/work-reference-ineligible.ts'
 import { WorkPermissionDenied } from '../errors/work-permission-denied.ts';
 import {
   CalendarDateSchema,
+  StorefrontInquirySchema,
   ContextRefSchema,
   EmployeeIdSchema,
   OpportunityIdSchema,
@@ -53,6 +54,7 @@ const bulkTaskIdsSchema = Schema.Array(TaskRefSchema.fields.resourceId).check(
 );
 export const SingleWorkCommandSchema = Schema.Union([
   Schema.TaggedStruct('CreateTask', {
+    storefrontInquiry: Schema.optionalKey(StorefrontInquirySchema),
     ...editableFields,
     contextRefs: Schema.optionalKey(Schema.Array(ContextRefSchema).check(Schema.isMaxLength(12))),
     title: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(200)),

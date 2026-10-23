@@ -1,7 +1,7 @@
 "use client";
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { createCatalog } from "./catalog-model";
-import type { CatalogCategory } from "@/mock-storefront/types";
+import type { CatalogCategory } from "@/ontos/catalog-types";
 import type { CatalogSnapshot } from "./catalog-server";
 const Context = createContext<CatalogSnapshot | null>(null);
 export function CatalogProvider({
@@ -14,8 +14,7 @@ export function CatalogProvider({
   return (
     <Context.Provider value={snapshot}>
       <p role="note" className="bg-base-dark p-2 text-center text-sm text-base-light">
-        DEMO – objednávky se jen ukládají pro ukázku; nic neplatíte a nic vám nedoručíme. Katalog,
-        ceny a sklad: OntOS. Účet a přihlášení: simulace.
+        DEMO – objednávky se ukládají do OntOS, ale v tomto prostředí se neplatí ani nedoručují.
       </p>
       {children}
     </Context.Provider>

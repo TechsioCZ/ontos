@@ -7,6 +7,7 @@ import {
   planAgendaEmails,
   planAkrosOrderEmails,
   planRentReminderEmail,
+  planStorefrontInquiryEmail,
 } from '../../src/dispatcher/plan.ts';
 import { isTestRecipient, testCaptureFromEnvironment } from '../../src/dispatcher/recipients.ts';
 import { addressOf, agendaSenderFor, senderFor } from '../../src/dispatcher/senders.ts';
@@ -377,5 +378,44 @@ describe('test recipients go to the separate test capture, never the demo inbox'
       port: 2525,
     });
     expect(testCaptureFromEnvironment({ EMAIL_TEST_SMTP_HOST: 'none' })).toBeNull();
+  });
+});
+
+describe('storefront inquiry notification', () => {
+  const task = {
+    ref: { resourceId: 'task-42' },
+    title: 'Kontaktní dotaz: Materiál',
+    createdAt: '2026-10-23T08:00:00Z',
+    storefrontInquiry: {
+      requestId: '97672670-44ed-4de3-915d-e40e2cebe99c',
+      kind: 'CONTACT' as const,
+      name: '<Pavel>',
+      email: 'pavel@example.com',
+      subject: 'Materiál',
+      message: 'Potřebuji <4> kusy & výkres.',
+    },
+  };
+  const options = { ...planOptions, recipient: 'podpora@example.com', appUrl: 'http://localhost:3020' };
+  test('plans one staff message from the retained contact task, never a marketing subscription', () => {
+    const planned = planStorefrontInquiryEmail(task, options);
+    expect(planned?.dedupeKey).toBe('storefront-inquiry:task-42');
+    expect(planned?.recipient).toBe(options.recipient);
+    expect(planned?.text).toContain('pavel@example.com');
+    expect(planned?.text).toContain('http://localhost:3020/cs/ukoly');
+    expect(planned?.html).toContain('&lt;Pavel&gt;');
+    expect(planned?.html).not.toContain('<Pavel>');
+    expect(planned?.source).toBe('storefront-inquiry');
+  });
+  test('does not invent a mailbox and ignores pre-enablement tasks', () => {
+    expect(planStorefrontInquiryEmail(task, { ...options, recipient: '' })).toBeNull();
+    expect(planStorefrontInquiryEmail(task, { ...options, enabledSince: '2026-10-24T00:00:00Z' })).toBeNull();
+  });
+  test('complaint intake is not represented as a formally opened claim', () => {
+    expect(
+      planStorefrontInquiryEmail(
+        { ...task, storefrontInquiry: { ...task.storefrontInquiry, kind: 'COMPLAINT' } },
+        options,
+      )?.text,
+    ).toContain('zatím ne reklamace');
   });
 });

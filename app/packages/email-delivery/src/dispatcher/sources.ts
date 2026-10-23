@@ -2,7 +2,7 @@
 // Committed-state readers. Which e-mails are due is decided once, by demo_email.pending_deliveries() (ids only, the
 // dispatcher's sole cross-tenant read). Content is read here, only inside inDeliveryScope (RLS) and only for those ids.
 import { PgClient } from '@effect/sql-pg';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
 import type {
   AgendaNotificationInput,
   AgendaPreferenceInput,
@@ -11,7 +11,7 @@ import type {
   EmailDeliverySource,
   RentReminderInput,
 } from './contract.ts';
-import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID } from './contract.ts';
+import { AKROS_LEGAL_ENTITY_ID, DEMO_TENANT_ID, StorefrontInquiryTaskSchema } from './contract.ts';
 import type { DeliveryScope } from './scope.ts';
 
 const json = <T>(value: unknown): T => (typeof value === 'string' ? JSON.parse(value) : value) as T;
@@ -43,6 +43,7 @@ export const parseDeliveryId = (deliveryId: string): ParsedDeliveryId | null => 
   const rest = deliveryId.slice(separator + 1);
   if (separator < 0 || rest === '') return null;
   switch (source) {
+    case 'storefront-inquiry':
     case 'rent-reminder':
       return { source, subjectId: rest };
     case 'akros-order': {
@@ -138,3 +139,23 @@ export const readAgendaRecipients = (scope: DeliveryScope, principalIds: readonl
       tenantId: row.tenantId,
     }));
   });
+
+/** Scoped committed task state, only pending ids discovered by the migration-owned scheduler. */
+export const readStorefrontInquiryTasks = Effect.fn('Sources.readStorefrontInquiryTasks')(
+  function* readStorefrontInquiryTasks(scope: DeliveryScope, taskIds: readonly string[]) {
+    if (taskIds.length === 0) {
+      return [];
+    }
+    const sql = yield* PgClient.PgClient;
+    const rows = yield* sql<{ readonly task: unknown }>`
+      select t as task from work_tasks.work_states s,
+        jsonb_array_elements(coalesce(s.state->'tasks', '[]'::jsonb)) t
+      where s.tenant_id = ${scope.tenantId}::uuid and s.legal_entity_id = ${scope.legalEntityId}::uuid
+        and t->'ref'->>'resourceId' in ${sql.in(taskIds)} and t->'storefrontInquiry' is not null
+      order by t->>'createdAt', t->'ref'->>'resourceId'`;
+    return yield* Effect.all(
+      rows.map((row) => Schema.decodeUnknownEffect(Schema.toEncoded(StorefrontInquiryTaskSchema))(row.task)),
+      { concurrency: 1 },
+    );
+  },
+);

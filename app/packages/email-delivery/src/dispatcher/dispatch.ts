@@ -4,7 +4,13 @@ import { emailEnvironment, emailTransport } from '../transport.ts';
 import type { EmailEnvironment, EmailTransportRuntime } from '../transport-runtime.ts';
 import type { DeliveryOutcome, EmailDeliverySource, PlannedEmail } from './contract.ts';
 import { claim, finish, readEnabledSince, recoverInterrupted } from './ledger.ts';
-import { deliveryOutcomeOf, planAgendaEmails, planAkrosOrderEmails, planRentReminderEmail } from './plan.ts';
+import {
+  deliveryOutcomeOf,
+  planAgendaEmails,
+  planAkrosOrderEmails,
+  planRentReminderEmail,
+  planStorefrontInquiryEmail,
+} from './plan.ts';
 import { isUndeliverableRecipient, undeliverableDomainsFor } from './recipients.ts';
 import { inDeliveryScope } from './scope.ts';
 import type { DeliveryScope } from './scope.ts';
@@ -16,6 +22,7 @@ import {
   readAkrosOrders,
   readPendingDeliveries,
   readRentReminders,
+  readStorefrontInquiryTasks,
 } from './sources.ts';
 
 type OutgoingEmail = PlannedEmail & { readonly from: string };
@@ -81,7 +88,7 @@ export const scheduleScopes = (pending: readonly PendingDelivery[], limit: numbe
       const work = scopes.get(id) ?? {
         keys: new Set<string>(),
         scope: { legalEntityId: item.legalEntityId, tenantId: item.tenantId },
-        subjects: { 'akros-order': [], 'facility-agenda': [], 'rent-reminder': [] },
+        subjects: { 'akros-order': [], 'facility-agenda': [], 'rent-reminder': [], 'storefront-inquiry': [] },
       };
       scopes.set(id, work);
       if (work.keys.has(item.deliveryId)) continue;
@@ -126,6 +133,17 @@ const planScope = (
         enabledSince,
       }))
         planned.push({ ...email, from });
+    }
+    for (const task of yield* readStorefrontInquiryTasks(scope, work.subjects['storefront-inquiry'])) {
+      const email = planStorefrontInquiryEmail(task, {
+        ...scope,
+        appUrl: environment['ONTOS_PUBLIC_URL'] ?? 'http://localhost:3020',
+        enabledSince,
+        recipient: environment.AKROS_INQUIRY_EMAIL_TO ?? '',
+      });
+      if (email !== null) {
+        planned.push({ ...email, from: senderFor(scope, 'AKROS', environment, transport.kind) });
+      }
     }
     return planned.filter((email) => work.keys.has(email.dedupeKey));
   });

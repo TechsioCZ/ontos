@@ -475,6 +475,11 @@ export const crmDemoRoles = {
 
 /** E-shop company „Kavárna Doma s.r.o.“ (0023). */
 export const eshopDemoRoles = {
+  akrosStorefront: {
+    identityAdmin: false,
+    label: 'AKROS storefront (API)',
+    modules: { 'demo.merchandise': 'write', 'work.tasks': 'write' },
+  },
   akrosAdmin: {
     identityAdmin: true,
     label: 'Správce e-shopu',
@@ -550,7 +555,7 @@ export const akrosStorefrontPrincipal = {
   kind: 'service',
   legalEntityId: akrosDemoLegalEntityId,
   principalId: demoId('core.principal', 'akros-storefront'),
-  role: 'storefront',
+  role: 'akrosStorefront',
 } as const;
 
 export const companyPermissionRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => [
@@ -559,7 +564,7 @@ export const companyPermissionRelationships = (actions: readonly DemoAction[]): 
   ),
   ...principalRelationships(
     akrosStorefrontPrincipal.principalId,
-    companyRoles.storefront,
+    companyRoles[akrosStorefrontPrincipal.role],
     actions,
     akrosDemoLegalEntityId,
   ),

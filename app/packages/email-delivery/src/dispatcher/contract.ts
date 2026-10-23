@@ -2,10 +2,12 @@
 // Platform after-commit e-mail receipts. Shell staff reads are scoped to the authenticated company;
 // storefront buyer reads require both the order number and its recipient. No content or address is exposed.
 
+import { Schema } from 'effect';
+
 export const DEMO_TENANT_ID = '70000000-0000-4000-8000-000000000020';
 export const AKROS_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000024';
 
-export type EmailDeliverySource = 'akros-order' | 'facility-agenda' | 'rent-reminder';
+export type EmailDeliverySource = 'akros-order' | 'facility-agenda' | 'rent-reminder' | 'storefront-inquiry';
 export type EmailDeliveryEvent =
   | 'ORDER_CREATED'
   | 'CONFIRMED'
@@ -13,7 +15,8 @@ export type EmailDeliveryEvent =
   | 'DELIVERED'
   | 'CANCELLED'
   | 'PAYMENT_REMINDER'
-  | 'AGENDA_NOTIFICATION';
+  | 'AGENDA_NOTIFICATION'
+  | 'INQUIRY_RECEIVED';
 /**
  * SENDING: claimed, SMTP submission in progress. SENT: SMTP server accepted DATA (250).
  * RETRY: SMTP server unreachable BEFORE any data was sent; safe to retry. FAILED: rejected permanently.
@@ -21,7 +24,12 @@ export type EmailDeliveryEvent =
  */
 export type EmailDeliveryStatus = 'SENDING' | 'SENT' | 'RETRY' | 'FAILED' | 'UNKNOWN' | 'SKIPPED';
 
-export const emailDeliverySources: readonly EmailDeliverySource[] = ['akros-order', 'facility-agenda', 'rent-reminder'];
+export const emailDeliverySources: readonly EmailDeliverySource[] = [
+  'akros-order',
+  'facility-agenda',
+  'rent-reminder',
+  'storefront-inquiry',
+];
 
 /**
  * E-mail provider state served on GET /shell-super-app-api/email/provider (no credentials, no cookies needed). `configured: false` when the
@@ -86,6 +94,7 @@ export const emailEventLabels: Readonly<Record<EmailDeliveryEvent, string>> = {
   PAYMENT_REMINDER: 'Upomínka k úhradě',
   SHIPPED: 'Předáno dopravci',
   AGENDA_NOTIFICATION: 'Upozornění z agendy',
+  INQUIRY_RECEIVED: 'Nový dotaz z e-shopu',
 };
 
 export const emailStatusLabels: Readonly<Record<EmailDeliveryStatus, string>> = {
@@ -194,3 +203,22 @@ export interface AgendaRecipientInput {
   readonly principalId: string;
   readonly tenantId: string;
 }
+
+/** Persisted actionable task intake; no marketing consent or price/stock snapshot. */
+export const StorefrontInquiryTaskSchema = Schema.Struct({
+  createdAt: Schema.DateTimeUtcFromString,
+  ref: Schema.Struct({ resourceId: Schema.String.pipe(Schema.brand('StorefrontInquiryTaskId')) }),
+  storefrontInquiry: Schema.Struct({
+    email: Schema.String,
+    kind: Schema.Literals(['CONTACT', 'PRODUCT_QUESTION', 'COMPLAINT']),
+    message: Schema.String,
+    name: Schema.String,
+    productId: Schema.optionalKey(Schema.String.pipe(Schema.brand('StorefrontInquiryProductId'))),
+    productName: Schema.optionalKey(Schema.String),
+    productSlug: Schema.optionalKey(Schema.String),
+    requestId: Schema.String.pipe(Schema.brand('StorefrontInquiryRequestId')),
+    subject: Schema.String,
+  }),
+  title: Schema.String,
+});
+export type StorefrontInquiryTaskInput = typeof StorefrontInquiryTaskSchema.Encoded;

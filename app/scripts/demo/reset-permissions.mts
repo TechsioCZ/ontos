@@ -86,7 +86,11 @@ const facilityOperationsModuleState = {
   stateId: '78000000-0000-4000-8000-000000000202',
 } as const;
 /** Managed API keys that run unlimited (each request exchanges the key for a single-use gateway assertion). */
-const unlimitedKeyNames = [agentBotPrincipal.displayName, storefrontPrincipal.displayName, akrosStorefrontPrincipal.displayName];
+const unlimitedKeyNames = [
+  agentBotPrincipal.displayName,
+  storefrontPrincipal.displayName,
+  akrosStorefrontPrincipal.displayName,
+];
 const SECURE_COOKIE_PREFIX = '__Secure-';
 const [headOfSales] = demoHumanAccounts;
 
@@ -503,13 +507,27 @@ const ensureBotKey = Effect.fn('DemoPermissions.ensureBotKey')(function* ensureB
   });
   const akrosTarget = { audience: STOREFRONT_KEY_AUDIENCE, legalEntityId: akrosStorefrontPrincipal.legalEntityId };
   const oldAkrosKey = existing.get('ONTOS_AKROS_STOREFRONT_API_KEY');
-  const akrosReusable = oldAkrosKey === undefined ? false : yield* Option.match(revision, {
-    onNone: () => Effect.succeed(false),
-    onSome: (current) => keyWorks(shellUrl, Redacted.make(oldAkrosKey), current, akrosTarget),
-  });
-  const akrosKey = akrosReusable && oldAkrosKey !== undefined ? Redacted.make(oldAkrosKey) : yield* issueBotKey(shellUrl, {
-    name: akrosStorefrontPrincipal.displayName, principalId: akrosStorefrontPrincipal.principalId,
-  });
+  const akrosReusable =
+    oldAkrosKey === undefined
+      ? false
+      : yield* Option.match(revision, {
+          onNone: () => Effect.succeed(false),
+          onSome: (current) =>
+            Effect.all([
+              keyWorks(shellUrl, Redacted.make(oldAkrosKey), current, akrosTarget),
+              keyWorks(shellUrl, Redacted.make(oldAkrosKey), current, {
+                audience: 'work-tasks',
+                legalEntityId: akrosStorefrontPrincipal.legalEntityId,
+              }),
+            ]).pipe(Effect.map((checks) => checks.every(Boolean))),
+        });
+  const akrosKey =
+    akrosReusable && oldAkrosKey !== undefined
+      ? Redacted.make(oldAkrosKey)
+      : yield* issueBotKey(shellUrl, {
+          name: akrosStorefrontPrincipal.displayName,
+          principalId: akrosStorefrontPrincipal.principalId,
+        });
   const values = new Map([
     ...existing,
     ['ONTOS_AKROS_STOREFRONT_API_KEY', Redacted.value(akrosKey)],
@@ -573,7 +591,9 @@ const main = (skipBot: boolean) =>
     );
     // CRM.md §3: the CRM server's governed Party Registry intake principal (salespeople's new clients get an identity).
     yield* setupCrmPartyIntake(root, environment, { skipKeys: skipBot }).pipe(
-      Effect.catch((failure) => Console.error(`crm-party-intake failed (${String(failure)}); companies are configured`)),
+      Effect.catch((failure) =>
+        Console.error(`crm-party-intake failed (${String(failure)}); companies are configured`),
+      ),
     );
   });
 

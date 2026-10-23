@@ -38,15 +38,6 @@ export function ProductFavoriteButton({ productId, productName }: ProductDetailA
 }
 
 export function ProductDetailActions({ productId, productName }: ProductDetailActionsProps) {
-  const storageKey = `akros-watch-${productId}`;
-  const [isWatched, setIsWatched] = useState(false);
-
-  const toggleWatch = () => {
-    const nextWatched = !isWatched;
-    setIsWatched(nextWatched);
-    window.localStorage.setItem(storageKey, String(nextWatched));
-  };
-
   const shareProduct = async () => {
     const shareData = { title: productName, url: window.location.href };
     if (navigator.share) {
@@ -68,21 +59,9 @@ export function ProductDetailActions({ productId, productName }: ProductDetailAc
       className="akros-product-actions -mt-(--akros-product-actions-offset) flex flex-wrap gap-x-(--akros-product-actions-column-gap) gap-y-(--dimension-8) pt-(--dimension-4) [&>*]:min-h-(--akros-product-actions-min-height)"
       aria-label="Další akce produktu"
     >
-      <Button
-        aria-pressed={isWatched}
-        className="akros-product-actions__watch hover:underline focus-visible:underline"
-        icon="token-icon-akros-product-watch"
-        iconSize="sm"
-        onClick={toggleWatch}
-        size="sm"
-        theme="borderless"
-        variant="secondary"
-      >
-        {isWatched ? "Produkt hlídáme" : "Hlídat produkt"}
-      </Button>
       <LinkButton
         as={StoreLink}
-        href="/kontakty#primy-kontakt"
+        href={`/kontakty?productId=${encodeURIComponent(productId)}#primy-kontakt`}
         className="akros-product-actions__question hover:underline focus-visible:underline"
         icon="token-icon-akros-product-question"
         iconSize="sm"

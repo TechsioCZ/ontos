@@ -14,6 +14,7 @@ const inB = (deliveryId: string): PendingDelivery => ({ deliveryId, legalEntityI
 
 describe('delivery ids', () => {
   test('name the source subject the scoped reader fetches', () => {
+    expect(parseDeliveryId('storefront-inquiry:task-1')).toEqual({ source: 'storefront-inquiry', subjectId: 'task-1' });
     expect(parseDeliveryId('rent-reminder:r-1')).toEqual({ source: 'rent-reminder', subjectId: 'r-1' });
     expect(parseDeliveryId('akros-order:o:1:SHIPPED')).toEqual({ source: 'akros-order', subjectId: 'o:1' });
     expect(parseDeliveryId('facility-agenda:p-1:2026-10-22T07:00:00.000Z')).toEqual({
@@ -41,7 +42,12 @@ describe('scope schedule', () => {
       { legalEntityId: entityB, tenantId: tenantB },
     ]);
     expect([...work[0]!.keys]).toEqual(['rent-reminder:a1', 'akros-order:o1:ORDER_CREATED', 'akros-order:o1:SHIPPED']);
-    expect(work[0]!.subjects).toEqual({ 'akros-order': ['o1'], 'facility-agenda': [], 'rent-reminder': ['a1'] });
+    expect(work[0]!.subjects).toEqual({
+      'akros-order': ['o1'],
+      'facility-agenda': [],
+      'rent-reminder': ['a1'],
+      'storefront-inquiry': [],
+    });
     expect([...work[1]!.keys]).toEqual(['rent-reminder:b1']);
     expect(work[1]!.subjects['akros-order']).toEqual([]);
   });
