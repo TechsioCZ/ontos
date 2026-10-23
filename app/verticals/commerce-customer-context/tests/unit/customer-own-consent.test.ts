@@ -2,7 +2,9 @@ import { privacySubjectRefForParty } from '@app/privacy/domain/privacy-subject-i
 import { CreatePrivacySubjectPayloadSchema } from '@app/privacy/api';
 import { ConsentSelfServiceRequestSchema, RecordNoticeProvisionPayloadSchema } from '@app/consent-authority-contracts';
 import type { ConsentSelfServiceRequest } from '@app/consent-authority-contracts';
-import { Result, Schema } from 'effect';
+import { PrivacyNoticeVersionSchema } from '@app/privacy/domain/privacy-notice-version';
+import type { PrivacyNoticeVersion } from '@app/privacy/domain/privacy-notice-version';
+import { Array as Arr, Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   CustomerConsentReceiptSchema,
@@ -11,7 +13,9 @@ import {
   noticeProvisionRequest,
   sameCustomerConsentScope,
 } from '../../api/portal-auth/consent/model.ts';
-import { UpdateCustomerOwnConsentSchema } from '../../shared/portal-auth/consent-api.ts';
+import { selectCustomerNewsletterNotice } from '../../api/portal-auth/consent/privacy-owner.ts';
+import type { CustomerNewsletterCatalog } from '../../api/portal-auth/consent/privacy-owner.ts';
+import { ConsentConflictProblemSchema, UpdateCustomerOwnConsentSchema } from '../../shared/portal-auth/consent-api.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const partyId = '22222222-2222-4222-8222-222222222222';
@@ -192,3 +196,140 @@ it('uses the Privacy-owned UUID contract while keeping Party identity a typed ex
   expect(customerNewsletterScope({ ...scopeInput, tenantId: otherId }).privacySubjectRef).not.toEqual(expected);
   expect(customerNewsletterScope({ ...scopeInput, partyId: otherId }).privacySubjectRef).not.toEqual(expected);
 });
+
+const customerScope = {
+  compositionRevision: 'a'.repeat(64),
+  legalEntityId: controllerRef,
+  partyId,
+  requestCorrelation: requestId,
+  tenantId,
+};
+const customerNotice = Schema.decodeUnknownSync(PrivacyNoticeVersionSchema)({
+  applicableScope: {
+    facts: [
+      { dimension: 'PRIVACY_SUBJECT', value: scope.privacySubjectRef.resourceId },
+      { dimension: 'CONTROLLER_SCOPE', value: controllerRef },
+      { dimension: 'PROCESSING_PURPOSE', value: purposeId },
+      { dimension: 'PROCESSING_PURPOSE_VERSION', value: purposeVersionId },
+      { dimension: 'CHANNEL', value: 'EMAIL' },
+    ],
+    operation: 'NEWSLETTER_CONSENT',
+    processingScopeRef: { scopeId: scope.scopeRef, scopeType: 'privacy.processing-scope' },
+  },
+  contentIdentity: 'sha256:newsletter-cs-v1',
+  effectiveFrom: '2026-10-01T00:00:00.000Z',
+  effectiveTo: null,
+  evidenceArtifactRef: 'privacy:newsletter-cs-v1',
+  language: 'cs',
+  noticeRef: {
+    moduleId: 'privacy.core',
+    resourceId: partyId,
+    resourceType: 'privacy.core.privacy-notice-version',
+    tenantId,
+  },
+  recordedAt: '2026-10-24T00:00:00.000Z',
+  versionId: noticeVersionId,
+  versionNumber: 1,
+  wording: 'Souhlasím se zasíláním novinek e-mailem. Souhlas mohu kdykoli odvolat.',
+});
+const catalog: CustomerNewsletterCatalog = {
+  configured: {
+    actorPrincipalId: otherId,
+    controllerRef,
+    noticeId: otherId,
+    noticeVersionId: otherId,
+    purposeId,
+    purposeVersionId,
+  },
+  consentScope: scope,
+  template: {
+    ...customerNotice,
+    noticeRef: { ...customerNotice.noticeRef, resourceId: otherId },
+    versionId: otherId,
+  },
+};
+
+it.effect('reuses the same exact native notice on repeated reads instead of requiring another create', () =>
+  Effect.gen(function* retainedNotice() {
+    expect(yield* selectCustomerNewsletterNotice(customerScope, catalog, [])).toBeUndefined();
+    for (let read = 0; read < 3; read += 1) {
+      expect(yield* selectCustomerNewsletterNotice(customerScope, catalog, [customerNotice])).toBe(customerNotice);
+    }
+    // Retained older versions and the template collection are not the customer's current notice.
+    const older = { ...customerNotice, contentIdentity: 'sha256:old', versionId: requestId };
+    expect(
+      yield* selectCustomerNewsletterNotice(customerScope, catalog, [older, catalog.template, customerNotice]),
+    ).toBe(customerNotice);
+  }),
+);
+
+it.effect('rejects ambiguous owner versions instead of choosing one or creating another', () =>
+  Effect.gen(function* ambiguousNotice() {
+    const failure = yield* Effect.flip(
+      selectCustomerNewsletterNotice(customerScope, catalog, [
+        customerNotice,
+        { ...customerNotice, versionId: requestId, versionNumber: 2 },
+      ]),
+    );
+    expect(Schema.is(ConsentConflictProblemSchema)(failure)).toBe(true);
+  }),
+);
+
+it.effect('never reuses notices with different identity, content, period or exact consent scope', () =>
+  Effect.gen(function* exactNoticeIdentity() {
+    const changedNotices: readonly PrivacyNoticeVersion[] = [
+      { ...customerNotice, noticeRef: { ...customerNotice.noticeRef, tenantId: otherId } },
+      { ...customerNotice, noticeRef: { ...customerNotice.noticeRef, resourceId: otherId } },
+      { ...customerNotice, wording: 'Jiné znění' },
+      { ...customerNotice, contentIdentity: 'sha256:other' },
+      { ...customerNotice, language: 'en' },
+      { ...customerNotice, evidenceArtifactRef: 'other-evidence' },
+      { ...customerNotice, effectiveFrom: '2026-10-02T00:00:00.000Z' },
+      { ...customerNotice, effectiveTo: '2026-11-01T00:00:00.000Z' },
+      { ...customerNotice, applicableScope: { ...customerNotice.applicableScope, operation: 'OTHER_OPERATION' } },
+      {
+        ...customerNotice,
+        applicableScope: {
+          ...customerNotice.applicableScope,
+          processingScopeRef: { scopeId: 'other-scope', scopeType: 'privacy.processing-scope' },
+        },
+      },
+      ...customerNotice.applicableScope.facts.map((fact) => ({
+        ...customerNotice,
+        applicableScope: {
+          ...customerNotice.applicableScope,
+          facts: customerNotice.applicableScope.facts.map((current) =>
+            current.dimension === fact.dimension ? { ...current, value: 'other-value' } : current,
+          ),
+        },
+      })),
+      {
+        ...customerNotice,
+        applicableScope: {
+          ...customerNotice.applicableScope,
+          facts: [...customerNotice.applicableScope.facts, { dimension: 'CHANNEL', value: 'SMS' }],
+        },
+      },
+    ];
+    for (const changed of changedNotices) {
+      expect(yield* selectCustomerNewsletterNotice(customerScope, catalog, [changed])).toBeUndefined();
+    }
+    expect(
+      yield* selectCustomerNewsletterNotice(customerScope, catalog, [
+        {
+          ...customerNotice,
+          applicableScope: {
+            ...customerNotice.applicableScope,
+            facts: Arr.reverse(customerNotice.applicableScope.facts),
+          },
+        },
+      ]),
+    ).toEqual({
+      ...customerNotice,
+      applicableScope: {
+        ...customerNotice.applicableScope,
+        facts: Arr.reverse(customerNotice.applicableScope.facts),
+      },
+    });
+  }),
+);
