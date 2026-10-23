@@ -251,7 +251,10 @@ it.effect('manual recovery keeps the original native Attempt identity and leaves
     };
     const resumed = yield* commercePortalAuthEnrollmentResumeOnRead(
       continuation,
-      attempt({ lease: { leaseExpiresAt: at, leaseToken, workerId }, state: 'RECONCILIATION_REQUIRED' }),
+      attempt({
+        lease: { leaseExpiresAt: DateTime.makeUnsafe(0), leaseToken, workerId },
+        state: 'RECONCILIATION_REQUIRED',
+      }),
     );
     expect(Option.isSome(resumed)).toBe(true);
     expect(calls).toEqual([attemptId]);
@@ -260,7 +263,7 @@ it.effect('manual recovery keeps the original native Attempt identity and leaves
         Option.isNone(
           yield* commercePortalAuthEnrollmentResumeOnRead(
             continuation,
-            attempt({ lease: { leaseExpiresAt: at, leaseToken, workerId }, state }),
+            attempt({ lease: { leaseExpiresAt: DateTime.makeUnsafe(0), leaseToken, workerId }, state }),
           ),
         ),
       ).toBe(true);
