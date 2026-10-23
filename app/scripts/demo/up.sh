@@ -320,6 +320,14 @@ if printf '%s\n' "${VERTICALS[@]}" | grep -qx commerce-customer-context; then
   restart_server commerce-customer-context verticals/commerce-customer-context
   wait_http "http://127.0.0.1:$(port_of commerce-customer-context)/.well-known/ontos-module-manifest.json" 180 commerce-customer-context
 fi
+# Explicit operator conversion of seeded guest contacts through Party matching and CUSTOMER owners.
+# Real visitor orders are never converted by bootstrap; staff confirm those in the order detail.
+if printf '%s\n' "${VERTICALS[@]}" | grep -qx merchandise &&
+  printf '%s\n' "${VERTICALS[@]}" | grep -qx party-registry; then
+  step demo-seed-order-customers env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" \
+    "ONTOS_DEMO_SEED_PASSWORD=${ONTOS_DEMO_PASSWORD:-password1234}" \
+    "${WITH_ENV[@]}" node scripts/demo/seed-order-customers.mts --apply
+fi
 # Rental data uses public reads/Actions, so it must run AFTER composition, company setup and grants.
 if [ "${DEMO_RESET:-1}" != 0 ]; then
   step demo-seed-rental env \

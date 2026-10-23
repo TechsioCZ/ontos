@@ -182,7 +182,18 @@ const makeOwnerClient = (target: SeedTarget, origin: string, cookie: string, com
         referenceAudiences,
       );
     });
-  return { apply, call, read };
+  /** Native generated clients retain typed owner errors and invocation recovery for multi-step operator jobs. */
+  const authorize = (audience: string) =>
+    issue(audience).pipe(
+      Effect.map((assertion) => ({
+        credential: Redacted.make(`Bearer ${Redacted.value(assertion.token)}`),
+        options: {
+          baseUrl: new URL(assertion.apiBaseUrl, origin).toString(),
+          compositionRevision: assertion.compositionRevision,
+        },
+      })),
+    );
+  return { apply, authorize, call, read };
 };
 
 export const connectSeedClient = (target: SeedTarget, email: string, password: Redacted.Redacted) =>

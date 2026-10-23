@@ -43,6 +43,7 @@ export const merchandiseMcpContribution = defineOntosMcpContribution({
       liveRight: 'canEditOrders',
       title: { cs: 'Upravit objednávku', en: 'Edit an order' },
     },
+    LinkOrderCustomer: 'hidden',
     PlaceStorefrontOrder: { title: { cs: 'Přijmout objednávku z e-shopu', en: 'Accept a storefront order' } },
     RecordStockMovement: { title: { cs: 'Zaznamenat skladový pohyb', en: 'Record a stock movement' } },
     RemoveDemoOrder: 'hidden',

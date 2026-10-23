@@ -33,6 +33,7 @@ export const nonHumanForbiddenCommands: ReadonlySet<string> = new Set([
   'BulkUpdateProducts',
   'ChangePrice',
   'EditOrder',
+  'LinkOrderCustomer',
   'RemoveDemoOrder',
   'ResetDemoData',
   'ArchiveDemoProduct',
