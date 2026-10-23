@@ -78,7 +78,7 @@ export const recordsRead = defineRead(
   {
     // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
     prepare: (_input, context) => crmRecordsGrants(context.scope).pipe(Effect.mapError(readFailure)),
-    load: (_input, context) => context.services.loadRecords().pipe(Effect.mapError(readFailure)),
+    load: (input, context) => context.services.loadRecords(input).pipe(Effect.mapError(readFailure)),
     finish: (input: RecordsRequest, context) =>
       finishCrmRecords(input, context.loaded, context.prepared, context.scope).pipe(
         Effect.mapError(readFailure),

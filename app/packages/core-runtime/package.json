@@ -13,6 +13,7 @@
     "./auth/gateway-assertion-redemption": "./src/auth/gateway-assertion-redemption.ts",
     "./auth/staff-authentication-namespace": "./src/auth/staff-authentication-namespace.ts",
     "./auth/system-principal-context-provenance": "./src/auth/system-principal-context-provenance.ts",
+    "./db/agent-history-page": "./src/db/agent-history-page.ts",
     "./demo-company-profiles": "./src/install/demo-company-profiles.ts",
     "./http/action-runner": "./src/http/http-instrumentation-seam.ts",
     "./http/governed-read": "./src/http/governed-read.ts",

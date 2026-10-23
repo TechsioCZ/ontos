@@ -1,9 +1,11 @@
+import { AGENT_PAGE_SIZE } from '@app/shared-contracts/agent-proposals';
 /**
  * Shell database store for the platform approval queue and agent activity (core.agent_proposals and read-only
  * views of the Core tables the activity feed joins). Pure row-to-wire mapping lives in ./mappers.ts.
  */
 import type {
   AgentActivityRequest,
+  AgentQueueRequest,
   AgentCommand,
   AgentDiffLine,
   AgentItemStatus,
@@ -265,6 +267,52 @@ export const listCompanyProposals = Effect.fn('AgentStore.listCompanyProposals')
     .pipe(Effect.mapError(unavailable));
   return rows.map(toRow);
 });
+
+/** Select whole batches, never cut a batch at a proposal-row limit. */
+export const listCompanyProposalPage = Effect.fn('AgentStore.listCompanyProposalPage')(
+  function* listCompanyProposalPage(
+    tenantId: string,
+    legalEntityId: string,
+    request: AgentQueueRequest,
+    visibleModules: ReadonlySet<string>,
+  ) {
+    const { executor } = yield* AuthDatabase;
+    const { cursor } = request;
+    const modules = [...visibleModules].filter((key) => request.moduleKey === undefined || key === request.moduleKey);
+    if (modules.length === 0) {
+      return [];
+    }
+    const before =
+      cursor === undefined
+        ? sql`true`
+        : sql`(date_trunc('milliseconds', min(p.created_at)), ('core:' || p.batch_id::text) collate "C") < (${cursor.at}::timestamptz, ${cursor.id} collate "C")`;
+    const rows = yield* executor
+      .select()
+      .from(coreAgentProposals)
+      .where(
+        and(
+          eq(coreAgentProposals.tenantId, tenantId),
+          eq(coreAgentProposals.legalEntityId, legalEntityId),
+          inArray(coreAgentProposals.moduleKey, modules),
+          sql`${coreAgentProposals.batchId} in (
+      select p.batch_id from core.agent_proposals p
+      where p.tenant_id = ${tenantId} and p.legal_entity_id = ${legalEntityId}
+        and p.module_key in (${sql.join(
+          modules.map((key) => sql`${key}`),
+          sql`, `,
+        )})
+        and ${request.batchKey === undefined ? sql`true` : sql`'core:' || p.batch_id::text = ${request.batchKey}`}
+      group by p.batch_id having ${before}
+        and ${request.pendingOnly === true ? sql`bool_or(p.status = 'pending')` : sql`true`}
+      order by date_trunc('milliseconds', min(p.created_at)) desc, p.batch_id::text collate "C" desc limit ${AGENT_PAGE_SIZE + 1})`,
+        ),
+      )
+      .orderBy(desc(coreAgentProposals.createdAt), desc(coreAgentProposals.batchId), asc(coreAgentProposals.position))
+      .limit((AGENT_PAGE_SIZE + 1) * 50)
+      .pipe(Effect.mapError(unavailable));
+    return rows.map(toRow);
+  },
+);
 
 export const loadBatchProposals = Effect.fn('AgentStore.loadBatchProposals')(function* loadBatchProposals(
   tenantId: string,
@@ -588,7 +636,39 @@ export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(funct
 ) {
   const { executor } = yield* AuthDatabase;
   const agentFilter = request.agentPrincipalId === undefined ? undefined : request.agentPrincipalId;
-  const limit = 300;
+  const limit = AGENT_PAGE_SIZE + 1;
+  const { cursor } = request;
+  const before = (at: SQL, id: SQL) =>
+    cursor === undefined
+      ? sql`true`
+      : sql`(date_trunc('milliseconds', ${at}), (${id}) collate "C") < (${cursor.at}::timestamptz, ${cursor.id} collate "C")`;
+  const visibleModules = [...scope.visibleModules].filter(
+    (key) => request.moduleKey === undefined || key === request.moduleKey,
+  );
+  if (visibleModules.length === 0) {
+    return buildActivityResponse([], request);
+  }
+  const visible = (module: SQL) =>
+    sql`${module} in (${sql.join(
+      visibleModules.map((key) => sql`${key}`),
+      sql`, `,
+    )})`;
+  const auditModule = sql`coalesce(${coreAuditEvents.targetModuleKey}, regexp_replace(${coreActionInvocations.actionKey}, '[.][^.]+$', ''))`;
+  const proposalOnly = [...scope.proposalOnlyAgents];
+  const nativeModules = visibleModules.filter((key) => scope.modules.hasOwnProposalEngine(key));
+  const proposalAudit =
+    proposalOnly.length === 0 || nativeModules.length === 0
+      ? sql`false`
+      : sql`${corePrincipals.principalId} in (${sql.join(
+          proposalOnly.map((id) => sql`${id}`),
+          sql`, `,
+        )}) and ${auditModule} in (${sql.join(
+          nativeModules.map((key) => sql`${key}`),
+          sql`, `,
+        )})`;
+  const auditKind = sql`case when ${coreAuditEvents.outcome} = 'succeeded' then case when ${proposalAudit} then 'proposal' else 'write' end when ${coreAuditEvents.outcome} = 'denied' then 'denied' else 'failed' end`;
+  const auditId = sql`'audit:' || ${coreAuditEvents.auditEventId}::text`;
+  const accessId = sql`'read:' || ${coreDataAccessEvents.dataAccessEventId}::text`;
 
   const auditRows = yield* executor
     .select({
@@ -622,11 +702,16 @@ export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(funct
       and(
         eq(coreAuditEvents.tenantId, tenantId),
         eq(coreAuditEvents.legalEntityId, legalEntityId),
+        visible(auditModule),
+        // Native engines own proposal history; exclude duplicate audit envelopes before taking the page.
+        sql`not (${coreAuditEvents.outcome} = 'succeeded' and (${proposalAudit}))`,
+        before(sql`${coreAuditEvents.occurredAt}`, auditId),
+        ...(request.kind === undefined ? [] : [sql`${auditKind} = ${request.kind}`]),
         eq(corePrincipals.kind, 'agent'),
         ...(agentFilter === undefined ? [] : [eq(corePrincipals.principalId, agentFilter)]),
       ),
     )
-    .orderBy(desc(coreAuditEvents.occurredAt))
+    .orderBy(sql`date_trunc('milliseconds', ${coreAuditEvents.occurredAt}) desc`, sql`${auditId} collate "C" desc`)
     .limit(limit)
     .pipe(Effect.mapError(unavailable));
 
@@ -672,18 +757,51 @@ export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(funct
       and(
         eq(coreDataAccessEvents.tenantId, tenantId),
         eq(coreDataAccessEvents.legalEntityId, legalEntityId),
+        visible(sql`${coreDataAccessEvents.servingModuleKey}`),
+        before(sql`${coreDataAccessEvents.occurredAt}`, accessId),
+        ...(request.kind === undefined
+          ? []
+          : [
+              sql`case when ${coreDataAccessEvents.outcome} = 'allowed' then 'read' else 'denied' end = ${request.kind}`,
+            ]),
         eq(corePrincipals.kind, 'agent'),
         ...(agentFilter === undefined ? [] : [eq(corePrincipals.principalId, agentFilter)]),
       ),
     )
-    .orderBy(desc(coreDataAccessEvents.occurredAt))
+    .orderBy(
+      sql`date_trunc('milliseconds', ${coreDataAccessEvents.occurredAt}) desc`,
+      sql`${accessId} collate "C" desc`,
+    )
     .limit(limit)
     .pipe(Effect.mapError(unavailable));
 
-  const proposals = yield* listCompanyProposals(tenantId, legalEntityId, {
-    limit,
-    ...(agentFilter === undefined ? {} : { agentPrincipalId: agentFilter }),
-  });
+  const eligibleEvents = sql`(values
+    (case when ${request.kind === undefined || request.kind === 'proposal'} then ${coreAgentProposals.createdAt} end, 'proposal:' || ${coreAgentProposals.proposalId}::text),
+    (case when ${request.kind === undefined || request.kind === 'decision'} and ${coreAgentProposals.status} <> 'pending' then ${coreAgentProposals.decidedAt} end, 'decision:' || ${coreAgentProposals.proposalId}::text),
+    (case when ${request.kind === undefined || request.kind === 'decision'} then ${coreAgentProposals.revertedAt} end, 'revert:' || ${coreAgentProposals.proposalId}::text)
+  )`;
+  const latestEvent = (field: SQL) => sql`(select ${field} from ${eligibleEvents} e(at, id)
+    where e.at is not null and ${before(sql`e.at`, sql`e.id`)}
+    order by date_trunc('milliseconds', e.at) desc, e.id collate "C" desc limit 1)`;
+  const eventAt = latestEvent(sql`date_trunc('milliseconds', e.at)`);
+  const eventId = latestEvent(sql`e.id`);
+  // A decision on an old proposal belongs on today's page, not the proposal's creation page.
+  const proposalRows = yield* executor
+    .select()
+    .from(coreAgentProposals)
+    .where(
+      and(
+        eq(coreAgentProposals.tenantId, tenantId),
+        eq(coreAgentProposals.legalEntityId, legalEntityId),
+        visible(sql`${coreAgentProposals.moduleKey}`),
+        ...(agentFilter === undefined ? [] : [eq(coreAgentProposals.agentPrincipalId, agentFilter)]),
+        sql`${eventAt} is not null`,
+      ),
+    )
+    .orderBy(sql`${eventAt} desc`, sql`${eventId} collate "C" desc`)
+    .limit(limit)
+    .pipe(Effect.mapError(unavailable));
+  const proposals = proposalRows.map(toRow);
   const names = yield* principalNames(tenantId);
 
   const entries = [
@@ -693,5 +811,5 @@ export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(funct
     ...accessRows.map((row) => accessRowToEntry(row, scope.modules)),
     ...proposals.flatMap((row) => proposalRowToEntries(row, names, scope.modules)),
   ].filter((entry) => entry.moduleKey !== null && scope.visibleModules.has(entry.moduleKey));
-  return buildActivityResponse(entries, request);
+  return buildActivityResponse(entries, { ...request, limit });
 });

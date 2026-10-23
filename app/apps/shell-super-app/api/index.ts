@@ -2280,10 +2280,10 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
         return response;
       }).pipe(agentPlatformDefect(request)),
     )
-    .handle('agentQueue', ({ request }) =>
+    .handle('agentQueue', ({ payload, request }) =>
       Effect.gen(function* agentQueueHandler() {
         const caller = yield* agentPlatformSessionCaller(request);
-        const response = yield* loadAgentQueue(caller).pipe(Effect.catch(agentPlatformFailure));
+        const response = yield* loadAgentQueue(caller, payload).pipe(Effect.catch(agentPlatformFailure));
         yield* noStore;
         return response;
       }).pipe(agentPlatformDefect(request)),

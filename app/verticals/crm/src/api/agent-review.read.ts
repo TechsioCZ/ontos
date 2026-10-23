@@ -69,7 +69,17 @@ export const agentReviewRead = defineRead(
   {
     // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
     prepare: (_input, context) => crmRecordsGrants(context.scope).pipe(Effect.mapError(crmUnavailable)),
-    load: (_input, context) => context.services.loadRecords().pipe(Effect.mapError(crmUnavailable)),
+    load: (input, context) =>
+      context.services
+        .loadRecords({}, [
+          ...new Set(
+            input.items.flatMap((item) => {
+              const id = clientIdOf(item.command);
+              return id === undefined ? [] : [id];
+            }),
+          ),
+        ])
+        .pipe(Effect.mapError(crmUnavailable)),
     finish: (input: AgentReviewRequest, context) =>
       // The reader's own records answer: clients narrowed to what they may see, and their rights.
       finishCrmRecords({}, context.loaded, context.prepared, context.scope).pipe(

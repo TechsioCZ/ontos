@@ -4,6 +4,9 @@
  */
 import {
   AGENT_REVERT_UNAVAILABLE,
+  AGENT_PAGE_SIZE,
+  compareAgentPage,
+  afterAgentCursor,
   type AgentActivityEntry,
   type AgentActivityKind,
   type AgentActivityRequest,
@@ -378,7 +381,9 @@ export const buildActivityResponse = (
   entries: readonly AgentActivityEntry[],
   request: AgentActivityRequest,
 ): AgentActivityResponse => {
-  const sorted = [...entries].sort((a, b) => Date.parse(b.occurredAt) - Date.parse(a.occurredAt));
+  const sorted = entries.toSorted((a, b) =>
+    compareAgentPage({ at: a.occurredAt, id: a.id }, { at: b.occurredAt, id: b.id }),
+  );
 
   const agentNames = new Map<string, string>();
   for (const entry of sorted) {
@@ -402,10 +407,17 @@ export const buildActivityResponse = (
 
   const filtered = sorted.filter(
     (entry) =>
+      afterAgentCursor({ at: entry.occurredAt, id: entry.id }, request.cursor) &&
       (request.agentPrincipalId === undefined || entry.agentPrincipalId === request.agentPrincipalId) &&
       (request.moduleKey === undefined || entry.moduleKey === request.moduleKey) &&
       (request.kind === undefined || entry.kind === request.kind),
   );
 
-  return { agents, entries: filtered.slice(0, request.limit ?? 150), modules };
+  const limit = request.limit ?? AGENT_PAGE_SIZE;
+  const page = filtered.slice(0, limit);
+  const last = page.at(-1);
+  const result = { agents, entries: page, modules };
+  return filtered.length > limit && last !== undefined
+    ? { ...result, nextCursor: { at: last.occurredAt, id: last.id } }
+    : result;
 };

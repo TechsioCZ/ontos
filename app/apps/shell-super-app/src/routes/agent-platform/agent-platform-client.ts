@@ -14,6 +14,7 @@ import {
 } from '@app/shared-contracts/agent-proposals';
 import type {
   AgentActivityRequest,
+  AgentQueueRequest,
   AgentDecideRequest,
   AgentRevertRequest,
 } from '@app/shared-contracts/agent-proposals';
@@ -65,10 +66,9 @@ const post = async <A>(
   }
 };
 
-export const loadAgentQueue = () => post('/queue', {}, AgentQueueResponseSchema);
+export const loadAgentQueue = (request: AgentQueueRequest) => post('/queue', request, AgentQueueResponseSchema);
 
-export const decideAgentItems = (request: AgentDecideRequest) =>
-  post('/decide', request, AgentDecideResponseSchema);
+export const decideAgentItems = (request: AgentDecideRequest) => post('/decide', request, AgentDecideResponseSchema);
 
 export const revertAgentBatch = (request: AgentRevertRequest) => post('/revert', request, AgentRevertResponseSchema);
 

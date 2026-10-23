@@ -1795,8 +1795,23 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       // A read-only or approval-only MCP connection cannot change the catalog directly.
       const canWrite = grants.writeAll && isConnectionWriteAllowed(scope, 'demo.merchandise');
       const canRead = staff && (canWrite || grants.readAll);
-      const head = yield* loadHead(transaction, store, { aiChanges: canRead }).pipe(Effect.mapError(unavailable));
+      const head = yield* loadHead(transaction, store, {
+        aiChanges: canRead,
+        ...(request.agentHistory === undefined ? {} : { history: request.agentHistory }),
+      }).pipe(Effect.mapError(unavailable));
       if (head === undefined) return yield* unavailable();
+      if (request.agentHistory !== undefined) {
+        return {
+          actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
+          ...(canRead && head.aiChanges !== undefined ? { aiChanges: head.aiChanges } : {}),
+          canWrite,
+          indicators: { lowStockCount: 0, openOrderValueMinor: 0, orderCount: 0, productCount: 0, stockValueMinor: 0 },
+          movements: [],
+          orders: [],
+          products: [],
+          revision: head.revision,
+        } satisfies RecordsResponse;
+      }
       const page = yield* staffProducts(transaction, store, view, storefront, options).pipe(
         Effect.mapError(unavailable),
       );
