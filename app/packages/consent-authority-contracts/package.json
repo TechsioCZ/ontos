@@ -1,0 +1,15 @@
+{
+  "name": "@app/consent-authority-contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./api": "./src/api.ts",
+    "./client": "./src/client.ts"
+  },
+  "dependencies": {
+    "@app/shared-contracts": "workspace:*",
+    "effect": "4.0.0-rc.117"
+  }
+}

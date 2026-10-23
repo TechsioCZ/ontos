@@ -1,5 +1,7 @@
 import {
   makeActionRuntimeLive,
+  ActionAuthorizationPreflight,
+  ActionRuntime,
   ActionAuthorizationPreflightDatabaseLive,
   ContextAccessLive,
   CorePersistenceLive,
@@ -7,7 +9,7 @@ import {
   ReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
-import type { GatewayAssertionRedemptionService } from '@app/core-runtime';
+import type { ActionRuntimeService, GatewayAssertionRedemptionService } from '@app/core-runtime';
 import {
   ActionPermissionLive,
   ActionRepositoryLive,
@@ -23,7 +25,7 @@ import { FetchHttpClient } from 'effect/unstable/http';
 import { ultramodernDeliveryUnit, ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { Effect, HttpApiBuilder, Layer, Schema } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
-import { Logger, References, Tracer } from 'effect';
+import { Context, Logger, References, Tracer } from 'effect';
 
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
@@ -84,7 +86,15 @@ import { upsertTemporaryDsrExportActionApiLive } from './upsert-temporary-dsr-ex
 
 import { privacyApi, privacyMarkerSchema, privacyOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
-import { ConsentSelfServiceAuthorityUnavailableLive } from '../src/actions/consent-self-service.action.ts';
+import {
+  CommerceConsentAuthorityLookup,
+  commerceConsentAuthorityLookup,
+  preparedCommerceConsentExecution,
+} from '../src/actions/commerce-consent-authority.ts';
+import {
+  ConsentSelfServiceAuthority,
+  ConsentSelfServiceAuthorityUnavailableLive,
+} from '../src/actions/consent-self-service.action.ts';
 import { PrivacyApplicabilityBusinessFactAuthorityUnavailableLive } from '../src/actions/privacy-applicability-business-fact-authority-service.ts';
 import { DsrIntakeReceiptAuthorityUnavailableLive } from '../src/actions/create-dsr-case.action.ts';
 import { DsrOwnerTaskAuthorityUnavailableLive } from '../src/actions/privacy-dsr-owner-task-authority.ts';
@@ -98,9 +108,46 @@ import { RetentionDispositionAuthorityUnavailableLive } from '../src/actions/pri
 import { DsrDeadlineAuthorityUnavailableLive } from '../src/actions/record-dsr-deadline.action.ts';
 import { DsrDeliveryAuthorityUnavailableLive } from '../src/actions/record-dsr-delivery-evidence.action.ts';
 import { DsrVerificationAuthorityUnavailableLive } from '../src/actions/record-dsr-verification.action.ts';
-import { NoticeChannelDeliveryAuthorityUnavailableLive } from '../src/actions/record-notice-provision.action.ts';
+import {
+  NoticeChannelDeliveryAuthority,
+  NoticeChannelDeliveryAuthorityUnavailableLive,
+} from '../src/actions/record-notice-provision.action.ts';
 import { DsrDeliveryAccessAuthorityUnavailableLive } from '../src/actions/dsr-delivery-access-authority.ts';
 import { ProcessingInterventionAuthorityUnavailableLive } from '../src/actions/processing-intervention-authority.ts';
+
+/** Build the native runtime with fresh pre-transaction evidence for each invocation. */
+const privacyConsentAuthorityActionRuntimeLive: Layer.Layer<
+  ActionRuntime,
+  never,
+  ActionRuntime | CommerceConsentAuthorityLookup | Layer.Services<ReturnType<typeof makeActionRuntimeLive>>
+> = Layer.effect(
+  ActionRuntime,
+  Effect.gen(function* privacyConsentAuthorityActionRuntime() {
+    const existing = yield* ActionRuntime;
+    const lookup = yield* CommerceConsentAuthorityLookup;
+    const dependencies = yield* Effect.context<Layer.Services<ReturnType<typeof makeActionRuntimeLive>>>();
+    const runAction: ActionRuntimeService['runAction'] = (input) =>
+      Effect.scoped(
+        Effect.gen(function* runConsentAwareAction() {
+          const execution = yield* preparedCommerceConsentExecution.pipe(
+            Effect.provideService(CommerceConsentAuthorityLookup, lookup),
+          );
+          const scope = yield* Effect.scope;
+          const runtimeContext = yield* Layer.buildWithScope(
+            makeActionRuntimeLive(ultramodernDeliveryUnit),
+            scope,
+          ).pipe(Effect.provideContext(Context.add(dependencies, ActionAuthorizationPreflight, execution.preflight)));
+          return yield* Context.get(runtimeContext, ActionRuntime)
+            .runAction(input)
+            .pipe(
+              Effect.provideService(ConsentSelfServiceAuthority, execution.authority),
+              Effect.provideService(NoticeChannelDeliveryAuthority, execution.noticeAuthority),
+            );
+        }),
+      );
+    return { resolveActionCommit: existing.resolveActionCommit, runAction };
+  }),
+);
 
 const operationAttributes = (operationContext: OperationContext) => {
   const attributes = {
@@ -184,7 +231,9 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(DatabaseConfigLive),
   Layer.provideMerge(PrivacyApplicabilityBusinessFactAuthorityUnavailableLive),
 );
-const productionActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+const productionActionRuntimeLive = privacyConsentAuthorityActionRuntimeLive.pipe(
+  Layer.provideMerge(makeActionRuntimeLive(ultramodernDeliveryUnit)),
+  Layer.provide(Layer.effect(CommerceConsentAuthorityLookup, commerceConsentAuthorityLookup)),
   Layer.provide(
     Layer.mergeAll(
       CorePersistenceLive,

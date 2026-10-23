@@ -230,3 +230,8 @@ export const getPrivacyReadiness = ({
       operationContext: requestContext.operationContext ?? privacyOperationContexts.readiness,
     },
   }).pipe(Effect.flatMap((client) => client.foundation.readiness({})));
+
+export { executeProcessingPurposesWithAuthorization, executeProcessingPurposes } from './processing-purposes-client.ts';
+export { executePrivacySubjectsWithAuthorization, executePrivacySubjects } from './privacy-subjects-client.ts';
+export { executeNoticeVersionsWithAuthorization, executeNoticeVersions } from './notice-versions-client.ts';
+export { executeCurrentConsentWithAuthorization, executeCurrentConsent } from './current-consent-client.ts';

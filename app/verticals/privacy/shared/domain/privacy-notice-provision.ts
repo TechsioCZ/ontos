@@ -1,71 +1,26 @@
-import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
+import type { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 import { Effect, Schema } from 'effect';
 
-const Timestamp = PrivacyIsoTimestampSchema;
-const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const Outcome = Schema.Literals([
-  'PROVEN_PROVISION',
-  'REPEATED_PROVISION',
-  'DISPLAYED_WITHOUT_ACKNOWLEDGEMENT',
-  'PROVISION_FAILED',
-  'PROVISION_INDETERMINATE',
-]);
+import { PrivacyNoticeChannelProofSchema } from '@app/consent-authority-contracts';
+import type {
+  PrivacyNoticeChannelProof,
+  PrivacyNoticeProvisionDraft,
+  PrivacyNoticeProvision,
+  RecordPrivacyNoticeProvisionInput,
+} from '@app/consent-authority-contracts';
 
-/** Proof emitted by the trusted owner of the concrete delivery channel. */
-const PrivacyNoticeChannelProofSchema = Schema.Struct({
-  anonymousContextRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
-  authorityRef: Ref,
-  businessInteractionRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
-  channel: Ref,
-  controllerRef: Ref,
-  evidenceRef: Ref,
-  noticeVersionRef: Ref,
-  observedAt: Timestamp,
-  privacySubjectRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
-  processingPurposeRef: Ref,
-  processingScopeRef: Ref,
-  proofKind: Schema.Literals(['DELIVERY_CONFIRMED', 'INTERACTIVE_ACKNOWLEDGEMENT', 'IN_PERSON_ACKNOWLEDGEMENT']),
-  providedLanguage: Ref,
-});
-export type PrivacyNoticeChannelProof = typeof PrivacyNoticeChannelProofSchema.Type;
-
-/** A minimal, immutable fact about one notice information step. Raw page or transport payloads are deliberately absent. */
-const privacyNoticeProvisionFields = {
-  actionRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
-  anonymousContextRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
-  businessInteractionRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
-  channel: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
-  channelProof: Schema.optional(Schema.toEncoded(Schema.OptionFromNullOr(PrivacyNoticeChannelProofSchema))),
-  controllerRef: Ref,
-  evidenceRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
-  failureReason: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
-  noticeVersionRef: Ref,
-  outcome: Outcome,
-  privacySubjectRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
-  processingPurposeRef: Ref,
-  processingScopeRef: Ref,
-  providedLanguage: Ref,
-  provisionedAt: Timestamp,
-  provisionId: Schema.toEncoded(Ref.pipe(Schema.brand('PrivacyProvisionId'))),
-  recordedAt: Timestamp,
-  supersedesProvisionRef: Schema.toEncoded(Schema.OptionFromNullOr(Ref)),
-} as const;
-
-export const PrivacyNoticeProvisionSchema = Schema.Struct(privacyNoticeProvisionFields);
-export type PrivacyNoticeProvision = typeof PrivacyNoticeProvisionSchema.Type;
-
-const RecordPrivacyNoticeProvisionInputSchema = Schema.Struct(privacyNoticeProvisionFields);
-export type RecordPrivacyNoticeProvisionInput = typeof RecordPrivacyNoticeProvisionInputSchema.Type;
-
-const { recordedAt: _recordedAt, ...privacyNoticeProvisionDraftFields } = privacyNoticeProvisionFields;
-const PrivacyNoticeProvisionDraftSchema = Schema.Struct(privacyNoticeProvisionDraftFields);
-export type PrivacyNoticeProvisionDraft = typeof PrivacyNoticeProvisionDraftSchema.Type;
-
-const PrivacyNoticeAuthorityFactSchema = Schema.Struct({
-  claimRef: Ref,
-  provision: PrivacyNoticeProvisionDraftSchema,
-});
-export type PrivacyNoticeAuthorityFact = typeof PrivacyNoticeAuthorityFactSchema.Type;
+export {
+  PrivacyNoticeProvisionSchema,
+  PrivacyNoticeAuthorityFactSchema,
+  PrivacyNoticeChannelProofSchema,
+} from '@app/consent-authority-contracts';
+export type {
+  PrivacyNoticeChannelProof,
+  PrivacyNoticeProvisionDraft,
+  PrivacyNoticeProvision,
+  RecordPrivacyNoticeProvisionInput,
+  PrivacyNoticeAuthorityFact,
+} from '@app/consent-authority-contracts';
 
 export interface TrustedPrivacyNoticeProvisionContext {
   readonly authoritativeProof: PrivacyNoticeChannelProof | null;

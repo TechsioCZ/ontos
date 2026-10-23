@@ -61,6 +61,12 @@
     },
     {
       "path": "../../packages/email-delivery"
+    },
+    {
+      "path": "../../packages/consent-authority-contracts"
+    },
+    {
+      "path": "../privacy"
     }
   ]
 }

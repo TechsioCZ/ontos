@@ -1,3 +1,4 @@
+import { ConsentDecisionKindSchema } from '@app/consent-authority-contracts';
 import { ConsentDecisionInvariantError } from './consent-decision-invariant-error.ts';
 import { Context, Effect, Schema } from 'effect';
 
@@ -11,8 +12,8 @@ const EvidenceRefs = Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMax
 const OptionalEvidenceRefs = Schema.Array(Ref).check(Schema.isMaxLength(32));
 
 /** Re-granting is a new GRANTED decision; history, never mutation, distinguishes it. */
-export const ConsentDecisionKindSchema = Schema.Literals(['GRANTED', 'REFUSED', 'WITHDRAWN']);
-export type ConsentDecisionKind = typeof ConsentDecisionKindSchema.Type;
+export { ConsentDecisionKindSchema } from '@app/consent-authority-contracts';
+export type { ConsentDecisionKind } from '@app/consent-authority-contracts';
 
 /** An immutable decision fact. Scope and evidence are retained on every revision. */
 export const ConsentDecisionSchema = Schema.Struct({

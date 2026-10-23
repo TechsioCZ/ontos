@@ -805,6 +805,15 @@ importers:
         specifier: ^26.4.1
         version: 26.6.3
 
+  packages/consent-authority-contracts:
+    dependencies:
+      '@app/shared-contracts':
+        specifier: workspace:*
+        version: link:../shared-contracts
+      effect:
+        specifier: 4.0.0-rc.117
+        version: 4.0.0-rc.117
+
   packages/core-runtime:
     dependencies:
       '@authzed/authzed-node':
@@ -1428,6 +1437,9 @@ importers:
       '@app/commerce-market-catalog':
         specifier: workspace:*
         version: link:../commerce-market-catalog
+      '@app/consent-authority-contracts':
+        specifier: workspace:*
+        version: link:../../packages/consent-authority-contracts
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
@@ -1455,6 +1467,9 @@ importers:
       '@app/pricing-contracts':
         specifier: workspace:*
         version: link:../../packages/pricing-contracts
+      '@app/privacy':
+        specifier: workspace:*
+        version: link:../privacy
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
@@ -3220,6 +3235,9 @@ importers:
 
   verticals/privacy:
     dependencies:
+      '@app/consent-authority-contracts':
+        specifier: workspace:*
+        version: link:../../packages/consent-authority-contracts
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime

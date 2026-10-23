@@ -67,6 +67,7 @@
     "worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"
   },
   "dependencies": {
+    "@app/consent-authority-contracts": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/shared-contracts": "workspace:*",

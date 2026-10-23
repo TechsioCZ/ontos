@@ -1,14 +1,13 @@
+import { PrivacyIsoTimestampSchema } from '@app/consent-authority-contracts';
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { DateTime, Option, Schema } from 'effect';
 
 import { PrivacySubjectRefSchema } from '../resources/privacy-subject.ts';
 import { PrivacyPartyRefSchema } from './party-reference.ts';
 
+export { PrivacyIsoTimestampSchema } from '@app/consent-authority-contracts';
+
 const NonEmptyText = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
-export const PrivacyIsoTimestampSchema = Schema.toEncoded(Schema.DateTimeUtcFromString).check(
-  Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/u),
-  Schema.makeFilter((value) => (Option.isSome(DateTime.make(value)) ? undefined : 'invalid UTC timestamp')),
-);
 
 const privacyTimestampMillis = (value: string): number | undefined =>
   DateTime.make(value).pipe(Option.map(DateTime.toEpochMillis), Option.getOrUndefined);

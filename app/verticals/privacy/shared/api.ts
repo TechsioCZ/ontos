@@ -322,3 +322,13 @@ export const privacyApiContract = {
   ownerId: 'privacy',
   readinessPath: '/privacy-api/privacy/readiness',
 } as const;
+
+export {
+  CreateProcessingPurposePayloadSchema,
+  CreateProcessingPurposeResultSchema,
+} from './actions/create-processing-purpose.ts';
+export { CreateNoticeVersionPayloadSchema, CreateNoticeVersionResultSchema } from './actions/create-notice-version.ts';
+export {
+  CreatePrivacySubjectPayloadSchema,
+  CreatePrivacySubjectResultSchema,
+} from './actions/create-privacy-subject.ts';

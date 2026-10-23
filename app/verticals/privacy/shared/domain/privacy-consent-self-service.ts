@@ -1,18 +1,33 @@
+import {
+  pathMatchesRequest,
+  ConsentOperationSchema,
+  TrustedOperationConsentAuthorityFactSchema,
+} from '@app/consent-authority-contracts';
+import type { ConsentSelfServiceRequest, TrustedOperationConsentAuthorityFact } from '@app/consent-authority-contracts';
+
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
 import { Effect, Schema } from 'effect';
 
-import { ConsentDecisionKindSchema } from './privacy-consent-decision.ts';
 import type { ConsentDecision } from './privacy-consent-decision.ts';
 import { ConsentScopeSchema } from './privacy-consent-scope.ts';
 import { PrivacyIsoTimestampSchema } from './privacy-subject.ts';
 import { PrivacySubjectRefSchema } from '../resources/privacy-subject.ts';
 
+export {
+  ConsentSelfServicePathSchema,
+  ConsentSelfServiceRequestSchema,
+  TrustedOperationConsentAuthorityFactSchema,
+} from '@app/consent-authority-contracts';
+export type {
+  ConsentSelfServicePath,
+  ConsentSelfServiceRequest,
+  ConsentSelfServiceOperation,
+  TrustedOperationConsentAuthorityFact,
+} from '@app/consent-authority-contracts';
+
 const Ref = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const EvidenceRefs = Schema.Array(Ref).check(Schema.isMinLength(1), Schema.isMaxLength(32));
 const Permission = Ref;
-const ConsentOperationSchema = Schema.Literals(['CONSENT_READ', 'CONSENT_WRITE', 'CONSENT_WITHDRAW']);
 const SupportEvidenceStatusSchema = Schema.Literals(['CURRENT', 'STALE', 'CONFLICT', 'UNAVAILABLE']);
-export type ConsentSelfServiceOperation = typeof ConsentOperationSchema.Type;
 
 const RetailProfileRefSchema = Schema.Struct({
   kind: Schema.Literal('RETAIL'),
@@ -34,59 +49,6 @@ const subjectMatches = (
 
 const principalMatches = (left: typeof PrincipalRefSchema.Type, right: typeof PrincipalRefSchema.Type): boolean =>
   left.principalId === right.principalId && left.tenantId === right.tenantId;
-
-const pathMatchesRequest = (path: ConsentSelfServicePath, request: Pick<ConsentSelfServiceRequest, 'scope'>): boolean =>
-  subjectMatches(path.subjectRef, request.scope.privacySubjectRef) && path.scopeRef === request.scope.scopeRef;
-
-/**
- * Public input intentionally contains references only. Binding state, granted
- * permissions, and verification outcomes are never accepted from a browser.
- * The server resolves those facts through the owner ports below.
- */
-export const ConsentSelfServicePathSchema = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literal('CURRENT_PROFILE_BINDING'),
-    operation: ConsentOperationSchema,
-    operationRef: Ref,
-    profileRef: Ref,
-    requestRef: Ref,
-    scopeRef: Ref,
-    subjectRef: PrivacySubjectRefSchema,
-  }),
-  Schema.Struct({
-    credentialRef: Ref,
-    kind: Schema.Literal('OPERATION_SCOPED'),
-    operation: ConsentOperationSchema,
-    operationRef: Ref,
-    requestRef: Ref,
-    scopeRef: Ref,
-    subjectRef: PrivacySubjectRefSchema,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal('SUPPORT_ASSISTED'),
-    operation: ConsentOperationSchema,
-    operationRef: Ref,
-    representationRef: Ref,
-    requestRef: Ref,
-    scopeRef: Ref,
-    subjectRef: PrivacySubjectRefSchema,
-    verificationRef: Ref,
-  }),
-]);
-export type ConsentSelfServicePath = typeof ConsentSelfServicePathSchema.Type;
-
-export const ConsentSelfServiceRequestSchema = Schema.Struct({
-  decision: ConsentDecisionKindSchema,
-  /** These refs are business input; Privacy resolves their authoritative records before commit. */
-  noticeEvidenceRefs: EvidenceRefs,
-  path: ConsentSelfServicePathSchema,
-  scope: ConsentScopeSchema,
-}).check(
-  Schema.makeFilter(({ path, scope }) =>
-    pathMatchesRequest(path, { scope }) ? undefined : 'Self-service path must pin the exact Consent Scope and Subject',
-  ),
-);
-export type ConsentSelfServiceRequest = typeof ConsentSelfServiceRequestSchema.Type;
 
 export const ConsentSelfServiceOutcomeSchema = Schema.Literals([
   'ALLOWED_PROFILE',
@@ -150,16 +112,6 @@ export const TrustedPortalConsentAuthorityFactSchema = Schema.Struct({
   status: AuthorityStatusSchema,
 });
 export type TrustedPortalConsentAuthorityFact = typeof TrustedPortalConsentAuthorityFactSchema.Type;
-
-export const TrustedOperationConsentAuthorityFactSchema = Schema.Struct({
-  ...CommonAuthorityFields,
-  expiresAt: PrivacyIsoTimestampSchema,
-  kind: Schema.Literal('OPERATION_SCOPED'),
-  proofRef: Ref,
-  status: AuthorityStatusSchema,
-  verifiedAt: PrivacyIsoTimestampSchema,
-});
-export type TrustedOperationConsentAuthorityFact = typeof TrustedOperationConsentAuthorityFactSchema.Type;
 
 export const TrustedSupportConsentAuthorityFactSchema = Schema.Struct({
   ...CommonAuthorityFields,
