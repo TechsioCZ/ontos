@@ -826,6 +826,39 @@ it.effect('serves only the declared recovery routes and keeps the verification r
   });
 });
 
+it.effect(
+  'rejects expired and invalid email tokens through the typed recovery route without granting a session',
+  () => {
+    const fixture = makeMemoryRecoveryStore();
+    return Effect.gen(function* invalidVerificationLinks() {
+      const recovery = yield* runWithRecovery(successfulProvider(), fixture.store, (service) =>
+        Effect.succeed(service),
+      );
+      yield* fixture.store.registerEmailVerificationToken({
+        email: EMAIL,
+        expiresAt: new Date(0),
+        providerSubjectId: ORIGINAL_SUBJECT,
+        token: VERIFICATION_TOKEN,
+      });
+      const app = yield* makeRecoveryTransport(recovery);
+      for (const token of [Redacted.value(VERIFICATION_TOKEN), 'never-issued-token']) {
+        const response = yield* Effect.promise(() =>
+          app.handler(
+            new Request(`${recoveryRoute('/verify-email')}?${new URLSearchParams({ token })}`),
+            transportContext,
+          ),
+        );
+        expect(response.status).toBe(400);
+        expect(response.headers.get('cache-control')).toBe('no-store');
+        expect(response.headers.has('set-cookie')).toBe(false);
+        const body: unknown = yield* Effect.promise(response.json.bind(response));
+        expect(body).toMatchObject({ code: 'INVALID_TOKEN' });
+        expect(JSON.stringify(body)).not.toContain(token);
+      }
+    });
+  },
+);
+
 it.effect('spends the recovery budget before the provider is reached and then answers 429', () => {
   let requestCalls = 0;
   const fixture = makeMemoryRecoveryStore();

@@ -362,6 +362,50 @@ it.effect('keeps a Better Auth reset token bound to the original provider subjec
   });
 });
 
+it.live('verifies the generated email link through the typed owner route and then permits password login', () =>
+  Effect.scoped(
+    Effect.gen(function* generatedVerificationLink() {
+      const fixture = yield* makeRecoveryFixture('typed-mail-link');
+      const store = yield* makeCommercePortalAuthRecoveryStore(fixture.database.executor).pipe(
+        Effect.provideService(Crypto.Crypto, recoveryCrypto),
+      );
+      const app = yield* makeRecoveryRuntime(fixture, store);
+      const mailURL = yield* Effect.fromNullishOr(fixture.verificationURLs.at(-1));
+      const link = new URL(mailURL);
+      expect(link.origin).toBe(ORIGIN);
+      expect(link.pathname).toBe(`${COMMERCE_PORTAL_AUTH_PUBLIC_BASE_PATH}/verify-email`);
+      const signIn = () =>
+        Effect.tryPromise({
+          catch: (cause) => cause,
+          try: () =>
+            fixture.auth.api.signInEmail({
+              body: { email: fixture.email, password: fixture.password },
+              headers: { origin: ORIGIN },
+            }),
+        });
+      expect(Result.isFailure(yield* Effect.result(signIn()))).toBe(true);
+
+      const response = yield* Effect.promise(() => app.handler(new Request(mailURL), transportContext));
+      expect(response.status).toBe(200);
+      expect(response.headers.has('set-cookie')).toBe(false);
+      expect(yield* Effect.promise(response.json.bind(response))).toStrictEqual({
+        outcome: 'EMAIL_VERIFICATION_COMPLETED_SAME_SUBJECT',
+      });
+      const signedIn = yield* signIn();
+      expect(signedIn.user.id).toBe(fixture.userId);
+      expect(signedIn.user.emailVerified).toBe(true);
+
+      for (const token of [link.searchParams.get('token') ?? '', 'never-issued-token']) {
+        const retry = new URL(mailURL);
+        retry.searchParams.set('token', token);
+        const rejected = yield* Effect.promise(() => app.handler(new Request(retry), transportContext));
+        expect(rejected.status).toBe(400);
+        expect(yield* Effect.promise(rejected.json.bind(rejected))).toMatchObject({ code: 'INVALID_TOKEN' });
+      }
+    }),
+  ),
+);
+
 it.live('proves PostgreSQL verification consumption is concurrent-safe and replay-resistant', () =>
   Effect.scoped(
     Effect.gen(function* postgresVerificationConcurrency() {
@@ -405,8 +449,19 @@ it.live('proves PostgreSQL verification expiry consumes an expired row and rejec
         .set({ expiresAt: DateTime.toDate(DateTime.add(DateTime.makeUnsafe(now), { seconds: -1 })) })
         .where(eq(verification.id, row.id));
 
-      const expired = yield* Effect.result(fixture.recovery.verifyEmail({ token: fixture.verificationToken }));
-      expect(Result.isFailure(expired)).toBe(true);
+      const store = yield* makeCommercePortalAuthRecoveryStore(fixture.database.executor).pipe(
+        Effect.provideService(Crypto.Crypto, recoveryCrypto),
+      );
+      const app = yield* makeRecoveryRuntime(fixture, store);
+      const verificationURL = yield* Effect.fromNullishOr(fixture.verificationURLs.at(-1));
+      const expired = yield* Effect.promise(() => app.handler(new Request(verificationURL), transportContext));
+      expect(expired.status).toBe(400);
+      expect(yield* Effect.promise(expired.json.bind(expired))).toMatchObject({ code: 'INVALID_TOKEN' });
+      const users = yield* fixture.database.executor
+        .select({ emailVerified: user.emailVerified })
+        .from(user)
+        .where(eq(user.id, fixture.userId));
+      expect(users.at(0)?.emailVerified).toBe(false);
       const remainingRows = yield* customVerificationRows(fixture);
       expect(remainingRows).toHaveLength(0);
     }),
