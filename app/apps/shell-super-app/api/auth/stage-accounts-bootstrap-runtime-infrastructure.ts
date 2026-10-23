@@ -70,7 +70,7 @@ const ensureAuthUser = Effect.fn('StageAccountsBootstrap.ensureAuthUser')(functi
 ) {
   const { adapter, executor: database } = yield* AuthDatabase;
   const existingUsers = yield* database
-    .select({ email: user.email, id: user.id, name: user.name })
+    .select({ email: user.email, emailVerified: user.emailVerified, id: user.id, name: user.name })
     .from(user)
     .where(eq(user.email, accountConfiguration.email))
     .limit(2)
@@ -125,9 +125,33 @@ const ensureAuthUser = Effect.fn('StageAccountsBootstrap.ensureAuthUser')(functi
           replaceStagePassword(transaction, credential.id, existingUser.id, replacementHash, updatedAt),
         )
         .pipe(Effect.mapError(persistenceFailure));
-      return { status: 'password-reset' as const, userId: existingUser.id };
     }
-    return { status: 'existing' as const, userId: existingUser.id };
+    if (!existingUser.emailVerified) {
+      // The guarded operator file attests this exact account, not arbitrary users in the database.
+      const updatedAt = yield* DateTime.nowAsDate;
+      const verified = yield* database
+        .update(user)
+        .set({ emailVerified: true, updatedAt })
+        .where(
+          and(
+            eq(user.id, existingUser.id),
+            eq(user.email, accountConfiguration.email),
+            eq(user.name, accountConfiguration.displayName),
+          ),
+        )
+        .returning({ id: user.id })
+        .pipe(Effect.mapError(persistenceFailure));
+      if (verified.length !== 1) {
+        return yield* new StageAccountsBootstrapError({
+          code: 'stage_accounts_conflict',
+          reason: 'The existing stage account user changed during operator verification',
+        });
+      }
+    }
+    return {
+      status: validPassword ? ('existing' as const) : ('password-reset' as const),
+      userId: existingUser.id,
+    };
   }
 
   const authentication = betterAuth({
@@ -150,6 +174,7 @@ const ensureAuthUser = Effect.fn('StageAccountsBootstrap.ensureAuthUser')(functi
     try: () =>
       authentication.api.createUser({
         body: {
+          data: { emailVerified: true },
           email: accountConfiguration.email,
           name: accountConfiguration.displayName,
           password: Redacted.value(accountConfiguration.password),
