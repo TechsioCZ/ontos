@@ -20,7 +20,8 @@
     "./agent-diff": "./src/agent-diff.ts",
     "./agent-review": "./src/agent-review.ts",
     "./agent-access": "./src/agent-access.ts",
-    "./oauth-connections": "./src/oauth-connections.ts"
+    "./oauth-connections": "./src/oauth-connections.ts",
+    "./page-data": "./src/page-data.ts"
   },
   "scripts": {
     "test:types": "ultramodern-create ultramodern typecheck --project tests/tsconfig.json && ultramodern-create ultramodern typecheck --project tests/client-runtime-types.tsconfig.json",
