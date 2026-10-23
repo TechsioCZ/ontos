@@ -23,7 +23,10 @@ import { FetchHttpClient } from 'effect/unstable/http';
 import { commerceMarketCatalogApi, commerceMarketCatalogOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import { ActionPrincipalVerifierLive } from './auth/action-principal.ts';
-import { GatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
+import {
+  GatewayAssertionRedemptionDatabaseLive,
+  GatewayAssertionRedemptionLive,
+} from './auth/gateway-assertion-redemption.ts';
 // <generated-governed-http-handler-imports>
 import { currentMarketCatalogReadApiLive } from './current-market-catalog-read-server.ts';
 import { eligibleMarketTuplesReadApiLive } from './eligible-market-tuples-read-server.ts';
@@ -93,9 +96,17 @@ const productionReadRuntimeLive = ReadRuntimeLive.pipe(
   Layer.provide(DatabaseConfigLive),
 );
 
+const productionGatewayAssertionRedemptionLive = GatewayAssertionRedemptionLive.pipe(
+  Layer.provide(GatewayAssertionRedemptionDatabaseLive),
+  Layer.provide(DatabaseConfigLive),
+);
+
 type CommerceMarketCatalogApiRuntimeArguments = readonly [
   readRuntime: Layer.Layer<ReadRuntime, Layer.Error<typeof productionReadRuntimeLive>>,
-  gatewayAssertionRedemption: Layer.Layer<GatewayAssertionRedemptionService>,
+  gatewayAssertionRedemption: Layer.Layer<
+    GatewayAssertionRedemptionService,
+    Layer.Error<typeof productionGatewayAssertionRedemptionLive>
+  >,
 ];
 
 export const makeCommerceMarketCatalogApiRuntime = (
@@ -146,6 +157,9 @@ export const makeCommerceMarketCatalogApiRuntime = (
   });
 };
 
-const apiRuntime = makeCommerceMarketCatalogApiRuntime(productionReadRuntimeLive, GatewayAssertionRedemptionLive);
+const apiRuntime = makeCommerceMarketCatalogApiRuntime(
+  productionReadRuntimeLive,
+  productionGatewayAssertionRedemptionLive,
+);
 
 export default apiRuntime;
