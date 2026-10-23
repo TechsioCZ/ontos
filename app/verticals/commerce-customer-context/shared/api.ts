@@ -11,6 +11,7 @@ import { CommercePortalAuthMfaApi } from './portal-auth/mfa-api.ts';
 import { CommercePortalAuthRecoveryApi } from './portal-auth/recovery-api.ts';
 import { CommercePortalAuthSessionApi } from './portal-auth/session-api.ts';
 import { CommercePortalAuthStepUpApi } from './portal-auth/step-up-api.ts';
+import { CustomerOwnProfileReadApi, CustomerOwnProfileUpdateApi } from './portal-auth/profile-api.ts';
 
 // <generated-governed-http-api-imports>
 import { PrivacyMeasureExecutionApi } from './apis/privacy-measure-execution.ts';
@@ -167,6 +168,8 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(CommercePortalAuthRecoveryApi)
   .addHttpApi(CommercePortalAuthStepUpApi)
   .addHttpApi(CommercePortalAuthEnrollmentApi)
+  .addHttpApi(CustomerOwnProfileReadApi)
+  .addHttpApi(CustomerOwnProfileUpdateApi)
   // <generated-governed-http-api-additions>
   .addHttpApi(PrivacyMeasureExecutionApi)
   .addHttpApi(AddSavedAddressActionApi)

@@ -154,6 +154,8 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
   ],
   entrypoints: {
     api: {
+      'customer-profile-read-own': () => import('./src/api/customer-profile-self-service-client.ts'),
+      'customer-profile-update-own': () => import('./src/api/customer-profile-self-service-client.ts'),
       // <generated-module-registration-apis>
       'commerce-quantity-policy-current': () => import('./src/api/commerce-quantity-policy-current-client.ts'),
       'commerce-quantity-resolution': () => import('./src/api/commerce-quantity-resolution-client.ts'),

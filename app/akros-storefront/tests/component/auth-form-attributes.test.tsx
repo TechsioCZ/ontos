@@ -117,14 +117,32 @@ describe("password-manager form semantics with the published UI-kit", () => {
       <AppRouterContext.Provider value={router}>
         <PathnameContext.Provider value="/muj-ucet">
           <CartProvider storage={null}>
-            <AccountProfilePage account={{ id: "customer-1", partyId: "party-1", tenantId: "tenant-1", email: "customer@example.test", name: "Customer One" }} />
+            <AccountProfilePage
+              account={{
+                id: "customer-1",
+                partyId: "party-1",
+                tenantId: "tenant-1",
+                email: "customer@example.test",
+                name: "Customer One",
+              }}
+              profile={{
+                displayName: "Customer One",
+                phone: "",
+                contactEmail: "customer@example.test",
+                version: "a".repeat(64),
+              }}
+            />
           </CartProvider>
         </PathnameContext.Provider>
       </AppRouterContext.Provider>,
     );
 
     expect(document.getElementById("account-password")).toBeNull();
-    const email = expectInput("account-email", { name: "email", type: "email", autocomplete: "username" });
+    const email = expectInput("account-email", {
+      name: "email",
+      type: "email",
+      autocomplete: "username",
+    });
     expect(email.value).toBe("customer@example.test");
     expect(email.readOnly).toBe(true);
   });

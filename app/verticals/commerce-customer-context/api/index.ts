@@ -61,6 +61,7 @@ import { CommercePortalAuthMfaProviderLive } from './portal-auth/provider/mfa/be
 import { CommercePortalAuthMfaServiceLive } from './portal-auth/provider/mfa/service.ts';
 import { CommercePortalAuthMfaStepUpCodeVerifierLive } from './portal-auth/provider/mfa/step-up-verifier.ts';
 import { portalAuthEnrollmentApiLive } from './portal-auth/enrollment/http.ts';
+import { customerOwnProfileReadApiLive, customerOwnProfileUpdateApiLive } from './portal-auth/profile/http.ts';
 import {
   CommercePortalAuthAccountCreationGatewayLive,
   CommercePortalAuthAccountCreationProviderLive,
@@ -810,6 +811,8 @@ export const makeCommerceCustomerContextApiRuntime = (
     portalAuthRecoveryApiLive,
     portalAuthStepUpApiLive,
     portalAuthEnrollmentApiLive,
+    customerOwnProfileReadApiLive,
+    customerOwnProfileUpdateApiLive,
     // <generated-governed-http-handler-layers>
     privacyMeasureExecutionReadApiLive,
     addSavedAddressActionApiLive,
@@ -943,6 +946,8 @@ export const makeCommerceCustomerContextApiRuntime = (
     // Invitation claims digest the one-time secret and dispatch an owner Action in the same transaction.
     commercePortalAuthPlatformCryptoLive,
     contextAccess,
+    compositionHttpClientLive,
+    moduleEntrypointGatewayLive.pipe(Layer.provide(databaseConfiguration)),
     commerceEnrollmentOwnerTransactionRunnerProductionLive.pipe(GovernedReadLayer.provide(databaseConfiguration)),
   ).pipe(
     // Core revalidates a presented session binding's authentication namespace before authorization.

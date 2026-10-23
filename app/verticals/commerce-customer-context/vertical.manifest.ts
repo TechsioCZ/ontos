@@ -3,6 +3,11 @@
 // @ontos-module-id commerce.customer-context
 import { defineOntosModuleManifest } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
+import { CustomerOwnProfileReadApi, CustomerOwnProfileUpdateApi } from './shared/portal-auth/profile-api.ts';
+import {
+  customerProfileReadOwnPermission,
+  customerProfileUpdateOwnPermission,
+} from './shared/permissions/customer-profile-self-service.ts';
 // <generated-module-manifest-imports>
 import { addSavedAddressAction } from './src/actions/add-saved-address.action.ts';
 import { administerCommerceQuantityRuleAction } from './src/actions/administer-commerce-quantity-rule.action.ts';
@@ -258,6 +263,8 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       // </generated-module-manifest-actions>
     ],
     api: {
+      'customer-profile-read-own': CustomerOwnProfileReadApi,
+      'customer-profile-update-own': CustomerOwnProfileUpdateApi,
       // <generated-module-manifest-apis>
       'commerce-quantity-policy-current': CommerceQuantityPolicyCurrentApi,
       'commerce-quantity-resolution': CommerceQuantityResolutionApi,
@@ -316,6 +323,8 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       // </generated-module-manifest-apis>
     },
     businessPermissions: [
+      customerProfileReadOwnPermission,
+      customerProfileUpdateOwnPermission,
       // <generated-module-manifest-business-permissions>
       counterpartyAccessManagePermission,
       counterpartyAccessReadPermission,
