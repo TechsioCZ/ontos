@@ -81,7 +81,7 @@ export function ContactForm({
   if (taskId !== null)
     return (
       <output className="akros-form-success">
-        Děkujeme. Dotaz je uložen v OntOS pro tým AKROS k vyřízení. Číslo požadavku: {taskId}.
+        Děkujeme. Dotaz jsme předali týmu AKROS k vyřízení. Číslo požadavku: {taskId}.
       </output>
     );
   return (
@@ -148,10 +148,7 @@ export function ContactForm({
           rows={compact ? 4 : 6}
           size={compact ? "sm" : "md"}
         />
-        <p>
-          Údaje odešleme týmu AKROS v OntOS k vyřízení vašeho dotazu. Nejde o přihlášení k
-          newsletteru.
-        </p>
+        <p>Údaje odešleme týmu AKROS k vyřízení vašeho dotazu. Nejde o přihlášení k newsletteru.</p>
         {kind === "COMPLAINT" && (
           <p>
             Odesláním vznikne úkol pro podporu, nikoli automaticky zaevidovaný reklamační případ.

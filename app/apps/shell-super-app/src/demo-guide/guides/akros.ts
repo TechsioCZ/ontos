@@ -3,7 +3,7 @@ import type { DemoGuide, DemoGuidePersona } from '../demo-guide-types.ts';
 const eshop: DemoGuidePersona = { email: 'eshop@akros.demo', role: 'Správce e-shopu' };
 const expedice: DemoGuidePersona = { email: 'expedice@akros.demo', role: 'Expedice' };
 
-/** Kai Uwe's standalone AKROS storefront, connected to OntOS; opened in a new tab, the customer needs no sign-in. */
+/** Kai Uwe's standalone storefront uses its own customer account, separate from the staff sign-in. */
 declare global {
   var ULTRAMODERN_PUBLIC_URL_AKROS_STOREFRONT: string | undefined;
 }
@@ -17,7 +17,7 @@ export const akrosGuide: DemoGuide = {
       steps: [
         {
           click:
-            'Tlačítko otevře e-shop v nové kartě. Zákazník nakupuje bez přihlášení, přihlášení do OntOS e-shop nepoužívá.',
+            'Tlačítko otevře e-shop v nové kartě. Katalog je veřejný; objednání vyžaduje zákaznický účet e-shopu, nikoli účet správce OntOS.',
           id: 'akros-katalog',
           persona: null,
           say: 'Tohle je zákaznický e-shop AKROS se zachovaným vlastním designem. Katalog, ceny a dostupnost mu dodává OntOS.',
@@ -42,12 +42,12 @@ export const akrosGuide: DemoGuide = {
         },
         {
           click:
-            'Osobní odběr → Dodací údaje → fiktivní kontakt Pavel Dvořák, pavel.dvorak@dvorak-stavby.demo → Souhrn objednávky → jednou Potvrdit DEMO objednávku → opište číslo objednávky.',
+            'V košíku se nejprve přihlaste zákaznickým účtem e-shopu. Vyberte PPL nebo Českou poštu → Dodací údaje → Souhrn objednávky → jednou Odeslat objednávku → opište číslo objednávky.',
           id: 'akros-objednavka',
           persona: null,
-          say: 'Objednávka se skutečně uloží do OntOS a dostane číslo. Nic se ale neplatí a nic se nepředává dopravci.',
-          target: { kind: 'external', label: 'pokladnu', url: `${storefront}/kosik/doprava-platba` },
-          title: 'Dokončení DEMO objednávky',
+          say: 'Objednávka se skutečně uloží a dostane číslo. Její stav je v zákaznickém účtu; odesláním neproběhne online platba ani objednání přepravy.',
+          target: { kind: 'external', label: 'pokladnu', url: `${storefront}/kosik` },
+          title: 'Dokončení objednávky',
         },
       ],
       summary: 'Zákazník nakupuje v původním e-shopu AKROS, OntOS dodává varianty, ceny a dostupnost.',
@@ -75,10 +75,10 @@ export const akrosGuide: DemoGuide = {
           title: 'Změna ceny varianty',
         },
         {
-          click: 'Asi po 16 sekundách obnovte kartu s produktem v e-shopu.',
+          click: 'Po nejvýše deseti sekundách obnovte kartu s produktem v e-shopu.',
           id: 'akros-cena-eshop',
           persona: null,
-          say: 'E-shop převezme novou cenu po krátké cache a přepočítá ji s DPH.',
+          say: 'E-shop načte cenu s DPH z OntOS; před objednáním ji ještě znovu ověří.',
           target: { kind: 'external', label: 'produkt v e-shopu', url: productUrl },
           title: 'Nová cena v e-shopu',
         },
@@ -94,7 +94,7 @@ export const akrosGuide: DemoGuide = {
             'Vyhledejte stejné číslo → detail → Začít zpracovávat → Připraveno k předání → Předat dopravci (simulace) → Dokončit.',
           id: 'akros-expedice-stavy',
           persona: expedice,
-          say: 'Expedice má jen svou práci: posouvá stav objednávky, ale nemůže ji upravit ani měnit ceny. Předání dopravci je výslovně simulované.',
+          say: 'Expedice posouvá skutečný stav objednávky, ale nemění její obsah ani ceny. Tento krok zatím nezajišťuje rezervaci přepravy ani štítek.',
           target: { kind: 'app', path: '/prodej/objednavky' },
           title: 'Zpracování objednávky',
         },
@@ -187,20 +187,20 @@ export const akrosGuide: DemoGuide = {
   boundaries: {
     live: [
       'Katalog, varianty, ceny, dostupnost a vyhledávání e-shopu AKROS čte server e-shopu přímo z OntOS; klíč k OntOS nikdy nepřijde do prohlížeče.',
-      'DEMO objednávka se skutečně uloží do OntOS, sníží sklad varianty a hned ji vidí správce i expedice; zákazník na potvrzení vidí živý stav.',
+      'Objednávka se skutečně uloží do OntOS, sníží sklad varianty a vidí ji správce i expedice; zákazník sleduje stav ve svém účtu.',
       'Změna ceny, textu nebo obrázku v administraci se v e-shopu projeví po obnovení stránky (krátká cache).',
-      'E-maily k objednávce se skutečně odesílají, ale jen do lokální testovací schránky Mailpit (localhost:8025), nikdy skutečným adresátům.',
+      'Přihlášení a registrace používají zákaznický účet napojený na OntOS. Pokladna vyžaduje přihlášení před zadáním dopravy a adresy.',
     ],
     simulated: [
-      'Předání dopravci: stav „Předáno dopravci (simulace)“ nevolá žádného dopravce a nic se nedoručuje.',
-      'Platba: nic se neplatí, v pokladně není platební brána; doprava a platba jsou jen ukázkové volby.',
-      'Zákaznické údaje v pokladně jsou fiktivní.',
-      'Přihlášení, registrace, Můj účet a Oblíbené jsou ukázkové obrazovky původního e-shopu bez napojení na OntOS; DEMO objednávka se dělá bez účtu.',
+      'Volba PPL nebo České pošty se s aktuální cenou uloží do objednávky; sama nezarezervuje přepravu ani nevytvoří štítek.',
+      'Objednávka bez online platby: v pokladně není platební brána a odesláním se nic neplatí.',
+      'Objednávka i zákaznické údaje se skutečně ukládají; používejte účet a kontakty určené pro ukázku.',
+      'Doručení e-mailů závisí na nastavení prostředí. Při ukázce neslibujte doručení do skutečné schránky ani omezení jen na lokální Mailpit.',
     ],
     unfinished: [
       'Množstevní cenové úrovně (nižší cena od 100 nebo 500 ks) zdrojová data nemají, e-shop je proto nenabízí.',
       'Produkt nejde smazat, jen vyřadit z prodeje (neaktivní a nezveřejněný).',
-      'Veřejný odkaz dostupný 24/7 zatím neexistuje: ukázka běží jen lokálně.',
+      'Odkaz v průvodci používá e-shop daného prostředí: na stage veřejný stage e-shop, při místním spuštění localhost.',
       'Daňové a účetní doklady, napojení dopravců, platební brány a kupóny nejsou součástí této verze.',
     ],
   },

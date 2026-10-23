@@ -765,15 +765,16 @@ it.live(
   },
 );
 
+const packageStockVariant = (id: string, constraints: { minimumQuantity?: number; packageQuantity?: number } = {}) => ({
+  attributes: '',
+  id,
+  name: id,
+  priceMinor: 100,
+  sku: id,
+  ...constraints,
+});
+
 it.live('counts only independently orderable variant packages in both card and detail summaries', () => {
-  const variant = (id: string, constraints: { minimumQuantity?: number; packageQuantity?: number } = {}) => ({
-    attributes: '',
-    id,
-    name: id,
-    priceMinor: 100,
-    sku: id,
-    ...constraints,
-  });
   const balances = [
     ['partial-one', 15],
     ['partial-two', 40],
@@ -797,17 +798,17 @@ it.live('counts only independently orderable variant packages in both card and d
         minimumQuantity: 50,
         packageQuantity: 50,
         variants: [
-          variant('partial-one', { minimumQuantity: 50, packageQuantity: 50 }),
-          variant('partial-two', { minimumQuantity: 50, packageQuantity: 50 }),
-          variant('rounded-below', { minimumQuantity: 75, packageQuantity: 50 }),
-          variant('rounded-ready', { minimumQuantity: 75, packageQuantity: 50 }),
-          variant('fallback'),
+          packageStockVariant('partial-one', { minimumQuantity: 50, packageQuantity: 50 }),
+          packageStockVariant('partial-two', { minimumQuantity: 50, packageQuantity: 50 }),
+          packageStockVariant('rounded-below', { minimumQuantity: 75, packageQuantity: 50 }),
+          packageStockVariant('rounded-ready', { minimumQuantity: 75, packageQuantity: 50 }),
+          packageStockVariant('fallback'),
         ],
       },
     ],
   });
   return withMerchandise(state, (fixture) =>
-    Effect.gen(function* () {
+    Effect.gen(function* packageStockSummary() {
       for (const fields of ['card', 'full'] as const) {
         const page = yield* catalogPage(fixture, { fields, productIds: ['p1'] });
         expect(page.products[0]?.variantSummary).toEqual({
@@ -816,8 +817,9 @@ it.live('counts only independently orderable variant packages in both card and d
           stockOnHand: 100,
           units: ['ks'],
         });
-        if (fields === 'full')
+        if (fields === 'full') {
           expect(page.products[0]?.variantRecords?.map((row) => row.stockOnHand)).toEqual([15, 40, 75, 100, 49]);
+        }
       }
     }),
   );

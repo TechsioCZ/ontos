@@ -98,3 +98,20 @@ it('has a Připojení ChatGPT / Claude chapter for every company', () => {
     expect(chapter?.steps.some((step) => step.target.kind === 'app' && step.target.path === '/sprava/lide')).toBe(true);
   }
 });
+
+it('describes authenticated owner-backed checkout without unsupported payment or local-only promises', () => {
+  const guide = demoGuideFor(legalEntities.akros);
+  const steps = guide?.chapters.flatMap((chapter) => chapter.steps) ?? [];
+  const checkout = steps.find((step) => step.id === 'akros-objednavka');
+  expect(checkout?.click).toContain('nejprve přihlaste zákaznickým účtem');
+  expect(checkout?.click).toContain('PPL nebo Českou poštu');
+  expect(checkout?.target).toEqual(expect.objectContaining({ kind: 'external', url: 'http://localhost:3070/kosik' }));
+  const boundaries = Object.values(guide?.boundaries ?? {})
+    .flat()
+    .join(' ');
+  expect(boundaries).toContain('před zadáním dopravy a adresy');
+  expect(boundaries).toContain('bez online platby');
+  expect(boundaries).not.toContain('bez napojení na OntOS');
+  expect(boundaries).not.toContain('ukázka běží jen lokálně');
+  expect(boundaries).not.toContain('nikdy skutečným adresátům');
+});

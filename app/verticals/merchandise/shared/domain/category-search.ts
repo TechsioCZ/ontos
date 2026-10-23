@@ -2,7 +2,8 @@
 // candidates PostgreSQL pre-filtered (see `searchCategoryCandidates`), so a picker never loads the whole tree.
 
 /** Stainless grades have one owner spelling in imports, navigation and staff lists. */
-export const normalizeCategoryName = (value: string): string => value.replace(/\bA\s+([245])\b/giu, 'A$1');
+export const normalizeCategoryName = (value: string): string =>
+  value.replaceAll(/\bA\s+(?<grade>[245])\b/giu, 'A$<grade>');
 
 /** Most matches one category search returns. */
 export const CATEGORY_RESULT_LIMIT = 50;

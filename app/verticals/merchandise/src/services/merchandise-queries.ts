@@ -614,6 +614,22 @@ export const hasCategoryTree = (db: MerchandiseDb, scope: StoreScope) =>
  * content (storefront: roots, the active category and its children; staff: the selected one with its history).
  * The storefront tree hides every category below an unpublished one.
  */
+interface CategoryDisplayLabels {
+  heading?: string;
+  imageAlt?: string;
+}
+
+const categoryDisplayLabels = (row: { readonly heading: string | null; readonly imageAlt: string | null }) => {
+  const labels: CategoryDisplayLabels = {};
+  if (row.heading !== null) {
+    labels.heading = normalizeCategoryName(row.heading);
+  }
+  if (row.imageAlt !== null) {
+    labels.imageAlt = normalizeCategoryName(row.imageAlt);
+  }
+  return labels;
+};
+
 export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(function* categoryTree(
   db: MerchandiseDb,
   scope: StoreScope,
@@ -708,11 +724,10 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
           position: row.position,
           slug: row.slug,
           ...(row.published === null ? {} : { published: row.published }),
-          ...(row.heading === null ? {} : { heading: normalizeCategoryName(row.heading) }),
+          ...categoryDisplayLabels(row),
           ...(row.description === null ? {} : { description: row.description }),
           ...(row.longDescription === null ? {} : { longDescription: row.longDescription }),
           ...(row.imageSrc === null ? {} : { imageSrc: row.imageSrc }),
-          ...(row.imageAlt === null ? {} : { imageAlt: normalizeCategoryName(row.imageAlt) }),
           ...(row.history === null || row.history === undefined ? {} : { history: decodeHistory(row.history) }),
         })),
   });

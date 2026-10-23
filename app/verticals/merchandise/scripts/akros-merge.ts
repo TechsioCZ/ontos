@@ -42,7 +42,9 @@ export const decodeCategoryText = <C extends Partial<Pick<CatalogCategory, (type
       const decoded = decodeHtmlEntities(value);
       const normalized =
         key === 'name' || key === 'heading' || key === 'imageAlt' ? normalizeCategoryName(decoded) : decoded;
-      if (normalized !== value) patch[key] = normalized;
+      if (normalized !== value) {
+        patch[key] = normalized;
+      }
     }
   }
   return Object.keys(patch).length === 0 ? category : { ...category, ...patch };
