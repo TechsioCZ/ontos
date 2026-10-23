@@ -35,7 +35,7 @@ export const inventoryBackendConfigurationCurrentRead = defineRead(
     inputSchema: InventoryBackendConfigurationCurrentRequestSchema,
     legalEntityScope: 'forbidden',
     owningModuleKey: MODULE_KEY,
-    permissionTarget: 'module',
+    permissionTarget: 'tenant',
     policies: [],
     readKey: 'commerce.inventory.api.inventory-backend-configuration-current',
     resultSchema: InventoryBackendConfigurationCurrentResponseSchema,
@@ -63,5 +63,5 @@ export const inventoryBackendConfigurationCurrentRead = defineRead(
     Effect.succeed(
       makeInventoryBackendConfigurationService(inventoryBackendConfigurationPersistenceForScope(transaction, scope)),
     ),
-  () => ({ kind: 'module', moduleId: MODULE_KEY }),
+  () => ({ kind: 'tenant' as const, permission: 'access' as const }),
 );

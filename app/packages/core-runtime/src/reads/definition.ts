@@ -335,8 +335,15 @@ export interface ReadDescriptorValidationInput {
   readonly entrypoint: ModuleEntrypointDescriptor;
   readonly legalEntityScope: string;
   readonly owningModuleKey: string;
+  readonly permissionTarget?: string;
   readonly resourcePermission?: ReadResourcePermissionDeclaration<never>;
 }
+
+/**
+ * Permission targets that can only be decided inside a legal-entity scope. `tenant` targets are decidable
+ * without one, and an explicitly addressed `legal_entity` target carries its own identity.
+ */
+const LEGAL_ENTITY_SCOPED_PERMISSION_TARGETS: ReadonlySet<string> = new Set(['module', 'resource']);
 
 const hasValidReadEntrypoint = (descriptor: ReadDescriptorValidationInput): boolean =>
   descriptor.entrypoint.moduleKey === descriptor.owningModuleKey &&
@@ -391,6 +398,24 @@ export const validateReadDescriptorInput = (descriptor: ReadDescriptorValidation
   }
   if (!LEGAL_ENTITY_SCOPES.some((scope) => scope === descriptor.legalEntityScope)) {
     return failReadDefinition('Read legal-entity scope must be required, optional, or forbidden');
+  }
+  if (
+    descriptor.legalEntityScope === 'forbidden' &&
+    descriptor.entrypoint.scope === 'tenant' &&
+    descriptor.permissionTarget !== undefined &&
+    LEGAL_ENTITY_SCOPED_PERMISSION_TARGETS.has(descriptor.permissionTarget) &&
+    // An allow-list, not a deny-list: the only tenant gate that decides independently of this target is a
+    // context permission other than `module.access`. `module.access` reuses the primary decision for the read's
+    // own module, so it restates the missing decision; authentication, `public` and `capability_issuance` do
+    // not evaluate the target at all.
+    !(
+      descriptor.entrypoint.authorization.kind === 'context_permission' &&
+      descriptor.entrypoint.authorization.permission !== 'module.access'
+    )
+  ) {
+    return failReadDefinition(
+      'Tenant Read with forbidden legal-entity scope needs a permission target that can be evaluated: it requires a context permission other than module.access, because a module.access gate reuses the target decision and authentication alone evaluates nothing',
+    );
   }
   if (
     descriptor.resourcePermission !== undefined &&
