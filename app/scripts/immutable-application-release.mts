@@ -1118,9 +1118,13 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
         Effect.mapError(() => fail('Cloudflare release request failed')),
       );
     const backendScript = `/workers/scripts/${plan.backendScriptName}`;
+    // A status-only response still has its body read, so its connection returns to the pool instead of
+    // holding the process open until the provider closes it (about a minute).
+    const statusOnly = (request: HttpClientRequest.HttpClientRequest) =>
+      execute(request).pipe(Effect.tap((response) => Effect.ignore(response.arrayBuffer)));
     const absence = yield* Effect.forEach(
       [backendScript, `/workers/scripts/${plan.assetsScriptName}`],
-      (suffix) => execute(HttpClientRequest.get(apiUrl(suffix))),
+      (suffix) => statusOnly(HttpClientRequest.get(apiUrl(suffix))),
       { concurrency: 'unbounded' },
     );
     for (const current of absence) {
@@ -1253,7 +1257,7 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
     // The read-backs are independent, so they run side by side; any failure still fails the release.
     const [installed, subdomain, installedContent] = yield* Effect.all(
       [
-        execute(HttpClientRequest.get(apiUrl(backendScript))),
+        statusOnly(HttpClientRequest.get(apiUrl(backendScript))),
         execute(HttpClientRequest.get(apiUrl(`${backendScript}/subdomain`))),
         execute(HttpClientRequest.get(apiUrl(`${backendScript}/content/v2`))),
       ],
