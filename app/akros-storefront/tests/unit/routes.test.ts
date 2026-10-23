@@ -1,6 +1,21 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import nextConfig from "../../next.config";
+
+it("records storefront Worker invocations without enabling traces", () => {
+  const config = JSON.parse(
+    readFileSync(resolve(import.meta.dirname, "../../wrangler.jsonc"), "utf8").replace(
+      /,(\s*[}\]])/gu,
+      "$1",
+    ),
+  ) as { observability: unknown };
+  expect(config.observability).toEqual({
+    logs: { enabled: true, invocation_logs: true },
+    traces: { enabled: false },
+  });
+});
 
 describe("public storefront rewrites", () => {
   it("maps public category shortcuts to categories that exist in the feed", async () => {

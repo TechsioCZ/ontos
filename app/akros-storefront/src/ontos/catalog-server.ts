@@ -59,12 +59,14 @@ export const CATEGORY_PAGE_SIZE = 24;
 const homeQuery: CatalogQuery = { featured: true, pageSize: 20 };
 
 const productPages = catalogCache<ProductPage>("products", {
+  storage: "isolate",
   freshMs: CATALOG_CACHE_MS,
   staleMs: CATALOG_CACHE_MS,
   keepMs: CATALOG_CACHE_MS,
   limit: 100,
 });
 const categoryTrees = catalogCache<CatalogCategory[]>("categories", {
+  storage: "shared",
   freshMs: CATEGORY_CACHE_MS,
   staleMs: CATEGORY_STALE_MS,
   keepMs: CATEGORY_KEEP_MS,
@@ -73,6 +75,7 @@ const categoryTrees = catalogCache<CatalogCategory[]>("categories", {
 /** One owner read per category: the tree with that category's content and its first listing page. */
 // These entries include product cards with prices and stock, not just category text.
 const categoryPages = catalogCache<CategoryPage>("category-content", {
+  storage: "isolate",
   freshMs: CATALOG_CACHE_MS,
   staleMs: CATALOG_CACHE_MS,
   keepMs: CATALOG_CACHE_MS,

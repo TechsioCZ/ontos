@@ -7,7 +7,13 @@ vi.mock("server-only", () => ({}));
 vi.mock("next/server", () => ({ after: vi.fn<typeof after>() }));
 vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext: vi.fn() }));
 
-const options = { freshMs: 10_000, staleMs: 60_000, keepMs: 600_000, limit: 10 };
+const options = {
+  storage: "shared" as const,
+  freshMs: 10_000,
+  staleMs: 60_000,
+  keepMs: 600_000,
+  limit: 10,
+};
 const deferred = <T>() => {
   let resolve!: (value: T) => void;
   let reject!: (error: unknown) => void;
@@ -29,6 +35,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("catalog stale-while-revalidate cache", () => {
@@ -154,6 +161,52 @@ describe("catalog stale-while-revalidate cache", () => {
       }),
     ).rejects.toThrow("owner unavailable");
     expect(after).not.toHaveBeenCalled();
+  });
+  it("reads fresh prices without waiting for or writing shared caches, including across isolates", async () => {
+    vi.useFakeTimers();
+    const pending = deferred<never>();
+    const edge = {
+      match: vi.fn(() => pending.promise),
+      put: vi.fn(() => pending.promise),
+    };
+    const store = {
+      getWithMetadata: vi.fn(() => pending.promise),
+      put: vi.fn(() => pending.promise),
+    };
+    const waitUntil = vi.fn();
+    vi.stubGlobal("caches", { default: edge });
+    vi.mocked(getCloudflareContext).mockReturnValue({
+      env: { STOREFRONT_CATALOG_CACHE: store },
+      ctx: { waitUntil },
+    } as unknown as ReturnType<typeof getCloudflareContext>);
+    const strict = {
+      ...options,
+      storage: "isolate" as const,
+      staleMs: options.freshMs,
+      keepMs: options.freshMs,
+    };
+    const cache = catalogCache<string>("prices", strict);
+    const load = vi.fn(async () => "new-price");
+    expect(await cache.get("k", load)).toBe("new-price");
+    vi.advanceTimersByTime(9_999);
+    expect(await cache.get("k", load)).toBe("new-price");
+    expect(load).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    expect(await cache.get("k", load)).toBe("new-price");
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(await catalogCache<string>("prices", strict).get("k", load)).toBe("new-price");
+    expect(load).toHaveBeenCalledTimes(3);
+    vi.advanceTimersByTime(10_000);
+    await expect(
+      cache.get("k", async () => {
+        throw new Error("owner unavailable");
+      }),
+    ).rejects.toThrow("owner unavailable");
+    expect(edge.match).not.toHaveBeenCalled();
+    expect(edge.put).not.toHaveBeenCalled();
+    expect(store.getWithMetadata).not.toHaveBeenCalled();
+    expect(store.put).not.toHaveBeenCalled();
+    expect(waitUntil).not.toHaveBeenCalled();
   });
   it("warms only values older than the given age", async () => {
     vi.useFakeTimers();

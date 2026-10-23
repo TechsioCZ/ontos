@@ -9,6 +9,10 @@
   "preview_urls": false,
   "routes": [{ "pattern": "ontos-stage-akros.bleeding.dev", "custom_domain": true }],
   "limits": { "cpu_ms": 30000 },
+  "observability": {
+    "logs": { "enabled": true, "invocation_logs": true },
+    "traces": { "enabled": false },
+  },
   "triggers": { "crons": ["*/15 * * * *"] },
   "vars": {},
 }
