@@ -1,11 +1,12 @@
-import { and, asc, eq, or } from 'drizzle-orm';
+import { and, asc, eq, or, sql } from 'drizzle-orm';
 import { Cause, DateTime, Effect, Schema } from 'effect';
 
-import { principalAuthBindings, principals } from '../db/schema.ts';
+import { auditEvents, principalAuthBindings, principals } from '../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import { defineSystemModuleEntrypoint } from '../modules/module-entrypoint.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
-import { defineRead } from '../reads/definition.ts';
+import { defineRead, defineReadConditionalPermission } from '../reads/definition.ts';
+import { validateManagedApiKeyTarget } from './managed-api-key-scope.ts';
 import { ReadHandlerUnavailable } from '../reads/errors.ts';
 import { isTrustedSystemPrincipalContext } from './system-principal-context-provenance.ts';
 
@@ -25,6 +26,10 @@ const bindingMetadata = Schema.Struct({
   status: BindingStatusSchema,
 });
 const PaginationInput = Schema.Struct(paginationInput);
+const ManagedInput = Schema.Union([
+  Schema.Struct({ ...paginationInput, scope: Schema.Literal('tenant-managed') }),
+  Schema.Struct({ ...paginationInput, principalId: PrincipalIdSchema, scope: Schema.Literal('company-agent') }),
+]);
 const SelfResult = Schema.Struct({
   items: Schema.Array(bindingMetadata),
   nextOffset: Schema.OptionFromNullOr(Schema.Finite),
@@ -35,7 +40,7 @@ const ManagedItem = Schema.Struct({
   bindingRevokedAt: Schema.OptionFromNullOr(Schema.DateTimeUtc),
   bindingStatus: Schema.OptionFromNullOr(BindingStatusSchema),
   displayName: Schema.String,
-  kind: Schema.Literals(['service', 'integration']),
+  kind: Schema.Literals(['service', 'integration', 'agent']),
   principalId: PrincipalIdSchema,
   principalStatus: Schema.Literals(['active', 'disabled', 'archived']),
 });
@@ -56,10 +61,9 @@ const readUnavailable = (reason: string, cause: unknown): ReadHandlerUnavailable
 };
 
 interface IdentityReadServices {
-  readonly listManaged: (input: {
-    readonly limit: number;
-    readonly offset: number;
-  }) => Effect.Effect<Schema.Schema.Type<typeof ManagedResult>, ReadHandlerUnavailable>;
+  readonly listManaged: (
+    input: typeof ManagedInput.Type,
+  ) => Effect.Effect<Schema.Schema.Type<typeof ManagedResult>, ReadHandlerUnavailable>;
   readonly listSelf: (input: {
     readonly limit: number;
     readonly offset: number;
@@ -71,9 +75,16 @@ const services = (
   tenantId: string,
   principalId: string,
   authenticationNamespaceId?: string,
+  legalEntityId?: string,
 ): IdentityReadServices => ({
-  listManaged: ({ limit, offset }) =>
-    transaction
+  listManaged: Effect.fn('ManagedPrincipalsRead.listManaged')(function* listManaged(input: typeof ManagedInput.Type) {
+    const { limit, offset } = input;
+    if (input.scope === 'company-agent') {
+      yield* validateManagedApiKeyTarget(transaction, { ...input, legalEntityId, tenantId }).pipe(
+        Effect.mapError((cause) => readUnavailable('The company agent key target is unavailable', cause)),
+      );
+    }
+    return yield* transaction
       .select({
         authBindingId: principalAuthBindings.principalAuthBindingId,
         bindingCreatedAt: principalAuthBindings.createdAt,
@@ -94,10 +105,26 @@ const services = (
             ? []
             : [eq(principalAuthBindings.authenticationNamespaceId, authenticationNamespaceId)]),
           eq(principalAuthBindings.subjectType, 'api_key'),
+          or(eq(principalAuthBindings.status, 'active'), eq(principalAuthBindings.status, 'disabled')),
+          ...(input.scope === 'company-agent'
+            ? [
+                sql`exists (select 1 from ${auditEvents} where
+            ${auditEvents.tenantId} = ${principalAuthBindings.tenantId}
+            and ${auditEvents.actionInvocationId} = ${principalAuthBindings.createdByInvocationId}
+            and ${auditEvents.legalEntityId} = ${legalEntityId}
+            and ${auditEvents.eventType} = 'action.executed' and ${auditEvents.outcome} = 'succeeded'
+            and ${auditEvents.evidenceJson}->>'actionKey' = 'core.identity.bind-managed-api-key')`,
+              ]
+            : []),
         ),
       )
       .where(
-        and(eq(principals.tenantId, tenantId), or(eq(principals.kind, 'service'), eq(principals.kind, 'integration'))),
+        and(
+          eq(principals.tenantId, tenantId),
+          input.scope === 'company-agent'
+            ? and(eq(principals.kind, 'agent'), eq(principals.principalId, input.principalId))
+            : or(eq(principals.kind, 'service'), eq(principals.kind, 'integration')),
+        ),
       )
       .orderBy(asc(principals.displayName), asc(principals.principalId), asc(principalAuthBindings.createdAt))
       .limit(limit + 1)
@@ -119,8 +146,8 @@ const services = (
             (
               row,
             ): row is typeof row & {
-              readonly kind: 'integration' | 'service';
-            } => row.kind === 'service' || row.kind === 'integration',
+              readonly kind: 'agent' | 'integration' | 'service';
+            } => row.kind === 'service' || row.kind === 'integration' || row.kind === 'agent',
           );
           return {
             items: eligible.slice(0, limit).map((row) => ({
@@ -143,7 +170,8 @@ const services = (
             Effect.mapError((cause) => readUnavailable('Managed identities are temporarily unavailable', cause)),
           ),
         ),
-      ),
+      );
+  }),
   listSelf: ({ limit, offset }) =>
     authenticationNamespaceId === undefined
       ? Effect.fail(
@@ -254,7 +282,7 @@ export const selfApiKeyBindingsRead = defineRead<
 );
 
 export const managedPrincipalsRead = defineRead<
-  typeof PaginationInput,
+  typeof ManagedInput,
   typeof ManagedResult,
   'core.identity',
   IdentityReadServices,
@@ -277,10 +305,10 @@ export const managedPrincipalsRead = defineRead<
       captureMode: 'metadata_only',
       policyKey: 'core.identity.managed-principals.access.v1',
     },
-    inputSchema: PaginationInput,
+    inputSchema: ManagedInput,
     legalEntityScope: 'optional',
     owningModuleKey: 'core.identity',
-    permissionTarget: 'tenant',
+    permissionTarget: 'conditional',
     policies: [],
     readKey: 'core.identity.managed-principals',
     resultSchema: ManagedResult,
@@ -298,7 +326,7 @@ export const managedPrincipalsRead = defineRead<
   (transaction, scope) => {
     if (scope.authMethod === 'system') {
       return isTrustedSystemPrincipalContext(scope)
-        ? Effect.succeed(services(transaction, scope.tenantId, scope.principalId))
+        ? Effect.succeed(services(transaction, scope.tenantId, scope.principalId, undefined, scope.legalEntityId))
         : Effect.fail(
             new OperationContextUnavailable({
               code: 'operation_context_unavailable',
@@ -314,7 +342,25 @@ export const managedPrincipalsRead = defineRead<
         }),
       );
     }
-    return Effect.succeed(services(transaction, scope.tenantId, scope.principalId, scope.authenticationNamespaceId));
+    return Effect.succeed(
+      services(transaction, scope.tenantId, scope.principalId, scope.authenticationNamespaceId, scope.legalEntityId),
+    );
   },
-  () => ({ kind: 'tenant', permission: 'manage_identity' }),
+  defineReadConditionalPermission<
+    typeof ManagedInput.Type,
+    { readonly kind: 'company-agent' } | { readonly kind: 'tenant-managed' }
+  >({
+    branches: {
+      'company-agent': {
+        requiredKinds: ['legal_entity'],
+        resolve: () => [{ kind: 'legal_entity', permission: 'manage_people' }],
+      },
+      'tenant-managed': {
+        requiredKinds: ['tenant'],
+        resolve: () => [{ kind: 'tenant', permission: 'manage_identity' }],
+      },
+    },
+    permissionKey: 'module.access',
+    select: (input) => ({ kind: input.scope }),
+  }),
 );

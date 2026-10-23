@@ -6,6 +6,8 @@ import { Effect, Schema } from 'effect';
 import type { ActionHandlerContext } from '../../actions/context.ts';
 import { defineAction } from '../../actions/definition.ts';
 import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
+import type { PrincipalManagementError } from '../../auth/principal-management-errors.ts';
+import { ManagedApiKeyScopeSchema, validateManagedApiKeyTarget } from '../../auth/managed-api-key-scope.ts';
 import { principalManagementRepositoryFromTransaction } from '../../auth/principal-management.ts';
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
@@ -22,6 +24,7 @@ const SetManagedApiKeyBindingStatusPayloadSchema = Schema.Union([
     newStatus: Schema.Literals(['active', 'disabled']),
     principalId: PrincipalIdSchema,
     reason: Schema.optionalKey(reason),
+    scope: ManagedApiKeyScopeSchema,
   }),
   Schema.Struct({
     authBindingId: AuthBindingIdSchema,
@@ -29,6 +32,7 @@ const SetManagedApiKeyBindingStatusPayloadSchema = Schema.Union([
     newStatus: Schema.Literal('revoked'),
     principalId: PrincipalIdSchema,
     reason,
+    scope: ManagedApiKeyScopeSchema,
   }),
 ]);
 export type SetManagedApiKeyBindingStatusPayload = Schema.Schema.Type<
@@ -45,9 +49,13 @@ const handle = Effect.fn('SetManagedApiKeyBindingStatusAction.handle')(
       Readonly<Record<never, never>>,
       {
         readonly setStatus: PrincipalManagementRepositoryService['setApiKeyBindingStatus'];
+        readonly validateTarget: (
+          input: SetManagedApiKeyBindingStatusPayload,
+        ) => Effect.Effect<void, PrincipalManagementError>;
       }
     >,
   ) {
+    yield* context.services.validateTarget(payload);
     const result = yield* context.services.setStatus({
       ...payload,
       managed: true,
@@ -80,7 +88,7 @@ export const setManagedApiKeyBindingStatusAction = defineAction(
       access: 'write',
       authorization: {
         kind: 'action_execution',
-        provisioning: 'tenant_membership_default',
+        provisioning: 'explicit',
       },
       entrypointKey: 'core.identity.set-managed-api-key-binding-status',
       moduleKey: 'core.identity',
@@ -93,11 +101,20 @@ export const setManagedApiKeyBindingStatusAction = defineAction(
     policies: [],
     resultSchema: SetManagedApiKeyBindingStatusResultSchema,
     schemaVersion: '1',
-    tenantPermission: () => 'manage_identity',
+    tenantPermission: (payload) => (payload.scope === 'tenant-managed' ? 'manage_identity' : undefined),
   },
   handle,
   (transaction, scope) => {
     const repository = principalManagementRepositoryFromTransaction(transaction, scope.authenticationNamespaceId);
-    return Effect.succeed({ setStatus: repository.setApiKeyBindingStatus });
+    return Effect.succeed({
+      setStatus: repository.setApiKeyBindingStatus,
+      validateTarget: (input: SetManagedApiKeyBindingStatusPayload) =>
+        validateManagedApiKeyTarget(transaction, {
+          ...input,
+          legalEntityId: scope.legalEntityId,
+          requireActive: false,
+          tenantId: scope.tenantId,
+        }),
+    });
   },
 );

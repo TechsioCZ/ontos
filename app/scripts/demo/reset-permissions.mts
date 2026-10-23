@@ -316,7 +316,11 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
 // Bot API key through the running shell.
 
 const SignInBodySchema = Schema.Struct({ email: Schema.String, password: Schema.Redacted(Schema.String) });
-const IssueKeyBodySchema = Schema.Struct({ name: Schema.String, principalId: PrincipalIdSchema });
+const IssueKeyBodySchema = Schema.Struct({
+  name: Schema.String,
+  principalId: PrincipalIdSchema,
+  scope: Schema.Literal('tenant-managed'),
+});
 const GatewayBodySchema = Schema.Struct({
   audience: Schema.String,
   compositionRevision: Schema.String,
@@ -451,7 +455,7 @@ const issueBotKey = Effect.fn('DemoPermissions.issueBotKey')(function* issueBotK
   const issued = yield* postJson(
     `${shellUrl}/shell-super-app-api/auth/identity/api-keys/managed`,
     IssueKeyBodySchema,
-    { name: key.name, principalId: key.principalId },
+    { name: key.name, principalId: key.principalId, scope: 'tenant-managed' },
     {
       cookie: sessionCookieHeader(signIn.cookies),
       'idempotency-key': `sales-demo-${key.name}-${randomUUID()}`,

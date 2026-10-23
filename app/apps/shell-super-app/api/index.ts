@@ -1559,22 +1559,6 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
         onSuccess: (response) => decodeResponse(ApiKeyIssueResponseSchema, response, shellInternalProblem),
       },
     );
-  const mutationContext = Effect.fn('shell.identity.mutationContext')(function* mutationContext(
-    request: RequestWithHeaders,
-    headers: RequestHeaders,
-  ) {
-    const resolved = yield* authenticated(request);
-    const idempotencyKey = yield* requiredIdempotencyKey(headers);
-    const service = yield* IdentityLifecycle;
-    return {
-      context: {
-        correlationId: correlationFromRequest(request),
-        idempotencyKey,
-        principal: resolved.principal,
-      },
-      service,
-    };
-  });
   const demoAccountCaller = Effect.fn('shell.identity.demoAccountCaller')(function* demoAccountCaller(
     request: RequestWithHeaders,
   ) {
@@ -1592,6 +1576,24 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
         session.availableLegalEntities.find((entry) => entry.legalEntityId === legalEntityId)?.legalName ??
         legalEntityId,
       principal: { ...session.principal, legalEntityId },
+    };
+  });
+  const mutationContext = Effect.fn('shell.identity.mutationContext')(function* mutationContext(
+    request: RequestWithHeaders,
+    headers: RequestHeaders,
+    managedScope?: 'company-agent' | 'tenant-managed',
+  ) {
+    const resolved =
+      managedScope === 'company-agent' ? yield* demoAccountCaller(request) : yield* authenticated(request);
+    const idempotencyKey = yield* requiredIdempotencyKey(headers);
+    const service = yield* IdentityLifecycle;
+    return {
+      context: {
+        correlationId: correlationFromRequest(request),
+        idempotencyKey,
+        principal: resolved.principal,
+      },
+      service,
     };
   });
   return handlers
@@ -1722,13 +1724,14 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       safeIdentity(
         request,
         Effect.gen(function* issueManagedApiKeyHandler() {
-          const { context, service } = yield* mutationContext(request, headers);
+          const { context, service } = yield* mutationContext(request, headers, payload.scope);
           return yield* service
             .issue(
               withOptionalProperty(
                 {
                   ...context,
                   managedPrincipalId: payload.principalId,
+                  managedScope: payload.scope,
                 },
                 payload.name !== undefined,
                 'name',
@@ -1746,7 +1749,8 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       safeIdentity(
         request,
         Effect.gen(function* listManagedApiKeysHandler() {
-          const resolved = yield* authenticated(request);
+          const resolved =
+            payload.scope === 'company-agent' ? yield* demoAccountCaller(request) : yield* authenticated(request);
           const runtime = yield* ReadRuntime;
           const keys = yield* ApiKeyService;
           const resolver = yield* PrincipalResolver;
@@ -1788,6 +1792,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
                     displayName: item.displayName,
                     key: {
                       authBindingId,
+                      bindingStatus: bindingState.status,
                       cleanupPending: metadata.enabled !== (bindingState.status === 'active'),
                       createdAt: metadata.createdAt,
                       enabled: metadata.enabled,
@@ -1831,13 +1836,14 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       safeIdentity(
         request,
         Effect.gen(function* setManagedKeyHandler() {
-          const { context, service } = yield* mutationContext(request, headers);
-          const { principalId, ...statusPayload } = payload;
+          const { context, service } = yield* mutationContext(request, headers, payload.scope);
+          const { principalId, scope, ...statusPayload } = payload;
           const response = yield* service
             .setStatus({
               ...statusPayload,
               ...context,
               managedPrincipalId: principalId,
+              managedScope: scope,
             })
             .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
           return yield* decodeResponse(ApiKeyLifecycleResponseSchema, response, shellInternalProblem);
@@ -1865,13 +1871,14 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
       safeIdentity(
         request,
         Effect.gen(function* rotateManagedKeyHandler() {
-          const { context, service } = yield* mutationContext(request, headers);
+          const { context, service } = yield* mutationContext(request, headers, payload.scope);
           return yield* service
             .rotate(
               withOptionalProperty(
                 {
                   ...context,
                   managedPrincipalId: payload.principalId,
+                  managedScope: payload.scope,
                 },
                 payload.name !== undefined,
                 'name',

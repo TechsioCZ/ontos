@@ -318,7 +318,7 @@ const ensureKey = Effect.fn('CommercePortal.key')(function* ensureKey(
   const cookie = Cookies.toCookieHeader(Cookies.setAllUnsafe(signIn.cookies, aliases));
   const issued = yield* post(
     `${shellUrl}/shell-super-app-api/auth/identity/api-keys/managed`,
-    { name: identity.apiKeyName, principalId: identity.principalId },
+    { name: identity.apiKeyName, principalId: identity.principalId, scope: 'tenant-managed' },
     {
       'content-type': 'application/json',
       cookie,

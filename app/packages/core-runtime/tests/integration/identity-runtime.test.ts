@@ -28,6 +28,8 @@ import {
   auditEvents,
   coreRelations,
   dataAccessEvents,
+  domainEvents,
+  outboxMessages,
   principalAuthBindings,
   principals,
   tenants,
@@ -186,6 +188,8 @@ it.live('runs identity mutations and tenant-isolated administration through live
       ),
     ];
     const cleanup = Effect.gen(function* cleanIdentityRuntimeFixtures() {
+      yield* admin.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId));
+      yield* admin.delete(domainEvents).where(eq(domainEvents.tenantId, tenantId));
       yield* admin.delete(dataAccessEvents).where(inArray(dataAccessEvents.tenantId, [tenantId]));
       yield* admin.delete(auditEvents).where(inArray(auditEvents.tenantId, [tenantId]));
       yield* admin.delete(actionInvocations).where(inArray(actionInvocations.tenantId, [tenantId]));
@@ -294,6 +298,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
           payload: {
             principalId: created.principalId,
             providerSubjectId: providerKeyId,
+            scope: 'tenant-managed',
           },
           principal,
           registration: bindManagedApiKeyAction,
@@ -310,6 +315,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
             expectedStatus: 'active',
             newStatus: 'disabled',
             principalId: created.principalId,
+            scope: 'tenant-managed',
           },
           principal,
           registration: setManagedApiKeyBindingStatusAction,
@@ -326,6 +332,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
             expectedStatus: 'disabled',
             newStatus: 'active',
             principalId: created.principalId,
+            scope: 'tenant-managed',
           },
           principal,
           registration: setManagedApiKeyBindingStatusAction,
@@ -409,7 +416,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
       );
       const listed = yield* runIdentityRead(
         readRuntime.runRead({
-          input: { limit: 100, offset: 0 },
+          input: { limit: 100, offset: 0, scope: 'tenant-managed' },
           principal,
           registration: managedPrincipalsRead,
           transport: { correlationId: randomUUID() },
@@ -430,7 +437,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
       ]);
       yield* runIdentityRead(
         readRuntime.runRead({
-          input: { limit: 100, offset: 0 },
+          input: { limit: 100, offset: 0, scope: 'tenant-managed' },
           principal: {
             authBindingId: selfBinding.authBindingId,
             authContextRef: `better-auth-api-key:${selfProviderKeyId}`,
@@ -533,7 +540,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
       expect(systemCreated.status).toBe('active');
       const systemRead = yield* runIdentityRead(
         readRuntime.runRead({
-          input: { limit: 100, offset: 0 },
+          input: { limit: 100, offset: 0, scope: 'tenant-managed' },
           principal: systemPrincipal,
           registration: managedPrincipalsRead,
           transport: { correlationId: randomUUID() },

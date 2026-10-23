@@ -8,26 +8,19 @@
  *   node scripts/demo/prepare-agent-platform-batch.mts        # from app/ (or ontos-runtime/app)
  */
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 
-const appRoot = new URL('../..', import.meta.url);
-const env = Object.fromEntries(
-  readFileSync(new URL('.env.demo.local', appRoot), 'utf8')
-    .split('\n')
-    .flatMap((line) => {
-      const match = /^([A-Z][A-Z0-9_]*)=(.*)$/u.exec(line.trim());
-      return match ? [[match[1], match[2]]] : [];
-    }),
-);
 const shellUrl = process.env.ONTOS_SHELL_URL ?? 'http://localhost:3020';
 const compositionUrl = process.env.ONTOS_COMPOSITION_URL ?? 'http://127.0.0.1:3041';
 const legalEntityId = '71000000-0000-4000-8000-000000000020'; // Obchodní firma
 /** The guide and the presenter find the batch by this instruction; keep it stable. */
 const instruction = 'Promítni nový ceník dodavatele (+5 %) do ceny jednoho produktu a připrav úkol pro obchodníky.';
 
-const key = process.env.ONTOS_AGENT_C_OBCHOD_API_KEY ?? env.ONTOS_AGENT_C_OBCHOD_API_KEY;
-assert.ok(key, 'Chybí klíč AI úrovně C pro Obchodní firmu: spusťte nejprve pnpm demo:ai-profiles');
+const key = process.env.ONTOS_AGENT_API_KEY;
+assert.ok(
+  key,
+  'Chybí explicitní ONTOS_AGENT_API_KEY. Vydejte klíč konkrétního agenta přes Lidé a role nebo pnpm demo:agent-api-keys issue; neukládejte jej do souboru.',
+);
 const agentHeaders = { 'x-api-key': key };
 
 interface QueueItem {
@@ -87,7 +80,9 @@ const listed = await post('/shell-super-app-api/agent-platform/proposals/list', 
 assert.equal(listed.status, 200, JSON.stringify(listed.body));
 const existing = (listed.body as QueueResponse).batches.find(
   (batch) =>
-    batch.instruction === instruction && batch.items.length > 0 && batch.items.every((item) => item.status === 'pending'),
+    batch.instruction === instruction &&
+    batch.items.length > 0 &&
+    batch.items.every((item) => item.status === 'pending'),
 );
 if (existing) {
   console.log(`Dávka už čeká na schválení (${existing.batchId}); nic nového nevzniklo.`);
@@ -117,7 +112,8 @@ const product = (records.body as MerchandiseRecords).products
   .toSorted((left, right) => left.name.localeCompare(right.name, 'cs'))[0];
 assert.ok(product, 'V Obchodní firmě chybí aktivní produkt bez variant s cenou alespoň 100 Kč');
 const newPriceMinor = Math.round((product.currentPriceMinor * 1.05) / 100) * 100;
-const czk = (minor: number) => new Intl.NumberFormat('cs-CZ', { currency: 'CZK', style: 'currency' }).format(minor / 100);
+const czk = (minor: number) =>
+  new Intl.NumberFormat('cs-CZ', { currency: 'CZK', style: 'currency' }).format(minor / 100);
 const taskTitle = `Informovat zákazníky o nové ceně: ${product.name}`.slice(0, 200);
 
 // 5. Submit the batch: one price change and one task.

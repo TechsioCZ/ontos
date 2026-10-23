@@ -10,6 +10,7 @@ import {
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
 import {
+  ActionAuthorityLive,
   ActionPermissionLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
@@ -27,6 +28,9 @@ import { makeActionRuntimeLive } from '../../packages/core-runtime/src/actions/r
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This composition root opens the privileged SELECT-only audit/membership reader; native Actions use the separate runtime-role pool.
 import { makeCoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
+import { OAuthFlowLive } from '../../apps/shell-super-app/api/auth/oauth-server/oauth-flow-live.ts';
+import { ApiKeyServiceLive } from '../../apps/shell-super-app/api/auth/api-key-service.ts';
+import { IdentityLifecycleLive } from '../../apps/shell-super-app/api/auth/identity-lifecycle.ts';
 import { AuthConfig, AuthConfigLive } from '../../apps/shell-super-app/api/auth/config.ts';
 import { AuthDatabaseLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { AuthenticationService, AuthenticationServiceLive } from '../../apps/shell-super-app/api/auth/service.ts';
@@ -73,7 +77,12 @@ const reads = Layer.effect(
     return { executor: database.executor };
   }),
 );
+const apiKeys = ApiKeyServiceLive.pipe(Layer.provide(Layer.merge(authConfig, authDatabase)));
+const identityLifecycle = IdentityLifecycleLive.pipe(Layer.provide(Layer.mergeAll(actionRuntime, apiKeys, resolver)));
 export const AgentProfileOperatorLive = Layer.mergeAll(
+  identityLifecycle,
+  ActionAuthorityLive,
+  OAuthFlowLive.pipe(Layer.provide(Layer.merge(authConfig, authDatabase))),
   authentication,
   actionRuntime,
   ActionPermissionLive,
@@ -100,5 +109,5 @@ export const authenticateAgentProfileOperator = Effect.gen(function* authenticat
       reason: 'The operator could not resolve an authenticated native principal',
     });
   }
-  return { close: service.signOut(headers), principal: context.principal };
+  return { close: service.signOut(headers), principal: context.principal, requestHeaders: headers };
 });

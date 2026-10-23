@@ -207,7 +207,11 @@ const ensureKey = Effect.fn('CrmPartyIntake.key')(function* ensureKey(root: stri
   const cookie = Cookies.toCookieHeader(Cookies.setAllUnsafe(signIn.cookies, aliases));
   const issued = yield* post(
     `${shellUrl}/shell-super-app-api/auth/identity/api-keys/managed`,
-    { name: crmPartyIntakePrincipal.apiKeyName, principalId: crmPartyIntakePrincipal.principalId },
+    {
+      name: crmPartyIntakePrincipal.apiKeyName,
+      principalId: crmPartyIntakePrincipal.principalId,
+      scope: 'tenant-managed',
+    },
     {
       'content-type': 'application/json',
       cookie,

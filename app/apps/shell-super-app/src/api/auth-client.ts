@@ -354,7 +354,11 @@ export const listManagedApiKeys = (
   payload: ManagedApiKeyListPayload,
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ManagedApiKeyListResponse, IdentityClientError> =>
-  invokeShellAuthenticationClient(options, (client) => client.identity.listManagedApiKeys({ payload }));
+  invokeShellAuthenticationClient(options, (client) =>
+    payload.scope === 'company-agent'
+      ? client.identity.listManagedApiKeys({ payload })
+      : client.identity.listManagedApiKeys({ payload }),
+  );
 
 export const setSelfApiKeyStatus = (
   payload: SetApiKeyStatusPayload,
