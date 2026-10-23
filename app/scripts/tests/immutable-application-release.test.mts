@@ -924,6 +924,18 @@ it.effect('requires deployment receipts for exactly the reviewed full module set
   }),
 );
 
+/** Records every advisory lock statement and its key, in order, against the native release timeline. */
+const releaseLockDatabase = (timeline: string[]) =>
+  Layer.effect(
+    CoreDatabase,
+    makeTestDatabase((statement, params) =>
+      Effect.sync(() => {
+        timeline.push(`${statement.replace(/^select /u, '')} ${params.join(',')}`.trim());
+        return statement.includes('pg_advisory_unlock') ? [{ unlocked: true }] : [];
+      }),
+    ).pipe(Effect.map((executor) => ({ executor }))),
+  );
+
 const refusesExistingProviderRelease = (existingBackend: boolean) =>
   Effect.scoped(
     Effect.gen(function* existingProviderRelease() {
@@ -1013,15 +1025,18 @@ const refusesExistingProviderRelease = (existingBackend: boolean) =>
         `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/subdomain`,
       );
       expect(
-        requests
-          .slice(1)
-          .map(({ url }) => url)
-          .sort(),
+        EffectArray.sort(
+          requests.slice(1).map(({ url }) => url),
+          Order.String,
+        ),
       ).toEqual(
-        [
-          `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.backendScriptName}`,
-          `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.assetsScriptName}`,
-        ].sort(),
+        EffectArray.sort(
+          [
+            `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.backendScriptName}`,
+            `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.assetsScriptName}`,
+          ],
+          Order.String,
+        ),
       );
       expect(yield* fileSystem.exists(nodePath.join(output, '.wrangler-immutable-backend.json'))).toBe(false);
       expect(yield* fileSystem.exists(nodePath.join(output, '.wrangler-immutable-assets.json'))).toBe(false);
@@ -1037,17 +1052,7 @@ it.effect('refuses an existing assets identity before commands, secret writes, o
   refusesExistingProviderRelease(false),
 );
 
-/** Records every advisory lock statement and its key, in order, against the native release timeline. */
-const releaseLockDatabase = (timeline: string[]) =>
-  Layer.effect(
-    CoreDatabase,
-    makeTestDatabase((statement, params) =>
-      Effect.sync(() => {
-        timeline.push(`${statement.replace(/^select /u, '')} ${params.join(',')}`.trim());
-        return statement.includes('pg_advisory_unlock') ? [{ unlocked: true }] : [];
-      }),
-    ).pipe(Effect.map((executor) => ({ executor }))),
-  );
+const SECRETS_FILE_ARGUMENT = '--secrets-file';
 
 const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* prepareDeploymentEffect(
   options: {
@@ -1081,6 +1086,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly deleteStatus?: number;
     readonly deployedEntrypoint?: string | false;
     readonly envelopeUnitId?: string;
+    readonly existingRelease?: boolean;
     readonly initialAssetNotFound?: boolean;
     readonly initialSource?: string;
     readonly noBundle?: boolean;
@@ -1089,6 +1095,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly overflowingAssetStream?: 'always' | 'once';
     readonly oversizedAssetBody?: boolean;
     readonly ownerSecrets?: Readonly<Record<string, string>>;
+    readonly packagingFailure?: boolean;
     readonly pageJsPath?: string;
     readonly recoveryWorkerName?: string;
     readonly recoveryWorkerStatuses?: readonly number[];
@@ -1099,6 +1106,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly unboundFile?: boolean;
     readonly unboundFileDuringPackaging?: boolean;
     readonly wrongAssetBytes?: boolean | 'once';
+    readonly wrongRetainedModule?: boolean;
   } = {},
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1189,10 +1197,12 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     backendUploads += 1;
     return outcome;
   };
-  const backendUploadOutcome = (command: OpsCommand, capturedConfig: Readonly<Record<string, Schema.Json>>) =>
-    capturedConfig.name === plan.backendScriptName && !command.args.includes('--dry-run')
-      ? nextBackendUploadOutcome()
-      : 'success';
+  const backendUploadOutcome = (command: OpsCommand, capturedConfig: Readonly<Record<string, Schema.Json>>) => {
+    if (command.args.includes('--dry-run')) {
+      return options.packagingFailure === true ? 'transient' : 'success';
+    }
+    return capturedConfig.name === plan.backendScriptName ? nextBackendUploadOutcome() : 'success';
+  };
   const providerResponse = (destination: URL) =>
     Match.value(destination.pathname).pipe(
       Match.when(`/client/v4${recoveryWorkerPath}`, () =>
@@ -1256,7 +1266,8 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
           Effect.sync(() => {
             const content = new FormData();
             for (const module of capturedModules) {
-              content.append(module.path, new File([module.bytes], module.path));
+              const bytes = options.wrongRetainedModule === true ? text('different retained bytes') : module.bytes;
+              content.append(module.path, new File([bytes], module.path));
             }
             return new Response(content, {
               headers:
@@ -1304,7 +1315,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
       ),
       Match.orElse(() =>
         Effect.sync(() => {
-          const status = absentChecks < 2 ? 404 : 200;
+          const status = options.existingRelease !== true && absentChecks < 2 ? 404 : 200;
           absentChecks += 1;
           return new Response(null, { status });
         }),
@@ -1456,12 +1467,12 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
           Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
         )(yield* fileSystem.readFileString(config));
         capturedConfigs.push(capturedConfig);
-        if (command.args.includes('--secrets-file')) {
-          const file = command.args[command.args.indexOf('--secrets-file') + 1] ?? '';
+        if (command.args.includes(SECRETS_FILE_ARGUMENT)) {
+          const secretsPath = command.args[command.args.indexOf(SECRETS_FILE_ARGUMENT) + 1] ?? '';
           capturedSecrets.push({
-            file,
+            file: secretsPath,
             secrets: yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(
-              yield* fileSystem.readFileString(file),
+              yield* fileSystem.readFileString(secretsPath),
             ),
           });
         }
@@ -1568,6 +1579,61 @@ it.effect('uploads a release under its own identity lock, never the environment-
       expect(timeline[0]).toBe(`pg_advisory_lock(hashtextextended($1, 0)) ${identityKey}`);
       expect(timeline.at(-1)).toBe(`pg_advisory_unlock(hashtextextended($1, 0)) ${identityKey}`);
       expect(timeline.filter((entry) => entry.startsWith('exec wrangler deploy')).length).toBe(3);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('reuses an exact complete retained release without uploading, writing secrets, or deleting identities', () =>
+  Effect.scoped(
+    Effect.gen(function* reusesRetainedRelease() {
+      const deployment = yield* prepareDeployment({
+        existingRelease: true,
+        ownerSecrets: { PRIVATE_KEY: 'test-only' },
+      });
+      const receipt = yield* deployment.deploy;
+      expect(receipt.backend.workerName).toBe(deployment.plan.backendScriptName);
+      expect(receipt.backend.versionId).toBe(BACKEND_VERSION_ID);
+      expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
+      expect(deployment.commands).toHaveLength(1);
+      expect(deployment.commands[0]?.args).toContain('--dry-run');
+      expect(deployment.commands[0]?.classifyTransientProviderFailure).toBe(false);
+      expect(deployment.capturedSecrets).toEqual([]);
+      expect(deployment.providerWrites).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('rejects retained content, entrypoint, and deployment mismatches without modifying previous identities', () =>
+  Effect.scoped(
+    Effect.gen(function* rejectsRetainedReleaseMismatch() {
+      for (const mismatch of [
+        { wrongRetainedModule: true },
+        { wrongAssetBytes: true },
+        { deployedEntrypoint: 'different.js' },
+        { backendDeploymentVersions: [{ percentage: 50, version_id: BACKEND_VERSION_ID }] },
+        { assetsDeploymentVersions: [{ percentage: 50, version_id: ASSETS_VERSION_ID }] },
+      ]) {
+        const deployment = yield* prepareDeployment({ existingRelease: true, ...mismatch });
+        const failure = yield* deployment.deploy.pipe(Effect.flip);
+        expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+        expect(deployment.commands).toHaveLength(1);
+        expect(deployment.commands[0]?.args).toContain('--dry-run');
+        expect(deployment.capturedSecrets).toEqual([]);
+        expect(deployment.providerWrites).toEqual([]);
+      }
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('never deletes a previous release when rerun packaging fails transiently', () =>
+  Effect.scoped(
+    Effect.gen(function* preservesRetainedReleaseOnPackagingFailure() {
+      const deployment = yield* prepareDeployment({ existingRelease: true, packagingFailure: true });
+      const failure = yield* deployment.deploy.pipe(Effect.flip);
+      expect(Schema.is(OpsCommandError)(failure)).toBe(true);
+      expect(deployment.commands).toHaveLength(1);
+      expect(deployment.providerWrites).toEqual([]);
+      expect(deployment.capturedSecrets).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -1741,7 +1807,7 @@ it.effect('publishes the complete captured native package and leaves compiled as
       expect(fixture.requests).toContain(`${backendEndpoint}/deployments`);
       // The secrets go up with the backend upload itself; nothing is written to the provider API afterwards.
       expect(fixture.providerWrites).toEqual([]);
-      expect(fixture.commands[1]?.args).toContain('--secrets-file');
+      expect(fixture.commands[1]?.args).toContain(SECRETS_FILE_ARGUMENT);
       expect(fixture.capturedSecrets.map(({ secrets }) => secrets)).toEqual([{ OWNER_BINDING: OWNER_SECRET_VALUE }]);
       expect(yield* fileSystem.exists(fixture.capturedSecrets[0]?.file ?? '')).toBe(false);
       expect(fixture.capturedSecrets[0]?.file.startsWith(fixture.output)).toBe(false);
@@ -1768,7 +1834,7 @@ it.effect('uploads a unit without secrets without a secrets file', () =>
       const fixture = yield* prepareDeployment();
       const receipt = yield* fixture.deploy;
       expect(receipt.backend.versionId).toBe(BACKEND_VERSION_ID);
-      expect(fixture.commands.every(({ args }) => !args.includes('--secrets-file'))).toBe(true);
+      expect(fixture.commands.every(({ args }) => !args.includes(SECRETS_FILE_ARGUMENT))).toBe(true);
       expect(fixture.capturedSecrets).toEqual([]);
       expect(fixture.providerWrites).toEqual([]);
     }),

@@ -44,6 +44,7 @@ import {
   decodeActiveApplicationCompositionSnapshot,
   deriveActiveApplicationCompositionSnapshot,
   encodeActiveApplicationCompositionSnapshot,
+  retryTransientCompositionRead,
 } from './active-application-composition.mts';
 import type { ActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/index.ts';
 import {
@@ -220,12 +221,8 @@ export const fetchArtifact = Effect.fn('ActiveApplicationComposition.fetchArtifa
           },
         ),
       ),
-      Effect.mapError(unobservable(appId, `${url} could not be observed`)),
-      Effect.timeoutOrElse({
-        duration: ARTIFACT_FETCH_TIMEOUT,
-        orElse: () =>
-          Effect.fail(new ActiveApplicationCompositionObservationError({ appId, message: `${url} timed out` })),
-      }),
+      retryTransientCompositionRead,
+      Effect.mapError(unobservable(appId, `${url} could not be observed after bounded reads`)),
     );
   const bytes = new Uint8Array(body.bytes);
   let offset = 0;
@@ -276,6 +273,7 @@ const publicationClient = Effect.gen(function* publicationClient() {
 export const readPublishedSnapshot = Effect.gen(function* readPublishedSnapshot() {
   const [client, url] = yield* Effect.all([publicationClient, publicationUrl]);
   return yield* client
+    .pipe(HttpClient.filterStatus((status) => status < 500))
     .execute(HttpClientRequest.get(url).pipe(HttpClientRequest.setHeader('cache-control', 'no-cache')))
     .pipe(
       Effect.flatMap((response) =>
@@ -292,17 +290,8 @@ export const readPublishedSnapshot = Effect.gen(function* readPublishedSnapshot(
           return Option.some(yield* response.text);
         }),
       ),
-      Effect.mapError(providerFailure('composition storage could not be read')),
-      Effect.timeoutOrElse({
-        duration: ARTIFACT_FETCH_TIMEOUT,
-        orElse: () =>
-          Effect.fail(
-            new ActiveApplicationCompositionPublicationError({
-              message: 'composition storage read timed out',
-              reason: 'publication_failed',
-            }),
-          ),
-      }),
+      retryTransientCompositionRead,
+      Effect.mapError(providerFailure('composition storage could not be read after bounded reads')),
     );
 });
 
