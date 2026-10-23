@@ -11,6 +11,7 @@ import { createNonHumanPrincipalAction } from './create-non-human-principal.acti
 import { manageDemoAccountAction } from './manage-demo-account.action.ts';
 import { recordSupportImpersonationAction } from './record-support-impersonation.action.ts';
 import { reservePrincipalBindingAction } from './reserve-principal-binding.action.ts';
+import { setCompanyMembershipAction } from './set-company-membership.action.ts';
 import { setManagedApiKeyBindingStatusAction } from './set-managed-api-key-binding-status.action.ts';
 import { setSelfApiKeyBindingStatusAction } from './set-self-api-key-binding-status.action.ts';
 // </generated-core-action-catalog-imports>
@@ -30,6 +31,7 @@ export const coreActionCatalog: readonly CoreActionDescriptor[] = Object.freeze(
   manageDemoAccountAction.descriptor,
   recordSupportImpersonationAction.descriptor,
   reservePrincipalBindingAction.descriptor,
+  setCompanyMembershipAction.descriptor,
   setManagedApiKeyBindingStatusAction.descriptor,
   setSelfApiKeyBindingStatusAction.descriptor,
   // </generated-core-action-catalog-values>

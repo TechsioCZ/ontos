@@ -1,12 +1,13 @@
 import { v1 } from '@authzed/authzed-node';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { Context, Effect, Layer, Redacted } from 'effect';
 import type { Reactivity } from 'effect/unstable/reactivity';
 
 import { CoreDatabase } from '../db/client.ts';
 import { DatabaseConfig } from '../db/config.ts';
+import type { CoreTransaction } from '../db/types.ts';
 import { withPostgresSessionAdvisoryLock } from '../db/session-advisory-lock.ts';
-import { legalEntities, principals, tenantModuleStates, tenants } from '../db/schema.ts';
+import { legalEntities, principalCompanyMemberships, principals, tenantModuleStates, tenants } from '../db/schema.ts';
 import { reconcileScopedActionAuthorization } from '../install/action-authorization-provisioning.ts';
 import type {
   ActionAuthorizationInstalledModuleScope,
@@ -19,6 +20,7 @@ import {
 import { coreActionCatalog } from '../modules/actions/catalog.ts';
 import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
+import { buildCompanyMembershipUpdates } from './company-membership.ts';
 import { loadSpiceDbConfig } from './config.ts';
 import { openSpiceDbRpc } from './spicedb-transaction-guard.ts';
 
@@ -95,6 +97,63 @@ export const buildPrincipalSelfCredentialUpdates = (input: {
   }),
 ];
 
+const readCurrentCompanyMembershipUpdates = Effect.fn(
+  'ActionAuthorizationLifecycle.readCurrentCompanyMembershipUpdates',
+)(function* readCurrentCompanyMembershipUpdates(
+  transaction: CoreTransaction,
+  principal: {
+    readonly kind: string;
+    readonly status: string;
+    readonly tenantStatus: string;
+  },
+  tenantId: string,
+  principalId: string,
+) {
+  const companies = yield* transaction
+    .select({ legalEntityId: legalEntities.legalEntityId, status: legalEntities.status })
+    .from(legalEntities)
+    .where(eq(legalEntities.tenantId, tenantId));
+  const membershipUpdates = yield* Effect.forEach(
+    companies,
+    Effect.fn(function* readCompanyMembership(company) {
+      // Membership RLS remains exact company scope, including for an attested Core worker.
+      // These settings are transaction-local and never escape to another pool user.
+      yield* transaction.execute(
+        sql`select set_config('ontos.tenant_id', ${tenantId}, true), set_config('ontos.legal_entity_id', ${company.legalEntityId}, true)`,
+        'objects',
+      );
+      const [membership] = yield* transaction
+        .select({
+          affiliation: principalCompanyMemberships.affiliation,
+          status: principalCompanyMemberships.status,
+        })
+        .from(principalCompanyMemberships)
+        .where(
+          and(
+            eq(principalCompanyMemberships.tenantId, tenantId),
+            eq(principalCompanyMemberships.legalEntityId, company.legalEntityId),
+            eq(principalCompanyMemberships.principalId, principalId),
+          ),
+        );
+      return membership === undefined
+        ? []
+        : buildCompanyMembershipUpdates({
+            affiliation: membership.affiliation,
+            companyActive: company.status === 'active',
+            kind: principal.kind,
+            legalEntityId: company.legalEntityId,
+            principalId,
+            principalStatus: principal.status,
+            status: membership.status,
+            tenantActive: principal.tenantStatus === 'active',
+            tenantId,
+          });
+    }),
+    { concurrency: 1 },
+  );
+  return membershipUpdates.flat();
+});
+
 export class ActionAuthorizationLifecycle extends Context.Service<
   ActionAuthorizationLifecycle,
   {
@@ -146,7 +205,13 @@ export const ActionAuthorizationLifecycleLive = Layer.effect(
                 if (principal === undefined) {
                   return yield* failed();
                 }
-                return principal;
+                const membershipUpdates = yield* readCurrentCompanyMembershipUpdates(
+                  transaction,
+                  principal,
+                  tenantId,
+                  principalId,
+                );
+                return { ...principal, membershipUpdates };
               }),
             );
             // The SQL fence ended. An old delivery always applies the current row, never old event authority.
@@ -165,6 +230,7 @@ export const ActionAuthorizationLifecycleLive = Layer.effect(
                       tenantActive: current.tenantStatus === 'active',
                       tenantId,
                     }),
+                    ...current.membershipUpdates,
                   ],
                 }),
               )

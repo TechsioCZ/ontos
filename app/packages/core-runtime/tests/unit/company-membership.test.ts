@@ -9,6 +9,7 @@ import {
   isCompanyAffiliationValid,
 } from '../../src/permissions/company-membership.ts';
 import { buildScopedRoleMembershipUpdates, toScopedRoleObjectId } from '../../src/permissions/scoped-role.ts';
+import { toLegalEntityAccessObjectId } from '../../src/permissions/context-access.ts';
 
 const tenantId = '71000000-0000-4000-8000-000000000001';
 const legalEntityId = '72000000-0000-4000-8000-000000000001';
@@ -23,6 +24,7 @@ const activeMembership = {
   principalStatus: 'active',
   status: 'active' as const,
   tenantActive: true,
+  tenantId,
 };
 
 it.effect('keeps human affiliation company-local and refuses technical workloads or human affiliation on agents', () =>
@@ -72,7 +74,11 @@ it.effect('projects only exact company membership, never affiliation-derived aut
     expect(employee).toEqual(external);
     expect(employee).toEqual(agent);
     expect(employee?.operation).toBe(v1.RelationshipUpdate_Operation.TOUCH);
-    expect(employee?.relationship?.resource).toEqual({ objectId: legalEntityId, objectType: 'legal_entity' });
+    expect(employee?.relationship?.resource).toEqual({
+      objectId: toLegalEntityAccessObjectId(tenantId, legalEntityId),
+      objectType: 'legal_entity',
+    });
+    expect(employee?.relationship?.resource?.objectId).not.toBe(legalEntityId);
     expect(employee?.relationship?.relation).toBe('member');
     expect(employee?.relationship?.subject?.object).toEqual({ objectId: principalId, objectType: 'principal' });
     expect(buildCompanyMembershipUpdates(activeMembership)).toHaveLength(1);
@@ -97,7 +103,7 @@ it.effect('removes company access for every inactive state without deleting prin
       expect(updates).toHaveLength(1);
       expect(updates[0]?.operation).toBe(v1.RelationshipUpdate_Operation.DELETE);
       expect(updates[0]?.relationship?.resource?.objectType).toBe('legal_entity');
-      expect(updates[0]?.relationship?.resource?.objectId).toBe(legalEntityId);
+      expect(updates[0]?.relationship?.resource?.objectId).toBe(toLegalEntityAccessObjectId(tenantId, legalEntityId));
       expect(updates[0]?.relationship?.subject?.object?.objectId).toBe(principalId);
     }
   }),

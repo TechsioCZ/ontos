@@ -888,6 +888,7 @@ export type { AgentGrantAccess, AgentGrantModule, AgentGrantWritePolicy } from '
 export { createNonHumanPrincipalAction } from './modules/actions/create-non-human-principal.action.ts';
 export { recordSupportImpersonationAction } from './modules/actions/record-support-impersonation.action.ts';
 export { reservePrincipalBindingAction } from './modules/actions/reserve-principal-binding.action.ts';
+export { setCompanyMembershipAction } from './modules/actions/set-company-membership.action.ts';
 export { setManagedApiKeyBindingStatusAction } from './modules/actions/set-managed-api-key-binding-status.action.ts';
 export { setSelfApiKeyBindingStatusAction } from './modules/actions/set-self-api-key-binding-status.action.ts';
 // </generated-core-action-exports>

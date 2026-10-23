@@ -1,7 +1,12 @@
 import { v1 } from '@authzed/authzed-node';
 import { Schema } from 'effect';
 
+import { toLegalEntityAccessObjectId } from './context-access.ts';
 import { PrincipalRefSchema } from './principal-ref.ts';
+
+const InvalidCompanyMembershipScope = Schema.TaggedError<Error>()('InvalidCompanyMembershipScope', {
+  reason: Schema.String,
+});
 
 const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(
   Schema.brand('CompanyMembershipLegalEntityId'),
@@ -50,20 +55,27 @@ export const buildCompanyMembershipUpdates = (input: {
   readonly principalStatus: string;
   readonly status: CompanyMembershipStatus;
   readonly tenantActive: boolean;
-}): readonly v1.RelationshipUpdate[] => [
-  v1.RelationshipUpdate.create({
-    operation:
-      input.status === 'active' &&
-      input.principalStatus === 'active' &&
-      input.tenantActive &&
-      input.companyActive &&
-      isCompanyAffiliationValid(input.kind, input.affiliation)
-        ? v1.RelationshipUpdate_Operation.TOUCH
-        : v1.RelationshipUpdate_Operation.DELETE,
-    relationship: {
-      relation: 'member',
-      resource: { objectId: input.legalEntityId, objectType: 'legal_entity' },
-      subject: { object: { objectId: input.principalId, objectType: 'principal' } },
-    },
-  }),
-];
+  readonly tenantId: string;
+}): readonly v1.RelationshipUpdate[] => {
+  const companyObjectId = toLegalEntityAccessObjectId(input.tenantId, input.legalEntityId);
+  if (companyObjectId === undefined) {
+    throw new InvalidCompanyMembershipScope({ reason: 'Membership requires an exact canonical company scope' });
+  }
+  return [
+    v1.RelationshipUpdate.create({
+      operation:
+        input.status === 'active' &&
+        input.principalStatus === 'active' &&
+        input.tenantActive &&
+        input.companyActive &&
+        isCompanyAffiliationValid(input.kind, input.affiliation)
+          ? v1.RelationshipUpdate_Operation.TOUCH
+          : v1.RelationshipUpdate_Operation.DELETE,
+      relationship: {
+        relation: 'member',
+        resource: { objectId: companyObjectId, objectType: 'legal_entity' },
+        subject: { object: { objectId: input.principalId, objectType: 'principal' } },
+      },
+    }),
+  ];
+};

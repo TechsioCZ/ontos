@@ -1,0 +1,89 @@
+import { Effect, Option, Schema } from 'effect';
+
+import type { ActionHandlerContext } from '../../actions/context.ts';
+import { defineAction } from '../../actions/definition.ts';
+import { companyMembershipManagementFromTransaction } from '../../auth/company-membership-management.ts';
+import { PrincipalManagementErrorSchema } from '../../auth/principal-management-errors.ts';
+import {
+  CompanyAffiliationSchema,
+  CompanyMembershipSchema,
+  CompanyMembershipStatusSchema,
+} from '../../permissions/company-membership.ts';
+import { PrincipalRefSchema } from '../../permissions/principal-ref.ts';
+import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
+import { principalLifecycleDomainEvents, recordPrincipalLifecycleChange } from './principal-lifecycle-event.ts';
+
+const reason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500), Schema.isPattern(/\S/u));
+const SetCompanyMembershipPayloadSchema = Schema.Struct({
+  affiliation: Schema.OptionFromNullOr(CompanyAffiliationSchema),
+  expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  principalRef: PrincipalRefSchema,
+  reason,
+  status: CompanyMembershipStatusSchema,
+});
+const MembershipAuditEvidenceSchema = Schema.Struct({
+  affiliation: Schema.Literals(['employee', 'external', 'none']),
+  expectedRevision: Schema.Int,
+  legalEntityId: CompanyMembershipSchema.fields.legalEntityId,
+  principalRef: PrincipalRefSchema,
+  reason,
+  revision: Schema.Int,
+  status: CompanyMembershipStatusSchema,
+});
+
+type MembershipServices = ReturnType<typeof companyMembershipManagementFromTransaction>;
+const handle = Effect.fn('SetCompanyMembershipAction.handle')(function* setCompanyMembership(
+  payload: typeof SetCompanyMembershipPayloadSchema.Type,
+  context: ActionHandlerContext<typeof principalLifecycleDomainEvents, MembershipServices>,
+) {
+  const result = yield* context.services.set(payload);
+  yield* context.recordDataAccess({
+    accessKind: 'read',
+    queryHash: `company-membership-prior:${result.legalEntityId}:${result.principalRef.principalId}:${payload.expectedRevision}`,
+    resultCount: 1,
+    servingModuleKey: 'core.identity',
+    targetModuleKey: 'core.identity',
+    targetResourceId: result.principalRef.principalId,
+    targetResourceType: 'principal',
+  });
+  yield* context.recordAuditEvidence({
+    affiliation: Option.getOrElse(result.affiliation, () => 'none'),
+    expectedRevision: payload.expectedRevision,
+    legalEntityId: result.legalEntityId,
+    principalRef: result.principalRef,
+    reason: payload.reason,
+    revision: result.revision,
+    status: result.status,
+  });
+  // Identity only: delayed/retried deliveries must reload all current company memberships.
+  yield* recordPrincipalLifecycleChange(context, result.principalRef.principalId);
+  return result;
+});
+
+/** Company administrators and tenant superadmins execute this exact Action through SpiceDB. */
+export const setCompanyMembershipAction = defineAction(
+  {
+    accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'core.identity.set-company-membership.access.v1' },
+    actionKey: 'core.identity.set-company-membership',
+    auditEvidenceSchema: MembershipAuditEvidenceSchema,
+    auditProfile: 'sensitive',
+    domainErrorSchema: PrincipalManagementErrorSchema,
+    domainEvents: principalLifecycleDomainEvents,
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'write',
+      authorization: { kind: 'action_execution', provisioning: 'explicit' },
+      entrypointKey: 'core.identity.set-company-membership',
+      moduleKey: 'core.identity',
+      role: 'action',
+    }),
+    idempotency: 'required',
+    legalEntityScope: 'required',
+    owningModuleKey: 'core.identity',
+    payloadSchema: SetCompanyMembershipPayloadSchema,
+    policies: [],
+    resultSchema: CompanyMembershipSchema,
+    schemaVersion: '1',
+  },
+  handle,
+  (transaction) => Effect.succeed(companyMembershipManagementFromTransaction(transaction)),
+);
