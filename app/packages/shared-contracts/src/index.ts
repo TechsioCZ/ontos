@@ -57,6 +57,9 @@ export type {
 } from './privacy-owner-contract.ts';
 
 export {
+  API_KEY_GATEWAY_CONTEXT_HEADER,
+  ApiKeyGatewayContextRequestSchema,
+  ApiKeyGatewayReadRequestSchema,
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_TTL_SECONDS,
@@ -83,6 +86,7 @@ export {
   shellGatewayContextContract,
 } from './gateway-context.ts';
 export type {
+  ApiKeyGatewayContextRequest,
   GatewayAudienceInvalidProblem,
   GatewayAuthenticationRequiredProblem,
   GatewayContextClientEffect,

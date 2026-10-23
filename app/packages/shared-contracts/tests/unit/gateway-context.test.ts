@@ -4,6 +4,8 @@ import { FetchHttpClient } from 'effect/unstable/http';
 import { expect, it } from 'effect-rstest';
 import {
   ApiKeyGatewayHeadersSchema,
+  ApiKeyGatewayContextRequestSchema,
+  ApiKeyGatewayReadRequestSchema,
   GatewayContextApiGroup,
   GatewayContextClaimsSchema,
   GatewayContextProtectedHeaderSchema,
@@ -281,6 +283,11 @@ it('classifies every Shell token-issuing endpoint as a capability issuer with it
       path: '/shell-super-app-api/auth/api-key/gateway-context',
     },
     {
+      credential: 'api_key',
+      entrypointKey: 'shell.gateway-read.issue.api-key',
+      path: '/shell-super-app-api/auth/api-key/gateway-read',
+    },
+    {
       credential: 'session',
       entrypointKey: 'shell.gateway-contexts.issue.session',
       path: '/shell-super-app-api/auth/gateway-contexts',
@@ -411,3 +418,24 @@ it.effect('issues API-key gateway context through the server-only credential bou
     });
   }),
 );
+
+it('lets server API keys bind the active revision without weakening session revision pinning', () => {
+  const payload = { audience: 'merchandise' };
+  expect(Schema.decodeUnknownSync(ApiKeyGatewayContextRequestSchema)(payload)).toEqual(payload);
+  expect(() => Schema.decodeUnknownSync(GatewayContextRequestSchema)(payload)).toThrow();
+  expect(() =>
+    Schema.decodeUnknownSync(ApiKeyGatewayContextRequestSchema)({ ...payload, compositionRevision: 'bad' }),
+  ).toThrow();
+});
+
+it('constrains the combined gateway protocol to named reads rather than arbitrary URLs or actions', () => {
+  const decode = Schema.decodeUnknownSync(ApiKeyGatewayReadRequestSchema);
+  const payload = { audience: 'merchandise', readName: 'records', query: { view: { storefront: true } } };
+  expect(decode(payload)).toEqual(payload);
+  for (const readName of ['../actions/order', 'https://other.test', '%2e%2e', 'records/../../actions']) {
+    expect(() => decode({ ...payload, readName })).toThrow();
+  }
+  expect(endpointStatuses(GatewayContextApiGroup.endpoints.readWithApiKeyGatewayContext)).toEqual([
+    400, 401, 403, 409, 429, 500, 503,
+  ]);
+});

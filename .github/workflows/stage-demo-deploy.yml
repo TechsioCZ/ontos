@@ -38,7 +38,6 @@ concurrency:
 env:
   WORKERS_DEV_SUBDOMAIN: edution
   STAGE_SHELL_URL: https://ontos-stage.bleeding.dev
-  STAGE_COMPOSITION_KV_ID: d51f044c49bc4757a5613c61b19b46d8
   STAGE_STOREFRONT_CATALOG_KV_ID: 24a10598d6154b7aa788fd5b8fc449a7
   STAGE_STOREFRONT_URL: https://ontos-stage-akros.bleeding.dev
 
@@ -219,7 +218,6 @@ jobs:
         env:
           ONTOS_SHELL_URL: ${{ env.STAGE_SHELL_URL }}
           ONTOS_SHELL_WORKER_NAME: app-shell-super-app
-          ONTOS_ACTIVE_APPLICATION_COMPOSITION_KV_ID: ${{ env.STAGE_COMPOSITION_KV_ID }}
           STOREFRONT_CATALOG_KV_ID: ${{ env.STAGE_STOREFRONT_CATALOG_KV_ID }}
           STOREFRONT_IMAGE_HOSTS: ''
         run: |
@@ -437,7 +435,6 @@ jobs:
         env:
           ONTOS_SHELL_URL: ${{ env.STAGE_SHELL_URL }}
           ONTOS_SHELL_WORKER_NAME: app-shell-super-app
-          ONTOS_ACTIVE_APPLICATION_COMPOSITION_KV_ID: ${{ env.STAGE_COMPOSITION_KV_ID }}
           STOREFRONT_CATALOG_KV_ID: ${{ env.STAGE_STOREFRONT_CATALOG_KV_ID }}
           STOREFRONT_IMAGE_HOSTS: ''
         run: |

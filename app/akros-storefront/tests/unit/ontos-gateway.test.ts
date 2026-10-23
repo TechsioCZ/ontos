@@ -19,89 +19,140 @@ vi.mock("react", () => ({
 }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/ontos/shell-fetch", () => ({ shellFetch: vi.fn() }));
-vi.mock("@/ontos/composition-revision", () => ({
-  readActiveRevision: vi.fn(async () => "a".repeat(64)),
-}));
 vi.mock("@/ontos/config", () => ({
   getConfig: () => ({
     apiKey: "key",
     shellUrl: "https://shell.test",
     legalEntityId: "71000000-0000-4000-8000-000000000024",
-    compositionUrl: "http://publisher.test/active",
-    compositionRevision: undefined,
   }),
 }));
 
 type Gateway = typeof import("@/ontos/gateway");
-const json = (status: number, body: unknown) =>
-  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json", ...headers },
+  });
 
 let gateway: Gateway;
 let minted = 0;
 let rejectToken: string | undefined;
+let rejectionStatus = 401;
+let revision = "a".repeat(64);
 beforeEach(async () => {
   vi.resetModules();
   vi.useRealTimers();
   gateway = await vi.importActual<Gateway>("@/ontos/gateway");
   minted = 0;
   rejectToken = undefined;
+  rejectionStatus = 401;
+  revision = "a".repeat(64);
   vi.mocked(shellFetch).mockReset();
   vi.mocked(shellFetch).mockImplementation(async (url, init) => {
-    if (url.endsWith("/auth/api-key/gateway-context")) {
+    if (
+      url.endsWith("/auth/api-key/gateway-context") ||
+      url.endsWith("/auth/api-key/gateway-read")
+    ) {
       minted += 1;
-      return json(200, {
-        apiBaseUrl: "/shell-super-app-api/module-api/merchandise/r1/merchandise-api",
-        compositionRevision: "a".repeat(64),
+      const body = JSON.parse(String(init.body)) as { audience: string; query?: unknown };
+      const context = {
+        apiBaseUrl: `/shell-super-app-api/module-api/${body.audience}/r${minted}/${body.audience}-api`,
+        compositionRevision: revision,
         expiresAt: Math.floor(Date.now() / 1000) + 300,
         token: `t${minted}`,
-      });
+      };
+      return url.endsWith("gateway-read")
+        ? json(
+            200,
+            { ok: `Bearer ${context.token}`, query: body.query },
+            { "x-ontos-gateway-context": JSON.stringify(context) },
+          )
+        : json(200, context);
     }
     const authorization = new Headers(init.headers).get("authorization");
-    if (authorization === `Bearer ${rejectToken}`) return json(401, { code: "unauthorized" });
-    return json(200, { ok: authorization });
+    if (authorization === `Bearer ${rejectToken}`)
+      return json(rejectionStatus, { code: "assertion_rejected" });
+    return json(200, { ok: authorization, query: JSON.parse(String(init.body)) });
   });
 });
 
+const read = (query: unknown = {}) => gateway.readRecords("merchandise", "records", query);
+
 describe("OntOS gateway assertions", () => {
-  it("reuses one assertion per audience until shortly before it expires", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    expect(await gateway.readRecords("merchandise", "records", {})).toEqual({ ok: "Bearer t1" });
-    expect(await gateway.readRecords("merchandise", "records", {})).toEqual({ ok: "Bearer t1" });
-    expect(minted).toBe(1);
-    vi.advanceTimersByTime(239_000);
-    expect(await gateway.readRecords("merchandise", "records", {})).toEqual({ ok: "Bearer t1" });
-    vi.advanceTimersByTime(2_000);
-    expect(await gateway.readRecords("merchandise", "records", {})).toEqual({ ok: "Bearer t2" });
-    expect(minted).toBe(2);
+  it("authenticates and reads in one Shell request, without a publisher or a separate mint", async () => {
+    expect(await read({ slug: "fresh-product" })).toEqual({
+      ok: "Bearer t1",
+      query: { slug: "fresh-product" },
+    });
+    expect(shellFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = vi.mocked(shellFetch).mock.calls[0]!;
+    expect(url).toBe("https://shell.test/shell-super-app-api/auth/api-key/gateway-read");
+    expect(JSON.parse(String(init.body))).toEqual({
+      audience: "merchandise",
+      legalEntityId: "71000000-0000-4000-8000-000000000024",
+      readName: "records",
+      query: { slug: "fresh-product" },
+    });
+    expect(new Headers(init.headers).get("x-api-key")).toBe("key");
+    expect(new Headers(init.headers).get("authorization")).toBeNull();
   });
-  it("joins concurrent mints for the same audience within one render", async () => {
+
+  it("reuses only the assertion, never a read result, until shortly before expiry", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    await read({ product: "one" });
+    expect(await read({ product: "two" })).toEqual({ ok: "Bearer t1", query: { product: "two" } });
+    expect(minted).toBe(1);
+    const [url, init] = vi.mocked(shellFetch).mock.calls[1]!;
+    expect(url).toContain("/module-api/merchandise/r1/merchandise-api/reads/records");
+    expect(new Headers(init.headers).get("x-api-key")).toBeNull();
+    expect(new Headers(init.headers).get("x-ontos-composition-revision")).toBe(revision);
+    vi.advanceTimersByTime(239_000);
+    await read();
+    vi.advanceTimersByTime(2_000);
+    expect(await read()).toEqual({ ok: "Bearer t2", query: {} });
+    expect(minted).toBe(2);
+    expect(shellFetch).toHaveBeenCalledTimes(4);
+  });
+
+  it("joins concurrent issuance within one render without sharing the first read's payload or result", async () => {
     await renderCache.run(new Map(), async () => {
-      const results = await Promise.all([
-        gateway.readRecords("merchandise", "records", { tree: true }),
-        gateway.readRecords("merchandise", "records", { featured: true }),
-        gateway.readRecords("merchandise", "records", { slug: "heavy-product" }),
-      ]);
-      expect(results).toEqual(Array.from({ length: 3 }, () => ({ ok: "Bearer t1" })));
+      const queries = [{ tree: true }, { featured: true }, { slug: "heavy-product" }];
+      expect(await Promise.all(queries.map(read))).toEqual(
+        queries.map((query) => ({ ok: "Bearer t1", query })),
+      );
       expect(minted).toBe(1);
-      expect(shellFetch).toHaveBeenCalledTimes(4);
+      expect(shellFetch).toHaveBeenCalledTimes(3);
     });
   });
-  it("never shares pending mints between renders", async () => {
+
+  it("never shares pending issuance between renders", async () => {
     await Promise.all([
-      renderCache.run(new Map(), () => gateway.readRecords("merchandise", "records", {})),
-      renderCache.run(new Map(), () => gateway.readRecords("merchandise", "records", {})),
+      renderCache.run(new Map(), () => read()),
+      renderCache.run(new Map(), () => read()),
     ]);
     expect(minted).toBe(2);
+    expect(shellFetch).toHaveBeenCalledTimes(2);
   });
+
   it("keeps different audiences separate within a render", async () => {
     await renderCache.run(new Map(), () =>
-      Promise.all([
-        gateway.readRecords("merchandise", "records", {}),
-        gateway.readRecords("pricing", "records", {}),
-      ]),
+      Promise.all([read(), gateway.readRecords("pricing", "records", {})]),
     );
     expect(minted).toBe(2);
   });
+
+  it("binds action issuance to the Shell's active revision with no client revision", async () => {
+    await gateway.callAction("merchandise", "order", {}, "one");
+    const [, init] = vi.mocked(shellFetch).mock.calls[0]!;
+    expect(JSON.parse(String(init.body))).toEqual({
+      audience: "merchandise",
+      legalEntityId: "71000000-0000-4000-8000-000000000024",
+    });
+    expect(
+      new Headers(vi.mocked(shellFetch).mock.calls[1]![1].headers).get("idempotency-key"),
+    ).toBe("one");
+  });
+
   it("drops a failed mint so the same render can retry", async () => {
     vi.mocked(shellFetch).mockResolvedValueOnce(json(503, { code: "gateway_unavailable" }));
     await renderCache.run(new Map(), async () => {
@@ -111,18 +162,48 @@ describe("OntOS gateway assertions", () => {
       ]);
       expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
       expect(shellFetch).toHaveBeenCalledTimes(1);
-      expect(await gateway.callAction("merchandise", "order", {}, "retry")).toEqual({
-        ok: "Bearer t1",
-      });
+      await gateway.callAction("merchandise", "order", {}, "retry");
       expect(shellFetch).toHaveBeenCalledTimes(3);
     });
   });
-  it("replaces a rejected assertion at once and retries the read", async () => {
-    await renderCache.run(new Map(), async () => {
-      await gateway.readRecords("merchandise", "records", {});
-      rejectToken = "t1";
-      expect(await gateway.readRecords("merchandise", "records", {})).toEqual({ ok: "Bearer t2" });
-      expect(minted).toBe(2);
-    });
+
+  it.each([400, 401, 409])(
+    "replaces a rejected assertion (HTTP %s) and rebinds to the current revision",
+    async (status) => {
+      await renderCache.run(new Map(), async () => {
+        await read();
+        rejectToken = "t1";
+        rejectionStatus = status;
+        revision = "b".repeat(64);
+        expect(await read()).toEqual({ ok: "Bearer t2", query: {} });
+        await read();
+        expect(
+          new Headers(vi.mocked(shellFetch).mock.calls.at(-1)![1].headers).get(
+            "x-ontos-composition-revision",
+          ),
+        ).toBe(revision);
+        expect(minted).toBe(2);
+      });
+    },
+  );
+
+  it("does not retry forbidden reads or serve an earlier result", async () => {
+    await read();
+    rejectToken = "t1";
+    rejectionStatus = 403;
+    await expect(read()).rejects.toMatchObject({ status: 403 });
+    expect(shellFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails closed on a successful combined response without assertion metadata", async () => {
+    vi.mocked(shellFetch).mockResolvedValue(json(200, { stale: "must not be returned" }));
+    await expect(read()).rejects.toMatchObject({ status: 502, code: "gateway_context_malformed" });
+  });
+
+  it("rejects path traversal before sending credentials", async () => {
+    await expect(gateway.readRecords("merchandise", "../actions/order", {})).rejects.toThrow(
+      "Invalid path segment",
+    );
+    expect(shellFetch).not.toHaveBeenCalled();
   });
 });

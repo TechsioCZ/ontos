@@ -18,6 +18,8 @@ export const shellFetch = async (url: string, init: RequestInit): Promise<Respon
     binding = getCloudflareContext().env.ONTOS_SHELL;
   } catch {
     // A plain Next.js local server has no Cloudflare request context.
+    return await fetch(url, init);
   }
-  return await (binding ? binding.fetch(url, init) : fetch(url, init));
+  if (binding === undefined) throw new Error("ONTOS_SHELL service binding is not configured");
+  return await binding.fetch(url, init);
 };

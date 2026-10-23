@@ -132,6 +132,24 @@ export const GatewayContextRequestSchema = Schema.Struct({
 });
 export type GatewayContextRequest = typeof GatewayContextRequestSchema.Encoded;
 
+/** Server credentials may bind to the active release without first downloading its composition. */
+export const ApiKeyGatewayContextRequestSchema = Schema.Struct({
+  ...GatewayContextRequestSchema.fields,
+  compositionRevision: Schema.optionalKey(compositionRevision),
+});
+export type ApiKeyGatewayContextRequest = typeof ApiKeyGatewayContextRequestSchema.Encoded;
+
+/** A credential-authenticated first read uses the same assertion and owner admission as subsequent reads. */
+export const ApiKeyGatewayReadRequestSchema = Schema.Struct({
+  audience: GatewayAudienceSchema,
+  legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+  query: Schema.Unknown,
+  readName: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u), Schema.isMaxLength(200)),
+});
+
+/** Server-only response metadata; never exposed through CORS or persisted by an intermediary. */
+export const API_KEY_GATEWAY_CONTEXT_HEADER = 'x-ontos-gateway-context';
+
 export const GatewayContextResponseSchema = Schema.Struct({
   apiBaseUrl: Schema.String.check(
     Schema.isMinLength(1),
@@ -230,8 +248,24 @@ export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
         GatewayInternalProblemSchema,
       ],
       headers: ApiKeyGatewayHeadersSchema,
-      payload: GatewayContextRequestSchema,
+      payload: ApiKeyGatewayContextRequestSchema,
       success: GatewayContextResponseSchema,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post('readWithApiKeyGatewayContext', '/auth/api-key/gateway-read', {
+      error: [
+        GatewayAuthenticationRequiredProblemSchema,
+        GatewayAudienceInvalidProblemSchema,
+        GatewayReloadRequiredProblemSchema,
+        GatewayForbiddenProblemSchema,
+        GatewayRateLimitedProblemSchema,
+        GatewayUnavailableProblemSchema,
+        GatewayInternalProblemSchema,
+      ],
+      headers: ApiKeyGatewayHeadersSchema,
+      payload: ApiKeyGatewayReadRequestSchema,
+      success: Schema.Unknown,
     }),
   );
 
@@ -241,6 +275,7 @@ export const shellGatewayContextContract = {
   apiPrefix: '/shell-super-app-api',
   documentContextPath: '/shell-super-app-api/shell/document-context',
   issueApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-context',
+  readWithApiKeyGatewayContextPath: '/shell-super-app-api/auth/api-key/gateway-read',
   issueDocumentGatewayContextsPath: '/shell-super-app-api/auth/gateway-contexts',
   issueGatewayContextPath: '/shell-super-app-api/auth/gateway-context',
   ownerId: 'shell-super-app',
@@ -261,6 +296,14 @@ export const gatewayContextAuthorizationEntrypoints = [
     entrypointKey: 'shell.gateway-context.issue.api-key',
     owner: shellGatewayContextContract.ownerId,
     path: shellGatewayContextContract.issueApiKeyGatewayContextPath,
+    surface: 'capability_issuance',
+  },
+  {
+    authorization: { credential: 'api_key', kind: 'capability_issuance' },
+    deployment: shellGatewayContextContract.ownerId,
+    entrypointKey: 'shell.gateway-read.issue.api-key',
+    owner: shellGatewayContextContract.ownerId,
+    path: shellGatewayContextContract.readWithApiKeyGatewayContextPath,
     surface: 'capability_issuance',
   },
   {

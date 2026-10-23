@@ -62,7 +62,11 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     'submitAgentProposals',
   ]);
   expect(authenticationEndpoints).toEqual(['currentSession', 'signIn', 'signOut']);
-  expect(gatewayEndpoints).toEqual(['issueGatewayContext', 'issueApiKeyGatewayContext']);
+  expect(gatewayEndpoints).toEqual([
+    'issueGatewayContext',
+    'issueApiKeyGatewayContext',
+    'readWithApiKeyGatewayContext',
+  ]);
   expect(Object.keys(ShellAuthenticationApi.groups.documentGateway.endpoints)).toEqual([
     'issueDocumentGatewayContexts',
   ]);
@@ -139,6 +143,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     manageAgentEntity: '/auth/identity/agent-entities',
     manageDemoAccount: '/auth/identity/demo-accounts',
     readPrincipalBinding: '/auth/identity/external/bindings/read',
+    readWithApiKeyGatewayContext: '/auth/api-key/gateway-read',
     replaceAgentOperators: '/auth/identity/agent-entities/operators',
     reservePrincipalBinding: '/auth/identity/external/bindings/reserve',
     resolveExternalSubject: '/auth/identity/external/resolve',

@@ -9,8 +9,6 @@ const required = (name) => {
 };
 const shellUrl = new URL(required("ONTOS_SHELL_URL"));
 if (shellUrl.protocol !== "https:") throw new Error("ONTOS_SHELL_URL must use HTTPS");
-const namespaceId = required("ONTOS_ACTIVE_APPLICATION_COMPOSITION_KV_ID");
-if (!/^[a-f\d]{32}$/u.test(namespaceId)) throw new Error("Invalid composition KV namespace ID");
 // The storefront's own catalog cache (public catalog reads only), shared by every data center.
 const catalogNamespaceId = required("STOREFRONT_CATALOG_KV_ID");
 if (!/^[a-f\d]{32}$/u.test(catalogNamespaceId)) throw new Error("Invalid catalog KV namespace ID");
@@ -30,10 +28,7 @@ config.vars = {
   ONTOS_SHELL_URL: shellUrl.origin,
   STOREFRONT_IMAGE_HOSTS: process.env.STOREFRONT_IMAGE_HOSTS ?? "",
 };
-config.kv_namespaces = [
-  { binding: "ONTOS_ACTIVE_APPLICATION_COMPOSITION", id: namespaceId },
-  { binding: "STOREFRONT_CATALOG_CACHE", id: catalogNamespaceId },
-];
+config.kv_namespaces = [{ binding: "STOREFRONT_CATALOG_CACHE", id: catalogNamespaceId }];
 config.services = [{ binding: "ONTOS_SHELL", service: shellWorker }];
 writeFileSync(
   new URL("../.wrangler.generated.json", import.meta.url),

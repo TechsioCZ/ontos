@@ -36,7 +36,8 @@ import {
   ModuleStateGateLive,
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
-import type { GatewayContextProblem } from '@app/shared-contracts';
+import { API_KEY_GATEWAY_CONTEXT_HEADER, GatewayContextResponseSchema } from '@app/shared-contracts';
+import type { ApiKeyGatewayContextRequest, GatewayContextProblem } from '@app/shared-contracts';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Cookies, HttpApiBuilder, HttpEffect, HttpServerResponse, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
@@ -57,7 +58,7 @@ import {
 } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
-import { ModuleApiTransportLive } from '../src/module-api/transport.ts';
+import { dispatchModuleApiRequest, ModuleApiTransportLive } from '../src/module-api/transport.ts';
 import { EmailTransportLive } from './email/transport.ts';
 
 import {
@@ -1925,7 +1926,7 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
 });
 
 const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function* requireGatewayReleaseEffect(
-  compositionRevision: string,
+  compositionRevision: string | undefined,
 ) {
   const authority = yield* ShellInstalledModuleCatalog;
   const catalog = yield* authority.load.pipe(
@@ -1935,7 +1936,7 @@ const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function*
     }),
   );
   if (
-    compositionRevision !== catalog.composition.revision ||
+    (compositionRevision !== undefined && compositionRevision !== catalog.composition.revision) ||
     catalog.composition.shell.deployment.appId !== ultramodernDeliveryUnit.appId ||
     catalog.composition.shell.deployment.buildMarker !== ultramodernDeliveryUnit.buildMarker
   ) {
@@ -1951,6 +1952,64 @@ const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function*
     );
   }
   return catalog.composition.revision;
+});
+
+const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(function* issueApiKeyContextEffect(
+  payload: ApiKeyGatewayContextRequest,
+  rawKey: string | undefined,
+  request: RequestWithHeaders,
+) {
+  const compositionRevision = yield* requireGatewayRelease(payload.compositionRevision);
+  const keys = yield* ApiKeyService;
+  const resolver = yield* PrincipalResolver;
+  if (rawKey === undefined || rawKey.trim().length === 0) {
+    return yield* failApiKeyGatewayProblem(gatewayAuthenticationRequiredProblem());
+  }
+  const verified = yield* keys
+    .verify(rawKey)
+    .pipe(Effect.catch((error) => failApiKeyGatewayProblem(apiKeyProviderGatewayProblem(error))));
+  const identity = yield* resolver
+    .resolveBetterAuthApiKey(verified.providerKeyId)
+    .pipe(Effect.catch((error) => pipe(error, principalResolutionGatewayProblem, failApiKeyGatewayProblem)));
+  let legalEntityId: string | undefined;
+  if (payload.legalEntityId !== undefined) {
+    const selected = yield* validateAuthorizedLegalEntity({
+      legalEntityId: payload.legalEntityId,
+      principalId: identity.principalId,
+      tenantId: identity.tenantId,
+    }).pipe(
+      Effect.catch((error) =>
+        failApiKeyGatewayProblem(
+          Predicate.isTagged(error, 'LegalEntitySelectionUnavailableError')
+            ? gatewayAuthorizationUnavailableProblem()
+            : gatewayForbiddenProblem(),
+        ),
+      ),
+    );
+    ({ legalEntityId } = selected);
+  }
+  const principal = withOptionalProperty(
+    {
+      authBindingId: identity.authBindingId,
+      authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
+      authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+      authMethod: 'api_key' as const,
+      principalId: identity.principalId,
+      tenantId: identity.tenantId,
+    },
+    legalEntityId !== undefined,
+    'legalEntityId',
+    legalEntityId,
+    {},
+  );
+  return yield* issueGatewayContextAssertion({
+    audience: payload.audience,
+    compositionRevision,
+    principal,
+  }).pipe(
+    Effect.tapError((error) => logGatewayIssuerFailure('api_key', request, error)),
+    Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)),
+  );
 });
 
 const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'gatewayContext', (handlers) =>
@@ -1988,60 +2047,66 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
     .handle('issueApiKeyGatewayContext', ({ headers, payload, request }) =>
       Effect.gen(function* issueApiKeyGatewayContextHandler() {
         yield* noStore;
-        yield* requireGatewayRelease(payload.compositionRevision);
-        const keys = yield* ApiKeyService;
-        const resolver = yield* PrincipalResolver;
-        const { 'x-api-key': rawKey } = headers;
-        if (rawKey === undefined || rawKey.trim().length === 0) {
-          return yield* failApiKeyGatewayProblem(gatewayAuthenticationRequiredProblem());
-        }
-        const verified = yield* keys
-          .verify(rawKey)
-          .pipe(Effect.catch((error) => failApiKeyGatewayProblem(apiKeyProviderGatewayProblem(error))));
-        const identity = yield* resolver
-          .resolveBetterAuthApiKey(verified.providerKeyId)
-          .pipe(Effect.catch((error) => pipe(error, principalResolutionGatewayProblem, failApiKeyGatewayProblem)));
-        let legalEntityId: string | undefined;
-        if (payload.legalEntityId !== undefined) {
-          const selected = yield* validateAuthorizedLegalEntity({
-            legalEntityId: payload.legalEntityId,
-            principalId: identity.principalId,
-            tenantId: identity.tenantId,
-          }).pipe(
-            Effect.catch((error) =>
-              failApiKeyGatewayProblem(
-                Predicate.isTagged(error, 'LegalEntitySelectionUnavailableError')
-                  ? gatewayAuthorizationUnavailableProblem()
-                  : gatewayForbiddenProblem(),
-              ),
-            ),
-          );
-          ({ legalEntityId } = selected);
-        }
-        const principal = withOptionalProperty(
-          {
-            authBindingId: identity.authBindingId,
-            authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
-            authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
-            authMethod: 'api_key' as const,
-            principalId: identity.principalId,
-            tenantId: identity.tenantId,
-          },
-          legalEntityId !== undefined,
-          'legalEntityId',
-          legalEntityId,
-          {},
-        );
-        return yield* issueGatewayContextAssertion({
-          audience: payload.audience,
-          compositionRevision: payload.compositionRevision,
-          principal,
-        }).pipe(
-          Effect.tapError((error) => logGatewayIssuerFailure('api_key', request, error)),
-          Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)),
-        );
+        return yield* issueApiKeyContext(payload, headers['x-api-key'], request);
       }).pipe(
         recoverUnexpectedDefect(request, 'Unexpected API-key gateway assertion defect', () =>
+          failGatewayProblem(gatewayInternalProblem()),
+        ),
+      ),
+    )
+    .handle('readWithApiKeyGatewayContext', ({ headers, payload, request }) =>
+      Effect.gen(function* readWithApiKeyGatewayContextHandler() {
+        yield* noStore;
+        const context = yield* issueApiKeyContext(payload, headers['x-api-key'], request);
+        const prefix = '/shell-super-app-api/module-api/';
+        if (!context.apiBaseUrl.startsWith(prefix)) {
+          return yield* failGatewayProblem(
+            problemDetails(
+              'GatewayAudienceInvalidProblem',
+              'The requested audience is not an available MicroVertical.',
+              400,
+              'Invalid gateway audience',
+              'https://ontos.dev/problems/gateway-audience-invalid',
+            ),
+          );
+        }
+        // Dispatch in-process, through the very same composition/release admission and owner transport.
+        // Never forward the API key, cookies or arbitrary caller headers to the owner.
+        const body = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(payload.query).pipe(Effect.orDie);
+        const encodedContext = yield* Schema.encodeEffect(Schema.fromJsonString(GatewayContextResponseSchema))(
+          context,
+        ).pipe(Effect.orDie);
+        const ownerRequest = new Request(
+          `https://shell.invalid${context.apiBaseUrl.slice('/shell-super-app-api'.length)}/reads/${encodeURIComponent(payload.readName)}`,
+          {
+            body,
+            headers: {
+              authorization: `Bearer ${context.token}`,
+              'content-type': 'application/json',
+              'x-correlation-id': correlationFromRequest(request),
+              'x-ontos-composition-revision': context.compositionRevision,
+            },
+            method: 'POST',
+          },
+        );
+        const response = yield* dispatchModuleApiRequest(ownerRequest).pipe(
+          Effect.catch((error) =>
+            Effect.succeed(
+              Response.json(
+                { code: 'gateway_dispatch_failed' },
+                { status: Predicate.isTagged(error, 'ModuleApiDispatchError') ? error.status : 503 },
+              ),
+            ),
+          ),
+        );
+        // The receiving runtime still redeems the assertion and rechecks principal/binding status,
+        // tenant/legal-entity scope and operation authorization. No authorization result is cached here.
+        return HttpServerResponse.fromWeb(response).pipe(
+          HttpServerResponse.setHeader(API_KEY_GATEWAY_CONTEXT_HEADER, encodedContext),
+          noStoreResponse,
+        );
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected API-key gateway read defect', () =>
           failGatewayProblem(gatewayInternalProblem()),
         ),
       ),

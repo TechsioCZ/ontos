@@ -1,5 +1,13 @@
-import { GatewayContextApi, GatewayContextRequestSchema, shellGatewayContextContract } from './gateway-context.ts';
-import type { GatewayContextClientError, GatewayContextRequest, GatewayContextResponse } from './gateway-context.ts';
+import {
+  ApiKeyGatewayContextRequestSchema,
+  GatewayContextApi,
+  shellGatewayContextContract,
+} from './gateway-context.ts';
+import type {
+  ApiKeyGatewayContextRequest,
+  GatewayContextClientError,
+  GatewayContextResponse,
+} from './gateway-context.ts';
 import { makeEffectHttpApiClient } from '@modern-js/bff-effect/effect-client';
 import { Context, Effect, Option, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
@@ -47,10 +55,10 @@ const apiKeyGatewayContextClient = makeEffectHttpApiClient(GatewayContextApi, {
  * and Tenant, validates the requested Legal Entity, and issues a fresh audience-scoped assertion.
  */
 export const issueApiKeyGatewayContext = (
-  payload: GatewayContextRequest,
+  payload: ApiKeyGatewayContextRequest,
   options: ApiKeyGatewayContextClientOptions,
 ): Effect.Effect<GatewayContextResponse, GatewayContextClientError> =>
-  Schema.decodeEffect(GatewayContextRequestSchema)(payload).pipe(
+  Schema.decodeEffect(ApiKeyGatewayContextRequestSchema)(payload).pipe(
     Effect.flatMap((decodedPayload) =>
       apiKeyGatewayContextClient.pipe(
         Effect.flatMap((client) =>
