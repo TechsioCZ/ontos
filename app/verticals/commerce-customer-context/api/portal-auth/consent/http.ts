@@ -143,7 +143,7 @@ const update = Effect.fn('CustomerConsent.update')(function* updateConsent(
       outcome: 'requested',
     })
     .pipe(Effect.mapError(consentUnavailable));
-  const acknowledged = yield* Schema.decodeUnknownEffect(CustomerConsentReceiptSchema)({
+  const acknowledged = yield* Schema.decodeEffect(CustomerConsentReceiptSchema)({
     acknowledgedAt: DateTime.formatIso(yield* DateTime.now),
     decision: input.decision,
     noticeVersionId: notice.versionId,
