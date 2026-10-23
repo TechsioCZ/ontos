@@ -528,8 +528,18 @@ it.live('cancels the owner stream when the downstream Node client aborts', () =>
     expect(first.done).toBe(false);
     expect([...(first.value ?? [])]).toEqual([0, 255]);
     controller.abort();
-    yield* Effect.sleep('100 millis');
-    expect(fixture.server.ingress[0]?.aborted).toBe(true);
+    // Abort propagation is asynchronous, so poll for it instead of assuming it lands inside a fixed sleep.
+    // The invariant is unchanged: the owner request must observe the abort, within a bounded window.
+    const ingressAborted = yield* Effect.gen(function* pollIngressAborted() {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (fixture.server.ingress[0]?.aborted === true) {
+          return true;
+        }
+        yield* Effect.sleep('20 millis');
+      }
+      return fixture.server.ingress[0]?.aborted === true;
+    });
+    expect(ingressAborted).toBe(true);
     const aborted = yield* fixture.owner.waitFor(RequestAbortedEventSchema, 'request-aborted');
     expect(aborted.path).toBe(`/${appId}-api/abort-stream`);
     const closed = yield* fixture.owner.waitFor(StreamClosedEventSchema, 'stream-closed');
