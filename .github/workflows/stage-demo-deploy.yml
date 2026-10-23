@@ -213,6 +213,7 @@ jobs:
           mise exec -- pnpm exec rstest --project scripts
           scripts/tests/immutable-application-release.test.mts
           scripts/tests/immutable-shell-release.test.mts
+          scripts/tests/stage-demo-deploy-workflow.test.mts
 
   build-storefront:
     name: Build akros-storefront
@@ -326,6 +327,18 @@ jobs:
           token: ${{ secrets.ZEROPS_TOKEN }}
           database-url: ${{ secrets.DATABASE_URL }}
           database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
+
+      # Every owner migrates its own schema through the same db:migrate chain as a local workspace, before
+      # any upload, so no release ever runs against a schema older than its code. The Commerce portal realm
+      # migrates with the same runtime/admin pair (it runs as ontos_runtime, as in .env.example). Any failed
+      # migration ends the round before anything is uploaded or published.
+      - name: Migrate every owner schema
+        timeout-minutes: 20
+        working-directory: app
+        env:
+          COMMERCE_PORTAL_AUTH_DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+        run: mise exec -- pnpm db:migrate
 
       # Deploys only upload immutable release Workers; nothing serves them until publication. Each upload
       # locks only its own release identity, so eight run side by side (Cloudflare API rate limits).
