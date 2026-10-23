@@ -7,6 +7,8 @@ import { executeApplyCommand as executeMerchandiseCommand } from '@app/merchandi
 import { executeRecords as executeMerchandiseRecords } from '@app/merchandise/clients/records';
 import type { ApplyCommandPayload as MerchandisePayload } from '@app/merchandise/contracts/apply-command';
 import { aiLogActionLabel, aiRiskLabel, aiStatusLabel } from '@app/shared-contracts/ai-approvals';
+import { definePageData, modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
+import type { ModulePageProps, PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { listEmployees } from '@app/workforce/clients/records';
 import type { AiBatch, AiChange, AiLogEntry } from '@app/shared-contracts/ai-approvals';
 import { FederatedI18nBoundary } from '@modern-js/plugin-i18n/runtime';
@@ -14,16 +16,18 @@ import { Helmet } from '@modern-js/runtime/head';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
-import { Effect, Random } from 'effect';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Effect, Match, Random, Schema } from 'effect';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import csResource from '../../../../../locales/cs/sales-pipeline.json';
 import enResource from '../../../../../locales/en/sales-pipeline.json';
-import { executeRecords as executePipelineRecords } from '../../../../api/records-client.ts';
+import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import '../../../index.css';
 import { applyPipelineCommand } from '../prilezitosti/pipeline-api.ts';
 import type { PipelineCommand } from '../prilezitosti/pipeline-api.ts';
 import { usePipelineReferences } from '../prilezitosti/pipeline-references.ts';
+import { allRecordsInput, pipelineRecords, usePipelineRecordsSnapshot } from '../prilezitosti/pipeline-records.ts';
+import type { RecordsLoadError } from '../prilezitosti/pipeline-records.ts';
 import './review.css';
 
 const i18nResources = {
@@ -76,17 +80,15 @@ interface RunGroup {
 
 const correlation = (name: string) => Random.nextInt.pipe(Effect.map((nonce) => `sales-pipeline:ai:${name}:${nonce}`));
 
-const loadOpportunities = correlation('records').pipe(
-  Effect.flatMap((key) => executePipelineRecords({}, key)),
-  Effect.map((response): ModuleSlice => ({
-    batches: response.aiChanges?.batches ?? [],
-    partyOf: new Map(response.items.map((item) => [item.id as string, item.partyId as string] as const)),
-    canWrite: response.canWrite,
-    changes: response.aiChanges?.changes ?? [],
-    log: response.aiChanges?.log ?? [],
-    revision: response.revision,
-  })),
-);
+/** Opportunity proposals come with the unfiltered records read the records page shares. */
+const opportunitySlice = (response: RecordsResponse): ModuleSlice => ({
+  batches: response.aiChanges?.batches ?? [],
+  partyOf: new Map(response.items.map((item) => [item.id as string, item.partyId as string] as const)),
+  canWrite: response.canWrite,
+  changes: response.aiChanges?.changes ?? [],
+  log: response.aiChanges?.log ?? [],
+  revision: response.revision,
+});
 
 /** Merchandise reads at most 250 orders by id per call. */
 const ORDER_ID_BATCH = 250;
@@ -132,6 +134,31 @@ const loadOrders = correlation('orders').pipe(
       })),
     ),
   ),
+);
+
+const OrdersLoadErrorSchema = Schema.Literals(['absent', 'error']);
+type OrdersLoadError = typeof OrdersLoadErrorSchema.Type;
+
+/** A refused read means the person has no access to order proposals; any other failure is an error. */
+const ordersLoadError = (problem: Effect.Error<typeof loadOrders>): OrdersLoadError =>
+  Match.value(problem).pipe(
+    Match.tag('RecordsForbiddenProblem', () => 'absent' as const),
+    Match.orElse(() => 'error' as const),
+  );
+
+/** Order proposals of one legal entity. */
+const aiOrders = definePageData({
+  key: (legalEntityId: string) => (legalEntityId === '' ? 'all' : legalEntityId),
+  load: (_legalEntityId: string) => loadOrders.pipe(Effect.mapError(ordersLoadError)),
+  runtime: browserRuntime,
+});
+
+const legalEntityOf = (props: Partial<ModulePageProps>): string => props.context?.legalEntityId ?? '';
+
+/** The Shell prepares both proposal reads before it reveals the page. */
+export const preloadPage = modulePagePreload(
+  (props) => pipelineRecords.preload(allRecordsInput(legalEntityOf(props))),
+  (props) => aiOrders.preload(legalEntityOf(props)),
 );
 
 /** Readable reason of a refused command (the module answers Czech details for AI refusals). */
@@ -199,32 +226,45 @@ const usePrincipalNames = () => {
   return names;
 };
 
-const useModule = (load: typeof loadOpportunities, reloadKey: number): ModuleState => {
-  const [state, setState] = useState<ModuleState>({ status: 'loading' });
-  useEffect(() => {
-    let active = true;
+const moduleStateOf = <A, E>(
+  snapshot: PageDataSnapshot<A, E>,
+  slice: (value: A) => ModuleSlice,
+  absent: (error: E) => boolean,
+): ModuleState => {
+  if (snapshot.state === 'ready') return { status: 'ready', ...slice(snapshot.value) };
+  if (snapshot.state === 'failed') return { status: absent(snapshot.error) ? 'absent' : 'error' };
+  return { status: 'loading' };
+};
+
+/** Both proposal reads, ready in the first render when the Shell prepared the page. */
+const useProposalModules = (legalEntityId: string) => {
+  const recordsInput = allRecordsInput(legalEntityId);
+  const recordsSnapshot = usePipelineRecordsSnapshot(recordsInput);
+  const ordersSnapshot = useSyncExternalStore(
+    aiOrders.subscribe,
+    () => aiOrders.snapshot(legalEntityId),
+    () => pageDataPending,
+  );
+  useEffect(() => aiOrders.ensure(legalEntityId), [legalEntityId]);
+  const opportunities = moduleStateOf(
+    recordsSnapshot,
+    opportunitySlice,
+    (failure: RecordsLoadError) => failure === 'forbidden',
+  );
+  const orders = moduleStateOf(
+    ordersSnapshot,
+    (slice: ModuleSlice) => slice,
+    (failure) => failure === 'absent',
+  );
+  const refresh = () => {
     void browserRuntime.runPromise(
-      load.pipe(
-        Effect.match({
-          onFailure: (error) => {
-            const forbidden =
-              typeof error === 'object' &&
-              error !== null &&
-              '_tag' in error &&
-              String(error._tag).includes('Forbidden');
-            if (active) setState({ status: forbidden ? 'absent' : 'error' });
-          },
-          onSuccess: (slice) => {
-            if (active) setState({ status: 'ready', ...slice });
-          },
-        }),
-      ),
+      Effect.all([pipelineRecords.refresh(recordsInput), aiOrders.refresh(legalEntityId)], {
+        concurrency: 2,
+        discard: true,
+      }),
     );
-    return () => {
-      active = false;
-    };
-  }, [load, reloadKey]);
-  return state;
+  };
+  return { opportunities, orders, refresh };
 };
 
 const groupRuns = (modules: Readonly<Record<ModuleKey, ModuleState>>): readonly RunGroup[] => {
@@ -530,10 +570,8 @@ const RunCard = ({
   );
 };
 
-const AiApprovalsContent = () => {
-  const [reloadKey, setReloadKey] = useState(0);
-  const opportunities = useModule(loadOpportunities, reloadKey);
-  const orders = useModule(loadOrders, reloadKey);
+const AiApprovalsContent = ({ legalEntityId }: { readonly legalEntityId: string }) => {
+  const { opportunities, orders, refresh } = useProposalModules(legalEntityId);
   const references = usePipelineReferences();
   const principalNames = usePrincipalNames();
   const [busy, setBusy] = useState(false);
@@ -620,7 +658,7 @@ const AiApprovalsContent = () => {
       .then((text) => {
         setMessage(text);
         setBusy(false);
-        setReloadKey((key) => key + 1);
+        refresh();
       });
   };
 
@@ -648,13 +686,7 @@ const AiApprovalsContent = () => {
         description="AI připraví návrh změn příležitostí a objednávek. Vy porovnáte údaje a rozhodnete. Bez vašeho souhlasu se nic nezmění."
         meta={<Badge variant="secondary">Úroveň C</Badge>}
         actions={
-          <Button
-            disabled={busy}
-            onClick={() => setReloadKey((key) => key + 1)}
-            theme="outlined"
-            variant="secondary"
-            size="sm"
-          >
+          <Button disabled={busy} onClick={refresh} theme="outlined" variant="secondary" size="sm">
             Obnovit seznam
           </Button>
         }
@@ -759,14 +791,14 @@ const AiApprovalsContent = () => {
   );
 };
 
-export const AiApprovalsPage = () => (
+export const AiApprovalsPage = (props: Partial<ModulePageProps>) => (
   <FederatedI18nBoundary
     defaultNamespace="sales-pipeline"
     fallbackLanguage="en"
     resources={i18nResources}
     supportedLanguages={['en', 'cs']}
   >
-    <AiApprovalsContent />
+    <AiApprovalsContent legalEntityId={legalEntityOf(props)} />
   </FederatedI18nBoundary>
 );
 

@@ -1,4 +1,6 @@
 import { BulkActionBar, foldSearchText, PageHeader, Toaster } from '@app/admin-ui';
+import { modulePagePreload } from '@app/shared-contracts/page-data';
+import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { useTagsFor } from '@app/tagging/components/tag-controls';
 import type { TagId } from '@app/tagging/contracts/records';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
@@ -38,7 +40,7 @@ import {
   defaultColumnVisibility,
 } from './pipeline-table.tsx';
 import type { PipelineLookups } from './pipeline-table.tsx';
-import { usePipelineRecords } from './pipeline-records.ts';
+import { initialRecordsInput, pipelineRecords, usePipelineRecords } from './pipeline-records.ts';
 import type { RecordsLoadError } from './pipeline-records.ts';
 import type { CustomerOption, EmployeeOption, LoadState } from './pipeline-references.ts';
 import { toSubjectIds, usePipelineReferences, useSubjectIdsWithTag } from './pipeline-references.ts';
@@ -304,15 +306,16 @@ const RecordsPageContent = ({
   initialOpportunityId,
   initialPartyId,
   invalidFilter,
+  legalEntityId,
 }: {
   readonly initialOpportunityId: string | undefined;
   readonly initialPartyId: PartyId | undefined;
   readonly invalidFilter: boolean;
+  readonly legalEntityId: string;
 }) => {
   const { t } = useModernI18n();
   const toaster = useToast();
   const { customers, employees, products } = usePipelineReferences();
-  const [reloadKey, setReloadKey] = useState(0);
   const [tagVersion, setTagVersion] = useState(0);
   const [filters, updateFilters] = useReducer(reduceViewFilters, {
     ...emptyViewFilters,
@@ -331,14 +334,12 @@ const RecordsPageContent = ({
   const [busy, setBusy] = useState(false);
   const [dialogError, setDialogError] = useState<string>();
 
-  const { loadError, pending, response } = usePipelineRecords(
-    { customer: customerFilter, owner: ownerFilter, stage: stageFilter },
-    reloadKey,
+  const { loadError, pending, reload, response } = usePipelineRecords(
+    { customer: customerFilter, legalEntityId, owner: ownerFilter, stage: stageFilter },
     !invalidFilter,
   );
   const canWrite = response?.canWrite === true;
   const revision = response?.revision ?? 0;
-  const reload = () => setReloadKey((key) => key + 1);
 
   const items = response?.items ?? [];
   const { refetch: refetchTags, tagsBySubject } = useTagsFor('opportunity', toSubjectIds(items.map((item) => item.id)));
@@ -621,7 +622,15 @@ const customerSearchSchema = Schema.Struct({
   partyId: Schema.optional(PartyIdSchema),
 });
 
-export const RecordsPage = () => {
+/** The Shell prepares the opening records read before it reveals the page. */
+export const preloadPage = modulePagePreload((props) =>
+  initialRecordsInput(props).pipe(
+    Option.match({ onNone: () => Effect.void, onSome: (input) => pipelineRecords.preload(input) }),
+  ),
+);
+
+/** Inside the Shell the page gets the person's context; on its own it reads without a legal entity key. */
+export const RecordsPage = ({ context }: Partial<ModulePageProps>) => {
   const location = useRouterState({ select: (state) => state.location.href });
   const search = useRouterState({
     select: (state) => {
@@ -648,6 +657,7 @@ export const RecordsPage = () => {
         initialPartyId={Option.getOrUndefined(requested)?.partyId}
         invalidFilter={Option.isNone(requested)}
         key={location}
+        legalEntityId={context?.legalEntityId ?? ''}
       />
     </FederatedI18nBoundary>
   );
