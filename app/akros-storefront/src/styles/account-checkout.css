@@ -202,3 +202,33 @@
   font-size: var(--text-sm);
   color: var(--color-fg-secondary);
 }
+.akros-address-autocomplete {
+  min-width: 0;
+}
+
+/* The kit exposes no positioner slot prop; keep its popup above the sticky header. */
+.akros-address-autocomplete [data-part="positioner"] {
+  z-index: var(--z-popup);
+}
+
+/* Combobox has no popup-height prop/token; retain its viewport limit and scrolling list. */
+.akros-address-autocomplete [data-part="content"] {
+  max-height: min(var(--akros-address-popup-max-height), var(--available-height, 100dvh));
+}
+
+.akros-address-autocomplete [data-part="item"] {
+  min-height: var(--dimension-44);
+}
+
+.akros-address-option-label {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.akros-address-status {
+  display: block;
+  margin-top: var(--dimension-8);
+  font-size: var(--text-sm);
+  color: var(--color-fg-secondary);
+}

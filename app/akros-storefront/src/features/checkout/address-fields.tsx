@@ -4,6 +4,7 @@ import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { PhoneInput } from "@techsio/ui-kit/molecules/phone-input";
 import { CheckoutSelect } from "./checkout-select";
 import type { CheckoutAddress, CheckoutErrors } from "@/mock-storefront/checkout";
+import { AddressAutocomplete } from "./address-autocomplete";
 
 const countries = [{ value: "CZ", label: "Česká republika" }];
 const phoneCountries = [
@@ -37,20 +38,32 @@ export function AddressFields({
           ["city", "Město", "address-level2"],
           ["postalCode", "PSČ", "postal-code"],
         ] as const
-      ).map(([key, label, autocomplete]) => (
-        <FormInput
-          key={key}
-          id={`${prefix}-${key}`}
-          label={label}
-          autoComplete={`${section} ${autocomplete}`}
-          size="sm"
-          required
-          value={address[key]}
-          onChange={(event) => onChange({ ...address, [key]: event.target.value })}
-          validateStatus={errors[`${prefix}.${key}`] ? "error" : "default"}
-          helpText={errors[`${prefix}.${key}`]}
-        />
-      ))}
+      ).map(([key, label, autocomplete]) =>
+        key === "street" ? (
+          <AddressAutocomplete
+            key={key}
+            id={`${prefix}-${key}`}
+            value={address.street}
+            country={address.country}
+            error={errors[`${prefix}.${key}`]}
+            onInput={(street) => onChange({ ...address, street })}
+            onSelect={(parts) => onChange({ ...address, ...parts })}
+          />
+        ) : (
+          <FormInput
+            key={key}
+            id={`${prefix}-${key}`}
+            label={label}
+            autoComplete={`${section} ${autocomplete}`}
+            size="sm"
+            required
+            value={address[key]}
+            onChange={(event) => onChange({ ...address, [key]: event.target.value })}
+            validateStatus={errors[`${prefix}.${key}`] ? "error" : "default"}
+            helpText={errors[`${prefix}.${key}`]}
+          />
+        ),
+      )}
       <CheckoutSelect
         id={`${prefix}-country`}
         label="Země"

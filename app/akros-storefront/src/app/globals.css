@@ -6,6 +6,7 @@
 @import "../tokens/_akros-layout.css";
 @import "../tokens/components/atoms/_akros-icon.css";
 @import "../tokens/components/atoms/_akros-input.css";
+@import "../tokens/components/molecules/_akros-address-autocomplete.css";
 @import "../tokens/components/molecules/_akros-select.css";
 @import "../tokens/components/atoms/_akros-textarea.css";
 @import "../tokens/components/molecules/_akros-accordion.css";

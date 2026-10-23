@@ -15,6 +15,11 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [
       {
+        // Fixed transport to the existing public service; no local address backend.
+        source: "/api/address-suggestions",
+        destination: "https://smart-suggest-shell-super-app.edution.workers.dev/api/v1/suggest",
+      },
+      {
         source: "/nerezovy-spojovaci-material",
         destination: "/kategorie/nerezovy-spojovaci-material",
       },

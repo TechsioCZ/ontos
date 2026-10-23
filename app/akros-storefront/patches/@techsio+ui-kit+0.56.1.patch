@@ -1,0 +1,28 @@
+diff --git a/node_modules/@techsio/ui-kit/dist/molecules/combobox.js b/node_modules/@techsio/ui-kit/dist/molecules/combobox.js
+index a71a2b3..ce0e0d5 100644
+--- a/node_modules/@techsio/ui-kit/dist/molecules/combobox.js
++++ b/node_modules/@techsio/ui-kit/dist/molecules/combobox.js
+@@ -282,10 +282,8 @@ function Combobox({ id, name, label, size, placeholder = "Select option", disabl
+             ...itemProps,
+             "aria-label": item.label,
+             className: itemSlot(),
+-            key: item.value,
+-            children: [
+-                itemContent,
+-                /*#__PURE__*/ jsx("span", {
++            key: item.value
++        }, itemContent, /*#__PURE__*/ jsx("span", {
+                     ...api.getItemIndicatorProps({
+                         item
+                     }),
+@@ -294,9 +292,7 @@ function Combobox({ id, name, label, size, placeholder = "Select option", disabl
+                         icon: "token-icon-check",
+                         size: "current"
+                     })
+-                })
+-            ]
+-        });
++                }));
+     };
+     return /*#__PURE__*/ jsxs("div", {
+         ...api.getRootProps(),
