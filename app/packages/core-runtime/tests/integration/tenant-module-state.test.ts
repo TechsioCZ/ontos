@@ -37,7 +37,7 @@ import type { OperationalScopeResolverService } from '../../src/operations/conte
 import { OperationAuthenticationRequired, OperationContextUnavailable } from '../../src/operations/errors.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { testOperationalScopeResolver as baseTestOperationalScopeResolver } from '../fixtures/operational-scope.ts';
-import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
+import { allowTenantPermissions, openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { injectStatementFaults } from '../support/database-faults.ts';
 import { makeInstalledCatalogFixture as catalogFrom } from '../support/installed-catalog.ts';
@@ -212,6 +212,8 @@ const Fixtures = Layer.mergeAll(
   NodeCrypto.layer,
 );
 
+const moduleStateRuntimeOptions = { ...openActionRuntimeOptions, contextAccess: allowTenantPermissions };
+
 const allowedPermission = {
   checkActionPermission: () => Effect.succeed('allowed' as const),
 };
@@ -317,7 +319,7 @@ const tenantModuleStateTest2 = Effect.gen(function* createAndTransitionTenantMod
       makeActionRepository(crypto),
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      moduleStateRuntimeOptions,
     );
     return Effect.gen(function* transitionSequence() {
       const created = yield* runtime.runAction(actionInput(moduleKey, 'active', 'create'));
@@ -403,7 +405,7 @@ const tenantModuleStateTest3 = Effect.gen(function* allDeclaredTenantModuleState
       makeActionRepository(crypto),
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      moduleStateRuntimeOptions,
     );
     const withCatalog = <Value, Error, Requirements>(
       effect: Effect.Effect<Value, Error, Requirements | InstalledModuleCatalogService>,
@@ -461,7 +463,7 @@ const tenantModuleStateTest4 = Effect.gen(function* idempotentReplayAndSameState
       makeActionRepository(crypto),
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      moduleStateRuntimeOptions,
     );
     return runtime.runAction(input);
   });
@@ -471,7 +473,7 @@ const tenantModuleStateTest4 = Effect.gen(function* idempotentReplayAndSameState
       makeActionRepository(crypto),
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      moduleStateRuntimeOptions,
     );
     return Effect.exit(runtime.runAction(input));
   });
@@ -483,7 +485,7 @@ const tenantModuleStateTest4 = Effect.gen(function* idempotentReplayAndSameState
       makeActionRepository(crypto),
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      moduleStateRuntimeOptions,
     );
     return Effect.exit(runtime.runAction(actionInput(moduleKey, 'active', 'same-state')));
   });
@@ -546,7 +548,7 @@ const tenantModuleStateTest5 = Effect.gen(function* rollbackFailedTenantModuleSt
       makeActionRepository(crypto),
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      moduleStateRuntimeOptions,
     );
     return Effect.exit(runtime.runAction(actionInput(moduleKey, 'active', 'forced-failure')));
   });
@@ -588,7 +590,7 @@ const tenantModuleStateTest6 = Effect.gen(function* serializeConcurrentTenantMod
       makeActionRepository(crypto),
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      moduleStateRuntimeOptions,
     );
     return runtime.runAction(actionInput(moduleKey, 'inactive', 'concurrent-initial'));
   });
@@ -605,7 +607,7 @@ const tenantModuleStateTest6 = Effect.gen(function* serializeConcurrentTenantMod
           makeActionRepository(crypto),
           allowedPermission,
           testOperationalScopeResolver,
-          openActionRuntimeOptions,
+          moduleStateRuntimeOptions,
         );
         return Effect.exit(runtime.runAction(actionInput(moduleKey, state, key)));
       }),
@@ -652,7 +654,7 @@ const tenantModuleStateTest7 = Effect.gen(function* deriveTrustedTenantScope() {
       makeActionRepository(crypto),
       allowedPermission,
       testOperationalScopeResolver,
-      openActionRuntimeOptions,
+      moduleStateRuntimeOptions,
     );
     return runtime.runAction(actionInput(moduleKey, 'suspended', 'tenant-isolation'));
   });

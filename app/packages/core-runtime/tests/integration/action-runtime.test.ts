@@ -74,7 +74,7 @@ import {
 } from '../../src/modules/tenant-module-state-service.ts';
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { testOperationalScopeResolver as baseTestOperationalScopeResolver } from '../fixtures/operational-scope.ts';
-import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
+import { allowTenantPermissions, openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeCoreDatabase } from '../../src/db/client.ts';
 import { injectStatementFaults } from '../support/database-faults.ts';
 import type { OperationalScopeResolverService } from '../../src/operations/context.ts';
@@ -354,6 +354,7 @@ const liveModuleStateOptions = (database: ContextServiceContract) => {
   const moduleStateGate = makeModuleStateGate(makeTenantModuleStateService(database));
   return {
     ...openActionRuntimeOptions,
+    contextAccess: allowTenantPermissions,
     moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
     moduleStateGate,
   };
