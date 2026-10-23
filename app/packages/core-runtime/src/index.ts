@@ -99,6 +99,14 @@ export {
   PeopleDirectoryResultSchema,
   peopleDirectoryRead,
 } from './auth/people-directory-read.ts';
+export { PersonInvitationIdentityProvider } from './auth/person-invitation-identity-provider.ts';
+export type {
+  PersonInvitationIdentityInput,
+  PersonInvitationIdentityWriter,
+} from './auth/person-invitation-identity-provider.ts';
+export { InvitePersonPayloadSchema, InvitePersonResultSchema } from './auth/person-invitation.ts';
+export type { InvitePersonPayload, InvitePersonResult } from './auth/person-invitation.ts';
+export { invitePersonAction } from './modules/actions/invite-person.action.ts';
 export { isConnectionWriteAllowed } from './auth/oauth-connection-scope.ts';
 // @ontos-codesmith-core-read-exports:start
 
