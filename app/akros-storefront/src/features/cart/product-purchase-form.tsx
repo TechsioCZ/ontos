@@ -6,7 +6,7 @@ import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
 import { Pagination } from "@techsio/ui-kit/molecules/pagination";
 import { Slider } from "@techsio/ui-kit/molecules/slider";
-import { DataTable, type ColumnDef } from "@techsio/ui-kit/organisms/data-table";
+import { Table } from "@techsio/ui-kit/organisms/table";
 
 import { useCart } from "@/features/cart/cart-provider";
 import { cs } from "@/i18n/cs";
@@ -431,164 +431,6 @@ export function ProductPurchaseForm({
     },
     [dispatch, product],
   );
-  const variantColumns = useMemo<ColumnDef<CatalogPurchaseVariant, unknown>[]>(
-    () => [
-      {
-        id: "name",
-        header: "Název",
-        meta: { width: "12%" },
-        cell: ({ row }) => {
-          const label = formatVariantLabel(row.original);
-
-          return (
-            <div className="akros-variant-table__name min-w-0">
-              <span className="@max-akros-variant-table/akros-variants:hidden">{product.name}</span>
-              <strong className="min-w-0 whitespace-normal wrap-anywhere @max-akros-variant-table/akros-variants:text-(length:--text-base)!">
-                {label}
-              </strong>
-              <p
-                className={`${variantListOnlyClassName} mt-(--dimension-8) text-xs font-normal text-fg-secondary`}
-              >
-                Kód: {row.original.sku}
-              </p>
-            </div>
-          );
-        },
-      },
-      {
-        accessorKey: "sku",
-        header: "Kód",
-        meta: { width: "16%" },
-        cell: ({ row }) => (
-          <span className="akros-variant-table__sku block whitespace-normal break-all @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal @max-akros-variant-table/akros-variants:text-fg-secondary">
-            <span className="akros-variant-table__mobile-label @max-akros-variant-table/akros-variants:inline!">
-              Kód:{" "}
-            </span>
-            <span>{row.original.sku}</span>
-          </span>
-        ),
-      },
-      {
-        accessorKey: "unit",
-        header: "M.J.",
-        meta: { align: "center", width: "4%" },
-      },
-      {
-        id: "availability",
-        header: "Dostupnost",
-        meta: { width: "9%" },
-        cell: ({ row }) => {
-          const isAvailable =
-            !row.original.availabilityUnknown &&
-            row.original.stockCount >= row.original.minimumQuantity;
-
-          return (
-            <strong
-              className="akros-variant-table__availability @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal"
-              data-available={isAvailable}
-              title={
-                row.original.availabilityUnknown
-                  ? "OntOS nyní nemůže potvrdit dostupnost této varianty."
-                  : undefined
-              }
-            >
-              {variantAvailabilityLabel(row.original)}
-            </strong>
-          );
-        },
-      },
-      {
-        id: "price",
-        header: "Cena",
-        meta: { width: "12%" },
-        cell: ({ row }) => {
-          const basePriceTier = row.original.priceTiers[0];
-
-          return (
-            <div className="akros-variant-table__price min-w-0">
-              <div className={`${variantListOnlyClassName} mb-(--dimension-8)`}>
-                <span
-                  className="akros-variant-table__availability text-xs font-normal"
-                  data-available={
-                    !row.original.availabilityUnknown &&
-                    row.original.stockCount >= row.original.minimumQuantity
-                  }
-                >
-                  {variantAvailabilityLabel(row.original)}
-                </span>
-              </div>
-              {row.original.priceUnavailableReason ? (
-                <span className="grid gap-1">
-                  <strong className="whitespace-normal!">Cena není dostupná</strong>
-                  <small className="whitespace-normal! text-xs font-normal text-fg-secondary">
-                    {row.original.priceUnavailableReason}
-                  </small>
-                </span>
-              ) : (
-                <>
-                  <strong className="min-w-0 whitespace-normal! wrap-anywhere @max-akros-variant-table/akros-variants:text-(length:--text-base)!">
-                    {formatPrice(row.original.priceMinor).replace(/\s(?=\S+$)/u, " ")}
-                    <span className="akros-variant-table__mobile-label @max-akros-variant-table/akros-variants:inline! @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal">
-                      {" "}
-                      / {row.original.unit}
-                    </span>
-                  </strong>
-                  {basePriceTier && (
-                    <small className="@max-akros-variant-table/akros-variants:text-xs! @max-akros-variant-table/akros-variants:font-normal">
-                      {formatPrice(basePriceTier.priceExcludingVatMinor)} bez DPH
-                    </small>
-                  )}
-                </>
-              )}
-            </div>
-          );
-        },
-      },
-      {
-        id: "quantity",
-        header: "Množství",
-        meta: { align: "center", width: "47%" },
-        cell: ({ row }) => {
-          const item = row.original;
-          const packageQuantity = item.packageQuantity ?? item.minimumQuantity;
-          const hasSeparatePackage = packageQuantity > item.minimumQuantity || !!item.quantityStep;
-
-          return (
-            <div className="akros-variant-table__purchase-cell @max-akros-variant-table/akros-variants:grid-cols-1! @max-akros-variant-table/akros-variants:gap-(--dimension-8)">
-              {item.quantityStep && (
-                <small className="col-span-full text-fg-secondary">
-                  Pouze celá balení po {packageQuantity.toLocaleString("cs-CZ")} {item.unit}.{" "}
-                  Minimální odběr {item.minimumQuantity.toLocaleString("cs-CZ")} {item.unit}.
-                </small>
-              )}
-              <VariantOrderControl
-                mode="minimum"
-                onAdd={addVariant}
-                product={product}
-                variant={item}
-              />
-              {hasSeparatePackage ? (
-                <VariantOrderControl
-                  mode="package"
-                  onAdd={addVariant}
-                  product={product}
-                  variant={item}
-                />
-              ) : (
-                <span
-                  aria-hidden="true"
-                  className="akros-variant-table__no-package @max-akros-variant-table/akros-variants:hidden"
-                >
-                  —
-                </span>
-              )}
-            </div>
-          );
-        },
-      },
-    ],
-    [addVariant, product],
-  );
 
   if (!variants?.length) {
     const purchaseItem = variant ?? product;
@@ -772,36 +614,232 @@ export function ProductPurchaseForm({
       </section>
 
       <>
-        <DataTable
-          className="akros-variant-data-table"
-          columns={variantColumns}
-          data={paginatedVariants}
-          enableSorting={false}
-          getRowId={(item) => item.id}
-          renderEmpty={() => (
-            <p className="akros-variant-purchase__empty">
-              Pro zadané filtry nebyla nalezena varianta.
-            </p>
-          )}
-          showColumnBorder
-          size="sm"
-          slotProps={{
-            root: {
-              "aria-label": "Varianty produktu",
-              className:
-                "akros-variant-data-table__table @max-akros-variant-table/akros-variants:block @max-akros-variant-table/akros-variants:[&_thead]:sr-only @max-akros-variant-table/akros-variants:[&_tbody]:grid @max-akros-variant-table/akros-variants:[&_tbody]:min-w-0 @max-akros-variant-table/akros-variants:[&_tbody]:gap-(--dimension-12)",
-            },
-            row: {
-              className: "akros-variant-data-table__row",
-            },
-          }}
-          tableLayout="fixed"
-          translations={{
-            emptyDescription: "Upravte zadané filtry a zkuste to znovu.",
-            emptyTitle: "Nenalezena žádná varianta",
-          }}
-          variant="line"
-        />
+        <div className="akros-variant-data-table flex w-full flex-col overflow-hidden rounded-data-table border-(length:--border-width-data-table) border-data-table-border">
+          <div className="relative w-full overflow-auto">
+            <Table
+              aria-label="Varianty produktu"
+              aria-rowcount={paginatedVariants.length + 1}
+              className="akros-variant-data-table__table @max-akros-variant-table/akros-variants:block @max-akros-variant-table/akros-variants:[&_thead]:sr-only @max-akros-variant-table/akros-variants:[&_tbody]:grid @max-akros-variant-table/akros-variants:[&_tbody]:min-w-0 @max-akros-variant-table/akros-variants:[&_tbody]:gap-(--dimension-12)"
+              showColumnBorder
+              size="sm"
+              style={{ tableLayout: "fixed" }}
+              variant="line"
+            >
+              <Table.Header>
+                <Table.Row>
+                  <Table.ColumnHeader
+                    className="group/header relative"
+                    style={{
+                      width: "12%",
+                      backgroundColor: "var(--color-data-table-bg)",
+                      backgroundImage:
+                        "linear-gradient(var(--color-data-table-header-bg), var(--color-data-table-header-bg))",
+                    }}
+                  >
+                    <div className="inline-flex items-center gap-100 whitespace-nowrap">Název</div>
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader
+                    className="group/header relative"
+                    style={{
+                      width: "16%",
+                      backgroundColor: "var(--color-data-table-bg)",
+                      backgroundImage:
+                        "linear-gradient(var(--color-data-table-header-bg), var(--color-data-table-header-bg))",
+                    }}
+                  >
+                    <div className="inline-flex items-center gap-100 whitespace-nowrap">Kód</div>
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader
+                    align="center"
+                    className="group/header relative"
+                    style={{
+                      width: "4%",
+                      backgroundColor: "var(--color-data-table-bg)",
+                      backgroundImage:
+                        "linear-gradient(var(--color-data-table-header-bg), var(--color-data-table-header-bg))",
+                    }}
+                  >
+                    <div className="inline-flex items-center gap-100 whitespace-nowrap">M.J.</div>
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader
+                    className="group/header relative"
+                    style={{
+                      width: "9%",
+                      backgroundColor: "var(--color-data-table-bg)",
+                      backgroundImage:
+                        "linear-gradient(var(--color-data-table-header-bg), var(--color-data-table-header-bg))",
+                    }}
+                  >
+                    <div className="inline-flex items-center gap-100 whitespace-nowrap">
+                      Dostupnost
+                    </div>
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader
+                    className="group/header relative"
+                    style={{
+                      width: "12%",
+                      backgroundColor: "var(--color-data-table-bg)",
+                      backgroundImage:
+                        "linear-gradient(var(--color-data-table-header-bg), var(--color-data-table-header-bg))",
+                    }}
+                  >
+                    <div className="inline-flex items-center gap-100 whitespace-nowrap">Cena</div>
+                  </Table.ColumnHeader>
+                  <Table.ColumnHeader
+                    align="center"
+                    className="group/header relative"
+                    style={{
+                      width: "47%",
+                      backgroundColor: "var(--color-data-table-bg)",
+                      backgroundImage:
+                        "linear-gradient(var(--color-data-table-header-bg), var(--color-data-table-header-bg))",
+                    }}
+                  >
+                    <div className="inline-flex items-center gap-100 whitespace-nowrap">
+                      Množství
+                    </div>
+                  </Table.ColumnHeader>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {paginatedVariants.map((item, index) => {
+                  const label = formatVariantLabel(item);
+                  const isAvailable =
+                    !item.availabilityUnknown && item.stockCount >= item.minimumQuantity;
+                  const basePriceTier = item.priceTiers[0];
+                  const packageQuantity = item.packageQuantity ?? item.minimumQuantity;
+                  const hasSeparatePackage =
+                    packageQuantity > item.minimumQuantity || !!item.quantityStep;
+                  return (
+                    <Table.Row
+                      key={item.id}
+                      aria-rowindex={index + 2}
+                      className="akros-variant-data-table__row"
+                    >
+                      <Table.Cell style={{ width: "12%" }}>
+                        <div className="akros-variant-table__name min-w-0">
+                          <span className="@max-akros-variant-table/akros-variants:hidden">
+                            {product.name}
+                          </span>
+                          <strong className="min-w-0 whitespace-normal wrap-anywhere @max-akros-variant-table/akros-variants:text-(length:--text-base)!">
+                            {label}
+                          </strong>
+                          <p
+                            className={`${variantListOnlyClassName} mt-(--dimension-8) text-xs font-normal text-fg-secondary`}
+                          >
+                            Kód: {item.sku}
+                          </p>
+                        </div>
+                      </Table.Cell>
+                      <Table.Cell style={{ width: "16%" }}>
+                        <span className="akros-variant-table__sku block whitespace-normal break-all @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal @max-akros-variant-table/akros-variants:text-fg-secondary">
+                          <span className="akros-variant-table__mobile-label @max-akros-variant-table/akros-variants:inline!">
+                            Kód:{" "}
+                          </span>
+                          <span>{item.sku}</span>
+                        </span>
+                      </Table.Cell>
+                      <Table.Cell align="center" style={{ width: "4%" }}>
+                        {item.unit}
+                      </Table.Cell>
+                      <Table.Cell style={{ width: "9%" }}>
+                        <strong
+                          className="akros-variant-table__availability @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal"
+                          data-available={isAvailable}
+                          title={
+                            item.availabilityUnknown
+                              ? "OntOS nyní nemůže potvrdit dostupnost této varianty."
+                              : undefined
+                          }
+                        >
+                          {variantAvailabilityLabel(item)}
+                        </strong>
+                      </Table.Cell>
+                      <Table.Cell style={{ width: "12%" }}>
+                        <div className="akros-variant-table__price min-w-0">
+                          <div className={`${variantListOnlyClassName} mb-(--dimension-8)`}>
+                            <span
+                              className="akros-variant-table__availability text-xs font-normal"
+                              data-available={
+                                !item.availabilityUnknown && item.stockCount >= item.minimumQuantity
+                              }
+                            >
+                              {variantAvailabilityLabel(item)}
+                            </span>
+                          </div>
+                          {item.priceUnavailableReason ? (
+                            <span className="grid gap-1">
+                              <strong className="whitespace-normal!">Cena není dostupná</strong>
+                              <small className="whitespace-normal! text-xs font-normal text-fg-secondary">
+                                {item.priceUnavailableReason}
+                              </small>
+                            </span>
+                          ) : (
+                            <>
+                              <strong className="min-w-0 whitespace-normal! wrap-anywhere @max-akros-variant-table/akros-variants:text-(length:--text-base)!">
+                                {formatPrice(item.priceMinor).replace(/\s(?=\S+$)/u, " ")}
+                                <span className="akros-variant-table__mobile-label @max-akros-variant-table/akros-variants:inline! @max-akros-variant-table/akros-variants:text-xs @max-akros-variant-table/akros-variants:font-normal">
+                                  {" "}
+                                  / {item.unit}
+                                </span>
+                              </strong>
+                              {basePriceTier && (
+                                <small className="@max-akros-variant-table/akros-variants:text-xs! @max-akros-variant-table/akros-variants:font-normal">
+                                  {formatPrice(basePriceTier.priceExcludingVatMinor)} bez DPH
+                                </small>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </Table.Cell>
+                      <Table.Cell align="center" style={{ width: "47%" }}>
+                        <div className="akros-variant-table__purchase-cell @max-akros-variant-table/akros-variants:grid-cols-1! @max-akros-variant-table/akros-variants:gap-(--dimension-8)">
+                          {item.quantityStep && (
+                            <small className="col-span-full text-fg-secondary">
+                              Pouze celá balení po {packageQuantity.toLocaleString("cs-CZ")}{" "}
+                              {item.unit}. Minimální odběr{" "}
+                              {item.minimumQuantity.toLocaleString("cs-CZ")} {item.unit}.
+                            </small>
+                          )}
+                          <VariantOrderControl
+                            mode="minimum"
+                            onAdd={addVariant}
+                            product={product}
+                            variant={item}
+                          />
+                          {hasSeparatePackage ? (
+                            <VariantOrderControl
+                              mode="package"
+                              onAdd={addVariant}
+                              product={product}
+                              variant={item}
+                            />
+                          ) : (
+                            <span
+                              aria-hidden="true"
+                              className="akros-variant-table__no-package @max-akros-variant-table/akros-variants:hidden"
+                            >
+                              —
+                            </span>
+                          )}
+                        </div>
+                      </Table.Cell>
+                    </Table.Row>
+                  );
+                })}
+                {paginatedVariants.length === 0 && (
+                  <Table.Row>
+                    <Table.Cell colSpan={6}>
+                      <p className="akros-variant-purchase__empty">
+                        Pro zadané filtry nebyla nalezena varianta.
+                      </p>
+                    </Table.Cell>
+                  </Table.Row>
+                )}
+              </Table.Body>
+            </Table>
+          </div>
+        </div>
         {visibleVariants.length > variantsPerPage && (
           <Pagination
             aria-label="Stránkování variant"
