@@ -29,6 +29,7 @@ import {
 } from 'effect';
 import { SignJWT, importJWK } from 'jose';
 
+import type { DocumentGatewayAssertion } from '../../shared/document-gateway-api.ts';
 import { ShellInstalledModuleCatalog } from '../modules/installed-module-catalog.ts';
 import type { InstalledModuleCatalogError } from '../modules/installed-module-catalog.ts';
 import { loadGatewayIssuerConfig } from './gateway-issuer-config.ts';
@@ -39,6 +40,7 @@ const SIGNING_CONFIGURATION_REFRESH = Duration.seconds(30);
 // token always leaves the caller time to reach its module.
 const ASSERTION_REUSE_MARGIN_SECONDS = 15;
 const MAX_REUSABLE_ASSERTIONS = 1024;
+const DOCUMENT_GATEWAY_SIGNING_CONCURRENCY = 8;
 
 const GatewayIssuerFailureCauseSchema = Schema.Defect();
 type GatewayIssuerFailureCause = Schema.Schema.Type<typeof GatewayIssuerFailureCauseSchema>;
@@ -59,6 +61,12 @@ export type GatewayIssuerError = Schema.Schema.Type<typeof GatewayIssuerErrorSch
 
 export interface IssueGatewayAssertionInput<Principal = GatewayTrustedPrincipalContext> {
   readonly audience: string;
+  readonly compositionRevision: string;
+  readonly principal: Principal;
+}
+
+interface IssueDocumentGatewayAssertionsInput<Principal> {
+  readonly audiences: readonly string[];
   readonly compositionRevision: string;
   readonly principal: Principal;
 }
@@ -85,6 +93,9 @@ interface GatewayIssuerService {
   readonly issue: <Principal>(
     input: IssueGatewayAssertionInput<Principal>,
   ) => Effect.Effect<GatewayContextResponse, GatewayIssuerError>;
+  readonly issueDocument: <Principal>(
+    input: IssueDocumentGatewayAssertionsInput<Principal>,
+  ) => Effect.Effect<readonly DocumentGatewayAssertion[], GatewayIssuerError>;
 }
 
 // Structurally compared, so two principals, contexts, audiences, releases or signing keys never
@@ -237,15 +248,11 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     );
   };
 
-  const issue = Effect.fn('GatewayIssuer.issue')(function* issueGatewayAssertion<Principal>(
-    input: IssueGatewayAssertionInput<Principal>,
+  const issueAdmitted = Effect.fn('GatewayIssuer.issueAdmitted')(function* issueAdmittedGatewayAssertion(
+    input: IssueGatewayAssertionInput,
+    admission: Effect.Success<GatewayIssuerLayerOptions['loadAdmission']>,
   ) {
-    const principal = yield* Schema.decodeUnknownEffect(GatewayTrustedPrincipalContextSchema, {
-      onExcessProperty: 'error',
-    })(input.principal).pipe(Effect.mapError((failureCause) => unavailable('principal', failureCause)));
-    const admission = yield* options.loadAdmission.pipe(
-      Effect.mapError((failureCause) => unavailable('audience', failureCause)),
-    );
+    const { principal } = input;
     const targetBuildMarker = admission.audiences.get(input.audience);
     if (targetBuildMarker === undefined) {
       return yield* new GatewayIssuerErrorConstructor({
@@ -328,6 +335,48 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
     return response;
   });
 
+  const decodePrincipal = Schema.decodeUnknownEffect(GatewayTrustedPrincipalContextSchema, {
+    onExcessProperty: 'error',
+  });
+  const admission = options.loadAdmission.pipe(
+    Effect.mapError((failureCause) => unavailable('audience', failureCause)),
+  );
+  const issue = Effect.fn('GatewayIssuer.issue')(function* issueGatewayAssertion<Principal>(
+    input: IssueGatewayAssertionInput<Principal>,
+  ) {
+    const principal = yield* decodePrincipal(input.principal).pipe(
+      Effect.mapError((failureCause) => unavailable('principal', failureCause)),
+    );
+    const approved = yield* admission;
+    return yield* issueAdmitted({ ...input, principal }, approved);
+  });
+  const issueDocument = Effect.fn('GatewayIssuer.issueDocument')(function* issueDocumentGatewayAssertions<Principal>(
+    input: IssueDocumentGatewayAssertionsInput<Principal>,
+  ) {
+    if (input.audiences.length === 0) {
+      return [];
+    }
+    const principal = yield* decodePrincipal(input.principal).pipe(
+      Effect.mapError((failureCause) => unavailable('principal', failureCause)),
+    );
+    // One document is one issuance operation. Its audiences share this fresh admission; a later
+    // document or individual issuance always reads authority again, including reusable tokens.
+    const approved = yield* admission;
+    const issued = yield* Effect.forEach(
+      input.audiences,
+      (audience) =>
+        issueAdmitted({ audience, compositionRevision: input.compositionRevision, principal }, approved).pipe(
+          Effect.map((assertion) => Option.some({ ...assertion, audience })),
+          Effect.catchIf(
+            (error) => error.code === 'gateway_audience_invalid',
+            () => Effect.succeedNone,
+          ),
+        ),
+      { concurrency: DOCUMENT_GATEWAY_SIGNING_CONCURRENCY },
+    );
+    return issued.flatMap((assertion) => (Option.isSome(assertion) ? [assertion.value] : []));
+  });
+
   const forgetAuthContext = (authContextRef: string) =>
     Ref.update(
       reusable,
@@ -339,6 +388,7 @@ const makeGatewayIssuer = Effect.fn('GatewayIssuer.make')(function* gatewayIssue
   return {
     forgetAuthContext,
     issue,
+    issueDocument,
   } satisfies GatewayIssuerService;
 });
 

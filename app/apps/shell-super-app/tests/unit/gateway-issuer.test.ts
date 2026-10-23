@@ -225,6 +225,121 @@ it.effect('shares cached configuration across concurrent valid issuances', () =>
   }),
 );
 
+it.effect('admits a document once and signs each available audience independently', () =>
+  Effect.gen(function* documentIssuance() {
+    const { configuration, publicKey } = yield* makeConfiguration();
+    let admissionLoads = 0;
+    let signatures = 0;
+    const layer = makeGatewayIssuerLayer(
+      dependencies(configuration, {
+        generateJti: Effect.sync(() => {
+          signatures += 1;
+          return `document-assertion-${signatures}`;
+        }),
+        loadAdmission: Effect.sync(() => {
+          admissionLoads += 1;
+          return {
+            audiences: new Map([
+              ['property-registry', 'property-registry-build'],
+              ['tagging', 'tagging-build'],
+            ]),
+            revision: compositionRevision,
+          };
+        }),
+      }),
+    );
+    const assertions = yield* GatewayIssuer.pipe(
+      Effect.flatMap((gateway) =>
+        gateway.issueDocument({
+          audiences: ['property-registry', 'unavailable-owner', 'tagging'],
+          compositionRevision,
+          principal,
+        }),
+      ),
+      Effect.provide(layer),
+    );
+    expect(admissionLoads).toBe(1);
+    expect(signatures).toBe(2);
+    expect(assertions.map(({ audience }) => audience)).toEqual(['property-registry', 'tagging']);
+    for (const assertion of assertions) {
+      const verified = yield* Effect.promise(() =>
+        jwtVerify(assertion.token, publicKey, {
+          algorithms: ['EdDSA'],
+          audience: assertion.audience,
+          currentDate: new Date(1_700_000_001_000),
+          issuer,
+        }),
+      );
+      expect(verified.payload['principal']).toEqual(principal);
+      expect(verified.payload['compositionRevision']).toBe(compositionRevision);
+      expect(verified.payload['targetBuildMarker']).toBe(`${assertion.audience}-build`);
+    }
+  }),
+);
+
+it.effect('rereads document admission after revocation and revision changes before reusing assertions', () =>
+  Effect.gen(function* documentAdmissionChanges() {
+    const { configuration } = yield* makeConfiguration();
+    let admissionLoads = 0;
+    let admitted = true;
+    let revision = compositionRevision;
+    const layer = makeGatewayIssuerLayer(
+      dependencies(configuration, {
+        loadAdmission: Effect.sync(() => {
+          admissionLoads += 1;
+          return {
+            audiences: admitted
+              ? new Map([['property-registry', 'property-registry-build']])
+              : new Map<string, string>(),
+            revision,
+          };
+        }),
+      }),
+    );
+    yield* Effect.gen(function* changeAdmissionBetweenDocuments() {
+      const gateway = yield* GatewayIssuer;
+      const input = { audiences: ['property-registry'], compositionRevision, principal };
+      expect((yield* gateway.issueDocument(input)).length).toBe(1);
+      admitted = false;
+      expect(yield* gateway.issueDocument(input)).toEqual([]);
+      admitted = true;
+      revision = 'b'.repeat(64);
+      expect((yield* Effect.flip(gateway.issueDocument(input))).code).toBe('gateway_revision_unsupported');
+      const refreshed = yield* gateway.issueDocument({ ...input, compositionRevision: revision });
+      expect(refreshed[0]?.compositionRevision).toBe(revision);
+      expect(admissionLoads).toBe(4);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect('rejects an invalid document principal before admission and leaves an empty batch idle', () =>
+  Effect.gen(function* invalidDocumentPrincipal() {
+    const { configuration } = yield* makeConfiguration();
+    let admissionLoads = 0;
+    const layer = makeGatewayIssuerLayer(
+      dependencies(configuration, {
+        loadAdmission: Effect.sync(() => {
+          admissionLoads += 1;
+          return { audiences: new Map<string, string>(), revision: compositionRevision };
+        }),
+      }),
+    );
+    yield* Effect.gen(function* documentPrincipalChecks() {
+      const gateway = yield* GatewayIssuer;
+      const failure = yield* Effect.flip(
+        gateway.issueDocument({
+          audiences: ['property-registry'],
+          compositionRevision,
+          principal: { ...principal, principalId: 'invalid' },
+        }),
+      );
+      expect(failure.stage).toBe('principal');
+      expect(yield* gateway.issueDocument({ audiences: [], compositionRevision, principal })).toEqual([]);
+      expect(admissionLoads).toBe(0);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
 it.effect('issues and verifies v2 assertions for namespaced principals', () =>
   Effect.gen(function* testProgramNamespacedPrincipal() {
     const { configuration, publicKey } = yield* makeConfiguration();

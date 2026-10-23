@@ -1144,9 +1144,6 @@ const captureShellRelease = Effect.fn('Shell.captureRelease')(function* captureS
 
 const PEOPLE_ADMINISTRATION = 'people_administration';
 
-/** Signing is local CPU work; a few in flight keep one document's assertions from monopolising the isolate. */
-const DOCUMENT_GATEWAY_SIGNING_CONCURRENCY = 8;
-
 /**
  * One assertion per audience for an authenticated session principal, from the same issuer as `issueGatewayContext`
  * (same audience binding and lifetime). An audience the release does not admit is left out instead of failing the
@@ -1158,19 +1155,8 @@ const issueDocumentGatewayAssertions = Effect.fn('ShellGateway.issueDocumentAsse
     compositionRevision: string,
     audiences: readonly string[],
   ) {
-    const issued = yield* Effect.forEach(
-      audiences,
-      (audience) =>
-        issueGatewayContextAssertion({ audience, compositionRevision, principal }).pipe(
-          Effect.map((assertion) => Option.some({ ...assertion, audience })),
-          Effect.catchIf(
-            (error) => error.code === 'gateway_audience_invalid',
-            () => Effect.succeedNone,
-          ),
-        ),
-      { concurrency: DOCUMENT_GATEWAY_SIGNING_CONCURRENCY },
-    );
-    return issued.flatMap((assertion) => (Option.isSome(assertion) ? [assertion.value] : []));
+    const issuer = yield* GatewayIssuer;
+    return yield* issuer.issueDocument({ audiences, compositionRevision, principal });
   },
 );
 

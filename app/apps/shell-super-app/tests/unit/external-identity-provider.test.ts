@@ -260,6 +260,7 @@ it.effect('mints a fresh provider audience assertion for every exact workload ca
           token: `provider-workload-token-${issueCalls.length}`,
         });
       },
+      issueDocument: () => Effect.die('Unexpected document issuance in the provider fixture'),
     };
     const request = makeProviderRequest();
     const acquire = Effect.gen(function* acquireAssertion() {
@@ -326,6 +327,7 @@ it.effect('admits a gateway-context assertion audienced for the provider verific
           token: `provider-gateway-token-${issueCalls.length}`,
         });
       },
+      issueDocument: () => Effect.die('Unexpected document issuance in the provider fixture'),
     };
     const acquireFor = (request: ExternalIdentityVerificationRequest) =>
       acquireExternalIdentityWorkloadAssertion(configuration, request, 'example-portal').pipe(
@@ -381,6 +383,7 @@ it.effect('refuses a provider workload assertion when its captured composition r
           }),
         );
       },
+      issueDocument: () => Effect.die('Unexpected document issuance in the provider fixture'),
     };
     const result = yield* acquireExternalIdentityWorkloadAssertion(
       configuration,
@@ -530,6 +533,7 @@ it.effect('routes the production deployment client to the verification path the 
           token: 'provider-workload-token',
         });
       },
+      issueDocument: () => Effect.die('Unexpected document issuance in the provider fixture'),
     };
     const fakeFetch: typeof fetch = async (input, init) => {
       const outboundRequest = new Request(input, init);
