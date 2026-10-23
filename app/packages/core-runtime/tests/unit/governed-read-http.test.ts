@@ -324,6 +324,57 @@ it.effect('passes only payload, trusted principal, registration, and correlation
   }),
 );
 
+it.effect('logs typed Core infrastructure failures with correlation while keeping the public problem sanitized', () =>
+  Effect.gen(function* diagnoseCoreFailures() {
+    for (const [failure, expected] of coreFailures) {
+      const logEntries: string[] = [];
+      // SAFETY: The service double fails before returning a result for any registration or payload.
+      const failingRuntime = {
+        runRead: () => Effect.fail(failure),
+      } as ReadRuntimeService;
+      const handler = makeGovernedReadHttpHandler({
+        authenticatePrincipal: () => Effect.succeed(principal),
+        problems,
+        registration,
+      });
+      const exit = yield* Effect.exit(
+        handler({
+          payload: { query: 'private payload' },
+          request: {
+            headers: Headers.fromInput({
+              authorization: 'Bearer private-credential',
+              'x-correlation-id': 'correlation-unavailable',
+            }),
+          },
+        }),
+      ).pipe(
+        Effect.provideService(ReadRuntime, failingRuntime),
+        Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+        Effect.provide(capturedLoggerLayer(logEntries)),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toEqual(expected);
+      }
+      if (expected.status === 500 || expected.status === 503) {
+        expect(logEntries).toHaveLength(1);
+        expect(yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(logEntries[0] ?? '{}')).toMatchObject({
+          annotations: {
+            code: failure.code,
+            correlationId: 'correlation-unavailable',
+            failureTag: failure._tag,
+            readKey: registration.descriptor.readKey,
+            reason,
+          },
+        });
+      } else {
+        expect(logEntries).toHaveLength(0);
+      }
+      expect(logEntries.join('\n')).not.toMatch(/private payload|private-credential/u);
+    }
+  }),
+);
+
 it.effect('sanitizes unexpected defects at the complete governed handler boundary', () =>
   Effect.gen(function* sanitizeHandlerDefects() {
     // SAFETY: This test double exercises only the handler's runRead call and deliberately omits no

@@ -511,7 +511,20 @@ export function makeGovernedReadHttpHandler<
               HttpServerRequest.HttpServerRequest
             > => {
               if (isReadCoreError(error)) {
-                return failProblem(classifyReadCoreError(error, options.problems));
+                const problem = classifyReadCoreError(error, options.problems);
+                const diagnostic =
+                  problem.status === 503 || problem.status === 500
+                    ? Effect.logError('Governed read failed').pipe(
+                        Effect.annotateLogs({
+                          code: error.code,
+                          correlationId,
+                          failureTag: error._tag,
+                          readKey: options.registration.descriptor.readKey,
+                          reason: error.reason,
+                        }),
+                      )
+                    : Effect.void;
+                return diagnostic.pipe(Effect.andThen(failProblem(problem)));
               }
               const { domainErrorSchema } = options.registration.descriptor;
               if (domainErrorSchema === undefined || options.mapDomainError === undefined) {
