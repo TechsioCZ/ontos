@@ -1,5 +1,5 @@
 /* oxlint-disable anti-slop/no-unknown-parameters -- The HTTP mapper is a schema-decoded generic boundary and revalidates every value before release; expires: 2027-03-31. */
-import { Cause, Effect, Match, Option, Redacted, Schema } from 'effect';
+import { Cause, Effect, Match, Option, Redacted, Result, Schema } from 'effect';
 import { HttpEffect, HttpServerResponse } from 'effect/http';
 import type { HttpServerRequest } from 'effect/http';
 
@@ -480,11 +480,11 @@ export function makeGovernedReadHttpHandler<
         return yield* Effect.fail(options.problems.invalid());
       }
       // The correlation identifier is persisted into read evidence and log annotations, so an unbounded
-      // caller-chosen value must be refused here rather than stored.
-      yield* Schema.decodeEffect(ReadCorrelationIdSchema)(correlationId).pipe(
-        // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Invalid-input diagnostics are deliberately sanitized at the transport boundary; remove-when: the rule supports security-boundary sanitizers.
-        Effect.mapError(() => options.problems.invalid()),
-      );
+      // caller-chosen value must be refused here rather than stored. Branching on the decode result keeps the
+      // schema's diagnostic out of the problem shape without discarding it in an error callback.
+      if (Result.isFailure(Schema.decodeUnknownResult(ReadCorrelationIdSchema)(correlationId))) {
+        return yield* Effect.fail(options.problems.invalid());
+      }
       const principal = yield* options.authenticatePrincipal(Redacted.make(request.headers['authorization']), {
         authentication: options.problems.authentication,
         unavailable: options.problems.unavailable,
