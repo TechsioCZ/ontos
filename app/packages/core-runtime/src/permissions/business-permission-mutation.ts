@@ -1,4 +1,4 @@
-import type { v1 } from '@authzed/authzed-node';
+import { v1 } from '@authzed/authzed-node';
 import { Context, Effect, Layer } from 'effect';
 import type { Scope } from 'effect';
 import {
@@ -111,6 +111,7 @@ const prepare = (
   }
   return {
     granteeId: input.principal.principalId,
+    granteeRelation: input.target.kind === 'retail_profile' ? 'self_service_grantee' : 'grantee',
     resourceId,
     scopeRelationships,
   };
@@ -148,3 +149,78 @@ export const BusinessPermissionRelationshipMutationLive = Layer.effect(
   BusinessPermissionRelationshipMutation,
   makeBusinessPermissionRelationshipMutationLive(),
 );
+
+/** One-time authorization graph migration; never creates a grant absent its exact native predecessor. */
+export const migrateRetailSelfServiceGrant = Effect.fn(
+  'BusinessPermissionRelationshipMutation.migrateRetailSelfServiceGrant',
+)(function* migrateRetailSelfServiceGrantEffect(
+  client: Pick<v1.ZedClientInterface['promises'], 'readRelationships' | 'writeRelationships'>,
+  input: BusinessPermissionRelationshipMutationInput,
+  apply: boolean,
+) {
+  const prepared = prepare(input);
+  if (prepared === undefined || input.operation !== 'grant' || input.target.kind !== 'retail_profile') {
+    return yield* unavailable();
+  }
+  const filter = v1.RelationshipFilter.create({
+    optionalRelation: 'grantee',
+    optionalResourceId: prepared.resourceId,
+    optionalSubjectFilter: v1.SubjectFilter.create({
+      optionalSubjectId: prepared.granteeId,
+      subjectType: 'principal',
+    }),
+    resourceType: 'business_permission',
+  });
+  const rows = yield* Effect.tryPromise(
+    async () =>
+      await client.readRelationships(
+        v1.ReadRelationshipsRequest.create({
+          consistency: { requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } },
+          relationshipFilter: filter,
+        }),
+      ),
+  ).pipe(
+    Effect.timeoutOrElse({ duration: SPICEDB_CHECK_TIMEOUT_MS, orElse: () => Effect.fail(unavailable()) }),
+    Effect.mapError(unavailable),
+  );
+  if (rows.length === 0) {
+    return { existing: 0, migrated: 0 };
+  }
+  const previous = rows[0]?.relationship;
+  if (
+    rows.length !== 1 ||
+    previous === undefined ||
+    previous.optionalCaveat !== undefined ||
+    previous.optionalExpiresAt !== undefined ||
+    previous.resource?.objectType !== 'business_permission' ||
+    previous.resource.objectId !== prepared.resourceId ||
+    previous.relation !== 'grantee' ||
+    previous.subject?.object?.objectType !== 'principal' ||
+    previous.subject.object.objectId !== prepared.granteeId ||
+    previous.subject.optionalRelation !== ''
+  ) {
+    return yield* unavailable();
+  }
+  if (!apply) {
+    return { existing: 1, migrated: 0 };
+  }
+  yield* Effect.tryPromise(
+    async () =>
+      await client.writeRelationships(
+        v1.WriteRelationshipsRequest.create({
+          optionalPreconditions: [v1.Precondition.create({ filter, operation: v1.Precondition_Operation.MUST_MATCH })],
+          updates: [
+            v1.RelationshipUpdate.create({
+              operation: v1.RelationshipUpdate_Operation.TOUCH,
+              relationship: { ...previous, relation: 'self_service_grantee' },
+            }),
+            v1.RelationshipUpdate.create({ operation: v1.RelationshipUpdate_Operation.DELETE, relationship: previous }),
+          ],
+        }),
+      ),
+  ).pipe(
+    Effect.timeoutOrElse({ duration: SPICEDB_CHECK_TIMEOUT_MS, orElse: () => Effect.fail(unavailable()) }),
+    Effect.mapError(unavailable),
+  );
+  return { existing: 1, migrated: 1 };
+});

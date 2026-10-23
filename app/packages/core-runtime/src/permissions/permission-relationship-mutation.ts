@@ -40,6 +40,7 @@ interface PermissionRelationshipDefinition {
 
 export interface PermissionRelationshipMutationPreparation {
   readonly granteeId: string;
+  readonly granteeRelation: 'grantee' | 'self_service_grantee';
   readonly resourceId: string;
   readonly scopeRelationships: readonly PermissionRelationshipDefinition[];
 }
@@ -91,7 +92,7 @@ export const makePermissionRelationshipMutation = <Input extends PermissionRelat
         v1.RelationshipUpdate.create({
           operation,
           relationship: relationship(definition.resourceType, prepared.resourceId, {
-            relation: 'grantee',
+            relation: prepared.granteeRelation,
             subjectId: prepared.granteeId,
             subjectType: 'principal',
           }),

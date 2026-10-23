@@ -56,15 +56,17 @@ definition resource {
 }
 
 // Each object ID encodes the stable permission code and exact tenant/business scope.
-// Tenant-only Pricing targets use tenant access; existing Retail and Counterparty targets use Legal Entity access.
+// Customer self-service grants name one exact profile; business grants retain independent scope admission.
 // A Price Group may inherit the same permission from its exact containing catalog through an explicit relation.
 definition business_permission {
   relation tenant: tenant
   relation legal_entity: legal_entity
   relation containing_catalog: business_permission
   relation grantee: principal
+  // Written only for exact customer-profile grants; it does not confer tenant/company membership.
+  relation self_service_grantee: principal
   permission direct_use = grantee & (tenant->access + legal_entity->access)
-  permission use = direct_use + (tenant->access & containing_catalog->direct_use)
+  permission use = self_service_grantee + direct_use + (tenant->access & containing_catalog->direct_use)
 }
 
 // Named entrypoint permissions are exact to one Tenant, optional Legal Entity, and owning module.
