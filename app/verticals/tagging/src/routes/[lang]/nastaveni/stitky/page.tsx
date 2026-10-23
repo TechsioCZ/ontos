@@ -19,24 +19,27 @@ import { DataTable } from '@techsio/ui-kit/organisms/data-table';
 import type { ColumnDef } from '@techsio/ui-kit/organisms/data-table';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { modulePagePreload } from '@app/shared-contracts/page-data';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
-import { Effect, Predicate, Random, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { useEffect, useState } from 'react';
-import { executeApplyCommand } from '../../../../api/apply-command-action-client.ts';
-import { executeRecords, subjectsWithTag } from '../../../../api/records-client.ts';
+import { applyTaggingCommand, subjectsWithTag } from '../../../../api/records-client.ts';
 import { loadSubjectNames } from '../../../../api/subject-names.ts';
 import type { SubjectNames } from '../../../../api/subject-names.ts';
-import { runTagEffect, TagI18n, tagColorValue } from '../../../../tags/tag-controls.tsx';
+import {
+  preloadTagCatalog,
+  refreshTagCatalog,
+  runTagEffect,
+  TagI18n,
+  tagCatalogStatusOf,
+  tagColorValue,
+  useTagCatalogSnapshot,
+} from '../../../../tags/tag-controls.tsx';
 import type { TaggingCommand } from '../../../../../shared/actions/apply-command.ts';
 import { subjectKindValues, tagColorValues } from '../../../../../shared/apis/records.ts';
 import type { SubjectId, SubjectKind, TagColor, TagId, TagWithCounts } from '../../../../../shared/apis/records.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
-
-type LoadState =
-  | { readonly status: 'loading' }
-  | { readonly status: 'error' }
-  | { readonly status: 'ready'; readonly tags: TagWithCounts[] };
 
 interface Draft {
   readonly color: TagColor;
@@ -57,24 +60,6 @@ const kindsOf = (tag: TagWithCounts) => {
   const applies = new Set(tag.subjectKinds);
   return subjectKindValues.filter((kind) => applies.has(kind));
 };
-
-// Every command reads the current revision first and sends it as expectedRevision.
-const correlation = (label: string) =>
-  Effect.all([Random.nextInt, Random.nextInt], { concurrency: 1 }).pipe(
-    Effect.map(([first, second]) => `tagging:${label}:${first}:${second}`),
-  );
-const readRecords = (requestId: number) =>
-  correlation(`records:${requestId}`).pipe(Effect.flatMap((id) => executeRecords({}, id)));
-const applyTaggingCommand = (command: TaggingCommand) =>
-  readRecords(0).pipe(
-    Effect.flatMap((current) =>
-      correlation('command').pipe(
-        Effect.flatMap((id) =>
-          executeApplyCommand({ command, expectedRevision: current.revision }, id, { idempotencyKey: id }),
-        ),
-      ),
-    ),
-  );
 
 const toggleKind = (kinds: readonly SubjectKind[], kind: SubjectKind, checked: boolean) => {
   const selected = new Set(kinds);
@@ -577,38 +562,17 @@ const tagColumns = (t: Translate): ColumnDef<TagWithCounts>[] => [
 
 const TagsPageContent = () => {
   const { t } = useModernI18n();
-  const [state, setState] = useState<LoadState>({ status: 'loading' });
-  const [request, setRequest] = useState({ id: 0 });
+  // The Shell preloads the shared catalog before it reveals the page, so the rows are here in the first render.
+  const catalog = useTagCatalogSnapshot(true);
+  const status = tagCatalogStatusOf(catalog);
   const [globalFilter, setGlobalFilter] = useState('');
   const [editor, setEditor] = useState<{ readonly tag: TagWithCounts | null } | null>(null);
   const [removing, setRemoving] = useState<TagWithCounts | null>(null);
   const [inspecting, setInspecting] = useState<TagWithCounts | null>(null);
 
-  useEffect(() => {
-    let active = true;
-    runTagEffect(readRecords(request.id), {
-      onFailure: () => {
-        if (active) {
-          setState({ status: 'error' });
-        }
-      },
-      onSuccess: (records) => {
-        if (active) {
-          setState({ status: 'ready', tags: [...records.tags] });
-        }
-      },
-    });
-    return () => {
-      active = false;
-    };
-  }, [request]);
-
-  // Refreshes keep the rows on screen; only a first load without rows shows the loading state.
-  const reload = () => {
-    setState((current) => (current.status === 'ready' ? current : { status: 'loading' }));
-    setRequest((current) => ({ id: current.id + 1 }));
-  };
-  const tags = state.status === 'ready' ? state.tags : noTags;
+  // A refresh keeps the rows on screen; only a failed read without rows shows the loading state while it retries.
+  const reload = refreshTagCatalog;
+  const tags = catalog.state === 'ready' ? catalog.value : noTags;
   // The Popis column only earns its width when at least one tag has a description.
   const hasDescriptions = tags.some((tag) => (tag.description ?? '') !== '');
   const columns = tagColumns(t).filter((column) => hasDescriptions || column.id !== 'description');
@@ -634,7 +598,7 @@ const TagsPageContent = () => {
         getRowId={(row) => row.id}
         getRowLabel={(row) => row.original.name}
         globalFilter={globalFilter}
-        loading={state.status === 'loading'}
+        loading={status === 'loading'}
         loadingRowCount={6}
         maxHeight="calc(100dvh - 15rem)"
         onGlobalFilterChange={(next) => setGlobalFilter(next)}
@@ -642,7 +606,7 @@ const TagsPageContent = () => {
         pageSizeOptions={[50, 100, 200]}
         paginationProps={{ translations: paginationTranslations }}
         renderEmpty={() => {
-          if (state.status === 'error') {
+          if (status === 'error') {
             return (
               <EmptyState
                 action={
@@ -737,4 +701,6 @@ export const RecordsPage = () => {
   );
 };
 
+/** The Shell awaits this before it reveals the page, so the table renders the tags in its first commit. */
+export const preloadPage = modulePagePreload(() => preloadTagCatalog);
 export default RecordsPage;

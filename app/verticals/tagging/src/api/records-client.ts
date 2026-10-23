@@ -155,7 +155,7 @@ export const subjectsWithTag = (kind: SubjectKind, tagId: TagId) =>
   );
 
 /** Runs one command against the current revision, read immediately before the write. */
-const applyTaggingCommand = (command: TaggingCommand) =>
+export const applyTaggingCommand = (command: TaggingCommand) =>
   freshCorrelation.pipe(
     Effect.flatMap((readId) => executeRecords({}, readId)),
     Effect.flatMap((current) =>

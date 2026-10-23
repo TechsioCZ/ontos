@@ -1,12 +1,15 @@
 /**
  * Shared tag controls for list pages in other verticals. Import from `@app/tagging/components/tag-controls`.
  *
- * Props-driven, no global state. Each control loads its own data through the tagging client and shows
- * loading, error and empty states inline.
+ * Props-driven. The tag catalog is one shared page dataset (`tagCatalogData`), so every picker on a page and the
+ * tagging page itself read the same tags; a page that offers pickers adds `preloadTagCatalog` to its `preloadPage`,
+ * and the pickers open with their options in the first render. Loading, error and empty states stay inline.
  *
  * - `TagFilter({ kind, label?, catalog?, value, onChange })`: single-tag Combobox filter for subjects of `kind`.
  *   `value` is a `TagId` or `null`; `onChange` receives the same shape. Pass `label` when sibling filters show one,
- *   and `catalog` when the page already loaded the tags, so the filter issues no read of its own.
+ *   and `catalog` when the page already loaded the tags of the kind; without it the filter reads the shared catalog.
+ * - `preloadTagCatalog`: an Effect that fills the shared catalog; add `() => preloadTagCatalog` to a page's
+ *   `modulePagePreload`, so its pickers open with their options before the Shell reveals the page.
  * - `TagCell({ tags, loading })`: the tags of one row as chips, two at most, then `+N`. Pass `loading`
  *   while `useTagsFor` is still loading, so an empty cell never reads as "no tags".
  * - `useTagsFor(kind, ids)`: `{ canWrite, tagsBySubject, status, refetch }` for the rows of a list.
@@ -27,9 +30,10 @@ import { Combobox } from '@techsio/ui-kit/molecules/combobox';
 import { RadioGroup } from '@techsio/ui-kit/molecules/radio-group';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { definePageData, pageDataPending } from '@app/shared-contracts/page-data';
 import { Effect, Schema } from 'effect';
 import type { ReactNode } from 'react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { assignTag, listTags, recordsFor, recordsOfKind, unassignTag } from '../api/records-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { ApplyCommandActionForbiddenProblemSchema } from '../../shared/apis/apply-command-action.ts';
@@ -98,33 +102,56 @@ export const TagCell = ({ loading = false, tags }: { loading?: boolean; tags: re
   );
 };
 
-/** Loads every tag that applies to `kind`. Does nothing while `enabled` is false. */
-const useTagCatalog = (kind: SubjectKind, enabled: boolean) => {
-  const [state, setState] = useState<{ readonly status: TagsStatus; readonly tags: Tag[] }>({
-    status: 'loading',
-    tags: [],
-  });
+/** One catalog entry per document: a legal-entity or tenant switch reloads the document. */
+const catalogScope = 'all';
+type CatalogScope = typeof catalogScope;
+
+/**
+ * Every tag of the selected legal entity with its tag-wide counts. The tagging page and every picker read this one
+ * dataset, so a page that preloaded it shows its options at once and a second picker issues no read of its own.
+ */
+export const tagCatalogData = definePageData({
+  key: (scope: CatalogScope) => scope,
+  load: () => listTags.pipe(Effect.map((tags) => [...tags])),
+  runtime: browserRuntime,
+});
+
+/** Fills the shared tag catalog; a page adds `() => preloadTagCatalog` to its `modulePagePreload`. Never fails. */
+export const preloadTagCatalog = tagCatalogData.preload(catalogScope);
+
+/** Re-reads the catalog while the current tags stay on screen. Use after a tag write and for a retry. */
+export const refreshTagCatalog = () => {
+  browserRuntime.runFork(tagCatalogData.refresh(catalogScope));
+};
+
+type TagCatalogSnapshot = ReturnType<typeof tagCatalogData.snapshot>;
+const catalogServerSnapshot = (): TagCatalogSnapshot => pageDataPending;
+const readCatalog = () => tagCatalogData.snapshot(catalogScope);
+
+/** The shared catalog, read synchronously. While `enabled`, a mount starts the read if nothing preloaded it. */
+export const useTagCatalogSnapshot = (enabled: boolean): TagCatalogSnapshot => {
+  const snapshot = useSyncExternalStore(tagCatalogData.subscribe, readCatalog, catalogServerSnapshot);
   useEffect(() => {
-    let active = true;
     if (enabled) {
-      runTagEffect(listTags, {
-        onFailure: () => {
-          if (active) {
-            setState({ status: 'error', tags: [] });
-          }
-        },
-        onSuccess: (tags) => {
-          if (active) {
-            setState({ status: 'ready', tags: tags.filter((tag) => tag.subjectKinds.includes(kind)) });
-          }
-        },
-      });
+      tagCatalogData.ensure(catalogScope);
     }
-    return () => {
-      active = false;
-    };
-  }, [enabled, kind]);
-  return state;
+  }, [enabled]);
+  return snapshot;
+};
+
+/** A failed read that is being retried shows as loading; the error comes back only if the retry fails too. */
+export const tagCatalogStatusOf = (snapshot: TagCatalogSnapshot): TagsStatus => {
+  if (snapshot.state === 'ready') {
+    return 'ready';
+  }
+  return snapshot.state === 'failed' && !snapshot.refreshing ? 'error' : 'loading';
+};
+
+/** The shared catalog narrowed to the tags that apply to `kind`. */
+const useTagCatalog = (kind: SubjectKind, enabled: boolean): TagCatalog => {
+  const snapshot = useTagCatalogSnapshot(enabled);
+  const tags = snapshot.state === 'ready' ? snapshot.value.filter((tag) => tag.subjectKinds.includes(kind)) : [];
+  return { refetch: refreshTagCatalog, status: tagCatalogStatusOf(snapshot), tags };
 };
 
 /** Tags a picker offers, loaded by the picker itself or handed in by a page that already read them. */
@@ -156,7 +183,7 @@ const visibleTagItems = <T extends { readonly label: string }>(items: readonly T
   items.some((item) => item.label === query) ? [...items] : items.filter((item) => matchesSearch(item.label, query));
 
 interface TagPickerFieldProps {
-  /** Tags the caller already loaded. When set, the picker issues no read of its own and a retry calls `refetch`. */
+  /** Tags the caller already loaded. Without it the picker reads the shared catalog. A retry calls `refetch`. */
   readonly catalog?: TagCatalog;
   readonly clearable: boolean;
   /** Filter mode: small control and a leading "all tags" option. A label shows only when the caller passes one. */
@@ -172,7 +199,6 @@ interface TagPickerFieldProps {
   readonly label?: string;
   readonly labelKey?: string;
   readonly onChange: (tagId: TagId | null) => void;
-  readonly onRetry: () => void;
   readonly value: TagId | null;
 }
 
@@ -188,7 +214,6 @@ const TagPickerField = ({
   label,
   labelKey,
   onChange,
-  onRetry,
   value,
 }: TagPickerFieldProps) => {
   const { t } = useModernI18n();
@@ -230,7 +255,7 @@ const TagPickerField = ({
           setTyped(null);
         }
       }}
-      onRetry={() => (provided === undefined ? onRetry() : provided.refetch())}
+      onRetry={() => catalog.refetch()}
       open={open}
       openOnClick
       // A filter with no tag applied reads "all tags", the same text its "all" option sets, so the placeholder never changes.
@@ -247,18 +272,14 @@ const TagPickerField = ({
   );
 };
 
-/** Combobox that loads its own catalog. A retry remounts it, so the catalog loads again. */
-const TagPicker = (props: Omit<TagPickerFieldProps, 'onRetry'>) => {
-  const [attempt, setAttempt] = useState(0);
-  return (
-    <TagI18n>
-      <TagPickerField {...props} key={attempt} onRetry={() => setAttempt((current) => current + 1)} />
-    </TagI18n>
-  );
-};
+const TagPicker = (props: TagPickerFieldProps) => (
+  <TagI18n>
+    <TagPickerField {...props} />
+  </TagI18n>
+);
 
 export interface TagFilterProps {
-  /** Tags the page already loaded, for example `useTagsOfKind(kind).catalog`. Without it the filter reads its own. */
+  /** Tags the page already loaded, for example `useTagsOfKind(kind).catalog`. Without it the filter reads the shared catalog. */
   catalog?: TagCatalog;
   kind: SubjectKind;
   /** Visible label above the filter, already translated. Pages pass one when sibling filters have labels. */
@@ -431,49 +452,6 @@ type BulkFailure = typeof bulkFailureValues.Type;
 /** A 403 from the records read or the apply command: retrying will not help, so the panel says so. */
 const isForbidden = Schema.is(Schema.Union([RecordsForbiddenProblemSchema, ApplyCommandActionForbiddenProblemSchema]));
 
-/** The bulk panel's tag catalog. Unlike the pickers' own read it keeps a 403 apart from other failures. */
-const useBulkCatalog = (kind: SubjectKind, enabled: boolean) => {
-  const [request, setRequest] = useState<{ readonly enabled: boolean }>({ enabled });
-  const [state, setState] = useState<{
-    readonly forbidden: boolean;
-    readonly status: TagsStatus;
-    readonly tags: readonly Tag[];
-  }>({ forbidden: false, status: 'loading', tags: [] });
-  if (request.enabled !== enabled) {
-    setRequest({ enabled });
-  }
-  useEffect(() => {
-    let active = true;
-    if (request.enabled) {
-      runTagEffect(listTags, {
-        onFailure: (error) => {
-          if (active) {
-            setState({ forbidden: isForbidden(error), status: 'error', tags: [] });
-          }
-        },
-        onSuccess: (tags) => {
-          if (active) {
-            setState({
-              forbidden: false,
-              status: 'ready',
-              tags: tags.filter((tag) => tag.subjectKinds.includes(kind)),
-            });
-          }
-        },
-      });
-    }
-    return () => {
-      active = false;
-    };
-  }, [kind, request]);
-  const refetch = () => {
-    setState((current) => ({ ...current, status: 'loading' }));
-    setRequest((current) => ({ ...current }));
-  };
-  const catalog: TagCatalog = { refetch, status: state.status, tags: state.tags };
-  return { catalog, forbidden: state.forbidden };
-};
-
 const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', subjectIds }: BulkTagDialogProps) => {
   const { t } = useModernI18n();
   const toaster = useToast();
@@ -482,8 +460,10 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', s
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<BulkFailure>('none');
   const [submitted, setSubmitted] = useState(false);
-  const bulkCatalog = useBulkCatalog(kind, open);
-  const forbidden = bulkCatalog.forbidden || failure === 'forbidden';
+  // The picker reads the same shared catalog; a 403 on it means this role may not tag at all, so the panel says so.
+  const catalog = useTagCatalogSnapshot(open);
+  const catalogForbidden = catalog.state === 'failed' && isForbidden(catalog.error);
+  const forbidden = catalogForbidden || failure === 'forbidden';
 
   const close = () => {
     setTagId(null);
@@ -570,7 +550,6 @@ const BulkTagDialogContent = ({ kind, onDone, onOpenChange, open, size = 'md', s
         )}
         {!forbidden && (
           <TagPicker
-            catalog={bulkCatalog.catalog}
             clearable={false}
             enabled={open}
             helpText={tagError ? t('tagging.tags.bulk.chooseTag') : ''}
