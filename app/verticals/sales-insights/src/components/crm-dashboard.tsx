@@ -4,26 +4,37 @@ import { FederatedI18nBoundary, Link as LocalizedLink, useModernI18n } from '@mo
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
-import { useState, useSyncExternalStore } from 'react';
-import { createDashboardQuery } from '../dashboard/dashboard-query.ts';
-import type { DashboardContext } from '../dashboard/dashboard-model.ts';
+import { modulePagePreload, pageDataPending } from '@app/shared-contracts/page-data';
+import type { ModulePageProps } from '@app/shared-contracts/page-data';
+import { useEffect, useSyncExternalStore } from 'react';
+import { dashboardData, dashboardInputOf } from '../dashboard/dashboard-data.ts';
+import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { formatMetricValue } from '../statistics/format-metric.ts';
 import csResource from '../../locales/cs/sales-insights.json';
 import enResource from '../../locales/en/sales-insights.json';
 import '../routes/index.css';
 
-export interface CrmDashboardProps {
-  readonly context: DashboardContext;
-}
+export type CrmDashboardProps = ModulePageProps;
 const key = 'sales-insights.dashboard';
 
+/** The Shell runs this before it reveals Home, so the cards render their values in the first commit. */
+export const preloadPage = modulePagePreload((props) => dashboardData.preload(dashboardInputOf(props)));
+
 /** Owner integration: the Shell passes only context; producer gateways remain the read authority. */
-export const CrmDashboard = (_props: CrmDashboardProps) => {
+export const CrmDashboard = (props: CrmDashboardProps) => {
   const { t } = useModernI18n();
-  const [query, setQuery] = useState(() => createDashboardQuery());
-  const data = useSyncExternalStore(query.subscribe, query.getSnapshot, query.getServerSnapshot);
-  const handleRefresh = () => setQuery(createDashboardQuery());
-  const values = data.state === 'ready' ? data.values : [];
+  const input = dashboardInputOf(props);
+  const data = useSyncExternalStore(
+    dashboardData.subscribe,
+    () => dashboardData.snapshot(input),
+    () => pageDataPending,
+  );
+  // A cold mount the Shell did not prepare (or a stale entry) loads here; a prepared one is already ready.
+  useEffect(() => dashboardData.ensure({ legalEntityId: input.legalEntityId }), [input.legalEntityId]);
+  const handleRefresh = () => {
+    void browserRuntime.runPromiseExit(dashboardData.refresh(input));
+  };
+  const values = data.state === 'ready' ? data.value : [];
   return (
     <div className="salesinsights:flex salesinsights:min-w-0 salesinsights:flex-col salesinsights:gap-4">
       <header className="salesinsights:flex salesinsights:flex-wrap salesinsights:items-start salesinsights:justify-between salesinsights:gap-3">
@@ -38,11 +49,6 @@ export const CrmDashboard = (_props: CrmDashboardProps) => {
           {t(`${key}.refresh`)}
         </Button>
       </header>
-      {data.state === 'loading' ? (
-        <StatusText aria-live="polite" status="default">
-          {t(`${key}.loading`)}
-        </StatusText>
-      ) : null}
       {data.state === 'ready' ? (
         <div className="salesinsights:grid salesinsights:gap-4 salesinsights:sm:grid-cols-2 salesinsights:xl:grid-cols-3">
           {values.map((value) => (

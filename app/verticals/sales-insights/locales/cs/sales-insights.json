@@ -123,7 +123,6 @@
       "description": "Aktuální příležitosti, pohledávky a úkoly.",
       "scope": "Údaje odpovídají právě vybranému tenantu a právnímu subjektu a vašim oprávněním.",
       "refresh": "Obnovit údaje",
-      "loading": "Načítáme obchodní přehled…",
       "currentSnapshot": "Aktuální stav",
       "openSource": "Otevřít přehled záznamů: {{metric}}",
       "openRecords": "Zobrazit záznamy",

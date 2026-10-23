@@ -122,7 +122,6 @@
       "description": "Current opportunities, receivables and tasks.",
       "scope": "Values follow the selected tenant, legal entity and your permissions.",
       "refresh": "Refresh data",
-      "loading": "Loading sales overview…",
       "currentSnapshot": "Current snapshot",
       "openSource": "Open records: {{metric}}",
       "openRecords": "View records",

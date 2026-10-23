@@ -1,11 +1,13 @@
 import { listOpportunities } from '@app/sales-pipeline/clients/records';
 import { listInvoices } from '@app/finance-billing/clients/records';
 import { listTasks } from '@app/work-tasks/clients/records';
+import { definePageData } from '@app/shared-contracts/page-data';
+import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { DateTime, Effect, Match, Random } from 'effect';
 import type { MetricInputs } from '../../shared/metrics.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 import { dashboardValues } from './dashboard-model.ts';
-import type { DashboardSourceState, DashboardValue } from './dashboard-model.ts';
+import type { DashboardSourceState } from './dashboard-model.ts';
 
 export interface DashboardSourceResult<A> {
   readonly items: readonly A[];
@@ -49,6 +51,9 @@ export const settleDashboardSource = <A>(
     }),
   );
 
+/** Formats an instant as the Prague calendar day (YYYY-MM-DD), the business day of the work producer. */
+const pragueCalendarDay = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Prague' });
+
 const correlation = Random.nextInt.pipe(Effect.map((id) => `crm-dashboard:${id}`));
 export const loadDashboard = Effect.gen(function* loadDashboardEffect() {
   const result = yield* Effect.all(
@@ -75,11 +80,7 @@ export const loadDashboard = Effect.gen(function* loadDashboardEffect() {
     tasks: result.tasks.items,
   };
   // Use the same Prague business day as the work producer (including around UTC midnight).
-  const today = yield* DateTime.now.pipe(
-    Effect.map((now) =>
-      new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Prague' }).format(DateTime.toDateUtc(now)),
-    ),
-  );
+  const today = yield* DateTime.now.pipe(Effect.map((now) => pragueCalendarDay.format(DateTime.toDateUtc(now))));
   return dashboardValues(
     inputs,
     { invoices: result.invoices.state, opportunities: result.opportunities.state, tasks: result.tasks.state },
@@ -87,58 +88,20 @@ export const loadDashboard = Effect.gen(function* loadDashboardEffect() {
   );
 });
 
-export type DashboardSnapshot =
-  | { readonly state: 'loading' }
-  | { readonly state: 'ready'; readonly values: readonly DashboardValue[] };
-/** A mounted dashboard owns its query, and unsubscription discards late results. No business data is persisted. */
-export const createDashboardQuery = (read: Effect.Effect<readonly DashboardValue[]> = loadDashboard) => {
-  const initial: DashboardSnapshot = { state: 'loading' };
-  let snapshot: DashboardSnapshot = initial;
-  let generation = 0;
-  let started = false;
-  const listeners = new Set<() => void>();
-  const publish = (next: DashboardSnapshot) => {
-    snapshot = next;
-    for (const listener of listeners) {
-      listener();
-    }
-  };
-  const reload = () => {
-    if (listeners.size === 0) {
-      return;
-    }
-    started = true;
-    generation += 1;
-    const requested = generation;
-    publish(initial);
-    void browserRuntime.runPromiseExit(
-      read.pipe(
-        Effect.tap((values) =>
-          Effect.sync(() => {
-            if (generation === requested && listeners.size > 0) {
-              publish({ state: 'ready', values });
-            }
-          }),
-        ),
-      ),
-    );
-  };
-  return {
-    getServerSnapshot: () => initial,
-    getSnapshot: () => snapshot,
-    reload,
-    subscribe: (listener: () => void) => {
-      listeners.add(listener);
-      if (!started) {
-        reload();
-      }
-      return () => {
-        listeners.delete(listener);
-        if (listeners.size === 0) {
-          generation += 1;
-          started = false;
-        }
-      };
-    },
-  };
-};
+export interface DashboardInput {
+  readonly legalEntityId: string;
+}
+export const dashboardInputOf = (props: ModulePageProps): DashboardInput => ({
+  legalEntityId: props.context?.legalEntityId ?? '',
+});
+
+/**
+ * The dashboard values of one legal entity, kept for the document so the Shell can prepare them before it reveals
+ * Home. A source failure is a card state, so the load itself never fails. Every revalidation asks the producers
+ * again, so a prior denial is never cached as an authorization decision.
+ */
+export const dashboardData = definePageData({
+  key: (input: DashboardInput) => input.legalEntityId,
+  load: (_input: DashboardInput) => loadDashboard,
+  runtime: browserRuntime,
+});

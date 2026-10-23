@@ -1,7 +1,7 @@
-import { DateTime, Deferred, Effect } from 'effect';
+import { DateTime, Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { dashboardValues } from '../../src/dashboard/dashboard-model.ts';
-import { createDashboardQuery, settleDashboardSource } from '../../src/dashboard/dashboard-query.ts';
+import { settleDashboardSource } from '../../src/dashboard/dashboard-data.ts';
 import type { MetricInputs } from '../../shared/metrics.ts';
 
 const inputs: MetricInputs = {
@@ -93,27 +93,5 @@ it.effect('settles independent producer states and retries a denial instead of c
     ).toEqual({ items: [], state: 'unavailable' });
     expect(yield* settleDashboardSource(Effect.succeed([]))).toEqual({ items: [], state: 'empty' });
     expect(yield* settleDashboardSource(Effect.succeed([1]))).toEqual({ items: [1], state: 'ready' });
-  }),
-);
-it.effect('does not publish a completed request after dashboard unmount', () =>
-  Effect.gen(function* unmountedDashboardQuery() {
-    let notifications = 0;
-    const release = yield* Deferred.make<boolean>();
-    const finished = yield* Deferred.make<boolean>();
-    const query = createDashboardQuery(
-      Deferred.await(release).pipe(
-        Effect.tap(() => Deferred.succeed(finished, true)),
-        Effect.as([]),
-      ),
-    );
-    const unsubscribe = query.subscribe(() => {
-      notifications += 1;
-    });
-    unsubscribe();
-    yield* Deferred.succeed(release, true);
-    yield* Deferred.await(finished);
-    yield* Effect.yieldNow;
-    expect(query.getSnapshot().state).toBe('loading');
-    expect(notifications).toBe(1);
   }),
 );

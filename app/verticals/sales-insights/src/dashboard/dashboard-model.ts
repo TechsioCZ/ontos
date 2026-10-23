@@ -10,11 +10,6 @@ const DashboardMetricSchema = Schema.Literals([
   'tasks_overdue',
 ]);
 export type DashboardMetric = typeof DashboardMetricSchema.Type;
-export interface DashboardContext {
-  readonly legalEntityId: string;
-  readonly principalId: string;
-  readonly tenantId: string;
-}
 export const DashboardSourceSchema = Schema.Literals(['opportunities', 'invoices', 'tasks']);
 export type DashboardSource = typeof DashboardSourceSchema.Type;
 export const DashboardSourceStateSchema = Schema.Literals(['empty', 'forbidden', 'ready', 'unavailable']);

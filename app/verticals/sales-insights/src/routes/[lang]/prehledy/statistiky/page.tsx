@@ -1,6 +1,8 @@
 import { PageHeader, SectionCard } from '@app/admin-ui';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { modulePagePreload } from '@app/shared-contracts/page-data';
+import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { DateTime } from 'effect';
 import csResource from '../../../../../locales/cs/sales-insights.json';
@@ -19,7 +21,8 @@ import {
   serializeStatisticsQuery,
 } from '../../../../statistics/statistics-query.ts';
 import { useUnreadableSources } from '../../../../statistics/readable-sources.ts';
-import { useStatisticsInputs } from '../../../../statistics/use-statistics-inputs.ts';
+import { preloadStatisticsInputs, useStatisticsInputs } from '../../../../statistics/use-statistics-inputs.ts';
+import type { StatisticsPageInput } from '../../../../statistics/use-statistics-inputs.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import '../../../index.css';
 
@@ -41,12 +44,27 @@ const writeUrlSearch = (search: string) => {
   window.history.replaceState(window.history.state, '', url);
 };
 
-const StatisticsPageContent = () => {
+/** Shell page props; the vertical's own route renders the page without them. */
+interface StatisticsPageProps {
+  readonly context?: ModulePageContext | undefined;
+}
+
+const inputOf = (context: ModulePageContext | undefined): StatisticsPageInput => ({
+  legalEntityId: context?.legalEntityId ?? '',
+});
+
+/** The Shell runs this before it reveals the page, so KPIs, chart and pipeline summary render real values at once. */
+export const preloadPage = modulePagePreload((props) => {
+  const query = parseStatisticsQuery(props.search, defaultQuery(todayDay()));
+  return preloadStatisticsInputs(statisticsSourcesFor(query.metric, query.groupBy), inputOf(props.context));
+});
+
+const StatisticsPageContent = ({ context }: StatisticsPageProps) => {
   const { t } = useModernI18n();
   const today = todayDay();
   const search = useRouterState({ select: (state) => state.location.searchStr });
   const query = parseStatisticsQuery(search, defaultQuery(today));
-  const data = useStatisticsInputs(statisticsSourcesFor(query.metric, query.groupBy));
+  const data = useStatisticsInputs(statisticsSourcesFor(query.metric, query.groupBy), inputOf(context));
   const unreadable = useUnreadableSources();
 
   // The query holds the grouping the metric can show; the URL keeps the one the user asked for, so a metric switch
@@ -119,14 +137,14 @@ const StatisticsPageContent = () => {
   );
 };
 
-export const RecordsPage = () => (
+export const RecordsPage = ({ context }: StatisticsPageProps) => (
   <FederatedI18nBoundary
     defaultNamespace="sales-insights"
     fallbackLanguage="en"
     resources={salesInsightsI18nResources}
     supportedLanguages={['en', 'cs']}
   >
-    <StatisticsPageContent />
+    <StatisticsPageContent context={context} />
   </FederatedI18nBoundary>
 );
 
