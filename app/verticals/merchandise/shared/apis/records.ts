@@ -49,6 +49,8 @@ export const StorefrontCatalogQuerySchema = Schema.Struct({
    */
   variantIds: Schema.optionalKey(Schema.Array(Schema.String).check(Schema.isMaxLength(200))),
   includeCategories: Schema.optionalKey(Schema.Boolean),
+  /** With includeCategories false: only the active category and its children, not the navigation tree. */
+  includeCategoryContent: Schema.optionalKey(Schema.Boolean),
 });
 export type StorefrontCatalogQuery = typeof StorefrontCatalogQuerySchema.Type;
 

@@ -605,6 +605,7 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
   input: {
     readonly activeId?: string | undefined;
     readonly activeSlug?: string | undefined;
+    readonly contentOnly?: boolean;
     readonly storefront: boolean;
   },
 ) {
@@ -644,6 +645,7 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
     'Categories could not be read',
   );
   const byId = new Map(rows.map((row) => [row.id, row] as const));
+  const contentId = input.activeId ?? rows.find((row) => row.slug === input.activeSlug)?.id;
   const visible = (id: string) => {
     const seen = new Set<string>();
     let current = byId.get(id);
@@ -658,7 +660,11 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
     catch: (cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored rows do not decode' }),
     try: () =>
       rows
-        .filter((row) => !input.storefront || visible(row.id))
+        .filter(
+          (row) =>
+            (!input.storefront || visible(row.id)) &&
+            (input.contentOnly !== true || row.id === contentId || row.parentId === contentId),
+        )
         .map((row): CategoryNode => ({
           hasChildren: row.hasChildren,
           id: row.id,

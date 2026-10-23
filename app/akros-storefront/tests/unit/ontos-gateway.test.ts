@@ -114,14 +114,32 @@ describe("OntOS gateway assertions", () => {
     expect(shellFetch).toHaveBeenCalledTimes(4);
   });
 
-  it("joins concurrent issuance within one render without sharing the first read's payload or result", async () => {
+  it("starts cold owner reads in parallel without waiting for another read's dispatch", async () => {
+    const original = vi.mocked(shellFetch).getMockImplementation()!;
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(shellFetch).mockImplementation(async (url, init) => {
+      const response = await original(url, init);
+      const payload = JSON.parse(String(init.body)) as { query?: { tree?: boolean } };
+      if (payload.query?.tree) await blocked;
+      return response;
+    });
     await renderCache.run(new Map(), async () => {
-      const queries = [{ tree: true }, { featured: true }, { slug: "heavy-product" }];
-      expect(await Promise.all(queries.map(read))).toEqual(
-        queries.map((query) => ({ ok: "Bearer t1", query })),
-      );
-      expect(minted).toBe(1);
-      expect(shellFetch).toHaveBeenCalledTimes(3);
+      const tree = read({ tree: true });
+      try {
+        const featured = await read({ featured: true });
+        expect(featured).toEqual({ ok: "Bearer t2", query: { featured: true } });
+        expect(minted).toBe(2);
+        expect(shellFetch).toHaveBeenCalledTimes(2);
+        expect(
+          vi.mocked(shellFetch).mock.calls.every(([url]) => url.endsWith("gateway-read")),
+        ).toBe(true);
+      } finally {
+        release();
+      }
+      expect(await tree).toEqual({ ok: "Bearer t1", query: { tree: true } });
     });
   });
 

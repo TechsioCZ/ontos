@@ -1645,9 +1645,14 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       if (head === undefined) return yield* unavailable();
       const { revision, homepageFeaturedProductIds: featuredIds } = head;
       const tree =
-        catalogQuery === undefined || catalogQuery.includeCategories === false
+        catalogQuery === undefined ||
+        (catalogQuery.includeCategories === false && catalogQuery.includeCategoryContent !== true)
           ? undefined
-          : yield* categoryTree(transaction, store, { activeSlug: catalogQuery.categorySlug, storefront: true });
+          : yield* categoryTree(transaction, store, {
+              activeSlug: catalogQuery.categorySlug,
+              contentOnly: catalogQuery.includeCategories === false,
+              storefront: true,
+            });
       const status =
         view.storefrontOrderStatus === undefined
           ? undefined

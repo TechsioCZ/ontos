@@ -105,6 +105,53 @@ it.live('resolves the active category slug within the tree statement without a l
   }),
 );
 
+const categoryContentRow = (id: string, parentId: string | null, published = true) => [
+  `Description ${id}`,
+  true,
+  `Heading ${id}`,
+  null,
+  id,
+  `Image ${id}`,
+  `/images/${id}.jpg`,
+  `Long ${id}`,
+  id,
+  parentId,
+  0,
+  published,
+  id,
+];
+
+it.live('projects compact category content identically to the full tree and hides unpublished ancestors', () =>
+  Effect.gen(function* compactCategoryContent() {
+    const db = yield* makeTestDatabase(() =>
+      Effect.succeed([
+        categoryContentRow('root', null),
+        categoryContentRow('active', 'root'),
+        categoryContentRow('child', 'active'),
+        categoryContentRow('other', 'root'),
+        categoryContentRow('hidden', 'root', false),
+        categoryContentRow('hidden-child', 'hidden'),
+      ]),
+    );
+    const scope = {
+      legalEntityId: '00000000-0000-4000-8000-000000000001',
+      tenantId: '00000000-0000-4000-8000-000000000002',
+    };
+    const full = yield* categoryTree(db, scope, { activeSlug: 'active', storefront: true });
+    const compact = yield* categoryTree(db, scope, { activeSlug: 'active', contentOnly: true, storefront: true });
+    expect(compact).toEqual(full.filter((node) => node.id === 'active' || node.parentId === 'active'));
+    expect(compact.map((node) => node.id)).toEqual(['active', 'child']);
+    expect(compact[0]).toMatchObject({
+      description: 'Description active',
+      heading: 'Heading active',
+      longDescription: 'Long active',
+    });
+    expect(compact[1]).toMatchObject({ imageAlt: 'Image child', imageSrc: '/images/child.jpg' });
+    expect(yield* categoryTree(db, scope, { activeSlug: 'hidden', contentOnly: true, storefront: true })).toEqual([]);
+    expect(yield* categoryTree(db, scope, { activeSlug: 'missing', contentOnly: true, storefront: true })).toEqual([]);
+  }),
+);
+
 it.live('lists featured products in homepage order followed by recommended ones', () =>
   onCatalog((fixture) =>
     Effect.gen(function* () {

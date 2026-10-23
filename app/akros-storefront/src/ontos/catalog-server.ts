@@ -72,8 +72,15 @@ const categoryTrees = catalogCache<CatalogCategory[]>("categories", {
   keepMs: CATEGORY_KEEP_MS,
   limit: 4,
 });
-/** One owner read per category: the tree with that category's content and its first listing page. */
-// These entries include product cards with prices and stock, not just category text.
+/** Only price-free active-category/child content is retained for the navigation window. */
+const categoryContent = catalogCache<CatalogCategory[]>("category-details", {
+  storage: "isolate",
+  freshMs: CATEGORY_CACHE_MS,
+  staleMs: CATEGORY_STALE_MS,
+  keepMs: CATEGORY_KEEP_MS,
+  limit: 60,
+});
+/** The first category listing still expires strictly after ten seconds. */
 const categoryPages = catalogCache<CategoryPage>("category-content", {
   storage: "isolate",
   freshMs: CATALOG_CACHE_MS,
@@ -135,16 +142,21 @@ const firstCategoryPage = (categorySlug: string) => ({
   fields: "card" as const,
 });
 const loadCategoryPage = (categorySlug: string) => async (): Promise<CategoryPage> => {
-  const body = await readCatalog({ ...firstCategoryPage(categorySlug), includeCategories: true });
-  const tree = projectCategories(body);
-  const category = tree.find((node) => node.slug === categorySlug);
-  // Only the nodes whose content this read adds (the category and its direct children): every category's
-  // entry would otherwise repeat the whole 2,000+ node tree that the root tree entry already holds.
+  let firstPage: ProductPage | undefined;
+  const categories = await categoryContent.get(categorySlug, async () => {
+    // On a content miss one bounded read supplies fresh prices and only the active branch's text/images.
+    // Never retain its products in the fifteen-minute content cache.
+    const body = await readCatalog({
+      ...firstCategoryPage(categorySlug),
+      includeCategories: false,
+      includeCategoryContent: true,
+    });
+    firstPage = projectProducts(body);
+    return projectCategories(body);
+  });
   return {
-    categories: category
-      ? tree.filter((node) => node.id === category.id || node.parentId === category.id)
-      : [],
-    page: projectProducts(body),
+    categories,
+    page: firstPage ?? (await readProducts(firstCategoryPage(categorySlug), "card")),
   };
 };
 /** The root tree with one category's own content and its children's content. */

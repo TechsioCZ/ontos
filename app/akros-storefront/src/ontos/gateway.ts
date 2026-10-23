@@ -137,16 +137,13 @@ const mintContext = async (audience: string): Promise<GatewayContext> => {
 const requestMints = cache(() => new Map<string, Promise<GatewayContext>>());
 
 /** The isolate's current assertion for `audience`, minted when missing, outdated or close to expiry. */
-const gatewayContext = async (
-  audience: string,
-  mint: () => Promise<GatewayContext> = () => mintContext(audience),
-): Promise<GatewayContext> => {
+const gatewayContext = async (audience: string): Promise<GatewayContext> => {
   const held = assertions.get(audience);
   if (held !== undefined && Date.now() < held.reuseUntil) return held;
   const pending = requestMints();
   let issuance = pending.get(audience);
   if (issuance === undefined) {
-    issuance = mint();
+    issuance = mintContext(audience);
     pending.set(audience, issuance);
   }
   try {
@@ -228,35 +225,44 @@ export const readRecords = async (
     try {
       let firstResponse: Response | undefined;
       const path = `/reads/${segment(readName)}`;
-      const context = await gatewayContext(vertical, async () => {
-        const requestedAt = Date.now();
-        firstResponse = await credentialRequest(GATEWAY_READ_PATH, {
-          audience: vertical,
-          legalEntityId: getConfig().legalEntityId,
-          readName: segment(readName),
-          query,
-        });
-        const encoded = firstResponse.headers.get(GATEWAY_CONTEXT_HEADER);
-        if (encoded === null) {
-          if (!firstResponse.ok) await parseResponse(firstResponse, path);
-          throw new OntosError(
-            "Gateway read response has no assertion",
-            502,
-            "gateway_context_malformed",
-          );
-        }
-        let decoded: Partial<GatewayContext>;
-        try {
-          decoded = JSON.parse(encoded) as Partial<GatewayContext>;
-        } catch {
-          throw new OntosError(
-            "Gateway context response is malformed",
-            502,
-            "gateway_context_malformed",
-          );
-        }
-        return parseContext(decoded, requestedAt);
-      });
+      // A combined gateway-read returns the assertion only after its owner finishes. Waiting for another
+      // read's issuance would serialize otherwise independent owner reads (category + recommendations).
+      // Cold reads therefore each authenticate and dispatch in parallel; only settled assertions are reused.
+      const held = assertions.get(vertical);
+      const context =
+        held !== undefined && Date.now() < held.reuseUntil
+          ? held
+          : await (async () => {
+              const requestedAt = Date.now();
+              firstResponse = await credentialRequest(GATEWAY_READ_PATH, {
+                audience: vertical,
+                legalEntityId: getConfig().legalEntityId,
+                readName: segment(readName),
+                query,
+              });
+              const encoded = firstResponse.headers.get(GATEWAY_CONTEXT_HEADER);
+              if (encoded === null) {
+                if (!firstResponse.ok) await parseResponse(firstResponse, path);
+                throw new OntosError(
+                  "Gateway read response has no assertion",
+                  502,
+                  "gateway_context_malformed",
+                );
+              }
+              let decoded: Partial<GatewayContext>;
+              try {
+                decoded = JSON.parse(encoded) as Partial<GatewayContext>;
+              } catch {
+                throw new OntosError(
+                  "Gateway context response is malformed",
+                  502,
+                  "gateway_context_malformed",
+                );
+              }
+              const issued = parseContext(decoded, requestedAt);
+              assertions.set(vertical, issued);
+              return issued;
+            })();
       try {
         return firstResponse === undefined
           ? await post(context, path, query)
