@@ -77,6 +77,9 @@ export const commercePortalActionKeys: readonly string[] = [
   'party.registry.create-party',
   'party.registry.counterparty-customer-onboard',
   'party.registry.add-contact-point',
+  // Customer self-service: the owner bridge edits the customer's own Party and contact points.
+  'party.registry.update-party',
+  'party.registry.update-contact-point',
   'commerce.customer-context.ensure-retail-customer-profile',
   'commerce.customer-context.bind-retail-portal-profile',
   'commerce.customer-context.claim-portal-enrollment-transition',
