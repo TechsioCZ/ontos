@@ -1,7 +1,7 @@
-import type { CatalogCategory, CatalogProduct } from "@/mock-storefront/types";
+import type { CatalogCategory, CatalogProduct } from "@/ontos/catalog-types";
 import { normalizeCatalogSearchTerm } from "@/lib/product-variant-search";
 
-/** One header-search product suggestion returned by POST /api/ontos/search (no server-side data). */
+/** One header-search product suggestion returned by POST /api/ontos/search from live OntOS catalog records. */
 export interface RemoteSearchSuggestion {
   productId: string;
   slug: string;

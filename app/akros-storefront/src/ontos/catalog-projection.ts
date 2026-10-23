@@ -10,7 +10,7 @@ import type {
   CatalogProductVariant,
   CatalogPurchaseProduct,
   CatalogPurchaseVariant,
-} from "@/mock-storefront/types";
+} from "@/ontos/catalog-types";
 
 /** A bounded client payload: do not serialize product.detail.variants through the product prop too. */
 export const purchaseProductOf = (product: CatalogProduct): CatalogPurchaseProduct => ({

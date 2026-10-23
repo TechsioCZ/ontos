@@ -1,6 +1,6 @@
 import "server-only";
 import { cache } from "react";
-import type { CatalogCategory, CatalogProduct } from "@/mock-storefront/types";
+import type { CatalogCategory, CatalogProduct } from "@/ontos/catalog-types";
 import { catalogCache, type WarmResult } from "./catalog-cache";
 import { createCatalog } from "./catalog-model";
 import { readRecords } from "./gateway";

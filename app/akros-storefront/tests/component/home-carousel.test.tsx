@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HomeCarousel } from "@/components/home-carousel";
-import { homeCarouselSlides } from "@/mock-storefront/fixtures/home-carousel";
+import { homeCarouselSlides } from "@/content/home-carousel";
 
 const originalScrollTo = Element.prototype.scrollTo;
 const originalScrollBy = Element.prototype.scrollBy;

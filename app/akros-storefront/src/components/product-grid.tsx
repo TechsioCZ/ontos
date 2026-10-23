@@ -10,7 +10,7 @@ import { AddToCartButton } from "@/features/cart/add-to-cart-button";
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
 import { productStockLabels, productStockTone } from "@/lib/product-stock";
-import type { CatalogProductSummary } from "@/mock-storefront/types";
+import type { CatalogProductSummary } from "@/ontos/catalog-types";
 
 export interface ProductGridItem extends CatalogProductSummary {
   detailHref?: string;

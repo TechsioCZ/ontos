@@ -6,7 +6,7 @@ import { VerticalNavigation } from "@techsio/ui-kit/molecules/vertical-navigatio
 import StoreLink from "@/components/store-link";
 
 import { cs } from "@/i18n/cs";
-import type { CatalogCategory } from "@/mock-storefront/types";
+import type { CatalogCategory } from "@/ontos/catalog-types";
 
 interface CategoryNavigationItemProps {
   activeIds: ReadonlySet<string>;

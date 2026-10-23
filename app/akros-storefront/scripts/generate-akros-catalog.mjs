@@ -7,7 +7,7 @@ import { SaxesParser } from "saxes";
 
 const storefrontRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRoot = resolve(storefrontRoot, "..", "local", "akros");
-const outputRoot = resolve(storefrontRoot, "src", "mock-storefront", "generated");
+const outputRoot = resolve(storefrontRoot, "src", "catalog-import", "generated");
 const categorySource = process.env.AKROS_CATEGORY_XML ?? resolve(sourceRoot, "category.xml");
 const productSource = process.env.AKROS_PRODUCT_ZIP ?? resolve(sourceRoot, "product.xml.zip");
 const akrosOrigin = "https://www.akros.cz";

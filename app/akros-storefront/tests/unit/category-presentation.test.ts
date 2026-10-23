@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { categoryDescription, categoryImage } from "@/lib/category-presentation";
-import type { CatalogCategory } from "@/mock-storefront/types";
+import type { CatalogCategory } from "@/ontos/catalog-types";
 
 const category: CatalogCategory = {
   id: "washers-sale",

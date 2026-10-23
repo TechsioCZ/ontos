@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { describeOfferPrice, PRICE_UNAVAILABLE_LABEL } from "@/lib/format";
 import { toRemoteSuggestion } from "@/ontos/search-suggestions";
-import type { CatalogProduct } from "@/mock-storefront/types";
+import type { CatalogProduct } from "@/ontos/catalog-types";
 
 const label = (input: Parameters<typeof describeOfferPrice>[0]) => describeOfferPrice(input).label;
 

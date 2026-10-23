@@ -1,4 +1,4 @@
-import type { CatalogCategory } from "@/mock-storefront/types";
+import type { CatalogCategory } from "@/ontos/catalog-types";
 
 export function categoryDescription(value: string | null | undefined): string | undefined {
   const description = value?.trim();

@@ -5,7 +5,7 @@ import { Input } from "@techsio/ui-kit/atoms/input";
 
 import { PrimaryLinkButton } from "@/components/primary-link-button";
 import { StorefrontWideShell } from "@/components/storefront-shell";
-import { blogArticles } from "@/mock-storefront/fixtures/content";
+import { blogArticles } from "@/content/editorial";
 
 export const metadata: Metadata = { title: "Blog" };
 

@@ -2,7 +2,7 @@ import Image from "next/image";
 import StoreLink from "@/components/store-link";
 
 import { categoryImage } from "@/lib/category-presentation";
-import type { CatalogCategory } from "@/mock-storefront/types";
+import type { CatalogCategory } from "@/ontos/catalog-types";
 
 export function CategoryGrid({ categories }: { categories: CatalogCategory[] }) {
   if (categories.length === 0) return null;

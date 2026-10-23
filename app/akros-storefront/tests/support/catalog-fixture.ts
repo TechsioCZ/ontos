@@ -1,8 +1,8 @@
 // Test fixture: Kai's generated AKROS catalog (the OntOS seed input) in the storefront model shape.
 import { createCatalog } from "@/ontos/catalog-model";
-import rawCatalog from "@/mock-storefront/generated/catalog.generated.json";
-import rawCategories from "@/mock-storefront/generated/categories.generated.json";
-import type { CatalogCategory, CatalogProduct } from "@/mock-storefront/types";
+import rawCatalog from "@/catalog-import/generated/catalog.generated.json";
+import rawCategories from "@/catalog-import/generated/categories.generated.json";
+import type { CatalogCategory, CatalogProduct } from "@/ontos/catalog-types";
 
 type SeedProduct = Omit<CatalogProduct, "variantSummary">;
 

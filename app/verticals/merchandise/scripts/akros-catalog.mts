@@ -6,14 +6,14 @@ import type { AkrosEncodedState, AkrosSource } from './akros-baseline.ts';
 const source: AkrosSource = {
   catalog: JSON.parse(
     readFileSync(
-      new URL('../../../akros-storefront/src/mock-storefront/generated/catalog.generated.json', import.meta.url),
+      new URL('../../../akros-storefront/src/catalog-import/generated/catalog.generated.json', import.meta.url),
       'utf8',
     ),
   ) as AkrosSource['catalog'],
   categories: (
     JSON.parse(
       readFileSync(
-        new URL('../../../akros-storefront/src/mock-storefront/generated/categories.generated.json', import.meta.url),
+        new URL('../../../akros-storefront/src/catalog-import/generated/categories.generated.json', import.meta.url),
         'utf8',
       ),
     ) as { categories: AkrosSource['categories'] }

@@ -6,7 +6,7 @@ const baseUrl = process.env.AKROS_TEST_BASE_URL ?? "http://localhost:3000";
 const slug = "vruty-se-zapustnou-hlavou-s-krizovou-drazkou-din-7997-a2";
 const { products } = JSON.parse(
   await readFile(
-    new URL("../../src/mock-storefront/generated/catalog.generated.json", import.meta.url),
+    new URL("../../src/catalog-import/generated/catalog.generated.json", import.meta.url),
   ),
 );
 const product = products.find((item) => item.slug === slug);

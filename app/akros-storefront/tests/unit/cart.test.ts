@@ -8,7 +8,7 @@ import {
   getMaximumOrderQuantity,
   getCartSubtotal,
   normalizeOrderQuantity,
-} from "@/mock-storefront/cart";
+} from "@/features/cart/cart-state";
 
 const screw: CartItemSnapshot = {
   productId: "product-screw",

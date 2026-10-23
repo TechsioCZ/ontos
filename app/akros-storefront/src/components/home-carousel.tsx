@@ -6,7 +6,7 @@ import { useRef, useState } from "react";
 import { Carousel } from "@techsio/ui-kit/molecules/carousel";
 
 import { cs } from "@/i18n/cs";
-import { homeCarouselSlides } from "@/mock-storefront/fixtures/home-carousel";
+import { homeCarouselSlides } from "@/content/home-carousel";
 
 export function HomeCarousel() {
   const [activePage, setActivePage] = useState(0);

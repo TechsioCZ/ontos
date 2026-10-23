@@ -5,8 +5,8 @@ import {
   createEmptyCart,
   getMaximumOrderQuantity,
   normalizeOrderQuantity,
-} from "@/mock-storefront/cart";
-import { parseStoredCart } from "@/mock-storefront/cart-storage";
+} from "@/features/cart/cart-state";
+import { parseStoredCart } from "@/features/cart/cart-storage";
 const item = {
   productId: "p",
   slug: "p",

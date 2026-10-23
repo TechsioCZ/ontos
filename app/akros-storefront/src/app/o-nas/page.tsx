@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { ContentGallery } from "@/components/content-gallery";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
-import { aboutGallery, manufacturingGallery } from "@/mock-storefront/fixtures/content";
+import { aboutGallery, manufacturingGallery } from "@/content/editorial";
 
 export const metadata: Metadata = { title: "O nás" };
 

@@ -5,7 +5,7 @@ import type {
   CatalogPromotionItem,
   CatalogProductSummary,
   CategoryData,
-} from "@/mock-storefront/types";
+} from "@/ontos/catalog-types";
 import { getProductStockStatus } from "@/lib/product-stock";
 
 export function createCatalog(catalogData: CatalogData, categoryData: CategoryData) {

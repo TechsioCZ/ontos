@@ -1,4 +1,4 @@
-import type { CatalogParameter, CatalogProductVariant } from "@/mock-storefront/types";
+import type { CatalogParameter, CatalogProductVariant } from "@/ontos/catalog-types";
 
 export const normalizeCatalogSearchTerm = (value: string) =>
   value

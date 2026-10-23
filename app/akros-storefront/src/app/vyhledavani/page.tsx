@@ -7,7 +7,7 @@ import { StorefrontShell } from "@/components/storefront-shell";
 import { cs } from "@/i18n/cs";
 import { getCatalogPage, type CatalogModel } from "@/ontos/catalog-server";
 import { placeholdersLast } from "@/ontos/search-suggestions";
-import type { CatalogProduct } from "@/mock-storefront/types";
+import type { CatalogProduct } from "@/ontos/catalog-types";
 
 export const metadata: Metadata = { title: cs.search.results };
 const productsPerPage = 24;

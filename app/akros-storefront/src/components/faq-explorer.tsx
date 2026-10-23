@@ -5,7 +5,7 @@ import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { Input } from "@techsio/ui-kit/atoms/input";
 import { Accordion } from "@techsio/ui-kit/molecules/accordion";
 
-import { faqGroups } from "@/mock-storefront/fixtures/content";
+import { faqGroups } from "@/content/editorial";
 
 const normalize = (value: string) =>
   value
