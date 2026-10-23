@@ -45,6 +45,10 @@ import type {
   ActionAuthorizationProvisioningClient,
   ActionAuthorizationProvisioningInput,
 } from '../../src/install/action-authorization-provisioning.ts';
+import {
+  BootstrapCompanyMembershipSchema,
+  installBootstrapCompanyMemberships,
+} from '../../src/install/context-bootstrap-shared.ts';
 import { ActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
 import { setCompanyMembershipAction } from '../../src/modules/actions/set-company-membership.action.ts';
 import { setScopedRoleMembershipAction } from '../../src/modules/actions/set-scoped-role-membership.action.ts';
@@ -871,4 +875,112 @@ it.live(
         .where(eq(applicationCompositionAuthority.revision, composition.revision))
         .pipe(Effect.asVoid);
     }).pipe(Effect.provide(Reactivity.layer)),
+);
+
+it.live(
+  'installs only explicit initial memberships and refuses reactivation, reclassification and partial fixtures',
+  () =>
+    Effect.gen(function* explicitBootstrapMemberships() {
+      const pair = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+      expect(pair.admin.database).toMatch(/^people_model_scratch_20261023_[0-9a-f]+$/u);
+      expect(pair.runtime.database).toBe(pair.admin.database);
+      const admin = yield* makeCoreDatabase(pair.admin);
+      const tenantId = randomUUID();
+      const legalEntityId = randomUUID();
+      const employee = randomUUID();
+      const external = randomUUID();
+      const agent = randomUUID();
+      const service = randomUUID();
+      const unselected = randomUUID();
+      yield* admin.executor.insert(tenants).values({
+        defaultLocale: 'en',
+        name: 'Owned bootstrap',
+        slug: `bootstrap-${tenantId}`,
+        status: 'active',
+        tenantId,
+      });
+      yield* admin.executor.insert(legalEntities).values({
+        legalEntityId,
+        legalName: 'Owned bootstrap',
+        registrationCountry: 'CZ',
+        registrationNumber: legalEntityId,
+        status: 'active',
+        tenantId,
+      });
+      yield* admin.executor.insert(principals).values([
+        ...[employee, external, unselected].map((principalId) => ({
+          displayName: 'Owned human',
+          kind: 'human' as const,
+          principalId,
+          status: 'active' as const,
+          tenantId,
+        })),
+        { displayName: 'Owned agent', kind: 'agent', principalId: agent, status: 'active', tenantId },
+        { displayName: 'Owned service', kind: 'service', principalId: service, status: 'active', tenantId },
+      ]);
+      const decode = Schema.decodeUnknownEffect(Schema.Array(BootstrapCompanyMembershipSchema));
+      const selected = yield* decode([
+        { affiliation: 'employee', legalEntityId, principalId: employee },
+        { affiliation: 'external', legalEntityId, principalId: external },
+        { affiliation: null, legalEntityId, principalId: agent },
+      ]);
+      const install = (memberships: readonly (typeof BootstrapCompanyMembershipSchema.Type)[]) =>
+        admin.executor.transaction((transaction) =>
+          installBootstrapCompanyMemberships(transaction, tenantId, memberships),
+        );
+      const rows = () =>
+        admin.executor
+          .select()
+          .from(principalCompanyMemberships)
+          .where(eq(principalCompanyMemberships.tenantId, tenantId));
+      yield* install([]);
+      expect(yield* rows()).toEqual([]);
+      yield* install(selected);
+      const original = yield* rows();
+      expect(original).toHaveLength(3);
+      expect(original.some((row) => row.principalId === unselected)).toBe(false);
+      yield* install(selected);
+      expect(yield* rows()).toEqual(original);
+      const invalid = yield* decode([
+        { affiliation: null, legalEntityId, principalId: service },
+        { affiliation: null, legalEntityId, principalId: employee },
+        { affiliation: 'employee', legalEntityId, principalId: agent },
+        { affiliation: 'employee', legalEntityId: randomUUID(), principalId: employee },
+        { affiliation: 'employee', legalEntityId, principalId: randomUUID() },
+        { affiliation: 'external', legalEntityId, principalId: employee },
+      ]);
+      yield* Effect.forEach(
+        invalid,
+        Effect.fn('BootstrapMembershipProof.rejectInvalid')(function* rejectInvalid(selection) {
+          expect((yield* Effect.result(install([selection])))._tag).toBe('Failure');
+          expect(yield* rows()).toEqual(original);
+        }),
+        { concurrency: 1, discard: true },
+      );
+      expect((yield* Effect.result(install([...selected, ...selected])))._tag).toBe('Failure');
+      const partial = yield* decode([
+        { affiliation: 'external', legalEntityId, principalId: unselected },
+        { affiliation: null, legalEntityId, principalId: service },
+      ]);
+      expect((yield* Effect.result(install(partial)))._tag).toBe('Failure');
+      expect(yield* rows()).toEqual(original);
+      yield* Effect.forEach(
+        ['invited', 'disabled', 'departed'] as const,
+        Effect.fn('BootstrapMembershipProof.preserveLifecycle')(function* preserveLifecycle(status) {
+          yield* admin.executor
+            .update(principalCompanyMemberships)
+            .set({ revision: 7, status })
+            .where(
+              and(
+                eq(principalCompanyMemberships.tenantId, tenantId),
+                eq(principalCompanyMemberships.principalId, employee),
+              ),
+            );
+          const before = yield* rows();
+          expect((yield* Effect.result(install(selected)))._tag).toBe('Failure');
+          expect(yield* rows()).toEqual(before);
+        }),
+        { concurrency: 1, discard: true },
+      );
+    }).pipe(Effect.scoped),
 );

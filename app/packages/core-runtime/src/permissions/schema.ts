@@ -43,7 +43,7 @@ definition tenant {
 // authentication namespace. It does not imply administrative lifecycle access.
 definition identity_namespace {
   relation tenant: tenant
-  relation provisioner: principal
+  relation provisioner: principal | scoped_role#member
   permission provision = provisioner & tenant->access
 }
 
@@ -76,8 +76,8 @@ definition module_access {
 
 definition resource {
   relation module: module_access
-  relation reader: principal
-  relation writer: principal
+  relation reader: principal | scoped_role#member
+  relation writer: principal | scoped_role#member
   permission read = (reader + module->read_all) & module->access
   permission write = (writer + module->write_all) & module->access
 }

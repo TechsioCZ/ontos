@@ -20,7 +20,7 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { NodeServices } from '@effect/platform-node';
+import { NodeHttpClient, NodeServices } from '@effect/platform-node';
 import { hashPassword } from 'better-auth/crypto';
 import {
   additionalDemoCompanies,
@@ -51,17 +51,22 @@ import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime
 import { legalEntities, principals, tenants } from '../../packages/core-runtime/src/db/schema.ts';
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { account, apikey, user } from '../../apps/shell-super-app/api/auth/db/schema.ts';
+import {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+} from '../../packages/core-runtime/src/modules/active-application-composition.ts';
+import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
+import { BootstrapCompanyMembershipSchema } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
 import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from '../siampark/reset-configuration.mts';
 import type { DemoResetChildEnvironment } from '../siampark/reset-configuration.mts';
 import { verificationAccount, verificationContext } from './verification-context.mts';
-import { setupAiProfiles } from './ai-profiles.mts';
-import { setupCrmPartyIntake } from './crm-party-intake.mts';
 import { demoId, demoLegalEntityId, demoTenantId, eshopDemoLegalEntityId } from './fixture-ids.mts';
 import {
   akrosStorefrontPrincipal,
   agentBotPrincipal,
   companyHumanAccounts,
+  demoCompanyMemberships,
   demoHumanAccounts,
   demoPermissionRelationships,
   storefrontPrincipal,
@@ -223,6 +228,7 @@ const ContextFixtureSchema = Schema.Struct({
       principalId: PrincipalIdSchema,
     }),
   ),
+  companyMemberships: Schema.optionalKey(Schema.Array(Schema.toEncoded(BootstrapCompanyMembershipSchema))),
   legalEntity: Schema.Struct({
     legalEntityId: LegalEntityIdSchema,
     legalName: Text,
@@ -241,6 +247,7 @@ const ContextFixtureSchema = Schema.Struct({
       resourceId: Schema.toEncoded(Text.pipe(Schema.brand('DemoResourceId'))),
       resourceType: Text,
       subjectId: Schema.toEncoded(Text.pipe(Schema.brand('DemoSubjectId'))),
+      subjectRelation: Schema.optionalKey(Text),
       subjectType: Text,
     }),
   ),
@@ -254,8 +261,12 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const actions = yield* discoverCurrentActions(root);
-  const relationships = demoPermissionRelationships(actions);
+  const source = yield* ActiveApplicationCompositionService;
+  const actions = yield* discoverCurrentActions(yield* source.load);
+  const relationships = yield* Effect.try({
+    catch: () => fail('Published scoped demo authorization policy is invalid'),
+    try: () => demoPermissionRelationships(actions),
+  });
   const demoContext = {
     accounts: allHumanAccounts.map(({ authBindingId, authUserId, displayName, principalId }) => ({
       authBindingId,
@@ -263,6 +274,7 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
       displayName,
       principalId,
     })),
+    companyMemberships: demoCompanyMemberships,
     legalEntity: {
       legalEntityId: demoLegalEntityId,
       legalName: 'Obchodní firma',
@@ -273,7 +285,7 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
     relationships,
     tenant: { defaultLocale: 'cs', displayName: 'OntOS DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
   };
-  for (const context of [demoContext, yield* verificationContext()]) {
+  for (const context of [demoContext, yield* verificationContext(actions)]) {
     const fixture = yield* Schema.encodeEffect(Schema.fromJsonString(ContextFixtureSchema))(context);
     const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'sales-demo-permissions-' });
     const file = path.join(directory, 'context.json');
@@ -340,14 +352,13 @@ const compositionRevision = (url: string) =>
     return composition.revision;
   }).pipe(Effect.option);
 
+const defaultBotTarget = { audience: BOT_KEY_AUDIENCE, legalEntityId: demoLegalEntityId };
+
 const keyWorks = (
   shellUrl: string,
   apiKey: Redacted.Redacted,
   revision: string,
-  target: { readonly audience: string; readonly legalEntityId: string } = {
-    audience: BOT_KEY_AUDIENCE,
-    legalEntityId: demoLegalEntityId,
-  },
+  target: { readonly audience: string; readonly legalEntityId: string } = defaultBotTarget,
 ) =>
   postJson(
     `${shellUrl}/shell-super-app-api/auth/api-key/gateway-context`,
@@ -422,12 +433,11 @@ export const ensureDemoCompanies = Effect.fn('DemoPermissions.ensureCompanies')(
   return yield* Console.log(`sales-demo companies: ${names} configured through audited Core Action`);
 });
 
+const defaultBotKey = { name: 'agent-bot', principalId: agentBotPrincipal.principalId };
+
 const issueBotKey = Effect.fn('DemoPermissions.issueBotKey')(function* issueBotKey(
   shellUrl: string,
-  key: { readonly name: string; readonly principalId: string } = {
-    name: 'agent-bot',
-    principalId: agentBotPrincipal.principalId,
-  },
+  key: { readonly name: string; readonly principalId: string } = defaultBotKey,
 ) {
   const signIn = yield* postJson(
     `${shellUrl}/shell-super-app-api/auth/sign-in`,
@@ -593,16 +603,6 @@ const main = (skipBot: boolean) =>
       yield* ensureBotKey(root);
       yield* liftBotKeyRateLimit;
     }
-    // AI principals A/B (ai-ab lane); a failure there must not hide the company and persona setup above.
-    yield* setupAiProfiles(root, environment, { skipKeys: skipBot }).pipe(
-      Effect.catch((failure) => Console.error(`ai-profiles failed (${String(failure)}); companies are configured`)),
-    );
-    // CRM.md §3: the CRM server's governed Party Registry intake principal (salespeople's new clients get an identity).
-    yield* setupCrmPartyIntake(root, environment, { skipKeys: skipBot }).pipe(
-      Effect.catch((failure) =>
-        Console.error(`crm-party-intake failed (${String(failure)}); companies are configured`),
-      ),
-    );
   });
 
 const environmentLive = ConfigProvider.layer(
@@ -622,6 +622,10 @@ const adminDatabaseConfigLive = Layer.effect(
 const servicesLive = Layer.mergeAll(
   AuthDatabaseFromDatabaseConfigLive.pipe(Layer.provide(adminDatabaseConfigLive)),
   FetchHttpClient.layer,
+  ActiveApplicationCompositionConfigLive.pipe(
+    Layer.provide(ActiveApplicationCompositionSourceLive),
+    Layer.provide(NodeHttpClient.layerUndici),
+  ),
 );
 
 const command = Command.make(

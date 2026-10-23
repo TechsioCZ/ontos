@@ -16,7 +16,11 @@ import {
   searchProjectionGenerations,
   searchProjectionRebuilds,
 } from '../src/db/schema.ts';
-import { bootstrapRelationshipRequest } from '../src/install/context-bootstrap-shared.ts';
+import {
+  BootstrapCompanyMembershipSchema,
+  bootstrapRelationshipRequest,
+  installBootstrapCompanyMemberships,
+} from '../src/install/context-bootstrap-shared.ts';
 import { loadSpiceDbConfig } from '../src/permissions/config.ts';
 import { openSpiceDbGrpcRpc } from '../src/permissions/spicedb-grpc-rpc.ts';
 
@@ -53,6 +57,7 @@ const FixtureSchema = Schema.Struct({
       principalId: PrincipalIdSchema,
     }),
   ),
+  companyMemberships: Schema.optionalKey(Schema.Array(BootstrapCompanyMembershipSchema)),
   legalEntity: Schema.Struct({
     legalEntityId: LegalEntityIdSchema,
     legalName: Text,
@@ -290,6 +295,7 @@ const main = (input: typeof FixtureSchema.Type) =>
             })
             .onConflictDoNothing();
         }
+        yield* installBootstrapCompanyMemberships(transaction, input.tenant.tenantId, input.companyMemberships ?? []);
         for (const module of input.modules) {
           yield* transaction
             .insert(tenantModuleStates)

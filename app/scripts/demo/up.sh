@@ -27,6 +27,7 @@ STAMP_DIR="$SCRATCH/demo-build"
 STUB_DIR="$SCRATCH/demo-bin"
 # Not Siampark's 3031: on the demo machine launchd still owns 3031 for the old Siampark composition service.
 COMPOSITION_PORT="${DEMO_COMPOSITION_PORT:-3041}"
+export ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL="http://127.0.0.1:$COMPOSITION_PORT/active"
 SHELL_PORT=3020
 STOREFRONT_PORT=3060
 BUILD_JOBS="${DEMO_BUILD_JOBS:-2}"
@@ -157,10 +158,6 @@ else
   pnpm_ db:verify >"$LOG_DIR/db-verify.log" 2>&1 ||
     say "WARN db:verify failed (placeholder seeds?): $(grep -E "failed|must" "$LOG_DIR/db-verify.log" | tail -2 | tr "\n" " ")"
 fi
-# `pnpm authorization:provision-current-actions` always fails in development: it records no assertions for
-# explicit Actions (every apply-command is explicit). The demo wrapper derives them for demo@test.com.
-step authorization-provision "${WITH_ENV[@]}" node scripts/demo/provision-actions.mts
-
 # 4. Native development builds, only when missing, stale, or forced.
 SHARED_SOURCE_DIGEST="$(node "$APP/scripts/demo/shared-build-source-digest.mts")"
 needs_build() {
@@ -276,7 +273,7 @@ step company-membership-hygiene "${WITH_ENV[@]}" node scripts/demo/company-membe
 step navigation-exclusions "${WITH_ENV[@]}" node scripts/demo/navigation-exclusions.mts
 # What each demo company says about itself on Home (core.legal_entities.welcome).
 step company-welcome "${WITH_ENV[@]}" node scripts/demo/company-welcome.mts
-# reset-permissions deliberately logs AI errors without failing; this explicit step makes a cold start honest.
+# AI setup is a separate fail-closed native audited operation, never a best-effort reset side effect.
 step ai-profiles pnpm_ demo:ai-profiles
 # Agentní entity: one presentable agent per company through the shell's admin endpoint (idempotent by name).
 step seed-agent-entities env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" node scripts/demo/seed-agent-entities.mts

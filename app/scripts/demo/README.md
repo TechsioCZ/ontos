@@ -19,9 +19,8 @@ Local only. Nothing here deploys. Run everything from `app/`.
    This starts `ontos-demo-db` (Postgres 18) and `ontos-demo-spicedb` (in-memory) in a separate
    project with its own `ontos_demo_postgres_data` volume.
 3. `pnpm db:migrate`, `pnpm local:initialize`, `pnpm demo:reset`, `pnpm demo:reset:sales`
-   (including the CRM and Siampark operations owner seeds), `pnpm demo:seed:eshop`, `pnpm db:verify`, and
-   `node scripts/demo/provision-actions.mts` (development replacement for
-   `pnpm authorization:provision-current-actions`, see Known issues).
+   (including the CRM and Siampark operations owner seeds), `pnpm demo:seed:eshop`, and `pnpm db:verify`.
+   Early fixtures create identities and data, not Action execution grants.
 4. Native builds of the shell and each selected vertical, run only when an app has no build or its
    sources (or `packages/`, or the lockfile) changed since its last build. At most two native builds run
    concurrently (`DEMO_BUILD_JOBS`); the standalone storefront is built separately.
@@ -48,34 +47,34 @@ Every step and server writes a log to `app/.scratch/demo-logs/<name>.log` (gitig
 
 ### Options
 
-| Variable                | Default                                                                           | Effect                                                                                                                                         |
-| ----------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DEMO_VERTICALS`        | `party-registry property-portfolio property-leasing legal-agreements work-tasks finance-billing commerce-customer-context workforce tagging sales-pipeline merchandise sales-insights crm facility-operations` | Verticals to build, serve and compose. Takes vertical IDs from `topology/reference-topology.json`, separated by spaces or commas.              |
-| `DEMO_REBUILD=1`        | off                                                                               | Rebuilds every selected app.                                                                                                                   |
-| `DEMO_RESET=0`          | on                                                                                | Skips all data resets and rental/CRM/operations/e-shop seeds; re-applies demo account grants and AI profiles. Use the default reset after a fresh in-memory SpiceDB restart to restore baseline resource grants. |
-| `DEMO_COMPOSITION_PORT` | `3041`                                                                            | Composition publisher port.                                                                                                                    |
+| Variable                | Default                                                                                                                                                                                                        | Effect                                                                                                                                                                                                           |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DEMO_VERTICALS`        | `party-registry property-portfolio property-leasing legal-agreements work-tasks finance-billing commerce-customer-context workforce tagging sales-pipeline merchandise sales-insights crm facility-operations` | Verticals to build, serve and compose. Takes vertical IDs from `topology/reference-topology.json`, separated by spaces or commas.                                                                                |
+| `DEMO_REBUILD=1`        | off                                                                                                                                                                                                            | Rebuilds every selected app.                                                                                                                                                                                     |
+| `DEMO_RESET=0`          | on                                                                                                                                                                                                             | Skips all data resets and rental/CRM/operations/e-shop seeds; re-applies demo account grants and AI profiles. Use the default reset after a fresh in-memory SpiceDB restart to restore baseline resource grants. |
+| `DEMO_COMPOSITION_PORT` | `3041`                                                                                                                                                                                                         | Composition publisher port.                                                                                                                                                                                      |
 
 Example: `DEMO_VERTICALS="party-registry work-tasks finance-billing commerce-customer-context workforce tagging" ./scripts/demo/up.sh`.
 The composition publisher reads the same list through `ONTOS_DEMO_VERTICALS`.
 
 ## Ports
 
-| Port            | Service                                                                                                |
-| --------------- | ------------------------------------------------------------------------------------------------------ |
-| 3020            | Shell: http://localhost:3020/cs                                                                        |
-| 3041            | Development composition (`/active`). Siampark used 3031, but launchd still holds 3031 on this machine. |
-| 3060            | Kavárna Doma customer storefront + server-only BFF |
-| 4125 / 4126     | CRM / facility operations |
-| 4101            | commerce-customer-context (API only)                                                                   |
-| 4102            | party-registry                                                                                         |
-| 4117            | work-tasks                                                                                          |
-| 4118            | finance-billing                                                                               |
-| 4114–4116, 4119 | property-portfolio / property-leasing / legal-agreements (started by default), crm-activities (not started)                    |
-| 1025 / 8025     | Mailpit: SMTP (127.0.0.1 only) / web UI + API http://localhost:8025 |
-| 1026 / 8026     | Test Mailpit (test/QA recipients only): SMTP / web UI + API http://localhost:8026 |
-| 3096            | E-mail dispatcher: read-only delivery receipts (127.0.0.1) |
-| 5433            | Postgres (`siampark_demo` database, admin `ontos_admin`)                                               |
-| 50051 / 8443    | SpiceDB gRPC / HTTP (TLS)                                                                              |
+| Port            | Service                                                                                                     |
+| --------------- | ----------------------------------------------------------------------------------------------------------- |
+| 3020            | Shell: http://localhost:3020/cs                                                                             |
+| 3041            | Development composition (`/active`). Siampark used 3031, but launchd still holds 3031 on this machine.      |
+| 3060            | Kavárna Doma customer storefront + server-only BFF                                                          |
+| 4125 / 4126     | CRM / facility operations                                                                                   |
+| 4101            | commerce-customer-context (API only)                                                                        |
+| 4102            | party-registry                                                                                              |
+| 4117            | work-tasks                                                                                                  |
+| 4118            | finance-billing                                                                                             |
+| 4114–4116, 4119 | property-portfolio / property-leasing / legal-agreements (started by default), crm-activities (not started) |
+| 1025 / 8025     | Mailpit: SMTP (127.0.0.1 only) / web UI + API http://localhost:8025                                         |
+| 1026 / 8026     | Test Mailpit (test/QA recipients only): SMTP / web UI + API http://localhost:8026                           |
+| 3096            | E-mail dispatcher: read-only delivery receipts (127.0.0.1)                                                  |
+| 5433            | Postgres (`siampark_demo` database, admin `ontos_admin`)                                                    |
+| 50051 / 8443    | SpiceDB gRPC / HTTP (TLS)                                                                                   |
 
 ## Real e-mail (SMTP, Mailpit)
 
@@ -127,27 +126,27 @@ Who may read receipts (`GET /v1/deliveries`, never addresses or bodies):
 - AKROS storefront (server-side BFF `/api/ontos/order-emails`): the order number AND the e-mail the order was
   placed with (`recipient`) must both match, so other customers' orders cannot be enumerated.
 
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `SMTP_HOST` | `127.0.0.1` | SMTP server |
-| `SMTP_PORT` | `1025` | SMTP port (Mailpit) |
-| `SMTP_SECURE` | `false` | `true` = implicit TLS (normally port 465). STARTTLS (587) is not supported. |
-| `SMTP_USER` / `SMTP_PASSWORD` | – | AUTH PLAIN; only accepted together with `SMTP_SECURE=true` |
-| `SMTP_TIMEOUT_MS` | `10000` | Socket timeout per attempt |
-| `SMTP_FROM` | – | Sender address for every company without its own variable below (the display name stays the company's, e.g. `Obchodní firma – účtárna <noreply@vase-domena.cz>`). Unset → the built-in demo addresses. |
-| `AKROS_EMAIL_FROM` | `AKROS e-shop <eshop@akros.demo>` | Sender of AKROS order e-mails |
-| `SIAMPARK_EMAIL_FROM` | `Siampark – finanční oddělení <finance@siampark.demo>` | Sender of Siampark payment reminders |
-| `OBCHODNI_FIRMA_EMAIL_FROM` | `Obchodní firma – účtárna <ucetni@demo.ontos>` | Sender of Obchodní firma payment reminders |
-| `EMAIL_TEST_SMTP_HOST` / `EMAIL_TEST_SMTP_PORT` | `127.0.0.1` / `1026` | Test capture for test/QA recipients (second Mailpit); `none` = send them to `SMTP_HOST` too |
-| `EMAIL_PROVIDER` | `smtp` | `none` = no e-mail provider configured: nothing is sent, the UI offers only copy/download |
-| `SIAMPARK_AGENDA_EMAIL_FROM` | `Siampark – upozornění <provoz@siampark.demo>` | Sender of Siampark agenda notifications |
-| `ONTOS_PUBLIC_URL` | `http://localhost:3020` | Links to the staff app in agenda e-mails |
-| `EMAIL_DISPATCHER_SESSION_URL` | `http://127.0.0.1:3020/shell-super-app-api/auth/session` | Shell session check for staff receipt reads |
-| `AKROS_STOREFRONT_PUBLIC_URL` | `http://localhost:3070` | Link in AKROS e-mails |
-| `EMAIL_DISPATCHER_PORT` | `3096` | Receipts API (127.0.0.1 only) |
-| `EMAIL_DISPATCHER_INTERVAL_MS` | `2000` | Poll interval |
-| `EMAIL_DISPATCHER_ALLOWED_ORIGINS` | `http://localhost:3020,http://127.0.0.1:3020` | CORS origins of the staff app |
-| `EMAIL_DISPATCHER_URL` | `http://127.0.0.1:3096` | Used server-side by the AKROS storefront |
+| Variable                                        | Default                                                  | Meaning                                                                                                                                                                                                |
+| ----------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `SMTP_HOST`                                     | `127.0.0.1`                                              | SMTP server                                                                                                                                                                                            |
+| `SMTP_PORT`                                     | `1025`                                                   | SMTP port (Mailpit)                                                                                                                                                                                    |
+| `SMTP_SECURE`                                   | `false`                                                  | `true` = implicit TLS (normally port 465). STARTTLS (587) is not supported.                                                                                                                            |
+| `SMTP_USER` / `SMTP_PASSWORD`                   | –                                                        | AUTH PLAIN; only accepted together with `SMTP_SECURE=true`                                                                                                                                             |
+| `SMTP_TIMEOUT_MS`                               | `10000`                                                  | Socket timeout per attempt                                                                                                                                                                             |
+| `SMTP_FROM`                                     | –                                                        | Sender address for every company without its own variable below (the display name stays the company's, e.g. `Obchodní firma – účtárna <noreply@vase-domena.cz>`). Unset → the built-in demo addresses. |
+| `AKROS_EMAIL_FROM`                              | `AKROS e-shop <eshop@akros.demo>`                        | Sender of AKROS order e-mails                                                                                                                                                                          |
+| `SIAMPARK_EMAIL_FROM`                           | `Siampark – finanční oddělení <finance@siampark.demo>`   | Sender of Siampark payment reminders                                                                                                                                                                   |
+| `OBCHODNI_FIRMA_EMAIL_FROM`                     | `Obchodní firma – účtárna <ucetni@demo.ontos>`           | Sender of Obchodní firma payment reminders                                                                                                                                                             |
+| `EMAIL_TEST_SMTP_HOST` / `EMAIL_TEST_SMTP_PORT` | `127.0.0.1` / `1026`                                     | Test capture for test/QA recipients (second Mailpit); `none` = send them to `SMTP_HOST` too                                                                                                            |
+| `EMAIL_PROVIDER`                                | `smtp`                                                   | `none` = no e-mail provider configured: nothing is sent, the UI offers only copy/download                                                                                                              |
+| `SIAMPARK_AGENDA_EMAIL_FROM`                    | `Siampark – upozornění <provoz@siampark.demo>`           | Sender of Siampark agenda notifications                                                                                                                                                                |
+| `ONTOS_PUBLIC_URL`                              | `http://localhost:3020`                                  | Links to the staff app in agenda e-mails                                                                                                                                                               |
+| `EMAIL_DISPATCHER_SESSION_URL`                  | `http://127.0.0.1:3020/shell-super-app-api/auth/session` | Shell session check for staff receipt reads                                                                                                                                                            |
+| `AKROS_STOREFRONT_PUBLIC_URL`                   | `http://localhost:3070`                                  | Link in AKROS e-mails                                                                                                                                                                                  |
+| `EMAIL_DISPATCHER_PORT`                         | `3096`                                                   | Receipts API (127.0.0.1 only)                                                                                                                                                                          |
+| `EMAIL_DISPATCHER_INTERVAL_MS`                  | `2000`                                                   | Poll interval                                                                                                                                                                                          |
+| `EMAIL_DISPATCHER_ALLOWED_ORIGINS`              | `http://localhost:3020,http://127.0.0.1:3020`            | CORS origins of the staff app                                                                                                                                                                          |
+| `EMAIL_DISPATCHER_URL`                          | `http://127.0.0.1:3096`                                  | Used server-side by the AKROS storefront                                                                                                                                                               |
 
 A real SMTP server is configuration only: put e.g. `SMTP_HOST=smtp.vase-domena.cz`, `SMTP_PORT=465`,
 `SMTP_SECURE=true`, `SMTP_USER=…`, `SMTP_PASSWORD=…`, `SMTP_FROM=noreply@vase-domena.cz` (one verified sender
@@ -322,12 +321,11 @@ date is 2026-10-05.
 
 ## Known issues
 
-- `pnpm authorization:provision-current-actions` always fails in development with
-  `action_authorization_input_invalid: Each explicit Action requires unique recorded allowed and denied
-verification assertions`. Its development target passes no explicit assertions, but every Action with
-  `provisioning: 'explicit'` (all apply-commands, several core identity Actions) needs one. `up.sh` runs
-  `scripts/demo/provision-actions.mts` instead, which derives them and grants every explicit Action to
-  `demo@test.com`.
+- `pnpm authorization:provision-current-actions` requires an owner-only v3 policy file through
+  `ONTOS_STAGE_ACCOUNTS_FILE` in development as well as stage. Its default is a read-only dry run;
+  apply requires the reviewed `ONTOS_AUTHORIZATION_PLAN_SHA256`. It refuses legacy/global policy.
+  The local `up.sh` installs explicit scoped demo policy only after composition publication through
+  `reset-permissions.mts`; no blanket `demo@test.com` Action grants are created.
 - The shell signs sessions into `__Secure-better-auth.session_token`, but the API-key Better Auth instance
   reads `better-auth.session_token` over plain http. Issuing an API key from a browser session on
   `http://localhost` therefore returns 401. `reset-permissions.mts` sends the session under both names.
