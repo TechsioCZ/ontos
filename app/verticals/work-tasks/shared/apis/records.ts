@@ -79,7 +79,7 @@ export const StorefrontInquirySchema = Schema.Struct({
   email: Schema.Trim.check(Schema.isMaxLength(254), Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/u)),
   subject: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(160)),
   message: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(1500)),
-  productId: Schema.optionalKey(Schema.String.check(Schema.isUUID())),
+  productId: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
   productSlug: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
   productName: Schema.optionalKey(Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
 });

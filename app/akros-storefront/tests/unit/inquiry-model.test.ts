@@ -19,12 +19,16 @@ describe("governed inquiry input", () => {
       }),
     ).toEqual(inquiry);
   });
-  it("requires a real product identity for a product inquiry", () => {
+  it("accepts bounded opaque catalog identities, not only UUIDs, for a product inquiry", () => {
     expect(parseInquirySubmission({ ...inquiry, kind: "PRODUCT_QUESTION" })).toBeNull();
-    expect(
-      parseInquirySubmission({ ...inquiry, kind: "PRODUCT_QUESTION", productId: inquiry.requestId })
-        ?.productId,
-    ).toBe(inquiry.requestId);
+    for (const productId of ["akros-product-fh-ii", inquiry.requestId]) {
+      expect(
+        parseInquirySubmission({ ...inquiry, kind: "PRODUCT_QUESTION", productId })?.productId,
+      ).toBe(productId);
+    }
+    for (const productId of ["", " ", "p".repeat(301), 123]) {
+      expect(parseInquirySubmission({ ...inquiry, kind: "PRODUCT_QUESTION", productId })).toBeNull();
+    }
     expect(parseInquirySubmission({ ...inquiry, productId: inquiry.requestId })).toBeNull();
   });
   it("refuses invalid email, missing replay identity and oversized messages", () => {

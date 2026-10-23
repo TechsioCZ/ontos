@@ -31,7 +31,9 @@ export function parseInquirySubmission(value: unknown): InquirySubmission | null
     subject === null ||
     message === null ||
     (item.productId !== undefined &&
-      (typeof item.productId !== "string" || !uuid.test(item.productId))) ||
+      (typeof item.productId !== "string" ||
+        item.productId.trim().length === 0 ||
+        item.productId.length > 300)) ||
     (item.kind === "PRODUCT_QUESTION" && item.productId === undefined) ||
     (item.kind !== "PRODUCT_QUESTION" && item.productId !== undefined)
   )

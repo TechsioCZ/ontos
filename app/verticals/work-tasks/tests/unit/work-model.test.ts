@@ -260,7 +260,7 @@ it.effect('retains a real storefront inquiry as an actionable task with its prod
       kind: 'PRODUCT_QUESTION',
       message: 'Prosím o potvrzení jakosti.',
       name: 'Pavel Dvořák',
-      productId: '97672670-44ed-4de3-915d-e40e2cebe991',
+      productId: 'akros-product-fh-ii',
       productName: 'Šroub A4',
       productSlug: 'sroub',
       requestId: '97672670-44ed-4de3-915d-e40e2cebe99c',
