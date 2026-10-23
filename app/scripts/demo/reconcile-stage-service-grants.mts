@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Stage-only additive service grants. No accounts, keys, schema or database writes. */
+/** Stage-only additive service grants and native isolated verification account provisioning. */
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { Config, Console, Effect, Exit, Layer, Option, Redacted, Schema } from 'effect';
@@ -23,6 +23,8 @@ import {
 import { akrosDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
 import { akrosStorefrontPrincipal, eshopDemoRoles, principalRelationships } from './permissions.mts';
 import type { DemoAction } from './permissions.mts';
+import { ensureStageVerification } from './ensure-stage-verification.mts';
+import { verificationContext } from './verification-context.mts';
 
 export class ServiceGrantError extends Schema.TaggedError<ServiceGrantError>()('ServiceGrantError', {
   reason: Schema.String,
@@ -53,19 +55,27 @@ const relationshipFrom = (
     resource: { objectId: resourceId, objectType: resourceType },
     subject: { object: { objectId: subjectId, objectType: subjectType } },
   });
-const requestFor = (relationship: v1.Relationship) =>
-  v1.ReadRelationshipsRequest.create({
-    consistency: consistent,
-    relationshipFilter: v1.RelationshipFilter.create({
-      optionalRelation: relationship.relation,
-      optionalResourceId: relationship.resource?.objectId,
-      optionalSubjectFilter: v1.SubjectFilter.create({
-        optionalSubjectId: relationship.subject?.object?.objectId,
-        subjectType: relationship.subject?.object?.objectType,
+const requestFor = (relationship: v1.Relationship) => {
+  const { resource } = relationship;
+  const subject = relationship.subject?.object;
+  if (resource === undefined || subject === undefined || resource.objectId === '' || subject.objectId === '') {
+    return Effect.fail(new ServiceGrantError({ reason: 'Refusing an unscoped authorization relationship read' }));
+  }
+  return Effect.succeed(
+    v1.ReadRelationshipsRequest.create({
+      consistency: consistent,
+      relationshipFilter: v1.RelationshipFilter.create({
+        optionalRelation: relationship.relation,
+        optionalResourceId: resource.objectId,
+        optionalSubjectFilter: v1.SubjectFilter.create({
+          optionalSubjectId: subject.objectId,
+          subjectType: subject.objectType,
+        }),
+        resourceType: resource.objectType,
       }),
-      resourceType: relationship.resource?.objectType,
     }),
-  });
+  );
+};
 const isPresent = (rows: readonly v1.ReadRelationshipsResponse[], expected: v1.Relationship) =>
   rows.some(
     ({ relationship }) =>
@@ -122,7 +132,7 @@ export const reconcileServiceGrants = Effect.fn('Stage.reconcileServiceGrants')(
   }
   // Fail before any writes if an existing service principal has no unconditional company membership.
   for (const membership of memberships) {
-    if (!isPresent(yield* rpc.readRelationships(requestFor(membership)), membership)) {
+    if (!isPresent(yield* rpc.readRelationships(yield* requestFor(membership)), membership)) {
       return yield* new ServiceGrantError({
         reason: `Initial service membership is missing for ${membership.subject?.object?.objectId}; no grants changed`,
       });
@@ -130,7 +140,7 @@ export const reconcileServiceGrants = Effect.fn('Stage.reconcileServiceGrants')(
   }
   const missing: v1.Relationship[] = [];
   for (const relationship of desired) {
-    if (!isPresent(yield* rpc.readRelationships(requestFor(relationship)), relationship)) {
+    if (!isPresent(yield* rpc.readRelationships(yield* requestFor(relationship)), relationship)) {
       missing.push(relationship);
     }
   }
@@ -149,7 +159,7 @@ export const reconcileServiceGrants = Effect.fn('Stage.reconcileServiceGrants')(
     }),
   );
   for (const relationship of desired) {
-    if (!isPresent(yield* rpc.readRelationships(requestFor(relationship)), relationship)) {
+    if (!isPresent(yield* rpc.readRelationships(yield* requestFor(relationship)), relationship)) {
       return yield* new ServiceGrantError({ reason: 'A service grant could not be verified after apply' });
     }
   }
@@ -197,7 +207,9 @@ type ReconciliationFailure =
   | Effect.Error<ReturnType<typeof reconcileServiceGrants>>
   | Effect.Error<typeof zeropsConfiguration>
   | Effect.Error<typeof environmentConfiguration>
-  | Effect.Error<ReturnType<typeof discoverCurrentActions>>;
+  | Effect.Error<ReturnType<typeof discoverCurrentActions>>
+  | Effect.Error<ReturnType<typeof ensureStageVerification>>
+  | Effect.Error<ReturnType<typeof verificationContext>>;
 const reportFailure = (error: ReconciliationFailure) =>
   Console.error(
     Schema.is(ServiceGrantError)(error)
@@ -238,7 +250,15 @@ const command = Command.make(
         } else if (verify) {
           mode = 'verify';
         }
-        return yield* reconcileServiceGrants(rpc, desiredServiceGrants(actions), mode);
+        // Check/verify stay read-only; only apply invokes the guarded native stage installer.
+        if (mode === 'apply') {
+          yield* ensureStageVerification(configuration);
+        }
+        const verification = yield* verificationContext();
+        const verificationGrants = verification.relationships.map((item) =>
+          relationshipFrom(item.resourceType, item.resourceId, item.relation, item.subjectType, item.subjectId),
+        );
+        return yield* reconcileServiceGrants(rpc, [...desiredServiceGrants(actions), ...verificationGrants], mode);
       }),
     ).pipe(Effect.tapError(reportFailure)),
 );

@@ -9,6 +9,8 @@ export const E2E = {
   shotsDir: env.E2E_SHOTS_DIR ?? '/Volumes/TraceDecayKingston/techsio-demo/v2/shots/mcp-oauth-e2e',
 } as const;
 
+export const VERIFICATION_PERSONA = 'verification@ci.ontos';
+
 export const PERSONA = 'management@siampark.demo';
 
 /** Company administrator of Obchodní firma; operator of its seeded AI agents (variant 2 acts as agent B). */

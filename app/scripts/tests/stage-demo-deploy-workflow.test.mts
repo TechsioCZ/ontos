@@ -8,6 +8,7 @@ import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
 const StepSchema = Schema.Struct({
+  'continue-on-error': Schema.optionalKey(Schema.Boolean),
   env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   id: Schema.optionalKey(Schema.String),
   if: Schema.optionalKey(Schema.String),
@@ -21,6 +22,7 @@ const WorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
     release: Schema.Struct({ steps: Schema.Array(StepSchema) }),
     'release-script-tests': Schema.Struct({ steps: Schema.Array(StepSchema) }),
+    verify: Schema.Struct({ steps: Schema.Array(StepSchema) }),
   }),
 });
 const readJobs = () =>
@@ -66,7 +68,14 @@ it('migrates the Commerce portal realm with the runtime and administrator databa
 
 it('runs this workflow test with the release script tests that gate the release job', () => {
   const tests = readJobs()['release-script-tests'].steps.find(({ run }) => run?.includes('rstest') === true);
-  expect(tests?.run).toContain('scripts/tests/stage-demo-deploy-workflow.test.mts');
+  for (const name of [
+    'stage-demo-deploy-workflow',
+    'reconcile-stage-service-grants',
+    'verification-context',
+    'mcp-proof-transport',
+  ]) {
+    expect(tests?.run).toContain(`scripts/tests/${name}.test.mts`);
+  }
 });
 
 it('publishes rebuilt contracts before replacing running demo processes, but starts new artifact endpoints first', () => {
@@ -259,3 +268,38 @@ it.effect(
       }),
     ).pipe(Effect.provide(OpsShellLive.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
+
+it('keeps the real MCP propose/reject proof outside every customer demo tenant', () => {
+  const proof = readJobs().verify.steps.find(({ run }) => run?.includes('prove-mcp-oauth.mts') === true);
+  expect(proof?.run).toContain('--variant=1 --verification');
+  expect(proof?.run).not.toContain('--variant=all');
+  expect(proof?.run).not.toContain('--keep');
+});
+
+it('reconciles service grants and the isolated verification context after migrations and before publication', () => {
+  const { steps } = readJobs().release;
+  const name = 'Reconcile storefront, Commerce and Privacy service grants';
+  const reconcile = steps.find((step) => step.name === name);
+  expect(indexOf(steps, name)).toBeGreaterThan(indexOf(steps, MIGRATE));
+  expect(indexOf(steps, name)).toBeLessThan(indexOf(steps, 'Upload every immutable release Worker'));
+  expect(reconcile?.if).toBeUndefined();
+  expect(reconcile?.['continue-on-error']).toBeUndefined();
+  expect(reconcile?.env?.ZEROPS_TOKEN).toBe(secretReference('ZEROPS_TOKEN'));
+  expect(reconcile?.env?.BETTER_AUTH_URL).toBe(['${{', 'env.STAGE_SHELL_URL', '}}'].join(' '));
+  expect(reconcile?.env?.BETTER_AUTH_SECRET).toContain(
+    "fromJSON(secrets.DEMO_IMMUTABLE_RELEASE_SECRETS)['shell-super-app'].BETTER_AUTH_SECRET",
+  );
+  expect(reconcile?.run?.match(/--zerops --(?:check|apply|verify)/gu)).toEqual([
+    '--zerops --check',
+    '--zerops --apply',
+    '--zerops --verify',
+  ]);
+  const script = readFileSync(new URL('../demo/reconcile-stage-service-grants.mts', import.meta.url), 'utf-8');
+  expect(script).toContain("if (mode === 'apply') {\n          yield* ensureStageVerification(configuration);");
+  expect(script).toContain('...verificationGrants');
+  const bootstrap = readFileSync(new URL('../demo/ensure-stage-verification.mts', import.meta.url), 'utf-8');
+  expect(bootstrap).toContain('apps/shell-super-app/scripts/bootstrap-stage-accounts.mts');
+  expect(bootstrap).toContain('mode: 0o600');
+  expect(bootstrap).toContain('makeTempDirectoryScoped');
+  expect(bootstrap).not.toContain('bootstrap-context.mts');
+});

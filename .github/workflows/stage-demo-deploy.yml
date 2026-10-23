@@ -214,6 +214,9 @@ jobs:
           scripts/tests/immutable-application-release.test.mts
           scripts/tests/immutable-shell-release.test.mts
           scripts/tests/stage-demo-deploy-workflow.test.mts
+          scripts/tests/reconcile-stage-service-grants.test.mts
+          scripts/tests/verification-context.test.mts
+          scripts/tests/mcp-proof-transport.test.mts
 
   build-storefront:
     name: Build akros-storefront
@@ -347,6 +350,8 @@ jobs:
         env:
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          BETTER_AUTH_URL: ${{ env.STAGE_SHELL_URL }}
+          BETTER_AUTH_SECRET: ${{ fromJSON(secrets.DEMO_IMMUTABLE_RELEASE_SECRETS)['shell-super-app'].BETTER_AUTH_SECRET }}
         run: |
           mise exec -- pnpm exec node scripts/demo/reconcile-stage-service-grants.mts --zerops --check
           mise exec -- pnpm exec node scripts/demo/reconcile-stage-service-grants.mts --zerops --apply
@@ -634,7 +639,7 @@ jobs:
         run: |
           E2E_PLAYWRIGHT_MODULE="$(cd apps/shell-super-app && mise exec -- node -p "require.resolve('@playwright/test')")"
           export E2E_PLAYWRIGHT_MODULE
-          mise exec -- node scripts/demo/prove-mcp-oauth.mts --variant=all
+          mise exec -- node scripts/demo/prove-mcp-oauth.mts --variant=1 --verification
 
       - name: Upload the MCP OAuth proof
         if: always()

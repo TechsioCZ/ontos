@@ -94,3 +94,16 @@ it.effect('a conditional membership never authorizes reconciliation', () =>
     expect(state.writes).toHaveLength(0);
   }),
 );
+
+it.effect('rejects malformed desired relationships instead of issuing a broad authorization read', () =>
+  Effect.gen(function* refusesUnscopedRead() {
+    const state = memoryRelationships(serviceGrantMemberships());
+    const error = yield* reconcileServiceGrants(
+      state.rpc,
+      [v1.Relationship.create({ relation: 'member' })],
+      'apply',
+    ).pipe(Effect.flip);
+    expect(Schema.is(ServiceGrantError)(error)).toBe(true);
+    expect(state.writes).toHaveLength(0);
+  }),
+);

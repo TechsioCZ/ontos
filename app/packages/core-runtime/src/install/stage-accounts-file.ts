@@ -73,7 +73,7 @@ const StageRetiredTenantSchema = Schema.Struct({
  * The operator stage accounts file. Its values never enter source control; only this shape does.
  * The number of Tenants and accounts, their identifiers, and their grants are all data.
  */
-const StageAccountsFileSchema = Schema.Struct({
+export const StageAccountsFileSchema = Schema.Struct({
   retiredAccountEmails: Schema.Array(AccountEmailSchema),
   retiredTenants: Schema.Array(StageRetiredTenantSchema),
   schemaVersion: Schema.Literal(2),

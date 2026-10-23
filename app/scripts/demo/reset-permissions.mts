@@ -54,6 +54,7 @@ import { account, apikey, user } from '../../apps/shell-super-app/api/auth/db/sc
 import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
 import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from '../siampark/reset-configuration.mts';
 import type { DemoResetChildEnvironment } from '../siampark/reset-configuration.mts';
+import { verificationAccount, verificationContext } from './verification-context.mts';
 import { setupAiProfiles } from './ai-profiles.mts';
 import { setupCrmPartyIntake } from './crm-party-intake.mts';
 import { demoId, demoLegalEntityId, demoTenantId, eshopDemoLegalEntityId } from './fixture-ids.mts';
@@ -138,7 +139,7 @@ const upsertIdentityRows = Effect.gen(function* upsertIdentityRows() {
           })
           .onConflictDoNothing();
       }
-      for (const row of allHumanAccounts) {
+      for (const row of [...allHumanAccounts, verificationAccount]) {
         yield* transaction
           .insert(user)
           .values({ banned: false, email: row.email, emailVerified: true, id: row.authUserId, name: row.displayName })
@@ -255,7 +256,7 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
   const path = yield* Path.Path;
   const actions = yield* discoverCurrentActions(root);
   const relationships = demoPermissionRelationships(actions);
-  const fixture = yield* Schema.encodeEffect(Schema.fromJsonString(ContextFixtureSchema))({
+  const demoContext = {
     accounts: allHumanAccounts.map(({ authBindingId, authUserId, displayName, principalId }) => ({
       authBindingId,
       authUserId,
@@ -271,26 +272,29 @@ const runBootstrapPort = Effect.fn('DemoPermissions.bootstrap')(function* runBoo
     modules: [crmModuleState, facilityOperationsModuleState, privacyModuleState],
     relationships,
     tenant: { defaultLocale: 'cs', displayName: 'OntOS DEMO', slug: 'siampark-demo', tenantId: demoTenantId },
-  });
-  const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'sales-demo-permissions-' });
-  const file = path.join(directory, 'context.json');
-  yield* fs.writeFileString(file, fixture);
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const code = yield* spawner.exitCode(
-    ChildProcess.make(
-      process.execPath,
-      [path.join(root, 'packages/core-runtime/scripts/bootstrap-development-context.mts'), '--fixture', file],
-      {
-        cwd: root,
-        env: { ...environment, MISE_ARGV0: '' },
-        stderr: 'inherit',
-        stdin: 'ignore',
-        stdout: 'inherit',
-      },
-    ),
-  );
-  if (code !== ChildProcessSpawner.ExitCode(0)) {
-    return yield* fail('Core development bootstrap port failed');
+  };
+  for (const context of [demoContext, yield* verificationContext()]) {
+    const fixture = yield* Schema.encodeEffect(Schema.fromJsonString(ContextFixtureSchema))(context);
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'sales-demo-permissions-' });
+    const file = path.join(directory, 'context.json');
+    yield* fs.writeFileString(file, fixture);
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const code = yield* spawner.exitCode(
+      ChildProcess.make(
+        process.execPath,
+        [path.join(root, 'packages/core-runtime/scripts/bootstrap-development-context.mts'), '--fixture', file],
+        {
+          cwd: root,
+          env: { ...environment, MISE_ARGV0: '' },
+          stderr: 'inherit',
+          stdin: 'ignore',
+          stdout: 'inherit',
+        },
+      ),
+    );
+    if (code !== ChildProcessSpawner.ExitCode(0)) {
+      return yield* fail('Core development bootstrap port failed');
+    }
   }
   return yield* Console.log(
     `sales-demo permissions: ${allHumanAccounts.length} accounts + agent-bot + storefront, ${relationships.length} relationships over ${actions.length} Actions`,

@@ -1,4 +1,6 @@
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { Effect } from 'effect';
+import { proofToolCall } from './tool-call.mts';
 
 export const MODERN_PROTOCOL_VERSION = '2026-07-28';
 export const LEGACY_PROTOCOL_VERSION = '2025-11-25';
@@ -25,7 +27,7 @@ export interface ToolOutcome {
 }
 
 export async function callJson(client: Client, name: string, args: Record<string, unknown> = {}): Promise<ToolOutcome> {
-  const result = await client.callTool({ name, arguments: args });
+  const result = await Effect.runPromise(proofToolCall(name, args, () => client.callTool({ name, arguments: args })));
   const content = Array.isArray(result.content) ? result.content : [];
   const text = content
     .filter((item): item is { type: 'text'; text: string } => item.type === 'text' && typeof item.text === 'string')
