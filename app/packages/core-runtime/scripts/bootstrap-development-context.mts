@@ -66,6 +66,7 @@ const FixtureSchema = Schema.Struct({
       resourceId: ResourceIdSchema,
       resourceType: Text,
       subjectId: SubjectIdSchema,
+      subjectRelation: Schema.optionalKey(Text),
       subjectType: Text,
     }),
   ),

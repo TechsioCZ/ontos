@@ -3,6 +3,14 @@ import { and, eq, or } from 'drizzle-orm';
 
 import { legalEntities, principalAuthBindings, principals } from '../db/schema.ts';
 import type { CoreTransaction } from '../db/types.ts';
+import {
+  ActionAuthorizationProvisioningError,
+  buildActionAuthorizationRelationships,
+  buildActionAuthorizationRoleGrantRelationships,
+  deriveScopedActionAuthorization,
+} from './action-authorization-provisioning.ts';
+import type { ActionAuthorizationProvisioningAction } from './action-authorization-provisioning.ts';
+import type { ScopedRoleIdentity } from '../permissions/scoped-role.ts';
 
 interface BootstrapIdentity {
   readonly authBindingId: string;
@@ -94,13 +102,64 @@ export const bootstrapPrincipalRecord = (context: BootstrapIdentity) =>
     tenantId: context.tenantId,
   }) as const;
 
-interface BootstrapRelationship {
+export interface BootstrapRelationship {
   readonly relation: string;
   readonly resourceId: string;
   readonly resourceType: string;
   readonly subjectId: string;
+  readonly subjectRelation?: string;
   readonly subjectType: string;
 }
+
+/** Exact wire projection, including usersets; conditional evidence must never be silently weakened. */
+export const bootstrapRelationshipsFromNative = (
+  relationships: readonly v1.Relationship[],
+): readonly BootstrapRelationship[] =>
+  relationships.map((item) => {
+    if (
+      item.resource === undefined ||
+      item.subject?.object === undefined ||
+      item.optionalCaveat !== undefined ||
+      item.optionalExpiresAt !== undefined
+    ) {
+      throw new ActionAuthorizationProvisioningError({
+        code: 'action_authorization_input_invalid',
+        reason: 'Bootstrap relationships require complete unconditional native authorization evidence',
+      });
+    }
+    return {
+      relation: item.relation,
+      resourceId: item.resource.objectId,
+      resourceType: item.resource.objectType,
+      subjectId: item.subject.object.objectId,
+      subjectRelation: item.subject.optionalRelation,
+      subjectType: item.subject.object.objectType,
+    };
+  });
+
+/** Explicit role policy in exactly one valid descriptor scope; never creates membership or guesses ownership. */
+export const scopedActionRoleBootstrapRelationships = (
+  input: ScopedRoleIdentity & {
+    readonly action: ActionAuthorizationProvisioningAction;
+  },
+): readonly BootstrapRelationship[] => {
+  const { action, ...scope } = input;
+  const installed = [{ ...scope, moduleKeys: [action.owningModuleKey] }];
+  const actions = deriveScopedActionAuthorization([action], installed);
+  if (actions.length !== 1) {
+    throw new ActionAuthorizationProvisioningError({
+      code: 'action_authorization_input_invalid',
+      reason: 'The selected bootstrap Action does not exist in the explicit role scope',
+    });
+  }
+  return bootstrapRelationshipsFromNative([
+    ...buildActionAuthorizationRelationships(actions),
+    ...buildActionAuthorizationRoleGrantRelationships(
+      actions.map((item) => ({ ...item, roleKey: scope.roleKey })),
+      installed,
+    ),
+  ]);
+};
 
 export const bootstrapRelationshipRequest = (relationships: readonly BootstrapRelationship[]) =>
   v1.WriteRelationshipsRequest.create({
@@ -118,6 +177,7 @@ export const bootstrapRelationshipRequest = (relationships: readonly BootstrapRe
               objectId: item.subjectId,
               objectType: item.subjectType,
             }),
+            optionalRelation: item.subjectRelation ?? '',
           }),
         }),
       }),

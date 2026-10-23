@@ -24,6 +24,11 @@ import type {
   ActionAuthorizationProvisioningInput,
   ScopedActionAuthorization,
 } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
+import {
+  bootstrapRelationshipRequest,
+  bootstrapRelationshipsFromNative,
+  scopedActionRoleBootstrapRelationships,
+} from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import { toLegalEntityAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../packages/core-runtime/src/permissions/schema.ts';
@@ -608,5 +613,43 @@ it('rejects a business Action or foreign owner opting into intrinsic credential 
     expect(() => buildIntrinsicSelfCredentialRelationships([descriptor], [companyAction])).toThrow(
       ActionAuthorizationProvisioningError,
     );
+  }
+});
+
+it('round-trips exact scoped Action role usersets through the Core bootstrap wire without implicit membership', () => {
+  const input = { action: descriptors[0], legalEntityId, roleKey: roleGrant.roleKey, tenantId };
+  const wire = scopedActionRoleBootstrapRelationships(input);
+  expect(wire).toHaveLength(3);
+  expect(wire.some(({ relation }) => relation === 'executor' || relation === 'member')).toBe(false);
+  const native = [
+    ...buildActionAuthorizationRelationships([companyAction]),
+    ...buildActionAuthorizationRoleGrantRelationships([roleGrant], installedModuleScopes),
+  ];
+  expect(bootstrapRelationshipRequest(wire).updates.map(({ relationship }) => relationship)).toEqual(native);
+  expect(wire.find(({ resourceType }) => resourceType === 'action_grant')?.subjectRelation).toBe('member');
+  expect(() => scopedActionRoleBootstrapRelationships({ ...input, action: descriptors[1] })).toThrow(
+    ActionAuthorizationProvisioningError,
+  );
+  expect(() =>
+    scopedActionRoleBootstrapRelationships({ action: descriptors[0], roleKey: roleGrant.roleKey, tenantId }),
+  ).toThrow(ActionAuthorizationProvisioningError);
+  const tenantPolicy = scopedActionRoleBootstrapRelationships({
+    action: descriptors[1],
+    roleKey: roleGrant.roleKey,
+    tenantId,
+  });
+  expect(tenantPolicy.some(({ relation }) => relation === 'tenant_scope')).toBe(true);
+  expect(tenantPolicy.some(({ relation }) => relation === 'company_scope')).toBe(false);
+});
+
+it('refuses incomplete and conditional evidence rather than losing authorization semantics in bootstrap serialization', () => {
+  const [relationship] = buildActionAuthorizationRelationships([companyAction]);
+  expect(relationship).toBeDefined();
+  for (const invalid of [
+    v1.Relationship.create({}),
+    v1.Relationship.create({ ...relationship, optionalCaveat: { caveatName: 'owned-condition' } }),
+    v1.Relationship.create({ ...relationship, optionalExpiresAt: { nanos: 0, seconds: '100' } }),
+  ]) {
+    expect(() => bootstrapRelationshipsFromNative([invalid])).toThrow(ActionAuthorizationProvisioningError);
   }
 });

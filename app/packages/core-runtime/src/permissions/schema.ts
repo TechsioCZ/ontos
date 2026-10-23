@@ -17,13 +17,13 @@ definition tenant {
   relation context_role: scoped_role#member
   relation superadmin: scoped_role#member
   relation auditor: scoped_role#member
-  relation identity_admin: principal
-  relation party_identity_manager: principal
-  relation party_identity_merger: principal
+  relation identity_admin: principal | scoped_role#member
+  relation party_identity_manager: principal | scoped_role#member
+  relation party_identity_merger: principal | scoped_role#member
   relation party_identity_reader: principal | scoped_role#member
-  relation party_identity_reviewer: principal
-  relation party_relationship_manager: principal
-  relation support: principal
+  relation party_identity_reviewer: principal | scoped_role#member
+  relation party_relationship_manager: principal | scoped_role#member
+  relation support: principal | scoped_role#member
   permission access = member
   permission select_context = (context_role + superadmin + auditor) & access
   permission manage_own_credentials = member->manage_own_credentials & access
