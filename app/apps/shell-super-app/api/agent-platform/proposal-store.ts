@@ -77,6 +77,9 @@ const coreLegalEntities = core.table('legal_entities', {
 });
 
 const coreAuditEvents = core.table('audit_events', {
+  targetModuleKey: text('target_module_key'),
+  targetResourceType: text('target_resource_type'),
+  targetResourceId: text('target_resource_id'),
   actionInvocationId: uuid('action_invocation_id'),
   auditEventId: uuid('audit_event_id').notNull(),
   evidenceJson: jsonb('evidence_json').$type<Readonly<Record<string, unknown>>>().notNull(),
@@ -89,6 +92,8 @@ const coreAuditEvents = core.table('audit_events', {
 });
 
 const coreActionInvocations = core.table('action_invocations', {
+  targetResourceType: text('target_resource_type'),
+  targetResourceId: text('target_resource_id'),
   actionInvocationId: uuid('action_invocation_id').notNull(),
   actionKey: text('action_key').notNull(),
 });
@@ -103,6 +108,7 @@ const coreDataAccessEvents = core.table('data_access_events', {
   principalId: uuid('principal_id').notNull(),
   servingModuleKey: text('serving_module_key').notNull(),
   targetResourceType: text('target_resource_type'),
+  targetResourceId: text('target_resource_id'),
   tenantId: uuid('tenant_id').notNull(),
 });
 
@@ -587,6 +593,13 @@ export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(funct
   const auditRows = yield* executor
     .select({
       actionInvocationKey: coreActionInvocations.actionKey,
+      targetModuleKey: coreAuditEvents.targetModuleKey,
+      targetResourceId: sql<
+        string | null
+      >`coalesce(${coreAuditEvents.targetResourceId}, ${coreActionInvocations.targetResourceId})`,
+      targetResourceType: sql<
+        string | null
+      >`coalesce(${coreAuditEvents.targetResourceType}, ${coreActionInvocations.targetResourceType})`,
       auditEventId: coreAuditEvents.auditEventId,
       displayName: corePrincipals.displayName,
       evidenceJson: coreAuditEvents.evidenceJson,
@@ -621,6 +634,9 @@ export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(funct
     return {
       actionKey: row.actionInvocationKey ?? (typeof evidenceAction === 'string' ? evidenceAction : null),
       auditEventId: row.auditEventId,
+      targetModuleKey: row.targetModuleKey,
+      targetResourceId: row.targetResourceId,
+      targetResourceType: row.targetResourceType,
       displayName: row.displayName,
       occurredAt: row.occurredAt,
       outcome: row.outcome,
@@ -640,6 +656,7 @@ export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(funct
       principalId: corePrincipals.principalId,
       servingModuleKey: coreDataAccessEvents.servingModuleKey,
       targetResourceType: coreDataAccessEvents.targetResourceType,
+      targetResourceId: coreDataAccessEvents.targetResourceId,
     })
     .from(coreDataAccessEvents)
     .innerJoin(

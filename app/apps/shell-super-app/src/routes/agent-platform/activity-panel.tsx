@@ -6,6 +6,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { agentActivityKindLabel } from '@app/shared-contracts/agent-proposals';
 import type { AgentActivityKind, AgentActivityRequest } from '@app/shared-contracts/agent-proposals';
 import { pageDataPending } from '@app/shared-contracts/page-data';
+import type { ReactNode } from 'react';
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
@@ -35,6 +36,21 @@ const activityFailureText = (httpStatus: number): string => {
   }
   return 'Aktivitu se nepodařilo načíst.';
 };
+
+export const ActivityText = ({
+  path,
+  children,
+}: {
+  readonly path: string | undefined;
+  readonly children: ReactNode;
+}) =>
+  path === undefined ? (
+    <>{children}</>
+  ) : (
+    <LocalizedLink className="agent-activity-link" to={path}>
+      {children}
+    </LocalizedLink>
+  );
 
 export const ActivityPanel = () => {
   const [agent, setAgent] = useState('');
@@ -140,11 +156,26 @@ export const ActivityPanel = () => {
               {state.value.entries.map((entry) => (
                 <div key={entry.id} role="row">
                   <span role="cell">{formatAgentTime(entry.occurredAt)}</span>
-                  <span role="cell">{entry.agentName}</span>
-                  <span role="cell">{entry.moduleLabel}</span>
                   <span role="cell">
-                    <span>{entry.actionLabel}</span>
-                    {entry.detail !== undefined && <small className="text-fg-secondary text-xs"> {entry.detail}</small>}
+                    <ActivityText path={entry.agentPath}>{entry.agentName}</ActivityText>
+                    {entry.grants?.map((grant) => (
+                      <small className="block text-xs" key={grant.path}>
+                        <ActivityText path={grant.path}>{`Oprávnění: ${grant.label}`}</ActivityText>
+                      </small>
+                    ))}
+                  </span>
+                  <span role="cell">
+                    <ActivityText path={entry.modulePath}>{entry.moduleLabel}</ActivityText>
+                  </span>
+                  <span role="cell">
+                    <ActivityText path={entry.actionPath}>{entry.actionLabel}</ActivityText>
+                    {entry.record !== undefined ? (
+                      <small className="block text-xs">
+                        <ActivityText path={entry.record.path}>{entry.record.label}</ActivityText>
+                      </small>
+                    ) : entry.detail !== undefined ? (
+                      <small className="text-fg-secondary text-xs"> {entry.detail}</small>
+                    ) : null}
                   </span>
                   <span role="cell">
                     <Badge size="sm" variant={kindBadgeVariant[entry.kind]}>

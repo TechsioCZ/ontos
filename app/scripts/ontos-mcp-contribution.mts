@@ -416,6 +416,9 @@ export const deriveOntosMcpContribution = (
             privateRecords: authored.approvalReview.privateRecords === true,
           },
         }),
+    ...(authored.agentAdministrationPage === undefined
+      ? {}
+      : { agentAdministrationPage: authored.agentAdministrationPage }),
     approvals: authored.approvals,
     ...(authored.approvalsPage === undefined
       ? {}
@@ -434,6 +437,7 @@ export const deriveOntosMcpContribution = (
       : { legalEntityWriteRelations: [...authored.legalEntityWriteRelations] }),
     ...(authored.ownProposalEngine === true ? { ownProposalEngine: true } : {}),
     ...(authored.page === undefined ? {} : { page: authored.page }),
+    ...(authored.recordLinks === undefined ? {} : { recordLinks: authored.recordLinks }),
     ...(revision === undefined
       ? {}
       : {

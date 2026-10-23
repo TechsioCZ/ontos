@@ -2,6 +2,7 @@
 import { defineOntosMcpContribution } from '@app/core-runtime';
 
 export const workforceMcpContribution = defineOntosMcpContribution({
+  agentAdministrationPage: '/sprava/lide',
   approvals: true,
   commandFieldLabels: {
     email: 'E-mail',

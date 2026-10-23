@@ -30,6 +30,7 @@ export interface McpCatalogTool extends Omit<OntosMcpTool, 'inputSchema'> {
 /** A module's MCP contribution as its contract states it: everything but the tools. */
 export interface McpModule {
   readonly appId: string;
+  readonly agentAdministrationPage?: OntosMcpContribution['agentAdministrationPage'];
   /** The module's agent review read the approval platform asks (undefined: generic handling). */
   readonly approvalReview: OntosMcpContribution['approvalReview'];
   readonly approvals: boolean;
@@ -44,6 +45,7 @@ export interface McpModule {
   /** The module keeps its own AI change engine the approval queue reads (legacy `aiChanges`). */
   readonly ownProposalEngine: boolean;
   readonly page: string | undefined;
+  readonly recordLinks?: OntosMcpContribution['recordLinks'];
   readonly revision: OntosMcpContribution['revision'];
   /** Where the module's release serves its tools (path on its origin) and the digest the contract pins. */
   readonly toolCatalog: { readonly path: string; readonly sha256: string; readonly toolCount: number };
@@ -146,6 +148,7 @@ export const buildMcpModules = (composition: ComposedRevision): McpModules => {
       return [
         {
           appId: module.deployment.appId,
+          agentAdministrationPage: contribution.agentAdministrationPage,
           approvalReview: contribution.approvalReview,
           approvals: contribution.approvals,
           approvalsPage: contribution.approvalsPage,
@@ -156,6 +159,7 @@ export const buildMcpModules = (composition: ComposedRevision): McpModules => {
           moduleId: module.moduleId,
           ownProposalEngine: contribution.ownProposalEngine === true,
           page: contribution.page,
+          recordLinks: contribution.recordLinks,
           revision: contribution.revision,
           toolCatalog: contribution.toolCatalog,
         },

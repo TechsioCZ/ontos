@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { AGENT_APPROVALS_PATH } from '@app/shared-contracts/agent-proposals';
 import type {
   AgentActivityRequest,
+  AgentCommand,
   AgentProposalSubmitRequest,
   AgentProposalSubmitResponse,
   AgentQueueBatch,
@@ -16,6 +17,10 @@ import { agentCommandDiff } from '@app/shared-contracts/agent-diff';
 import { Effect } from 'effect';
 
 import { loadAgentProfiles } from '../auth/agent-store.ts';
+import { demoAccountCapability } from '../auth/demo-accounts.ts';
+import { listGrants } from '../oauth-connections/grant-store.ts';
+import { companyDirectoryLive } from '../oauth-connections-admin/company-directory-live.ts';
+import { commandRecordReference, resolveActivityLinks } from './activity-links.ts';
 
 import { approverCheck, hiddenByReview } from './approval-logic.ts';
 import { AgentPlatformForbidden, AgentPlatformInvalid, callerModuleAccess } from './caller.ts';
@@ -49,6 +54,8 @@ const moduleTextsOf = (composed: ComposedModules) => ({
   commandFieldLabelsOf: (appId: string) => composed.byAppId(appId)?.commandFieldLabels ?? {},
   hasOwnProposalEngine: (moduleKey: string) => composed.byModuleId(moduleKey)?.ownProposalEngine === true,
   labelOf: composed.labelOf,
+  recordReferenceOf: (moduleKey: string, command: AgentCommand) =>
+    commandRecordReference(composed.byModuleId(moduleKey)?.recordLinks ?? [], command),
 });
 
 const countPending = (batches: readonly AgentQueueBatch[], onlyDecidable: boolean): number =>
@@ -346,9 +353,58 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
     { concurrency: 2 },
   );
   const hidden = new Set(scoped.flat());
-  return yield* listAgentActivity(tenantId, legalEntityId, request, {
+  const activity = yield* listAgentActivity(tenantId, legalEntityId, request, {
     modules: moduleTextsOf(composed),
     proposalOnlyAgents,
     visibleModules: new Set([...modules.write].filter((moduleKey) => !hidden.has(moduleKey))),
   });
+  const recordModules = composed.all.filter(
+    (module) =>
+      modules.access.has(module.moduleId) &&
+      (module.recordLinks?.length ?? 0) > 0 &&
+      activity.entries.some((entry) => entry.moduleKey === module.moduleId && entry.recordReference !== undefined),
+  );
+  const records = new Map(
+    yield* Effect.forEach(
+      recordModules,
+      (module) =>
+        readModuleRecords(caller.principal, module.appId).pipe(Effect.map((body) => [module.moduleId, body] as const)),
+      { concurrency: 2 },
+    ),
+  );
+  // Same live capability as the destination. Never turn approval rights into identity-administration rights.
+  const canManage = yield* demoAccountCapability(caller).pipe(
+    Effect.map((capability) => capability.canManage),
+    Effect.orElseSucceed(() => false),
+  );
+  const visibleAgents = canManage
+    ? yield* companyDirectoryLive.members(tenantId, legalEntityId).pipe(
+        Effect.flatMap((members) => companyDirectoryLive.agents(tenantId, members)),
+        Effect.map(
+          (agents) => new Set(agents.filter((agent) => agent.status !== 'archived').map((agent) => agent.principalId)),
+        ),
+        Effect.orElseSucceed(() => new Set<string>()),
+      )
+    : new Set<string>();
+  const grants = canManage ? yield* listGrants({ tenantId, legalEntityId }).pipe(Effect.orElseSucceed(() => [])) : [];
+  const identityPage = canManage
+    ? composed.all.find((module) => module.agentAdministrationPage !== undefined && modules.access.has(module.moduleId))
+        ?.agentAdministrationPage
+    : undefined;
+  return {
+    ...activity,
+    entries: activity.entries.map((entry) => {
+      const module = entry.moduleKey === null ? undefined : composed.byModuleId(entry.moduleKey);
+      return resolveActivityLinks(entry, {
+        agentExists: visibleAgents.has(entry.agentPrincipalId),
+        canManageAgents: canManage,
+        canOpenModule: module !== undefined && modules.access.has(module.moduleId),
+        canReviewProposals: true,
+        grants,
+        identityPage,
+        module,
+        records: entry.moduleKey === null ? undefined : records.get(entry.moduleKey),
+      });
+    }),
+  };
 });

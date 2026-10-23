@@ -1,5 +1,6 @@
 import { EmptyState, SectionCard, dialogCloseLabel, formatDateTime, surfaceTileClassName } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import type {
   AgentAuditEntry,
   AgentEntity,
@@ -16,8 +17,8 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { FormCheckbox } from '@techsio/ui-kit/molecules/form-checkbox';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
-import { Effect } from 'effect';
-import { useCallback, useState } from 'react';
+import { Effect, Option, Schema } from 'effect';
+import { useCallback, useEffect, useState } from 'react';
 import { revokeAgentConnection, runAgentCommand, saveAgentOperators } from '../../../../api/agent-entities-client.ts';
 import type { AgentFailure } from '../../../../api/agent-entities-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
@@ -31,6 +32,7 @@ const connectionsKey = 'workforce.agents.connections';
 const PEOPLE_KEY = 'workforce.people';
 const PEOPLE_ERROR_KEY = `${PEOPLE_KEY}.errors`;
 const AUDIT_LIMIT = 8;
+const AgentDetailSearchSchema = Schema.Struct({ agent: Schema.optionalKey(Schema.String) });
 
 const statusVariant = { active: 'success', archived: 'outline', disabled: 'danger' } as const;
 
@@ -83,6 +85,10 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify, personLabel }: A
   // Prepared with the page; a change re-reads it while the current agents stay on screen.
   const state = usePageData(agentEntitiesData, legalEntityId);
   const [editing, setEditing] = useState<EditingState | null>(null);
+  const linkedAgent = useRouterState({
+    select: (routerState) =>
+      Option.getOrUndefined(Schema.decodeOption(AgentDetailSearchSchema)(routerState.location.search))?.agent ?? null,
+  });
   const [statusAction, setStatusAction] = useState<AgentStatusAction | null>(null);
 
   const fetchOverview = useCallback(() => {
@@ -90,6 +96,15 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify, personLabel }: A
   }, [legalEntityId]);
 
   const overview = state.state === 'ready' ? labelled(state.value, personLabel) : null;
+
+  useEffect(() => {
+    if (linkedAgent === null || state.state !== 'ready') {
+      return;
+    }
+    const element = document.querySelector<HTMLElement>(`#${CSS.escape(`agent-${linkedAgent}`)}`);
+    element?.scrollIntoView({ block: 'start' });
+    element?.focus({ preventScroll: true });
+  }, [linkedAgent, state.state]);
 
   return (
     <>
@@ -137,6 +152,11 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify, personLabel }: A
             </div>
           )}
 
+          {overview !== null &&
+            linkedAgent !== null &&
+            !overview.agents.some((agent) => agent.principalId === linkedAgent) && (
+              <StatusText status="warning">Agent z odkazu neexistuje nebo k němu nemáte přístup.</StatusText>
+            )}
           {overview !== null && overview.agents.length === 0 && (
             <EmptyState description={t(`${key}.emptyHint`)} title={t(`${key}.empty`)} />
           )}
@@ -145,6 +165,7 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify, personLabel }: A
             overview.agents.map((agent) => (
               <AgentCard
                 agent={agent}
+                highlighted={agent.principalId === linkedAgent}
                 company={overview.company.legalName.replace(/\.$/u, '')}
                 key={agent.principalId}
                 members={overview.members}
@@ -188,6 +209,7 @@ export const AgentEntitiesSection = ({ legalEntityId, onNotify, personLabel }: A
 };
 
 interface AgentCardProps {
+  readonly highlighted: boolean;
   readonly agent: AgentEntity;
   readonly company: string;
   readonly members: readonly PrincipalRef[];
@@ -198,7 +220,17 @@ interface AgentCardProps {
   readonly onStatus: (action: AgentStatusAction) => void;
 }
 
-const AgentCard = ({ agent, company, members, modules, onChanged, onEdit, onNotify, onStatus }: AgentCardProps) => {
+const AgentCard = ({
+  agent,
+  highlighted,
+  company,
+  members,
+  modules,
+  onChanged,
+  onEdit,
+  onNotify,
+  onStatus,
+}: AgentCardProps) => {
   const { t } = useModernI18n();
   const moduleLabel = (moduleId: string) => modules.find((option) => option.moduleId === moduleId)?.label ?? moduleId;
   const readable = agent.modules.map((grant) => moduleLabel(grant.moduleId)).join(', ');
@@ -215,7 +247,12 @@ const AgentCard = ({ agent, company, members, modules, onChanged, onEdit, onNoti
   }
 
   return (
-    <article className={`${surfaceTileClassName} flex flex-col gap-200 p-250`}>
+    <article
+      id={`agent-${agent.principalId}`}
+      tabIndex={highlighted ? -1 : undefined}
+      aria-current={highlighted ? 'true' : undefined}
+      className={`${surfaceTileClassName} flex flex-col gap-200 p-250 scroll-mt-20 ${highlighted ? 'ring-2 ring-primary' : ''}`}
+    >
       <header className="flex flex-wrap items-start justify-between gap-150">
         <div className="flex min-w-0 flex-wrap items-center gap-100">
           <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">{agent.displayName}</span>

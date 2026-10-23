@@ -1,3 +1,5 @@
+import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { Option, Schema } from 'effect';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -28,6 +30,11 @@ import {
   writePolicyBadge,
   writePolicyLabel,
 } from '../../profile/connected-apps-model.ts';
+
+const ConnectionDetailSearchSchema = Schema.Struct({
+  agent: Schema.optionalKey(Schema.String),
+  grant: Schema.optionalKey(Schema.String),
+});
 
 type FilterKey = 'actingPrincipalId' | 'clientId' | 'status' | 'userPrincipalId';
 
@@ -68,6 +75,21 @@ const EndedDetail = ({ connection }: { readonly connection: ConnectionSummary })
 
 export const ConnectionsAdminPanel = () => {
   const [filter, setFilter] = useState<ConnectionAdminFilter>(DEFAULT_CONNECTIONS_FILTER);
+  const targetGrantId = useRouterState({
+    select: (routerState) =>
+      Option.getOrUndefined(Schema.decodeOption(ConnectionDetailSearchSchema)(routerState.location.search))?.grant,
+  });
+  const targetAgentId = useRouterState({
+    select: (routerState) =>
+      Option.getOrUndefined(Schema.decodeOption(ConnectionDetailSearchSchema)(routerState.location.search))?.agent,
+  });
+  useEffect(() => {
+    if (targetGrantId !== undefined) {
+      setFilter({});
+    } else if (targetAgentId !== undefined) {
+      setFilter({ actingPrincipalId: targetAgentId });
+    }
+  }, [targetGrantId, targetAgentId]);
   const [notice, setNotice] = useState('');
   const [target, setTarget] = useState<ConnectionSummary | undefined>(undefined);
   const [reason, setReason] = useState('');
@@ -142,10 +164,17 @@ export const ConnectionsAdminPanel = () => {
     );
   }
 
-  const { company, connections, filterOptions, stats } = state.value;
+  const { company, connections: allConnections, filterOptions, stats } = state.value;
+  const connections =
+    targetGrantId === undefined
+      ? allConnections
+      : allConnections.filter((connection) => connection.grantId === targetGrantId);
   const filterKeys = Object.keys(filter);
-  let emptyText = 'Filtru neodpovídá žádné připojení.';
-  if (filterKeys.length === 0) {
+  let emptyText =
+    targetGrantId === undefined
+      ? 'Filtru neodpovídá žádné připojení.'
+      : 'Připojení z odkazu neexistuje nebo k němu nemáte přístup.';
+  if (filterKeys.length === 0 && targetGrantId === undefined) {
     emptyText = 'Ve firmě zatím nikdo nepřipojil žádnou aplikaci.';
   } else if (filterKeys.length === 1 && filter.status === 'active') {
     emptyText = 'Ve firmě teď není připojená žádná aplikace. Starší připojení najdete ve filtru Stav.';
@@ -153,6 +182,7 @@ export const ConnectionsAdminPanel = () => {
 
   return (
     <div className="flex min-w-0 flex-col gap-250">
+      {targetGrantId !== undefined && <h2 className="font-semibold text-lg">Detail oprávnění připojení</h2>}
       {notice === '' ? null : (
         <StatusText aria-live="polite" showIcon status="success">
           {notice}

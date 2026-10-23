@@ -25,7 +25,8 @@ const FIELD_LABELS: Readonly<Record<string, Readonly<Record<string, string>>>> =
 const modules: ModuleTexts = {
   commandFieldLabelsOf: (appId) => FIELD_LABELS[appId] ?? {},
   hasOwnProposalEngine: (moduleKey) => moduleKey in LABELS,
-  labelOf: (moduleKey) => (moduleKey === null || moduleKey === undefined ? 'Platforma' : (LABELS[moduleKey] ?? moduleKey)),
+  labelOf: (moduleKey) =>
+    moduleKey === null || moduleKey === undefined ? 'Platforma' : (LABELS[moduleKey] ?? moduleKey),
 };
 
 const baseRow: AgentProposalRow = {
@@ -317,4 +318,35 @@ it('lists the stored command for modules without their own diff with the module 
   expect(batch?.items[0]?.diffSource).toBe('command');
   expect(batch?.items[0]?.diff).toEqual([{ after: 'Elektroměr hala A', field: 'name', label: 'Název měřidla' }]);
   expect(batch?.items[0]?.revertUnavailableReason).toBe('Tuto změnu nelze automaticky vrátit.');
+});
+
+it('preserves audit record references and their owning module even without an action invocation', () => {
+  const entry = auditRowToEntry(
+    {
+      actionKey: null,
+      auditEventId: 'audit-1',
+      occurredAt: new Date('2026-10-23T10:00:00Z'),
+      principalId: AGENT,
+      displayName: 'Agent',
+      outcome: 'succeeded',
+      outcomeCode: 'ok',
+      targetModuleKey: 'fixture.notes',
+      targetResourceType: 'fixture.note',
+      targetResourceId: 'note-1',
+    },
+    { modules, proposalOnly: false },
+  );
+  expect(entry.moduleKey).toBe('fixture.notes');
+  expect(entry.recordReference).toEqual({ resourceType: 'fixture.note', resourceId: 'note-1' });
+});
+
+it('carries an exact proposal and module-owned record reference for every proposal decision', () => {
+  const entries = proposalRowToEntries({ ...baseRow, status: 'applied', decidedAt: new Date() }, names, {
+    ...modules,
+    recordReferenceOf: () => ({ resourceId: 'record-1', resourceType: 'fixture.note' }),
+  });
+  for (const entry of entries) {
+    expect(entry.proposal).toEqual({ batchKey: `core:${baseRow.batchId}`, itemKey: `core:${baseRow.proposalId}` });
+    expect(entry.recordReference).toEqual({ resourceId: 'record-1', resourceType: 'fixture.note' });
+  }
 });

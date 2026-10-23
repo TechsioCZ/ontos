@@ -66,6 +66,9 @@ export interface AuditActivityRow {
   readonly outcome: string;
   readonly outcomeCode: string;
   readonly actionKey: string | null;
+  readonly targetModuleKey?: string | null;
+  readonly targetResourceId?: string | null;
+  readonly targetResourceType?: string | null;
 }
 
 export interface AccessActivityRow {
@@ -78,6 +81,7 @@ export interface AccessActivityRow {
   readonly accessKind: string;
   readonly servingModuleKey: string;
   readonly targetResourceType: string | null;
+  readonly targetResourceId?: string | null;
 }
 
 export const nameOf = (names: ReadonlyMap<string, string>, principalId: string | null): string =>
@@ -93,6 +97,7 @@ export interface ModuleTexts {
   /** The module keeps its own AI change engine: its apply-command writes by proposal-only agents are proposals. */
   readonly hasOwnProposalEngine: (moduleKey: string) => boolean;
   readonly labelOf: (moduleKey: string | null | undefined) => string;
+  readonly recordReferenceOf?: (moduleKey: string, command: AgentCommand) => AgentActivityEntry['recordReference'];
 }
 
 export interface QueueItemOptions {
@@ -234,7 +239,7 @@ export const auditRowToEntry = (
   row: AuditActivityRow,
   options: { readonly modules: ModuleTexts; readonly proposalOnly: boolean },
 ): AgentActivityEntry => {
-  const moduleKey = moduleKeyOfAction(row.actionKey);
+  const moduleKey = row.targetModuleKey ?? moduleKeyOfAction(row.actionKey);
   const proposal =
     row.outcome === 'succeeded' &&
     options.proposalOnly &&
@@ -266,6 +271,11 @@ export const auditRowToEntry = (
     agentName: row.displayName,
     agentPrincipalId: row.principalId,
     id: `audit:${row.auditEventId}`,
+    ...(row.targetResourceId == null || row.targetResourceType == null
+      ? {}
+      : {
+          recordReference: { resourceId: row.targetResourceId, resourceType: row.targetResourceType },
+        }),
     kind,
     moduleKey,
     moduleLabel: options.modules.labelOf(moduleKey),
@@ -292,6 +302,11 @@ export const accessRowToEntry = (row: AccessActivityRow, modules: ModuleTexts): 
     agentName: row.displayName,
     agentPrincipalId: row.principalId,
     id: `read:${row.dataAccessEventId}`,
+    ...(row.targetResourceId == null || row.targetResourceType === null
+      ? {}
+      : {
+          recordReference: { resourceId: row.targetResourceId, resourceType: row.targetResourceType },
+        }),
     kind,
     moduleKey: row.servingModuleKey,
     moduleLabel: modules.labelOf(row.servingModuleKey),
@@ -306,7 +321,10 @@ export const proposalRowToEntries = (
   names: ReadonlyMap<string, string>,
   modules: ModuleTexts,
 ): AgentActivityEntry[] => {
+  const recordReference = modules.recordReferenceOf?.(row.moduleKey, row.command);
   const base = {
+    ...(recordReference === undefined ? {} : { recordReference }),
+    proposal: { batchKey: `core:${row.batchId}`, itemKey: `core:${row.proposalId}` },
     agentName: row.agentLabel,
     agentPrincipalId: row.agentPrincipalId,
     moduleKey: row.moduleKey,

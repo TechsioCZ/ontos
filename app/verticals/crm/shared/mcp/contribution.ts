@@ -77,5 +77,26 @@ export const crmMcpContribution = defineOntosMcpContribution({
     'agent-review': OntosMcpHidden,
     records: { title: { cs: 'Přehled klientů, kontaktů a objednávek', en: 'Clients, contacts and orders overview' } },
   },
+  recordLinks: [
+    {
+      resourceType: 'demo.crm.client',
+      path: '/crm/klienti',
+      queryParam: 'klient',
+      recordsPath: 'state.clients.items',
+      idField: 'id',
+      labelField: 'name',
+      commands: [
+        ...[
+          'AddContactPerson',
+          'AssignClient',
+          'LinkClientParty',
+          'LinkExternalCustomer',
+          'PlanContact',
+          'RecordVisit',
+        ].map((tag) => ({ tag, idField: 'clientId' })),
+        ...['ArchiveClient', 'RestoreClient', 'UpdateClient'].map((tag) => ({ tag, idField: 'id' })),
+      ],
+    },
+  ],
   revision: { read: 'records' },
 });

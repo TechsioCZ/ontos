@@ -1,4 +1,5 @@
 import { Link as LocalizedLink } from '@modern-js/plugin-i18n/runtime';
+import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
@@ -13,7 +14,7 @@ import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { ModulePageSkeleton } from '../module-page-skeleton.tsx';
 import { decideAgentItems, formatAgentTime, revertAgentBatch } from './agent-platform-client.ts';
 import { agentQueueData } from './platform-page-data.ts';
-import { batchKeyFromSearch } from './batch-link.ts';
+import { batchKeyFromSearch, itemKeyFromSearch } from './batch-link.ts';
 
 type Decision = 'approve' | 'reject';
 
@@ -68,12 +69,19 @@ const ChangeCard = ({
   item,
   busy,
   decide,
+  highlighted,
 }: {
+  readonly highlighted: boolean;
   readonly item: AgentQueueItem;
   readonly busy: boolean;
   readonly decide: (keys: readonly string[], decision: Decision) => void;
 }) => (
-  <article className="ai-review-change" data-item-key={item.key}>
+  <article
+    aria-current={highlighted ? 'true' : undefined}
+    tabIndex={highlighted ? -1 : undefined}
+    className="ai-review-change"
+    data-item-key={item.key}
+  >
     <div className="ai-review-heading">
       <div>
         <h3 className="font-semibold text-sm">{item.summary}</h3>
@@ -175,12 +183,14 @@ const BatchCard = ({
   batch,
   busy,
   highlighted,
+  targetItemKey,
   onDecide,
   onRevert,
 }: {
   readonly batch: AgentQueueBatch;
   readonly busy: boolean;
   readonly highlighted: boolean;
+  readonly targetItemKey: string | undefined;
   readonly onDecide: (batch: AgentQueueBatch, keys: readonly string[], decision: Decision, note: string) => void;
   readonly onRevert: (batch: AgentQueueBatch, note: string) => void;
 }) => {
@@ -311,7 +321,7 @@ const BatchCard = ({
       </header>
       <div className="ai-review-changes">
         {batch.items.map((item) => (
-          <ChangeCard busy={busy} decide={decide} item={item} key={item.key} />
+          <ChangeCard highlighted={item.key === targetItemKey} busy={busy} decide={decide} item={item} key={item.key} />
         ))}
       </div>
     </section>
@@ -342,11 +352,10 @@ export const ApprovalsPanel = () => {
   useEffect(() => agentQueueData.ensure('queue'), []);
 
   /** `?davka=<batchId>` from an MCP review link: show that batch, scroll to it once and highlight it. */
-  const [targetKey, setTargetKey] = useState<string | undefined>(undefined);
+  const search = useRouterState({ select: (routerState) => routerState.location.searchStr });
+  const targetKey = batchKeyFromSearch(search);
+  const targetItemKey = itemKeyFromSearch(search);
   const scrolledTo = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    setTargetKey(batchKeyFromSearch(window.location.search));
-  }, []);
   useEffect(() => {
     if (queue.state !== 'ready' || targetKey === undefined || scrolledTo.current === targetKey) {
       return;
@@ -369,12 +378,19 @@ export const ApprovalsPanel = () => {
       setShownCount(index + 1);
       return;
     }
-    const element = document.querySelector(`[data-batch-key="${targetKey}"]`);
-    if (element !== null) {
+    const batchElement = document.querySelector<HTMLElement>(`[data-batch-key="${CSS.escape(targetKey)}"]`);
+    const element =
+      targetItemKey === undefined
+        ? batchElement
+        : batchElement?.querySelector<HTMLElement>(`[data-item-key="${CSS.escape(targetItemKey)}"]`);
+    if (element != null && targetItemKey !== undefined) {
+      element.focus({ preventScroll: true });
+    }
+    if (element != null) {
       scrolledTo.current = targetKey;
       element.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-  }, [queue, targetKey, filter, moduleFilter, shownCount]);
+  }, [queue, targetKey, targetItemKey, filter, moduleFilter, shownCount]);
 
   const finish = (text: string) => {
     setMessage(text);
@@ -449,6 +465,11 @@ export const ApprovalsPanel = () => {
   // „Všechny dávky“ shows the newest batches first and older history on request.
   const shownBatches = filter === 'all' ? visibleBatches.slice(0, shownCount) : visibleBatches;
   const hiddenCount = visibleBatches.length - shownBatches.length;
+  const targetBatch = response.batches.find((batch) => batch.key === targetKey);
+  const missingTarget =
+    targetKey !== undefined &&
+    (targetBatch === undefined ||
+      (targetItemKey !== undefined && !targetBatch.items.some((item) => item.key === targetItemKey)));
 
   return (
     <div className="ai-review">
@@ -508,9 +529,9 @@ export const ApprovalsPanel = () => {
           {message}
         </StatusText>
       )}
-      {targetKey !== undefined && !response.batches.some((batch) => batch.key === targetKey) && (
+      {missingTarget && (
         <StatusText aria-live="polite" showIcon size="sm" status="warning">
-          Dávku z odkazu tu nevidíte. Možná patří jiné firmě, nebo k jejím modulům nemáte přístup.
+          Návrh z odkazu tu nevidíte. Možná patří jiné firmě, byl odstraněn, nebo k němu nemáte přístup.
         </StatusText>
       )}
       {visibleBatches.length === 0 ? (
@@ -528,6 +549,7 @@ export const ApprovalsPanel = () => {
             batch={batch}
             busy={busy}
             highlighted={batch.key === targetKey}
+            targetItemKey={targetItemKey}
             key={batch.key}
             onDecide={onDecide}
             onRevert={onRevert}

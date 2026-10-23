@@ -294,3 +294,21 @@
     width: 100%;
   }
 }
+
+.agent-activity-link {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  overflow-wrap: anywhere;
+}
+.agent-activity-link:hover {
+  color: var(--color-primary);
+}
+.agent-activity-link:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+.ai-review-change[aria-current='true'] {
+  outline: 2px solid var(--color-primary);
+  scroll-margin-top: 5rem;
+}

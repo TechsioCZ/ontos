@@ -87,6 +87,20 @@ export const OntosMcpApprovalsPageSchema = Schema.Struct({
 });
 export type OntosMcpApprovalsPage = typeof OntosMcpApprovalsPageSchema.Type;
 
+/** Record navigation owned by the module. Records are resolved only from its read as the viewer. */
+export const OntosMcpRecordLinkSchema = Schema.Struct({
+  resourceType: nonEmpty,
+  path: shellPagePath,
+  queryParam: Schema.String.check(Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9_-]*$/u)),
+  /** Dot path of the visible record array in the module's declared revision read. */
+  recordsPath: nonEmpty,
+  idField: nonEmpty,
+  labelField: nonEmpty,
+  /** Exact commands which touch this record, and the field containing its id. */
+  commands: Schema.Array(Schema.Struct({ tag: nonEmpty, idField: nonEmpty })),
+});
+export type OntosMcpRecordLink = typeof OntosMcpRecordLinkSchema.Type;
+
 /**
  * Czech names of the fields of the module's commands and Action payloads, by wire key, e.g. `{ dueDate: 'Termín' }`.
  * The approval queue labels the lines of a stored command with them when the module gives no lines of its own.
@@ -122,6 +136,7 @@ export const OntosMcpToolCatalogReferenceSchema = Schema.Struct({
 export type OntosMcpToolCatalogReference = typeof OntosMcpToolCatalogReferenceSchema.Type;
 
 export const OntosMcpContributionSchema = Schema.Struct({
+  agentAdministrationPage: Schema.optionalKey(shellPagePath),
   approvalReview: Schema.optionalKey(OntosMcpApprovalReviewSchema),
   approvalsPage: Schema.optionalKey(OntosMcpApprovalsPageSchema),
   /** Proposals for this module may go to the platform approval queue („Ke schválení“). */
@@ -142,6 +157,7 @@ export const OntosMcpContributionSchema = Schema.Struct({
   ownProposalEngine: Schema.optionalKey(Schema.Boolean),
   /** Shell page of the module below `/<lang>`, e.g. `/ukoly`. */
   page: Schema.optionalKey(shellPagePath),
+  recordLinks: Schema.optionalKey(Schema.Array(OntosMcpRecordLinkSchema)),
   revision: Schema.optionalKey(OntosMcpRevisionSchema),
   /** The module's tools, served as a separate digest-pinned artifact of the same release. */
   toolCatalog: OntosMcpToolCatalogReferenceSchema,
@@ -172,6 +188,8 @@ export type OntosMcpHidden = typeof OntosMcpHidden;
  * {@link OntosMcpHidden}; the contract generator fails otherwise.
  */
 export interface OntosMcpContributionInput {
+  /** Module-owned page showing an agent’s identity and company grants; accepts `?agent=<principalId>`. */
+  readonly agentAdministrationPage?: string;
   readonly actions?: Readonly<Record<string, OntosMcpWriteInput | OntosMcpHidden>>;
   /** Read slug of the module's agent review read (see {@link OntosMcpApprovalReviewSchema}). */
   readonly approvalReview?: { readonly privateRecords?: boolean; readonly read: string };
@@ -189,6 +207,7 @@ export interface OntosMcpContributionInput {
   readonly ownProposalEngine?: boolean;
   readonly page?: string;
   readonly reads: Readonly<Record<string, OntosMcpToolTextInput | OntosMcpHidden>>;
+  readonly recordLinks?: readonly OntosMcpRecordLink[];
   readonly revision?: {
     readonly field?: string;
     readonly fieldsByCommandPrefix?: readonly { readonly field: string; readonly prefix: string }[];
@@ -245,6 +264,12 @@ export const defineOntosMcpContribution = <const Input extends OntosMcpContribut
   }
   if (input.revision !== undefined && !(input.revision.read in input.reads)) {
     fail(`MCP revision read ${input.revision.read} is not one of the module's reads`);
+  }
+  if (input.recordLinks !== undefined) {
+    if (input.revision === undefined) {
+      fail('MCP record links need a declared records read');
+    }
+    Schema.decodeSync(Schema.Array(OntosMcpRecordLinkSchema))(input.recordLinks);
   }
   return Object.freeze(input);
 };
