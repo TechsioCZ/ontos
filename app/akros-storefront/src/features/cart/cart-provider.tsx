@@ -177,6 +177,9 @@ const providerReducer = (
   if (action.type === "clear") {
     return { ...state, cart: createEmptyCart(), feedback: null, removedItem: null };
   }
+  if (action.type === "reorder") {
+    return { ...state, cart: cartReducer(state.cart, action), feedback: null, removedItem: null };
+  }
   if (action.type === "remove") {
     const index = state.cart.lines.findIndex(
       (line) => line.productId === action.productId && line.variantId === action.variantId,

@@ -1,26 +1,7 @@
-import { mockCustomer } from "./fixtures/account";
+import { demoAccount } from "./fixtures/account";
 
 export const accountProfileStorageKey = "akros-demo-account-profile-v1";
-export const createAccountProfile = () => ({
-  email: mockCustomer.email as string,
-  firstName: "Jan",
-  lastName: "Novák",
-  billingEmail: mockCustomer.email as string,
-  street: "Průmyslová 1420",
-  city: "Praha 10",
-  postalCode: "102 00",
-  country: "CZ",
-  phone: mockCustomer.phone as string,
-  phone2: "",
-  company: mockCustomer.company as string,
-  companyId: "12345678",
-  vatId: "CZ12345678",
-  deliveryStreet: "",
-  deliveryCity: "",
-  deliveryPostalCode: "",
-  newsletter: false,
-  privacyConsent: false,
-});
+export const createAccountProfile = () => ({ ...demoAccount.profile });
 export type AccountProfile = ReturnType<typeof createAccountProfile>;
 export type AccountProfileErrors = Partial<Record<keyof AccountProfile, string>>;
 

@@ -98,7 +98,7 @@ export function FavoritesList() {
     <div data-account-products>
       <output>Uloženo variant: {favorites.length}. Seznam je uložený v tomto prohlížeči.</output>
       {message && <p role="alert">{message}</p>}
-      {products.length > 0 && <ProductGrid products={products} columns="featured" />}
+      {products.length > 0 && <ProductGrid products={products} columns="checkout" />}
       {missing.length > 0 && (
         <section aria-label="Nenačtené oblíbené varianty">
           <p>Některé varianty se nepodařilo načíst nebo už nejsou v katalogu.</p>

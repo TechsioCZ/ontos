@@ -15,6 +15,11 @@ try {
   await page.goto(new URL("/muj-ucet", base).href, { waitUntil: "domcontentloaded" });
   await page.locator("#account-email").waitFor({ timeout: 120000 });
   await page.evaluate(() => document.fonts.ready);
+  for (const flag of await page.locator("[data-account-phone-control] img").all()) {
+    await flag.scrollIntoViewIfNeeded();
+    await flag.evaluate((img) => img.decode());
+  }
+  await page.evaluate(() => scrollTo(0, 0));
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("DOM.enable");
   await cdp.send("CSS.enable");
@@ -283,14 +288,26 @@ try {
   await page.locator("#account-deliveryPostalCode").fill("60200");
   await page.locator("#account-password").fill("never-persist-me");
   await page.getByRole("button", { name: "Změnit údaje", exact: true }).click();
-  const passwordFeedback = page.getByText(
-    "Změna hesla není připojena k účtu. Pro uložení ostatních údajů vymažte pole hesla.",
-    { exact: true },
-  );
-  await passwordFeedback.waitFor().catch(async (error) => {
-    console.error("Password submit state:", await page.locator("form").innerText());
-    throw error;
-  });
+  await page.getByText("Údaje byly uložené v tomto prohlížeči.", { exact: true }).waitFor();
+  assert.equal(await page.locator("#account-password").inputValue(), "never-persist-me");
+  await page.getByRole("button", { name: "Změnit heslo", exact: true }).click();
+  await page.getByText("Potvrďte nové heslo.", { exact: true }).waitFor();
+  await page.locator("#account-password-confirmation").fill("different");
+  await page.getByRole("button", { name: "Změnit heslo", exact: true }).click();
+  await page.getByText("Hesla se neshodují.", { exact: true }).waitFor();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await page.locator("#account-postalCode").fill("bad");
+    await page.getByRole("button", { name: "Změnit údaje", exact: true }).click();
+    await page.waitForFunction(() => document.activeElement?.id === "account-postalCode");
+    await page.locator("#account-postalCode").fill("102 00");
+  }
+  await page.locator("#account-password-confirmation").fill("never-persist-me");
+  await page.locator("#account-password-confirmation").press("Enter");
+  await page
+    .getByText("Změna hesla zatím není připojena k účtu. Ostatní údaje můžete uložit samostatně.", {
+      exact: true,
+    })
+    .waitFor();
   assert.equal(
     await page.evaluate(() =>
       localStorage.getItem("akros-demo-account-profile-v1").includes("never-persist-me"),

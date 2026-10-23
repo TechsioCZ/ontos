@@ -108,10 +108,10 @@ try {
     .click();
   await page.getByRole("heading", { level: 1, name: "Objednávka #2024-00812" }).waitFor();
   assert.ok(
-    await page.locator("[data-akros-account]").getByText("8 450 Kč", { exact: true }).isVisible(),
+    await page.locator("[data-akros-account]").getByText("164,80 Kč", { exact: true }).isVisible(),
   );
   assert.equal(
-    await page.getByText("NX-9330830").count(),
+    await page.getByText("Kód: 10799700040030", { exact: true }).count(),
     0,
     "Another order must not show the first order's products",
   );

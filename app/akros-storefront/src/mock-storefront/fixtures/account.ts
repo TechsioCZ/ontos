@@ -1,44 +1,251 @@
-export const mockCustomer = {
-  initials: "JN",
-  name: "Jan Novák",
+import { formatPrice } from "@/lib/format";
+
+export interface DemoOrderLine {
+  productId: string;
+  variantId: string;
+  name: string;
+  sku: string;
+  unit: string;
+  quantity: number;
+  priceMinor: number;
+}
+
+// All seed data for the demo account lives here. Order prices and addresses are historical snapshots.
+export const demoAccount = {
   customerNumber: "84210",
-  email: "novak@stavebniny.cz",
-  phone: "+420 777 123 456",
-  company: "Stavebniny s.r.o.",
-  address: "Průmyslová 1420, Praha 10, 102 00",
-} as const;
+  profile: {
+    email: "novak@stavebniny.cz",
+    firstName: "Jan",
+    lastName: "Novák",
+    billingEmail: "novak@stavebniny.cz",
+    street: "Průmyslová 1420",
+    city: "Praha 10",
+    postalCode: "102 00",
+    country: "CZ",
+    phone: "+420 777 123 456",
+    phone2: "",
+    company: "Stavebniny s.r.o.",
+    companyId: "12345678",
+    vatId: "CZ12345678",
+    deliveryStreet: "",
+    deliveryCity: "",
+    deliveryPostalCode: "",
+    newsletter: false,
+    privacyConsent: false,
+  },
+  orders: [
+    {
+      number: "#2024-00847",
+      date: "28. 10. 2026",
+      status: "Odesláno",
+      billingAddress: {
+        name: "Jan Novák",
+        company: "Stavebniny s.r.o.",
+        street: "Průmyslová 1420",
+        city: "Praha 10",
+        postalCode: "102 00",
+        country: "CZ",
+      },
+      shippingMinor: 11900,
+      shippingTitle: "PPL",
+      paymentTitle: "Kartou online",
+      lines: [
+        {
+          productId: "product-20532",
+          variantId: "item-4746",
+          name: "vrut 4 x 30,(záp.hl.+kř.dr.)DIN7997/A2",
+          sku: "10799700040030",
+          unit: "ks",
+          quantity: 20,
+          priceMinor: 154,
+        },
+        {
+          productId: "product-20532",
+          variantId: "item-5419",
+          name: "vrut 4 x 20,(záp.hl.+kř.dr.)DIN7997/A2",
+          sku: "10799700040020",
+          unit: "ks",
+          quantity: 40,
+          priceMinor: 132,
+        },
+        {
+          productId: "product-20532",
+          variantId: "item-5294",
+          name: "vrut 6 x 45,(záp.hl.+kř.dr.)DIN7997/A2",
+          sku: "10799700060045",
+          unit: "ks",
+          quantity: 10,
+          priceMinor: 569,
+        },
+      ],
+    },
+    {
+      number: "#2024-00812",
+      date: "15. 10. 2026",
+      status: "Doručeno",
+      billingAddress: {
+        name: "Jan Novák",
+        company: "Stavebniny s.r.o.",
+        street: "Průmyslová 1420",
+        city: "Praha 10",
+        postalCode: "102 00",
+        country: "CZ",
+      },
+      shippingMinor: 11900,
+      shippingTitle: "PPL",
+      paymentTitle: "Kartou online",
+      lines: [
+        {
+          productId: "product-20532",
+          variantId: "item-5420",
+          name: "vrut 4 x 25,(záp.hl.+kř.dr.)DIN7997/A2",
+          sku: "10799700040025",
+          unit: "ks",
+          quantity: 20,
+          priceMinor: 126,
+        },
+        {
+          productId: "product-20532",
+          variantId: "item-6543",
+          name: "vrut 3 x 25,(záp.hl.+kř.dr.)DIN7997/A2",
+          sku: "10799700030025",
+          unit: "ks",
+          quantity: 20,
+          priceMinor: 103,
+        },
+      ],
+    },
+    {
+      number: "#2024-00790",
+      date: "02. 10. 2026",
+      status: "Doručeno",
+      billingAddress: {
+        name: "Jan Novák",
+        company: "Stavebniny s.r.o.",
+        street: "Průmyslová 1420",
+        city: "Praha 10",
+        postalCode: "102 00",
+        country: "CZ",
+      },
+      shippingMinor: 11900,
+      shippingTitle: "PPL",
+      paymentTitle: "Kartou online",
+      lines: [
+        {
+          productId: "product-20532",
+          variantId: "item-4709",
+          name: "vrut 5 x 25,(záp.hl.+kř.dr.)DIN7997/A2",
+          sku: "10799700050025",
+          unit: "ks",
+          quantity: 100,
+          priceMinor: 220,
+        },
+        {
+          productId: "product-20532",
+          variantId: "item-5878",
+          name: "vrut 5 x 30,(záp.hl.+kř.dr.)DIN7997/A2",
+          sku: "10799700050030",
+          unit: "ks",
+          quantity: 10,
+          priceMinor: 230,
+        },
+      ],
+    },
+    {
+      number: "#2024-00754",
+      date: "14. 09. 2026",
+      status: "Doručeno",
+      billingAddress: {
+        name: "Jan Novák",
+        company: "Stavebniny s.r.o.",
+        street: "Průmyslová 1420",
+        city: "Praha 10",
+        postalCode: "102 00",
+        country: "CZ",
+      },
+      shippingMinor: 11900,
+      shippingTitle: "PPL",
+      paymentTitle: "Kartou online",
+      lines: [
+        {
+          productId: "product-20532",
+          variantId: "item-5421",
+          name: "vrut 4 x 35,(záp.hl.+kř.dr.)DIN7997/A2",
+          sku: "10799700040035",
+          unit: "ks",
+          quantity: 20,
+          priceMinor: 189,
+        },
+      ],
+    },
+    {
+      number: "#2024-00711",
+      date: "28. 08. 2026",
+      status: "Doručeno",
+      billingAddress: {
+        name: "Jan Novák",
+        company: "Stavebniny s.r.o.",
+        street: "Průmyslová 1420",
+        city: "Praha 10",
+        postalCode: "102 00",
+        country: "CZ",
+      },
+      shippingMinor: 11900,
+      shippingTitle: "PPL",
+      paymentTitle: "Kartou online",
+      lines: [
+        {
+          productId: "product-20532",
+          variantId: "item-5422",
+          name: "vrut 4 x 40,(záp.hl.+kř.dr.)DIN7997/A2",
+          sku: "10799700040040",
+          unit: "ks",
+          quantity: 10,
+          priceMinor: 170,
+        },
+        {
+          productId: "product-20532",
+          variantId: "item-5423",
+          name: "vrut 4 x 50,(záp.hl.+kř.dr.)DIN7997/A2",
+          sku: "10799700040050",
+          unit: "ks",
+          quantity: 10,
+          priceMinor: 239,
+        },
+      ],
+    },
+  ],
+};
 
-export const mockOrders = [
-  { number: "#2024-00847", date: "28. 10. 2026", items: 3, total: "1 569 Kč", status: "Odesláno" },
-  { number: "#2024-00812", date: "15. 10. 2026", items: 12, total: "8 450 Kč", status: "Doručeno" },
-  { number: "#2024-00790", date: "02. 10. 2026", items: 5, total: "2 110 Kč", status: "Doručeno" },
-  { number: "#2024-00754", date: "14. 09. 2026", items: 1, total: "450 Kč", status: "Doručeno" },
-  { number: "#2024-00711", date: "28. 08. 2026", items: 8, total: "3 890 Kč", status: "Doručeno" },
-] as const;
+export const mockCustomer = {
+  initials: demoAccount.profile.firstName[0] + demoAccount.profile.lastName[0],
+  name: demoAccount.profile.firstName + " " + demoAccount.profile.lastName,
+  customerNumber: demoAccount.customerNumber,
+  email: demoAccount.profile.email,
+  phone: demoAccount.profile.phone,
+  company: demoAccount.profile.company,
+  address:
+    demoAccount.profile.street +
+    ", " +
+    demoAccount.profile.city +
+    ", " +
+    demoAccount.profile.postalCode,
+};
 
-export const mockOrderLines = [
-  {
-    name: "Šroub se šestihrannou hlavou M8×30 DIN 933 A2",
-    code: "NX-9330830",
-    quantity: "50 ks",
-    unitPrice: "17,80 Kč",
-    total: "890 Kč",
-  },
-  {
-    name: "Matice šestihranná M8 DIN 934 / A2",
-    code: "NX-93408A2",
-    quantity: "100 ks",
-    unitPrice: "3,40 Kč",
-    total: "340 Kč",
-  },
-  {
-    name: "Podložka plochá M8 DIN 125A / A2",
-    code: "NX-12508A2",
-    quantity: "100 ks",
-    unitPrice: "2,20 Kč",
-    total: "220 Kč",
-  },
-] as const;
+export const mockOrders = demoAccount.orders.map((order) => {
+  const subtotalMinor = order.lines.reduce(
+    (total, line) => total + Math.round(line.priceMinor * line.quantity),
+    0,
+  );
+  return {
+    ...order,
+    subtotalMinor,
+    totalMinor: subtotalMinor + order.shippingMinor,
+    items: order.lines.length,
+    total: formatPrice(subtotalMinor + order.shippingMinor),
+  };
+});
+export type DemoOrder = (typeof mockOrders)[number];
 
 export const mockTrackingSteps = [
   { title: "Přijato", detail: "28. 10. v 14:32", complete: true },

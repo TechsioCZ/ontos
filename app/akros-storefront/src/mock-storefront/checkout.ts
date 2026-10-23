@@ -1,5 +1,5 @@
 import { type CartState, getCartSubtotal } from "./cart";
-import { mockCustomer } from "./fixtures/account";
+import { demoAccount } from "./fixtures/account";
 import {
   checkoutDeliveryMethods,
   checkoutPaymentMethods,
@@ -46,18 +46,18 @@ export const createCheckoutDraft = (): CheckoutDraft => ({
   deliveryId: "",
   paymentId: "",
   pickupPointId: "",
-  email: mockCustomer.email,
-  company: mockCustomer.company,
-  companyId: "12345678",
-  vatId: "CZ12345678",
+  email: demoAccount.profile.email,
+  company: demoAccount.profile.company,
+  companyId: demoAccount.profile.companyId,
+  vatId: demoAccount.profile.vatId,
   billing: {
-    firstName: "Jan",
-    lastName: "Novák",
-    street: "Průmyslová 1420",
-    city: "Praha 10",
-    postalCode: "102 00",
-    country: "CZ",
-    phone: "+420777123456",
+    firstName: demoAccount.profile.firstName,
+    lastName: demoAccount.profile.lastName,
+    street: demoAccount.profile.street,
+    city: demoAccount.profile.city,
+    postalCode: demoAccount.profile.postalCode,
+    country: demoAccount.profile.country,
+    phone: demoAccount.profile.phone,
   },
   delivery: {
     firstName: "",

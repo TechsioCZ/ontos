@@ -11,6 +11,7 @@ import { PhoneInput } from "@techsio/ui-kit/molecules/phone-input";
 import { Accordion } from "@techsio/ui-kit/molecules/accordion";
 import { AccountShell } from "@/components/account-shell";
 import { useAccountProfileSnapshot } from "./use-account-profile";
+import { PasswordChange } from "./password-change";
 import { CheckoutSelect } from "@/features/checkout/checkout-select";
 import {
   accountProfileStorageKey,
@@ -68,9 +69,18 @@ export function AccountProfilePage() {
   const [errors, setErrors] = useState<AccountProfileErrors>({});
   const [feedback, setFeedback] = useState("");
   const [companyFeedback, setCompanyFeedback] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmation, setConfirmation] = useState("");
   const formRef = useRef<HTMLFormElement>(null);
+  const focusOrigin = useRef<Element | null>(null);
+  const [focusAttempt, setFocusAttempt] = useState(0);
+  useEffect(() => {
+    if (focusAttempt === 0) return;
+    const frame = requestAnimationFrame(() => {
+      if (document.activeElement !== focusOrigin.current) return;
+      const fields = formRef.current?.querySelectorAll<HTMLElement>('[aria-invalid="true"]');
+      [...(fields ?? [])].find((field) => !field.closest("#zmena-hesla"))?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusAttempt]);
   useEffect(() => {
     const hash = window.location.hash;
     const frame = requestAnimationFrame(() => {
@@ -168,17 +178,9 @@ export function AccountProfilePage() {
                       : "billing",
               );
               setOpen((current) => [...new Set([...current, ...requiredSections])]);
-              requestAnimationFrame(() =>
-                formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus(),
-              );
+              focusOrigin.current = document.activeElement;
+              setFocusAttempt((current) => current + 1);
               setFeedback("Zkontrolujte zvýrazněné údaje.");
-              return;
-            }
-            if (password || confirmation) {
-              setOpen((current) => [...new Set([...current, "contact"])]);
-              setFeedback(
-                "Změna hesla není připojena k účtu. Pro uložení ostatních údajů vymažte pole hesla.",
-              );
               return;
             }
             try {
@@ -208,26 +210,7 @@ export function AccountProfilePage() {
               <div className="grid max-w-(--akros-account-form-width) gap-(--dimension-24) md:grid-cols-2">
                 <div className="grid gap-(--dimension-32)">
                   {input("email", "Email", "email", "email")}
-                  <div id="zmena-hesla">
-                    <FormInput
-                      id="account-password"
-                      label="Heslo"
-                      size="sm"
-                      type="password"
-                      autoComplete="new-password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                    />
-                  </div>
-                  <FormInput
-                    id="account-password-confirmation"
-                    label="Potvrdit heslo"
-                    size="sm"
-                    type="password"
-                    autoComplete="new-password"
-                    value={confirmation}
-                    onChange={(e) => setConfirmation(e.target.value)}
-                  />
+                  <PasswordChange />
                 </div>
                 <aside className="grid h-fit gap-(--dimension-32) rounded-(--dimension-8) bg-(--akros-account-surface) p-(--dimension-24)">
                   <h2 className="text-(length:--akros-account-section-size) leading-(--akros-account-heading-leading) font-bold">

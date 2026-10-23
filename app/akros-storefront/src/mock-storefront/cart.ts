@@ -25,6 +25,7 @@ export interface CartState {
 
 export type CartAction =
   | { type: "add"; item: CartItemSnapshot; quantity: number }
+  | { type: "reorder"; items: CartLine[] }
   | { type: "set-quantity"; productId: string; variantId?: string; quantity: number }
   | { type: "remove"; productId: string; variantId?: string }
   | { type: "clear" };
@@ -64,8 +65,39 @@ export const normalizeOrderQuantity = (item: CartItemSnapshot, quantity: number)
 const isSameLine = (line: CartLine, productId: string, variantId?: string) =>
   line.productId === productId && line.variantId === variantId;
 
+// Batch additions use current catalog snapshots and never reduce existing contents.
+export function addCartItems(state: CartState, items: CartLine[]) {
+  const lines = [...state.lines];
+  const added = new Set<string>();
+  const notices: string[] = [];
+  for (const item of items) {
+    const index = lines.findIndex((line) => isSameLine(line, item.productId, item.variantId));
+    const previous = index < 0 ? 0 : lines[index].quantity;
+    if (!Number.isFinite(item.quantity) || item.quantity <= 0 || item.priceMinor <= 0) {
+      notices.push(`${item.sku}: položku nelze objednat.`);
+      continue;
+    }
+    const target = Math.round((previous + item.quantity) * 1_000_000) / 1_000_000;
+    const normalized = normalizeOrderQuantity(item, target);
+    const quantity = normalized <= target ? Math.max(previous, normalized) : previous;
+    const increment = Math.round((quantity - previous) * 1_000_000) / 1_000_000;
+    if (increment > 0) {
+      const next = { ...item, quantity };
+      if (index < 0) lines.push(next);
+      else lines[index] = next;
+      added.add(`${item.productId}/${item.variantId ?? ""}`);
+    }
+    if (increment !== item.quantity)
+      notices.push(
+        `${item.sku}: přidáno ${formatQuantity(increment)} z ${formatQuantity(item.quantity)} ${item.unit} podle dostupnosti a objednacího množství.`,
+      );
+  }
+  return { cart: { ...state, lines }, addedLines: added.size, notices };
+}
+
 export const cartReducer = (state: CartState, action: CartAction): CartState => {
   if (action.type === "clear") return createEmptyCart();
+  if (action.type === "reorder") return addCartItems(state, action.items).cart;
 
   if (action.type === "remove") {
     return {

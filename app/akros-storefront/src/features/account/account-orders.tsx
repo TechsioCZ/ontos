@@ -9,6 +9,7 @@ import { DataTable, type ColumnDef } from "@techsio/ui-kit/organisms/data-table"
 import { CheckoutSelect } from "@/features/checkout/checkout-select";
 import { AccountHeading } from "./account-content";
 import { mockOrders } from "@/mock-storefront/fixtures/account";
+import { ReorderAction } from "./reorder-action";
 
 type Order = (typeof mockOrders)[number];
 export const orderHref = (order: Order) =>
@@ -45,7 +46,7 @@ const columns: ColumnDef<Order>[] = [
   },
   {
     id: "total",
-    accessorFn: (order) => Number(order.total.replace(/\D/g, "")),
+    accessorFn: (order) => order.totalMinor,
     header: "Cena celkem",
     meta: { align: "end" },
     cell: ({ row }) => (
@@ -55,15 +56,18 @@ const columns: ColumnDef<Order>[] = [
   { accessorKey: "status", header: "Stav" },
   {
     id: "actions",
-    header: "Detail",
+    header: "Akce",
     enableSorting: false,
     cell: ({ row }) => (
-      <NextLink
-        className="underline underline-offset-4 hover:no-underline"
-        href={orderHref(row.original)}
-      >
-        Otevřít<span className="sr-only"> objednávku {row.original.number}</span>
-      </NextLink>
+      <div className="akros-order-actions">
+        <ReorderAction orderNumber={row.original.number} />
+        <NextLink
+          className="underline underline-offset-4 hover:no-underline"
+          href={orderHref(row.original)}
+        >
+          Otevřít<span className="sr-only"> objednávku {row.original.number}</span>
+        </NextLink>
+      </div>
     ),
   },
 ];
@@ -193,16 +197,19 @@ export function AccountOrders() {
                     <dd>{order.status}</dd>
                   </div>
                 </dl>
-                <LinkButton
-                  as={NextLink}
-                  href={orderHref(order)}
-                  size="sm"
-                  theme="outlined"
-                  variant="secondary"
-                  data-account-action
-                >
-                  Detail objednávky
-                </LinkButton>
+                <div className="akros-order-actions">
+                  <ReorderAction orderNumber={order.number} />
+                  <LinkButton
+                    as={NextLink}
+                    href={orderHref(order)}
+                    size="sm"
+                    theme="outlined"
+                    variant="secondary"
+                    data-account-action
+                  >
+                    Detail objednávky
+                  </LinkButton>
+                </div>
               </li>
             ))}
           </ul>

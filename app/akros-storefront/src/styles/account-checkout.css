@@ -140,3 +140,45 @@
     padding: var(--dimension-24);
   }
 }
+.akros-order-actions,
+.akros-reorder-action {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dimension-16);
+  min-width: 0;
+}
+
+.akros-reorder-action > button {
+  max-width: 100%;
+  white-space: normal;
+}
+
+.akros-account-notice {
+  margin-block: var(--dimension-16) var(--dimension-24);
+  color: var(--akros-account-muted);
+  font-size: var(--dimension-16);
+}
+
+.akros-password-change {
+  display: grid;
+  min-width: 0;
+  gap: var(--dimension-24);
+}
+
+.akros-password-change > h3 {
+  font-weight: var(--font-weight-bold);
+}
+
+.akros-password-change .akros-account-notice {
+  margin: 0;
+}
+
+/* Variant identity must remain readable in account cards, including long SKUs. */
+[data-account-products] .akros-catalog-product-card__name,
+[data-account-products] .akros-product-card__description {
+  display: block;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: unset;
+}
