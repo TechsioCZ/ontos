@@ -136,7 +136,9 @@ export const ChangePrincipalStatusPayloadSchema = Schema.Union([
 export const IssueApiKeyPayloadSchema = Schema.Struct({
   name: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(32))),
 });
+export const ManagedApiKeyScopeSchema = Schema.Literals(['company-agent', 'tenant-managed']);
 export const IssueManagedApiKeyPayloadSchema = Schema.Struct({
+  scope: ManagedApiKeyScopeSchema,
   ...IssueApiKeyPayloadSchema.fields,
   principalId: PrincipalIdSchema,
 });
@@ -162,12 +164,14 @@ export const SetManagedApiKeyStatusPayloadSchema = Schema.Union([
     ...apiKeyStatusFields,
     newStatus: MutableApiKeyBindingStatusSchema,
     principalId: PrincipalIdSchema,
+    scope: ManagedApiKeyScopeSchema,
     reason: Schema.optionalKey(identityReason),
   }),
   Schema.Struct({
     ...apiKeyStatusFields,
     newStatus: Schema.Literal('revoked'),
     principalId: PrincipalIdSchema,
+    scope: ManagedApiKeyScopeSchema,
     reason: identityReason,
   }),
 ]);
@@ -177,6 +181,7 @@ export const RotateApiKeyPayloadSchema = Schema.Struct({
   reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
 });
 export const RotateManagedApiKeyPayloadSchema = Schema.Struct({
+  scope: ManagedApiKeyScopeSchema,
   ...RotateApiKeyPayloadSchema.fields,
   principalId: PrincipalIdSchema,
 });
@@ -201,10 +206,27 @@ export const SelfApiKeyListResponseSchema = Schema.Struct({
   items: Schema.Array(ApiKeyLifecycleResponseSchema),
   nextOffset: Schema.Union([Schema.Null, Schema.Finite]),
 });
+export const ManagedApiKeyListPayloadSchema = Schema.Union([
+  Schema.Struct({
+    ...IdentityListPayloadSchema.fields,
+    scope: Schema.Literal('tenant-managed'),
+  }),
+  Schema.Struct({
+    ...IdentityListPayloadSchema.fields,
+    principalId: PrincipalIdSchema,
+    scope: Schema.Literal('company-agent'),
+  }),
+]);
 export const ManagedApiKeyListItemSchema = Schema.Struct({
   displayName: Schema.String,
-  key: Schema.Union([Schema.Null, ApiKeyLifecycleResponseSchema]),
-  kind: Schema.Literals(['service', 'integration']),
+  key: Schema.Union([
+    Schema.Null,
+    Schema.Struct({
+      ...ApiKeyLifecycleResponseSchema.fields,
+      bindingStatus: MutableApiKeyBindingStatusSchema,
+    }),
+  ]),
+  kind: Schema.Literals(['service', 'integration', 'agent']),
   principalId: PrincipalIdSchema,
   principalStatus,
 });
@@ -238,6 +260,7 @@ export type ApiKeyLifecycleResponse = Schema.Schema.Type<typeof ApiKeyLifecycleR
 export type ApiKeyIssueResponse = Schema.Schema.Type<typeof ApiKeyIssueResponseSchema>;
 export type PrincipalMutationResponse = Schema.Schema.Type<typeof PrincipalMutationResponseSchema>;
 export type SelfApiKeyListResponse = Schema.Schema.Type<typeof SelfApiKeyListResponseSchema>;
+export type ManagedApiKeyListPayload = Schema.Schema.Type<typeof ManagedApiKeyListPayloadSchema>;
 export type ManagedApiKeyListResponse = Schema.Schema.Type<typeof ManagedApiKeyListResponseSchema>;
 export type StartSupportImpersonationPayload = Schema.Schema.Type<typeof StartSupportImpersonationPayloadSchema>;
 export type SupportImpersonationResponse = Schema.Schema.Type<typeof SupportImpersonationResponseSchema>;
@@ -847,7 +870,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
       .add(
         HttpApiEndpoint.post('listManagedApiKeys', '/auth/identity/api-keys/managed/list', {
           error: identityErrors,
-          payload: IdentityListPayloadSchema,
+          payload: ManagedApiKeyListPayloadSchema,
           success: ManagedApiKeyListResponseSchema,
         }),
       )

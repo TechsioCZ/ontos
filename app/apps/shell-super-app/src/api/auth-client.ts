@@ -59,6 +59,7 @@ import type {
   IdentityListPayload,
   IssueApiKeyPayload,
   IssueManagedApiKeyPayload,
+  ManagedApiKeyListPayload,
   ManagedApiKeyListResponse,
   PrincipalMutationResponse,
   RotateApiKeyPayload,
@@ -350,7 +351,7 @@ export const issueManagedApiKey = (
   );
 
 export const listManagedApiKeys = (
-  payload: IdentityListPayload,
+  payload: ManagedApiKeyListPayload,
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ManagedApiKeyListResponse, IdentityClientError> =>
   invokeShellAuthenticationClient(options, (client) => client.identity.listManagedApiKeys({ payload }));
