@@ -64,6 +64,7 @@ it('keeps identity provisioning to one neutral namespace capability', () => {
     'merge_party_identity',
     'read_party_identity',
     'review_party_identity',
+    'select_context',
   ]);
   expect(IDENTITY_NAMESPACE_PERMISSION_KEYS).toEqual(['provision']);
 });

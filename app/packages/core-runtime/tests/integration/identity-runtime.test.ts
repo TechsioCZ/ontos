@@ -44,7 +44,12 @@ import { SPICEDB_CHECK_TIMEOUT_MS, createSpiceDbPermissionClient } from '../../s
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
 import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { makeContextAccess } from '../../src/permissions/context-access.ts';
-import { makeActionPermissionService, toSpiceDbActionObjectId } from '../../src/permissions/service.ts';
+import {
+  buildActionAuthorizationRelationships,
+  buildActionAuthorizationRoleGrantRelationships,
+} from '../../src/install/action-authorization-provisioning.ts';
+import { toScopedRoleObjectId } from '../../src/permissions/scoped-role.ts';
+import { makeActionPermissionService } from '../../src/permissions/service.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
@@ -165,17 +170,20 @@ it.live('runs identity mutations and tenant-isolated administration through live
       'core.identity.set-managed-api-key-binding-status',
       'core.identity.set-self-api-key-binding-status',
     ] as const;
+    const identityActions = identityActionKeys.map((actionKey) => ({ actionKey, tenantId }));
+    const identityRole = { roleKey: 'identity-runtime-administrator', tenantId };
     const spiceDbRelationships = [
       relationship('tenant', tenantId, 'member', 'principal', administratorPrincipalId),
       relationship('tenant', tenantId, 'identity_admin', 'principal', administratorPrincipalId),
       relationship('tenant', tenantId, 'support', 'principal', administratorPrincipalId),
-      ...identityActionKeys.flatMap((actionKey) => {
-        const objectId = toSpiceDbActionObjectId(actionKey);
-        return [
-          relationship('action', objectId, 'executor', 'principal', administratorPrincipalId),
-          relationship('action', objectId, 'executor', 'principal', systemPrincipalId),
-        ];
-      }),
+      ...buildActionAuthorizationRelationships(identityActions),
+      ...buildActionAuthorizationRoleGrantRelationships(
+        identityActions.map((action) => ({ ...action, roleKey: identityRole.roleKey })),
+        [{ moduleKeys: ['core.identity'], tenantId }],
+      ),
+      ...[administratorPrincipalId, systemPrincipalId].map((memberId) =>
+        relationship('scoped_role', toScopedRoleObjectId(identityRole), 'member', 'principal', memberId),
+      ),
     ];
     const cleanup = Effect.gen(function* cleanIdentityRuntimeFixtures() {
       yield* admin.delete(dataAccessEvents).where(inArray(dataAccessEvents.tenantId, [tenantId]));

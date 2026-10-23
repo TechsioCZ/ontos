@@ -21,7 +21,9 @@ import {
   validateActiveApplicationCompositionSnapshot,
 } from '../modules/active-application-composition.ts';
 import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
-import { OntosOutboxSubscriptionContractSchema } from '../modules/manifest.ts';
+import { OutboxSubscriptionAuthoritySchema } from '../modules/manifest.ts';
+import { CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS } from './core-system-subscriptions.ts';
+import { isCoreSystemOutboxSubscription } from './definition.ts';
 import { OutboxWorkerDescriptorError } from './errors.ts';
 import { ActiveApplicationCompositionUnavailableError } from '../modules/active-application-composition-errors.ts';
 
@@ -36,7 +38,7 @@ import { parseOutboxPollingConfig, runOutboxPollingLoop } from './poller.ts';
 import type { OutboxPollingConfig, RunOutboxPollingLoopInput } from './poller.ts';
 import type { OutboxRuntime } from './runtime.ts';
 
-const sameSubscriptions = Schema.toEquivalence(Schema.Array(OntosOutboxSubscriptionContractSchema));
+const sameSubscriptions = Schema.toEquivalence(Schema.Array(OutboxSubscriptionAuthoritySchema));
 const subscriptionOrder = Order.mapInput(Order.String, ({ workerKey }: { readonly workerKey: string }) => workerKey);
 const unavailableSubscriptionCatalog = (cause: unknown) =>
   new ActiveApplicationCompositionUnavailableError({
@@ -94,7 +96,7 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
       const loop = Effect.gen(function* runCompiledOutboxWorkerLoop() {
         const authority = yield* ActiveApplicationCompositionService;
         const suppliedSubscriptions = yield* Schema.decodeUnknownEffect(
-          Schema.Array(OntosOutboxSubscriptionContractSchema),
+          Schema.Array(OutboxSubscriptionAuthoritySchema),
           { onExcessProperty: 'error' },
         )(compiledSubscriptions).pipe(
           Effect.mapError(
@@ -112,8 +114,19 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
           for (const module of snapshot.composition.modules) {
             modulesById.set(module.moduleId, module);
           }
+          const coreEntry = registrations.length > 0 && registrations.every(({ descriptor }) =>
+            isCoreSystemOutboxSubscription(descriptor),
+          );
+          if (!coreEntry && registrations.some(({ descriptor }) => descriptor.entrypoint.scope === 'system')) {
+            return yield* new OutboxWorkerDescriptorError({
+              code: 'outbox_worker_descriptor_invalid',
+              reason: 'Core system workers cannot share a tenant module owner artifact',
+            });
+          }
           for (const registration of registrations) {
-            const approved = modulesById.get(registration.descriptor.consumerModuleKey);
+            const approved = coreEntry
+              ? snapshot.composition.shell
+              : modulesById.get(registration.descriptor.consumerModuleKey);
             if (
               approved === undefined ||
               approved.deployment.appId !== expectedDeployment.appId ||
@@ -137,16 +150,17 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
               ownerModules.add(moduleId);
             }
           }
-          const approvedSubscriptions: (typeof OntosOutboxSubscriptionContractSchema.Type)[] = [];
-          for (const { runtime } of catalog.contracts) {
-            for (const subscription of runtime.outboxSubscriptions) {
-              if (ownerModules.has(subscription.consumerModuleKey)) {
-                approvedSubscriptions.push(subscription);
-              }
-            }
-          }
+          const approvedSubscriptions: OutboxWorkerSubscription[] = coreEntry
+            ? [...CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS]
+            : catalog.contracts.flatMap(({ runtime }) =>
+                runtime.outboxSubscriptions.filter(({ consumerModuleKey }) => ownerModules.has(consumerModuleKey)),
+              );
           approvedSubscriptions.sort(subscriptionOrder);
-          if (!sameSubscriptions(approvedSubscriptions, suppliedSubscriptions)) {
+          const approvedContract = yield* Schema.decodeUnknownEffect(
+            Schema.Array(OutboxSubscriptionAuthoritySchema),
+            { onExcessProperty: 'error' },
+          )(approvedSubscriptions).pipe(Effect.mapError(unavailableSubscriptionCatalog));
+          if (!sameSubscriptions(approvedContract, suppliedSubscriptions)) {
             return yield* new OutboxWorkerDescriptorError({
               code: 'outbox_worker_descriptor_invalid',
               reason: 'The compiled Outbox Worker subscriptions differ from the complete approved owner contract',

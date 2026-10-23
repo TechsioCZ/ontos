@@ -13,6 +13,7 @@ import { IdentityPersistenceUnavailableError } from '../auth/principal-managemen
 import { loadSpiceDbConfig } from '../permissions/config.ts';
 import { toLegalEntityAccessObjectId } from '../permissions/context-access.ts';
 import type { SpiceDbRpc } from '../permissions/spicedb-rpc.ts';
+import { replaceAgentScopedRolePolicy } from './agent-scoped-role-policy.ts';
 
 export interface DemoAccountRelationship {
   readonly relation: string;
@@ -149,10 +150,12 @@ export interface DemoAccountGrants {
   readonly relationshipsOf: (
     principalId: string,
   ) => Effect.Effect<readonly DemoAccountRelationship[], IdentityPersistenceUnavailableError>;
-  /** Makes `desired` the agent's complete grant set; everything else is removed except the tenant membership. */
+  /** Atomically replaces one company's explicit agent role, its policy and membership. */
   readonly replaceAgentGrants: (input: {
-    readonly desired: readonly DemoAccountRelationship[];
+    readonly desired: readonly v1.Relationship[];
+    readonly legalEntityId: string;
     readonly principalId: string;
+    readonly tenantId: string;
   }) => Effect.Effect<{ readonly granted: number; readonly revoked: number }, IdentityPersistenceUnavailableError>;
 }
 
@@ -196,18 +199,15 @@ const makeGrants = (rpc: SpiceDbRpc): DemoAccountGrants => ({
     relationshipsOf(rpc, principalId).pipe(Effect.map((relationships) => membershipCompanies(relationships))),
   relationshipsOf: (principalId) => relationshipsOf(rpc, principalId),
   replaceAgentGrants: Effect.fn('DemoAccountGrants.replaceAgentGrants')(function* replaceAgentGrants(input) {
-    const key = (relationship: DemoAccountRelationship) =>
-      `${relationship.resourceType}|${relationship.resourceId}|${relationship.relation}`;
-    const desiredKeys = new Set(input.desired.map(key));
     const current = yield* relationshipsOf(rpc, input.principalId);
-    const revoke = current.filter(
-      (relationship) =>
-        !desiredKeys.has(key(relationship)) &&
-        !(relationship.resourceType === 'tenant' && relationship.relation === 'member'),
-    );
-    yield* write(rpc, v1.RelationshipUpdate_Operation.DELETE, input.principalId, revoke);
-    yield* write(rpc, v1.RelationshipUpdate_Operation.TOUCH, input.principalId, input.desired);
-    return { granted: input.desired.length, revoked: revoke.length };
+    return yield* replaceAgentScopedRolePolicy(rpc, {
+      ...input,
+      currentPrincipalRelationships: current
+        .map(
+          (relationship) => update(v1.RelationshipUpdate_Operation.TOUCH, input.principalId, relationship).relationship,
+        )
+        .filter((relationship) => relationship !== undefined),
+    });
   }),
   companyMembers: (tenantId, legalEntityId) =>
     rpc

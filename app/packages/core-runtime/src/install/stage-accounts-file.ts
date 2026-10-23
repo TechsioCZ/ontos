@@ -73,10 +73,41 @@ const StageRetiredTenantSchema = Schema.Struct({
  * The operator stage accounts file. Its values never enter source control; only this shape does.
  * The number of Tenants and accounts, their identifiers, and their grants are all data.
  */
+const ScopedRoleSchema = Schema.Struct({
+  legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+  principalIds: Schema.Array(PrincipalIdSchema),
+  roleKey: TrimmedNonEmptyString,
+  tenantId: TenantIdSchema,
+});
+
+const ScopedActionRoleGrantSchema = Schema.Struct({
+  actionKey: ActionKeySchema,
+  legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+  roleKey: TrimmedNonEmptyString,
+  tenantId: TenantIdSchema,
+});
+
+const ScopedActionAssertionSchema = Schema.Struct({
+  actionKey: ActionKeySchema,
+  assertions: Schema.NonEmptyArray(
+    Schema.Struct({
+      expected: Schema.Literals(['allowed', 'denied']),
+      principalId: PrincipalIdSchema,
+    }),
+  ),
+  legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
+  tenantId: TenantIdSchema,
+});
+
 const StageAccountsFileSchema = Schema.Struct({
+  actionAuthorization: Schema.Struct({
+    actionAssertions: Schema.Array(ScopedActionAssertionSchema),
+    roleGrants: Schema.Array(ScopedActionRoleGrantSchema),
+  }),
   retiredAccountEmails: Schema.Array(AccountEmailSchema),
   retiredTenants: Schema.Array(StageRetiredTenantSchema),
-  schemaVersion: Schema.Literal(2),
+  schemaVersion: Schema.Literal(3),
+  scopedRoles: Schema.Array(ScopedRoleSchema),
   tenants: Schema.NonEmptyArray(StageTenantSchema),
 });
 

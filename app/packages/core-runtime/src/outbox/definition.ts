@@ -1,7 +1,7 @@
 import { Predicate, Schema } from 'effect';
 import type { Effect } from 'effect';
 
-import type { TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
+import type { SystemModuleEntrypoint, TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
 import { OutboxWorkerDescriptorError } from './errors.ts';
 
 const outboxWorkerRegistration: unique symbol = Symbol('@app/core-runtime/outbox/worker-registration');
@@ -41,7 +41,9 @@ export interface OutboxWorkerDescriptor<
   Producer extends string,
 > {
   readonly consumerModuleKey: Consumer;
-  readonly entrypoint: TenantModuleEntrypoint<'worker', 'background', Consumer>;
+  readonly entrypoint:
+    | TenantModuleEntrypoint<'worker', 'background', Consumer>
+    | SystemModuleEntrypoint<'worker', 'background', Consumer>;
   readonly leaseDurationMs: number;
   /** Defaults to required so existing Legal Entity workers cannot silently broaden their scope. */
   readonly legalEntityScope?: 'forbidden' | 'required';
@@ -169,9 +171,16 @@ const assertFiniteInteger = (value: number, minimum: number, maximum: number, la
   }
 };
 
+/** Core background work is independent of tenant module installation, never a vertical escape hatch. */
+export const isCoreSystemOutboxSubscription = (descriptor: OutboxWorkerSubscription): boolean =>
+  descriptor.entrypoint.scope === 'system' &&
+  descriptor.consumerModuleKey.startsWith('core.') &&
+  descriptor.producerModuleKey.startsWith('core.');
+
 const assertWorkerEntrypoint = (descriptor: OutboxWorkerSubscription, reason: string): void => {
   if (
-    descriptor.entrypoint.scope !== 'tenant' ||
+    (descriptor.entrypoint.scope !== 'tenant' && !isCoreSystemOutboxSubscription(descriptor)) ||
+    descriptor.entrypoint.authorization.kind !== 'owner_local_background' ||
     descriptor.entrypoint.role !== 'worker' ||
     descriptor.entrypoint.access !== 'background' ||
     descriptor.entrypoint.moduleKey !== descriptor.consumerModuleKey ||
@@ -212,8 +221,11 @@ export const defineOutboxWorker = <
 ): OutboxWorkerRegistration<PayloadSchema, Consumer, Producer, HandlerError, HandlerRequirements> => {
   assertWorkerSubscription(
     descriptor,
-    'Worker entrypoint must be an immutable tenant worker/background descriptor owned by consumerModuleKey',
+    'Worker entrypoint must be an immutable owner-local worker/background descriptor; system workers require Core owners',
   );
+  if (descriptor.entrypoint.scope === 'system' && descriptor.legalEntityScope !== 'forbidden') {
+    throw descriptorError('Core system workers must explicitly use tenant-wide owner database scope');
+  }
   assertFiniteInteger(descriptor.leaseDurationMs, 1000, 3_600_000, 'leaseDurationMs');
   if (
     descriptor.legalEntityScope !== undefined &&

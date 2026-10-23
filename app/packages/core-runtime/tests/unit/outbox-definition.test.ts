@@ -1,7 +1,8 @@
 import { Effect, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { defineSystemModuleEntrypoint, defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { OntosOutboxSubscriptionContractSchema, OutboxSubscriptionAuthoritySchema } from '../../src/modules/manifest.ts';
 import {
   defineOutboxWorker,
   getOutboxWorkerHandler,
@@ -181,6 +182,51 @@ it('rejects duplicate worker keys and calculates bounded exponential backoff', (
   expect(retryBackoffMs(worker.descriptor.retryPolicy, 3)).toBe(4000);
   expect(retryBackoffMs(worker.descriptor.retryPolicy, 10)).toBe(10_000);
 });
+it('admits only explicitly tenant-wide Core system workers, without changing public module contracts', () => {
+  const required = makeWorker();
+  const workerKey = 'core.authorization.reconcile-installation';
+  const descriptor = {
+    ...required.descriptor,
+    consumerModuleKey: 'core.authorization',
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'background',
+      authorization: { kind: 'owner_local_background' },
+      entrypointKey: workerKey,
+      moduleKey: 'core.authorization',
+      role: 'worker',
+    }),
+    legalEntityScope: 'forbidden' as const,
+    producerModuleKey: 'core.modules',
+    topic: 'core.modules.installation-changed.v1',
+    workerKey,
+  };
+  const worker = defineOutboxWorker(descriptor, () => Effect.void);
+  const subscription = {
+    consumerModuleKey: descriptor.consumerModuleKey,
+    entrypoint: descriptor.entrypoint,
+    producerModuleKey: descriptor.producerModuleKey,
+    topic: descriptor.topic,
+    workerKey,
+  };
+  expect(validateOutboxWorkerRegistrations([worker])).toEqual([worker]);
+  expect(validateOutboxWorkerSubscriptions([subscription])).toEqual([subscription]);
+  expect(Schema.is(OutboxSubscriptionAuthoritySchema)(subscription)).toBe(true);
+  expect(Schema.is(OntosOutboxSubscriptionContractSchema)(subscription)).toBe(false);
+  expect(() => defineOutboxWorker({ ...descriptor, legalEntityScope: 'required' }, () => Effect.void)).toThrow(OutboxWorkerDescriptorError);
+  expect(() => defineOutboxWorker({ ...descriptor, producerModuleKey: 'tenant.module' }, () => Effect.void)).toThrow(OutboxWorkerDescriptorError);
+  expect(() => defineOutboxWorker({
+    ...required.descriptor,
+    entrypoint: defineSystemModuleEntrypoint({
+      access: 'background',
+      authorization: { kind: 'owner_local_background' },
+      entrypointKey: required.descriptor.workerKey,
+      moduleKey: required.descriptor.consumerModuleKey,
+      role: 'worker',
+    }),
+    legalEntityScope: 'forbidden',
+  }, () => Effect.void)).toThrow(OutboxWorkerDescriptorError);
+});
+
 it('validates and freezes the schema-free installed subscription catalog', () => {
   const worker = makeWorker();
   const subscription = {

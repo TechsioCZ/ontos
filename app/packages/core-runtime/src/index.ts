@@ -1,3 +1,4 @@
+export { withPostgresSessionAdvisoryLock } from './db/session-advisory-lock.ts';
 export {
   ACTION_PROVISIONING_INTENTS,
   ActionExecutionAuthorizationSchema,
@@ -878,7 +879,6 @@ export type { DemoAccountRelationship } from './install/demo-account-administrat
 export { openPrincipalOperators, operatorChanges } from './permissions/principal-operators.ts';
 export type { PrincipalOperators } from './permissions/principal-operators.ts';
 export {
-  actionKeyOfObjectId,
   agentGrantRelationships,
   agentModuleAccessOf,
   isReadPermission,

@@ -58,8 +58,9 @@ it.layer(NodeFileSystem.layer)('SpiceDB bootstrap sources', (suite) => {
       expect(extractSchema(development)).toBe(ONTOS_SPICEDB_SCHEMA);
       expect(extractSchema(stage)).toBe(ONTOS_SPICEDB_SCHEMA);
       expect(stage).not.toMatch(/relationships:|assertions:/u);
-      expect(development).toMatch(/#executor@tenant:test-tenant#member/u);
-      expect(development).toMatch(/#executor@principal:allowed-principal/u);
+      expect(development).toMatch(/#role@scoped_role:test-executor#member/u);
+      expect(development).toMatch(/scoped_role:test-executor#member@principal:allowed-principal/u);
+      expect(development).not.toMatch(/#executor@|#restriction@|is_restricted/u);
       expect(development).toMatch(/relation containing_catalog: business_permission/u);
       expect(development).toMatch(
         /permission use = direct_use \+ \(tenant->access & containing_catalog->direct_use\)/u,

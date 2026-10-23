@@ -1622,7 +1622,9 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         .checkActionPermission({
           actionKey: input.registration.descriptor.actionKey,
           correlationId: transport.correlationId,
+          ...(scope.legalEntityId === undefined ? {} : { legalEntityId: scope.legalEntityId }),
           principalId: principal.principalId,
+          tenantId: scope.tenantId,
         })
         .pipe(Effect.tapError((error) => Effect.logError(error.reason)));
       const tenantPermissionDecision = yield* checkTenantActionPermission(principal, tenantPermission);

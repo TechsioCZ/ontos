@@ -3,7 +3,7 @@ import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ActionPermissionCheckError } from '../../src/actions/errors.ts';
-import type { SpiceDbPermissionClientError } from '../../src/permissions/client.ts';
+import type { SpiceDbPermissionClient, SpiceDbPermissionClientError } from '../../src/permissions/client.ts';
 import { spiceDbPermissionClientError } from '../../src/permissions/client.ts';
 import { SPICEDB_ROOT_ENV_PATH, loadSpiceDbConfig, parseSpiceDbConfig } from '../../src/permissions/config.ts';
 import {
@@ -11,19 +11,21 @@ import {
   SPICEDB_CHECK_TIMEOUT_MS,
   SPICEDB_EXECUTE_PERMISSION,
   SPICEDB_PRINCIPAL_OBJECT_TYPE,
-  SPICEDB_RESTRICTION_PERMISSION,
+  SPICEDB_PROPOSE_PERMISSION,
   acquirePermissionClientResource,
   makeActionPermissionLive,
   makeActionPermissionService,
   toSpiceDbActionObjectId,
 } from '../../src/permissions/service.ts';
-import type { PermissionCheckClient } from '../../src/permissions/service.ts';
+import { makeActionAuthorityService } from '../../src/permissions/action-authority.ts';
 import { SPICEDB_TEST_CERTIFICATE } from '../support/spicedb-test-certificate.ts';
 
 const input = {
   actionKey: 'inventory.stock.reserve',
   correlationId: 'correlation-permission-test',
+  legalEntityId: '00000000-0000-4000-8000-000000000002',
   principalId: '00000000-0000-4000-8000-000000000003',
+  tenantId: '00000000-0000-4000-8000-000000000001',
 } as const;
 
 const response = (permissionship: v1.CheckPermissionResponse_Permissionship) =>
@@ -32,9 +34,10 @@ const response = (permissionship: v1.CheckPermissionResponse_Permissionship) =>
 const makeClient = (
   responses: readonly Effect.Effect<v1.CheckPermissionResponse, SpiceDbPermissionClientError>[],
   requests: v1.CheckPermissionRequest[] = [],
-): PermissionCheckClient => {
+): SpiceDbPermissionClient => {
   let index = 0;
   return {
+    checkBulkPermissions: () => Effect.die('Unexpected bulk permission request'),
     checkPermission: (request) =>
       Effect.suspend(() => {
         requests.push(request);
@@ -135,12 +138,14 @@ it.effect('losslessly maps Action keys and exact principal identities using full
     expect(decision).toBe('allowed');
     expect(requests.length).toBe(1);
     expect(requests[0]?.resource).toEqual({
-      objectId: toSpiceDbActionObjectId(input.actionKey),
+      objectId: toSpiceDbActionObjectId(input),
       objectType: SPICEDB_ACTION_OBJECT_TYPE,
     });
-    expect(toSpiceDbActionObjectId(input.actionKey)).toBe('ak_aW52ZW50b3J5LnN0b2NrLnJlc2VydmU');
-    expect(toSpiceDbActionObjectId('inventory.stock.reserve')).not.toBe(
-      toSpiceDbActionObjectId('inventory-stock-reserve'),
+    expect(Buffer.from(toSpiceDbActionObjectId(input).slice(3), 'base64url').toString('utf-8')).toBe(
+      JSON.stringify([input.tenantId, input.legalEntityId, input.actionKey]),
+    );
+    expect(toSpiceDbActionObjectId(input)).not.toBe(
+      toSpiceDbActionObjectId({ ...input, actionKey: 'inventory-stock-reserve' }),
     );
     expect(requests[0]?.subject?.object).toEqual({
       objectId: input.principalId,
@@ -172,54 +177,29 @@ it.effect('classifies fully consistent execute permission as allowed or denied w
   }),
 );
 
-it.effect('report-only compatibility distinguishes missing policy from an explicit restriction', () =>
-  Effect.gen(function* reportonlyCompatibilityDistinguishesMissingPolicyFromAnExplicit() {
-    const nowEpochMs = Date.parse('2026-09-10T00:00:00.000Z');
-    const events: unknown[] = [];
-    const rollout = {
-      activatedAtEpochMs: nowEpochMs - 1000,
-      compatibilityEntrypoints: new Set([input.actionKey]),
-      expiresAtEpochMs: nowEpochMs + 1000,
-      inventoryHash: 'inventory',
-      mode: 'report_only' as const,
-      sourceRevision: 'revision',
-    };
-    const missingRequests: v1.CheckPermissionRequest[] = [];
-    const missing = makeActionPermissionService(
+it.effect('checks a distinct graph object for each tenant and company with no global fallback', () =>
+  Effect.gen(function* checksExactScope() {
+    const requests: v1.CheckPermissionRequest[] = [];
+    const service = makeActionPermissionService(
       makeClient(
-        [
-          response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
-          response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
-        ],
-        missingRequests,
+        Array.from({ length: 4 }, () => response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION)),
+        requests,
       ),
-      {
-        emit: (event) => {
-          events.push(event);
-        },
-        nowEpochMs: () => nowEpochMs,
-        rollout,
-      },
     );
-    expect(yield* missing.checkActionPermission(input)).toBe('allowed');
-    expect(missingRequests.map(({ permission }) => permission)).toEqual([
-      SPICEDB_EXECUTE_PERMISSION,
-      SPICEDB_RESTRICTION_PERMISSION,
-    ]);
-    expect(events.length).toBe(1);
-
-    const restricted = makeActionPermissionService(
-      makeClient([
-        response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION),
-        response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
-      ]),
-      {
-        emit: () => expect.unreachable(),
-        nowEpochMs: () => nowEpochMs,
-        rollout,
-      },
-    );
-    expect(yield* restricted.checkActionPermission(input)).toBe('denied');
+    const { legalEntityId, ...tenantScope } = input;
+    const scopes = [
+      input,
+      { ...input, legalEntityId: '00000000-0000-4000-8000-000000000004' },
+      { ...input, tenantId: '00000000-0000-4000-8000-000000000005' },
+      tenantScope,
+    ];
+    for (const scope of scopes) {
+      expect(yield* service.checkActionPermission(scope)).toBe('denied');
+    }
+    expect(new Set(requests.map((request) => request.resource?.objectId)).size).toBe(4);
+    expect(requests.every(({ permission }) => permission === SPICEDB_EXECUTE_PERMISSION)).toBe(true);
+    expect(requests.length).toBe(scopes.length);
+    expect(legalEntityId).toBeDefined();
   }),
 );
 
@@ -246,6 +226,168 @@ it.effect('fails closed for conditional, unspecified, malformed, and client fail
       expect(failure.reason.includes('internal host')).toBe(false);
     }
   }),
+);
+
+it.effect('checks propose once on each exact scope without falling back to execute', () =>
+  Effect.gen(function* checksExactProposalScope() {
+    const requests: v1.CheckPermissionRequest[] = [];
+    const scopes = [
+      input,
+      { ...input, legalEntityId: 'another-company' },
+      { ...input, tenantId: 'another-tenant' },
+      { actionKey: input.actionKey, principalId: input.principalId, tenantId: input.tenantId },
+    ];
+    const service = makeActionAuthorityService(
+      makeClient(
+        [
+          response(v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION),
+          ...scopes.slice(1).map(() => response(v1.CheckPermissionResponse_Permissionship.NO_PERMISSION)),
+        ],
+        requests,
+      ),
+    );
+    const decisions = yield* Effect.forEach(scopes, (scope) => service.checkActionProposalPermission(scope), {
+      concurrency: 1,
+    });
+
+    expect(decisions).toEqual(['allowed', 'denied', 'denied', 'denied']);
+    expect(requests).toHaveLength(scopes.length);
+    expect(new Set(requests.map(({ resource }) => resource?.objectId)).size).toBe(scopes.length);
+    for (const [index, request] of requests.entries()) {
+      expect(request.permission).toBe(SPICEDB_PROPOSE_PERMISSION);
+      expect(request.resource).toEqual({
+        objectId: toSpiceDbActionObjectId(scopes[index] ?? input),
+        objectType: SPICEDB_ACTION_OBJECT_TYPE,
+      });
+      expect(request.subject?.object).toEqual({
+        objectId: input.principalId,
+        objectType: SPICEDB_PRINCIPAL_OBJECT_TYPE,
+      });
+      expect(request.consistency?.requirement).toEqual({ fullyConsistent: true, oneofKind: 'fullyConsistent' });
+    }
+  }),
+);
+
+it.effect('fails proposal checks closed for conditional, unspecified, and client failures without another check', () =>
+  Effect.gen(function* failsProposalChecksClosed() {
+    for (const result of [
+      response(v1.CheckPermissionResponse_Permissionship.CONDITIONAL_PERMISSION),
+      response(v1.CheckPermissionResponse_Permissionship.UNSPECIFIED),
+      Effect.fail(spiceDbPermissionClientError(new Error('private connection evidence'))),
+    ]) {
+      const requests: v1.CheckPermissionRequest[] = [];
+      const failure = yield* Effect.flip(
+        makeActionAuthorityService(makeClient([result], requests)).checkActionProposalPermission(input),
+      );
+      expect(Schema.is(ActionPermissionCheckError)(failure)).toBe(true);
+      expect(failure.reason).not.toContain('private connection evidence');
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.permission).toBe(SPICEDB_PROPOSE_PERMISSION);
+    }
+  }),
+);
+
+const bulkResponse = (request: v1.CheckBulkPermissionsRequest): v1.CheckBulkPermissionsResponse =>
+  v1.CheckBulkPermissionsResponse.create({
+    pairs: request.items.map((item) => ({
+      request: item,
+      response: {
+        item: {
+          permissionship:
+            item.permission === SPICEDB_PROPOSE_PERMISSION
+              ? v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION
+              : v1.CheckPermissionResponse_Permissionship.NO_PERMISSION,
+        },
+        oneofKind: 'item',
+      },
+    })),
+  });
+
+it.effect('projects exact propose and execute authority in serial batches of at most 200 graph checks', () =>
+  Effect.gen(function* boundedBulkActionAuthority() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const client: SpiceDbPermissionClient = {
+      checkBulkPermissions: (request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return bulkResponse(request);
+        }),
+      checkPermission: () => Effect.die('Unexpected single permission request'),
+      close: () => {},
+    };
+    const targets = Array.from({ length: 201 }, (_, index) => ({ ...input, actionKey: `work.tasks.action-${index}` }));
+    const service = makeActionAuthorityService(client);
+    expect(yield* service.checkActionAuthorities([])).toEqual([]);
+    expect(requests).toHaveLength(0);
+    const decisions = yield* service.checkActionAuthorities(targets);
+    expect(requests.map(({ items }) => items.length)).toEqual([200, 200, 2]);
+    expect(decisions).toEqual(targets.map((target) => ({ ...target, execute: 'denied', propose: 'allowed' })));
+    for (const request of requests) {
+      expect(request.consistency?.requirement).toEqual({ fullyConsistent: true, oneofKind: 'fullyConsistent' });
+      for (const item of request.items) {
+        expect(item.resource?.objectType).toBe(SPICEDB_ACTION_OBJECT_TYPE);
+        expect(item.subject?.object?.objectId).toBe(input.principalId);
+        expect(item.subject?.optionalRelation).toBe('');
+      }
+    }
+  }),
+);
+
+it.effect(
+  'fails bulk Action authority closed on missing, mismatched, conditional, error, or failed graph responses',
+  () =>
+    Effect.gen(function* malformedBulkAuthority() {
+      const mutations = [
+        () => v1.CheckBulkPermissionsResponse.create(),
+        (request: v1.CheckBulkPermissionsRequest) => {
+          const result = bulkResponse(request);
+          const [first] = result.pairs;
+          if (first?.request?.subject !== undefined) {
+            first.request.subject.optionalRelation = 'unexpected-userset';
+          }
+          return result;
+        },
+        (request: v1.CheckBulkPermissionsRequest) => {
+          const result = bulkResponse(request);
+          const [first] = result.pairs;
+          if (first?.response.oneofKind === 'item') {
+            first.response.item.permissionship = v1.CheckPermissionResponse_Permissionship.CONDITIONAL_PERMISSION;
+          }
+          return result;
+        },
+        (request: v1.CheckBulkPermissionsRequest) => {
+          const result = bulkResponse(request);
+          const [first] = result.pairs;
+          if (first !== undefined) {
+            first.response = {
+              error: { code: 13, details: [], message: 'private graph evidence' },
+              oneofKind: 'error',
+            };
+          }
+          return result;
+        },
+      ];
+      for (const mutate of mutations) {
+        const client: SpiceDbPermissionClient = {
+          checkBulkPermissions: (request) => Effect.succeed(mutate(v1.CheckBulkPermissionsRequest.clone(request))),
+          checkPermission: () => Effect.die('Unexpected single permission request'),
+          close: () => {},
+        };
+        const failure = yield* Effect.flip(makeActionAuthorityService(client).checkActionAuthorities([input]));
+        expect(Schema.is(ActionPermissionCheckError)(failure)).toBe(true);
+        expect(failure.reason).not.toContain('private graph evidence');
+      }
+      const failed: SpiceDbPermissionClient = {
+        checkBulkPermissions: () => Effect.fail(spiceDbPermissionClientError()),
+        checkPermission: () => Effect.die('Unexpected single permission request'),
+        close: () => {},
+      };
+      expect(
+        Schema.is(ActionPermissionCheckError)(
+          yield* Effect.flip(makeActionAuthorityService(failed).checkActionAuthorities([input])),
+        ),
+      ).toBe(true);
+    }),
 );
 
 it.effect('constructs the live client with a bounded deadline and finalizes it with the scope', () =>

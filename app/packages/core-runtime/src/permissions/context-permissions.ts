@@ -7,6 +7,7 @@ export const TENANT_PERMISSION_KEYS = [
   'merge_party_identity',
   'read_party_identity',
   'review_party_identity',
+  'select_context',
 ] as const;
 export type TenantPermissionKey = (typeof TENANT_PERMISSION_KEYS)[number];
 

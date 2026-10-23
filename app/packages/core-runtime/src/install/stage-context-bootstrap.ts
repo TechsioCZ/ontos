@@ -348,6 +348,20 @@ export const buildStageContextRelationships = Effect.fn('StageContextBootstrap.b
     }
     return [
       {
+        relation: 'tenant',
+        resourceId: context.principalId,
+        resourceType: 'principal',
+        subjectId: context.tenantId,
+        subjectType: 'tenant',
+      },
+      {
+        relation: 'self',
+        resourceId: context.principalId,
+        resourceType: 'principal',
+        subjectId: context.principalId,
+        subjectType: 'principal',
+      },
+      {
         relation: 'member',
         resourceId: context.tenantId,
         resourceType: 'tenant',
@@ -423,6 +437,20 @@ export const buildRetiredStageContextRelationships = Effect.fn('StageContextBoot
         subjectType: 'legal_entity',
       },
       ...context.principalIds.flatMap((principalId) => [
+        {
+          relation: 'tenant',
+          resourceId: principalId,
+          resourceType: 'principal',
+          subjectId: context.tenantId,
+          subjectType: 'tenant',
+        },
+        {
+          relation: 'self',
+          resourceId: principalId,
+          resourceType: 'principal',
+          subjectId: principalId,
+          subjectType: 'principal',
+        },
         ...['member', ...STAGE_GRANTABLE_TENANT_RELATIONS].map((relation) => ({
           relation,
           resourceId: context.tenantId,

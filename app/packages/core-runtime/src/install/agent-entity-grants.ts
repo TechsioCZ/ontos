@@ -1,92 +1,81 @@
-/**
- * Agent entities (lane agent-entities): the SpiceDB relationships an agent principal gets in its company. Built from
- * the relationships of the company's role template personas (the same grants human roles use), filtered per module by
- * the access the administrator chose and by the write policy. Pure; `DemoAccountGrants.replaceAgentGrants` writes them.
- */
+/** Administrator selections become explicit company-scoped SpiceDB policy, never principal executor grants. */
+import { v1 } from '@authzed/authzed-node';
+import { Schema } from 'effect';
+
+import { toLegalEntityAccessObjectId, toModuleAccessObjectId } from '../permissions/context-access.ts';
+import { agentScopedRoleObjectId } from '../permissions/scoped-role.ts';
+import { toSpiceDbActionGrantObjectId } from '../permissions/service.ts';
 import { demoAccountObjectIdParts } from './demo-account-administration.ts';
 import type { DemoAccountRelationship } from './demo-account-administration.ts';
+import type { ActionAuthorizationProvisioningAction } from './action-authorization-provisioning.ts';
 
-export type AgentGrantAccess = 'read' | 'write';
-export type AgentGrantWritePolicy = 'approval' | 'direct' | 'read_only';
+export const AgentGrantAccessSchema = Schema.Literals(['read', 'write']);
+export type AgentGrantAccess = typeof AgentGrantAccessSchema.Type;
+export const AgentGrantWritePolicySchema = Schema.Literals(['approval', 'direct', 'read_only']);
+export type AgentGrantWritePolicy = typeof AgentGrantWritePolicySchema.Type;
 export interface AgentGrantModule {
   readonly access: AgentGrantAccess;
   readonly moduleId: string;
 }
 
+const AgentGrantInvariantError = Schema.TaggedError<Error>()('AgentGrantInvariantError', { reason: Schema.String });
+const invalid = (reason: string): never => {
+  throw new AgentGrantInvariantError({ reason });
+};
 const companyScopedTypes: ReadonlySet<string> = new Set(['legal_entity', 'module_access', 'context_permission']);
 
-/** `read_all`, `.read`, `_read` permissions only read; everything else (write_all, assign, …) writes. */
+/** Legacy named-permission ceiling; role authority is persisted as graph policy, not derived at check time. */
 export const isReadPermission = (permission: string): boolean => /(?:^|[._])read(?:_all)?$/u.test(permission);
-
-/** Action key of an `action` object ID (`ak_` + base64url of the key), or undefined. */
-export const actionKeyOfObjectId = (objectId: string): string | undefined =>
-  objectId.startsWith('ak_') ? Buffer.from(objectId.slice('ak_'.length), 'base64url').toString('utf-8') : undefined;
-
 const belongsToCompany = (relationship: DemoAccountRelationship, legalEntityId: string) =>
   demoAccountObjectIdParts(relationship.resourceId).includes(legalEntityId);
 const isCoreModule = (moduleId: string) => moduleId.startsWith('core.');
-
 const companyModules = (
   relationships: readonly DemoAccountRelationship[],
   legalEntityId: string,
 ): readonly string[] => [
   ...new Set(
-    relationships.flatMap((relationship) => {
-      if (relationship.resourceType !== 'module_access' || !belongsToCompany(relationship, legalEntityId)) {
-        return [];
-      }
-      const moduleId = demoAccountObjectIdParts(relationship.resourceId)[2];
-      return moduleId === undefined ? [] : [moduleId];
-    }),
+    relationships.flatMap((relationship) =>
+      relationship.resourceType === 'module_access' && belongsToCompany(relationship, legalEntityId)
+        ? demoAccountObjectIdParts(relationship.resourceId).slice(2, 3)
+        : [],
+    ),
   ),
 ];
 
-/** Module and access one relationship grants, or undefined when it is not module-specific. */
-export const relationshipModuleAccess = (
-  relationship: DemoAccountRelationship,
-  knownModules: readonly string[],
-): AgentGrantModule | undefined => {
+/** Named permission/module metadata only. Action ownership always comes from the composition catalog. */
+export const relationshipModuleAccess = (relationship: DemoAccountRelationship): AgentGrantModule | undefined => {
+  const parts = demoAccountObjectIdParts(relationship.resourceId);
   if (relationship.resourceType === 'module_access') {
-    const moduleId = demoAccountObjectIdParts(relationship.resourceId)[2];
+    const moduleId = parts.at(2);
     return moduleId === undefined ? undefined : { access: 'read', moduleId };
   }
   if (relationship.resourceType === 'context_permission') {
-    const parts = demoAccountObjectIdParts(relationship.resourceId);
-    const moduleId = parts[3];
-    const permission = parts[4];
+    const moduleId = parts.at(3);
+    const permission = parts.at(4);
     return moduleId === undefined || permission === undefined
       ? undefined
       : { access: isReadPermission(permission) ? 'read' : 'write', moduleId };
   }
-  if (relationship.resourceType === 'action' && relationship.relation === 'executor') {
-    const actionKey = actionKeyOfObjectId(relationship.resourceId);
-    if (actionKey === undefined) {
-      return undefined;
-    }
-    const moduleId = knownModules
-      .filter((candidate) => actionKey.startsWith(`${candidate}.`))
-      .toSorted((left, right) => right.length - left.length)[0];
-    return moduleId === undefined ? undefined : { access: 'write', moduleId };
-  }
   return undefined;
 };
 
-/** Highest access per non-Core module of the company the relationships grant, sorted by module ID. */
 export const agentModuleAccessOf = (
   relationships: readonly DemoAccountRelationship[],
   legalEntityId: string,
 ): readonly AgentGrantModule[] => {
-  const known = companyModules(relationships, legalEntityId);
+  const known = new Set(companyModules(relationships, legalEntityId));
   const access = new Map<string, AgentGrantAccess>();
   for (const relationship of relationships) {
     if (companyScopedTypes.has(relationship.resourceType) && !belongsToCompany(relationship, legalEntityId)) {
       continue;
     }
-    const granted = relationshipModuleAccess(relationship, known);
-    if (granted === undefined || isCoreModule(granted.moduleId) || !known.includes(granted.moduleId)) {
-      continue;
-    }
-    if (access.get(granted.moduleId) !== 'write') {
+    const granted = relationshipModuleAccess(relationship);
+    if (
+      granted !== undefined &&
+      !isCoreModule(granted.moduleId) &&
+      known.has(granted.moduleId) &&
+      access.get(granted.moduleId) !== 'write'
+    ) {
       access.set(granted.moduleId, granted.access);
     }
   }
@@ -95,56 +84,141 @@ export const agentModuleAccessOf = (
     .toSorted((left, right) => left.moduleId.localeCompare(right.moduleId));
 };
 
-/**
- * The complete grant set of one agent entity in `legalEntityId`. `legalEntityWriteRelations` holds, per module, the
- * company-wide relations its writers need (declared by the module's contract); others stay read-only.
- */
-export const agentGrantRelationships = (input: {
+export interface AgentScopedRolePolicyInput {
+  /** Validated published contracts, including exact owningModuleKey and legalEntityScope. */
+  readonly actions: readonly Pick<
+    ActionAuthorizationProvisioningAction,
+    'actionKey' | 'legalEntityScope' | 'owningModuleKey'
+  >[];
   readonly legalEntityId: string;
   readonly legalEntityWriteRelations: ReadonlyMap<string, readonly string[]>;
   readonly modules: readonly AgentGrantModule[];
+  readonly principalId: string;
   readonly template: readonly DemoAccountRelationship[];
+  readonly tenantId: string;
   readonly writePolicy: AgentGrantWritePolicy;
-}): readonly DemoAccountRelationship[] => {
-  const known = companyModules(input.template, input.legalEntityId);
-  const effective = new Map<string, AgentGrantAccess>(
-    input.modules
-      .filter(({ moduleId }) => !isCoreModule(moduleId))
-      .map(({ access, moduleId }) => [moduleId, input.writePolicy === 'direct' ? access : 'read'] as const),
+}
+
+/** Policy materialization is operator data, not a role-to-permission matrix used by authorization checks. */
+export const agentGrantRelationships = (input: AgentScopedRolePolicyInput): readonly v1.Relationship[] => {
+  if (
+    new Set(input.actions.map(({ actionKey }) => actionKey)).size !== input.actions.length ||
+    new Set(input.modules.map(({ moduleId }) => moduleId)).size !== input.modules.length ||
+    input.principalId.length === 0 ||
+    input.tenantId.length === 0 ||
+    input.legalEntityId.length === 0
+  ) {
+    return invalid(
+      'Agent policy requires unique composition Actions, module selections and a complete principal scope',
+    );
+  }
+  const companyObjectId =
+    toLegalEntityAccessObjectId(input.tenantId, input.legalEntityId) ?? invalid('Invalid agent company scope');
+  const roleObjectId = agentScopedRoleObjectId(input);
+  const roleSubject = { object: { objectId: roleObjectId, objectType: 'scoped_role' }, optionalRelation: 'member' };
+  const principalSubject = { object: { objectId: input.principalId, objectType: 'principal' } };
+  const policy = (resourceType: string, resourceId: string, relation: string) =>
+    v1.Relationship.create({
+      relation,
+      resource: { objectId: resourceId, objectType: resourceType },
+      subject: roleSubject,
+    });
+  const membership = (resourceType: string, resourceId: string) =>
+    v1.Relationship.create({
+      relation: 'member',
+      resource: { objectId: resourceId, objectType: resourceType },
+      subject: principalSubject,
+    });
+  const effective = new Map(
+    input.modules.map(({ access, moduleId }) => {
+      if (isCoreModule(moduleId)) {
+        return invalid('Agent module selections cannot grant Core administration');
+      }
+      return [moduleId, input.writePolicy === 'direct' ? access : 'read'] as const;
+    }),
   );
   const writes = (moduleId: string) => effective.get(moduleId) === 'write';
-  const writtenLegalEntityRelations = new Set(
+  const writerRelations = new Set(
     [...input.legalEntityWriteRelations].flatMap(([moduleId, relations]) => (writes(moduleId) ? relations : [])),
   );
-  const keep = (relationship: DemoAccountRelationship): boolean => {
+  const namedPolicy = input.template.flatMap((relationship) => {
     if (companyScopedTypes.has(relationship.resourceType) && !belongsToCompany(relationship, input.legalEntityId)) {
-      return false;
+      return [];
     }
-    if (relationship.resourceType === 'tenant') {
-      return relationship.relation === 'member' || relationship.relation.endsWith('_reader');
+    if (
+      relationship.resourceType === 'tenant' &&
+      relationship.resourceId === input.tenantId &&
+      relationship.relation.endsWith('_reader')
+    ) {
+      return [policy('tenant', relationship.resourceId, relationship.relation)];
     }
-    if (relationship.resourceType === 'legal_entity') {
-      return (
-        relationship.relation === 'member' ||
-        relationship.relation.endsWith('_reader') ||
-        writtenLegalEntityRelations.has(relationship.relation)
-      );
+    if (
+      relationship.resourceType === 'legal_entity' &&
+      relationship.resourceId === companyObjectId &&
+      (relationship.relation.endsWith('_reader') || writerRelations.has(relationship.relation))
+    ) {
+      return [policy('legal_entity', relationship.resourceId, relationship.relation)];
     }
-    if (relationship.resourceType === 'module_access') {
-      const moduleId = demoAccountObjectIdParts(relationship.resourceId)[2];
-      return moduleId === 'core.shell' || (moduleId !== undefined && effective.has(moduleId));
-    }
-    if (relationship.resourceType === 'context_permission' || relationship.resourceType === 'action') {
-      const granted = relationshipModuleAccess(relationship, known);
-      return (
+    if (relationship.resourceType === 'context_permission' && relationship.relation === 'grantee') {
+      const granted = relationshipModuleAccess(relationship);
+      if (
         granted !== undefined &&
         effective.has(granted.moduleId) &&
         (granted.access === 'read' || writes(granted.moduleId))
-      );
+      ) {
+        return [policy('context_permission', relationship.resourceId, 'role_grantee')];
+      }
     }
-    return false;
-  };
-  const key = (relationship: DemoAccountRelationship) =>
-    `${relationship.resourceType}|${relationship.resourceId}|${relationship.relation}`;
-  return [...new Map(input.template.filter(keep).map((relationship) => [key(relationship), relationship])).values()];
+    return [];
+  });
+  // Shell access is explicit template evidence, not a selectable administration module.
+  // Preserve only entry access: a reader_role would also grant every Shell resource read.
+  const shellId = toModuleAccessObjectId(input.tenantId, input.legalEntityId, 'core.shell');
+  const shellAccess =
+    shellId !== undefined &&
+    input.template.some(
+      (relationship) =>
+        relationship.resourceType === 'module_access' &&
+        relationship.resourceId === shellId &&
+        relationship.relation === 'accessor',
+    )
+      ? [policy('module_access', shellId, 'accessor_role')]
+      : [];
+  const modulePolicy = [...effective].map(([moduleId, access]) =>
+    policy(
+      'module_access',
+      toModuleAccessObjectId(input.tenantId, input.legalEntityId, moduleId) ?? invalid('Invalid agent module scope'),
+      access === 'write' ? 'writer_role' : 'reader_role',
+    ),
+  );
+  const selectedWriters = new Set(
+    input.modules.flatMap(({ access, moduleId }) => (access === 'write' ? [moduleId] : [])),
+  );
+  const actionPolicy = input.actions.flatMap((action) =>
+    input.writePolicy !== 'read_only' &&
+    selectedWriters.has(action.owningModuleKey) &&
+    action.legalEntityScope !== 'forbidden'
+      ? [
+          policy(
+            'action_grant',
+            toSpiceDbActionGrantObjectId({
+              actionKey: action.actionKey,
+              legalEntityId: input.legalEntityId,
+              tenantId: input.tenantId,
+            }),
+            input.writePolicy === 'approval' ? 'proposer_role' : 'role',
+          ),
+        ]
+      : [],
+  );
+  const relationships = [
+    membership('tenant', input.tenantId),
+    membership('legal_entity', companyObjectId),
+    membership('scoped_role', roleObjectId),
+    ...namedPolicy,
+    ...shellAccess,
+    ...modulePolicy,
+    ...actionPolicy,
+  ];
+  return [...new Map(relationships.map((item) => [v1.Relationship.toJsonString(item), item])).values()];
 };

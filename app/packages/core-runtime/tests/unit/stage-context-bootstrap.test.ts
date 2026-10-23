@@ -11,6 +11,7 @@ import {
 const fixturePassword = (account: string): string => `fixture-${account}-password`;
 
 const accountsFileSource = JSON.stringify({
+  actionAuthorization: { actionAssertions: [], roleGrants: [] },
   retiredAccountEmails: [],
   retiredTenants: [
     {
@@ -20,7 +21,8 @@ const accountsFileSource = JSON.stringify({
       tenantId: '10000000-0000-4000-8000-0000000000b0',
     },
   ],
-  schemaVersion: 2,
+  schemaVersion: 3,
+  scopedRoles: [],
   tenants: [
     {
       accounts: [
@@ -82,6 +84,20 @@ it.effect('writes exactly the Tenant relations listed in grant data, only inside
   Effect.gen(function* writesListedRelations() {
     for (const context of stageContextsFromAccountsFile(yield* loadAccountsFile)) {
       const relationships = yield* buildStageContextRelationships(context);
+      expect(relationships).toContainEqual({
+        relation: 'self',
+        resourceId: context.principalId,
+        resourceType: 'principal',
+        subjectId: context.principalId,
+        subjectType: 'principal',
+      });
+      expect(relationships).toContainEqual({
+        relation: 'tenant',
+        resourceId: context.principalId,
+        resourceType: 'principal',
+        subjectId: context.tenantId,
+        subjectType: 'tenant',
+      });
       expect(
         relationships
           .filter(({ relation, resourceType }) => resourceType === 'tenant' && relation !== 'member')
@@ -104,7 +120,14 @@ it.effect('deletes every relationship a bootstrap can have written for a retired
       return;
     }
     const relationships = yield* buildRetiredStageContextRelationships(retired);
-    expect(relationships).toHaveLength(2 + retired.principalIds.length * (STAGE_GRANTABLE_TENANT_RELATIONS.length + 3));
+    expect(relationships).toContainEqual({
+      relation: 'self',
+      resourceId: retired.principalIds[0],
+      resourceType: 'principal',
+      subjectId: retired.principalIds[0],
+      subjectType: 'principal',
+    });
+    expect(relationships).toHaveLength(2 + retired.principalIds.length * (STAGE_GRANTABLE_TENANT_RELATIONS.length + 5));
     expect(relationships).toContainEqual({
       relation: 'member',
       resourceId: retired.tenantId,

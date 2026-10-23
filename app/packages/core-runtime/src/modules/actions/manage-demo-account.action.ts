@@ -27,6 +27,7 @@ import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../../auth/staff-authenticati
 import { principalAuthBindings, principals } from '../../db/schema.ts';
 import type { ScopedTransactionExecutor } from '../../db/scoped-transaction.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
+import { principalLifecycleDomainEvents, recordPrincipalLifecycleChange } from './principal-lifecycle-event.ts';
 
 const uuid = Schema.String.check(Schema.isUUID());
 const text = (maximum: number) => Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(maximum));
@@ -185,7 +186,7 @@ interface Services {
 
 const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* handle(
   payload: ManageDemoAccountPayload,
-  context: ActionHandlerContext<Readonly<Record<never, never>>, Services>,
+  context: ActionHandlerContext<typeof principalLifecycleDomainEvents, Services>,
 ) {
   const environment = yield* Config.String('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
     Effect.orElseSucceed(() => 'unknown'),
@@ -239,6 +240,7 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
       newRoleLabel: payload.roleLabel,
       newStatus: 'active',
     });
+    yield* recordPrincipalLifecycleChange(context, payload.principalId);
     return { operation: 'create' as const, principalId: payload.principalId, status: 'active' as const };
   }
   if (payload.operation === 'create-agent') {
@@ -271,6 +273,7 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
       principalKind: 'agent',
       writePolicy: payload.writePolicy,
     });
+    yield* recordPrincipalLifecycleChange(context, payload.principalId);
     return { operation: 'create-agent' as const, principalId: payload.principalId, status: 'active' as const };
   }
   const target = yield* loadManagedPrincipal(transaction, tenantId, payload.principalId);
@@ -297,6 +300,7 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
       principalKind: 'agent',
       reason: payload.reason,
     });
+    yield* recordPrincipalLifecycleChange(context, payload.principalId);
     return { operation: 'archive-agent' as const, principalId: payload.principalId, status: 'archived' as const };
   }
   if (payload.operation === 'configure-agent') {
@@ -366,6 +370,7 @@ const handleManageDemoAccount = Effect.fn('ManageDemoAccount.handle')(function* 
     principalKind: target.kind,
     reason: payload.reason ?? null,
   });
+  yield* recordPrincipalLifecycleChange(context, payload.principalId);
   return { operation: 'change-status' as const, principalId: payload.principalId, status: payload.newStatus };
 });
 
@@ -379,7 +384,7 @@ export const manageDemoAccountAction = defineAction(
     auditEvidenceSchema: ManageDemoAccountAuditEvidenceSchema,
     auditProfile: 'sensitive',
     domainErrorSchema: PrincipalManagementErrorSchema,
-    domainEvents: {},
+    domainEvents: principalLifecycleDomainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'action_execution', provisioning: 'explicit' },

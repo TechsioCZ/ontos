@@ -9,6 +9,7 @@ import { PrincipalManagementErrorSchema } from '../../auth/principal-management-
 import { principalManagementRepositoryFromTransaction } from '../../auth/principal-management.ts';
 import type { PrincipalManagementRepositoryService } from '../../auth/principal-management.ts';
 import { defineSystemModuleEntrypoint } from '../module-entrypoint.ts';
+import { principalLifecycleDomainEvents, recordPrincipalLifecycleChange } from './principal-lifecycle-event.ts';
 
 const PrincipalIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId'));
 const status = Schema.Literals(['active', 'disabled', 'archived']);
@@ -35,7 +36,7 @@ const ChangePrincipalStatusResultSchema = Schema.Struct({
 const handle = Effect.fn('ChangePrincipalStatusAction.handle')(function* changePrincipalStatusActionHandle(
   payload: ChangePrincipalStatusPayload,
   context: ActionHandlerContext<
-    Readonly<Record<never, never>>,
+    typeof principalLifecycleDomainEvents,
     {
       readonly change: PrincipalManagementRepositoryService['changePrincipalStatus'];
     }
@@ -54,6 +55,7 @@ const handle = Effect.fn('ChangePrincipalStatusAction.handle')(function* changeP
     targetResourceId: payload.principalId,
     targetResourceType: 'principal',
   });
+  yield* recordPrincipalLifecycleChange(context, payload.principalId);
   return result;
 });
 
@@ -66,7 +68,7 @@ export const changePrincipalStatusAction = defineAction(
     actionKey: 'core.identity.change-principal-status',
     auditProfile: 'sensitive',
     domainErrorSchema: PrincipalManagementErrorSchema,
-    domainEvents: {},
+    domainEvents: principalLifecycleDomainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: {

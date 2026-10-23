@@ -29,6 +29,8 @@ const tenant = (suffix: string) => ({
 });
 
 const validFile = {
+  actionAuthorization: { actionAssertions: [], roleGrants: [] },
+  scopedRoles: [],
   retiredAccountEmails: ['retired-fixture@example.invalid'],
   retiredTenants: [
     {
@@ -38,7 +40,7 @@ const validFile = {
       tenantId: '10000000-0000-4000-8000-0000000000c0',
     },
   ],
-  schemaVersion: 2,
+  schemaVersion: 3,
   tenants: [tenant('a'), tenant('b')],
 };
 
@@ -52,7 +54,7 @@ it.effect('accepts any number of Tenants and accounts with grants as data', () =
     expect(parsed).toMatchObject({
       retiredAccountEmails: validFile.retiredAccountEmails,
       retiredTenants: validFile.retiredTenants,
-      schemaVersion: 2,
+      schemaVersion: 3,
       tenants: validFile.tenants.map(({ accounts, ...tenantData }) => ({
         ...tenantData,
         accounts: accounts.map(({ authBindingId, displayName, email, grants, principalId }) => ({

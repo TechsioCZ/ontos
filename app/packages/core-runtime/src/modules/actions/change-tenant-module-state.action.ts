@@ -4,6 +4,7 @@
 import { Effect, Schema } from 'effect';
 
 import type { ActionHandlerContext } from '../../actions/context.ts';
+import { createChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxMessage } from './change-tenant-module-state-core-modules-tenant-module-state-changed-v1.outbox-message.ts';
 import { defineAction } from '../../actions/definition.ts';
 import { InstalledModuleCatalogService } from '../catalog.ts';
 import { OntosModuleIdSchema } from '../manifest.ts';
@@ -65,7 +66,10 @@ const ChangeTenantModuleStateError = Schema.Union([
   TenantModuleStateValidationUnavailableError,
 ]);
 
-type ChangeTenantModuleStateDomainEvents = Readonly<Record<never, Schema.ConstraintDecoder<unknown>>>;
+const changeTenantModuleStateDomainEvents = {
+  'core.modules.tenant-module-state-changed.v1': ChangeTenantModuleStateResultSchema,
+};
+type ChangeTenantModuleStateDomainEvents = typeof changeTenantModuleStateDomainEvents;
 
 interface ChangeTenantModuleStateServices {
   readonly persist: (
@@ -116,6 +120,20 @@ const handleChangeTenantModuleState = Effect.fn('ChangeTenantModuleStateAction.h
       targetResourceType: 'tenant-module-state',
     });
 
+    const event = yield* context.addDomainEvent({
+      eventType: 'core.modules.tenant-module-state-changed.v1',
+      payloadJson: result,
+      producerModuleKey: 'core.modules',
+      subjectModuleKey: payload.moduleKey,
+      subjectResourceId: payload.moduleKey,
+      subjectResourceType: 'tenant-module-state',
+    });
+    yield* context.addOutboxMessage(
+      event,
+      createChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxMessage({
+        data: { moduleKey: payload.moduleKey },
+      }),
+    );
     return result;
   },
 );
@@ -129,7 +147,7 @@ export const changeTenantModuleStateAction = defineAction(
     actionKey: 'core.modules.change-tenant-module-state',
     auditProfile: 'sensitive',
     domainErrorSchema: ChangeTenantModuleStateError,
-    domainEvents: {},
+    domainEvents: changeTenantModuleStateDomainEvents,
     entrypoint: defineSystemModuleEntrypoint({
       access: 'write',
       authorization: {
@@ -154,3 +172,11 @@ export const changeTenantModuleStateAction = defineAction(
       persist: (input) => persistTenantModuleStateChange(transaction, input),
     }),
 );
+
+// <generated-outbox-message-exports>
+export { ChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxPayloadSchema } from './change-tenant-module-state-core-modules-tenant-module-state-changed-v1.outbox-message.ts';
+export { ChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxProducerModuleKey } from './change-tenant-module-state-core-modules-tenant-module-state-changed-v1.outbox-message.ts';
+export { ChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxTopic } from './change-tenant-module-state-core-modules-tenant-module-state-changed-v1.outbox-message.ts';
+export { createChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxMessage } from './change-tenant-module-state-core-modules-tenant-module-state-changed-v1.outbox-message.ts';
+export type { ChangeTenantModuleStateCoreModulesTenantModuleStateChangedV1OutboxPayload } from './change-tenant-module-state-core-modules-tenant-module-state-changed-v1.outbox-message.ts';
+// </generated-outbox-message-exports>
