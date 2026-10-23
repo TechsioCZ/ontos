@@ -17,3 +17,13 @@ it('selects the exact proposal from activity links without accepting selector te
   expect(itemKeyFromSearch('?navrh=%22%5D%20article')).toBeUndefined();
   expect(itemKeyFromSearch('')).toBeUndefined();
 });
+
+it('targets exact items in module-native queues without lowercasing their ids', () => {
+  const query = new URLSearchParams({
+    davka: 'legacy:fixture-notes:Batch:One',
+    navrh: 'legacy:fixture-notes:Change:Two',
+  }).toString();
+  expect(batchKeyFromSearch(query)).toBe('legacy:fixture-notes:Batch:One');
+  expect(itemKeyFromSearch(query)).toBe('legacy:fixture-notes:Change:Two');
+  expect(itemKeyFromSearch('?navrh=legacy:fixture-notes:')).toBeUndefined();
+});

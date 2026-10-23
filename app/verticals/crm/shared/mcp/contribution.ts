@@ -80,6 +80,7 @@ export const crmMcpContribution = defineOntosMcpContribution({
   recordLinks: [
     {
       resourceType: 'demo.crm.client',
+      proposalTargetKind: 'client',
       path: '/crm/klienti',
       queryParam: 'klient',
       recordsPath: 'state.clients.items',

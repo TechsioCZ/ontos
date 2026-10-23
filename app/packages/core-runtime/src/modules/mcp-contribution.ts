@@ -92,6 +92,8 @@ export const OntosMcpRecordLinkSchema = Schema.Struct({
   resourceType: nonEmpty,
   path: shellPagePath,
   queryParam: Schema.String.check(Schema.isPattern(/^[a-zA-Z][a-zA-Z0-9_-]*$/u)),
+  /** Target kind used by this module’s own proposal engine, when it has one. */
+  proposalTargetKind: Schema.optionalKey(nonEmpty),
   /** Dot path of the visible record array in the module's declared revision read. */
   recordsPath: nonEmpty,
   idField: nonEmpty,

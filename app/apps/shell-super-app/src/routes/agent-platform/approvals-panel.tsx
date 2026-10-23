@@ -357,7 +357,7 @@ export const ApprovalsPanel = () => {
   const targetItemKey = itemKeyFromSearch(search);
   const scrolledTo = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (queue.state !== 'ready' || targetKey === undefined || scrolledTo.current === targetKey) {
+    if (queue.state !== 'ready' || targetKey === undefined || scrolledTo.current === (targetItemKey ?? targetKey)) {
       return;
     }
     const index = queue.value.batches.findIndex((batch) => batch.key === targetKey);
@@ -387,7 +387,7 @@ export const ApprovalsPanel = () => {
       element.focus({ preventScroll: true });
     }
     if (element != null) {
-      scrolledTo.current = targetKey;
+      scrolledTo.current = targetItemKey ?? targetKey;
       element.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, [queue, targetKey, targetItemKey, filter, moduleFilter, shownCount]);

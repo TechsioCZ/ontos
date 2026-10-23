@@ -28,7 +28,8 @@ import { loadComposedModules } from './composed-modules.ts';
 import type { ComposedModules } from './composed-modules.ts';
 import type { AgentPlatformCaller } from './caller.ts';
 import { readLegacyBatches } from './legacy-queue.ts';
-import { rowsToQueueBatches } from './mappers.ts';
+import { moduleActivityFromRecords } from './legacy-normalize.ts';
+import { buildActivityResponse, rowsToQueueBatches } from './mappers.ts';
 import type { AgentProposalRow } from './mappers.ts';
 import { readModuleRecords } from './module-call.ts';
 import { reviewByModule, reviewedItem, reviewInModule } from './module-review.ts';
@@ -361,8 +362,13 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
   const recordModules = composed.all.filter(
     (module) =>
       modules.access.has(module.moduleId) &&
-      (module.recordLinks?.length ?? 0) > 0 &&
-      activity.entries.some((entry) => entry.moduleKey === module.moduleId && entry.recordReference !== undefined),
+      modules.write.has(module.moduleId) &&
+      !hidden.has(module.moduleId) &&
+      (module.ownProposalEngine ||
+        ((module.recordLinks?.length ?? 0) > 0 &&
+          activity.entries.some(
+            (entry) => entry.moduleKey === module.moduleId && entry.recordReference !== undefined,
+          ))),
   );
   const records = new Map(
     yield* Effect.forEach(
@@ -371,6 +377,35 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
         readModuleRecords(caller.principal, module.appId).pipe(Effect.map((body) => [module.moduleId, body] as const)),
       { concurrency: 2 },
     ),
+  );
+  const names = yield* principalNames(tenantId);
+  const agentPrincipals = new Set(agentIds);
+  const native = recordModules.flatMap((module) =>
+    module.ownProposalEngine
+      ? moduleActivityFromRecords(
+          { appId: module.appId, label: module.label.cs, moduleKey: module.moduleId },
+          records.get(module.moduleId),
+          {
+            names,
+            recordLinks: module.recordLinks,
+          },
+        ).filter((entry) => agentPrincipals.has(entry.agentPrincipalId))
+      : [],
+  );
+  const nativeInvocations = new Set(
+    native.flatMap((entry) => (entry.actionInvocationId === undefined ? [] : [entry.actionInvocationId])),
+  );
+  const combined = buildActivityResponse(
+    [
+      ...activity.entries.filter(
+        (entry) =>
+          entry.kind !== 'proposal' ||
+          entry.actionInvocationId === undefined ||
+          !nativeInvocations.has(entry.actionInvocationId),
+      ),
+      ...native,
+    ],
+    request,
   );
   // Same live capability as the destination. Never turn approval rights into identity-administration rights.
   const canManage = yield* demoAccountCapability(caller).pipe(
@@ -392,8 +427,12 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
         ?.agentAdministrationPage
     : undefined;
   return {
-    ...activity,
-    entries: activity.entries.map((entry) => {
+    ...combined,
+    agents: [...new Map([...activity.agents, ...combined.agents].map((agent) => [agent.principalId, agent])).values()],
+    modules: [
+      ...new Map([...activity.modules, ...combined.modules].map((module) => [module.moduleKey, module])).values(),
+    ],
+    entries: combined.entries.map((entry) => {
       const module = entry.moduleKey === null ? undefined : composed.byModuleId(entry.moduleKey);
       return resolveActivityLinks(entry, {
         agentExists: visibleAgents.has(entry.agentPrincipalId),

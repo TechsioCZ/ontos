@@ -59,6 +59,7 @@ export interface AgentProposalRow {
 }
 
 export interface AuditActivityRow {
+  readonly actionInvocationId?: string | null;
   readonly auditEventId: string;
   readonly occurredAt: Date;
   readonly principalId: string;
@@ -271,6 +272,7 @@ export const auditRowToEntry = (
     agentName: row.displayName,
     agentPrincipalId: row.principalId,
     id: `audit:${row.auditEventId}`,
+    ...(row.actionInvocationId == null ? {} : { actionInvocationId: row.actionInvocationId }),
     ...(row.targetResourceId == null || row.targetResourceType == null
       ? {}
       : {

@@ -1,10 +1,13 @@
 import type {
+  AgentActivityEntry,
   AgentDiffLine,
   AgentItemStatus,
   AgentQueueBatch,
   AgentQueueItem,
   AgentRisk,
 } from '@app/shared-contracts/agent-proposals';
+
+import type { McpModule } from '../mcp/catalog.ts';
 
 type Rec = Readonly<Record<string, unknown>>;
 
@@ -195,4 +198,87 @@ export const normalizeLegacySlice = (
     ];
   });
   return batches.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+};
+
+/** Actual module-owned proposal records, not a guessed correlation with a generic audit action. */
+export const moduleActivityFromRecords = (
+  module: LegacyEngineModule,
+  body: unknown,
+  options: { readonly names: ReadonlyMap<string, string>; readonly recordLinks: McpModule['recordLinks'] },
+): AgentActivityEntry[] => {
+  const slice = sliceFromRecords(body);
+  if (!isRecord(slice)) return [];
+  const changes = Array.isArray(slice['changes']) ? slice['changes'].filter(isRecord) : [];
+  const logs = Array.isArray(slice['log']) ? slice['log'].filter(isRecord) : [];
+  return normalizeLegacySlice(module, slice, { canDecide: false, names: options.names }).flatMap((batch) =>
+    batch.items.flatMap((item): AgentActivityEntry[] => {
+      const changeId = parseLegacyKey(item.key)?.id;
+      const change = changes.find(
+        (candidate) => candidate['id'] === changeId && candidate['batchId'] === batch.batchId,
+      );
+      const target = change?.['target'];
+      const kind = isRecord(target) ? text(target['kind']) : undefined;
+      const resourceId = isRecord(target) ? text(target['id']) : undefined;
+      const link = options.recordLinks?.find(
+        (candidate) => candidate.proposalTargetKind !== undefined && candidate.proposalTargetKind === kind,
+      );
+      const proposedLog = logs.find(
+        (log) => log['changeId'] === changeId && log['batchId'] === batch.batchId && log['action'] === 'proposed',
+      );
+      const actionInvocationId = proposedLog === undefined ? undefined : text(proposedLog['invocationId']);
+      const base = {
+        agentName: batch.agentLabel,
+        agentPrincipalId: batch.agentPrincipalId,
+        moduleKey: module.moduleKey,
+        moduleLabel: module.label,
+        proposal: { batchKey: batch.key, itemKey: item.key },
+        ...(resourceId === undefined || link === undefined
+          ? {}
+          : { recordReference: { resourceId, resourceType: link.resourceType } }),
+      };
+      const entries: AgentActivityEntry[] = [
+        {
+          ...base,
+          actionLabel: `Návrh: ${item.summary}`,
+          detail: item.targetLabel,
+          id: `proposal:${item.key}`,
+          kind: 'proposal',
+          occurredAt: item.proposedAt,
+          outcomeCode: 'proposed',
+          ...(actionInvocationId === undefined ? {} : { actionInvocationId }),
+        },
+      ];
+      if (item.decidedAt !== undefined && item.status !== 'pending') {
+        const decider = item.decidedByName ?? 'Neznámý uživatel';
+        entries.push({
+          ...base,
+          actionLabel:
+            item.status === 'rejected'
+              ? `Zamítnuto: ${decider}`
+              : item.status === 'failed'
+                ? `Schváleno, ale nešlo provést: ${decider}`
+                : `Schváleno: ${decider}`,
+          detail: item.summary,
+          id: `decision:${item.key}`,
+          kind: 'decision',
+          occurredAt: item.decidedAt,
+          outcomeCode: item.status,
+        });
+      }
+      const revertedAt = change === undefined ? undefined : text(change['revertedAt']);
+      if (revertedAt !== undefined) {
+        const revertedBy = change === undefined ? undefined : text(change['revertedBy']);
+        entries.push({
+          ...base,
+          actionLabel: `Vráceno: ${options.names.get(revertedBy ?? '') ?? 'Neznámý uživatel'}`,
+          detail: item.summary,
+          id: `revert:${item.key}`,
+          kind: 'decision',
+          occurredAt: revertedAt,
+          outcomeCode: 'reverted',
+        });
+      }
+      return entries;
+    }),
+  );
 };

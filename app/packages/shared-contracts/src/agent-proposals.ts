@@ -260,6 +260,7 @@ export type AgentActivityRequest = typeof AgentActivityRequestSchema.Type;
 export const AgentActivityEntrySchema = Schema.Struct({
   /** Czech, e.g. „Čtení seznamu“, „Zápis změny“, „Návrh změny“, „Schváleno: Jana Nováková“. */
   actionLabel: Schema.String,
+  actionInvocationId: Schema.optionalKey(Schema.String),
   agentName: Schema.String,
   agentPrincipalId: Schema.String,
   detail: Schema.optionalKey(Schema.String),

@@ -593,6 +593,7 @@ export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(funct
   const auditRows = yield* executor
     .select({
       actionInvocationKey: coreActionInvocations.actionKey,
+      actionInvocationId: coreAuditEvents.actionInvocationId,
       targetModuleKey: coreAuditEvents.targetModuleKey,
       targetResourceId: sql<
         string | null
@@ -634,6 +635,7 @@ export const listAgentActivity = Effect.fn('AgentStore.listAgentActivity')(funct
     return {
       actionKey: row.actionInvocationKey ?? (typeof evidenceAction === 'string' ? evidenceAction : null),
       auditEventId: row.auditEventId,
+      actionInvocationId: row.actionInvocationId,
       targetModuleKey: row.targetModuleKey,
       targetResourceId: row.targetResourceId,
       targetResourceType: row.targetResourceType,
