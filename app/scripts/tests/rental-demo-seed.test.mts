@@ -1,9 +1,15 @@
 import { NodeServices } from '@effect/platform-node';
+import { CounterpartyRefSchema } from '../../verticals/party-registry/shared/resources/counterparty.ts';
+import { PartyRefSchema } from '../../verticals/party-registry/shared/resources/party.ts';
+import { PartyIdSchema } from '../../verticals/sales-pipeline/shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
+import { EmployeeIdSchema } from '../../verticals/workforce/shared/resources/employee.ts';
 import { Effect, FileSystem, Match, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
 import { expect, it } from 'effect-rstest';
 
+import { demoId } from '../demo/fixture-ids.mts';
 import { ensureSeedCustomer, existingSeedCustomer } from '../demo/rental-seed-customer.mts';
+import { seedSiamparkCaseRecords } from '../demo/seed-siampark-cases.mts';
 import { requireSeedMatch, uniqueSeedRecord } from '../demo/rental-seed.mts';
 import { connectSeedClient, DemoSeedError, validateSeedTarget } from '../demo/seed-client.mts';
 
@@ -11,6 +17,8 @@ const ownerApi = '/owner-api';
 const revisionFixture = 'revision-fixture';
 const propertyAudience = 'property-portfolio';
 const partyModule = 'party.registry';
+const partyResource = 'party.registry.party';
+const counterpartyResource = 'party.registry.counterparty';
 const target = {
   legalEntityId: '71000000-0000-4000-8000-000000000021',
   shellUrl: 'https://demo.example.test',
@@ -48,14 +56,14 @@ it.effect('refuses duplicate fixture keys and mismatching records without overwr
         counterpartyRef: {
           moduleId: partyModule,
           resourceId: target.legalEntityId,
-          resourceType: 'party.registry.counterparty',
+          resourceType: counterpartyResource,
           tenantId: target.tenantId,
         },
         displayName: 'Ukázkový nájemce Siampark',
         partyRef: {
           moduleId: partyModule,
           resourceId: target.legalEntityId,
-          resourceType: 'party.registry.party',
+          resourceType: partyResource,
           tenantId: target.tenantId,
         },
         status: 'ARCHIVED',
@@ -87,10 +95,10 @@ it.effect('resumes customer onboarding after an owner failure without creating a
     const partyRef = {
       moduleId: partyModule,
       resourceId: target.legalEntityId,
-      resourceType: 'party.registry.party',
+      resourceType: partyResource,
       tenantId: target.tenantId,
     };
-    const counterpartyRef = { ...partyRef, resourceType: 'party.registry.counterparty' };
+    const counterpartyRef = { ...partyRef, resourceType: counterpartyResource };
     let creates = 0;
     let onboards = 0;
     const http = HttpClient.make((request, url) => {
@@ -256,4 +264,192 @@ it.effect('stops at denied authorization without sending a write to an owner', (
     expect(Schema.is(DemoSeedError)(failure)).toBe(true);
     expect(ownerPaths).toEqual([]);
   }),
+);
+
+const caseClients = [
+  { kind: 'organization', name: 'Kavárna Na Nábřeží s.r.o.' },
+  { kind: 'organization', name: 'Advokátní kancelář Horák & partneři' },
+  { kind: 'person', name: 'Ing. Pavel Šťastný' },
+  { kind: 'organization', name: 'Fyzioterapie Pohyb s.r.o.' },
+] as const;
+const caseOwners = { external: demoId('seed.employee', 'external'), management: demoId('seed.employee', 'management') };
+const CaseCandidate = Schema.Struct({
+  candidate: Schema.Struct({
+    displayName: Schema.String,
+    partyType: Schema.Literals(['ORGANIZATION', 'PERSON']),
+    subjectEvidence: Schema.Array(Schema.Struct({ observedSubject: Schema.String })),
+  }),
+});
+const CasePartyRef = Schema.toEncoded(PartyRefSchema);
+const CaseCounterpartyRef = Schema.toEncoded(CounterpartyRefSchema);
+const CaseCommand = Schema.Struct({
+  command: Schema.Struct({
+    ownerEmployeeId: Schema.toEncoded(EmployeeIdSchema),
+    partyId: Schema.toEncoded(PartyIdSchema),
+    title: Schema.String,
+  }),
+  expectedRevision: Schema.Int,
+});
+const decodeSeedBody = <A, E>(schema: Schema.Codec<A, E>, body: string): A =>
+  Schema.decodeUnknownSync(Schema.fromJsonString(schema))(body);
+const caseFixture = (options: { readonly failOnboardingOnce?: boolean; readonly missingClient?: boolean } = {}) => {
+  const customers: {
+    readonly counterpartyRef: typeof CaseCounterpartyRef.Type;
+    readonly displayName: string;
+    readonly partyRef: typeof CasePartyRef.Type;
+    readonly status: string;
+  }[] = [];
+  const parties: { readonly candidate: typeof CaseCandidate.Type.candidate; readonly ref: typeof CasePartyRef.Type }[] =
+    [];
+  const items: {
+    readonly id: string;
+    readonly ownerEmployeeId: string;
+    readonly partyId: string;
+    readonly title: string;
+  }[] = [];
+  let onboards = 0;
+  const http = HttpClient.make((request, url) => {
+    const body = Match.value(request.body).pipe(
+      Match.tag('Uint8Array', ({ body: bytes }) => new TextDecoder().decode(bytes)),
+      Match.orElse(() => '{}'),
+    );
+    let response: Response;
+    if (url.pathname === gatewayPath) {
+      const { audience } = decodeSeedBody(Schema.Struct({ audience: Schema.String }), body);
+      response = Response.json({
+        apiBaseUrl: `${ownerApi}/${audience}`,
+        compositionRevision: revisionFixture,
+        token: 'case-fixture-assertion',
+      });
+    } else if (url.pathname.endsWith('/crm/reads/records')) {
+      response = Response.json({
+        state: { clients: { items: options.missingClient === true ? caseClients.slice(1) : caseClients } },
+      });
+    } else if (url.pathname.endsWith('/reads/customer-list')) {
+      response = Response.json({ items: customers });
+    } else if (url.pathname.endsWith('/actions/create-party')) {
+      const { candidate } = decodeSeedBody(CaseCandidate, body);
+      const ref: typeof CasePartyRef.Type = {
+        moduleId: partyModule,
+        resourceId: demoId('seed.case.party', candidate.displayName),
+        resourceType: partyResource,
+        tenantId: target.tenantId,
+      };
+      parties.push({ candidate, ref });
+      response = Response.json({
+        decisionRef: { ...ref, resourceType: 'party.registry.party-match-decision' },
+        outcome: 'CREATED',
+        partyRef: ref,
+      });
+    } else if (url.pathname.endsWith('/actions/counterparty-customer-onboard')) {
+      onboards += 1;
+      const { partyRef } = decodeSeedBody(Schema.Struct({ partyRef: CasePartyRef }), body);
+      const party = parties.find(({ ref }) => ref.resourceId === partyRef.resourceId);
+      expect(party).toBeDefined();
+      const counterpartyRef: typeof CaseCounterpartyRef.Type = { ...partyRef, resourceType: counterpartyResource };
+      if (options.failOnboardingOnce === true && onboards === 1) {
+        response = Response.json({}, { status: 503 });
+      } else {
+        customers.push({
+          counterpartyRef,
+          displayName: party?.candidate.displayName ?? '',
+          partyRef,
+          status: 'ACTIVE',
+        });
+        response = Response.json({
+          counterpartyCreated: true,
+          counterpartyRef,
+          legalEntityRef: {
+            moduleId: 'core.identity',
+            resourceId: target.legalEntityId,
+            resourceType: 'core.identity.legal-entity',
+            tenantId: target.tenantId,
+          },
+          partyRef,
+          rolePeriodCreated: true,
+          rolePeriodRef: { ...partyRef, resourceType: 'party.registry.counterparty-role-period' },
+          roleType: 'CUSTOMER',
+          validFrom: '2026-10-05T00:00:00.000Z',
+          validTo: null,
+        });
+      }
+    } else if (url.pathname.endsWith('/actions/apply-command')) {
+      const { command, expectedRevision } = decodeSeedBody(CaseCommand, body);
+      expect(customers.some(({ partyRef }) => partyRef.resourceId === command.partyId)).toBe(true);
+      expect(expectedRevision).toBe(items.length);
+      items.push({ ...command, id: demoId('seed.case', command.title) });
+      response = Response.json({ revision: items.length });
+    } else if (url.pathname.endsWith('/sales-pipeline/reads/records')) {
+      response = Response.json({ items, revision: items.length });
+    } else {
+      response = sessionResponse(url.pathname);
+    }
+    return Effect.succeed(HttpClientResponse.fromWeb(request, response));
+  });
+  return { customers, http, items, parties };
+};
+
+it.effect('a clean CRM-only bootstrap creates all four native customers before cases and keeps the person kind', () =>
+  Effect.gen(function* seedsCompleteCaseDataset() {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'siampark-case-seed-' });
+    const fixture = caseFixture();
+    yield* Effect.gen(function* nativeCases() {
+      const client = yield* connect();
+      const first = yield* seedSiamparkCaseRecords(client, target, caseOwners, directory);
+      expect(first.items).toHaveLength(4);
+      expect(first.items.filter(({ ownerEmployeeId }) => ownerEmployeeId === caseOwners.external)).toHaveLength(3);
+      expect((yield* seedSiamparkCaseRecords(client, target, caseOwners, directory)).items).toEqual(first.items);
+    }).pipe(Effect.provideService(HttpClient.HttpClient, fixture.http));
+    expect(fixture.customers).toHaveLength(4);
+    expect(fixture.parties).toHaveLength(4);
+    expect(fixture.items).toHaveLength(4);
+    expect(fixture.parties.map(({ candidate }) => candidate.partyType)).toEqual([
+      'ORGANIZATION',
+      'ORGANIZATION',
+      'PERSON',
+      'ORGANIZATION',
+    ]);
+    expect(
+      fixture.parties.every(({ candidate }) => candidate.subjectEvidence[0]?.observedSubject === candidate.partyType),
+    ).toBe(true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('an interrupted case customer onboarding fails and resumes its native Party instead of duplicating it', () =>
+  Effect.gen(function* resumesCaseCustomer() {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'siampark-case-retry-' });
+    const fixture = caseFixture({ failOnboardingOnce: true });
+    yield* Effect.gen(function* nativeRetry() {
+      const client = yield* connect();
+      expect(
+        Schema.is(DemoSeedError)(
+          yield* seedSiamparkCaseRecords(client, target, caseOwners, directory).pipe(Effect.flip),
+        ),
+      ).toBe(true);
+      expect(fixture.items).toHaveLength(0);
+      expect((yield* seedSiamparkCaseRecords(client, target, caseOwners, directory)).items).toHaveLength(4);
+    }).pipe(Effect.provideService(HttpClient.HttpClient, fixture.http));
+    expect(fixture.parties).toHaveLength(4);
+    expect(fixture.customers).toHaveLength(4);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('missing CRM fixture data fails the case seed rather than silently reporting a partial success', () =>
+  Effect.gen(function* rejectsIncompleteCrm() {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'siampark-case-missing-' });
+    const fixture = caseFixture({ missingClient: true });
+    yield* Effect.gen(function* noPartialCases() {
+      const client = yield* connect();
+      const failure = yield* seedSiamparkCaseRecords(client, target, caseOwners, directory).pipe(Effect.flip);
+      expect(Schema.is(DemoSeedError)(failure)).toBe(true);
+      expect((yield* Schema.decodeUnknownEffect(DemoSeedError)(failure)).reason).toContain(
+        'Expected one Siampark CRM fixture',
+      );
+    }).pipe(Effect.provideService(HttpClient.HttpClient, fixture.http));
+    expect(fixture.parties).toHaveLength(0);
+    expect(fixture.items).toHaveLength(0);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
