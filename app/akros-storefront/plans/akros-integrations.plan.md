@@ -2,8 +2,11 @@
 name: akros-integrations
 overview: Ověřit lokální našeptávač a připravit navazující vyhledávání, změnu hesla a adresní předvyplnění podle potvrzených externích kontraktů.
 todos:
+  - id: task-15-17-frontend
+    content: FE TASK 15/17 – oddělená validovaná změna hesla a skutečný Smart Address klient s ručním fallbackem; živá úspěšná integrace zůstává závislá na službách.
+    status: completed
   - id: confirm-integration-contracts
-    content: Uzavřít D5, D7 a D8 pro autentizaci, pořadí a zdroj vyhledávání a adresního poskytovatele; bez nich nepředstírat připravenost integrací.
+    content: Uzavřít D5 a D7 pro autentizaci a případný vzdálený zdroj vyhledávání; D8 Smart Address v1 je lokálně ověřené živým průchodem.
     status: pending
   - id: task-11-search-suggestions
     content: TASK 11 – ověřit existující lokální našeptávač a opravit přesné směrování výsledků na produkty a varianty; Meilisearch zůstává navazující integrací.
@@ -13,13 +16,32 @@ todos:
     status: pending
   - id: task-17-address-autocomplete
     content: TASK 17 – po výběru ověřeného zdroje doplnit adresní našeptávání a předvyplnění s možností ručního zadání.
-    status: pending
+    status: completed
 isProject: false
 ---
 
 # akros-integrations
 
 ## Execution Notes
+
+Lokální FE realizaci a přesné limity živého ověření vlastní
+[review TASK 12–17](akros-tasks-12-17-review.md). TASK 17 má klienta konkrétního
+nasazeného v1 API a pevný same-origin rewrite. Živý průchod bez interceptů prošel
+nad produkčním sestavením na desktopu i mobilu: návrhy RÚIAN i doplnění polí.
+D8 je pro tuto lokální integraci uzavřené; samotný AKROS se dosud nenasazuje.
+
+Následné review odhalilo neúplné vyhledávání samotného poskytovatele: například
+`Boženy Němcové Tábor` nevrací žádnou adresu v Táboře. Toto zůstává otevřené
+pro Smart Address; ověřené FE napojení neznamená úplné pokrytí adres služby.
+Reprodukce a dočasnou opravu React chyby ve vydaném Comboboxu vlastní
+[integrační poznámky](akros-smart-address-integration.md).
+
+Upřesnění uživatele 22. 10. 2026 omezuje naši dodávku na FE storefront.
+[Audit zbývajících úkolů](akros-remaining-fe-scope.md) rozlišuje FE formuláře a
+napojení od vlastní serverové funkce. U TASK 15 lze samostatně dokončit formulář
+a validaci; ověření skutečné změny hesla níže platí pro celou budoucí integraci,
+nikoli jako požadavek implementovat autentizaci v tomto prototypu. U TASK 17
+nezavádět lokální náhradu skutečného poskytovatele adres.
 
 Původní úkoly zůstávají v plánu, ale jejich integrace nejsou z aktuálních zadání
 plně rozhodnuté. Výchozí pořadí je pozdější fáze; není to změna GitHub labelu na
@@ -76,6 +98,13 @@ validace, odpovědi serveru a správné chování relací. Bez autentizační sl
 issue prohlásit za hotové; případné demo UI je pouze dílčí výstup.
 
 ### TASK 17 – adresní našeptávání · #1315
+
+Uživatel 22. 10. 2026 dodal konkrétní Smart Address repo a nasazené demo.
+[Ověření existující služby](akros-smart-address-integration.md) zaznamenává původní
+HTTP 503 i následnou úspěšnou odpověď v1. FE klient používá pevný same-origin
+rewrite; živé doplnění RÚIAN adres prošlo nad produkčním sestavením na desktopu
+i mobilu. Tím je D8 pro lokální dodávku potvrzené. Původní integrační kritéria níže
+zůstávají podkladem ověření, nikoli pokynem vytvořit nový poskytovatel.
 
 - Nejdřív ověřit publikované rozhraní již vyvinuté vlastní databáze adres, její
   pokrytí a podmínky použití. Nepřebírat privátní zdrojový kód nebo databázový přístup

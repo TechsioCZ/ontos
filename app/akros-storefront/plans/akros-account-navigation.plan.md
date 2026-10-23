@@ -2,6 +2,9 @@
 name: akros-account-navigation
 overview: Upravit textovou horní navigaci, zarovnání kategorií a skutečné chybějící části editace profilu a adres podle TASK 09, 10 a 14.
 todos:
+  - id: task-14-profile-frontend
+    content: FE TASK 14 – ověřit editaci a obnovu existujícího profilu/adres a odstranit blokaci jejich uložení rozepsaným heslem bez nových simulací.
+    status: completed
   - id: task-09-text-navigation
     content: TASK 09 – po upřesnění D6 ponechat v horním seznamu jen odkazy na textové stránky a zachovat dostupnost katalogu jinde.
     status: completed
@@ -17,6 +20,10 @@ isProject: false
 # akros-account-navigation
 
 ## Execution Notes
+
+FE výsledek TASK 14/15 a kontrolu desktopu/mobilu vlastní
+[review TASK 12–17](akros-tasks-12-17-review.md). Účtová persistence zůstává
+navazující backend, nikoli pokyn přidat nový browserový adresář.
 
 Tato část může postupovat nezávisle na přestavbě variant. Odkazy na issues a
 rozhodnutí D4/D6 jsou v [hlavním plánu](../IMPLEMENTATION-PLAN.md).
@@ -51,6 +58,11 @@ Dokončeno: screenshoty krátké i dlouhé kategorie prokážou stejné zarovná
 a doprovodného textu bez ořezu nebo změny klikatelné oblasti.
 
 ### TASK 14 – osobní údaje a adresy · #1312
+
+Aktuální [audit FE/BE rozsahu](akros-remaining-fe-scope.md) zapracovává uživatelovo
+upřesnění a komentář v issue z 22. 10. 2026: nepřidávat simulaci backendové
+persistence ani nový lokální adresář. Prověřit existující formuláře a opravit jen
+doložené FE mezery; účtové uložení mezi prohlížeči zůstává backendové napojení.
 
 - Nejdřív porovnat očekávané chování s existujícím `AccountProfilePage`, validací
   a lokálním uložením. Tyto části už fungují; neopakovat jejich implementaci.

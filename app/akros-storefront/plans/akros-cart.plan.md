@@ -2,18 +2,25 @@
 name: akros-cart
 overview: Doplnit hmotnost košíku a opakování konkrétní objednávky s aktuálními variantami podle TASK 16 a 12.
 todos:
+  - id: task-12-16-frontend
+    content: FE TASK 12/16 – funkční opakování demo objednávek do aktivního košíku; reaktivní váha z ověřených jednotkových dat nebo neznámý součet.
+    status: completed
   - id: task-16-cart-weight
     content: TASK 16 – zobrazit a průběžně přepočítávat celkovou hmotnost z ověřených variant a skutečných množství.
-    status: pending
+    status: completed
   - id: task-12-order-again
     content: TASK 12 – vložit položky vybrané původní objednávky do aktuálního košíku po ověření současného katalogu a skladu.
-    status: pending
+    status: completed
 isProject: false
 ---
 
 # akros-cart
 
 ## Execution Notes
+
+Lokální FE výsledek a ověření po souhlasu uživatele vlastní
+[review TASK 12–17](akros-tasks-12-17-review.md). Zbývající pending body níže
+jsou funkce celé integrace, nikoli chybějící simulace backendu.
 
 Navazuje na `akros-weight` a jeho předchůdce `akros-foundation`;
 nemusí čekat na celý vizuální detail variant.
@@ -39,10 +46,15 @@ přepočet, odebrání, přepnutí košíku a obnovení uloženého košíku.
 
 ### TASK 12 – objednat znovu
 
+Pozdější souhlas uživatele schvaluje funkční demo TASK 12 nad jedním zdrojem
+dat účtu a pěti historickými objednávkami v `fixtures/account.ts` a současným
+košíkem. Nevytvářet další backend, autentizaci ani archiv nových objednávek.
+Aktuální implementaci a review vlastní [výsledek TASK 12–17](akros-tasks-12-17-review.md).
+
 - Přidat akci v historii pro konkrétní objednávku. Neplnit všechny objednávky
   stejnými `mockOrderLines`; současná historie nemá vazby potřebné pro tento úkon.
-- Zvolit jednoznačný zdroj řádků: lokálně dokončené objednávky a/nebo doplněné
-  provázané demo fixtures. Historická objednávka nese reference a objednané množství.
+- Jednoznačný zdroj řádků pro demo je `fixtures/account.ts`. Historická objednávka
+  nese reference a objednané množství; nezavádět další paralelní zdroj.
 - Před vložením vyhodnotit dnešní existenci varianty, cenu, sklad, minimum a balení.
   Původní cenu ani dostupnost nepovažovat za současnou nabídku.
 - Vkládat do aktivního košíku a zachovat jeho dosavadní položky. Při sloučení stejné

@@ -13,13 +13,16 @@ todos:
     status: completed
   - id: task-13-favorites-page
     content: TASK 13 – zobrazit uložené varianty, umožnit jejich odebrání a otevřít přes odkaz správnou variantu.
-    status: pending
+    status: completed
 isProject: false
 ---
 
 # akros-detail
 
 ## Execution Notes
+
+TASK 13 je nyní ověřený v celém průchodu na 14 šířkách včetně opravy čitelnosti
+mobilních karet; výsledek a důkazy vlastní [review TASK 12–17](akros-tasks-12-17-review.md).
 
 Navazuje na `akros-variants`. Jednotka kg pro zobrazení hmotnosti byla doložena 22. 10. 2026; `akros-weight` dále řeší přepočet pro košík z TASK 16. Mapování na issues
 a rozhodnutí jsou v [hlavním plánu](../IMPLEMENTATION-PLAN.md). Modal a jeho akce

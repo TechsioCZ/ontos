@@ -12,6 +12,15 @@ npm run dev
 
 Open <http://localhost:3000>.
 
+`npm install`/`npm ci` applies the versioned `@techsio/ui-kit@0.56.1` Combobox patch
+via `patch-package`. Its selection renderer passed the static label/check-indicator pair
+as an unkeyed children array, causing React development errors even with unique option IDs.
+The patch passes these two static children as separate `createElement` arguments, preserving
+the option keys and selection behavior. See [React's static-children contract](https://react.dev/reference/react/createElement#caveats).
+Do not disable lifecycle scripts when installing. Restart an already-running dev server after
+the patch changes. Remove this patch, hook and tool dependency once a published UI-kit version
+contains the fix; the checkout component regression test must continue passing.
+
 The six-part UI-kit refactor, its progress and component adoption inventories are tracked in
 [UI-KIT-REFACTOR.md](./UI-KIT-REFACTOR.md).
 
@@ -76,6 +85,16 @@ home via the logo and preserved desktop/mobile access to the catalog.
 results at 1920/1024/390/320 px. It covers prefix-colliding and duplicate SKUs, selection
 after reload, modal identity, keyboard/pointer navigation and variant/group prices.
 Screenshots and the report are saved under `test-results/search-routing/`.
+
+`npm run test:selects` checks the shared select appearance against Figma node 7:1992
+at 17 widths from 320 to 1920 px: checkout countries, account country, order filters
+and pickup point. It covers keyboard/pointer selection, arrow rotation, validation,
+filtering and isolation from the PhoneInput country picker. Screenshots and the
+measurement report are saved under `test-results/select-appearance/`.
+The overrides live in `src/tokens/components/molecules/_akros-select.css`, scoped
+through the shared `CheckoutSelect` wrapper. The indicator reuses the existing
+Figma SVG because the kit trigger has no icon-source prop; the kit still owns
+the indicator and its open-state rotation.
 
 With the storefront running, `npm run test:home` checks homepage overflow, product stock rows
 and reachable carousel controls at 34 widths from 320 to 2560 px, including breakpoint edges.
@@ -249,9 +268,33 @@ in `src/mock-storefront/fixtures/checkout.ts`; they are not live AKROS business 
   after hydration to avoid portalled `useId` differences on direct URLs. Its maximum height
   explicitly consumes the dialog token so the body scrolls while the header/footer remain visible.
   Variant descriptions and positive raw `sourceNetWeight` come from the catalog generator;
-  the weight unit/sale-unit relationship remains unverified. The modal shows weight as unknown,
-  and the multi-variant container no longer displays its parent's weight.
+  the modal displays documented source weights in kg and leaves missing values unknown.
+  The cart uses the agreed kg/piece and usable kg/metre interpretation, resolving exact variants;
+  the multi-variant container no longer displays its parent's weight.
 - No account backend, database, authentication, checkout submission, or OntOS application module is used.
+- The demo account seed lives in `src/mock-storefront/fixtures/account.ts`: profile, addresses,
+  and five complete historical orders referencing actual catalog variants. Profile and checkout
+  defaults share this seed. Reorder adds into the active existing cart using current catalog prices,
+  merges matching variants, and reports stock/minimum restrictions. Historical snapshots stay intact.
+  This is a local demo, not a server-side order operation or authenticated order archive.
+- The separate password action accepts a typed service callback; without an account service it
+  explains unavailability and never claims a successful password change.
+- Cart weight resolves source kg per sales unit from the exact catalog identity, including old carts,
+  unless an explicit normalized `unitWeightKg` was supplied. Positive kg/piece and kg/metre source
+  values are used without physical-plausibility guesses. Missing/zero values and unsupported units
+  stay unknown. Partial totals show the known sum prominently with an incomplete-data note;
+  package sizes are not multiplied twice. See [weight rules](plans/akros-weight.plan.md).
+- Checkout street fields call the existing Smart Suggest public v1 API through a fixed same-origin
+  Next rewrite; the service itself does not expose cross-origin CORS headers. A service failure leaves
+  manual address entry available. Initial inspection returned Cloudflare 1102, then live requests
+  returned real RUIAN suggestions. Browser regression tests isolate its responses.
+  Requests now use the deployed SDK's limit of 20 rather than 5. The service's observed search
+  limitations (including Boženy Němcové in Tábor) are recorded in
+  [the integration notes](plans/akros-smart-address-integration.md); missing suggestions never
+  prevent manual entry.
+- `npm run test:reorder-ui`, `test:favorites-routing`, `test:cart-weight`, and `test:addresses` cover
+  the remaining frontend tasks and are included in `test:browser`.
+- Uncommitted task-by-task review and backend dependencies: [TASK 12–17](plans/akros-tasks-12-17-review.md).
 - `npm run check` runs formatting, linting, type checking, tests, and the production build.
 
 Original checkout implementation history: [CHECKOUT-PLAN.md](CHECKOUT-PLAN.md).

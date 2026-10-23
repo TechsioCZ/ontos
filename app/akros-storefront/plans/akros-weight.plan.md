@@ -4,7 +4,7 @@ overview: Ověřit zdroj a jednotkový význam hmotnosti konkrétních variant p
 todos:
   - id: verify-variant-weight
     content: Ověřit D3 a doplnit hmotnost konkrétních variant z doloženého zdroje včetně jednotky a pravidel pro chybějící data.
-    status: pending
+    status: completed
 isProject: false
 ---
 
@@ -16,7 +16,38 @@ Navazuje na identitu z `akros-foundation`. Technický předpoklad TASK 07 a 16,
 nikoli nový obchodní požadavek. Rozhodnutí D3 a společná pravidla jsou v
 [hlavním plánu](../IMPLEMENTATION-PLAN.md).
 
-### Hmotnost varianty
+### Schválené pravidlo pro košík, 22. 10. 2026
+
+Uživatel výslovně schválil logickou interpretaci zdrojové hmotnosti za jednu
+prodejní jednotku po porovnání s akros.cz. Toto rozhodnutí nahrazuje předchozí
+blokaci TASK 16 na formálním doložení jednotkového významu.
+
+- Kladné `net_weight` kusového zboží znamená kg/ks. Balení je už převedené na
+  kusy nákupním formulářem, takže se při součtu znovu nenásobí.
+- U metrového zboží jde o kg/m: například lanko
+  `10305304040011` má 0,06 kg/m na [původním webu](https://www.akros.cz/lanko-4-0-1-x19-dr-din-3053-1-4401).
+- Následné upřesnění uživatele: FE používá kladné zdrojové hodnoty bez odhadování
+  jejich fyzikální věrohodnosti. Dřívější výjimky pro 0,001 kg/m a FVE kategorii
+  se ruší; správnost hodnot vlastní datový zdroj a budoucí backend.
+- Při částečných datech je hlavní údaj „Hmotnost známých položek“ s číselným
+  součtem a upozorněním na chybějící řádky. „Nelze určit“ se zobrazí pouze tehdy,
+  když nemá použitelnou hmotnost žádný řádek.
+- Nulové, chybějící a nepodporované jednotky zůstávají neznámé, bez odhadů náhrady.
+- Jediný resolver `getProductUnitWeightKg` v katalogové vrstvě ověřuje produkt,
+  variantu, SKU a MJ. Nedědí váhu rodiče a nevybírá jinou variantu při chybě ID.
+  Součet přes něj funguje pro všechny nákupní cesty i staré uložené košíky;
+  případná explicitně normalizovaná `unitWeightKg` má přednost.
+- Žádné nové mock váhy, datový archiv, generovaný paralelní index nebo změny cen
+  a skladů. Původní feed a generované soubory se nemění.
+
+Ověření původního košíku, 22. 10. 2026: [řetěz DIN 766/A4 2 mm](https://www.akros.cz/retez-nerezovy-2-kratky-clanek-din-766-a4),
+SKU `10076604020000`, uvádí v detailu 0,001 kg a MJ m. V izolovaném anonymním
+košíku se stejnou variantou původní web zobrazuje 3 m → 0.003 kg a po změně
+na 100 m → 0.1 kg v bloku Doprava. Kontrola zahrnula reload; objednávka se
+nevytvářela. Screenshoty jsou v ignorované složce `test-results/task-16/legacy/`.
+To potvrzuje shodu výpočtu se zdrojem, nikoli fyzikální správnost zdrojových dat.
+
+### Předchozí audit hmotnosti varianty
 
 Kontrola 21. 10. 2026: feed má kladnou hodnotu u 13 597 z 19 025 variant,
 dalších 5 428 má nulu. Tag `net_weight` nemá atribut jednotky. Implementace
