@@ -1,7 +1,11 @@
 import { Link as LocalizedLink, useModernI18n } from '@modern-js/plugin-i18n/runtime';
+import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
+import { Effect } from 'effect';
+
+import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
 
 /**
  * Page title of a recovery state, shown once as the page heading by the shell frame. A record page says "Záznam nebyl
@@ -23,6 +27,16 @@ export const ShellStatusPanel = ({
   readonly status: string;
 }) => {
   const { t } = useModernI18n();
+  const navigate = useNavigate();
+  // Retry loads the document again through the router, so a recovered Shell or module release is picked up.
+  const retry = () => {
+    browserRuntime.runFork(
+      Effect.tryPromise(() => navigate({ reloadDocument: true, to: '.' })).pipe(
+        Effect.timeout('10 seconds'),
+        Effect.ignore,
+      ),
+    );
+  };
   const missing = status === 'not_found';
   const forbidden = status === 'forbidden';
   return (
@@ -50,7 +64,7 @@ export const ShellStatusPanel = ({
         {missing || forbidden ? null : (
           <Button
             icon="icon-[mdi--refresh]"
-            onClick={() => window.location.reload()}
+            onClick={retry}
             size="sm"
             theme="outlined"
             type="button"

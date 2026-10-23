@@ -78,7 +78,10 @@ export const FinanceCommandSchema = Schema.Union([
   Schema.TaggedStruct('SetPriorSettlement', {
     actorLabel,
     entries: Schema.Array(
-      Schema.Struct({ amountMinor: MoneyMinorSchema.check(Schema.isGreaterThan(0)), invoiceResourceId: FinanceTextSchema }),
+      Schema.Struct({
+        amountMinor: MoneyMinorSchema.check(Schema.isGreaterThan(0)),
+        invoiceResourceId: FinanceTextSchema,
+      }),
     ).check(Schema.isMaxLength(20)),
     invoiceRef: InvoiceRefSchema,
     note: Schema.optionalKey(FinanceTextSchema),
@@ -93,22 +96,6 @@ export const FinanceCommandSchema = Schema.Union([
     skontoText: Schema.optionalKey(FinanceTextSchema),
   }),
   Schema.TaggedStruct('VoidInvoice', { invoiceRef: InvoiceRefSchema }),
-  Schema.TaggedStruct('RequestAccountingSync', { invoiceRef: InvoiceRefSchema }),
-  Schema.TaggedStruct('RetryAccountingSync', { invoiceRef: InvoiceRefSchema }),
-  Schema.TaggedStruct('ApplyAccountingObservation', {
-    correlation: FinanceTextSchema,
-    invoiceRef: InvoiceRefSchema,
-    receipt: Schema.optionalKey(FinanceTextSchema),
-    resultId: FinanceTextSchema,
-    status: Schema.Literals(['SUCCESS', 'FAILED']),
-  }),
-  Schema.TaggedStruct('ApplyPaymentObservation', {
-    confirmedPaidMinor: MoneyMinorSchema,
-    correlation: FinanceTextSchema,
-    currency: Schema.Literal('CZK'),
-    invoiceRef: InvoiceRefSchema,
-    resultId: FinanceTextSchema,
-  }),
   // ---- Sales demo v2 (S07 – S09) ----
   /** Received invoice entered by hand, optionally with the scanned/PDF document attached. */
   Schema.TaggedStruct('RecordIncomingInvoice', {

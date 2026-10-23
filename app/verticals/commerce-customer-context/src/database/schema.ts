@@ -312,7 +312,7 @@ export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.with
     ),
     check(
       'ccc_portal_enrollment_attempts_state_ck',
-      sql`${table.state} in ('IN_PROGRESS', 'VERIFICATION_REQUIRED', 'COMPLETE', 'RECONCILIATION_REQUIRED', 'TERMINATED')`,
+      sql`${table.state} in ('IN_PROGRESS', 'VERIFICATION_REQUIRED', 'COMPLETE', 'RECONCILIATION_REQUIRED', 'TERMINATED', 'FAILED')`,
     ),
     positiveRevision('ccc_portal_enrollment_attempts_revision_ck', table.revision),
     check(

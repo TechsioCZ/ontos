@@ -5,7 +5,6 @@ import type {
   FinanceState,
   Invoice,
   ManualPayment,
-  PaymentObservation,
   PlanItem,
 } from '../apis/records.ts';
 import { DateTime } from 'effect';
@@ -51,7 +50,7 @@ export interface PaymentEvent {
   readonly id: string;
   readonly invoiceResourceId: string;
   /** PRIOR = an earlier advance/partial amount taken into account by hand: it settles, but moves no money. */
-  readonly source: 'MANUAL' | 'PRIOR' | 'SIMULATED' | 'SNAPSHOT';
+  readonly source: 'MANUAL' | 'PRIOR' | 'SNAPSHOT';
 }
 
 const isoDateOf = (value: unknown): string => {
@@ -67,7 +66,7 @@ const isoDateOf = (value: unknown): string => {
  * explains (older seeded snapshots) becomes one SNAPSHOT event, so the sum always equals `paidMinor`.
  */
 export const paymentEvents = (
-  state: Pick<FinanceState, 'invoices' | 'paymentObservations'> & {
+  state: Pick<FinanceState, 'invoices'> & {
     readonly manualPayments?: readonly ManualPayment[];
   },
 ): readonly PaymentEvent[] => {
@@ -88,26 +87,6 @@ export const paymentEvents = (
         source: 'PRIOR',
       });
       explained += entry.amountMinor;
-    }
-    const observations = state.paymentObservations
-      .filter((observation: PaymentObservation) => observation.invoiceRef.resourceId === id)
-      .map((observation) => ({ amount: observation.confirmedPaidMinor, date: isoDateOf(observation.observedAt) }))
-      .sort((left, right) => left.amount - right.amount);
-    let cumulative = 0;
-    for (const [index, observation] of observations.entries()) {
-      const increment = observation.amount - cumulative;
-      cumulative = observation.amount;
-      if (increment > 0) {
-        events.push({
-          amountMinor: increment,
-          date: observation.date,
-          direction: invoice.direction,
-          id: `${id}:obs:${index}`,
-          invoiceResourceId: id,
-          source: 'SIMULATED',
-        });
-        explained += increment;
-      }
     }
     for (const payment of (state.manualPayments ?? []).filter((entry) => entry.invoiceResourceId === id)) {
       events.push({
@@ -190,7 +169,7 @@ export interface CashFlowMonth {
  * expected, and an invoice that realises a budget is never counted twice (S09-02).
  */
 export const cashFlowMonths = (
-  state: Pick<FinanceState, 'invoices' | 'paymentObservations'> & {
+  state: Pick<FinanceState, 'invoices'> & {
     readonly budgets?: readonly BudgetLine[];
     readonly cashFlowOpening?: CashFlowOpening;
     readonly manualPayments?: readonly ManualPayment[];
@@ -433,7 +412,9 @@ const czk = (minor: number) =>
  */
 export const isTestReminderRecipient = (recipient: string) => {
   const domain = recipient.trim().toLowerCase().split('@').at(-1) ?? '';
-  return /(?:^|\.)(?:invalid|example|test|localhost)$/u.test(domain) || /(?:^|\.)example\.(?:com|net|org)$/u.test(domain);
+  return (
+    /(?:^|\.)(?:invalid|example|test|localhost)$/u.test(domain) || /(?:^|\.)example\.(?:com|net|org)$/u.test(domain)
+  );
 };
 
 /** Simple Czech reminder template (S07.R7). */

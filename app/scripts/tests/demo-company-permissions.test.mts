@@ -18,9 +18,11 @@ import {
 } from '../demo/fixture-ids.mts';
 import {
   companyHumanAccounts,
+  companyPermissionRelationships,
   crmPersonaPrincipalIds,
   demoHumanAccounts,
   demoPermissionRelationships,
+  privacyMarketingOperator,
   siamparkRentalPersonas,
   storefrontPrincipal,
 } from '../demo/permissions.mts';
@@ -35,6 +37,10 @@ import {
 } from '../demo/commerce-portal.mts';
 import { toIdentityNamespaceAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
 
+const createProcessingPurposeAction = 'privacy.core.create-processing-purpose';
+const recordConsentDecisionAction = 'privacy.core.record-consent-decision';
+const privacyModule = 'privacy.core';
+const commerceModule = 'commerce.customer-context';
 const merchandiseModule = 'demo.merchandise';
 const portfolioModule = 'property.portfolio';
 const billingModule = 'finance.billing';
@@ -249,11 +255,179 @@ it('provisions only the Commerce portal namespace and its three Core binding Act
   expect(rows.some((row) => row.relation === 'identity_admin')).toBe(false);
 });
 
+it('grants the Commerce enrollment business permissions without broadening its Party Actions or company scope', () => {
+  expect(commercePortalActionKeys.filter((actionKey) => actionKey.startsWith('party.registry.'))).toEqual([
+    'party.registry.create-party',
+    'party.registry.accept-retail-enrollment-evidence',
+    'party.registry.counterparty-customer-onboard',
+    'party.registry.add-contact-point',
+    'party.registry.update-party',
+    'party.registry.update-contact-point',
+  ]);
+  const unrelatedPartyActions = [
+    'party.registry.archive-party',
+    'party.registry.resolve-duplicate-candidate-create',
+    'party.registry.create-party-relationship',
+  ];
+  const rows = commercePortalRelationships(
+    [...commercePortalActionKeys, ...unrelatedPartyActions].map((actionKey) => ({
+      actionKey,
+      provisioning: 'explicit',
+    })),
+  );
+  const { principalId } = commercePortalPrincipal;
+  expect(rows.filter((row) => row.resourceType === 'tenant').map((row) => row.relation)).toEqual([
+    'member',
+    'party_identity_reader',
+    'party_identity_manager',
+  ]);
+  const legal = toLegalEntityAccessObjectId(demoTenantId, commercePortalPrincipal.legalEntityId);
+  expect(rows.filter((row) => row.resourceType === 'legal_entity')).toEqual([
+    {
+      relation: 'tenant',
+      resourceId: legal,
+      resourceType: 'legal_entity',
+      subjectId: demoTenantId,
+      subjectType: 'tenant',
+    },
+    {
+      relation: 'member',
+      resourceId: legal,
+      resourceType: 'legal_entity',
+      subjectId: principalId,
+      subjectType: 'principal',
+    },
+    {
+      relation: 'counterparty_reader',
+      resourceId: legal,
+      resourceType: 'legal_entity',
+      subjectId: principalId,
+      subjectType: 'principal',
+    },
+    {
+      relation: 'counterparty_manager',
+      resourceId: legal,
+      resourceType: 'legal_entity',
+      subjectId: principalId,
+      subjectType: 'principal',
+    },
+  ]);
+  expect(rows.filter((row) => row.relation === 'executor').map((row) => row.resourceId)).toEqual(
+    commercePortalActionKeys.map(toSpiceDbActionObjectId),
+  );
+  expect(rows.some((row) => row.relation === 'identity_admin' || row.relation === 'party_identity_reviewer')).toBe(
+    false,
+  );
+});
+
+it('grants all four native Privacy reads only in the Commerce service company', () => {
+  const rows = commercePortalRelationships([]);
+  const permissions = [
+    'privacy.processing_catalog.read',
+    'privacy.notice.read',
+    'privacy.subjects.read',
+    'privacy.consent.read',
+  ];
+  const { legalEntityId, principalId } = commercePortalPrincipal;
+  for (const permission of permissions) {
+    for (const company of [legalEntityId, demoLegalEntityId, eshopDemoLegalEntityId, rentalDemoLegalEntityId]) {
+      const resourceId = toContextPermissionAccessObjectId(demoTenantId, company, {
+        moduleId: privacyModule,
+        permission,
+      });
+      expect(
+        rows.some(
+          (row) =>
+            row.resourceType === 'context_permission' &&
+            row.resourceId === resourceId &&
+            row.relation === 'grantee' &&
+            row.subjectId === principalId,
+        ),
+      ).toBe(company === legalEntityId);
+    }
+  }
+  expect(
+    rows
+      .filter((row) => row.resourceType === 'context_permission' && row.relation === 'grantee')
+      .map((row) => row.resourceId),
+  ).toEqual([
+    toContextPermissionAccessObjectId(demoTenantId, legalEntityId, {
+      moduleId: commerceModule,
+      permission: 'customer.group.read',
+    }),
+    ...permissions.map((permission) =>
+      toContextPermissionAccessObjectId(demoTenantId, legalEntityId, {
+        moduleId: privacyModule,
+        permission,
+      }),
+    ),
+  ]);
+  expect(rows.filter((row) => row.relation === 'executor')).toEqual([]);
+  expect(rows.some((row) => row.relation === 'identity_admin')).toBe(false);
+  expect(commercePortalRelationships([])).toEqual(rows);
+  expect(new Set(rows.map((row) => JSON.stringify(row))).size).toBe(rows.length);
+});
+
+it('restricts the existing company operator to native Privacy catalog setup, never customer consent', () => {
+  const setupActions = [createProcessingPurposeAction, 'privacy.core.create-notice-version'];
+  const actions = [
+    ...setupActions,
+    recordConsentDecisionAction,
+    'privacy.core.consent-self-service',
+    'privacy.core.record-notice-provision',
+    'privacy.core.create-privacy-subject',
+  ].map((actionKey) => ({
+    actionKey,
+    provisioning: 'explicit' as const,
+  }));
+  const rows = companyPermissionRelationships(actions).filter(
+    (row) => row.subjectId === privacyMarketingOperator.principalId,
+  );
+  expect(
+    companyHumanAccounts.filter((account) => account.principalId === privacyMarketingOperator.principalId),
+  ).toEqual([privacyMarketingOperator]);
+  const privacyActions = new Set(actions.map(({ actionKey }) => toSpiceDbActionObjectId(actionKey)));
+  expect(
+    rows
+      .filter(
+        (row) => row.resourceType === 'action' && row.relation === 'executor' && privacyActions.has(row.resourceId),
+      )
+      .map((row) => row.resourceId),
+  ).toEqual(setupActions.map(toSpiceDbActionObjectId));
+  for (const company of [
+    privacyMarketingOperator.legalEntityId,
+    demoLegalEntityId,
+    eshopDemoLegalEntityId,
+    rentalDemoLegalEntityId,
+  ]) {
+    expect(
+      rows.some(
+        (row) =>
+          row.resourceType === 'module_access' &&
+          row.relation === 'accessor' &&
+          row.resourceId === toModuleAccessObjectId(demoTenantId, company, privacyModule),
+      ),
+    ).toBe(company === privacyMarketingOperator.legalEntityId);
+    for (const permission of ['privacy.processing_catalog.read', 'privacy.notice.read']) {
+      expect(
+        rows.some(
+          (row) =>
+            row.resourceType === 'context_permission' &&
+            row.relation === 'grantee' &&
+            row.resourceId ===
+              toContextPermissionAccessObjectId(demoTenantId, company, { moduleId: privacyModule, permission }),
+        ),
+      ).toBe(company === privacyMarketingOperator.legalEntityId);
+    }
+  }
+  expect(companyPermissionRelationships(actions)).toEqual(companyPermissionRelationships(actions));
+});
+
 it('grants the Privacy authority reader exactly two Commerce facts without customer, Party or consent writes', () => {
   const actions = [
     ...commercePortalActionKeys,
-    'privacy.core.create-processing-purpose',
-    'privacy.core.record-consent-decision',
+    createProcessingPurposeAction,
+    recordConsentDecisionAction,
     'commerce.customer-context.apply-command',
   ].map((actionKey) => ({ actionKey, provisioning: 'explicit' as const }));
   const rows = privacyConsentAuthorityRelationships(actions);
@@ -263,7 +437,7 @@ it('grants the Privacy authority reader exactly two Commerce facts without custo
     ['customer.consent.resolve_authority', 'customer.notice.resolve_authority'].map((permission) => ({
       relation: 'grantee',
       resourceId: toContextPermissionAccessObjectId(demoTenantId, privacyConsentPrincipal.legalEntityId, {
-        moduleId: 'commerce.customer-context',
+        moduleId: commerceModule,
         permission,
       }),
       resourceType: 'context_permission',
@@ -276,7 +450,7 @@ it('grants the Privacy authority reader exactly two Commerce facts without custo
       .filter((row) => row.resourceType === 'module_access' && row.relation === 'accessor')
       .map((row) => row.resourceId),
   ).toEqual(
-    ['core.shell', 'commerce.customer-context'].map((moduleId) =>
+    ['core.shell', commerceModule].map((moduleId) =>
       toModuleAccessObjectId(demoTenantId, privacyConsentPrincipal.legalEntityId, moduleId),
     ),
   );
@@ -293,8 +467,8 @@ it('grants Commerce only native customer consent setup/provision/self-service Ac
   for (const actionKey of allowed) {
     expect(commercePortalActionKeys).toContain(actionKey);
   }
-  expect(commercePortalActionKeys).not.toContain('privacy.core.create-processing-purpose');
-  expect(commercePortalActionKeys).not.toContain('privacy.core.record-consent-decision');
+  expect(commercePortalActionKeys).not.toContain(createProcessingPurposeAction);
+  expect(commercePortalActionKeys).not.toContain(recordConsentDecisionAction);
   expect(
     demoPermissionRelationships(allowed.map((actionKey) => ({ actionKey, provisioning: 'explicit' })))
       .filter(

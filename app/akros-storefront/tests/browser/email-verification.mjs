@@ -55,35 +55,51 @@ try {
   assert.equal(registration.status(), 200, "Real enrollment must accept registration");
   assert.equal((await registration.json()).outcome, "ENROLLMENT_STARTED");
   await page.getByRole("status").filter({ hasText: "Registrace byla přijata" }).waitFor();
-  let verificationUrl;
   const search = new URL("/api/v1/search", mailpit);
   search.searchParams.set("query", `to:${email}`);
-  const deadline = Date.now() + 90000;
-  while (!verificationUrl && Date.now() < deadline) {
-    const list = await fetch(search).then((response) => response.json());
-    for (const message of list.messages) {
-      const mail = await fetch(new URL(`/api/v1/message/${message.ID}`, mailpit)).then((response) =>
-        response.json(),
-      );
-      const content = `${mail.Text ?? ""}\n${mail.HTML ?? ""}`.replaceAll("&amp;", "&");
-      const link = content.match(
-        /https?:\/\/[^\s"<>]+\/commerce-customer-context-api\/api\/portal-auth\/verify-email\?[^\s"<>]+/u,
-      )?.[0];
-      if (link) {
-        verificationUrl = new URL(link);
-        break;
+  async function nextVerificationMessage(excludeIds = new Set()) {
+    const deadline = Date.now() + 90000;
+    while (Date.now() < deadline) {
+      const list = await fetch(search).then((response) => response.json());
+      for (const message of list.messages) {
+        if (excludeIds.has(message.ID)) continue;
+        const mail = await fetch(new URL(`/api/v1/message/${message.ID}`, mailpit)).then(
+          (response) => response.json(),
+        );
+        const content = `${mail.Text ?? ""}\n${mail.HTML ?? ""}`.replaceAll("&amp;", "&");
+        const link = content.match(
+          /https?:\/\/[^\s"<>]+\/commerce-customer-context-api\/api\/portal-auth\/verify-email\?[^\s"<>]+/u,
+        )?.[0];
+        if (link) {
+          const url = new URL(link);
+          assert.equal(url.origin, base.origin, "The realm must generate the storefront origin");
+          assert.equal(url.pathname, verifyPath);
+          assert.ok(url.searchParams.get("token"), "Generated link must carry a token");
+          return { id: message.ID, url };
+        }
       }
+      await delay(1000);
     }
-    if (!verificationUrl) await delay(1000);
+    throw new Error("Mailpit did not receive the real generated verification email");
   }
-  assert.ok(verificationUrl, "Mailpit must receive the real generated verification email");
-  assert.equal(
-    verificationUrl.origin,
-    base.origin,
-    "The realm must generate the storefront origin",
+  const originalMessage = await nextVerificationMessage();
+  await page.goto(new URL("/prihlaseni", base).href, { waitUntil: "domcontentloaded" });
+  await page.locator("#verification-resend-email").fill(email);
+  const resendResponse = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/api/ontos/account" &&
+      response.request().method() === "POST",
   );
-  assert.equal(verificationUrl.pathname, verifyPath);
-  assert.ok(verificationUrl.searchParams.get("token"), "Generated link must carry a token");
+  await page.getByRole("button", { name: "Poslat ověřovací e-mail znovu", exact: true }).click();
+  const resend = await resendResponse;
+  assert.equal(resend.status(), 200, "The real owner must accept verification resend");
+  assert.deepEqual(await resend.json(), { outcome: "EMAIL_VERIFICATION_STARTED" });
+  await page
+    .getByRole("status")
+    .filter({ hasText: "Pokud účet s tímto e-mailem čeká na ověření" })
+    .waitFor();
+  const resentMessage = await nextVerificationMessage(new Set([originalMessage.id]));
+  const verificationUrl = resentMessage.url;
   // Do not let navigation errors echo the real one-time token in a Playwright call log.
   const followLink = async () => {
     try {
@@ -126,7 +142,7 @@ try {
   await page.locator("#account-email").waitFor();
   assert.equal(await page.locator("#account-email").inputValue(), email);
   console.log(
-    "Real Mailpit verification: registration, delivered generated link, Czech success/invalid/replay landing, no granted session and customer login passed.",
+    "Real Mailpit verification: registration, native resend and second delivered link, Czech success/invalid/replay landing, no granted session and customer login passed.",
   );
 } finally {
   await tab.close();

@@ -18,7 +18,7 @@ export pnpm_config_verify_deps_before_run=false
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$APP"
 
-DEFAULT_VERTICALS="party-registry property-portfolio property-leasing legal-agreements work-tasks finance-billing commerce-customer-context workforce tagging sales-pipeline merchandise sales-insights crm facility-operations"
+DEFAULT_VERTICALS="party-registry privacy property-portfolio property-leasing legal-agreements work-tasks finance-billing commerce-customer-context workforce tagging sales-pipeline merchandise sales-insights crm facility-operations"
 read -r -a VERTICALS <<<"$(printf '%s' "${DEMO_VERTICALS:-$DEFAULT_VERTICALS}" | tr ',' ' ')"
 SCRATCH="$APP/.scratch"
 LOG_DIR="$SCRATCH/demo-logs"
@@ -71,6 +71,13 @@ load_env() {
     export "$key=$value"
   done <"$APP/.env"
   export MISE_ARGV0=
+}
+# Only generated, explicitly owned configuration may replace an already exported value.
+# Missing file values stay unset rather than retaining a stale credential/reference.
+reload_env_keys() {
+  local key
+  for key in "$@"; do unset "$key"; done
+  load_env
 }
 
 # Native release identity hashes the clean Git HEAD into every build marker, so a commit made while the
@@ -155,14 +162,17 @@ fi
 step authorization-provision "${WITH_ENV[@]}" node scripts/demo/provision-actions.mts
 
 # 4. Native development builds, only when missing, stale, or forced.
+SHARED_SOURCE_DIGEST="$(node "$APP/scripts/demo/shared-build-source-digest.mts")"
 needs_build() {
   local id="$1" dir stamp
-  # DEMO_SKIP_BUILD=1 serves whatever dist/ already holds (builds are done separately, e.g. rebuild-one.sh).
-  [ "${DEMO_SKIP_BUILD:-0}" = 1 ] && [ -f "$(contract_of "$id")" ] && return 1
   dir="$(dir_of "$id")"
   stamp="$STAMP_DIR/$id.stamp"
+  [ -f "$(contract_of "$id")" ] || return 0
+  # Never reuse a dist compiled against another Core/contract schema, even with DEMO_SKIP_BUILD.
+  [ "$(cat "$dir/dist/.ontos-shared-source-digest" 2>/dev/null || true)" = "$SHARED_SOURCE_DIGEST" ] || return 0
   [ "${DEMO_REBUILD:-0}" = 1 ] && return 0
-  [ -f "$(contract_of "$id")" ] && [ -f "$stamp" ] || return 0
+  [ "${DEMO_SKIP_BUILD:-0}" = 1 ] && return 1
+  [ -f "$stamp" ] || return 0
   [ -n "$(find "$dir" packages pnpm-lock.yaml -newer "$stamp" -type f \
     -not -path '*/node_modules/*' -not -path '*/dist/*' -not -path '*/.dev-public/*' \
     -not -path '*/cloudflare-dist/*' -not -path '*/.output/*' -not -path '*/.modern/*' \
@@ -184,6 +194,8 @@ for id in "${APPS[@]}"; do
     say "building $id (log: $LOG_DIR/build-$id.log)"
     touch "$STAMP_DIR/$id.building"
     ("${NO_GIT[@]}" "${WITH_ENV[@]}" pnpm --dir "$(dir_of "$id")" exec sh -c "$script" >"$LOG_DIR/build-$id.log" 2>&1 &&
+      [ "$(node "$APP/scripts/demo/shared-build-source-digest.mts")" = "$SHARED_SOURCE_DIGEST" ] &&
+      printf '%s\n' "$SHARED_SOURCE_DIGEST" >"$(dir_of "$id")/dist/.ontos-shared-source-digest" &&
       mv "$STAMP_DIR/$id.building" "$STAMP_DIR/$id.stamp") &
     build_pids+=($!)
     build_ids+=("$id")
@@ -272,10 +284,11 @@ step seed-agent-entities env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" 
 step mcp-agent-operators "${WITH_ENV[@]}" node scripts/demo/mcp-agent-operators.mts
 # CRM.md §3: key of the CRM's Party Registry intake principal (read by the crm server per intake, no restart).
 step crm-party-intake pnpm_ demo:crm-party-intake
-# AKROS customer accounts: the Commerce portal's service principal, its managed key and the Shell's provider data
-# land in app/.env; the Shell and the Commerce vertical read them at start, so both restart once with them.
+# AKROS customer accounts: publish the two workload identities/keys and Shell provider configuration first.
 step commerce-portal pnpm_ demo:commerce-portal
-load_env
+reload_env_keys COMMERCE_CORE_IDENTITY_BASE_URL COMMERCE_CORE_IDENTITY_API_KEY \
+  ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT \
+  COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS ONTOS_PRIVACY_GATEWAY_API_KEY COMMERCE_MARKETING_ACTOR_PRINCIPAL_ID
 restart_server() { # restart_server <name> <directory>
   local pid
   pid="$(cat "$PID_DIR/$1.pid" 2>/dev/null || true)"
@@ -287,9 +300,33 @@ restart_server() { # restart_server <name> <directory>
 }
 restart_server shell-super-app apps/shell-super-app
 wait_http "http://127.0.0.1:$SHELL_PORT/.well-known/ontos-shell-runtime.json" 180 shell-super-app
+# Privacy reads its Commerce authority callback key at startup too; it must not retain the old credential.
+if printf '%s\n' "${VERTICALS[@]}" | grep -qx privacy; then
+  restart_server privacy verticals/privacy
+  wait_http "http://127.0.0.1:$(port_of privacy)/.well-known/ontos-module-manifest.json" 180 privacy
+fi
 if printf '%s\n' "${VERTICALS[@]}" | grep -qx commerce-customer-context; then
+  if printf '%s\n' "${VERTICALS[@]}" | grep -qx privacy; then
+    # The declared AKROS human operator has only two Privacy setup Actions and two catalog reads.
+    # COMPLETE checkpoints re-read native records only; unknown writes stop for governed reconciliation.
+    step privacy-marketing env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" \
+      "ONTOS_DEMO_SEED_PASSWORD=${ONTOS_DEMO_PASSWORD:-password1234}" \
+      "${WITH_ENV[@]}" node scripts/demo/privacy-marketing.mts --apply \
+      --checkpoint "$SCRATCH/privacy-marketing.json" --env-file "$APP/.env"
+    reload_env_keys COMMERCE_MARKETING_PURPOSE_ID COMMERCE_MARKETING_PURPOSE_VERSION_ID \
+      COMMERCE_MARKETING_NOTICE_ID COMMERCE_MARKETING_NOTICE_VERSION_ID COMMERCE_MARKETING_CONTROLLER_REF
+  fi
+  # Start Commerce only after all owner-returned catalog references and workload credentials are reloaded.
   restart_server commerce-customer-context verticals/commerce-customer-context
   wait_http "http://127.0.0.1:$(port_of commerce-customer-context)/.well-known/ontos-module-manifest.json" 180 commerce-customer-context
+fi
+# Explicit operator conversion of seeded guest contacts through Party matching and CUSTOMER owners.
+# Real visitor orders are never converted by bootstrap; staff confirm those in the order detail.
+if printf '%s\n' "${VERTICALS[@]}" | grep -qx merchandise &&
+  printf '%s\n' "${VERTICALS[@]}" | grep -qx party-registry; then
+  step demo-seed-order-customers env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" \
+    "ONTOS_DEMO_SEED_PASSWORD=${ONTOS_DEMO_PASSWORD:-password1234}" \
+    "${WITH_ENV[@]}" node scripts/demo/seed-order-customers.mts --apply
 fi
 # Rental data uses public reads/Actions, so it must run AFTER composition, company setup and grants.
 if [ "${DEMO_RESET:-1}" != 0 ]; then

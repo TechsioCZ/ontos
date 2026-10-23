@@ -69,6 +69,7 @@ export interface CommercePortalAuthPolicyValue {
     readonly mfa: { readonly max: number; readonly windowSeconds: number };
     readonly recovery: { readonly max: number; readonly windowSeconds: number };
     readonly signIn: { readonly max: number; readonly windowSeconds: number };
+    readonly verificationCaller: { readonly max: number; readonly windowSeconds: number };
   };
   readonly secretRotation: {
     readonly routineRefreshRotatesSessionIdentifier: boolean;
@@ -140,6 +141,7 @@ export const COMMERCE_PORTAL_AUTH_POLICY: CommercePortalAuthPolicyValue = Object
     mfa: Object.freeze({ max: 5, windowSeconds: 300 }),
     recovery: Object.freeze({ max: 3, windowSeconds: 3600 }),
     signIn: Object.freeze({ max: 5, windowSeconds: 60 }),
+    verificationCaller: Object.freeze({ max: 30, windowSeconds: 60 }),
   }),
   secretRotation: Object.freeze({
     routineRefreshRotatesSessionIdentifier: false,

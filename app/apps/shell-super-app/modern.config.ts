@@ -305,9 +305,11 @@ export default defineConfig(
               .chunkLoadingGlobal('__ULTRAMODERN_SHELL_SUPER_APP_LOADED_CHUNKS__');
           },
           rspack: ((config, { environment, isServer, rspack }) => {
-            const browserBuild = !(isServer || environment.name === 'workerSSR');
-            config.plugins.push(new rspack.DefinePlugin({ __ONTOS_BROWSER_BUILD__: browserBuild }));
-            if (browserBuild) {
+            // The framework proves Shell's browser-only federation loading from this exact inline define.
+            config.plugins.push(
+              new rspack.DefinePlugin({ __ONTOS_BROWSER_BUILD__: !(isServer || environment.name === 'workerSSR') }),
+            );
+            if (!(isServer || environment.name === 'workerSSR')) {
               config.plugins.push(createServerOnlyBrowserReplacement(rspack));
             }
             if (!cloudflareDeployEnabled) {

@@ -10,8 +10,8 @@
  *
  *   - its managed API key is both the Core identity transport credential (`COMMERCE_CORE_IDENTITY_API_KEY`) and the
  *     vertical's gateway credential for owner calls (`ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY`);
- *   - read access to party.registry (party matching is `module.access`) and commerce.customer-context, plus executor
- *     grants for exactly the Actions the enrollment owners run;
+ *   - module read access, tenant Party identity management for match/create, and counterparty management only in
+ *     the selling company, plus executor grants for exactly the Actions the enrollment owners run;
  *   - the Shell's `ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT` names it as the attester of the portal namespace and
  *     grants it the reserve/activate/status/read/resolve/gateway-context workload operations.
  *
@@ -39,7 +39,10 @@ import {
 import { Command, Flag } from 'effect/unstable/cli';
 import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
-import { toIdentityNamespaceAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
+import {
+  toIdentityNamespaceAccessObjectId,
+  toLegalEntityAccessObjectId,
+} from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { principals } from '../../packages/core-runtime/src/db/schema.ts';
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { apikey } from '../../apps/shell-super-app/api/auth/db/schema.ts';
@@ -48,7 +51,7 @@ import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } fro
 import { writeAiRelationships } from './ai-profiles.mts';
 import type { AiRelationship } from './ai-profiles.mts';
 import { akrosDemoLegalEntityId, demoId, demoTenantId } from './fixture-ids.mts';
-import { principalRelationships } from './permissions.mts';
+import { principalRelationships, privacyReadContextPermissions } from './permissions.mts';
 import type { DemoRole } from './permissions.mts';
 
 const COMMERCE_PORTAL = 'commerce-portal';
@@ -73,8 +76,9 @@ const SHELL_AUDIENCE = 'shell-super-app';
 const GATEWAY_CONTEXT_AUDIENCES = ['commerce-customer-context', 'party-registry', 'privacy'] as const;
 const BINDING_OPERATIONS = ['activate', 'read', 'reserve', 'resolve', 'status'] as const;
 
-/** Module access only; the Actions below are granted one by one. */
+/** Exact company-scoped native reads; the Actions below are granted one by one. */
 const commercePortalRole: DemoRole = {
+  contextPermissions: { 'privacy.core': privacyReadContextPermissions },
   identityAdmin: false,
   label: 'Commerce portal (service)',
   modules: { 'commerce.customer-context': 'read', 'party.registry': 'read', 'privacy.core': 'read' },
@@ -90,6 +94,7 @@ export const commercePortalActionKeys: readonly string[] = [
   'privacy.core.record-notice-provision',
   'privacy.core.consent-self-service',
   'party.registry.create-party',
+  'party.registry.accept-retail-enrollment-evidence',
   'party.registry.counterparty-customer-onboard',
   'party.registry.add-contact-point',
   // Customer self-service: the owner bridge edits the customer's own Party and contact points.
@@ -134,6 +139,22 @@ export const commercePortalRelationships = (actions: readonly DiscoveredAction[]
       subjectType: 'principal',
     },
     ...principalRelationships(principalId, commercePortalRole, actions, legalEntityId),
+    // Business authority is independent of the exact Action executor allowlist below.
+    // Keep module access read-only: a write role would automatically grant every Party Action.
+    {
+      relation: 'party_identity_manager',
+      resourceId: demoTenantId,
+      resourceType: 'tenant',
+      subjectId: principalId,
+      subjectType: 'principal',
+    },
+    {
+      relation: 'counterparty_manager',
+      resourceId: toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '',
+      resourceType: 'legal_entity',
+      subjectId: principalId,
+      subjectType: 'principal',
+    },
   ];
   for (const { actionKey, provisioning } of actions.filter((action) =>
     commercePortalActionKeys.includes(action.actionKey),

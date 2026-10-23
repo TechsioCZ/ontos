@@ -1,6 +1,18 @@
 import { createHash } from 'node:crypto';
 
-import { Array as EffectArray, DateTime, Duration, Effect, Option, Order, Schema } from 'effect';
+import {
+  Array as EffectArray,
+  Cause,
+  DateTime,
+  Duration,
+  Effect,
+  Match,
+  Option,
+  Order,
+  Schedule,
+  Schema,
+} from 'effect';
+import { HttpClientError } from 'effect/unstable/http';
 
 import {
   ActiveApplicationCompositionSnapshotSchema,
@@ -40,6 +52,24 @@ export const ACTIVE_APPLICATION_COMPOSITION_POLICY = Object.freeze({
 
 /** Bound on observing one deployed artifact. */
 export const ARTIFACT_FETCH_TIMEOUT = Duration.seconds(10);
+
+/** Three bounded GET attempts; validation failures and non-5xx responses never qualify. */
+export const retryTransientCompositionRead = <A, E, R>(read: Effect.Effect<A, E, R>) =>
+  read.pipe(
+    Effect.timeout(ARTIFACT_FETCH_TIMEOUT),
+    Effect.retry({
+      schedule: Schedule.exponential('1 second'),
+      times: 2,
+      while: (failure) =>
+        Cause.isTimeoutError(failure) ||
+        (HttpClientError.isHttpClientError(failure) &&
+          Match.value(failure.reason).pipe(
+            Match.tag('TransportError', () => true),
+            Match.tag('StatusCodeError', ({ response }) => response.status >= 500),
+            Match.orElse(() => false),
+          )),
+    }),
+  );
 
 /**
  * Derivation, validation, and conflicting-publication failures of the publisher. Messages name the

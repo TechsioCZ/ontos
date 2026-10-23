@@ -565,7 +565,8 @@
             "delete": "smazat agenta {{target}}",
             "other": "změnit agenta {{target}}"
           }
-        }
+        },
+        "loadError": "Agenty se nepodařilo načíst. Zkuste to znovu."
       },
       "errors": {
         "forbidden": "Akci smí provést jen správce firmy. Pokus byl zaznamenán v auditu.",

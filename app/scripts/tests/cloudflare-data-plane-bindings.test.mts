@@ -23,7 +23,13 @@ const PUBLIC_URL = 'ULTRAMODERN_PUBLIC_URL_CATALOG';
 const DEPLOYMENT_ENVIRONMENT = 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT';
 const PRICING_PUBLIC_URL = 'ULTRAMODERN_PUBLIC_URL_PRICING';
 const PRICING_WORKER = 'app-pricing';
-const GeneratedWranglerObservabilitySchema = Schema.Struct({ name: Schema.String, observability: Schema.Unknown });
+const PLACEMENT_HOST_VARIABLE = 'ULTRAMODERN_CLOUDFLARE_PLACEMENT_HOST';
+const PLACEMENT_HOST = 'backend.example.com:443';
+const GeneratedWranglerObservabilitySchema = Schema.Struct({
+  name: Schema.String,
+  observability: Schema.Unknown,
+  placement: Schema.Struct({ host: Schema.String }),
+});
 
 const reader =
   (values: Readonly<Record<string, string>>) =>
@@ -61,6 +67,7 @@ it('serves every Worker only on its custom domain, off workers.dev and preview U
       kv_namespaces: [COMPOSITION_BINDING],
       limits: { cpu_ms: CLOUDFLARE_WORKER_CPU_MS },
       observability: { enabled: false },
+      placement: { mode: 'off' },
       preview_urls: false,
       routes: [{ custom_domain: true, pattern: 'ontos-stage-catalog.stage.example.com' }],
       workers_dev: false,
@@ -101,6 +108,10 @@ it('refuses a Worker build for an unknown deployment environment', () => {
   expect(() => workerConfigFor({ [DEPLOYMENT_ENVIRONMENT]: 'staging' })).toThrow();
 });
 
+it.each(['', '   '])('refuses an empty declared placement host (%j)', (host) => {
+  expect(() => workerConfigFor({ [PLACEMENT_HOST_VARIABLE]: host })).toThrow();
+});
+
 it.each([
   ['stage', { enabled: true, head_sampling_rate: 1 }],
   ['production', { enabled: false }],
@@ -115,6 +126,7 @@ it.each([
       [COMPOSITION_KV_ID]: COMPOSITION_KV,
       [DEPLOYMENT_ENVIRONMENT]: environment,
       [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG,
+      [PLACEMENT_HOST_VARIABLE]: PLACEMENT_HOST,
       [PRICING_PUBLIC_URL]: 'https://ontos-stage-pricing.stage.example.com',
       [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE,
     }),
@@ -135,7 +147,7 @@ it.each([
   const wrangler = Schema.decodeUnknownSync(GeneratedWranglerObservabilitySchema)(
     createWranglerConfig(process.cwd(), deploy === undefined ? {} : { deploy }),
   );
-  expect(wrangler).toEqual({ name: PRICING_WORKER, observability });
+  expect(wrangler).toEqual({ name: PRICING_WORKER, observability, placement: { host: PLACEMENT_HOST } });
 });
 
 it('refuses a Worker build without its public URL', () => {

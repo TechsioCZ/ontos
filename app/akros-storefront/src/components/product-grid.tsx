@@ -75,7 +75,6 @@ export function ProductGrid({
                   aria-label={product.name}
                   className="akros-catalog-product-card__image-link"
                   href={detailHref}
-                  prefetchOnIntent
                 >
                   <ProductCard.Image
                     as={Image}
@@ -131,11 +130,7 @@ export function ProductGrid({
               </div>
 
               <ProductCard.Name className="akros-catalog-product-card__name m-0 text-center uppercase">
-                <StoreLink
-                  className="akros-product-card__name-link"
-                  href={detailHref}
-                  prefetchOnIntent
-                >
+                <StoreLink className="akros-product-card__name-link" href={detailHref}>
                   {product.name}
                 </StoreLink>
               </ProductCard.Name>
@@ -216,7 +211,6 @@ export function ProductGrid({
                     as={StoreLink}
                     block
                     href={detailHref}
-                    prefetchOnIntent
                     size="sm"
                     uppercase
                     variant="primary"

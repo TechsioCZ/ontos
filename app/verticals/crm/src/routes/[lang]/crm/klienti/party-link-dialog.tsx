@@ -85,7 +85,7 @@ export const PartyLinkDialog = ({
   const chosen = offered.find((entry) => entry.link.counterpartyId === choice);
 
   const link = (partyRef: { readonly counterpartyId: string; readonly partyId: string }, name: string) =>
-    run({ _tag: 'LinkClientParty', clientId: client.id, partyRef }, `Propojeno s Party Registry: ${name}`).then(
+    run({ _tag: 'LinkClientParty', clientId: client.id, partyRef }, `Propojeno s evidencí zákazníků: ${name}`).then(
       (ok) => {
         if (ok) {
           onClose();
@@ -132,7 +132,7 @@ export const PartyLinkDialog = ({
               theme="outlined"
               variant="secondary"
             >
-              Založit v Party Registry
+              Založit v evidenci zákazníků
             </Button>
           )}
           <Button
@@ -153,7 +153,7 @@ export const PartyLinkDialog = ({
       }
       closeLabel={dialogCloseLabel}
       customTrigger
-      description="Identita firmy patří do Party Registry (Prodej › Zákazníci). CRM si ukládá jen ověřený odkaz; kontakty, návštěvy a objednávky zůstávají v CRM."
+      description="Identita firmy patří do evidence zákazníků (Prodej › Zákazníci). CRM si ukládá jen ověřený odkaz; kontakty, návštěvy a objednávky zůstávají v CRM."
       onOpenChange={({ open }) => {
         if (!open) {
           onClose();
@@ -161,14 +161,14 @@ export const PartyLinkDialog = ({
       }}
       open
       size="md"
-      title={`Propojit ${client.name} s Party Registry`}
+      title={`Propojit ${client.name} s evidencí zákazníků`}
     >
       <div className="flex flex-col gap-200">
         {directory.kind === 'loading' && <p className="text-fg-secondary text-sm">Načítám zákazníky z registru…</p>}
         {directory.kind === 'failed' && (
           <StatusText showIcon status={directory.failure === 'forbidden' ? 'warning' : 'error'}>
             {directory.failure === 'forbidden'
-              ? 'Seznam zákazníků v Party Registry vám není přístupný. Propojení provede správce nebo vedoucí obchodu.'
+              ? 'Seznam zákazníků v evidenci zákazníků vám není přístupný. Propojení provede správce nebo vedoucí obchodu.'
               : registryFailureMessage[directory.failure]}
           </StatusText>
         )}
@@ -184,7 +184,7 @@ export const PartyLinkDialog = ({
                   value: entry.link.counterpartyId,
                 })),
               ]}
-              label="Existující zákazník v Party Registry"
+              label="Existující zákazník v evidenci zákazníků"
               name="party-link-target"
               onValueChange={(details) => setChoice(details.value[0] ?? '')}
               value={[choice]}

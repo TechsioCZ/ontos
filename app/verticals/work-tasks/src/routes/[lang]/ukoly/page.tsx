@@ -40,6 +40,7 @@ import {
   TaskTabSchema,
   commonTransitionTargets,
   doneThisWeek,
+  defaultTaskTab,
   employeeIdOf,
   filterTasks,
   initialTaskFilters,
@@ -362,7 +363,7 @@ const useTaskView = (partyId: typeof PartyIdSchema.Type | undefined, invalidFilt
   const stored = partyId === undefined && !invalidFilter ? taskViewFromSnapshot(snapshot) : undefined;
   const [tabOverride, setTabOverride] = useState<TaskTab>();
   const [filtersOverride, setFiltersOverride] = useState<TaskFilters>();
-  const tab = tabOverride ?? stored?.tab ?? (partyId === undefined ? 'mine' : 'all');
+  const tab = tabOverride ?? stored?.tab ?? (partyId === undefined ? undefined : 'all');
   const filters = filtersOverride ?? stored?.filters ?? initialTaskFilters;
   return { filters, setFilters: setFiltersOverride, setTab: setTabOverride, tab };
 };
@@ -423,7 +424,7 @@ const useTasksPage = (
     opportunities: !opportunitiesAllowed || opportunitiesSnapshot.state !== 'pending',
   };
   const [loadedObjects, setLoadedObjects] = useState<readonly ObjectOption[]>();
-  const { filters: storedFilters, setFilters, setTab, tab } = useTaskView(partyId, invalidFilter);
+  const { filters: storedFilters, setFilters, setTab, tab: preferredTab } = useTaskView(partyId, invalidFilter);
   // A saved filter from a broader role cannot silently hide rows when its directory is no longer available.
   const filters = records?.lookupAccess?.employees === 'allowed' ? storedFilters : { ...storedFilters, assignee: ALL };
   // Default order: the nearest due date first. Tasks without a date sort last (column option).
@@ -522,6 +523,8 @@ const useTasksPage = (
     records === undefined ? undefined : employeeIdOf(records.actorPrincipalRef.principalId, employees);
   // "Mine" narrows by the employee linked to this login; until the employees settle the table stays in its loading
   // state instead of flashing every task.
+  const tab =
+    preferredTab ?? defaultTaskTab(records?.items ?? [], mineEmployeeId, records?.actorPrincipalRef.principalId);
   const mineResolving = tab === 'mine' && !lookups.employees;
   const visibleTasks =
     records === undefined || mineResolving
@@ -755,8 +758,7 @@ const useTasksPage = (
     if (records === undefined) {
       return;
     }
-    const putRow = (row: Task) =>
-      taskRecords.update(input, (current) => withSavedTask(current, row, current.revision));
+    const putRow = (row: Task) => taskRecords.update(input, (current) => withSavedTask(current, row, current.revision));
     setActionError(undefined);
     setRowBusy(true);
     putRow({ ...task, state: toState });

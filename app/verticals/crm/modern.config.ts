@@ -230,7 +230,7 @@ export default defineConfig(
       },
       output: {
         assetPrefix,
-        disableTsChecker: process.env.DEMO_DISABLE_TS_CHECKER === '1',
+        disableTsChecker: getBuildConfigEnvironment('DEMO_DISABLE_TS_CHECKER') === '1',
         distPath: {
           html: './',
           root: buildOutputRoot,
@@ -300,9 +300,7 @@ export default defineConfig(
           overrideBrowserslist: ['defaults'],
         },
         bundlerChain: (chain) => {
-          chain.output
-            .uniqueName('verticalCrm')
-            .chunkLoadingGlobal('__ULTRAMODERN_VERTICAL_CRM_LOADED_CHUNKS__');
+          chain.output.uniqueName('verticalCrm').chunkLoadingGlobal('__ULTRAMODERN_VERTICAL_CRM_LOADED_CHUNKS__');
         },
         tsChecker: {
           typescript: {

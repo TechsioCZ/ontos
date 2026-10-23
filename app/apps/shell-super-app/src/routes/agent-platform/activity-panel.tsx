@@ -4,10 +4,15 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { agentActivityKindLabel } from '@app/shared-contracts/agent-proposals';
-import type { AgentActivityKind, AgentActivityRequest } from '@app/shared-contracts/agent-proposals';
+import type {
+  AgentActivityKind,
+  AgentActivityRequest,
+  AgentActivityResponse,
+  AgentPageCursor,
+} from '@app/shared-contracts/agent-proposals';
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { ModulePageSkeleton } from '../module-page-skeleton.tsx';
@@ -52,36 +57,71 @@ export const ActivityText = ({
     </LocalizedLink>
   );
 
+const activityRequest = (
+  agent: string,
+  moduleKey: string,
+  kind: '' | AgentActivityKind,
+  cursor: AgentPageCursor | undefined,
+): AgentActivityRequest => {
+  let value: AgentActivityRequest = { ...DEFAULT_ACTIVITY_REQUEST };
+  if (cursor !== undefined) {
+    value = { ...value, cursor };
+  }
+  if (agent !== '') {
+    value = { ...value, agentPrincipalId: agent };
+  }
+  if (moduleKey !== '') {
+    value = { ...value, moduleKey };
+  }
+  if (kind !== '') {
+    value = { ...value, kind };
+  }
+  return value;
+};
+
 export const ActivityPanel = () => {
   const [agent, setAgent] = useState('');
   const [moduleKey, setModuleKey] = useState('');
   const [kind, setKind] = useState<'' | AgentActivityKind>('');
-  const request = useMemo(
-    (): AgentActivityRequest => ({
-      ...DEFAULT_ACTIVITY_REQUEST,
-      ...(agent === '' ? {} : { agentPrincipalId: agent }),
-      ...(moduleKey === '' ? {} : { moduleKey }),
-      ...(kind === '' ? {} : { kind }),
-    }),
-    [agent, moduleKey, kind],
-  );
+  const filterKey = [agent, moduleKey, kind].join('|');
+  const [page, setPage] = useState<{ readonly cursor: AgentPageCursor; readonly filter: string }>();
+  const cursor = page?.filter === filterKey ? page.cursor : undefined;
+  const request = activityRequest(agent, moduleKey, kind, cursor);
   // The Shell prepared the default list before it revealed the page; another filter loads on demand.
   const snapshot = useSyncExternalStore(
     agentActivityData.subscribe,
     () => agentActivityData.snapshot(request),
     () => pageDataPending,
   );
-  useEffect(() => agentActivityData.ensure(request), [request]);
+  useEffect(
+    () => agentActivityData.ensure(activityRequest(agent, moduleKey, kind, cursor)),
+    [agent, moduleKey, kind, cursor],
+  );
   // While another filter loads, the last settled list stays on screen.
   const [settled, setSettled] = useState(snapshot);
+  // Keep discovered filter choices across pages without retaining the activity rows themselves.
+  const [options, setOptions] = useState<Pick<AgentActivityResponse, 'agents' | 'modules'>>(
+    snapshot.state === 'ready' ? snapshot.value : { agents: [], modules: [] },
+  );
   if (snapshot.state !== 'pending' && snapshot !== settled) {
     setSettled(snapshot);
+    if (snapshot.state === 'ready') {
+      setOptions({
+        agents: [
+          ...new Map([...options.agents, ...snapshot.value.agents].map((entry) => [entry.principalId, entry])).values(),
+        ],
+        modules: [
+          ...new Map([...options.modules, ...snapshot.value.modules].map((entry) => [entry.moduleKey, entry])).values(),
+        ],
+      });
+    }
   }
   const state = snapshot.state === 'pending' ? settled : snapshot;
-  const options = state.state === 'ready' ? state.value : { agents: [], modules: [] };
 
   const reload = () => {
-    browserRuntime.runFork(agentActivityData.refresh(request));
+    setPage(undefined);
+    const { cursor: _cursor, ...firstPage } = request;
+    browserRuntime.runFork(agentActivityData.refresh(firstPage));
   };
 
   return (
@@ -185,9 +225,24 @@ export const ActivityPanel = () => {
                 </div>
               ))}
             </div>
-            <p className="text-fg-secondary text-xs">{`Zobrazeno ${state.value.entries.length} posledních záznamů.`}</p>
+            <p className="text-fg-secondary text-xs">{`Zobrazeno ${state.value.entries.length} záznamů.`}</p>
           </>
         ))}
+      {state.state === 'ready' && state.value.nextCursor !== undefined && (
+        <Button
+          disabled={snapshot.state === 'pending'}
+          onClick={() => {
+            if (state.value.nextCursor !== undefined) {
+              setPage({ cursor: state.value.nextCursor, filter: filterKey });
+            }
+          }}
+          size="sm"
+          theme="outlined"
+          variant="secondary"
+        >
+          Načíst další
+        </Button>
+      )}
       <div>
         <LinkButton as={LocalizedLink} size="sm" theme="outlined" to="/sprava/ke-schvaleni" variant="primary">
           Přejít na Ke schválení

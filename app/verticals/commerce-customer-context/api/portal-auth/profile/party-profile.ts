@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   AddContactPointPayloadSchema,
   PartyCommandConflictProblemSchema,
+  normalizePhone,
   UpdateContactPointPayloadSchema,
   UpdatePartyPayloadSchema,
 } from '@app/party-registry/api';
@@ -18,10 +19,14 @@ import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
 import { acquireRetailPartyGateway } from '../../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import type { RetailPartyCandidateOwnerInput } from '../../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import type { CustomerOwnProfile, UpdateCustomerOwnProfile } from '../../../shared/portal-auth/profile-api.ts';
-import { profileConflict, profileUnavailable } from './problems.ts';
+import { profileConflict, profileInvalid, profileUnavailable } from './problems.ts';
 
 type Contact = PartyContactPointsResponse['items'][number];
-export interface CustomerPartyProfileScope extends Omit<RetailPartyCandidateOwnerInput, 'candidate'> {
+type ProfileCommandError = Effect.Error<ReturnType<typeof updatePartyWithAuthorization>>;
+export interface CustomerPartyProfileScope extends Pick<
+  RetailPartyCandidateOwnerInput,
+  'compositionRevision' | 'legalEntityId' | 'requestCorrelation' | 'tenantId'
+> {
   readonly partyId: string;
 }
 const sameParty = (left: PartyRef, right: PartyRef) =>
@@ -114,6 +119,14 @@ export const updateCustomerPartyProfile = Effect.fn('CustomerOwnProfile.updatePa
   if (before.profile.version !== input.version) {
     return yield* Effect.fail(profileConflict());
   }
+  // Validate the complete phone intent before any native command can commit a different field.
+  // Empty means removal; nonempty values use the owner's exact national/international rules.
+  if (input.phone !== '') {
+    yield* Effect.try({
+      catch: profileInvalid,
+      try: () => normalizePhone(input.phone, input.phone.startsWith('+') ? undefined : 'CZ'),
+    });
+  }
   const validFrom = DateTime.formatIso(yield* DateTime.now);
   const evidenceReference = `commerce.customer-profile:${scope.requestCorrelation}`;
   const provenance = {
@@ -126,7 +139,7 @@ export const updateCustomerPartyProfile = Effect.fn('CustomerOwnProfile.updatePa
     execute: (
       authorization: Redacted.Redacted,
       options: Parameters<typeof updatePartyWithAuthorization>[2],
-    ) => Effect.Effect<unknown, unknown>,
+    ) => Effect.Effect<unknown, ProfileCommandError>,
   ) {
     const gateway = yield* acquireRetailPartyGateway(scope).pipe(Effect.mapError(profileUnavailable));
     return yield* execute(gateway.credential, {
@@ -140,7 +153,7 @@ export const updateCustomerPartyProfile = Effect.fn('CustomerOwnProfile.updatePa
     );
   });
   if (input.displayName !== before.profile.displayName) {
-    const payload = yield* Schema.decodeUnknownEffect(UpdatePartyPayloadSchema)({
+    const payload = yield* Schema.decodeEffect(UpdatePartyPayloadSchema)({
       displayName: input.displayName,
       expectedRevision: before.detail.party.revision,
       partyRef: before.partyRef,
@@ -168,7 +181,7 @@ export const updateCustomerPartyProfile = Effect.fn('CustomerOwnProfile.updatePa
         verification: { state: 'UNVERIFIED' },
       };
       if (current === undefined) {
-        if (!value) {
+        if (value === '') {
           return;
         }
         const payload = yield* Schema.decodeUnknownEffect(AddContactPointPayloadSchema)({
@@ -185,7 +198,7 @@ export const updateCustomerPartyProfile = Effect.fn('CustomerOwnProfile.updatePa
           type: 'CORRECT_CONTACT_POINT',
         } as const;
         const payload = yield* Schema.decodeUnknownEffect(UpdateContactPointPayloadSchema)({
-          change: value ? { ...correction, replacement } : correction,
+          change: value === '' ? correction : { ...correction, replacement },
           contactPointRef: current.contactPointRef,
           expectedRevision: current.revision,
           provenance,

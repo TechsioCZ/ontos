@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import StoreLink from "@/components/store-link";
-import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { Footer } from "@techsio/ui-kit/organisms/footer";
 
 import { cs } from "@/i18n/cs";
@@ -39,47 +38,6 @@ const customerLinks = [
   { href: "/gdpr", label: cs.footer.privacy },
   { href: "/faq", label: cs.footer.downloads },
   { href: "/kontakty", label: cs.footer.substitutePerformance },
-] as const;
-
-const paymentMethods = [
-  { alt: cs.footer.paymentCard, height: 28, src: "/akros/footer/payment-card.png", width: 39 },
-  { alt: "Google Pay", height: 28, src: "/akros/footer/google-pay.png", width: 39 },
-  { alt: "Apple Pay", height: 28, src: "/akros/footer/apple-pay.png", width: 39 },
-  { alt: cs.footer.cash, height: 28, src: "/akros/footer/cash.png", width: 39 },
-  { alt: cs.footer.bankTransfer, height: 28, src: "/akros/footer/bank-transfer.png", width: 39 },
-] satisfies FooterAsset[];
-
-const carriers = [
-  { alt: "Zásilkovna", height: 28, src: "/akros/footer/zasilkovna.png", width: 69 },
-  { alt: "PPL", height: 28, src: "/akros/footer/ppl.png", width: 52 },
-  { alt: "GLS", height: 28, src: "/akros/footer/gls.png", width: 52 },
-  { alt: "DPD", height: 28, src: "/akros/footer/dpd.png", width: 52 },
-  { alt: "Balíkovna", height: 28, src: "/akros/footer/balikovna.png", width: 69 },
-] satisfies FooterAsset[];
-
-const securityMethods = [
-  {
-    alt: "Verified by Visa",
-    height: 26.56,
-    intrinsicHeight: 41,
-    intrinsicWidth: 71,
-    src: "/akros/footer/visa.png",
-    width: 46,
-  },
-  {
-    alt: "Mastercard SecureCode",
-    height: 26.53,
-    intrinsicHeight: 41,
-    intrinsicWidth: 85,
-    src: "/akros/footer/mastercard-securecode.png",
-    width: 55,
-  },
-] satisfies FooterAsset[];
-
-const socialLinks = [
-  { href: "https://fb.com", icon: "token-icon-akros-facebook", label: "Facebook" },
-  { href: "https://instagram.com", icon: "token-icon-akros-instagram", label: "Instagram" },
-  { href: "https://youtube.com", icon: "token-icon-akros-youtube", label: "YouTube" },
 ] as const;
 
 export function SiteFooter() {
@@ -151,54 +109,6 @@ export function SiteFooter() {
                   width: 45,
                 }}
               />
-            </div>
-          </Footer.Section>
-
-          <Footer.Section className="akros-footer__section">
-            <Footer.Title>{cs.footer.followUs}</Footer.Title>
-            <div className="akros-footer__socials">
-              {socialLinks.map((social) => (
-                <Footer.Link
-                  aria-label={social.label}
-                  className="akros-footer__social-icon"
-                  external
-                  href={social.href}
-                  key={social.href}
-                >
-                  <Icon icon={social.icon} size="2xl" />
-                </Footer.Link>
-              ))}
-            </div>
-          </Footer.Section>
-        </Footer.Container>
-
-        <Footer.Divider />
-
-        <Footer.Container className="akros-footer__commerce">
-          <Footer.Section>
-            <Footer.Title>{cs.footer.paymentMethods}</Footer.Title>
-            <div className="akros-footer__asset-row akros-footer__asset-row--payments">
-              {paymentMethods.map((item) => (
-                <FooterAssetImage asset={item} key={item.src} />
-              ))}
-            </div>
-          </Footer.Section>
-
-          <Footer.Section>
-            <Footer.Title>{cs.footer.carriers}</Footer.Title>
-            <div className="akros-footer__asset-row akros-footer__asset-row--carriers">
-              {carriers.map((item) => (
-                <FooterAssetImage asset={item} key={item.src} />
-              ))}
-            </div>
-          </Footer.Section>
-
-          <Footer.Section>
-            <Footer.Title>{cs.footer.secureShopping}</Footer.Title>
-            <div className="akros-footer__asset-row akros-footer__asset-row--security">
-              {securityMethods.map((item) => (
-                <FooterAssetImage asset={item} key={item.src} />
-              ))}
             </div>
           </Footer.Section>
         </Footer.Container>

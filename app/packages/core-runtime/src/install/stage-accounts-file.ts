@@ -99,7 +99,7 @@ const ScopedActionAssertionSchema = Schema.Struct({
   tenantId: TenantIdSchema,
 });
 
-const StageAccountsFileSchema = Schema.Struct({
+export const StageAccountsFileSchema = Schema.Struct({
   actionAuthorization: Schema.Struct({
     actionAssertions: Schema.Array(ScopedActionAssertionSchema),
     roleGrants: Schema.Array(ScopedActionRoleGrantSchema),

@@ -39,8 +39,9 @@ const access: ActivityLinkAccess = {
   canManageAgents: true,
   canOpenModule: true,
   canReviewProposals: true,
-  identityPage: '/people',
+  identityPage: '/sprava/lide-a-role',
   module: { ...module, page: '/notes', recordLinks: [link] },
+  personExists: false,
   records: { state: { notes: [{ id: 'a /&?', title: 'Poznámka zákazníka' }] } },
   grants: [
     {
@@ -67,7 +68,7 @@ it('links the exact proposal, record, module home, agent identity and each real 
   expect(resolved.actionPath).toBe('/sprava/ke-schvaleni?davka=core%3Abatch&navrh=core%3Aproposal');
   expect(resolved.modulePath).toBe('/notes');
   expect(resolved.record).toEqual({ label: 'Poznámka zákazníka', path: '/notes?note=a+%2F%26%3F' });
-  expect(resolved.agentPath).toBe('/people?agent=agent-1');
+  expect(resolved.agentPath).toBe('/sprava/lide-a-role?agent=agent-1');
   expect(resolved.grants?.[0]?.path).toBe('/sprava/pripojene-aplikace?grant=grant%20%2F1');
 });
 
@@ -109,15 +110,21 @@ it('keeps unknown modules, absent agents and grants, and audit entries with no d
   expect(resolved.grants).toBeUndefined();
 });
 
-it('uses connected apps only when a real grant exists and the viewer can administer it', () => {
-  expect(resolveActivityLinks(entry, { ...access, identityPage: undefined }).agentPath).toBe(
-    '/sprava/pripojene-aplikace?agent=agent-1',
-  );
+it('links human-delegated OAuth activity to its real person identity, not a fabricated agent', () => {
+  const resolved = resolveActivityLinks(entry, {
+    ...access,
+    agentExists: false,
+    grants: access.grants.map((grant) => ({ ...grant, actingKind: 'human' })),
+    personExists: true,
+  });
+  expect(resolved.agentPath).toBe('/sprava/lide-a-role?person=agent-1');
+  expect(resolved.grants?.[0]?.path).toBe('/sprava/pripojene-aplikace?grant=grant%20%2F1');
   expect(
-    resolveActivityLinks(entry, {
-      ...access,
-      grants: [{ ...access.grants[0]!, actingPrincipalId: 'other' }],
-      identityPage: undefined,
-    }).agentPath,
+    resolveActivityLinks(entry, { ...access, canManageAgents: false, personExists: true }).agentPath,
   ).toBeUndefined();
+});
+
+it('does not substitute a connections filter when the real identity destination is unavailable', () => {
+  expect(resolveActivityLinks(entry, { ...access, identityPage: undefined }).agentPath).toBeUndefined();
+  expect(resolveActivityLinks(entry, { ...access, agentExists: false }).agentPath).toBeUndefined();
 });

@@ -1451,3 +1451,23 @@ export const commerceEnrollmentDueWorkForExecution = (
       Effect.flatMap((rows) => Effect.forEach(rows, mapDueAttempt, { concurrency: 1 })),
     ),
 });
+
+/** A native state transition derived solely from a final required owner rejection. */
+const failAttemptRoutine = defineScopedRoutine({
+  name: 'fail_portal_enrollment',
+  ownerModuleKey: MODULE_KEY,
+  parameters: [{ source: 'tenantId', type: 'uuid' }, uuid(), text(), text()],
+  resultSchema: Schema.Struct({ failed: Schema.Boolean }),
+  routineKey: 'portal-enrollment-attempt.fail',
+  schema: 'commerce_customer_context',
+});
+
+export const failRejectedEnrollmentAttempt = (
+  transaction: EnrollmentAttemptScopedRoutineInvoker,
+  attemptId: EnrollmentAttemptId,
+  transition: { readonly ownerModuleKey: string; readonly transitionKey: string },
+): Effect.Effect<boolean, CommerceEnrollmentAttemptError> =>
+  transaction.invoke(failAttemptRoutine, [attemptId, transition.ownerModuleKey, transition.transitionKey]).pipe(
+    Effect.mapError((cause) => unavailable(cause)),
+    Effect.map((rows) => rows[0]?.failed === true),
+  );

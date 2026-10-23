@@ -1,4 +1,6 @@
 import { Schema } from 'effect';
+import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
+import { PartyRefSchema } from '@app/party-registry/resources/party';
 import { MerchandiseScopeMismatch } from '../errors/merchandise-scope-mismatch.ts';
 import { MerchandiseNotFound } from '../errors/merchandise-not-found.ts';
 import { MerchandiseLifecycleConflict } from '../errors/merchandise-lifecycle-conflict.ts';
@@ -220,6 +222,13 @@ export const MerchandiseCommandSchema = Schema.Union([
     lines: Schema.Array(StorefrontOrderLineRequestSchema).check(Schema.isMinLength(1), Schema.isMaxLength(50)),
     note: Schema.optionalKey(Schema.Trim.check(Schema.isMaxLength(1000))),
     shippingMethod: ShippingMethodSchema,
+  }),
+  /** Staff-confirmed customer conversion; the server re-reads the native CUSTOMER before linking. */
+  Schema.TaggedStruct('LinkOrderCustomer', {
+    counterpartyRef: CounterpartyRefSchema,
+    expectedPartyId: PartyIdSchema,
+    id: OrderIdSchema,
+    partyRef: PartyRefSchema,
   }),
   /** Admin edit of an open order; each changed aspect appends a before/after history entry. */
   Schema.TaggedStruct('EditOrder', {

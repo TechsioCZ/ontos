@@ -11,7 +11,7 @@ import { AgentReviewRequestSchema, AgentReviewResponseSchema } from '../../share
 import type { AgentReviewRequest } from '../../shared/apis/agent-review.ts';
 import { CrmStateSchema } from '../../shared/apis/records.ts';
 import { crmRecordsGrants, finishCrmRecords, persistenceService } from '../services/persistence.service.ts';
-import { reviewCrmProposal, seesAllClients } from './agent-review.ts';
+import { clientIdOf, clientReadEvidence, reviewCrmProposal, seesAllClients } from './agent-review.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
@@ -69,7 +69,17 @@ export const agentReviewRead = defineRead(
   {
     // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
     prepare: (_input, context) => crmRecordsGrants(context.scope).pipe(Effect.mapError(crmUnavailable)),
-    load: (_input, context) => context.services.loadRecords().pipe(Effect.mapError(crmUnavailable)),
+    load: (input, context) =>
+      context.services
+        .loadRecords({}, [
+          ...new Set(
+            input.items.flatMap((item) => {
+              const id = clientIdOf(item.command);
+              return id === undefined ? [] : [id];
+            }),
+          ),
+        ])
+        .pipe(Effect.mapError(crmUnavailable)),
     finish: (input: AgentReviewRequest, context) =>
       // The reader's own records answer: clients narrowed to what they may see, and their rights.
       finishCrmRecords({}, context.loaded, context.prepared, context.scope).pipe(
@@ -77,8 +87,13 @@ export const agentReviewRead = defineRead(
         Effect.map((records) => {
           const clients = encodeState(records.state).clients.items;
           const items = input.items.map((request) => reviewCrmProposal(request, records.viewer, clients));
+          const [request] = input.items;
+          const clientId = input.items.length === 1 && request !== undefined ? clientIdOf(request.command) : undefined;
           return {
-            evidence: { resultCount: items.length },
+            evidence: clientReadEvidence(
+              items.length,
+              clients.find((client) => client.id === clientId),
+            ),
             result: { items, seesAllRecords: seesAllClients(records.viewer) },
           };
         }),

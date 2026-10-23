@@ -176,11 +176,6 @@
     "meters": "Měřidla v součtu: {{count}}"
   },
   "people": {
-    "you": "vy",
-    "management": "Vedení Siamparku",
-    "operations": "Provoz Siamparku",
-    "finance": "Finance Siamparku",
-    "external": "Externí partner",
-    "other": "jiný uživatel"
+    "you": "vy"
   }
 }

@@ -76,8 +76,7 @@ const document: Document = {
   title: 'Lease',
   updatedAt: '2026-10-05T00:00:00.000Z',
 };
-const empty: AgreementsState = { contracts: [], documents: [], signatureObservations: [] };
-let signatureSequence = 0;
+const empty: AgreementsState = { contracts: [], documents: [] };
 const validators: AgreementsValidators = {
   ...unavailableAgreementsValidators,
   counterparty: (ref) =>
@@ -89,10 +88,6 @@ const validators: AgreementsValidators = {
       legalEntityId,
       partyRef,
     }),
-  signatureRequestId: Effect.sync(() => {
-    signatureSequence += 1;
-    return `00000000-0000-4000-8000-${String(signatureSequence).padStart(12, '0')}`;
-  }),
   unit: (ref) => Effect.succeed({ legalEntityId, lifecycleState: 'ACTIVE', propertyRef, unitRef: ref }),
 };
 const rejected = <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
@@ -192,7 +187,6 @@ describe('Agreements state transitions', () => {
         signedDocumentReference: 'archive://agreements/signed.pdf',
         signedOn: '2026-01-01',
       });
-      expect(recorded.snapshot.signatureObservations).toEqual([]);
       expect(
         Schema.is(AgreementsConflict)(
           yield* Effect.flip(transitionAgreements(recorded.snapshot, command, scope, validators)),
@@ -232,7 +226,6 @@ describe('Agreements state transitions', () => {
       );
       expect(updated.snapshot.contracts).toEqual([edited]);
       expect(updated.snapshot.documents).toEqual(initial.documents);
-      expect(updated.snapshot.signatureObservations).toEqual(initial.signatureObservations);
       for (const record of [
         { ...previous, signatureState: 'SENT' as const },
         { ...previous, lifecycleState: 'ACTIVE' as const },
@@ -256,57 +249,6 @@ describe('Agreements state transitions', () => {
         ),
       );
       expect(Schema.is(AgreementsRejected)(invalid)).toBe(true);
-    }),
-  );
-  it.effect('keeps lifecycle independent from a simulated signature and produces final signed metadata', () =>
-    Effect.gen(function* testEffect() {
-      const created = yield* transitionAgreements(empty, { _tag: 'CreateContract', record: draft }, scope, validators);
-      const sent = yield* transitionAgreements(
-        created.snapshot,
-        { _tag: 'SendSignature', contractRef, signerContact: 'signer@example.test' },
-        scope,
-        validators,
-      );
-      expect(sent.snapshot.contracts[0]).toMatchObject({ lifecycleState: 'DRAFT', signatureState: 'SENT' });
-      expect(sent.snapshot.signatureObservations[0]).toMatchObject({
-        completedAt: null,
-        integrationKind: 'ELECTRONIC_SIGNATURE',
-        ownerResourceRef: contractRef,
-        providerLabel: 'DEMO',
-        signer: { contact: 'signer@example.test', counterpartyRef, displayName: 'Canonical customer', partyRef },
-      });
-      expect(sent.snapshot.signatureObservations[0]?.attemptedAt).not.toBe('2026-10-05T00:00:00.000Z');
-      yield* rejected(
-        transitionAgreements(
-          sent.snapshot,
-          { _tag: 'ObserveSignature', contractRef, document: null, outcome: 'SIGNED' },
-          scope,
-          validators,
-        ),
-      );
-      const signed = yield* transitionAgreements(
-        sent.snapshot,
-        { _tag: 'ObserveSignature', contractRef, document, outcome: 'SIGNED' },
-        scope,
-        validators,
-      );
-      expect(signed.snapshot.contracts[0]).toMatchObject({ lifecycleState: 'DRAFT', signatureState: 'SIGNED' });
-      expect(signed.snapshot.documents[0]).toMatchObject({
-        lifecycleState: 'FINAL',
-        signedDocumentReference: 'SIMULATED:signed-lease',
-      });
-      expect(signed.snapshot.signatureObservations[0]).toMatchObject({
-        correlation: sent.snapshot.signatureObservations[0]?.correlation,
-        mode: 'SIMULATED',
-        state: 'SIGNED',
-      });
-      const active = yield* transitionAgreements(
-        signed.snapshot,
-        { _tag: 'ActivateContract', contractRef },
-        scope,
-        validators,
-      );
-      expect(active.snapshot.contracts[0]).toMatchObject({ lifecycleState: 'ACTIVE', signatureState: 'SIGNED' });
     }),
   );
   it.effect(
@@ -411,85 +353,6 @@ describe('Agreements state transitions', () => {
           }),
         );
       }
-    }),
-  );
-  it.effect('rejects signatures on unsigned-unsent or terminated records and does not fabricate signed evidence', () =>
-    Effect.gen(function* testEffect() {
-      yield* rejected(
-        transitionAgreements(
-          { ...empty, contracts: [draft] },
-          { _tag: 'ObserveSignature', contractRef, document, outcome: 'SIGNED' },
-          scope,
-          validators,
-        ),
-      );
-      const sent = yield* transitionAgreements(
-        { ...empty, contracts: [draft] },
-        { _tag: 'SendSignature', contractRef, signerContact: 'signer@example.test' },
-        scope,
-        validators,
-      );
-      const declined = yield* transitionAgreements(
-        sent.snapshot,
-        { _tag: 'ObserveSignature', contractRef, document: null, outcome: 'DECLINED' },
-        scope,
-        validators,
-      );
-      expect(declined.snapshot.documents).toEqual([]);
-      expect(declined.snapshot.contracts[0]?.signatureState).toBe('DECLINED');
-      expect(declined.snapshot.signatureObservations[0]?.observationId).toBe(
-        sent.snapshot.signatureObservations[0]?.observationId,
-      );
-      expect(declined.snapshot.signatureObservations[0]?.completedAt).toBeTruthy();
-      const resent = yield* transitionAgreements(
-        declined.snapshot,
-        { _tag: 'SendSignature', contractRef, signerContact: 'retry@example.test' },
-        scope,
-        validators,
-      );
-      expect(resent.snapshot.signatureObservations).toHaveLength(2);
-      expect(resent.snapshot.signatureObservations[1]?.observationId).not.toBe(
-        sent.snapshot.signatureObservations[0]?.observationId,
-      );
-      expect(resent.snapshot.signatureObservations[0]?.state).toBe('DECLINED');
-      yield* rejected(
-        transitionAgreements(
-          { ...empty, contracts: [{ ...draft, lifecycleState: 'TERMINATED' }] },
-          { _tag: 'SendSignature', contractRef, signerContact: 'signer@example.test' },
-          scope,
-          validators,
-        ),
-      );
-    }),
-  );
-  it.effect('refuses missing contact and unavailable or mismatched canonical signer validation', () =>
-    Effect.gen(function* signatureGuards() {
-      const initial = { ...empty, contracts: [draft] };
-      yield* rejected(
-        transitionAgreements(initial, { _tag: 'SendSignature', contractRef, signerContact: '  ' }, scope, validators),
-      );
-      yield* rejected(
-        transitionAgreements(
-          initial,
-          { _tag: 'SendSignature', contractRef, signerContact: 'signer@example.test' },
-          scope,
-          unavailableAgreementsValidators,
-        ),
-      );
-      yield* rejected(
-        transitionAgreements(
-          initial,
-          { _tag: 'SendSignature', contractRef, signerContact: 'signer@example.test' },
-          scope,
-          {
-            ...validators,
-            counterparty: (ref) =>
-              validators
-                .counterparty(ref)
-                .pipe(Effect.map((value) => ({ ...value, partyRef: { ...value.partyRef, tenantId: legalEntityId } }))),
-          },
-        ),
-      );
     }),
   );
   it('derives expiration using the supplied business date, independently of audit time', () => {

@@ -1,7 +1,8 @@
 import { Cause, Effect, Exit, Logger, Redacted, Schema } from 'effect';
 // @effect-diagnostics strictEffectProvide:off -- Test-owned logger capture entrypoint; expires: 2026-12-31.
 import { expect, it } from 'effect-rstest';
-import { Headers, HttpServerRequest } from 'effect/unstable/http';
+import { TestClock } from 'effect/testing';
+import { Headers, HttpEffect, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
 
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { classifyReadCoreError, makeGovernedReadHttpHandler } from '../../src/http/governed-read.ts';
@@ -195,6 +196,58 @@ const readRuntime = {
 } as ReadRuntimeService;
 const requestService = HttpServerRequest.fromWeb(new Request('https://ontos.test/reads/fixture'));
 
+it.effect('reports authentication and response encoding separately without exposing request values', () =>
+  Effect.gen(function* encodedResponseTiming() {
+    const entries: string[] = [];
+    const responses: HttpServerResponse.HttpServerResponse[] = [];
+    const handler = makeGovernedReadHttpHandler({
+      authenticatePrincipal: () => TestClock.adjust('3 millis').pipe(Effect.as(principal)),
+      problems,
+      registration,
+    });
+    const response = handler({
+      payload: { query: 'private-query' },
+      request: {
+        headers: Headers.fromInput({
+          authorization: 'Bearer private-token',
+          'x-correlation-id': 'private-correlation',
+        }),
+      },
+    }).pipe(
+      Effect.flatMap((result) =>
+        TestClock.adjust('7 millis').pipe(
+          Effect.as(HttpServerResponse.jsonUnsafe(result, { headers: { 'server-timing': 'existing;dur=1' } })),
+        ),
+      ),
+    );
+    for (let requestIndex = 0; requestIndex < 2; requestIndex += 1) {
+      yield* HttpEffect.toHandled(response, (_request, value) =>
+        Effect.sync(() => {
+          responses.push(value);
+        }),
+      ).pipe(
+        Effect.provideService(ReadRuntime, readRuntime),
+        Effect.provideService(
+          HttpServerRequest.HttpServerRequest,
+          HttpServerRequest.fromWeb(new Request('https://ontos.test/reads/timing')),
+        ),
+        Effect.provide(capturedLoggerLayer(entries)),
+      );
+    }
+    const timings = responses.map((value) => value.headers['server-timing'] ?? '');
+    const isolate = timings.map((header) => /owner-isolate;desc="(?<id>[a-z0-9]+):(?<ordinal>\d+)"/u.exec(header));
+    expect(isolate[0]?.groups?.['id']).toMatch(/^[a-z0-9]+$/u);
+    expect(isolate[1]?.groups?.['id']).toBe(isolate[0]?.groups?.['id']);
+    expect(Number(isolate[1]?.groups?.['ordinal'])).toBe(Number(isolate[0]?.groups?.['ordinal']) + 1);
+    for (const header of timings) {
+      expect(header).toContain('existing;dur=1, owner-isolate;desc=');
+      expect(header).toContain(', read-authentication;dur=3, read-encode;dur=7');
+    }
+    expect(entries.join('\n')).toContain('Governed read phases completed');
+    expect(entries.join('\n')).not.toMatch(/private-|better-auth|00000000/u);
+  }),
+);
+
 it.effect('validates correlation before authentication or ReadRuntime acquisition', () =>
   Effect.gen(function* validateCorrelationFirst() {
     let authenticationCalls = 0;
@@ -315,12 +368,65 @@ it.effect('passes only payload, trusted principal, registration, and correlation
     expect(result).toEqual({ ok: true });
     expect(observed).toEqual([
       {
-        input: payload,
+        decodedInput: payload,
+        inputFormat: 'decoded',
         principal,
         registration,
+        timings: expect.any(Object),
         transport: { correlationId: 'correlation-test' },
       },
     ]);
+  }),
+);
+
+it.effect('logs typed Core infrastructure failures with correlation while keeping the public problem sanitized', () =>
+  Effect.gen(function* diagnoseCoreFailures() {
+    for (const [failure, expected] of coreFailures) {
+      const logEntries: string[] = [];
+      // SAFETY: The service double fails before returning a result for any registration or payload.
+      const failingRuntime = {
+        runRead: () => Effect.fail(failure),
+      } as ReadRuntimeService;
+      const handler = makeGovernedReadHttpHandler({
+        authenticatePrincipal: () => Effect.succeed(principal),
+        problems,
+        registration,
+      });
+      const exit = yield* Effect.exit(
+        handler({
+          payload: { query: 'private payload' },
+          request: {
+            headers: Headers.fromInput({
+              authorization: 'Bearer private-credential',
+              'x-correlation-id': 'correlation-unavailable',
+            }),
+          },
+        }),
+      ).pipe(
+        Effect.provideService(ReadRuntime, failingRuntime),
+        Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+        Effect.provide(capturedLoggerLayer(logEntries)),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toEqual(expected);
+      }
+      if (expected.status === 500 || expected.status === 503) {
+        expect(logEntries).toHaveLength(1);
+        expect(yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(logEntries[0] ?? '{}')).toMatchObject({
+          annotations: {
+            code: failure.code,
+            correlationId: 'correlation-unavailable',
+            failureTag: failure._tag,
+            readKey: registration.descriptor.readKey,
+            reason,
+          },
+        });
+      } else {
+        expect(logEntries).toHaveLength(0);
+      }
+      expect(logEntries.join('\n')).not.toMatch(/private payload|private-credential/u);
+    }
   }),
 );
 
@@ -509,5 +615,54 @@ it.effect('uses the configured receiver audience instead of an HTTP audience hea
       Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
     );
     expect(observed.map((input) => input.audience)).toEqual(['test.receiver.api']);
+  }),
+);
+
+it.effect('passes transformed framework payloads through the explicit decoded runtime entry', () =>
+  Effect.gen(function* transformedHttpPayload() {
+    const inputSchema = Schema.Struct({
+      at: Schema.DateTimeUtcFromString,
+      filter: Schema.OptionFromNullOr(Schema.String),
+    });
+    const transformedRegistration = defineRead(
+      {
+        accessKind: 'detail',
+        entrypoint: registration.descriptor.entrypoint,
+        evidencePolicy: registration.descriptor.evidencePolicy,
+        inputSchema,
+        legalEntityScope: 'forbidden',
+        owningModuleKey: 'core.shell',
+        permissionTarget: 'module',
+        policies: [],
+        readKey: 'core.shell.governed-http-transformed-test',
+        resultSchema: Schema.Struct({ ok: Schema.Literal(true) }),
+        schemaVersion: '1',
+      },
+      {
+        load: () => Effect.succeed({ evidence: { resultCount: 1 }, result: { ok: true as const } }),
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const wireInput = { at: '2026-10-23T12:00:00.000Z', filter: null };
+    const payload = yield* Schema.decodeEffect(inputSchema)(wireInput);
+    observed.length = 0;
+    const handler = makeGovernedReadHttpHandler({
+      authenticatePrincipal: () => Effect.succeed(principal),
+      problems,
+      registration: transformedRegistration,
+    });
+    const result = yield* handler({
+      payload,
+      request: { headers: Headers.fromInput({ 'x-correlation-id': 'transformed-input' }) },
+    }).pipe(
+      Effect.provideService(ReadRuntime, readRuntime),
+      Effect.provideService(HttpServerRequest.HttpServerRequest, requestService),
+    );
+    expect(result).toEqual({ ok: true });
+    expect(observed).toHaveLength(1);
+    expect(observed[0]?.input).toBeUndefined();
+    expect(observed[0]?.decodedInput).toEqual(payload);
+    expect(yield* Schema.decodeUnknownEffect(Schema.toType(inputSchema))(observed[0]?.decodedInput)).toEqual(payload);
   }),
 );

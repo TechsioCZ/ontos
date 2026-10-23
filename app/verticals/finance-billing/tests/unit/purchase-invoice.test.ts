@@ -6,9 +6,8 @@ import { transitionFinance } from '../../src/services/persistence.service.ts';
 
 const state: FinanceState = {
   invoices: [],
-  accountingObservations: [],
+
   financialPlanEntries: [],
-  paymentObservations: [],
 };
 const scope = {
   tenantId: 'a0000000-0000-4000-8000-000000000001',

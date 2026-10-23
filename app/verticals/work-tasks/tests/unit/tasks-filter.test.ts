@@ -3,6 +3,7 @@ import { expect, it } from 'effect-rstest';
 import { PartyIdSchema, TaskSchema } from '../../shared/apis/records.ts';
 import {
   customerOptionItems,
+  defaultTaskTab,
   filterTasks,
   initialTaskFilters,
 } from '../../src/routes/[lang]/ukoly/tasks-model.ts';
@@ -87,4 +88,12 @@ it('narrows customer picker items by a query without diacritics and leaves unnam
   ]);
   expect(customerOptionItems(customers, '')).toHaveLength(2);
   expect(customerOptionItems(customers, 'ostrava')).toHaveLength(0);
+});
+
+it('opens available company work when there is no personal open work, without changing explicit mine filtering', () => {
+  expect(defaultTaskTab([task], undefined, tenantId)).toBe('all');
+  const owned = { ...task, ownerPrincipalRef: { principalId: tenantId, tenantId } };
+  expect(defaultTaskTab([task, owned], undefined, tenantId)).toBe('mine');
+  expect(defaultTaskTab([{ ...owned, state: 'DONE' }], undefined, tenantId)).toBe('all');
+  expect(filterTasks([task], { filters: initialTaskFilters, tab: 'mine' })).toEqual([]);
 });

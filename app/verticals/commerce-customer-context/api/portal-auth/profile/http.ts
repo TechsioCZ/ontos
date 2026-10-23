@@ -77,8 +77,8 @@ const admittedScope = Effect.fn('CustomerOwnProfile.admit')(function* admit(
   if (current.state !== 'authenticated') {
     return yield* Effect.fail(profileAuthentication());
   }
-  yield* authorizeCustomerProfile(current.principal, entrypoint);
-  if (current.principal.legalEntityId === undefined) {
+  yield* authorizeCustomerProfile(current.workloadPrincipal, entrypoint);
+  if (current.workloadPrincipal.legalEntityId === undefined) {
     return yield* Effect.fail(profileForbidden());
   }
   const compositions = yield* ActiveApplicationCompositionService;
@@ -90,10 +90,10 @@ const admittedScope = Effect.fn('CustomerOwnProfile.admit')(function* admit(
     current,
     scope: {
       compositionRevision: active.composition.revision,
-      legalEntityId: current.principal.legalEntityId,
+      legalEntityId: current.workloadPrincipal.legalEntityId,
       partyId: current.account.partyId,
       requestCorrelation: randomUUID(),
-      tenantId: current.principal.tenantId,
+      tenantId: current.workloadPrincipal.tenantId,
     },
   };
 });

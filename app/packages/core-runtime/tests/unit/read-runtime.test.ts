@@ -1,3 +1,4 @@
+import { ReadInputValidationError } from '../../src/reads/read-input-validation-error.ts';
 import { PgClient } from '@effect/sql-pg';
 import { Cause, Context, DateTime, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Schema } from 'effect';
 import { FetchHttpClient, HttpClient } from 'effect/unstable/http';
@@ -43,6 +44,7 @@ import {
   ReadPolicyDenied,
 } from '../../src/reads/errors.ts';
 import type { ReadFinishContext, ReadHandlerResult } from '../../src/reads/context.ts';
+import { validateReadEvidenceMetadata } from '../../src/reads/context.ts';
 import { makeReadRuntime, READ_RUNTIME_STAGES } from '../../src/reads/runtime.ts';
 import { guardSpiceDbRpc } from '../../src/permissions/spicedb-transaction-guard.ts';
 import { guardPoolAcquisition, IoInsideDatabaseTransaction } from '../../src/db/transaction-io-guard.ts';
@@ -70,7 +72,12 @@ const transactionOperationAt = DateTime.toDateUtc(DateTime.makeUnsafe(Date.parse
 /** The Read installs its scope and reads the start time in one statement; `set_config` echoes what it set. */
 const transactionTimeRow = (text: string, values: readonly unknown[]) =>
   text.includes('set_config')
-    ? { legal_entity_id: values[1], operation_at: transactionOperationAt, tenant_id: values[0] }
+    ? {
+        isolation: 'read committed',
+        legal_entity_id: values[1],
+        operation_at: transactionOperationAt,
+        tenant_id: values[0],
+      }
     : { operation_at: transactionOperationAt };
 
 const approvedCompositionRevision = 'a'.repeat(64);
@@ -159,11 +166,8 @@ const makeHarness = Effect.fn(function* makeHarness(
   let tenantPermissionChecks = 0;
   const evidenceRows: EvidenceRow[] = [];
   const evidenceParameterRows: unknown[][] = [];
-  const query = (text: string, values: readonly unknown[]) =>
-    Effect.gen(function* executeReadQuery() {
-      if (/^(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE SAVEPOINT)/u.test(text)) {
-        options.sqlEvents?.push(text);
-      }
+  const transactionSetup = (text: string, values: readonly unknown[]) =>
+    Effect.gen(function* transactionSetupQuery() {
       if (text.includes("current_setting('transaction_isolation')")) {
         const isolation = options.compositionIsolation ?? 'read committed';
         if (isolation !== 'read committed') {
@@ -171,7 +175,36 @@ const makeHarness = Effect.fn(function* makeHarness(
         }
         authorityLocks += 1;
         options.authorityEvents?.push('authority_locked');
-        return [{ isolation }];
+        if (!text.includes('set_config')) {
+          return [{ isolation }];
+        }
+      }
+      if (text.includes('set_config')) {
+        scopeInstalls += 1;
+        options.authorityEvents?.push('scope_installed');
+      }
+      if (text.includes('transaction_timestamp')) {
+        transactionTimestampReadCount += 1;
+        if (options.failTransactionTimestamp === true) {
+          return yield* new SqlError({
+            reason: new ConnectionError({ cause: new Error('transaction clock unavailable') }),
+          });
+        }
+        return [transactionTimeRow(text, values)];
+      }
+      return [];
+    });
+  const query = (text: string, values: readonly unknown[]) =>
+    Effect.gen(function* executeReadQuery() {
+      if (/^(?:BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE SAVEPOINT)/u.test(text)) {
+        options.sqlEvents?.push(text);
+      }
+      if (
+        text.includes('transaction_isolation') ||
+        text.includes('transaction_timestamp') ||
+        text.includes('set_config')
+      ) {
+        return yield* transactionSetup(text, values);
       }
       if (text.includes('application_composition_authority')) {
         authorityReads += 1;
@@ -190,19 +223,6 @@ const makeHarness = Effect.fn(function* makeHarness(
                 unexpired: authority.unexpired,
               },
             ];
-      }
-      if (text.includes('set_config')) {
-        scopeInstalls += 1;
-        options.authorityEvents?.push('scope_installed');
-      }
-      if (text.includes('transaction_timestamp')) {
-        transactionTimestampReadCount += 1;
-        if (options.failTransactionTimestamp === true) {
-          return yield* new SqlError({
-            reason: new ConnectionError({ cause: new Error('transaction clock unavailable') }),
-          });
-        }
-        return [transactionTimeRow(text, values)];
       }
       if (text.includes('data_access_events')) {
         if (options.failEvidence === true) {
@@ -3250,5 +3270,186 @@ it.effect('preserves only schema-declared owner Read failures', () =>
     );
     expect(Predicate.isTagged(failure, 'DeclaredReadFailure')).toBe(true);
     expect((yield* Schema.decodeUnknownEffect(DeclaredReadFailure)(failure)).reasonCode).toBe('PURPOSE_NOT_ALLOWED');
+  }),
+);
+
+it.effect('accepts already-decoded DateTime input without running its wire transformation again', () =>
+  Effect.gen(function* decodedTemporalInput() {
+    const harness = yield* makeHarness();
+    const inputSchema = Schema.Struct({ validFrom: Schema.DateTimeUtcFromString });
+    const received: unknown[] = [];
+    const transformedRegistration = defineRead(
+      { ...registration().descriptor, inputSchema },
+      {
+        load: (input) => {
+          received.push(input);
+          return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+        },
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'core.shell' }),
+    );
+    const wireInput = { validFrom: '2026-10-23T12:00:00.000Z' };
+    const decodedInput = yield* Schema.decodeEffect(inputSchema)(wireInput);
+    for (const input of [{ input: wireInput }, { decodedInput, inputFormat: 'decoded' as const }]) {
+      expect(
+        yield* harness.runtime.runRead({
+          ...input,
+          principal: scope,
+          registration: transformedRegistration,
+          transport: { correlationId: scope.correlationId },
+        }),
+      ).toEqual([]);
+    }
+    expect(received).toEqual([decodedInput, decodedInput]);
+
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        // @ts-expect-error The explicit decoded entry never accepts the encoded timestamp string.
+        decodedInput: wireInput,
+        inputFormat: 'decoded',
+        principal: scope,
+        registration: transformedRegistration,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Schema.is(ReadInputValidationError)(failure)).toBe(true);
+    expect(received).toHaveLength(2);
+  }),
+);
+
+for (const targeted of [false, true]) {
+  it.effect(
+    `persists ${targeted ? 'the exact owner record on a single read' : 'a one-result list without a record target'}`,
+    () =>
+      Effect.gen(function* ownerRecordReadEvidence() {
+        const harness = yield* makeHarness({ permissionDecision: 'allowed' });
+        const evidence = targeted
+          ? { resultCount: 1, targetResource: { resourceId: 'record-1', resourceType: 'fixture.record' } }
+          : { resultCount: 1 };
+        const read = defineRead(
+          registration().descriptor,
+          { load: () => Effect.succeed({ evidence, result: ['visible'] }) },
+          () => Effect.succeed({}),
+          () => ({ kind: 'module', moduleId: 'core.shell' }),
+        );
+        expect(
+          yield* harness.runtime.runRead({
+            input: {},
+            principal: scope,
+            registration: read,
+            transport: { correlationId: scope.correlationId },
+          }),
+        ).toEqual(['visible']);
+        const [persisted] = harness.evidenceParameterRows();
+        expect(persisted).toContain(targeted ? 'read' : 'list');
+        expect(persisted?.includes('record-1')).toBe(targeted);
+        expect(persisted?.includes('fixture.record')).toBe(targeted);
+        expect(harness.permissionChecks().resourcePermissionChecks).toBe(0);
+      }),
+  );
+}
+
+it.effect('never discloses a single record or records its owner evidence when authorization denies the read', () =>
+  Effect.gen(function* deniedOwnerRecordEvidence() {
+    let loaded = false;
+    const legalEntityId = '00000000-0000-4000-8000-000000000004';
+    const harness = yield* makeHarness({
+      modulePermissionDecision: 'denied',
+      resolvedScope: { ...scope, legalEntityId },
+    });
+    const read = defineRead(
+      {
+        ...registration().descriptor,
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'read',
+          authorization: { kind: 'context_permission', permission: 'module.access' },
+          entrypointKey: 'fixture.records.read',
+          moduleKey: 'fixture.records',
+          role: 'api',
+        }),
+        legalEntityScope: 'required',
+        owningModuleKey: 'fixture.records',
+      },
+      {
+        load: () => {
+          loaded = true;
+          return Effect.succeed({
+            evidence: {
+              resultCount: 1,
+              targetResource: { resourceId: 'private-record', resourceType: 'fixture.record' },
+            },
+            result: ['private'],
+          });
+        },
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'module', moduleId: 'fixture.records' }),
+    );
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: counterpartyReadPrincipal(legalEntityId),
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ReadPermissionDenied')).toBe(true);
+    expect(loaded).toBe(false);
+    expect(harness.evidenceParameterRows().flat()).not.toContain('private-record');
+  }),
+);
+
+for (const evidence of [
+  { resultCount: 0, targetResource: { resourceId: 'record-1', resourceType: 'fixture.record' } },
+  { resultCount: 2, targetResource: { resourceId: 'record-1', resourceType: 'fixture.record' } },
+  { resultCount: 1, targetResource: { resourceId: '', resourceType: 'fixture.record' } },
+  { resultCount: 1, targetResource: { resourceId: 'record-1', resourceType: '' } },
+  { resultCount: 1, targetResource: { resourceId: 1, resourceType: 'fixture.record' } },
+  {
+    resultCount: 1,
+    targetResource: { moduleId: 'forged.module', resourceId: 'record-1', resourceType: 'fixture.record' },
+  },
+]) {
+  it.effect(`rejects invalid or non-single-record evidence ${JSON.stringify(evidence)}`, () =>
+    Effect.gen(function* invalidOwnerResourceEvidence() {
+      const failure = yield* Effect.flip(validateReadEvidenceMetadata('metadata_only', evidence));
+      expect(Predicate.isTagged(failure, 'ReadEvidenceValidationError')).toBe(true);
+    }),
+  );
+}
+
+it.effect('refuses owner evidence that replaces a declared authorized resource', () =>
+  Effect.gen(function* conflictingOwnerResourceEvidence() {
+    const legalEntityId = '00000000-0000-4000-8000-000000000004';
+    const harness = yield* makeHarness({ permissionDecision: 'allowed', resolvedScope: { ...scope, legalEntityId } });
+    const read = defineRead(
+      { ...registration().descriptor, legalEntityScope: 'required', permissionTarget: 'resource' },
+      {
+        load: () =>
+          Effect.succeed({
+            evidence: {
+              resultCount: 1,
+              targetResource: { resourceId: 'other-record', resourceType: 'fixture.record' },
+            },
+            result: ['visible'],
+          }),
+      },
+      () => Effect.succeed({}),
+      () => ({
+        kind: 'resource',
+        resource: { moduleId: 'core.shell', resourceId: 'authorized-record', resourceType: 'fixture.record' },
+      }),
+    );
+    const failure = yield* Effect.flip(
+      harness.runtime.runRead({
+        input: {},
+        principal: counterpartyReadPrincipal(legalEntityId),
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      }),
+    );
+    expect(Predicate.isTagged(failure, 'ReadEvidenceValidationError')).toBe(true);
+    expect(harness.evidence()).toBe(0);
   }),
 );

@@ -10,6 +10,7 @@ import {
   AgentProposalSubmitRequestSchema,
   AgentProposalSubmitResponseSchema,
   AgentQueueResponseSchema,
+  AgentQueueRequestSchema,
   AgentRevertRequestSchema,
   AgentRevertResponseSchema,
 } from '@app/shared-contracts/agent-proposals';
@@ -712,7 +713,6 @@ const AgentApiKeyHeadersSchema = Schema.Struct({
   'x-api-key': Schema.optionalKey(Schema.String),
 });
 export const AgentOwnProposalsRequestSchema = Schema.Struct({ legalEntityId: Schema.String.check(Schema.isUUID()) });
-const AgentQueueRequestSchema = Schema.Struct({});
 
 /**
  * Server rendering's one read per Shell document. It signs the document's gateway assertions too, so it is a classified

@@ -20,7 +20,7 @@
     "pages": {
       "records": {
         "title": "Faktury a finance",
-        "description": "Ukázka s referenčním datem 5. 10. 2026. Účetní potvrzení a platby jsou simulované."
+        "description": "Faktury, úhrady, pohledávky a předání do účetnictví."
       }
     },
     "faktury": {
@@ -181,7 +181,6 @@
       "clearRelatedFilter": "Zobrazit všechny zákazníky"
     },
     "demo": {
-      "simulation": "Ukázka s referenčním datem 5. 10. 2026. Účetní potvrzení a platby jsou simulované.",
       "summary": "Výnosy {{revenue}} · Náklady {{cost}} · Neuhrazeno {{outstanding}} · Po splatnosti {{overdue}}",
       "variance": "Odchylka výnosů od plánu {{revenue}} · Odchylka nákladů {{cost}}",
       "direction": "Směr",
@@ -251,7 +250,6 @@
         "PLANNED": "Plánováno",
         "CANCELLED": "Zrušeno"
       },
-      "paymentHistory": "Potvrzené platební výsledky (simulace)",
       "observedAt": "Čas pozorování",
       "correlation": "Korelace",
       "resultId": "Identifikátor výsledku",

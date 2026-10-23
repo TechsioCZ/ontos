@@ -38,6 +38,7 @@ const providerUnavailableProblem = () => Effect.fail(commercePortalAuthVerificat
 const providerRequest = (request: CommercePortalAuthVerificationRequest) => {
   const base = {
     authenticationNamespaceId: request.authenticationNamespaceId,
+    authenticationOperation: request.authenticationOperation,
     nonce: request.nonce,
     providerSubjectId: request.providerSubjectId,
     sessionRef: request.sessionRef,

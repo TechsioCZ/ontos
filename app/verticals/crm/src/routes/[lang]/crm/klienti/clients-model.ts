@@ -31,7 +31,7 @@ const knownPrincipals: Record<string, string> = {
   '849fdb3c-fab6-5c14-b20a-d885dc27313d': 'Karel Hanák (správce)',
   '8abb7df7-c19d-5d49-836a-2146dbe5064c': 'Lucie Dvořáková (vedoucí obchodu)',
   // scripts/demo/crm-party-intake.mts: the CRM service account that writes clients into Party Registry.
-  'b0442ea3-0560-5337-9012-406ef4b5e028': 'Systém CRM (zápis do Party Registry)',
+  'b0442ea3-0560-5337-9012-406ef4b5e028': 'Systém CRM (zápis do evidence zákazníků)',
 };
 
 /** Display name of whoever ran a command: salesperson, known persona, or a neutral label. */
@@ -47,7 +47,7 @@ export const principalLabel = (records: RecordsResponse, principalId: string) =>
   return principalId === records.viewer.principalId ? 'Vy' : 'Jiný uživatel';
 };
 
-/** Is the client linked to its canonical identity in Party Registry (CRM.md §3)? */
+/** Is the client linked to its canonical identity in Evidence zákazníků (CRM.md §3)? */
 export const partyLinked = (client: Client) => client.partyRef?.counterpartyId !== undefined;
 
 export const activeContactsOf = (records: RecordsResponse, clientId: string): readonly ContactPerson[] =>
@@ -112,7 +112,7 @@ export const eventLabels: Record<ClientEventKind, string> = {
   contact_added: 'Přidána kontaktní osoba',
   contact_removed: 'Odebrána kontaktní osoba',
   contact_updated: 'Upravena kontaktní osoba',
-  party_linked: 'Propojeno s Party Registry',
+  party_linked: 'Propojeno s evidencí zákazníků',
 };
 
 export const fieldLabels: Record<string, string> = {
@@ -176,7 +176,7 @@ export const contactsCsv = (records: RecordsResponse, clients: readonly Client[]
       'Telefon klienta',
       'E-mail klienta',
       'Adresa',
-      'Party Registry',
+      'Evidence zákazníků',
       'Kontaktní osoba',
       'Pracovní role',
       'Telefon osoby',

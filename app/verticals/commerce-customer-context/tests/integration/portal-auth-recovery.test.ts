@@ -1534,3 +1534,43 @@ it.live(
       }),
     ),
 );
+
+it.live('native verification resend is indistinguishable for unknown and already-verified accounts', () =>
+  Effect.gen(function* nativeVerificationResend() {
+    const database = { account: [], session: [], user: [], verification: [] };
+    const tokens: string[] = [];
+    const auth = betterAuth({
+      baseURL: ORIGIN,
+      database: memoryAdapter(database),
+      emailAndPassword: { autoSignIn: false, enabled: true, requireEmailVerification: true },
+      emailVerification: {
+        autoSignInAfterVerification: false,
+        sendOnSignUp: false,
+        sendVerificationEmail: ({ token }) => {
+          tokens.push(token);
+          return Promise.resolve();
+        },
+      },
+      secret: SECRET,
+      trustedOrigins: [ORIGIN],
+    });
+    const provider = makeCommercePortalAuthRecoveryProvider(auth);
+    yield* Effect.promise(() =>
+      auth.api.signUpEmail({
+        body: { email: EMAIL, name: 'Native resend account', password: ORIGINAL_PASSWORD },
+      }),
+    );
+    const unknown = yield* provider.sendVerificationEmail({ body: { email: 'unknown@example.test' } });
+    expect(tokens).toHaveLength(0);
+    const unverified = yield* provider.sendVerificationEmail({ body: { email: EMAIL } });
+    expect(tokens).toHaveLength(1);
+    const [issuedToken] = tokens;
+    const token = yield* Effect.fromNullishOr(issuedToken);
+    yield* Effect.promise(() => auth.api.verifyEmail({ query: { token } }));
+    const verified = yield* provider.sendVerificationEmail({ body: { email: EMAIL } });
+    expect(tokens).toHaveLength(1);
+    expect(unknown).toStrictEqual({ status: true });
+    expect(unverified).toStrictEqual(unknown);
+    expect(verified).toStrictEqual(unknown);
+  }),
+);

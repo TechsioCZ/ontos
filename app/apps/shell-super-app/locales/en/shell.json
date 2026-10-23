@@ -565,7 +565,8 @@
             "delete": "delete agent {{target}}",
             "other": "change agent {{target}}"
           }
-        }
+        },
+        "loadError": "Could not load agents. Please try again."
       },
       "errors": {
         "forbidden": "Only the company administrator may do this. The attempt was audited.",

@@ -1,27 +1,12 @@
 import { describe, expect, it } from 'effect-rstest';
-import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { applyCommandAction } from '../../src/actions/apply-command.action.ts';
-import { ActionPermissionCheckError, OperationContextUnavailable, ReadRuntime } from '@app/core-runtime';
+import { ActionPermissionCheckError, OperationContextUnavailable } from '@app/core-runtime';
 import { ActionPermission } from '@app/core-runtime/actions/runtime-wiring';
 import { OAuthConnectionContextSchema } from '@app/core-runtime/actions/principal-context';
 import { financeWriteCapability } from '../../src/api/records.read.ts';
 import { DateTime, Effect, Exit, Layer, Schema } from 'effect';
-import { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
-import { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
-import { HttpServerRequest } from 'effect/unstable/http';
 import type { FinanceCommand } from '../../shared/actions/apply-command.ts';
-import {
-  FinanceConflict,
-  FinancePersistenceUnavailable,
-  FinanceRejected,
-  FinanceCommandSchema,
-} from '../../shared/actions/apply-command.ts';
-import {
-  CalendarDateSchema,
-  FinanceStateSchema,
-  InvoiceDraftFields,
-  RecordsResponseSchema,
-} from '../../shared/apis/records.ts';
+import { FinanceRejected, FinanceCommandSchema } from '../../shared/actions/apply-command.ts';
+import { CalendarDateSchema, InvoiceDraftFields, RecordsResponseSchema } from '../../shared/apis/records.ts';
 import type { FinanceState, Invoice } from '../../shared/apis/records.ts';
 import {
   projectFinanceRecords,
@@ -73,27 +58,8 @@ const invoice: Invoice = {
   updatedAt: now,
 };
 const state: FinanceState = {
-  accountingObservations: [
-    {
-      attemptedAt: now,
-      attemptId: 'attempt-failed',
-      completedAt: now,
-      correlation: invoice.accountingCorrelation,
-      integrationKind: 'ACCOUNTING',
-      invoiceRef: ref,
-      latest: true,
-      mode: 'SIMULATED',
-      providerLabel: 'DEMO',
-      requestSummary: 'Existing invoice export',
-      resultId: 'failed-result',
-      resultSummary: 'Simulated export failed',
-      revision: 2,
-      status: 'FAILED',
-    },
-  ],
   financialPlanEntries: [],
   invoices: [invoice],
-  paymentObservations: [],
 };
 const validators: FinanceValidators = { invoice: () => Effect.void };
 const run = (snapshot: FinanceState, command: FinanceCommand) =>
@@ -113,116 +79,6 @@ it.effect('rejects stale aggregate revisions before applying a fresh command', (
 );
 
 describe('Finance owner transitions', () => {
-  it.effect(
-    'retries one failed invoice, preserves failure and correlation, and only a receipt resolves the pending attempt',
-    () =>
-      Effect.gen(function* financeCase1() {
-        const retry = yield* run(state, { _tag: 'RetryAccountingSync', invoiceRef: ref });
-        expect(retry.invoice!.accountingSyncState).toBe('PENDING');
-        expect(retry.invoice!.paymentState).toBe('UNPAID');
-        expect(retry.state.invoices).toHaveLength(1);
-        expect(retry.state.accountingObservations).toHaveLength(2);
-        expect(retry.state.accountingObservations[0]?.latest).toBe(false);
-        expect(retry.state.accountingObservations[0]?.status).toBe('FAILED');
-        expect(retry.state.accountingObservations[1]?.integrationKind).toBe('ACCOUNTING');
-        expect(retry.state.accountingObservations[1]?.correlation).toBe(invoice.accountingCorrelation);
-        expect(projectFinanceRecords(retry.state, 1, {}).indicators.integrationWarnings).toBe(0);
-        yield* fails(retry.state, {
-          _tag: 'ApplyAccountingObservation',
-          correlation: invoice.accountingCorrelation,
-          invoiceRef: ref,
-          resultId: 'missing-receipt',
-          status: 'SUCCESS',
-        });
-        const observed = yield* run(retry.state, {
-          _tag: 'ApplyAccountingObservation',
-          correlation: invoice.accountingCorrelation,
-          invoiceRef: ref,
-          receipt: 'demo-ext-b201',
-          resultId: 'success-result',
-          status: 'SUCCESS',
-        });
-        expect(observed.invoice!.accountingSyncState).toBe('SYNCED');
-        expect(observed.invoice!.externalAccountingReference).toBe('demo-ext-b201');
-        expect(observed.invoice!.paidMinor).toBe(0);
-        expect(observed.state.accountingObservations[1]?.revision).toBe(2);
-        const duplicate = yield* run(observed.state, {
-          _tag: 'ApplyAccountingObservation',
-          correlation: invoice.accountingCorrelation,
-          invoiceRef: ref,
-          receipt: 'demo-ext-b201',
-          resultId: 'success-result',
-          status: 'SUCCESS',
-        });
-        expect(duplicate.changed).toBe(false);
-        expect(duplicate.state).toBe(observed.state);
-        expect((yield* run(observed.state, { _tag: 'RetryAccountingSync', invoiceRef: ref })).changed).toBe(false);
-        yield* fails(observed.state, {
-          _tag: 'ApplyAccountingObservation',
-          correlation: invoice.accountingCorrelation,
-          invoiceRef: ref,
-          receipt: 'different-receipt',
-          resultId: 'success-result',
-          status: 'SUCCESS',
-        });
-        expect(Schema.is(FinanceStateSchema)(observed.state)).toBe(true);
-      }),
-  );
-  it.effect(
-    'cumulative partial/full payments preserve accounting failure, reject overpayment and regressions, and replay without another observation',
-    () =>
-      Effect.gen(function* financeCase2() {
-        const command: FinanceCommand = {
-          _tag: 'ApplyPaymentObservation',
-          confirmedPaidMinor: 900_000,
-          correlation: 'payment-b201',
-          currency: 'CZK',
-          invoiceRef: ref,
-          resultId: 'payment-half',
-        };
-        const half = yield* run(state, command);
-        expect(half.invoice!.paymentState).toBe('PARTIALLY_PAID');
-        expect(half.invoice!.accountingSyncState).toBe('FAILED');
-        expect(half.state.paymentObservations).toHaveLength(1);
-        expect(projectFinanceRecords(half.state, 1, {}).indicators.receivablesOutstandingMinor).toBe(900_000);
-        expect(projectFinanceRecords(half.state, 1, {}).indicators.overdueInvoices).toBe(1);
-        expect((yield* run(half.state, command)).changed).toBe(false);
-        yield* fails(half.state, {
-          ...command,
-          correlation: 'changed-payment-correlation',
-          resultId: 'new-correlation',
-        });
-        yield* fails(half.state, { ...command, confirmedPaidMinor: 800_000, resultId: 'regression' });
-        yield* fails(half.state, { ...command, confirmedPaidMinor: 1_800_001, resultId: 'overpayment' });
-        yield* fails(half.state, { ...command, confirmedPaidMinor: 800_000 });
-        const paid = yield* run(half.state, { ...command, confirmedPaidMinor: 1_800_000, resultId: 'payment-full' });
-        expect(paid.invoice!.paymentState).toBe('PAID');
-        expect(paid.invoice!.accountingSyncState).toBe('FAILED');
-        expect(projectFinanceRecords(paid.state, 2, {}).indicators.overdueInvoices).toBe(0);
-        expect(projectFinanceRecords(paid.state, 2, {}).indicators.integrationWarnings).toBe(1);
-      }),
-  );
-  it.effect('late duplicate failed result after a retry does not replace a newer pending outcome', () =>
-    Effect.gen(function* financeCase3() {
-      const pending = yield* run(state, { _tag: 'RetryAccountingSync', invoiceRef: ref });
-      const replay = yield* run(pending.state, {
-        _tag: 'ApplyAccountingObservation',
-        correlation: invoice.accountingCorrelation,
-        invoiceRef: ref,
-        resultId: 'failed-result',
-        status: 'FAILED',
-      });
-      expect(replay.changed).toBe(false);
-      expect(replay.invoice!.accountingSyncState).toBe('PENDING');
-      yield* fails(pending.state, {
-        _tag: 'ApplyAccountingObservation',
-        correlation: 'foreign-correlation',
-        invoiceRef: ref,
-        resultId: 'foreign-result',
-        status: 'FAILED',
-      });
-    }),
-  );
   it.effect('creates and updates only drafts and rejects unavailable/foreign references', () =>
     Effect.gen(function* financeCase4() {
       const create: FinanceCommand = {
@@ -291,30 +147,6 @@ describe('Finance owner transitions', () => {
         true,
       );
       yield* fails(state, { _tag: 'VoidInvoice', invoiceRef: { ...ref, resourceId: 'missing' } });
-    }),
-  );
-  it.effect('requires explicit request state and protects paid or synchronized invoices from voiding', () =>
-    Effect.gen(function* financeCase5() {
-      yield* fails(state, { _tag: 'RequestAccountingSync', invoiceRef: ref });
-      const unsent = {
-        ...state,
-        accountingObservations: [],
-        invoices: [{ ...invoice, accountingSyncState: 'NOT_SYNCED' as const }],
-      };
-      const pending = yield* run(unsent, { _tag: 'RequestAccountingSync', invoiceRef: ref });
-      yield* fails(pending.state, { _tag: 'VoidInvoice', invoiceRef: ref });
-      yield* fails(pending.state, { _tag: 'RetryAccountingSync', invoiceRef: ref });
-      const paid = yield* run(state, {
-        _tag: 'ApplyPaymentObservation',
-        confirmedPaidMinor: invoice.totalMinor,
-        correlation: 'payment-b201',
-        currency: 'CZK',
-        invoiceRef: ref,
-        resultId: 'paid',
-      });
-      yield* fails(paid.state, { _tag: 'VoidInvoice', invoiceRef: ref });
-      const voided = yield* run(unsent, { _tag: 'VoidInvoice', invoiceRef: ref });
-      expect(projectFinanceRecords(voided.state, 1, {}).indicators.revenueMinor).toBe(0);
     }),
   );
 });
@@ -437,104 +269,6 @@ describe('Finance calendar and projection', () => {
       ).indicators.revenueMinor,
     ).toBe(0);
   });
-});
-
-const paymentTestDependencies = Layer.mergeAll(
-  Layer.succeed(ActiveApplicationCompositionService, {
-    load: Effect.die('A payment observation must not load foreign composition'),
-  }),
-  Layer.succeed(GatewayPrincipalVerifierConfiguration, {
-    configuration: Effect.die('A payment observation must not request a foreign assertion'),
-  }),
-  Layer.succeed(
-    HttpServerRequest.HttpServerRequest,
-    HttpServerRequest.fromWeb(new Request('http://localhost:4115/finance-action-test')),
-  ),
-  Layer.succeed(ReadRuntime, { runRead: () => Effect.die('A payment observation must not read Core identity') }),
-);
-
-it.layer(paymentTestDependencies)('Finance Action lifecycle', (suite) => {
-  suite.effect(
-    'payment Action commits through the real Core collector and response codec, then rejects stale revision',
-    () =>
-      Effect.gen(function* paymentActionCollectorRegression() {
-        let storedState = state;
-        let revision = 0;
-        const harness = yield* makeActionTestHarness({
-          actionPermission: 'allowed',
-          services: [
-            bindActionTestServices(applyCommandAction, {
-              // @effect-diagnostics-next-line syncToSucceed:off
-              loadDocument: () => Effect.sync((): undefined => undefined),
-              // @effect-diagnostics-next-line effectSucceedWithVoid:off -- the port answers `StateRow | undefined`, which `Effect.void` does not satisfy.
-              loadStateRow: () => Effect.succeed(undefined),
-              writeDocument: () => Effect.void,
-              load: () => Effect.succeed({ revision, state: storedState }),
-              save: (nextState, expectedRevision) =>
-                requireFinanceRevision(revision, expectedRevision).pipe(
-                  Effect.flatMap(() => Schema.encodeEffect(FinanceStateSchema)(nextState)),
-                  Effect.flatMap(Schema.decodeEffect(FinanceStateSchema)),
-                  Effect.mapError(
-                    () =>
-                      new FinancePersistenceUnavailable({
-                        code: 'finance_persistence_unavailable',
-                        reason: 'Test persistence codec failed',
-                      }),
-                  ),
-                  Effect.map((decoded) => {
-                    storedState = decoded;
-                    revision += 1;
-                    return revision;
-                  }),
-                ),
-              validators,
-            }),
-          ],
-        });
-        const principal = {
-          authBindingId: 'a0000000-0000-4000-8000-000000000003',
-          authContextRef: 'better-auth-session:finance-collector-test',
-          authMethod: 'session' as const,
-          legalEntityId,
-          principalId: 'a0000000-0000-4000-8000-000000000004',
-          tenantId,
-        };
-        const payload = {
-          command: {
-            _tag: 'ApplyPaymentObservation' as const,
-            confirmedPaidMinor: invoice.totalMinor,
-            correlation: 'payment-b201',
-            currency: 'CZK' as const,
-            invoiceRef: ref,
-            resultId: 'payment-action-full',
-          },
-          expectedRevision: 0,
-        };
-        const result = yield* harness.runtime.runAction({
-          payload,
-          principal,
-          registration: applyCommandAction,
-          transport: { correlationId: 'finance-payment-action', idempotencyKey: 'finance-payment-action-1' },
-        });
-        expect(result.invoice!.paymentState).toBe('PAID');
-        expect(result.invoice!.accountingSyncState).toBe('FAILED');
-        expect(storedState.paymentObservations).toHaveLength(1);
-        expect(harness.snapshot().committed).toHaveLength(1);
-        expect(harness.snapshot().committed[0]?.evidence.dataAccessEvents).toHaveLength(1);
-        expect(revision).toBe(1);
-        const stale = yield* harness.runtime
-          .runAction({
-            payload: { ...payload, command: { ...payload.command, resultId: 'another-payment' } },
-            principal,
-            registration: applyCommandAction,
-            transport: { correlationId: 'finance-stale-action', idempotencyKey: 'finance-payment-action-2' },
-          })
-          .pipe(Effect.flip);
-        expect(Schema.is(FinanceConflict)(stale)).toBe(true);
-        expect(storedState.paymentObservations).toHaveLength(1);
-        expect(revision).toBe(1);
-      }),
-  );
 });
 
 it.layer(

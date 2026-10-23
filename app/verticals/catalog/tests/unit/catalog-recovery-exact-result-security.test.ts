@@ -96,6 +96,7 @@ describe('Catalog exact committed result recovery', () => {
           resolutions += 1;
           return Effect.fail(committed);
         },
+        resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
         runAction: () => {
           actionRuns += 1;
           return Effect.die('Action must not replay');

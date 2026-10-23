@@ -42,19 +42,11 @@ export const parseCzk = (raw: string): number | undefined | null => {
   return Math.round(Number(compact) * 100);
 };
 
-/** Demo personas of Siampark (scripts/siampark/fixtures.mts). Unknown principals show a short id. */
-const knownPrincipals: Readonly<Record<string, string>> = {
-  '72000000-0000-4000-8000-000000000021': 'Management Siampark',
-  '72000000-0000-4000-8000-000000000022': 'Provoz Siampark',
-  '72000000-0000-4000-8000-000000000023': 'Finance Siampark',
-  '72000000-0000-4000-8000-000000000024': 'Externí obchodník',
-};
-
 export const principalLabel = (ref: PrincipalRef, actor: PrincipalRef | undefined, you: string): string => {
-  if (actor !== undefined && actor.principalId === ref.principalId) {
-    return `${knownPrincipals[ref.principalId] ?? ref.principalId.slice(-6)} (${you})`;
+  if (actor !== undefined && actor.tenantId === ref.tenantId && actor.principalId === ref.principalId) {
+    return you;
   }
-  return knownPrincipals[ref.principalId] ?? `uživatel …${ref.principalId.slice(-6)}`;
+  return '';
 };
 
 export type DueState = 'overdue' | 'soon' | 'planned';

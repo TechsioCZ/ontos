@@ -1,14 +1,20 @@
-const plurals = new Intl.PluralRules('cs-CZ');
-const numbers = new Intl.NumberFormat('cs-CZ');
+import { memoize } from 'effect/Function';
+
+const locale = Object.freeze({ language: 'cs-CZ' });
+// Importing contracts must not initialize ICU formatters in owners that never render day counts.
+// oxlint-disable-next-line react-doctor/js-hoist-intl -- PERF-OWNER: built once lazily through Function.memoize; czech-plural.test.ts proves construction and reuse. Remove when the rule recognizes memoize; expires: 2026-12-31.
+const plurals = memoize(({ language }: typeof locale) => new Intl.PluralRules(language));
+// oxlint-disable-next-line react-doctor/js-hoist-intl -- PERF-OWNER: built once lazily through Function.memoize; czech-plural.test.ts proves construction and reuse. Remove when the rule recognizes memoize; expires: 2026-12-31.
+const numbers = memoize(({ language }: typeof locale) => new Intl.NumberFormat(language));
 
 /** Czech cardinal forms: 1 den, 2–4 dny, 0/5/21 dní; fractions use dne. */
 export const czechPlural = (
   count: number,
-  forms: { readonly one: string; readonly few: string; readonly many: string; readonly other: string },
+  forms: { readonly few: string; readonly many: string; readonly one: string; readonly other: string },
 ): string => {
-  const category = plurals.select(count);
+  const category = plurals(locale).select(count);
   return category === 'one' || category === 'few' || category === 'many' ? forms[category] : forms.other;
 };
 
 export const formatCzechDays = (count: number): string =>
-  `${numbers.format(count)} ${czechPlural(count, { one: 'den', few: 'dny', many: 'dne', other: 'dní' })}`;
+  `${numbers(locale).format(count)} ${czechPlural(count, { few: 'dny', many: 'dne', one: 'den', other: 'dní' })}`;

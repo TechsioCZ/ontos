@@ -26,7 +26,6 @@
     "demo": {
       "feedback": {
         "loading": "Loading…",
-        "ready": "Ready",
         "saving": "Saving…",
         "forbidden": "You do not have permission for this area.",
         "conflict": "The state has changed. Refresh data and try the operation again.",
@@ -40,7 +39,6 @@
       "detail": "Detail",
       "openEnd": "Open ended",
       "customer": "Tenant",
-      "simulated": "SIMULATED — provider simulation",
       "activate": "Activate",
       "choose": "Choose a record",
       "startDate": "Start",
@@ -58,11 +56,6 @@
         "COMPLETED": "Completed",
         "CANCELLED": "Cancelled"
       },
-      "bookingStates": {
-        "SUCCESS": "Imported successfully",
-        "FAILED": "Import failed",
-        "CONFLICT": "Booking conflict"
-      },
       "attempts": "Attempts: {{attemptCount}}",
       "contract": "Contract",
       "confirm": "Confirm",
@@ -71,14 +64,9 @@
       "create": "Create a lease draft",
       "customerSearch": "Find a customer",
       "search": "Search",
-      "bookingObservations": "Booking simulation observations",
       "list": "Leases and stays",
-      "importBooking": "Import a short stay",
-      "bookingFormContext": "Select a unit, dates and a guest. The stay simulation is for two people.",
       "guestSearch": "Find a guest",
       "guest": "Guest",
-      "simulateImport": "Simulate a successful import",
-      "simulateFailure": "Simulate an import failure",
       "retry": "Retry import with the selected details",
       "provider": "Provider",
       "attemptedAt": "Attempt time",

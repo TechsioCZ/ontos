@@ -52,6 +52,7 @@ const now = DateTime.makeUnsafe('2026-09-17T09:00:00.000Z');
 const request = Schema.decodeUnknownSync(CommercePortalAuthVerificationRequestSchema)({
   audience: 'commerce-customer-context',
   authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+  authenticationOperation: 'resolve',
   nonce: '50000000-0000-4000-8000-000000000011',
   operation: 'commerce-portal-authentication.verify-external-authentication.v1',
   operationRef: 'integration-operation-1',
@@ -80,6 +81,7 @@ const verification = {
         Schema.decodeUnknownSync(VerifyExternalAuthenticationResultSchema)({
           authenticatedAt: now,
           authenticationNamespaceId: decoded.authenticationNamespaceId,
+          authenticationOperation: 'resolve',
           emailVerified: true,
           nonce: decoded.nonce,
           observedAt: now,

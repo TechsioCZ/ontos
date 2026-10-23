@@ -4,6 +4,7 @@
 // the person may not read or that is down shows „bez oprávnění“ / „zdroj nedostupný“, never a zero. Clicking a tile
 // lists exactly the counted records (S15-01) with CSV export of those rows only (S15-02). Global search covers only
 // records the person can read.
+import type { ModulePageProps } from '@app/shared-contracts/page-data';
 import { PageHeader } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Button } from '@techsio/ui-kit/atoms/button';
@@ -12,10 +13,22 @@ import { AgendaFrame } from '../../../../ui/agenda-frame.tsx';
 import { pragueToday } from '../../../../ui/ops-agenda/deadlines.ts';
 import { currentAgendaState, buildDeadlines, buildKpis, buildSearchIndex } from '../../../../ui/ops-agenda/model.ts';
 import type { KpiId } from '../../../../ui/ops-agenda/model.ts';
-import { allSettled, preloadRentalOverviewSources, useRentalOverviewSources } from '../../../../ui/ops-agenda/sources.ts';
+import {
+  allSettled,
+  preloadRentalOverviewSources,
+  useRentalOverviewSources,
+} from '../../../../ui/ops-agenda/sources.ts';
 import { Icon, fmt, langOf } from '../../../../ui/ops-agenda/ui-bits.tsx';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
-import { DrillDown, Hero, KpiGrid, OccupancyByBuilding, OpsAgendas, SearchResults, UpcomingTimeline } from './dashboard-parts.tsx';
+import {
+  DrillDown,
+  Hero,
+  KpiGrid,
+  OccupancyByBuilding,
+  OpsAgendas,
+  SearchResults,
+  UpcomingTimeline,
+} from './dashboard-parts.tsx';
 
 const kpiIds: readonly KpiId[] = [
   'occupancy',
@@ -38,7 +51,7 @@ const readKpiParam = (): KpiId | undefined => {
   return kpiIds.find((id) => id === value);
 };
 
-const OverviewView = () => {
+const OverviewView = ({ displayName }: { readonly displayName: string | undefined }) => {
   const { language, t } = useModernI18n();
   const lang = langOf(language);
   const { loadSearch, names, reload, sources } = useRentalOverviewSources();
@@ -136,9 +149,9 @@ const OverviewView = () => {
         title={t('facility-operations.agenda.overview.title')}
       />
       <Hero
+        displayName={displayName}
         deadlines={deadlines}
         kpis={kpis}
-        me={me}
         onQuery={setQuery}
         query={query}
         sources={sources}
@@ -155,7 +168,12 @@ const OverviewView = () => {
           sources={sources}
         />
       )}
-      <KpiGrid kpis={kpis} onSelect={(id) => select(id === selected ? undefined : id)} selected={selected} settled={settled} />
+      <KpiGrid
+        kpis={kpis}
+        onSelect={(id) => select(id === selected ? undefined : id)}
+        selected={selected}
+        settled={settled}
+      />
       {selectedKpi !== undefined && (
         <DrillDown
           agendaRevision={agendaEnvelope?.revision ?? 0}
@@ -177,10 +195,10 @@ const OverviewView = () => {
   );
 };
 
-export const OverviewPage = () => (
+export const OverviewPage = ({ context }: Partial<ModulePageProps>) => (
   <AgendaFrame>
     <UltramodernRouteHead titleKey="facility-operations.agenda.overview.title" />
-    <OverviewView />
+    <OverviewView displayName={context?.displayName} />
   </AgendaFrame>
 );
 

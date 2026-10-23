@@ -101,8 +101,7 @@ const fixture = (): FinanceState => {
   return {
     invoices: [...invoices, retained, duplicate],
     financialPlanEntries: [],
-    accountingObservations: [],
-    paymentObservations: [],
+
     recurringTemplates: [
       {
         active: true,
@@ -146,7 +145,6 @@ describe('Siampark scoped rental fixture repair', () => {
           paidMinor: 0,
         });
       }
-      expect(repaired.paymentObservations).toBe(original.paymentObservations);
       expect(repaired.accountingExports).toBe(original.accountingExports);
       expect(
         repaired.invoices.find((entry) => entry.ref.resourceId === '8471308c-6070-4f0b-a9a1-545e30b698ee')

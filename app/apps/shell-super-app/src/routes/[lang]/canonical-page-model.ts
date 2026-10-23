@@ -39,7 +39,6 @@ export const canonicalPathFromRequest = (request: Request, language: string): st
 export const legacyCanonicalRedirects: ReadonlyMap<string, string> = new Map([
   ['/siampark/overview', '/nemovitosti/prehled'],
   ['/siampark/properties', '/nemovitosti'],
-  ['/siampark/integrations', '/nemovitosti/integrace'],
   ['/siampark/occupancy', '/najmy'],
   ['/siampark/agreements', '/smlouvy'],
   ['/siampark/finance', '/finance'],

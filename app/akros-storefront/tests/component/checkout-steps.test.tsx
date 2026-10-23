@@ -43,7 +43,7 @@ it("offers only owner shipping tariffs and never fictitious pickup locations or 
   const radio = await screen.findByRole("radio", { name: /Owner shipping/ });
   expect(screen.getAllByRole("radio")).toHaveLength(1);
   expect(screen.queryByRole("combobox")).toBeNull();
-  expect(screen.getByText("Online platba není dostupná")).toBeTruthy();
+  expect(screen.getByText("Objednávka bez online platby")).toBeTruthy();
   await user.click(radio);
   await user.click(screen.getByRole("button", { name: "Dodací údaje" }));
   expect(router.push).toHaveBeenCalledWith("/kosik/dodaci-udaje");

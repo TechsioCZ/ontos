@@ -26,6 +26,7 @@ import { lineGrossMinor } from '../../../../../shared/domain/order-totals.ts';
 import type { CustomerDirectory } from './customers-directory.ts';
 import { OrderEditForm } from './order-edit-form.tsx';
 import { OrderEmailDeliveries } from './order-email-deliveries.tsx';
+import { OrderCustomerButton } from './order-customer-button.tsx';
 import {
   historyActorLabel,
   historyKindLabels,
@@ -345,6 +346,21 @@ export const OrderDetailDialog = ({
               }}
             />
           )}
+          {canEditOrders &&
+            storefront &&
+            order.contact !== undefined &&
+            customers.status === 'ready' &&
+            !customers.entries.some((customer) => customer.partyId === order.partyId) && (
+              <OrderCustomerButton
+                key={order.id}
+                onConverted={() => {
+                  customers.reload();
+                  onEdited('Kontakt byl převeden na zákazníka');
+                }}
+                order={order}
+                revision={revision}
+              />
+            )}
           <WorkflowSteps status={order.status} />
           <DetailList
             items={[

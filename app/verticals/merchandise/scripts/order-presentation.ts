@@ -1,4 +1,4 @@
-import type { MerchandiseStateSchema } from '../shared/apis/records.ts';
+import type { Order, MerchandiseStateSchema } from '../shared/apis/records.ts';
 
 type Encoded = typeof MerchandiseStateSchema.Encoded;
 
@@ -19,6 +19,13 @@ const akrosOrderIds = [
   '6c62c028-85af-5c2c-aef2-24d3e35ac6b1',
   '3c19e491-9840-5e44-bbbd-729f767b3699',
 ];
+
+/** Bootstrap converts only the six known demo orders; real contacts require separate operator intent. */
+export const orderCustomerSeedEligible = (order: Order, includeRealOrders: boolean): boolean =>
+  order.demoCleanup === undefined &&
+  order.channel === 'STOREFRONT' &&
+  order.contact !== undefined &&
+  (includeRealOrders || (order.demo === true && akrosOrderIds.includes(order.id)));
 
 /** Only replace untouched fixture placeholders, never visitor contacts or staff edits. */
 export const refreshAkrosOrderPresentation = (state: Encoded): Encoded => ({

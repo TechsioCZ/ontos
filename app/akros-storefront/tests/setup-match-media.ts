@@ -2,6 +2,7 @@ import { beforeEach, vi } from "vitest";
 
 // jsdom does not implement the media queries used by UI-kit motion preferences.
 beforeEach(() => {
+  if (typeof window === "undefined") return;
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,

@@ -1,3 +1,8 @@
+import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
+import {
+  EnrollmentCommandRecoveryApi,
+  EnrollmentCommandRecoveryInputSchema,
+} from '../../../shared/enrollment-command-recovery-api.ts';
 import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import type { PartyRef } from '@app/party-registry/resources/party';
@@ -14,12 +19,7 @@ import type { RetailCustomerProfileRefSchema } from '../../../shared/resources/r
 import type { RetailPortalPrincipalRefSchema } from '../../../shared/resources/retail-portal-profile-binding.ts';
 import { executeBindRetailPortalProfileWithAuthorization } from '../../api/bind-retail-portal-profile-action-client.ts';
 import { executeEnsureRetailCustomerProfileWithAuthorization } from '../../api/ensure-retail-customer-profile-action-client.ts';
-import {
-  decodeOwnerOutcome,
-  decodeOwnerResolution,
-  ownerRejected,
-  ownerUnavailable,
-} from '../orchestration/owner-effect-codec.ts';
+import { decodeOwnerOutcome, decodeOwnerResolution, ownerUnavailable } from '../orchestration/owner-effect-codec.ts';
 import type { OwnerOutcomeDraft, OwnerResolutionDraft } from '../orchestration/owner-effect-codec.ts';
 import type {
   CommerceEnrollmentOwnerEffect,
@@ -46,7 +46,7 @@ import {
  * journey halts rather than reporting portal access that does not exist.
  *
  * Both dispatch under the immutable owner invocation as idempotency key; a timeout after commit
- * reconciles through the Action commit resolution port, never through a second dispatch.
+ * resolves native execution state: only NOT_STARTED or RETRYABLE redispatch the exact original payload/key.
  */
 
 type EnsureProfilePayload = Parameters<typeof executeEnsureRetailCustomerProfileWithAuthorization>[0];
@@ -68,7 +68,10 @@ export class CommerceActionCommitResolutionFailed extends Schema.TaggedError<Com
 
 type CommerceActionCommitState<Result> =
   | { readonly result: Result; readonly state: 'COMMITTED' }
-  | { readonly state: 'OPEN' };
+  | { readonly state: 'NOT_STARTED' }
+  | { readonly state: 'RETRYABLE' }
+  | { readonly state: 'RUNNING' }
+  | { readonly state: 'REJECTED' };
 
 /**
  * Exact read of one Commerce Action invocation's committed result.  It resolves commit state and
@@ -327,11 +330,21 @@ export const retailCustomerProfileOwnerEffect = (
       .pipe(
         Effect.mapError((cause) => unavailable('The Retail Customer Profile commit resolution is unavailable', cause)),
       );
-    if (resolved.state === 'OPEN') {
-      return yield* ownerRejected(
-        'commerce_profile_commit_open',
-        'The Commerce Action invocation has not committed yet and must be retried',
-      );
+    if (resolved.state === 'RUNNING') {
+      return yield* unavailable('The original Commerce Action is still running or indeterminate');
+    }
+    if (resolved.state === 'REJECTED') {
+      return yield* resolutionOf(reconciliation, ENSURE_OWNER_KEY, reconciliation.ownerInvocationId, {
+        kind: 'REJECTED',
+        outcomeCode: 'commerce_command_rejected',
+        reason: 'The original Commerce Action was terminally rejected',
+      });
+    }
+    if (resolved.state === 'NOT_STARTED' || resolved.state === 'RETRYABLE') {
+      const result = yield* executors
+        .ensureProfile(yield* payload(), input.requestCorrelation, { idempotencyKey: reconciliation.ownerInvocationId })
+        .pipe(Effect.mapError((cause) => unavailable('The original Commerce Action retry is unavailable', cause)));
+      return yield* resolutionOf(reconciliation, ENSURE_OWNER_KEY, result.profileRef.resourceId, ensureVerdict(result));
     }
     return yield* resolutionOf(
       reconciliation,
@@ -379,11 +392,21 @@ export const retailPortalBindingOwnerEffect = (
       .pipe(
         Effect.mapError((cause) => unavailable('The Retail Portal Binding commit resolution is unavailable', cause)),
       );
-    if (resolved.state === 'OPEN') {
-      return yield* ownerRejected(
-        'commerce_profile_commit_open',
-        'The Commerce Action invocation has not committed yet and must be retried',
-      );
+    if (resolved.state === 'RUNNING') {
+      return yield* unavailable('The original Commerce Action is still running or indeterminate');
+    }
+    if (resolved.state === 'REJECTED') {
+      return yield* resolutionOf(reconciliation, BIND_OWNER_KEY, reconciliation.ownerInvocationId, {
+        kind: 'REJECTED',
+        outcomeCode: 'commerce_command_rejected',
+        reason: 'The original Commerce Action was terminally rejected',
+      });
+    }
+    if (resolved.state === 'NOT_STARTED' || resolved.state === 'RETRYABLE') {
+      const result = yield* executors
+        .bindProfile(yield* payload(), input.requestCorrelation, { idempotencyKey: reconciliation.ownerInvocationId })
+        .pipe(Effect.mapError((cause) => unavailable('The original Commerce Action retry is unavailable', cause)));
+      return yield* resolutionOf(reconciliation, BIND_OWNER_KEY, result.bindingRef.resourceId, bindingVerdict(result));
     }
     return yield* resolutionOf(
       reconciliation,
@@ -517,3 +540,26 @@ export const retailPortalBindingActionExecutor = (
     );
   });
 };
+
+/** Fresh service transport, exact original key; native runtime owns execution/locking decisions. */
+export const resolveRetailOwnerCommand = Effect.fn('RetailEnrollment.resolveOwnerCommand')(
+  function* resolveRetailOwnerCommand(
+    authority: RetailOwnerInvocationAuthority,
+    payload: typeof EnrollmentCommandRecoveryInputSchema.Encoded,
+  ) {
+    const connection = yield* issueRetailOwnerConnection(authority);
+    const client = yield* makeGovernedEffectBffClient(
+      {
+        api: EnrollmentCommandRecoveryApi,
+        credential: connection.credential,
+        defaultApiPrefix: '/commerce-customer-context-api',
+        requestCorrelation: authority.requestCorrelation,
+      },
+      { baseUrl: connection.baseUrl, compositionRevision: authority.compositionRevision },
+    );
+    const decoded = yield* Schema.decodeEffect(EnrollmentCommandRecoveryInputSchema)(payload).pipe(
+      Effect.mapError((cause) => unavailable('The native owner recovery identity is invalid', cause)),
+    );
+    return yield* client.enrollmentCommandRecovery.resolve({ payload: decoded });
+  },
+);

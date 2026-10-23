@@ -86,7 +86,6 @@ const DEFAULT_START_DATE = currentPragueDay();
 const DEFAULT_END_DATE = '';
 const LABEL_EDIT_DRAFT = 'property-leasing.demo.editDraft';
 const LABEL_CREATE = 'property-leasing.demo.create';
-const LABEL_SIMULATED = 'property-leasing.demo.simulated';
 const propertyLeasingI18nResources = {
   cs: { 'property-leasing': csResource },
   en: { 'property-leasing': enResource },
@@ -154,9 +153,8 @@ const loadGuestNames = (records: RecordsResponse) =>
       ),
     { concurrency: 4 },
   ).pipe(
-    Effect.map(
-      (entries): Readonly<Record<string, string>> =>
-        Object.fromEntries(entries.flatMap(([id, name]) => (name === undefined ? [] : [[id, name]]))),
+    Effect.map((entries): Readonly<Record<string, string>> =>
+      Object.fromEntries(entries.flatMap(([id, name]) => (name === undefined ? [] : [[id, name]]))),
     ),
   );
 const loadLeaseRecords = Effect.fn('PropertyLeasing.loadLeaseRecords')(function* loadLeaseRecordsData() {
@@ -201,7 +199,9 @@ export const preloadPage = modulePagePreload(
   (props) => leaseRecords.preload(leaseInputOf(props.context)),
   (props) => {
     const resourceId = Option.getOrUndefined(decodeRecordsSearch(props.search))?.resourceId;
-    return resourceId === undefined ? Effect.void : leaseOccupant.preload({ ...leaseInputOf(props.context), resourceId });
+    return resourceId === undefined
+      ? Effect.void
+      : leaseOccupant.preload({ ...leaseInputOf(props.context), resourceId });
   },
 );
 type FailureLike = Parameters<typeof failureFeedback>[0];
@@ -294,8 +294,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
   const [customerId, setCustomerId] = useState('');
   const [customersLoading, setCustomersLoading] = useState(false);
   const [customerOpen, setCustomerOpen] = useState(false);
-  const [editor, setEditor] = useState<'lease' | 'stay' | 'booking'>();
-  const [retryObservationId, setRetryObservationId] = useState<string>();
+  const [editor, setEditor] = useState<'lease' | 'stay'>();
   const [startDate, setStartDate] = useState(DEFAULT_START_DATE);
   const [endDate, setEndDate] = useState(DEFAULT_END_DATE);
   const [editingId, setEditingId] = useState('');
@@ -310,7 +309,6 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
   const selected = snapshot?.occupancies.find((record) => record.occupancyRef.resourceId === linkedResourceId);
   const clearSensitiveState = () => {
     setEditor(undefined);
-    setRetryObservationId(undefined);
     setCustomersLoading(false);
     setEditingId('');
     setCustomers([]);
@@ -350,10 +348,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
           ),
           Effect.orElseSucceed(() => 'unavailable' as const),
         ),
-        tasks: executeWorkRecords(
-          { contextResourceId: record.unitRef.resourceId },
-          'property-leasing.unit-tasks',
-        ).pipe(
+        tasks: executeWorkRecords({ contextResourceId: record.unitRef.resourceId }, 'property-leasing.unit-tasks').pipe(
           Effect.map((value) => value.items),
           Effect.orElseSucceed(() => 'unavailable' as const),
         ),
@@ -702,8 +697,7 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
       ),
     );
   };
-  const newDraft = (mode: 'lease' | 'stay' | 'booking' = 'lease', retryId?: string) => {
-    setRetryObservationId(retryId);
+  const newDraft = (mode: 'lease' | 'stay' = 'lease') => {
     setEditingId('');
     setStartDate(DEFAULT_START_DATE);
     setEndDate(DEFAULT_END_DATE);
@@ -779,53 +773,6 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
             setGuests(values);
             setGuestId('');
             setActionFeedback(undefined);
-          },
-        }),
-      ),
-    );
-  };
-  const importBooking = (outcome: 'SUCCESS' | 'FAILED', retryId?: string) => {
-    const unit = properties?.units.find((record) => record.unitRef.resourceId === unitId);
-    const guest = guests.find((record) => record.ref.resourceId === guestId);
-    if (unit === undefined || guest === undefined || endDate.length === 0) {
-      setActionFeedback('validation');
-      return;
-    }
-    run(
-      Effect.all({ observationId: newUuid, resourceId: newUuid }, { concurrency: 1 }).pipe(
-        Effect.match({
-          onFailure: reportFailure,
-          onSuccess: ({ observationId, resourceId }) => {
-            const record: Occupancy = {
-              contractRef: null,
-              customerCounterpartyRef: null,
-              endDate,
-              externalBookingCorrelation: null,
-              guestPartyRef: guest.ref,
-              kind: 'SHORT_STAY',
-              note: null,
-              occupancyRef: {
-                moduleId: 'property.leasing',
-                resourceId,
-                resourceType: 'property.leasing.occupancy',
-                tenantId: unit.unitRef.tenantId,
-              },
-              peopleCount: 2,
-              startDate,
-              state: 'CONFIRMED',
-              unitRef: unit.unitRef,
-            };
-            if (retryId === undefined) {
-              runCommand({
-                _tag: 'ImportBooking',
-                correlation: `SIMULATED:booking:${observationId}`,
-                observationId,
-                outcome,
-                record,
-              });
-            } else {
-              runCommand({ _tag: 'RetryBooking', observationId: retryId, record });
-            }
           },
         }),
       ),
@@ -909,14 +856,12 @@ const useRecordsPage = (context: ModulePageProps['context']) => {
     guestId,
     guestQuery,
     guests,
-    importBooking,
     kindFilter,
     language,
     linkedResourceId,
     newDraft,
     properties,
     refresh,
-    retryObservationId,
     runCommand,
     saveDraft,
     searchGuests,
@@ -974,9 +919,7 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
         {feedback !== 'loading' && (
           <output aria-live="polite">
             {t(
-              feedback === 'ready'
-                ? 'property-leasing.detail.notFound'
-                : `property-leasing.demo.feedback.${feedback}`,
+              feedback === 'ready' ? 'property-leasing.detail.notFound' : `property-leasing.demo.feedback.${feedback}`,
             )}
           </output>
         )}
@@ -1099,9 +1042,7 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
               href: `/${language}/ukoly`,
               label: t('property-leasing.story.tasks'),
               value:
-                state.related.tasks === 'unavailable'
-                  ? t('property-leasing.story.unavailable')
-                  : String(tasks.length),
+                state.related.tasks === 'unavailable' ? t('property-leasing.story.unavailable') : String(tasks.length),
             },
             {
               href:
@@ -1125,9 +1066,7 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
               action={
                 canEditRent ? (
                   <Button disabled={busy} onClick={state.openRentEditor} size="sm" theme="outlined" variant="secondary">
-                    {t(
-                      selected.rentTerms === undefined ? 'property-leasing.rent.set' : 'property-leasing.rent.edit',
-                    )}
+                    {t(selected.rentTerms === undefined ? 'property-leasing.rent.set' : 'property-leasing.rent.edit')}
                   </Button>
                 ) : undefined
               }
@@ -1191,9 +1130,7 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
                   ? undefined
                   : `/${language}/smlouvy?resourceId=${contract.contractRef.resourceId}`
               }
-              taskHref={
-                tasks[0] === undefined ? undefined : `/${language}/ukoly?resourceId=${tasks[0].ref.resourceId}`
-              }
+              taskHref={tasks[0] === undefined ? undefined : `/${language}/ukoly?resourceId=${tasks[0].ref.resourceId}`}
               dossier={snapshot.tenantDossiers?.find(
                 (item) => item.counterpartyId === selected.customerCounterpartyRef?.resourceId,
               )}
@@ -1252,35 +1189,6 @@ const OccupancyDetail = ({ state }: { readonly state: ReturnType<typeof useRecor
           {selected.note !== null && (
             <SectionCard title={t('property-leasing.detail.note')}>
               <p className="propertyleasing:whitespace-pre-wrap propertyleasing:text-sm">{selected.note}</p>
-            </SectionCard>
-          )}
-          {selected.externalBookingCorrelation !== null && (
-            <SectionCard title={t('property-leasing.demo.importBooking')}>
-              <Badge variant="info">{t(LABEL_SIMULATED)}</Badge>
-              <p className="propertyleasing:break-words propertyleasing:text-sm">
-                {selected.externalBookingCorrelation}
-              </p>
-              {snapshot?.bookingObservations.flatMap((value) =>
-                value.occupancyRef?.resourceId === selected.occupancyRef.resourceId
-                  ? [
-                      <p
-                        className={`${surfaceTileClassName} propertyleasing:space-y-2 propertyleasing:break-words propertyleasing:p-4 propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)`}
-                        key={value.observationId}
-                      >
-                        {t(`property-leasing.demo.bookingStates.${value.state}`)} · {value.correlation} ·{' '}
-                        {t('property-leasing.demo.attempts', { attemptCount: value.attempts })}
-                        <br />
-                        {t('property-leasing.demo.provider')}: {value.providerLabel}
-                        <br />
-                        {t('property-leasing.demo.attemptedAt')}: {value.attemptedAt}
-                        <br />
-                        {t('property-leasing.demo.requestSummary')}: {value.requestSummary}
-                        <br />
-                        {t('property-leasing.demo.resultSummary')}: {value.resultSummary}
-                      </p>,
-                    ]
-                  : [],
-              )}
             </SectionCard>
           )}
         </div>
@@ -1463,13 +1371,8 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
   if (editor === undefined) {
     return null;
   }
-  const { guestId, guestQuery, guests, importBooking, searchGuests, setGuestId, setGuestQuery } = state;
-  const panelTitle =
-    editor === 'booking'
-      ? 'property-leasing.demo.importBooking'
-      : editor === 'stay'
-        ? 'property-leasing.demo.newBooking'
-        : LABEL_EDIT_DRAFT;
+  const { guestId, guestQuery, guests, searchGuests, setGuestId, setGuestQuery } = state;
+  const panelTitle = editor === 'stay' ? 'property-leasing.demo.newBooking' : LABEL_EDIT_DRAFT;
   const title = editor === 'lease' && editingId.length === 0 ? 'property-leasing.demo.newLease' : panelTitle;
   // Only units in operation inside a building in operation are offered for a new stay or lease.
   const activeUnits = (properties?.units ?? []).filter(
@@ -1495,24 +1398,10 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
             >
               {t(state.editingId.length > 0 ? 'property-leasing.demo.saveDraft' : LABEL_CREATE)}
             </Button>
-          ) : editor === 'stay' ? (
+          ) : (
             <Button disabled={busy} isLoading={feedback === 'saving'} onClick={state.createStay} variant="primary">
               Uložit rezervaci
             </Button>
-          ) : (
-            <>
-              <Button disabled={busy} onClick={() => importBooking('FAILED')} theme="outlined" variant="danger">
-                {t('property-leasing.demo.simulateFailure')}
-              </Button>
-              <Button
-                disabled={busy}
-                isLoading={feedback === 'saving'}
-                onClick={() => importBooking('SUCCESS', state.retryObservationId)}
-                variant="primary"
-              >
-                {t('property-leasing.demo.simulateImport')}
-              </Button>
-            </>
           )}
         </div>
       }
@@ -1530,9 +1419,7 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
       title={t(title)}
     >
       <div className="propertyleasing:space-y-4 propertyleasing:py-2">
-        {feedback !== 'ready' && (
-          <output aria-live="polite">{t(`property-leasing.demo.feedback.${feedback}`)}</output>
-        )}
+        {feedback !== 'ready' && <output aria-live="polite">{t(`property-leasing.demo.feedback.${feedback}`)}</output>}
         <div className="propertyleasing:space-y-4">
           {editingId.length === 0 && (
             <div className="propertyleasing:grid propertyleasing:gap-4 propertyleasing:md:grid-cols-2">
@@ -1612,12 +1499,12 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
             </section>
           )}
         </div>
-        {(state.editor === 'booking' || state.editor === 'stay') && (
+        {state.editor === 'stay' && (
           <section className="propertyleasing:space-y-4">
             <p className="propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)">
-              {state.editor === 'stay'
-                ? 'Ruční rezervace bez napojení na rezervační portál. Po uložení ji můžete potvrdit, zahájit, ukončit nebo zrušit. Potvrzení kontroluje kolize termínů.'
-                : t('property-leasing.demo.bookingFormContext')}
+              {
+                'Ruční rezervace bez napojení na rezervační portál. Po uložení ji můžete potvrdit, zahájit, ukončit nebo zrušit. Potvrzení kontroluje kolize termínů.'
+              }
             </p>
             <div className="propertyleasing:flex propertyleasing:items-end propertyleasing:gap-2">
               <div className="propertyleasing:min-w-0 propertyleasing:flex-1">
@@ -1657,7 +1544,7 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
                 </Select.Content>
               </Select.Positioner>
             </Select>
-            {state.editor === 'stay' ? (
+            {
               <>
                 <FormInput
                   id="stay-people-count"
@@ -1676,9 +1563,7 @@ const OccupancyDraftForm = ({ state }: { readonly state: ReturnType<typeof useRe
                   onChange={(event) => state.setStayNote(event.target.value)}
                 />
               </>
-            ) : (
-              <Badge variant="info">{t(LABEL_SIMULATED)}</Badge>
-            )}
+            }
           </section>
         )}
       </div>
@@ -1735,7 +1620,9 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
             directoryLoaded={state.directoryLoaded}
             entry={state.tenantDirectory.find((item) => item.counterpartyRef.resourceId === state.linkedCounterpartyId)}
             feedbackText={
-              feedback === 'ready' || feedback === 'loading' ? undefined : t(`property-leasing.demo.feedback.${feedback}`)
+              feedback === 'ready' || feedback === 'loading'
+                ? undefined
+                : t(`property-leasing.demo.feedback.${feedback}`)
             }
             language={state.language}
             newContactId={newUuid}
@@ -1760,15 +1647,6 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                     </Button>
                     <Button
                       disabled={busy || snapshot === undefined}
-                      onClick={() => state.newDraft('booking')}
-                      size="sm"
-                      theme="borderless"
-                      variant="secondary"
-                    >
-                      Simulace importu
-                    </Button>
-                    <Button
-                      disabled={busy || snapshot === undefined}
                       onClick={() => state.newDraft()}
                       size="sm"
                       variant="primary"
@@ -1780,26 +1658,27 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
               }
               description={t('property-leasing.pages.records.description')}
               meta={
-                feedback !== 'loading' && (
-                <output aria-live="polite">
-                  <Badge
-                    size="sm"
-                    variant={
-                      (
-                        {
-                          conflict: 'warning',
-                          forbidden: 'danger',
-                          ready: 'success',
-                          saving: 'info',
-                          unavailable: 'danger',
-                          validation: 'warning',
-                        } as const
-                      )[feedback]
-                    }
-                  >
-                    {t(`property-leasing.demo.feedback.${feedback}`)}
-                  </Badge>
-                </output>
+                feedback !== 'loading' &&
+                feedback !== 'ready' && (
+                  <output aria-live="polite">
+                    <Badge
+                      size="sm"
+                      variant={
+                        (
+                          {
+                            conflict: 'warning',
+                            forbidden: 'danger',
+                            ready: 'success',
+                            saving: 'info',
+                            unavailable: 'danger',
+                            validation: 'warning',
+                          } as const
+                        )[feedback]
+                      }
+                    >
+                      {t(`property-leasing.demo.feedback.${feedback}`)}
+                    </Badge>
+                  </output>
                 )
               }
               title={t('property-leasing.pages.records.title')}
@@ -1818,7 +1697,12 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
               <LinkButton href="#tenants" size="sm" theme="outlined" variant="secondary">
                 Nájemci, zájemci a kontaktní osoby ↓
               </LinkButton>
-              <LinkButton href={`/${state.language}/nemovitosti/prehled`} size="sm" theme="outlined" variant="secondary">
+              <LinkButton
+                href={`/${state.language}/nemovitosti/prehled`}
+                size="sm"
+                theme="outlined"
+                variant="secondary"
+              >
                 Kalendář a přehled nemovitostí →
               </LinkButton>
             </div>
@@ -1854,7 +1738,9 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
               </div>
             </div>
             {snapshot !== undefined && visible.length === 0 && (
-              <p className={`${surfaceTileClassName} propertyleasing:p-5 propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)`}>
+              <p
+                className={`${surfaceTileClassName} propertyleasing:p-5 propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)`}
+              >
                 {t('property-leasing.demo.empty')}
               </p>
             )}
@@ -1942,46 +1828,6 @@ const RecordsPageContent = ({ context }: { readonly context: ModulePageProps['co
                 unitName={unitName}
               />
             )}
-            <section className={`${surfaceCardClassName} propertyleasing:space-y-4 propertyleasing:p-5`}>
-              <h2 className="propertyleasing:text-lg propertyleasing:font-semibold">
-                {t('property-leasing.demo.bookingObservations')}
-              </h2>
-              {snapshot?.bookingObservations.map((value) => (
-                <p
-                  className={`${surfaceTileClassName} propertyleasing:space-y-2 propertyleasing:break-words propertyleasing:p-4 propertyleasing:text-sm propertyleasing:text-(--color-fg-secondary)`}
-                  key={value.observationId}
-                >
-                  <Badge variant="info">{t(LABEL_SIMULATED)}</Badge> {value.correlation} ·{' '}
-                  {t(`property-leasing.demo.bookingStates.${value.state}`)}
-                  <br />
-                  {t('property-leasing.demo.provider')}: {value.providerLabel} · {value.integrationKind}
-                  <br />
-                  {t('property-leasing.demo.attemptedAt')}: {value.attemptedAt}
-                  {value.completedAt !== null && (
-                    <>
-                      <br />
-                      {t('property-leasing.demo.completedAt')}: {value.completedAt}
-                    </>
-                  )}
-                  <br />
-                  {t('property-leasing.demo.ownerReference')}: {value.ownerResourceRef.resourceId}
-                  <br />
-                  {t('property-leasing.demo.requestSummary')}: {value.requestSummary}
-                  <br />
-                  {t('property-leasing.demo.resultSummary')}: {value.resultSummary}
-                  {value.state !== 'SUCCESS' && (
-                    <Button
-                      disabled={busy}
-                      onClick={() => state.newDraft('booking', value.observationId)}
-                      size="sm"
-                      variant="warning"
-                    >
-                      {t('property-leasing.demo.retry')}
-                    </Button>
-                  )}
-                </p>
-              ))}
-            </section>
           </>
         ) : (
           <OccupancyDetail state={state} />

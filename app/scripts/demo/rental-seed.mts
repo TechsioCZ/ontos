@@ -7,10 +7,14 @@ import { RecordsResponseSchema as FinanceRecords } from '@app/finance-billing/co
 import { OccupancyCommandSchema } from '@app/property-leasing/contracts/apply-command';
 import { RecordsResponseSchema as OccupancyRecords } from '@app/property-leasing/contracts/records';
 import { PropertyCommandSchema } from '@app/property-portfolio/contracts/apply-command';
-import { PropertyDateSchema, RecordsResponseSchema as PropertyRecords } from '@app/property-portfolio/contracts/records';
+import {
+  PropertyDateSchema,
+  RecordsResponseSchema as PropertyRecords,
+} from '@app/property-portfolio/contracts/records';
 import { Console, DateTime, Effect, Schema } from 'effect';
 
 import { demoId } from './fixture-ids.mts';
+import { preflightRentalCrmOrders, seedRentalCrmOrders } from './rental-crm-orders.mts';
 import { ensureSeedCustomer, existingSeedCustomer, seedCustomerList } from './rental-seed-customer.mts';
 import { DemoSeedError } from './seed-client.mts';
 import type { SeedClient, SeedTarget } from './seed-client.mts';
@@ -22,40 +26,15 @@ const financeAudience = 'finance-billing';
 const workAudience = 'work-tasks';
 const partyAudience = 'party-registry';
 const pipelineAudience = 'sales-pipeline';
+const propertyResponsiblePerson = 'Provoz Siampark';
 
 /**
  * Siampark rental story (company 0021): two buildings, eight units, five tenant organizations, leases in every
  * state (active, ending, upcoming, ended, draft), contracts with recorded signature evidence, service tasks on the
- * units and invoice drafts anchored to building, unit, lease and contract. Every identity is a fixed UUIDv5, so a
+ * units and issued invoices anchored to building, unit, lease and contract. Every identity is a fixed UUIDv5, so a
  * rerun only fills in what is missing and never overwrites diverging data.
  */
 export const rentalStory = {
-  properties: [
-    { address: 'Parková 12, 140 00 Praha 4', code: 'PARKOVA', key: 'parkova', name: 'Rezidence Parková' },
-    {
-      address: 'Nábřeží Kapitána Jaroše 7, 170 00 Praha 7',
-      code: 'RIVERSIDE',
-      key: 'riverside',
-      name: 'Riverside Office Park',
-    },
-  ],
-  units: [
-    { capacity: 3, code: 'A101', key: 'a101', name: 'Byt A101 · 2+kk', property: 'parkova' },
-    { capacity: 4, code: 'A102', key: 'a102', name: 'Byt A102 · 3+kk', property: 'parkova' },
-    { capacity: 2, code: 'A201', key: 'a201', name: 'Byt A201 · 1+kk', property: 'parkova' },
-    { capacity: 3, code: 'A202', key: 'a202', name: 'Byt A202 · 2+kk', property: 'parkova' },
-    { capacity: 40, code: 'R101', key: 'r101', name: 'Obchodní prostor R101', property: 'riverside' },
-    { capacity: 18, code: 'R201', key: 'r201', name: 'Kancelář R201', property: 'riverside' },
-    { capacity: 24, code: 'R301', key: 'r301', name: 'Kancelář R301', property: 'riverside' },
-    { capacity: null, code: 'S01', key: 's01', name: 'Sklad S01', property: 'riverside' },
-  ],
-  tenants: [
-    { evidenceKey: 'kavarna-u-parku', key: 'kavarna', name: 'Kavárna U Parku s.r.o.' },
-    { evidenceKey: 'atelier-horak', key: 'atelier', name: 'Ateliér Horák s.r.o.' },
-    { evidenceKey: 'technoservis-praha', key: 'technoservis', name: 'Technoservis Praha a.s.' },
-    { evidenceKey: 'lekarna-na-nabrezi', key: 'lekarna', name: 'Lékárna Na Nábřeží s.r.o.' },
-    { evidenceKey: 'novotny-consulting', key: 'novotny', name: 'Novotný Consulting s.r.o.' },
-  ],
   leases: [
     {
       contract: {
@@ -169,6 +148,30 @@ export const rentalStory = {
       unit: 'a201',
     },
   ],
+  opportunity: {
+    expectedCloseDate: '2026-11-15',
+    line: { productName: 'Nájem kanceláře R301, roční nájemné', quantity: 12, unitPriceMinor: 4_680_000, vatRate: 21 },
+    tenant: 'lekarna',
+    title: 'Pronájem Riverside R301 – Lékárna Na Nábřeží',
+  },
+  properties: [
+    {
+      address: 'Parková 12, 140 00 Praha 4',
+      code: 'PARKOVA',
+      key: 'parkova',
+      name: 'Rezidence Parková',
+      propertyType: 'Bytový dům',
+      responsiblePerson: propertyResponsiblePerson,
+    },
+    {
+      address: 'Nábřeží Kapitána Jaroše 7, 170 00 Praha 7',
+      code: 'RIVERSIDE',
+      key: 'riverside',
+      name: 'Riverside Office Park',
+      propertyType: 'Administrativní budova',
+      responsiblePerson: propertyResponsiblePerson,
+    },
+  ],
   tasks: [
     {
       description: 'Roční revize vzduchotechniky a digestoře v kavárně, protokol založit ke smlouvě.',
@@ -203,35 +206,23 @@ export const rentalStory = {
       title: 'Úprava dispozice R301 před nástupem lékárny',
     },
   ],
-  invoices: [
-    {
-      documentNumber: 'NAJ-R101-2026-11',
-      dueDate: '2026-11-10',
-      issueDate: '2026-11-01',
-      lease: 'r101-kavarna',
-      period: 'listopad 2026',
-    },
-    {
-      documentNumber: 'NAJ-R201-2026-11',
-      dueDate: '2026-11-15',
-      issueDate: '2026-11-01',
-      lease: 'r201-atelier',
-      period: 'listopad 2026',
-    },
-    {
-      documentNumber: 'NAJ-A101-2026-10',
-      dueDate: '2026-10-05',
-      issueDate: '2026-10-01',
-      lease: 'a101-technoservis',
-      period: 'říjen 2026',
-    },
+  tenants: [
+    { evidenceKey: 'kavarna-u-parku', key: 'kavarna', name: 'Kavárna U Parku s.r.o.' },
+    { evidenceKey: 'atelier-horak', key: 'atelier', name: 'Ateliér Horák s.r.o.' },
+    { evidenceKey: 'technoservis-praha', key: 'technoservis', name: 'Technoservis Praha a.s.' },
+    { evidenceKey: 'lekarna-na-nabrezi', key: 'lekarna', name: 'Lékárna Na Nábřeží s.r.o.' },
+    { evidenceKey: 'novotny-consulting', key: 'novotny', name: 'Novotný Consulting s.r.o.' },
   ],
-  opportunity: {
-    expectedCloseDate: '2026-11-15',
-    line: { productName: 'Nájem kanceláře R301, roční nájemné', quantity: 12, unitPriceMinor: 4_680_000, vatRate: 21 },
-    tenant: 'lekarna',
-    title: 'Pronájem Riverside R301 – Lékárna Na Nábřeží',
-  },
+  units: [
+    { capacity: 3, code: 'A101', key: 'a101', name: 'Byt A101 · 2+kk', property: 'parkova' },
+    { capacity: 4, code: 'A102', key: 'a102', name: 'Byt A102 · 3+kk', property: 'parkova' },
+    { capacity: 2, code: 'A201', key: 'a201', name: 'Byt A201 · 1+kk', property: 'parkova' },
+    { capacity: 3, code: 'A202', key: 'a202', name: 'Byt A202 · 2+kk', property: 'parkova' },
+    { capacity: 40, code: 'R101', key: 'r101', name: 'Obchodní prostor R101', property: 'riverside' },
+    { capacity: 18, code: 'R201', key: 'r201', name: 'Kancelář R201', property: 'riverside' },
+    { capacity: 24, code: 'R301', key: 'r301', name: 'Kancelář R301', property: 'riverside' },
+    { capacity: null, code: 'S01', key: 's01', name: 'Sklad S01', property: 'riverside' },
+  ],
 } as const;
 
 /** Kept for the CLI summary and older callers. */
@@ -240,12 +231,32 @@ export const rentalSeed = {
   unitName: rentalStory.units[1].name,
 } as const;
 
-type PropertySpec = (typeof rentalStory.properties)[number];
+interface PropertySpec {
+  readonly address: string;
+  readonly code: string;
+  readonly key: string;
+  readonly name: string;
+  readonly propertyType: string;
+  readonly responsiblePerson: string;
+}
 type UnitSpec = (typeof rentalStory.units)[number];
-type TenantSpec = (typeof rentalStory.tenants)[number];
 type LeaseSpec = (typeof rentalStory.leases)[number];
 type TaskSpec = (typeof rentalStory.tasks)[number];
-type InvoiceSpec = (typeof rentalStory.invoices)[number];
+export const rentalInvoicePlan = (asOf: Date) =>
+  Array.from({ length: 4 }, (_, index) => {
+    const month = DateTime.subtract(DateTime.startOf(DateTime.makeUnsafe(asOf), 'month'), { months: 3 - index });
+    const period = DateTime.formatIsoDateUtc(month).slice(0, 7);
+    return (['r101-kavarna', 'r201-atelier', 'a101-technoservis'] as const).map((lease, leaseIndex) => ({
+      documentNumber: `NAJ-${['R101', 'R201', 'A101'][leaseIndex]}-${period}`,
+      dueDate: `${period}-${['10', '28', '05'][leaseIndex]}`,
+      issueDate: `${period}-01`,
+      lease,
+      paid: index < 2 || (index === 2 && leaseIndex !== 1) || (index === 3 && leaseIndex === 0),
+      paidOn: `${period}-01`,
+      period: DateTime.format(month, { locale: 'cs-CZ', month: 'long', timeZone: 'UTC', year: 'numeric' }),
+    }));
+  }).flat();
+type InvoiceSpec = ReturnType<typeof rentalInvoicePlan>[number];
 
 const seedNote = 'DEMO siampark-rental-v2: syntetický příklad, bez skutečného podepsaného souboru.';
 const propertyRead = Schema.toEncoded(PropertyRecords);
@@ -337,7 +348,34 @@ const ensureProperty = (client: SeedClient, spec: PropertySpec) =>
       yield* client.apply(
         propertyAudience,
         propertyCommand,
-        { _tag: 'CreateProperty', address: spec.address, code: spec.code, name: spec.name },
+        {
+          _tag: 'CreateProperty',
+          address: spec.address,
+          code: spec.code,
+          name: spec.name,
+          propertyType: spec.propertyType,
+          responsiblePerson: spec.responsiblePerson,
+        },
+        snapshot.revision,
+      );
+      snapshot = yield* client.read(propertyAudience, propertyRead);
+      record = yield* required(`Property ${spec.code}`, yield* uniqueSeedRecord(`Property ${spec.code}`, matching()));
+    }
+    const propertyType = record.propertyType?.trim() ?? '';
+    const responsiblePerson = record.responsiblePerson?.trim() ?? '';
+    if (propertyType === '' || responsiblePerson === '') {
+      yield* client.apply(
+        propertyAudience,
+        propertyCommand,
+        {
+          _tag: 'UpdateProperty',
+          address: record.address,
+          name: record.name,
+          note: record.note,
+          propertyRef: record.propertyRef,
+          propertyType: propertyType === '' ? spec.propertyType : record.propertyType,
+          responsiblePerson: responsiblePerson === '' ? spec.responsiblePerson : record.responsiblePerson,
+        },
         snapshot.revision,
       );
       snapshot = yield* client.read(propertyAudience, propertyRead);
@@ -474,7 +512,7 @@ const ensureContract = (
   Effect.gen(function* contract() {
     const terms = spec.contract;
     if (terms === null) {
-      return undefined;
+      return;
     }
     const contractRef = storyRef(target, 'legal.agreements', 'contract', spec.key);
     const find = (items: (typeof agreementsRead.Type)['contracts']) =>
@@ -604,34 +642,37 @@ const progressLease = (client: SeedClient, spec: LeaseSpec, lease: Lease, contra
 
 const ensureTenantContacts = (client: SeedClient, lease: Lease) =>
   Effect.gen(function* tenantContacts() {
-    if (lease.customerCounterpartyRef === null) return;
+    if (lease.customerCounterpartyRef === null) {
+      return;
+    }
     const snapshot = yield* client.read(occupancyAudience, occupancyRead);
     // Retain any operator edits, communication and archival evidence; only fill a missing dossier.
-    if (snapshot.tenantDossiers?.some((item) => item.counterpartyId === lease.customerCounterpartyRef?.resourceId))
+    if (snapshot.tenantDossiers?.some((item) => item.counterpartyId === lease.customerCounterpartyRef?.resourceId)) {
       return;
+    }
     yield* client.apply(
       occupancyAudience,
       occupancyCommand,
       {
         _tag: 'UpdateTenantDossier',
-        occupancyRef: lease.occupancyRef,
+        activity: { kind: 'NOTE', summary: 'DEMO: založena evidence kontaktních osob nájemce kavárny R101.' },
         contacts: [
           {
+            email: 'lucie@kavarna-u-parku.demo',
             id: demoId('siampark-rental.contact', 'kavarna-lucie'),
             name: 'Lucie Parková',
-            role: 'Jednatelka',
-            email: 'lucie@kavarna-u-parku.demo',
             phone: '+420 777 101 101',
+            role: 'Jednatelka',
           },
           {
+            email: 'petr@kavarna-u-parku.demo',
             id: demoId('siampark-rental.contact', 'kavarna-petr'),
             name: 'Petr Novák',
-            role: 'Vedoucí provozu',
-            email: 'petr@kavarna-u-parku.demo',
             phone: '+420 777 101 102',
+            role: 'Vedoucí provozu',
           },
         ],
-        activity: { kind: 'NOTE', summary: 'DEMO: založena evidence kontaktních osob nájemce kavárny R101.' },
+        occupancyRef: lease.occupancyRef,
       },
       snapshot.revision,
     );
@@ -660,17 +701,17 @@ const ensureTask = (client: SeedClient, spec: TaskSpec, unit: Unit, tenant: Cust
     );
   });
 
-const ensureInvoice = (
+export const ensureInvoice = (
   client: SeedClient,
   spec: InvoiceSpec,
   lease: LeaseSpec,
-  unit: Unit,
-  tenant: Customer,
-  occupancy: Lease,
-  contract: Contract | undefined,
+  unit: Pick<Unit, 'code' | 'name' | 'propertyRef' | 'unitRef'>,
+  tenant: Pick<Customer, 'counterpartyRef' | 'partyRef'>,
+  occupancy: Pick<Lease, 'occupancyRef'>,
+  contract?: Contract,
 ) =>
   Effect.gen(function* invoice() {
-    const snapshot = yield* client.read(financeAudience, financeRead);
+    let snapshot = yield* client.read(financeAudience, financeRead);
     const lines = [
       {
         description: `Nájemné ${unit.code} – ${spec.period}`,
@@ -685,24 +726,11 @@ const ensureInvoice = (
         vatRate: 21 as const,
       },
     ];
-    const existing = yield* uniqueSeedRecord(
-      `Invoice ${spec.documentNumber}`,
-      snapshot.state.invoices.filter((item) => item.documentNumber === spec.documentNumber),
-    );
-    if (existing !== undefined) {
-      yield* requireSeedMatch(
-        `Invoice ${spec.documentNumber}`,
-        existing.counterpartyRef.resourceId === tenant.counterpartyRef.resourceId &&
-          isDeepStrictEqual(existing.lines, lines),
-      );
-      return;
-    }
-    yield* client.apply(
-      financeAudience,
-      financeCommand,
-      {
-        _tag: 'CreateInvoiceDraft',
-        ...(contract === undefined ? {} : { contractRef: contract.contractRef }),
+    const matching = () => snapshot.state.invoices.filter((item) => item.documentNumber === spec.documentNumber);
+    let existing = yield* uniqueSeedRecord(`Invoice ${spec.documentNumber}`, matching());
+    if (existing === undefined) {
+      const draft: Extract<typeof financeCommand.Type, { readonly _tag: 'CreateInvoiceDraft' }> = {
+        _tag: 'CreateInvoiceDraft' as const,
         counterpartyRef: tenant.counterpartyRef,
         currency: 'CZK',
         direction: 'OUTGOING',
@@ -715,16 +743,123 @@ const ensureInvoice = (
         partyId: tenant.partyRef.resourceId,
         propertyRef: unit.propertyRef,
         unitRef: unit.unitRef,
-      },
-      snapshot.revision,
-      [
-        partyAudience,
-        propertyAudience,
-        propertyAudience,
-        occupancyAudience,
-        ...(contract === undefined ? [] : [agreementsAudience]),
-      ],
+      };
+      yield* client.apply(
+        financeAudience,
+        financeCommand,
+        contract === undefined ? draft : { ...draft, contractRef: contract.contractRef },
+        snapshot.revision,
+        [
+          partyAudience,
+          propertyAudience,
+          propertyAudience,
+          occupancyAudience,
+          ...(contract === undefined ? [] : [agreementsAudience]),
+        ],
+      );
+      snapshot = yield* client.read(financeAudience, financeRead);
+      existing = yield* required(
+        `Invoice ${spec.documentNumber}`,
+        yield* uniqueSeedRecord(`Invoice ${spec.documentNumber}`, matching()),
+      );
+    }
+    yield* requireSeedMatch(
+      `Invoice ${spec.documentNumber}`,
+      existing.counterpartyRef.resourceId === tenant.counterpartyRef.resourceId &&
+        isDeepStrictEqual(existing.lines, lines) &&
+        existing.businessState !== 'VOIDED',
     );
+    if (existing.businessState === 'DRAFT') {
+      if (existing.reviewState !== 'PREPARED') {
+        yield* client.apply(
+          financeAudience,
+          financeCommand,
+          { _tag: 'MarkInvoicesPrepared', invoiceRefs: [existing.ref] },
+          snapshot.revision,
+        );
+        snapshot = yield* client.read(financeAudience, financeRead);
+      }
+      yield* client.apply(
+        financeAudience,
+        financeCommand,
+        { _tag: 'ConfirmInvoice', invoiceRef: existing.ref },
+        snapshot.revision,
+        [
+          partyAudience,
+          ...(existing.propertyRef === undefined ? [] : [propertyAudience]),
+          ...(existing.unitRef === undefined ? [] : [propertyAudience]),
+          ...(existing.occupancyRef === undefined ? [] : [occupancyAudience]),
+          ...(existing.contractRef === undefined ? [] : [agreementsAudience]),
+          ...(existing.taskRef === undefined ? [] : [workAudience]),
+        ],
+      );
+      snapshot = yield* client.read(financeAudience, financeRead);
+      existing = yield* required(
+        `Invoice ${spec.documentNumber}`,
+        yield* uniqueSeedRecord(`Invoice ${spec.documentNumber}`, matching()),
+      );
+    }
+    // The native payment owner records evidence; never forge a connector observation or pay twice after a lost response.
+    if (spec.paid && existing.paidMinor < existing.totalMinor) {
+      yield* client.apply(
+        financeAudience,
+        financeCommand,
+        {
+          _tag: 'RecordManualPayment',
+          amountMinor: existing.totalMinor - existing.paidMinor,
+          invoiceRef: existing.ref,
+          note: 'Úhrada nájemného bankovním převodem',
+          paidOn: spec.paidOn,
+        },
+        snapshot.revision,
+      );
+    }
+    snapshot = yield* client.read(financeAudience, financeRead);
+    existing = yield* required(
+      `Invoice ${spec.documentNumber}`,
+      yield* uniqueSeedRecord(`Invoice ${spec.documentNumber}`, matching()),
+    );
+    const category = 'Nájemné a služby';
+    yield* requireSeedMatch(
+      `Invoice category ${spec.documentNumber}`,
+      existing.budgetCategory === undefined || existing.budgetCategory === category,
+    );
+    if (existing.budgetCategory === undefined) {
+      yield* client.apply(
+        financeAudience,
+        financeCommand,
+        { _tag: 'SetInvoiceDetails', budgetCategory: category, invoiceRef: existing.ref },
+        snapshot.revision,
+      );
+      snapshot = yield* client.read(financeAudience, financeRead);
+    }
+    const budget = yield* uniqueSeedRecord(
+      `Rental budget ${spec.documentNumber}`,
+      (snapshot.state.budgets ?? []).filter(
+        (line) =>
+          line.period === spec.issueDate.slice(0, 7) &&
+          line.kind === 'REVENUE' &&
+          line.category === category &&
+          line.unitRef?.resourceId === unit.unitRef.resourceId,
+      ),
+    );
+    if (budget === undefined) {
+      yield* client.apply(
+        financeAudience,
+        financeCommand,
+        {
+          _tag: 'UpsertBudgetLine',
+          category,
+          kind: 'REVENUE',
+          period: spec.issueDate.slice(0, 7),
+          plannedMinor: Math.round(existing.totalMinor * 1.05),
+          propertyRef: unit.propertyRef,
+          unitRef: unit.unitRef,
+        },
+        snapshot.revision,
+        [propertyAudience, propertyAudience],
+      );
+    }
   });
 
 const ensureOpportunity = (client: SeedClient, tenant: Customer) =>
@@ -772,12 +907,26 @@ export const seedRentalDemo = (
     yield* client.read(workAudience, WorkRecords);
     yield* client.read(pipelineAudience, Opportunities);
     yield* client.read(financeAudience, financeRead);
+    const asOf = yield* DateTime.nowAsDate;
+    yield* preflightRentalCrmOrders(client, asOf);
     if (!options.apply) {
       return { applied: false, demoSignature: options.demoSignature };
     }
     const properties = new Map<string, Property & { readonly key: string }>();
     for (const spec of rentalStory.properties) {
       properties.set(spec.key, { ...(yield* ensureProperty(client, spec)), key: spec.key });
+    }
+    // Earlier bootstrap properties remain distinct from the rental-story buildings; repair metadata without creating more.
+    const bootstrapProperties = yield* client.read(propertyAudience, propertyRead);
+    for (const record of bootstrapProperties.properties.filter((item) => ['PARK', 'RIVER'].includes(item.code))) {
+      yield* ensureProperty(client, {
+        address: record.address,
+        code: record.code,
+        key: record.code,
+        name: record.name,
+        propertyType: record.code === 'PARK' ? 'Bytový dům' : 'Apartmánový dům',
+        responsiblePerson: propertyResponsiblePerson,
+      });
     }
     const units = new Map<string, Unit & { readonly key: string }>();
     for (const spec of rentalStory.units) {
@@ -797,7 +946,7 @@ export const seedRentalDemo = (
     yield* Console.log(`Tenants ready: ${tenants.size}.`);
     const leases = new Map<
       string,
-      { readonly contract: Contract | undefined; readonly lease: Lease; readonly key: string }
+      { readonly contract: Contract | undefined; readonly key: string; readonly lease: Lease }
     >();
     for (const spec of rentalStory.leases) {
       const unit = yield* byKey('Unit', units, spec.unit);
@@ -805,10 +954,12 @@ export const seedRentalDemo = (
       const lease = yield* ensureLeaseDraft(client, target, spec, unit, tenant);
       const contract = yield* ensureContract(client, target, spec, unit, tenant, lease);
       yield* progressLease(client, spec, lease, contract);
-      if (spec.key === 'r101-kavarna') yield* ensureTenantContacts(client, lease);
+      if (spec.key === 'r101-kavarna') {
+        yield* ensureTenantContacts(client, lease);
+      }
       leases.set(spec.key, { contract, key: spec.key, lease });
       yield* Console.log(
-        `Lease ${spec.key}: ${spec.state}${contract === undefined ? '' : `, contract ${spec.contract?.state}`}.`,
+        `Lease ${spec.key}: ${spec.state}; contract ${contract === undefined ? 'none' : spec.contract?.state}.`,
       );
     }
     for (const spec of rentalStory.tasks) {
@@ -823,7 +974,8 @@ export const seedRentalDemo = (
       }
     }
     yield* Console.log(`Service tasks ready: ${rentalStory.tasks.length}.`);
-    for (const spec of rentalStory.invoices) {
+    const invoices = rentalInvoicePlan(asOf);
+    for (const spec of invoices) {
       const leaseSpec = rentalStory.leases.find((item) => item.key === spec.lease);
       const seeded = leases.get(spec.lease);
       if (leaseSpec !== undefined && seeded !== undefined) {
@@ -838,7 +990,8 @@ export const seedRentalDemo = (
         );
       }
     }
-    yield* Console.log(`Invoice drafts ready: ${rentalStory.invoices.length}.`);
+    yield* Console.log(`Issued rental invoices ready: ${invoices.length}, including paid and overdue receivables.`);
     yield* ensureOpportunity(client, yield* byKey('Tenant', tenants, rentalStory.opportunity.tenant));
+    yield* seedRentalCrmOrders(client, asOf);
     return { applied: true, demoSignature: options.demoSignature };
   });

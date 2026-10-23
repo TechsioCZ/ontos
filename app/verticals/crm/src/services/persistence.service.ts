@@ -1,3 +1,4 @@
+import { agentHistoryPageSql } from '@app/core-runtime/db/agent-history-page';
 // CRM persistence + ACL (owned by crm-scaffold). One JSONB document per (tenant, legal entity), optimistic
 // revision. The viewer (principal + context permissions + salesperson record) is computed here for every read
 // and command; projections and reducers in shared/ enforce it (C00).
@@ -5,7 +6,7 @@ import { ContextAccess, isConnectionWriteAllowed, OperationContextUnavailable } 
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { makeReferenceGatewayCredentialSource } from '@app/gateway-principal-verifier/server';
 import { executeCounterpartyReadWithAuthorization } from '@app/party-registry/api/client';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { DateTime, Effect, Schema } from 'effect';
 
 import {
@@ -55,7 +56,7 @@ const registryUnavailable = (cause?: unknown) =>
   withCause(
     new CrmReferenceUnavailable({
       code: 'crm_reference_unavailable',
-      reason: 'Party Registry je dočasně nedostupný; vazbu na zákazníka teď nelze ověřit',
+      reason: 'Evidence zákazníků je dočasně nedostupná; vazbu na zákazníka teď nelze ověřit',
     }),
     cause,
   );
@@ -89,16 +90,16 @@ export const verifiedPartyOf = (
   today: string,
 ): VerifiedParty | string => {
   if (counterparty.legalEntityRef.resourceId !== legalEntityId) {
-    return 'Zákazník v Party Registry patří jiné firmě';
+    return 'Zákazník v evidenci zákazníků patří jiné firmě';
   }
   if (counterparty.party.archived) {
-    return 'Záznam v Party Registry je archivovaný';
+    return 'Záznam v evidenci zákazníků je archivovaný';
   }
   if (
     counterparty.party.canonicalPartyRef.resourceId !== link.partyId &&
     counterparty.party.storedPartyRef.resourceId !== link.partyId
   ) {
-    return 'Party a Counterparty v Party Registry k sobě nepatří';
+    return 'Údaje o firmě a zákazníkovi k sobě nepatří';
   }
   const customer = counterparty.currentRoles.some(
     (role) =>
@@ -108,7 +109,7 @@ export const verifiedPartyOf = (
       (role.validTo === null || role.validTo.slice(0, 10) > today),
   );
   if (!customer) {
-    return 'Firma nemá v Party Registry platnou roli zákazníka';
+    return 'Firma nemá v evidenci zákazníků platnou roli zákazníka';
   }
   return {
     counterpartyId: link.counterpartyId,
@@ -216,7 +217,7 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
         ).pipe(
           Effect.mapError((failure) =>
             isNotVisible(failure)
-              ? partyIneligible('Zákazník v Party Registry neexistuje nebo k němu nemáte přístup')
+              ? partyIneligible('Zákazník v evidenci zákazníků neexistuje nebo k němu nemáte přístup')
               : registryUnavailable(failure),
           ),
         );
@@ -307,17 +308,39 @@ export const persistenceService = Effect.fn('Crm.persistenceService')(
       const revision = yield* save(expectedRevision, change.state);
       return { entityIds: [...change.entityIds], revision };
     });
-    /** The records read's whole transaction step: the raw state row; {@link finishCrmRecords} decodes it. */
-    const loadRecords = () =>
-      transaction
-        .select({ revision: crmStates.revision, state: crmStates.state })
-        .from(crmStates)
-        .where(whereScope)
-        .limit(1)
-        .pipe(
-          Effect.map(([row]): LoadedCrmRecords => row),
-          Effect.mapError(unavailable),
-        );
+    /** Ordinary records, bounded history, or only the clients needed by the owner review. */
+    const loadRecords = (request: RecordsRequest = {}, reviewClientIds?: readonly string[]) =>
+      Effect.gen(function* loadCrmRecords() {
+        const empty = yield* Schema.encodeEffect(Schema.fromJsonString(CrmStateSchema))(initialCrmState);
+        const historySource = sql`${crmStates.state}->'aiChanges'`;
+        const history =
+          request.agentHistory === undefined
+            ? undefined
+            : agentHistoryPageSql(historySource, 'crm', request.agentHistory);
+        let state =
+          request.agentHistory === undefined
+            ? sql`${crmStates.state}`
+            : sql`(${empty}::jsonb || jsonb_build_object('aiChanges', ${history}))`;
+        if (reviewClientIds !== undefined) {
+          const ids = sql.join(
+            reviewClientIds.map((id) => sql`${id}`),
+            sql`, `,
+          );
+          const target = reviewClientIds.length === 0 ? sql`false` : sql`c->>'id' in (${ids})`;
+          state = sql`(${empty}::jsonb || jsonb_build_object(
+          'clients', (${empty}::jsonb->'clients') || jsonb_build_object('items',
+            coalesce((select jsonb_agg(c) from (select c from jsonb_array_elements(coalesce(${crmStates.state}->'clients'->'items', '[]'::jsonb)) c
+              where ${target} limit ${reviewClientIds.length}) clients), '[]'::jsonb)),
+          'salespeople', coalesce((select jsonb_agg(p) from (select p from jsonb_array_elements(coalesce(${crmStates.state}->'salespeople', '[]'::jsonb)) p
+            where p->>'principalId' = ${scope.principalId} and p->>'active' = 'true' limit 1) people), '[]'::jsonb)))`;
+        }
+        return yield* transaction
+          .select({ revision: crmStates.revision, state })
+          .from(crmStates)
+          .where(whereScope)
+          .limit(1)
+          .pipe(Effect.map(([row]): LoadedCrmRecords => row));
+      }).pipe(Effect.mapError(unavailable));
     return { apply, loadRecords };
   },
   Effect.mapError((cause) =>

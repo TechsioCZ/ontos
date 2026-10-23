@@ -28,9 +28,8 @@ const nextConfig: NextConfig = {
     ],
   },
   reactStrictMode: true,
-  // Product links prefetch their page on intent (StoreLink); a prefetched page is reused for 30 s only, so a
-  // click never shows an older price than that.
-  experimental: { staleTimes: { static: 30 } },
+  // Catalog responses already have a strict ten-second owner-read window. Never extend it in the router.
+  experimental: { staleTimes: { static: 0, dynamic: 0 } },
   async headers() {
     return [
       {

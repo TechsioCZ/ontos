@@ -21,7 +21,7 @@ import {
 } from '../../shared/actions/apply-command.ts';
 import type { ActivityCommand } from '../../shared/actions/apply-command.ts';
 import { RelationshipsStateSchema } from '../../shared/apis/records.ts';
-import type { Activity, EmailObservation, RecordsRequest, RelationshipsState } from '../../shared/apis/records.ts';
+import type { Activity, RecordsRequest, RelationshipsState } from '../../shared/apis/records.ts';
 import { ActivityRefSchema } from '../../shared/resources/activity.ts';
 import { relationshipsStates } from '../database/schema.ts';
 
@@ -262,20 +262,6 @@ export const evolveRelationshipsState = Effect.fn('Relationships.evolveState')(f
   return { activity, state: { ...state, activities: [...state.activities, activity] } };
 });
 
-export const visibleEmailObservations = (
-  observations: readonly EmailObservation[],
-  activities: readonly Activity[],
-): readonly EmailObservation[] =>
-  observations.filter((observation) =>
-    activities.some(
-      ({ ref }) =>
-        ref.moduleId === observation.ownerResourceRef.moduleId &&
-        ref.resourceType === observation.ownerResourceRef.resourceType &&
-        ref.resourceId === observation.ownerResourceRef.resourceId &&
-        ref.tenantId === observation.ownerResourceRef.tenantId,
-    ),
-  );
-
 const ContextGrantSchema = Schema.Literals(['read_all', 'write_all']);
 type ContextGrant = typeof ContextGrantSchema.Type;
 
@@ -387,7 +373,6 @@ export const finishCrmActivitiesRecords = Effect.fn('Relationships.finishRecords
   return {
     actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
     canWrite: grants.writeAll,
-    emailObservations: visibleEmailObservations(snapshot.state.emailObservations, items),
     items,
     revision: snapshot.revision,
   };

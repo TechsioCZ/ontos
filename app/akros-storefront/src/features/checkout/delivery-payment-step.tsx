@@ -106,10 +106,10 @@ export function DeliveryPaymentStep() {
             Platba
           </h2>
           <div className="rounded-sm border border-(--color-border-primary) p-4">
-            <p className="font-bold">Online platba není dostupná</p>
+            <p className="font-bold">Objednávka bez online platby</p>
             <p className="mt-2 text-sm text-(--color-fg-secondary)">
-              OntOS zde nemá platební metodu ani evidenci úhrady. Odesláním vznikne objednávka,
-              nikoli úhrada.
+              Objednávku předáme obchodu k vyřízení. Její stav najdete ve svém účtu. Odesláním
+              objednávky neprovádíte platbu.
             </p>
           </div>
         </section>

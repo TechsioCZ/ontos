@@ -8,7 +8,7 @@
 // Core-queue proposals live in `core.agent_proposals`; approval runs the stored module command (governed Action
 // `<appId>/actions/<actionSlug>`) AS THE APPROVING PERSON, so the module's own permissions and Core audit apply.
 // Modules that keep their own AI change engine (`aiChanges`, declared in their MCP contribution) appear in the same queue.
-import { Schema } from 'effect';
+import { DateTime, Result, Schema } from 'effect';
 
 const ShortText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const LongText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4000));
@@ -199,7 +199,63 @@ export const AgentQueueBatchSchema = Schema.Struct({
 });
 export type AgentQueueBatch = typeof AgentQueueBatchSchema.Type;
 
+export const AgentActivityKindSchema = Schema.Literals(['read', 'write', 'denied', 'failed', 'proposal', 'decision']);
+export type AgentActivityKind = typeof AgentActivityKindSchema.Type;
+
+/** Stable descending keyset shared by the platform and owner history reads. */
+export const AgentPageCursorSchema = Schema.Struct({
+  // Canonical wire position: lexical order must equal chronological order, including milliseconds.
+  at: Schema.String.check(
+    Schema.makeFilter((value) =>
+      Result.match(Schema.decodeResult(Schema.DateTimeUtcFromString)(value), {
+        onFailure: () => 'Invalid UTC cursor',
+        onSuccess: (date) =>
+          DateTime.formatIso(date) === value ? undefined : 'Cursor must use canonical UTC milliseconds',
+      }),
+    ),
+  ),
+  id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(400)),
+});
+export type AgentPageCursor = typeof AgentPageCursorSchema.Type;
+export const AGENT_PAGE_SIZE = 30;
+const ModuleKey = Schema.toEncoded(ShortText.pipe(Schema.brand('ModuleKey')));
+const BatchKey = Schema.toEncoded(ShortText.pipe(Schema.brand('AgentBatchKey')));
+const AgentPrincipalId = Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('AgentPrincipalId')));
+export const AgentQueueRequestSchema = Schema.Struct({
+  batchKey: Schema.optionalKey(BatchKey),
+  cursor: Schema.optionalKey(AgentPageCursorSchema),
+  moduleKey: Schema.optionalKey(ModuleKey),
+  pendingOnly: Schema.optionalKey(Schema.Boolean),
+});
+export type AgentQueueRequest = typeof AgentQueueRequestSchema.Type;
+
+/** Owner records reads use this mode to project only a bounded AI history slice in PostgreSQL. */
+export const AgentHistoryRequestSchema = Schema.Struct({
+  agentPrincipalId: Schema.optionalKey(AgentPrincipalId),
+  batchKey: Schema.optionalKey(BatchKey),
+  cursor: Schema.optionalKey(AgentPageCursorSchema),
+  kind: Schema.optionalKey(AgentActivityKindSchema),
+  mode: Schema.Literals(['queue', 'activity']),
+  pendingOnly: Schema.optionalKey(Schema.Boolean),
+});
+export type AgentHistoryRequest = typeof AgentHistoryRequestSchema.Type;
+
+/** Newest first; identifier breaks timestamp ties deterministically (also in SQL). */
+export const compareAgentPage = (left: AgentPageCursor, right: AgentPageCursor): number => {
+  if (left.at !== right.at) {
+    return left.at < right.at ? 1 : -1;
+  }
+  if (left.id === right.id) {
+    return 0;
+  }
+  return left.id < right.id ? 1 : -1;
+};
+export const afterAgentCursor = (entry: AgentPageCursor, cursor: AgentPageCursor | undefined): boolean =>
+  cursor === undefined || compareAgentPage(entry, cursor) > 0;
+
 export const AgentQueueResponseSchema = Schema.Struct({
+  modules: Schema.optionalKey(Schema.Array(Schema.Struct({ label: Schema.String, moduleKey: ModuleKey }))),
+  nextCursor: Schema.optionalKey(AgentPageCursorSchema),
   /** Newest batch first. */
   batches: Schema.Array(AgentQueueBatchSchema),
   company: Schema.Struct({ legalEntityId: Schema.String, legalName: Schema.String }),
@@ -246,13 +302,11 @@ export type AgentRevertResponse = typeof AgentRevertResponseSchema.Type;
 
 // ------------------------------------------------------------------------------------------------ activity
 
-export const AgentActivityKindSchema = Schema.Literals(['read', 'write', 'denied', 'failed', 'proposal', 'decision']);
-export type AgentActivityKind = typeof AgentActivityKindSchema.Type;
-
 export const AgentActivityRequestSchema = Schema.Struct({
   agentPrincipalId: Schema.optionalKey(Schema.String.check(Schema.isUUID())),
+  cursor: Schema.optionalKey(AgentPageCursorSchema),
   kind: Schema.optionalKey(AgentActivityKindSchema),
-  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ maximum: 300, minimum: 1 }))),
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ maximum: AGENT_PAGE_SIZE, minimum: 1 }))),
   moduleKey: Schema.optionalKey(ShortText),
 });
 export type AgentActivityRequest = typeof AgentActivityRequestSchema.Type;
@@ -260,6 +314,7 @@ export type AgentActivityRequest = typeof AgentActivityRequestSchema.Type;
 export const AgentActivityEntrySchema = Schema.Struct({
   /** Czech, e.g. „Čtení seznamu“, „Zápis změny“, „Návrh změny“, „Schváleno: Jana Nováková“. */
   actionLabel: Schema.String,
+  actionInvocationId: Schema.optionalKey(Schema.String),
   agentName: Schema.String,
   agentPrincipalId: Schema.String,
   detail: Schema.optionalKey(Schema.String),
@@ -281,6 +336,7 @@ export const AgentActivityEntrySchema = Schema.Struct({
 export type AgentActivityEntry = typeof AgentActivityEntrySchema.Type;
 
 export const AgentActivityResponseSchema = Schema.Struct({
+  nextCursor: Schema.optionalKey(AgentPageCursorSchema),
   agents: Schema.Array(Schema.Struct({ name: Schema.String, principalId: Schema.String })),
   entries: Schema.Array(AgentActivityEntrySchema),
   modules: Schema.Array(Schema.Struct({ label: Schema.String, moduleKey: Schema.String })),

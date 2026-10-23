@@ -72,6 +72,14 @@ export const contextPermissionKey = (moduleId: DemoModuleId, access: ModuleAcces
 const moduleReadPermissions = (moduleId: DemoModuleId): readonly string[] =>
   moduleId === 'commerce.customer-context' ? ['customer.group.read'] : [];
 
+/** Native Privacy reads are separate company-scoped grants, not implied by module access. */
+export const privacyReadContextPermissions = [
+  'privacy.processing_catalog.read',
+  'privacy.notice.read',
+  'privacy.subjects.read',
+  'privacy.consent.read',
+] as const;
+
 const everything = {
   'commerce.customer-context': 'write',
   'demo.merchandise': 'write',
@@ -504,12 +512,19 @@ export const eshopDemoRoles = {
     restrictedModules: ['commerce.customer-context'],
   },
   akrosAdmin: {
+    actionKeys: {
+      'privacy.core': ['privacy.core.create-processing-purpose', 'privacy.core.create-notice-version'],
+    },
+    contextPermissions: {
+      'privacy.core': ['privacy.processing_catalog.read', 'privacy.notice.read'],
+    },
     identityAdmin: true,
     label: 'Správce e-shopu',
     modules: {
       'demo.merchandise': 'write',
       'demo.tagging': 'read',
       'party.registry': 'write',
+      'privacy.core': 'read',
       'work.tasks': 'write',
       'demo.workforce': 'write',
     },
@@ -544,6 +559,15 @@ const persona = (key: string, email: string, displayName: string, legalEntityId:
   role,
 });
 
+/** Existing AKROS human administrator: exact company-only Privacy catalog setup operator. */
+export const privacyMarketingOperator = persona(
+  'akros-eshop',
+  'eshop@akros.demo',
+  'Správce e-shopu',
+  akrosDemoLegalEntityId,
+  'akrosAdmin',
+);
+
 /** Human accounts of the CRM and e-shop companies (password `password1234`); each belongs to one company only. */
 export const companyHumanAccounts = [
   persona('hanak-spravce', 'spravce@hanak.demo', 'Karel Hanák', crmDemoLegalEntityId, 'crmAdmin'),
@@ -551,7 +575,7 @@ export const companyHumanAccounts = [
   persona('hanak-obchodnik-a', 'obchodnik.a@hanak.demo', 'Jan Novák', crmDemoLegalEntityId, 'crmRep'),
   persona('hanak-obchodnik-b', 'obchodnik.b@hanak.demo', 'Petra Svobodová', crmDemoLegalEntityId, 'crmRep'),
   persona('kavarna-eshop', 'eshop@kavarna.demo', 'Tereza Malá', eshopDemoLegalEntityId, 'eshopAdmin'),
-  persona('akros-eshop', 'eshop@akros.demo', 'Správce e-shopu', akrosDemoLegalEntityId, 'akrosAdmin'),
+  privacyMarketingOperator,
   persona('akros-expedice', 'expedice@akros.demo', 'Expedice', akrosDemoLegalEntityId, 'fulfilment'),
   persona('kavarna-expedice', 'expedice@kavarna.demo', 'Ondřej Kříž', eshopDemoLegalEntityId, 'fulfilment'),
 ] as const;

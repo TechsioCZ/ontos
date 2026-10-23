@@ -25,7 +25,6 @@ import {
   deviceTypeIcon,
   incidentStateVariant,
   locationText,
-  personaName,
   severityVariant,
   todayPrague,
   useSecurityLabel,
@@ -116,7 +115,9 @@ const SecurityView = () => {
             className={`${deviceTypeIcon(row.original.deviceType)} size-5 shrink-0 text-fg-secondary`}
           />
           <span className="flex min-w-0 flex-col">
-            <span className="truncate font-medium" title={row.original.name}>{row.original.name}</span>
+            <span className="truncate font-medium" title={row.original.name}>
+              {row.original.name}
+            </span>
             <span className="truncate text-fg-secondary text-xs">
               {k(`deviceType.${row.original.deviceType}`)}
               {row.original.serialNumber === undefined ? '' : ` · ${row.original.serialNumber}`}
@@ -129,7 +130,9 @@ const SecurityView = () => {
     },
     {
       cell: ({ row }) => (
-        <span className="line-clamp-2 text-sm">{locationText(row.original, t('facility-operations.common.notProvided'))}</span>
+        <span className="line-clamp-2 text-sm">
+          {locationText(row.original, t('facility-operations.common.notProvided'))}
+        </span>
       ),
       header: k('fields.location'),
       id: 'location',
@@ -181,7 +184,9 @@ const SecurityView = () => {
     },
     {
       cell: ({ row }) => (
-        <span className="truncate text-sm">{row.original.administrator ?? t('facility-operations.common.notProvided')}</span>
+        <span className="truncate text-sm">
+          {row.original.administrator ?? t('facility-operations.common.notProvided')}
+        </span>
       ),
       header: k('fields.administrator'),
       id: 'administrator',
@@ -226,7 +231,6 @@ const SecurityView = () => {
       cell: ({ row }) => (
         <span className="flex flex-col">
           <span>{formatDate(row.original.occurredOn)}</span>
-          <span className="text-fg-secondary text-xs">{personaName(k, row.original.createdBy)}</span>
         </span>
       ),
       header: k('fields.occurredOn'),

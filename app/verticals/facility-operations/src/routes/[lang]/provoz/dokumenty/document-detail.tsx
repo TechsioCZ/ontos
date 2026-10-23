@@ -22,7 +22,6 @@ import {
   formatIsoDate,
   formatWhen,
   SubjectChip,
-  usePrincipalLabel,
 } from '../../../../ui/documents-kit.tsx';
 import { canPreview, DownloadButton, FilePreviewBody, FilePreviewDialog } from '../../../../ui/file-preview.tsx';
 import type { CommandOutcome, FailureReason, useAgendaRecords } from '../../../../ui/use-agenda.ts';
@@ -178,7 +177,9 @@ const SignatureForm = ({
     <div className={`${surfaceTileClassName} flex flex-col gap-150 p-150`}>
       {error !== undefined && (
         <StatusText showIcon status="error">
-          {error === 'required' ? t('facility-operations.common.required') : t(`facility-operations.common.errors.${error}`)}
+          {error === 'required'
+            ? t('facility-operations.common.required')
+            : t(`facility-operations.common.errors.${error}`)}
         </StatusText>
       )}
       <div className="grid grid-cols-1 gap-150 sm:grid-cols-3">
@@ -245,7 +246,6 @@ export const DocumentDetailPanel = ({
   readonly run: (command: OpsCommand) => Promise<CommandOutcome>;
 }) => {
   const { t } = useModernI18n();
-  const principalLabel = usePrincipalLabel();
   const [preview, setPreview] = useState<StoredFileRef | undefined>(undefined);
   const [signing, setSigning] = useState(false);
   const notProvided = t('facility-operations.common.notProvided');
@@ -292,7 +292,7 @@ export const DocumentDetailPanel = ({
             </Badge>
           )}
           <span className="text-fg-secondary text-xs">
-            {t(`${k}.fields.lastChange`)}: {principalLabel(document.updatedBy)} · {formatWhen(document.updatedAt)}
+            {t(`${k}.fields.lastChange`)}: {formatWhen(document.updatedAt)}
           </span>
         </span>
       }
@@ -337,12 +337,12 @@ export const DocumentDetailPanel = ({
                     : `v${current.version} · ${current.file.name} · ${formatBytes(current.file.size)}`,
               },
               {
-                label: t('facility-operations.common.createdBy'),
-                value: `${principalLabel(document.createdBy)} · ${formatWhen(document.createdAt)}`,
+                label: t('facility-operations.common.createdAt'),
+                value: `${formatWhen(document.createdAt)}`,
               },
               {
                 label: t(`${k}.fields.lastChange`),
-                value: `${principalLabel(document.updatedBy)} · ${formatWhen(document.updatedAt)}`,
+                value: `${formatWhen(document.updatedAt)}`,
               },
               ...(document.description === undefined
                 ? []
@@ -461,7 +461,6 @@ export const DocumentDetailPanel = ({
                     <span className="text-fg-secondary text-xs">
                       {t(`${k}.detail.uploadedLine`, {
                         when: formatWhen(version.uploadedAt),
-                        who: principalLabel(version.uploadedBy),
                       })}
                     </span>
                     {version.note !== undefined && <span className="text-xs italic">„{version.note}“</span>}
@@ -504,10 +503,9 @@ export const DocumentDetailPanel = ({
                   value: t(`${k}.detail.versionLabel`, { version: document.signature.version }),
                 },
                 {
-                  label: t('facility-operations.common.createdBy'),
-                  value: t(`${k}.signature.recordedBy`, {
+                  label: t('facility-operations.common.createdAt'),
+                  value: t(`${k}.signature.recordedAt`, {
                     when: formatWhen(document.signature.recordedAt),
-                    who: principalLabel(document.signature.recordedBy),
                   }),
                 },
               ]}

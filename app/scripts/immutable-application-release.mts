@@ -20,8 +20,10 @@ import {
   Effect,
   FileSystem,
   Layer,
+  Match,
   Option,
   Order,
+  Predicate,
   Redacted,
   Runtime,
   Schedule,
@@ -75,6 +77,20 @@ const ImmutableAssetNotReady = Data.TaggedError('ImmutableAssetNotReady')<{
   readonly message: string;
 }>;
 type ImmutableAssetNotReadyError = InstanceType<typeof ImmutableAssetNotReady>;
+
+/**
+ * One asset GET lost to the network rather than answered: a connection reset (before or during the body), a
+ * response that never started within its bound, or a provider 5xx. Answered content — a non-5xx status, headers or
+ * bytes — never is, and a body that stalls after its headers stays bounded by the overall readback deadline.
+ */
+const ImmutableAssetTransientRead = Data.TaggedError('ImmutableAssetTransientRead')<{
+  readonly path: string;
+  readonly transport: string;
+}>;
+/** Bound on one asset GET reaching its response headers. */
+const ASSET_RESPONSE_TIMEOUT = Duration.seconds(10);
+/** GETs of one asset per readback attempt, when the transport rather than the content fails. */
+const ASSET_READ_ATTEMPTS = 3;
 
 const SHELL_APP_ID = 'shell-super-app';
 const NATIVE_ENVELOPE_MISMATCH = 'the native Cloudflare release envelope does not bind the final artifact bytes';
@@ -894,7 +910,11 @@ export const validateImmutableAssetRedirects = Effect.fn('ImmutableApplicationRe
 );
 
 export const verifyRetainedPublicAsset = Effect.fn('ImmutableApplicationRelease.assetReadback')(
-  function* verifyRetainedPublicAssetEffect(plan: ImmutableApplicationReleasePlan, file: ReleaseFile) {
+  function* verifyRetainedPublicAssetEffect(
+    plan: ImmutableApplicationReleasePlan,
+    file: ReleaseFile,
+    mode: 'new-upload' | 'retained-release' = 'new-upload',
+  ) {
     const client = yield* HttpClient.HttpClient;
     const encodedPath = file.path.split('/').map(encodeURIComponent).join('/');
     const url = `${plan.assetsOrigin}${encodedPath}`;
@@ -902,7 +922,19 @@ export const verifyRetainedPublicAsset = Effect.fn('ImmutableApplicationRelease.
     let lastNotReady: ImmutableAssetNotReadyError | null = null;
     const attempt = Effect.scoped(
       Effect.gen(function* readRetainedPublicAssetAttempt() {
-        const response = yield* client.get(url);
+        const response = yield* client.get(url).pipe(
+          Effect.timeoutOrElse({
+            duration: ASSET_RESPONSE_TIMEOUT,
+            orElse: () => Effect.fail(new ImmutableAssetTransientRead({ path: file.path, transport: 'timeout' })),
+          }),
+        );
+        if (response.status >= 500) {
+          yield* response.stream.pipe(Stream.runDrain, Effect.ignore);
+          return yield* new ImmutableAssetTransientRead({
+            path: file.path,
+            transport: `HTTP ${String(response.status)}`,
+          });
+        }
         if (response.status === 404) {
           yield* response.stream.pipe(Stream.runDrain);
           return false;
@@ -972,6 +1004,27 @@ export const verifyRetainedPublicAsset = Effect.fn('ImmutableApplicationRelease.
         return true;
       }),
     ).pipe(
+      Effect.catchTag('HttpClientError', (failure) =>
+        Match.value(failure.reason).pipe(
+          Match.tag('TransportError', 'DecodeError', ({ _tag }) =>
+            Effect.fail(new ImmutableAssetTransientRead({ path: file.path, transport: _tag })),
+          ),
+          Match.orElse(() => Effect.fail(failure)),
+        ),
+      ),
+      Effect.retry({
+        schedule: Schedule.exponential('1 second'),
+        times: ASSET_READ_ATTEMPTS - 1,
+        while: Predicate.isTagged('ImmutableAssetTransientRead'),
+      }),
+      Effect.catchTag('ImmutableAssetTransientRead', ({ path: assetPath, transport }) =>
+        Effect.fail(
+          fail('the immutable public asset could not be read on any bounded transport attempt', {
+            path: assetPath,
+            transport,
+          }),
+        ),
+      ),
       Effect.catchTag('ImmutableAssetNotReady', (cause) => {
         lastNotReady = cause;
         return Effect.succeed(false);
@@ -979,8 +1032,12 @@ export const verifyRetainedPublicAsset = Effect.fn('ImmutableApplicationRelease.
     );
     return yield* Effect.gen(function* awaitRetainedPublicAssetBytes() {
       while (!(yield* attempt)) {
+        if (mode === 'retained-release') {
+          return yield* fail('the retained immutable public asset does not match this build');
+        }
         yield* Effect.sleep(Duration.seconds(1));
       }
+      return yield* Effect.void;
     }).pipe(
       Effect.timeout(Duration.seconds(30)),
       Effect.catchTag('TimeoutError', (cause) =>
@@ -1249,8 +1306,11 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
       (suffix) => statusOnly(HttpClientRequest.get(apiUrl(suffix))),
       { concurrency: 'unbounded' },
     );
+    // A failed-job rerun may find the complete release uploaded by its earlier attempt. Never
+    // overwrite either identity: reuse only after the same full package and asset readback below.
+    const reuseExisting = absence.every((current) => current.status === 200);
     for (const current of absence) {
-      if (current.status !== 404) {
+      if (!reuseExisting && current.status !== 404) {
         return yield* fail(
           current.status === 200
             ? 'an immutable release identity already exists; publication must never overwrite it'
@@ -1301,16 +1361,18 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
         immutableAssetsWranglerConfig(plan, deployedAssetsDirectory, wrangler.compatibility_date),
       ),
     );
-    const deploy = (configFile: string, extra: readonly string[]) =>
-      classifyTransientUpload(
-        runCommand({
-          args: ['exec', 'wrangler', 'deploy', '--config', configFile, ...extra],
-          classifyTransientProviderFailure: true,
-          command: 'pnpm',
-          cwd: input.appDirectory,
-          env: { CLOUDFLARE_ACCOUNT_ID: Redacted.make(accountId), CLOUDFLARE_API_TOKEN: apiToken },
-        }),
-      );
+    const deploy = (configFile: string, extra: readonly string[]) => {
+      const command = runCommand({
+        args: ['exec', 'wrangler', 'deploy', '--config', configFile, ...extra],
+        classifyTransientProviderFailure: !reuseExisting,
+        command: 'pnpm',
+        cwd: input.appDirectory,
+        env: { CLOUDFLARE_ACCOUNT_ID: Redacted.make(accountId), CLOUDFLARE_API_TOKEN: apiToken },
+      });
+      // Existing identities are not owned by this attempt. Even a transient packaging failure
+      // must never enter the upload retry's half-release deletion path.
+      return reuseExisting ? command : classifyTransientUpload(command);
+    };
     const packageDirectory = yield* fileSystem.makeTempDirectoryScoped({
       prefix: 'ontos-immutable-package-',
     });
@@ -1362,23 +1424,28 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
     // The secrets travel with the one backend upload, so the release has a single version that already
     // holds them. The file lives outside the checkout and is removed when the upload scope closes.
     const secretsArguments: string[] = [];
-    if (Object.keys(secrets).length > 0) {
+    if (!reuseExisting && Object.keys(secrets).length > 0) {
       const secretsFile = yield* fileSystem.makeTempFileScoped({ prefix: 'ontos-release-secrets-', suffix: '.json' });
       yield* fileSystem.chmod(secretsFile, 0o600);
-      yield* fileSystem.writeFileString(secretsFile, JSON.stringify(secrets));
+      yield* fileSystem.writeFileString(
+        secretsFile,
+        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Record(Schema.String, Schema.String)))(secrets),
+      );
       secretsArguments.push('--secrets-file', secretsFile);
     }
     yield* markPhase('verify upload package');
-    yield* deploy(backendConfig, ['--no-bundle', ...secretsArguments]);
-    yield* markPhase('backend upload with secrets');
-    yield* deployImmutableAssets({
-      accountId,
-      appDirectory: input.appDirectory,
-      configFile: assetsConfig,
-      plan,
-      token: apiToken,
-    });
-    yield* markPhase('assets upload');
+    if (!reuseExisting) {
+      yield* deploy(backendConfig, ['--no-bundle', ...secretsArguments]);
+      yield* markPhase('backend upload with secrets');
+      yield* deployImmutableAssets({
+        accountId,
+        appDirectory: input.appDirectory,
+        configFile: assetsConfig,
+        plan,
+        token: apiToken,
+      });
+      yield* markPhase('assets upload');
+    }
     // The read-backs are independent, so they run side by side; any failure still fails the release.
     const [installed, subdomain, installedContent] = yield* Effect.all(
       [
@@ -1416,7 +1483,7 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
       [
         Effect.forEach(
           assets.filter((file) => !['_headers', '_redirects', '.assetsignore'].includes(file.path)),
-          (file) => verifyRetainedPublicAsset(plan, file),
+          (file) => verifyRetainedPublicAsset(plan, file, reuseExisting ? 'retained-release' : 'new-upload'),
           { concurrency: 16 },
         ),
         readRetainedImmutableWorkerVersion(accountId, apiToken, plan.backendScriptName),
@@ -1601,25 +1668,8 @@ const executableLayer = Layer.effectDiscard(Command.run(command, { version: '1.0
 const exitWhenCommandCompletes: Runtime.Teardown = (exit, onExit) => {
   Runtime.defaultTeardown(exit, (code) => {
     onExit(code);
-    // Names what would still have held the event loop open (diagnostic for the 58 s exit delay).
-    const handles = (process as unknown as { _getActiveHandles?: () => unknown[] })._getActiveHandles?.() ?? [];
-    const described = handles.map((handle) => {
-      const value = handle as {
-        constructor?: { name?: string };
-        remoteAddress?: string;
-        remotePort?: number;
-        spawnargs?: string[];
-        pid?: number;
-      };
-      const kind = value.constructor?.name ?? typeof handle;
-      if (value.remoteAddress !== undefined) return `${kind} ${value.remoteAddress}:${String(value.remotePort)}`;
-      if (value.spawnargs !== undefined)
-        return `${kind} pid ${String(value.pid)} ${value.spawnargs.join(' ').slice(0, 120)}`;
-      return kind;
-    });
-    process.stderr.write(
-      `release CLI exit ${String(code)}: open resources ${JSON.stringify(process.getActiveResourcesInfo())} handles ${JSON.stringify(described)}\n`,
-    );
+    // Scope finalizers have completed before this executable teardown is called.
+    // oxlint-disable-next-line effect-native/no-process-exit-outside-script-entry -- Native executable teardown after Scope closure; expires: 2027-03-31.
     process.exit(code);
   });
 };

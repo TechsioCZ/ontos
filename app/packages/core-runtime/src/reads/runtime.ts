@@ -14,6 +14,7 @@ import { installOperationalScope, installOperationalScopeAt } from '../db/scoped
 import type { CoreTransaction } from '../db/types.ts';
 import {
   lockApplicationCompositionAuthority,
+  lockApplicationCompositionReadScope,
   precheckApplicationCompositionAdmission,
 } from '../modules/application-composition-authority.ts';
 import type { ModuleEntrypointDescriptor } from '../modules/module-entrypoint.ts';
@@ -67,6 +68,7 @@ import {
 } from './definition.ts';
 import type { ReadCoreError } from './errors.ts';
 import {
+  ReadEvidenceValidationError,
   ReadHandlerExecutionError,
   ReadHandlerNotFound,
   ReadHandlerUnavailable,
@@ -79,6 +81,9 @@ import {
 } from './errors.ts';
 import { persistReadEvidence } from './repository.ts';
 import type { PersistReadEvidenceInput } from './repository.ts';
+import { observeReadPhase } from './diagnostics.ts';
+import type { ReadPhase, ReadTiming } from './diagnostics.ts';
+import type { Ref } from 'effect';
 
 const withOptionalProperty = <
   const Base extends object,
@@ -1136,6 +1141,29 @@ const checkResultPermissions = Effect.fn('ReadRuntime.checkResultPermissions')(f
   return yield* Effect.void;
 });
 
+/** Callers explicitly distinguish encoded ingress from framework-decoded domain values. */
+type ReadRuntimeInput<InputSchema extends Schema.ConstraintDecoder<unknown>> =
+  | {
+      readonly decodedInput?: never;
+      readonly input: unknown;
+      readonly inputFormat?: 'encoded';
+    }
+  | {
+      readonly decodedInput: InputSchema['Type'];
+      readonly input?: never;
+      readonly inputFormat: 'decoded';
+    };
+
+const decodeReadRuntimeInput = <InputSchema extends Schema.ConstraintDecoder<unknown>>(
+  schema: InputSchema,
+  input: ReadRuntimeInput<InputSchema>,
+) => {
+  const decoded = input.inputFormat === 'decoded';
+  return Schema.decodeUnknownEffect(decoded ? Schema.toType(schema) : schema, {
+    onExcessProperty: 'error',
+  })(decoded ? input.decodedInput : input.input);
+};
+
 const readRuntimeFromDependencies = <
   DatabaseValue extends (typeof CoreDatabase)['Service'],
   GatewayValue extends ModuleEntrypointGatewayService,
@@ -1162,25 +1190,27 @@ const readRuntimeFromDependencies = <
     DomainErrorSchema extends Schema.ConstraintDecoder<{
       readonly _tag: string;
     }>,
-  >(input: {
-    /** Trusted receiving deployment audience for per-operation admission. */
-    readonly audience?: string;
-    readonly input: unknown;
-    readonly principal: unknown;
-    readonly registration: ReadRegistration<
-      InputSchema,
-      ResultSchema,
-      Owner,
-      Services,
-      HandlerError,
-      Requirements,
-      DomainErrorSchema
-    >;
-    readonly transport: unknown;
-  }): Effect.fn.Return<ResultSchema['Type'], ReadCoreError | DomainErrorSchema['Type'], Requirements> {
-    const decodedInput = yield* Schema.decodeUnknownEffect(input.registration.descriptor.inputSchema, {
-      onExcessProperty: 'error',
-    })(input.input).pipe(
+  >(
+    input: {
+      /** Trusted receiving deployment audience for per-operation admission. */
+      readonly audience?: string;
+      readonly principal: unknown;
+      readonly registration: ReadRegistration<
+        InputSchema,
+        ResultSchema,
+        Owner,
+        Services,
+        HandlerError,
+        Requirements,
+        DomainErrorSchema
+      >;
+      /** Request-owned timing collector; never derived from the read payload. */
+      readonly timings?: Ref.Ref<readonly ReadTiming[]>;
+      readonly transport: unknown;
+    } & ReadRuntimeInput<InputSchema>,
+  ): Effect.fn.Return<ResultSchema['Type'], ReadCoreError | DomainErrorSchema['Type'], Requirements> {
+    const observe = (phase: ReadPhase) => observeReadPhase(phase, input.timings);
+    const decodedInput = yield* decodeReadRuntimeInput(input.registration.descriptor.inputSchema, input).pipe(
       Effect.mapError((parseIssue) =>
         preserveFailureCause(
           new ReadInputValidationError({
@@ -1272,22 +1302,16 @@ const readRuntimeFromDependencies = <
         }),
         cause,
       );
-    const admittedTransaction = <Value, Failure, Environment>(
+    const readTransaction = <Value, Failure, Environment>(
       body: (transaction: CoreTransaction) => Effect.Effect<Value, Failure, Environment>,
     ) =>
       database.executor
-        .transaction(
-          Effect.fn('ReadRuntime.admittedTransaction')(function* admittedTransactionBody(transaction: CoreTransaction) {
-            if (compositionRevision !== undefined) {
-              yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'read').pipe(
-                Effect.mapError(compositionNoLongerAdmits),
-              );
-            }
-            // Between BEGIN and COMMIT nothing reaches SpiceDB, a module, the network, or a second pooled connection.
-            return yield* body(transaction).pipe(insideDatabaseTransaction(input.registration.descriptor.readKey));
-          }),
+        .transaction((transaction) =>
+          // Between BEGIN and COMMIT nothing reaches SpiceDB, a module, the network, or a second pooled connection.
+          body(transaction).pipe(insideDatabaseTransaction(input.registration.descriptor.readKey)),
         )
         .pipe(
+          observe('read-transaction'),
           Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
           Effect.tapError((failure) =>
             Schema.is(SqlError)(failure)
@@ -1307,6 +1331,21 @@ const readRuntimeFromDependencies = <
           ),
         );
 
+    const admittedTransaction = <Value, Failure, Environment>(
+      body: (transaction: CoreTransaction) => Effect.Effect<Value, Failure, Environment>,
+    ) =>
+      readTransaction(
+        Effect.fn('ReadRuntime.admittedTransaction')(function* admittedTransactionBody(transaction: CoreTransaction) {
+          if (compositionRevision !== undefined) {
+            yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'read').pipe(
+              Effect.mapError(compositionNoLongerAdmits),
+              observe('read-authority'),
+            );
+          }
+          return yield* body(transaction);
+        }),
+      );
+
     /** A definite denial is recorded only while the composition still admits this Read. */
     const recordDenial = (evidence: PersistReadEvidenceInput, failure: ReadPermissionDenied | ReadPolicyDenied) =>
       admittedTransaction((transaction) => persistReadEvidence(transaction, evidence)).pipe(
@@ -1317,6 +1356,7 @@ const readRuntimeFromDependencies = <
     if (compositionRevision !== undefined) {
       yield* precheckApplicationCompositionAdmission(database.executor, compositionRevision, 'read').pipe(
         Effect.mapError(compositionNoLongerAdmits),
+        observe('read-admission'),
       );
     }
     // Revalidate scope, fetch module state, and check the static module permission independently.
@@ -1342,10 +1382,14 @@ const readRuntimeFromDependencies = <
     );
     const [scope, snapshotExit, moduleAccessPrefetch] = yield* Effect.all(
       [
-        resolveScope,
+        resolveScope.pipe(observe('read-scope')),
         // Preserve scope-validation failure precedence; consume a snapshot failure only after scope succeeds.
-        Effect.exit(gateway.prepareSnapshot(principal, [input.registration.descriptor.entrypoint])),
-        prefetchEntrypointModuleAccess(contextAccess, principal, input.registration.descriptor.entrypoint),
+        Effect.exit(
+          gateway.prepareSnapshot(principal, [input.registration.descriptor.entrypoint]).pipe(observe('read-module')),
+        ),
+        prefetchEntrypointModuleAccess(contextAccess, principal, input.registration.descriptor.entrypoint).pipe(
+          observe('read-permission'),
+        ),
       ],
       { concurrency: 3 },
     );
@@ -1555,12 +1599,17 @@ const readRuntimeFromDependencies = <
           ),
         ],
         { concurrency: 2 },
-      );
+      ).pipe(observe('read-prepare'));
       // Owner work: the transaction holds only the scope installation, owner authorization state, and `load`.
       // Remote I/O and a second pooled connection refuse to run inside it (`insideDatabaseTransaction`).
-      const finishOwner = yield* admittedTransaction(
+      const finishOwner = yield* readTransaction(
         Effect.fn('ReadRuntime.readTransactionBody')(function* readTransactionBody(transaction: CoreTransaction) {
-          const { operationAt, scoped } = yield* installOperationalScopeAt(transaction, scope);
+          const { operationAt, scoped } = yield* compositionRevision === undefined
+            ? installOperationalScopeAt(transaction, scope).pipe(observe('read-rls'))
+            : lockApplicationCompositionReadScope(transaction, compositionRevision, scope).pipe(
+                Effect.mapError(compositionNoLongerAdmits),
+                observe('read-authority'),
+              );
           stage('scope_installed');
           const ownerAuthorizationDecision = yield* ownerAuthorizationCheck(scoped, operationAt);
           if (ownerAuthorizationDecision === 'denied') {
@@ -1576,7 +1625,7 @@ const readRuntimeFromDependencies = <
             });
           }
           const services = yield* getReadServiceFactory(input.registration)(scoped, scope, compositionRevision);
-          const finish = yield* loadWith(services).pipe(sanitizeOwnerFailure);
+          const finish = yield* loadWith(services).pipe(sanitizeOwnerFailure, observe('read-owner'));
           stage('handler_executed');
           // @effect-diagnostics-next-line returnEffectInGen:off -- The after-commit step leaves the transaction unevaluated.
           return finish;
@@ -1596,6 +1645,7 @@ const readRuntimeFromDependencies = <
             parseIssue,
           ),
         ),
+        observe('read-validation'),
       );
       stage('result_decoded');
       const resultPermissionResolver = getReadResultPermissionTargetResolver(input.registration);
@@ -1606,13 +1656,36 @@ const readRuntimeFromDependencies = <
         input.registration.descriptor.evidencePolicy.captureMode,
         handlerResult.evidence,
       );
+      const ownerResource = evidence.targetResource;
+      if (
+        ownerResource !== undefined &&
+        ((permissionTargetMetadata.targetResourceId !== undefined &&
+          permissionTargetMetadata.targetResourceId !== ownerResource.resourceId) ||
+          (permissionTargetMetadata.targetResourceType !== undefined &&
+            permissionTargetMetadata.targetResourceType !== ownerResource.resourceType) ||
+          (permissionTargetMetadata.targetModuleKey !== undefined &&
+            permissionTargetMetadata.targetModuleKey !== input.registration.descriptor.owningModuleKey))
+      ) {
+        return yield* new ReadEvidenceValidationError({
+          code: 'read_evidence_invalid',
+          reason: 'Owner read evidence conflicts with the declared resource target',
+        });
+      }
+      const evidenceTarget =
+        ownerResource === undefined
+          ? permissionTargetMetadata
+          : {
+              targetModuleKey: input.registration.descriptor.owningModuleKey,
+              targetResourceId: ownerResource.resourceId,
+              targetResourceType: ownerResource.resourceType,
+            };
       yield* persistReadEvidence(
         database.executor,
         withOptionalProperty(
           withOptionalProperty(
             withOptionalProperty(
               {
-                accessKind: input.registration.descriptor.accessKind,
+                accessKind: ownerResource === undefined ? input.registration.descriptor.accessKind : 'detail',
                 captureMode: input.registration.descriptor.evidencePolicy.captureMode,
                 outcome: 'allowed',
                 outcomeCode: 'read_allowed',
@@ -1638,10 +1711,10 @@ const readRuntimeFromDependencies = <
           {
             scope,
             servingModuleKey: input.registration.descriptor.owningModuleKey,
-            ...permissionTargetMetadata,
+            ...evidenceTarget,
           },
         ),
-      );
+      ).pipe(observe('read-audit'));
       stage('evidence_persisted');
       return result;
     });

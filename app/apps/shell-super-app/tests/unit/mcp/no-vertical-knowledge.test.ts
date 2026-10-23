@@ -18,6 +18,7 @@ import {
   rentalDemoCompany,
 } from '@app/core-runtime/demo-company-profiles';
 import { expect, it } from '@rstest/core';
+import { parseSync } from 'oxc-parser';
 
 const appRoot = fileURLToPath(new URL('../../../../../', import.meta.url));
 const verticalsRoot = path.join(appRoot, 'verticals');
@@ -74,7 +75,9 @@ const filesOf = (relative: string): string[] => {
     .map((entry) => path.join(absolute, String(entry)))
     .filter(
       (file) =>
-        /\.(?:mts|ts|tsx)$/u.test(file) && !file.includes(`${path.sep}node_modules${path.sep}`) && statSync(file).isFile(),
+        /\.(?:mts|ts|tsx)$/u.test(file) &&
+        !file.includes(`${path.sep}node_modules${path.sep}`) &&
+        statSync(file).isFile(),
     )
     .filter((file) => !isException(file));
 };
@@ -92,6 +95,30 @@ const companyPatterns = companies.flatMap(({ legalEntityId, legalName }) => {
     { id: `${legalEntityId} suffix`, pattern: new RegExp(`['"\`]0+${escape(significant)}['"\`]`, 'u') },
     { id: legalName, pattern: new RegExp(`(?<![\\p{L}\\p{N}])${escape(baseName(legalName))}(?![\\p{L}\\p{N}])`, 'u') },
   ];
+});
+
+it('keeps runtime browser imports out of server implementation modules', () => {
+  const apiRoot = path.join(appRoot, 'apps/shell-super-app/api');
+  const hits = filesOf('apps/shell-super-app/src').flatMap((file) =>
+    parseSync(file, readFileSync(file, 'utf-8')).program.body.flatMap((statement) => {
+      if (
+        statement.type !== 'ImportDeclaration' ||
+        statement.importKind === 'type' ||
+        !statement.source.value.startsWith('.') ||
+        (statement.specifiers.length > 0 &&
+          statement.specifiers.every(
+            (specifier) => specifier.type === 'ImportSpecifier' && specifier.importKind === 'type',
+          ))
+      ) {
+        return [];
+      }
+      const target = path.resolve(path.dirname(file), statement.source.value);
+      return target.startsWith(`${apiRoot}${path.sep}`) && target !== path.join(apiRoot, 'index.ts')
+        ? [`${path.relative(appRoot, file)} imports ${path.relative(appRoot, target)}`]
+        : [];
+    }),
+  );
+  expect(hits).toEqual([]);
 });
 
 it('finds the verticals of this workspace', () => {

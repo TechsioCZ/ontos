@@ -31,10 +31,9 @@ export type CommercePortalAuthPasswordResetBoundary = Schema.Codec.Encoded<
   typeof CommercePortalAuthPasswordResetSchema
 >;
 
-/** Email verification requests are authorized for one exact provider subject and email pair. */
+/** Public resend names an address only; provider identity comes exclusively from its native callback. */
 export const CommercePortalAuthEmailVerificationRequestSchema = Schema.Struct({
   email,
-  providerSubjectId: CommercePortalAuthProviderSubjectIdSchema,
 });
 export type CommercePortalAuthEmailVerificationRequestBoundary = Schema.Codec.Encoded<
   typeof CommercePortalAuthEmailVerificationRequestSchema

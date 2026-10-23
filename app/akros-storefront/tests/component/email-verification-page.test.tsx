@@ -45,6 +45,7 @@ async function landing(stav?: string | string[]) {
 it("explains successful verification in Czech and offers the real login page", async () => {
   await landing("overeno");
   expect(screen.getByRole("heading", { name: "E-mail byl ověřen" })).toBeTruthy();
+  expect(screen.queryByRole("button", { name: "Poslat ověřovací e-mail znovu" })).toBeNull();
   expect(screen.getByRole("status").textContent).toContain("Nyní se můžete přihlásit");
   expect(screen.getByRole("link", { name: "Přejít k přihlášení" }).getAttribute("href")).toBe(
     "/prihlaseni",
@@ -57,6 +58,7 @@ it.each([undefined, "neplatne", "unknown", ["overeno", "neplatne"]])(
     await landing(status);
     expect(screen.getByRole("heading", { name: "E-mail nebyl ověřen" })).toBeTruthy();
     expect(screen.getByRole("status").textContent).toContain("platnost vypršela");
+    expect(screen.getByRole("button", { name: "Poslat ověřovací e-mail znovu" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Kontaktovat podporu" }).getAttribute("href")).toBe(
       "/kontakty",
     );

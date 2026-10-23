@@ -256,3 +256,78 @@ it.effect('uses stable bounded distinct provider names even for the longest rele
     expect(assets.length).toBe(63);
   }),
 );
+
+it.effect('forwards only exact reviewed realm cookies to the declaring owner, route and method', () =>
+  Effect.gen(function* reviewedCredentialTransport() {
+    const declared = {
+      ...contract,
+      manifest: {
+        ...contract.manifest,
+        publicSurface: {
+          ...contract.manifest.publicSurface,
+          apiCookieTransport: [
+            {
+              cookieNames: ['example-portal.session_token', '__Secure-example-portal.session_token'],
+              realmPrefix: 'example-portal',
+              routes: [{ method: 'GET', path: '/api/customer-account' }],
+            },
+          ],
+        },
+      },
+    };
+    const otherOwner = {
+      ...contract,
+      deployment: { appId: 'other-registry', buildMarker },
+      manifest: { ...contract.manifest, module: { ...contract.manifest.module, id: 'other.registry' } },
+    };
+    const snapshot = yield* makeCompositionSnapshot([declared, otherOwner]);
+    const cookies =
+      'better-auth.session_token=staff; __Secure-better-auth.session_token=secure-staff; another-portal.session_token=foreign; example-portal.session_token=signed%2Bvalue; example-portal.session_data=cache; __Secure-example-portal.session_token=secure%2Fvalue; random=value';
+    const admittedRequest = (path: string, method = 'GET') =>
+      new Request(requestFor(snapshot.composition.revision, `${appId}/${buildMarker}/${appId}-api${path}`), {
+        headers: { cookie: cookies, [MODULE_API_REVISION_HEADER]: snapshot.composition.revision },
+        method,
+      });
+    const accepted = yield* admitModuleApiRequest(admittedRequest('/api/customer-account'), snapshot.composition);
+    expect(accepted.forwardedRequest.headers.get('cookie')).toBe(
+      'example-portal.session_token=signed%2Bvalue; __Secure-example-portal.session_token=secure%2Fvalue',
+    );
+    for (const [path, method] of [
+      ['/api/customer-account', 'POST'],
+      ['/api/customer-account/extra', 'GET'],
+      ['/api/customer-account-other', 'GET'],
+      ['/api/resend-verification', 'GET'],
+    ] as const) {
+      const denied = yield* admitModuleApiRequest(admittedRequest(path, method), snapshot.composition);
+      expect(denied.forwardedRequest.headers.get('cookie')).toBeNull();
+    }
+    const otherOwnerRequest = new Request(
+      requestFor(
+        snapshot.composition.revision,
+        `other-registry/${buildMarker}/other-registry-api/api/customer-account`,
+      ),
+      {
+        headers: { cookie: cookies, [MODULE_API_REVISION_HEADER]: snapshot.composition.revision },
+      },
+    );
+    const isolated = yield* admitModuleApiRequest(otherOwnerRequest, snapshot.composition);
+    expect(isolated.forwardedRequest.headers.get('cookie')).toBeNull();
+    const noDeclaration = yield* makeCompositionSnapshot([contract]);
+    const undeclaredRequest = new Request(requestFor(noDeclaration.composition.revision), {
+      headers: { cookie: cookies, [MODULE_API_REVISION_HEADER]: noDeclaration.composition.revision },
+    });
+    const absent = yield* admitModuleApiRequest(undeclaredRequest, noDeclaration.composition);
+    expect(absent.forwardedRequest.headers.get('cookie')).toBeNull();
+    const duplicate = new Request(admittedRequest('/api/customer-account'), {
+      headers: {
+        cookie: 'example-portal.session_token=first; example-portal.session_token=second',
+        [MODULE_API_REVISION_HEADER]: snapshot.composition.revision,
+      },
+    });
+    expect((yield* admitModuleApiRequest(duplicate, snapshot.composition).pipe(Effect.flip)).status).toBe(400);
+    const nominated = new Request(admittedRequest('/api/customer-account'), {
+      headers: { connection: 'cookie', cookie: cookies, [MODULE_API_REVISION_HEADER]: snapshot.composition.revision },
+    });
+    expect((yield* admitModuleApiRequest(nominated, snapshot.composition).pipe(Effect.flip)).status).toBe(400);
+  }),
+);

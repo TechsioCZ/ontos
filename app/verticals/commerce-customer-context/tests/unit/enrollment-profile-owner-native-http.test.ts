@@ -4,6 +4,8 @@ import { ConfigProvider, DateTime, Effect, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 import { expect, it } from 'effect-rstest';
 
+import { EnrollmentCommandRecoveryInputSchema } from '../../shared/enrollment-command-recovery-api.ts';
+import type { EnrollmentCommandRecoveryResultSchema } from '../../shared/enrollment-command-recovery-api.ts';
 import { EnsureRetailCustomerProfilePayloadSchema } from '../../shared/actions/ensure-retail-customer-profile.ts';
 import { BindRetailPortalProfilePayloadSchema } from '../../shared/actions/bind-retail-portal-profile.ts';
 import {
@@ -11,6 +13,7 @@ import {
   RETAIL_PORTAL_SELF_SERVICE_BASELINE,
 } from '../../shared/domain/profile-contracts.ts';
 import {
+  resolveRetailOwnerCommand,
   retailCustomerProfileActionExecutor,
   retailPortalBindingActionExecutor,
 } from '../../src/enrollment/journeys/retail-self-enrollment-profile-owners.ts';
@@ -103,6 +106,7 @@ const bindingPayload = Schema.decodeSync(BindRetailPortalProfilePayloadSchema)({
 
 const NativeRequestPayloadSchema = Schema.Union([
   GatewayContextRequestSchema,
+  EnrollmentCommandRecoveryInputSchema,
   EnsureRetailCustomerProfilePayloadSchema,
   BindRetailPortalProfilePayloadSchema,
 ]);
@@ -143,7 +147,8 @@ const IssuanceModeSchema = Schema.Literals([
 ]);
 type IssuanceMode = typeof IssuanceModeSchema.Type;
 
-const nativeOwnerServer = (mode: IssuanceMode) =>
+type RecoveryState = (typeof EnrollmentCommandRecoveryResultSchema.Type)['state'];
+const nativeOwnerServer = (mode: IssuanceMode, recoveryState: RecoveryState = 'RETRYABLE') =>
   Effect.sync(() => {
     const requests: CapturedRequest[] = [];
     const nativeFetch: typeof fetch = (input, init) => {
@@ -170,6 +175,17 @@ const nativeOwnerServer = (mode: IssuanceMode) =>
                 expiresAt: 1_800_000_300,
                 token: issuedAssertion(mode),
               });
+        }
+        if (path.endsWith('/api/enrollment/commands/resolve')) {
+          return Response.json(
+            recoveryState === 'NOT_STARTED'
+              ? { retryCommand: true, state: recoveryState }
+              : {
+                  invocationId: '90000000-0000-4000-8000-000000000001',
+                  retryCommand: recoveryState === 'RETRYABLE',
+                  state: recoveryState,
+                },
+          );
         }
         if (path.endsWith('/ensure-retail-customer-profile')) {
           return Response.json({ outcome: 'PROFILE_CREATED', profileRef, revision: 1, state: 'ACTIVE' });
@@ -289,3 +305,29 @@ it.effect('pins enrollment revision, tenant, Legal Entity and correlation before
     expect(server.requests[1]?.headers.get('x-correlation-id')).toBe(requestCorrelation);
   }).pipe(Effect.provide(FetchHttpClient.layer), Effect.scoped),
 );
+
+for (const state of ['NOT_STARTED', 'RETRYABLE', 'RUNNING', 'COMMITTED', 'REJECTED'] as const) {
+  it.effect(`projects ${state} over exact selected-release owner recovery without dispatch`, () =>
+    Effect.gen(function* scheduledNativeRecovery() {
+      const server = yield* nativeOwnerServer('current', state);
+      const payload = {
+        actionKey: 'commerce.customer-context.bind-retail-portal-profile' as const,
+        idempotencyKey: 'original-owner-invocation',
+      };
+      const outcome = yield* resolveRetailOwnerCommand(
+        { compositionRevision: revision, legalEntityId, requestCorrelation, tenantId },
+        payload,
+      ).pipe(
+        Effect.provide(configured(server.baseUrl)),
+        Effect.provideService(FetchHttpClient.Fetch, server.nativeFetch),
+      );
+      expect(outcome.state).toBe(state);
+      expect(outcome.retryCommand).toBe(state === 'NOT_STARTED' || state === 'RETRYABLE');
+      expect(server.requests).toHaveLength(2);
+      expect(server.requests[1]?.path).toBe('/selected-owner-api/api/enrollment/commands/resolve');
+      expect(server.requests[1]?.payload).toEqual(payload);
+      expect(server.requests[1]?.headers.get('x-ontos-composition-revision')).toBe(revision);
+      expect(server.requests[1]?.headers.has('idempotency-key')).toBe(false);
+    }),
+  );
+}

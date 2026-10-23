@@ -1,5 +1,5 @@
 /* oxlint-disable anti-slop/no-unknown-parameters -- The HTTP mapper is a schema-decoded generic boundary and revalidates every value before release; expires: 2027-03-31. */
-import { Cause, Effect, Match, Option, Redacted, Schema } from 'effect';
+import { Cause, Clock, Effect, Match, Option, Random, Redacted, Ref, Schema } from 'effect';
 import { HttpEffect, HttpServerResponse } from 'effect/unstable/http';
 import type { HttpServerRequest } from 'effect/unstable/http';
 
@@ -9,6 +9,22 @@ import type { ReadRegistration } from '../reads/definition.ts';
 import type { ReadCoreError } from '../reads/errors.ts';
 import { isReadCoreError } from '../reads/errors.ts';
 import { ReadRuntime } from '../reads/runtime.ts';
+import { observeReadPhase, readServerTiming, recordReadTiming } from '../reads/diagnostics.ts';
+import type { ReadTiming } from '../reads/diagnostics.ts';
+
+// Opaque diagnostics only: no services, sockets, identities or request data survive a request.
+const isolateReads = Ref.makeUnsafe<{ readonly id: string | null; readonly ordinal: number }>({
+  id: null,
+  ordinal: 0,
+});
+const nextIsolateRead = Random.nextInt.pipe(
+  Effect.flatMap((random) =>
+    Ref.modify(isolateReads, (previous) => {
+      const next = { id: previous.id ?? Math.abs(random).toString(36), ordinal: previous.ordinal + 1 };
+      return [next, next];
+    }),
+  ),
+);
 
 interface HttpProblem<Status extends number> {
   readonly status: Status;
@@ -470,16 +486,42 @@ export function makeGovernedReadHttpHandler<
     payload,
     request,
   }: GovernedReadRequest<Schema.Schema.Type<InputSchema>>) {
+    const isolate = yield* nextIsolateRead;
+    const timings = yield* Ref.make<readonly ReadTiming[]>([]);
+    let encodeStartedAt: bigint | undefined;
+    yield* HttpEffect.appendPreResponseHandler(
+      Effect.fn('GovernedRead.reportTiming')(function* reportReadTiming(
+        _request: HttpServerRequest.HttpServerRequest,
+        response: HttpServerResponse.HttpServerResponse,
+      ) {
+        if (encodeStartedAt !== undefined) {
+          yield* recordReadTiming(timings, 'read-encode', encodeStartedAt);
+        }
+        const entries = yield* Ref.get(timings);
+        yield* Effect.logInfo('Governed read phases completed').pipe(
+          Effect.annotateLogs({ isolate, readKey: options.registration.descriptor.readKey, timings: entries }),
+        );
+        const previous = response.headers['server-timing'];
+        const header = `owner-isolate;desc="${isolate.id}:${isolate.ordinal}", ${readServerTiming(entries)}`;
+        return HttpServerResponse.setHeader(
+          response,
+          'server-timing',
+          previous === undefined ? header : `${previous}, ${header}`,
+        );
+      }),
+    );
     let correlationId: string | undefined;
     const execute = Effect.gen(function* executeGovernedRead() {
       correlationId = request.headers['x-correlation-id'];
       if (correlationId === undefined || correlationId.trim().length === 0) {
         return yield* Effect.fail(options.problems.invalid());
       }
-      const principal = yield* options.authenticatePrincipal(Redacted.make(request.headers['authorization']), {
-        authentication: options.problems.authentication,
-        unavailable: options.problems.unavailable,
-      });
+      const principal = yield* options
+        .authenticatePrincipal(Redacted.make(request.headers['authorization']), {
+          authentication: options.problems.authentication,
+          unavailable: options.problems.unavailable,
+        })
+        .pipe(observeReadPhase('read-authentication', timings));
       const runtime = yield* ReadRuntime;
       let receivingAudience: Pick<OperationalScopeRequest, 'audience'> = {};
       if (options.audience !== undefined) {
@@ -488,9 +530,11 @@ export function makeGovernedReadHttpHandler<
       return yield* runtime
         .runRead({
           ...receivingAudience,
-          input: payload,
+          decodedInput: payload,
+          inputFormat: 'decoded',
           principal,
           registration: options.registration,
+          timings,
           transport: { correlationId },
         })
         .pipe(
@@ -511,7 +555,20 @@ export function makeGovernedReadHttpHandler<
               HttpServerRequest.HttpServerRequest
             > => {
               if (isReadCoreError(error)) {
-                return failProblem(classifyReadCoreError(error, options.problems));
+                const problem = classifyReadCoreError(error, options.problems);
+                const diagnostic =
+                  problem.status === 503 || problem.status === 500
+                    ? Effect.logError('Governed read failed').pipe(
+                        Effect.annotateLogs({
+                          code: error.code,
+                          correlationId,
+                          failureTag: error._tag,
+                          readKey: options.registration.descriptor.readKey,
+                          reason: error.reason,
+                        }),
+                      )
+                    : Effect.void;
+                return diagnostic.pipe(Effect.andThen(failProblem(problem)));
               }
               const { domainErrorSchema } = options.registration.descriptor;
               if (domainErrorSchema === undefined || options.mapDomainError === undefined) {
@@ -543,6 +600,11 @@ export function makeGovernedReadHttpHandler<
         Effect.annotateLogs(Effect.logError('Unexpected governed-read HTTP defect'), {
           correlationId: correlationId === undefined || correlationId.trim().length === 0 ? 'missing' : correlationId,
         }).pipe(Effect.andThen(Effect.fail(options.problems.internal()))),
+      ),
+      Effect.onExit(
+        Effect.fn('GovernedRead.beginEncoding')(function* beginEncoding() {
+          encodeStartedAt = yield* Clock.monotonicTimeNanos;
+        }),
       ),
     );
   });

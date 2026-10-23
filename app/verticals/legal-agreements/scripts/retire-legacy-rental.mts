@@ -35,7 +35,6 @@ const program = Effect.gen(function* () {
       const counts = {
         contracts: state.contracts.length - next.contracts.length,
         documents: state.documents.length - next.documents.length,
-        signatureObservations: state.signatureObservations.length - next.signatureObservations.length,
       };
       if (!process.argv.includes('--apply')) {
         yield* Console.log('Dry run: unchanged legacy rental fixtures to retire', counts);

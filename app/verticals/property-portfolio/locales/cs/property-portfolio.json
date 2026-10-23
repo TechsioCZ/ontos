@@ -18,39 +18,6 @@
     "title": "Nemovitosti",
     "widgetBody": "Vlastní routovanou plochu verticalu.",
     "pages": {
-      "integrations": {
-        "title": "Integrace",
-        "description": "Výsledky účetnictví, rezervací a podpisů v demonstraci.",
-        "refresh": "Načíst výsledky",
-        "unavailable": "Výsledky se nepodařilo načíst. Zkuste to znovu.",
-        "simulation": "SIMULATED · DEMO — výsledky jsou simulované, bez odeslání externím poskytovatelům.",
-        "accounting": "Účetnictví",
-        "booking": "Rezervace",
-        "signature": "Elektronické podpisy",
-        "correlation": "Korelace",
-        "state": "Výsledek",
-        "attempt": "Pokus",
-        "summary": "Popis",
-        "empty": "Zatím bez výsledků.",
-        "retry": "Opakování neúspěšného účetnictví proveďte u příslušné faktury ve Financích.",
-        "finance": "Otevřít finance",
-        "occupancy": "Otevřít obsazenost",
-        "agreements": "Otevřít smlouvy",
-        "other": "Další služby",
-        "email": "E-mailová oznámení",
-        "payroll": "Mzdy: placeholder; datový tok není součástí této demonstrace.",
-        "forbidden": "K výsledkům těchto integrací nemáte přístup.",
-        "attemptedAt": "Čas pokusu",
-        "states": {
-          "SUCCESS": "Úspěšné",
-          "FAILED": "Neúspěšné",
-          "CONFLICT": "Konflikt",
-          "PENDING": "Čeká na výsledek",
-          "SENT": "Odesláno",
-          "SIGNED": "Podepsáno",
-          "DECLINED": "Odmítnuto"
-        }
-      },
       "overview": {
         "title": "Přehled pronájmů",
         "referenceDate": "Referenční den",
@@ -95,8 +62,7 @@
           "occupancy": "Obsazenost",
           "finance": "Finance",
           "work": "Úkoly",
-          "relationships": "Vztahy",
-          "integrations": "Integrace"
+          "relationships": "Vztahy"
         },
         "forbidden": "Pro tento přehled nemáte oprávnění.",
         "sourceRecords": "Zdrojové záznamy",

@@ -29,6 +29,7 @@ it.live('persists immutable credential-free registration and admits only exact l
       const attemptId = randomUUID();
       const partyId = randomUUID();
       const bindingId = randomUUID();
+      const authBindingId = randomUUID();
       const profileId = randomUUID();
       const principalId = randomUUID();
       const subject = `provider-registration-${randomUUID()}`;
@@ -58,6 +59,16 @@ it.live('persists immutable credential-free registration and admits only exact l
                 yield* execute(sql.raw(statement));
               }
             }
+            const authorityMigration = readFileSync(
+              new URL(
+                '../../drizzle/20261023233000_retail-enrollment-binding-authority/migration.sql',
+                import.meta.url,
+              ),
+              'utf-8',
+            );
+            for (const statement of authorityMigration.split('--> statement-breakpoint')) {
+              yield* execute(sql.raw(statement));
+            }
             yield* execute(
               sql`select set_config('ontos.tenant_id', ${tenantId}, true), set_config('ontos.legal_entity_id', ${legalEntityId}, true)`,
             );
@@ -72,9 +83,10 @@ it.live('persists immutable credential-free registration and admits only exact l
             );
             yield* execute(sql`insert into commerce_customer_context.retail_portal_profile_bindings
         (retail_portal_profile_binding_id, tenant_id, legal_entity_id, auth_binding_id, principal_id, retail_customer_profile_id, enrollment_evidence_ref, action_invocation_id, actor_principal_id)
-        values (${bindingId}::uuid, ${tenantId}::uuid, ${legalEntityId}::uuid, ${randomUUID()}::uuid, ${principalId}::uuid, ${profileId}::uuid, 'registration-acceptance', ${randomUUID()}::uuid, ${principalId}::uuid)`);
+        values (${bindingId}::uuid, ${tenantId}::uuid, ${legalEntityId}::uuid, ${authBindingId}::uuid, ${principalId}::uuid, ${profileId}::uuid, 'registration-acceptance', ${randomUUID()}::uuid, ${principalId}::uuid)`);
             for (const operation of [
               { owner: 'party.registry', result: partyId, transition: 'party.candidate.submit' },
+              { owner: 'commerce.portal-auth', result: subject, transition: 'provider.account.create' },
               {
                 owner: 'commerce.customer-context',
                 result: bindingId,
@@ -108,12 +120,20 @@ it.live('persists immutable credential-free registration and admits only exact l
             ).pipe(Effect.result);
             yield* execute(sql`rollback to savepoint credential_registration`);
             expect(Result.isFailure(credentialRegistration)).toBe(true);
-            const account = (lookupTenant = tenantId, lookupLegalEntity = legalEntityId, lookupSubject = subject) =>
+            const account = (
+              lookupTenant = tenantId,
+              lookupLegalEntity = legalEntityId,
+              lookupSubject = subject,
+              lookupPrincipal = principalId,
+              lookupBinding = authBindingId,
+            ) =>
               execute(
-                sql`select * from commerce_customer_context.read_retail_enrollment_account_party(${lookupTenant}::uuid, ${lookupLegalEntity}::uuid, ${lookupSubject})`,
+                sql`select * from commerce_customer_context.read_retail_enrollment_account_party(${lookupTenant}::uuid, ${lookupLegalEntity}::uuid, ${lookupSubject}, ${lookupPrincipal}::uuid, ${lookupBinding}::uuid)`,
               );
-            expect(yield* account()).toEqual([{ party_id: partyId }]);
+            expect(yield* account()).toEqual([{ party_id: partyId, profile_id: profileId }]);
             expect(yield* account(tenantId, legalEntityId, 'unknown-provider-subject')).toEqual([]);
+            expect(yield* account(tenantId, legalEntityId, subject, randomUUID())).toEqual([]);
+            expect(yield* account(tenantId, legalEntityId, subject, principalId, randomUUID())).toEqual([]);
             for (const wrong of [
               { entity: legalEntityId, tenant: randomUUID() },
               { entity: randomUUID(), tenant: tenantId },

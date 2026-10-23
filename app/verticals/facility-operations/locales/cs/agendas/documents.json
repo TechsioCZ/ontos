@@ -8,7 +8,6 @@
     "versions": "Verze",
     "description": "Popis",
     "links": "Vazby",
-    "uploadedBy": "Nahrál(a)",
     "uploadedAt": "Nahráno",
     "lastChange": "Poslední změna",
     "currentVersion": "Aktuální verze",
@@ -78,12 +77,12 @@
     "signedBy": "Podepsal(a)",
     "signedOn": "Datum podpisu",
     "version": "Podepsaná verze",
-    "recordedBy": "Zaznamenal(a) {{who}} {{when}}",
     "signed": "Podepsáno {{date}}",
     "signedVersion": "Podepsaná verze",
     "manualNote": "Ruční evidence podpisu, nejde o elektronický podpis.",
     "saved": "Podpis zaznamenán",
-    "needVersion": "Nejdřív nahrajte soubor s podepsaným zněním."
+    "needVersion": "Nejdřív nahrajte soubor s podepsaným zněním.",
+    "recordedAt": "Zaznamenáno {{when}}"
   },
   "tabs": {
     "all": "Všechny dokumenty",
@@ -177,7 +176,7 @@
     "edit": "Upravit údaje",
     "comments": "Komentáře",
     "noVersions": "Dokument zatím nemá žádný soubor.",
-    "uploadedLine": "{{who}} · {{when}}",
+    "uploadedLine": "Nahráno {{when}}",
     "notFound": "Dokument nebyl nalezen."
   },
   "linked": {
@@ -209,7 +208,7 @@
     "retracted": "Komentář odebral autor {{when}}.",
     "edited": "upraveno",
     "history": "Historie úprav",
-    "historyEntry": "Původní znění ({{who}}, {{when}})",
+    "historyEntry": "Původní znění ({{when}})",
     "attachment": "Odkaz na dokument",
     "noAttachment": "Bez odkazu",
     "forbidden": "Komentáře jsou dostupné jen interním rolím správce.",
@@ -230,13 +229,6 @@
       "vedeni": "Smlouvy, rozhodnutí a schvalování",
       "technika": "Revize, servis a dodavatelé"
     }
-  },
-  "principals": {
-    "management": "Vedení",
-    "operations": "Provoz",
-    "finance": "Finance",
-    "external": "Externí partner",
-    "unknown": "Uživatel {{id}}"
   },
   "pdfPage": "Strana {{page}} z {{count}}",
   "pdfPrevious": "Předchozí strana",

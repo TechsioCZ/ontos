@@ -88,3 +88,45 @@ describe("real customer forms", () => {
     expect(screen.queryByText(/Účet byl vytvořen/)).toBeNull();
   });
 });
+
+it("offers a real email-only resend on login without navigating or persisting a profile", async () => {
+  fetchAccount.mockResolvedValue(Response.json({ outcome: "EMAIL_VERIFICATION_STARTED" }));
+  render(<LoginForm />);
+  fill("verification-resend-email", "waiting@example.test");
+  fireEvent.click(screen.getByRole("button", { name: "Poslat ověřovací e-mail znovu" }));
+  expect(await screen.findByText(/Pokud účet s tímto e-mailem čeká na ověření/)).toBeTruthy();
+  const [path, init] = fetchAccount.mock.calls[0]!;
+  expect(path).toBe("/api/ontos/account");
+  expect(JSON.parse(String(init!.body))).toEqual({
+    operation: "resend-verification",
+    email: "waiting@example.test",
+  });
+  expect(router.push).not.toHaveBeenCalled();
+  expect(router.refresh).not.toHaveBeenCalled();
+  expect(localStorage.length).toBe(0);
+});
+
+it("disables resend while awaiting the owner and shows a real rate-limit refusal", async () => {
+  let complete: (value: Response) => void = () => {
+    throw new Error("Request not pending");
+  };
+  fetchAccount.mockImplementation(
+    () =>
+      new Promise<Response>((resolve) => {
+        complete = resolve;
+      }),
+  );
+  render(<LoginForm />);
+  fill("verification-resend-email", "waiting@example.test");
+  fireEvent.click(screen.getByRole("button", { name: "Poslat ověřovací e-mail znovu" }));
+  expect(screen.getByRole("button", { name: "Odesílám…" }).hasAttribute("disabled")).toBe(true);
+  expect(fetchAccount).toHaveBeenCalledOnce();
+  complete(
+    Response.json({ message: "Příliš mnoho pokusů. Zkuste to prosím později." }, { status: 429 }),
+  );
+  expect((await screen.findByRole("alert")).textContent).toContain("Příliš mnoho pokusů");
+  expect(screen.queryByText(/Pokud účet s tímto e-mailem čeká na ověření/)).toBeNull();
+  expect(
+    screen.getByRole("button", { name: "Poslat ověřovací e-mail znovu" }).hasAttribute("disabled"),
+  ).toBe(false);
+});

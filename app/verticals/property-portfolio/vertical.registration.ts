@@ -25,7 +25,6 @@ export const propertyPortfolioRegistration = defineVerticalRuntimeRegistration({
     },
     pages: {
       // <generated-module-registration-pages>
-      'page-integrations': () => import('./src/routes/[lang]/nemovitosti/integrace/page.tsx'),
       'page-overview': () => import('./src/routes/[lang]/nemovitosti/prehled/page.tsx'),
       'page-records': () => import('./src/routes/[lang]/nemovitosti/page.tsx'),
       // </generated-module-registration-pages>

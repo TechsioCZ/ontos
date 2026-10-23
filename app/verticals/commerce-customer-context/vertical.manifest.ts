@@ -10,6 +10,8 @@ import {
   customerConsentNoticeAuthorityPermission,
 } from './shared/permissions/customer-consent-self-service.ts';
 import { defineOntosModuleManifest } from '@app/core-runtime';
+import { getCookies } from 'better-auth/cookies';
+import { COMMERCE_PORTAL_AUTH_POLICY } from './api/portal-auth/provider/config.ts';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 import { CustomerOwnProfileReadApi, CustomerOwnProfileUpdateApi } from './shared/portal-auth/profile-api.ts';
 import {
@@ -334,6 +336,27 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'verify-retail-purchasing-subject-current-v1': VerifyRetailPurchasingSubjectCurrentV1Api,
       // </generated-module-manifest-apis>
     },
+    apiCookieTransport: [
+      {
+        cookieNames: [false, true].flatMap((useSecureCookies) => {
+          const cookies = getCookies({
+            advanced: { cookiePrefix: COMMERCE_PORTAL_AUTH_POLICY.cookie.namePrefix, useSecureCookies },
+          });
+          return [cookies.sessionToken.name, cookies.dontRememberToken.name];
+        }),
+        realmPrefix: COMMERCE_PORTAL_AUTH_POLICY.cookie.namePrefix,
+        routes: [
+          { method: 'GET', path: '/api/portal-auth/get-session' },
+          { method: 'GET', path: '/api/portal-auth/customer-account' },
+          { method: 'GET', path: '/api/portal-auth/customer-profile' },
+          { method: 'POST', path: '/api/portal-auth/customer-profile' },
+          { method: 'GET', path: '/api/portal-auth/customer-consent' },
+          { method: 'POST', path: '/api/portal-auth/customer-consent' },
+          { method: 'POST', path: '/api/portal-auth/sign-out' },
+          { method: 'POST', path: '/api/portal-auth/refresh' },
+        ],
+      },
+    ],
     businessPermissions: [
       customerConsentReadOwnPermission,
       customerConsentUpdateOwnPermission,

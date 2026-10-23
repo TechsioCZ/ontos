@@ -4,6 +4,7 @@
  * reader's own records answer (clients already narrowed to what they may see, and their viewer rights) decides
  * visibility, who may carry out a change, the before -> after lines and the undo of client edits. Pure.
  */
+import type { ReadEvidenceMetadata } from '@app/core-runtime';
 import { agentFieldLines, agentRecordHolds } from '@app/shared-contracts/agent-diff';
 import type { AgentCommand, AgentDiffLine, AgentRevertPlan } from '@app/shared-contracts/agent-proposals';
 import { AGENT_REVERT_UNAVAILABLE } from '@app/shared-contracts/agent-proposals';
@@ -46,6 +47,14 @@ export const clientIdOf = (command: AgentCommand): string | undefined => {
   const field = typeof tag === 'string' ? CLIENT_ID_FIELD[tag] : undefined;
   const id = field === undefined ? undefined : command[field];
   return typeof id === 'string' && id !== '' ? id : undefined;
+};
+
+/** Records only the exact visible client of a single-record read, never a list or review batch. */
+export const clientReadEvidence = (resultCount: number, client?: { readonly id: string }): ReadEvidenceMetadata => {
+  if (resultCount !== 1 || client === undefined) {
+    return { resultCount };
+  }
+  return { resultCount, targetResource: { resourceId: client.id, resourceType: 'demo.crm.client' } };
 };
 
 const CLIENT_LABELS: Readonly<Record<string, string>> = {
@@ -126,7 +135,10 @@ export const reviewCrmProposal = (
     return { key, visible, ...(lines === undefined ? {} : { diff: lines }) };
   }
   if (stage === 'undo') {
-    const inPlace = command['_tag'] === 'UpdateClient' ? client !== undefined && agentRecordHolds(command['patch'], client) : undefined;
+    const inPlace =
+      command['_tag'] === 'UpdateClient'
+        ? client !== undefined && agentRecordHolds(command['patch'], client)
+        : undefined;
     return { key, visible, ...(inPlace === undefined ? {} : { stillInPlace: inPlace }) };
   }
   const lines = clientDiff(command, client);

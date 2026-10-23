@@ -9,6 +9,7 @@ import {
   COMMERCE_AUTHENTICATION_NAMESPACE_ID,
   CommerceSessionReferenceSchema,
 } from '../../shared/portal-auth-contracts.ts';
+import { CommerceEnrollmentAuthenticationReferenceJsonSchema } from '../../shared/portal-auth-enrollment-reference.ts';
 import { COMMERCE_PORTAL_AUTH_VERIFY_OPERATION } from '../../shared/portal-auth-verification.ts';
 import {
   CommerceEnrollmentProofService,
@@ -90,6 +91,7 @@ const expiresAt = new Date(testNow.getTime() + 3_600_000);
 
 const request = {
   authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+  authenticationOperation: 'resolve' as const,
   nonce,
   providerSubjectId,
   sessionRef,
@@ -114,6 +116,7 @@ const allowingCaller: CommercePortalAuthVerificationCaller['Service'] = {
 const proofUnavailable: CommerceEnrollmentProofService['Service'] = {
   authorizeAccountCreation: () => Effect.fail(new CommerceEnrollmentProofUnavailable()),
   verify: () => Effect.fail(new CommerceEnrollmentProofUnavailable()),
+  verifyBinding: () => Effect.fail(new CommerceEnrollmentProofUnavailable()),
 };
 
 const runVerification = (
@@ -247,6 +250,7 @@ it.effect('binds an active owner-local Attempt proof to the allowed result', () 
         policyVersion: COMMERCE_PORTAL_AUTH_POLICY.policyVersion,
         revision: 2,
       }),
+    verifyBinding: () => Effect.fail(new CommerceEnrollmentProofUnavailable()),
   };
   return runVerification(
     { ...request, enrollmentAttemptId },
@@ -295,6 +299,7 @@ it.effect('authorizes the exact create invocation before invoking Better Auth', 
         return { evidenceRef, revision: 7 };
       }),
     verify: () => Effect.fail(new CommerceEnrollmentProofUnavailable()),
+    verifyBinding: () => Effect.fail(new CommerceEnrollmentProofUnavailable()),
   };
   const gateway = {
     create: (input: { readonly email: string; readonly name: string; readonly password: Redacted.Redacted }) =>
@@ -339,6 +344,7 @@ it.effect('does not invoke Better Auth when the owner rejects the create invocat
   const proof: CommerceEnrollmentProofService['Service'] = {
     authorizeAccountCreation: () => Effect.fail(new CommerceEnrollmentProofUnavailable()),
     verify: () => Effect.fail(new CommerceEnrollmentProofUnavailable()),
+    verifyBinding: () => Effect.fail(new CommerceEnrollmentProofUnavailable()),
   };
   const gateway = {
     create: () =>
@@ -386,6 +392,7 @@ it.effect('projects a Better Auth create response double without returning its t
     existsByEmail: () => Effect.succeed(false),
     existsByProviderSubject: () => Effect.succeed(true),
     subjectForOwnerInvocation: () => Effect.succeedNone,
+    verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
   }).pipe(
     Effect.flatMap((gateway) =>
       gateway.create({
@@ -439,6 +446,7 @@ it.effect('awaits the verification send after sign-up commits before returning t
       existsByEmail: () => Effect.succeed(false),
       existsByProviderSubject: () => Effect.succeed(true),
       subjectForOwnerInvocation: () => Effect.succeedNone,
+      verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
     },
     {
       email: 'buyer@example.test',
@@ -478,6 +486,7 @@ it.effect('reports unavailable, not created, when the verification send fails af
         existsByEmail: () => Effect.succeed(false),
         existsByProviderSubject: () => Effect.succeed(true),
         subjectForOwnerInvocation: () => Effect.succeedNone,
+        verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
       },
       {
         email: 'buyer@example.test',
@@ -512,6 +521,7 @@ it.effect('does not treat Better Auth generic duplicate responses as created acc
         existsByEmail: () => Effect.succeed(false),
         existsByProviderSubject: () => Effect.succeed(false),
         subjectForOwnerInvocation: () => Effect.succeedNone,
+        verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
       },
       {
         email: 'existing@example.test',
@@ -554,6 +564,7 @@ it.effect('maps a definitive Better Auth validation failure to rejected', () => 
         existsByEmail: () => Effect.succeed(false),
         existsByProviderSubject: () => Effect.succeed(false),
         subjectForOwnerInvocation: () => Effect.succeedNone,
+        verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
       },
       {
         email: 'buyer@example.test',
@@ -589,6 +600,7 @@ it.effect('fails closed when the Better Auth error code is absent or unbounded',
           existsByEmail: () => Effect.succeed(false),
           existsByProviderSubject: () => Effect.succeed(false),
           subjectForOwnerInvocation: () => Effect.succeedNone,
+          verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
         },
         {
           email: 'buyer@example.test',
@@ -630,6 +642,7 @@ it.effect('rejects an existing email before invoking Better Auth', () => {
         existsByEmail: () => Effect.succeed(true),
         existsByProviderSubject: () => Effect.succeed(true),
         subjectForOwnerInvocation: () => Effect.succeedNone,
+        verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
       },
       {
         email: 'existing@example.test',
@@ -673,6 +686,7 @@ it.effect('replays a correlated owner invocation to its committed subject instea
       existsByProviderSubject: () => Effect.succeed(true),
       subjectForOwnerInvocation: ({ ownerInvocationId: invocation }) =>
         invocation === ownerInvocationId ? Effect.succeedSome(providerSubjectId) : Effect.succeedNone,
+      verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
     },
     {
       email: 'buyer@example.test',
@@ -706,6 +720,7 @@ it.effect('maps a malformed Better Auth success response to unavailable', () => 
         existsByEmail: () => Effect.succeed(false),
         existsByProviderSubject: () => Effect.succeed(true),
         subjectForOwnerInvocation: () => Effect.succeedNone,
+        verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
       },
       {
         email: 'buyer@example.test',
@@ -743,6 +758,7 @@ it.effect('maps an indeterminate Better Auth provider failure to unavailable wit
         existsByEmail: () => Effect.succeed(false),
         existsByProviderSubject: () => Effect.succeed(false),
         subjectForOwnerInvocation: () => Effect.succeedNone,
+        verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
       },
       {
         email: 'buyer@example.test',
@@ -786,6 +802,7 @@ it.effect('maps a wrapped Better Auth storage failure to unavailable after one p
         existsByEmail: () => Effect.succeed(false),
         existsByProviderSubject: () => Effect.succeed(false),
         subjectForOwnerInvocation: () => Effect.succeedNone,
+        verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
       },
       {
         email: 'buyer@example.test',
@@ -822,6 +839,7 @@ it.effect('rejects raw password and missing owner invocation before any gateway 
     existsByEmail: () => Effect.succeed(false),
     existsByProviderSubject: () => Effect.succeed(true),
     subjectForOwnerInvocation: () => Effect.succeedNone,
+    verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
   };
   const rawPasswordInput = {
     email: 'buyer@example.test',
@@ -1117,6 +1135,7 @@ it.effect('normalizes the address once before the duplicate guard, the provider 
         return true;
       }),
     subjectForOwnerInvocation: () => Effect.succeedNone,
+    verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
   }).pipe(
     Effect.flatMap((gateway) =>
       gateway.create({
@@ -1145,3 +1164,93 @@ it.effect('normalizes the address once before the duplicate guard, the provider 
     ),
   );
 });
+
+it.effect('enrollment binding proof authorizes reserve/activate without a session, never session operations', () =>
+  Effect.gen(function* enrollmentBindingVerification() {
+    const reference = yield* Schema.encodeUnknownEffect(CommerceEnrollmentAuthenticationReferenceJsonSchema)({
+      enrollmentAttemptId,
+      kind: 'commerce-enrollment-binding.v1',
+      providerOwnerOperationId: ownerInvocationId,
+      sellingLegalEntityId: '70000000-0000-4000-8000-000000000001',
+    });
+    const reads: string[] = [];
+    const proof: CommerceEnrollmentProofService['Service'] = {
+      ...proofUnavailable,
+      verifyBinding: (input) => {
+        reads.push(input.providerOwnerOperationId);
+        return Effect.succeed({
+          enrollmentAttemptId,
+          evidenceRef,
+          observedAt: DateTime.makeUnsafe(0),
+          policyVersion: 'test-binding.v1',
+          revision: 3,
+        });
+      },
+    };
+    const noSession: CommercePortalAuthSessionReader = {
+      findBySessionId: () => Effect.die('Enrollment must not invent a customer session'),
+    };
+    for (const authenticationOperation of ['reserve', 'activate'] as const) {
+      const result = yield* runVerification(
+        { ...request, authenticationOperation, sessionRef: reference },
+        noSession,
+        allowingCaller,
+        proof,
+      );
+      expect(result.outcome).toBe('ALLOWED');
+      if (result.outcome === 'ALLOWED') {
+        expect(result.emailVerified).toBe(false);
+      }
+    }
+    expect(reads).toHaveLength(2);
+    expect(
+      (yield* runVerification(
+        {
+          ...request,
+          authenticationOperation: 'reserve',
+          enrollmentAttemptId: '20000000-0000-4000-8000-000000000099',
+          sessionRef: reference,
+        },
+        noSession,
+        allowingCaller,
+        proof,
+      )).outcome,
+    ).toBe('REJECTED');
+    expect(reads).toHaveLength(2);
+    for (const authenticationOperation of ['resolve', 'gateway-context', 'read', 'status'] as const) {
+      expect(
+        (yield* runVerification(
+          { ...request, authenticationOperation, sessionRef: reference },
+          noSession,
+          allowingCaller,
+          proof,
+        )).outcome,
+      ).toBe('REJECTED');
+    }
+    expect(reads).toHaveLength(2);
+    expect(
+      (yield* runVerification(
+        { ...request, authenticationOperation: 'reserve', sessionRef: reference },
+        noSession,
+        allowingCaller,
+      )).outcome,
+    ).toBe('UNAVAILABLE');
+    for (const forged of [
+      'commerce-enrollment:guessed',
+      JSON.stringify({ enrollmentAttemptId, kind: 'commerce-enrollment-binding.v1' }),
+      reference.replace('commerce-enrollment-binding.v1', 'foreign-enrollment.v1'),
+      reference.replace(/\}$/u, ',"unexpected":true}'),
+    ]) {
+      expect(
+        (yield* Effect.exit(
+          runVerification(
+            { ...request, authenticationOperation: 'reserve', sessionRef: forged },
+            noSession,
+            allowingCaller,
+            proof,
+          ),
+        ))._tag,
+      ).toBe('Failure');
+    }
+  }),
+);

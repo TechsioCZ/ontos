@@ -85,13 +85,20 @@ beforeEach(async () => {
       pageSize: Number(catalog.pageSize ?? 24),
       homepageFeaturedProductIds: [],
       products: [product("p1")],
-      ...(catalog.includeCategories
+      ...(catalog.includeCategories || catalog.includeCategoryContent
         ? {
-            categories: tree.map((node) =>
-              node.slug === catalog.categorySlug
-                ? category(node.id, node.parentId, node.slug, true)
-                : node,
-            ),
+            categories: tree
+              .filter(
+                (node) =>
+                  !catalog.includeCategoryContent ||
+                  node.slug === catalog.categorySlug ||
+                  node.parentId === tree.find((entry) => entry.slug === catalog.categorySlug)?.id,
+              )
+              .map((node) =>
+                node.slug === catalog.categorySlug
+                  ? category(node.id, node.parentId, node.slug, true)
+                  : node,
+              ),
           }
         : {}),
     };
@@ -225,7 +232,8 @@ describe("OntOS catalog server reads", () => {
       pageSize: 24,
       sort: "name",
       fields: "card",
-      includeCategories: true,
+      includeCategories: false,
+      includeCategoryContent: true,
     });
     expect(model.getCategoryBySlug("srouby")).toMatchObject({
       heading: "Nadpis srouby",
@@ -267,10 +275,56 @@ describe("OntOS catalog server reads", () => {
         .filter((call) => call.categorySlug === "srouby")
         .map(({ page, sort, includeCategories }) => ({ page, sort, includeCategories })),
     ).toEqual([
-      { page: 1, sort: "name", includeCategories: true },
+      { page: 1, sort: "name", includeCategories: false },
       { page: 2, sort: "name", includeCategories: false },
       { page: undefined, sort: "price-asc", includeCategories: false },
     ]);
+  });
+  it("keeps only category content for fifteen minutes while product prices expire after ten seconds", async () => {
+    vi.useFakeTimers();
+    const first = await server.getCatalog("srouby");
+    expect(first.getCategoryBySlug("srouby")?.longDescription).toBe("Velmi dlouhý popis kategorie");
+    expect(
+      vi
+        .mocked(readRecords)
+        .mock.calls.map(catalogOf)
+        .filter((query) => query.categorySlug),
+    ).toEqual([
+      {
+        categorySlug: "srouby",
+        page: 1,
+        pageSize: 24,
+        sort: "name",
+        fields: "card",
+        includeCategories: false,
+        includeCategoryContent: true,
+      },
+    ]);
+    vi.mocked(readRecords).mockClear();
+    vi.advanceTimersByTime(10_000);
+    const next = await server.getCatalog("srouby");
+    expect(next.getCategoryBySlug("srouby")).toEqual(first.getCategoryBySlug("srouby"));
+    expect(
+      vi
+        .mocked(readRecords)
+        .mock.calls.map(catalogOf)
+        .filter((query) => query.categorySlug),
+    ).toEqual([
+      {
+        categorySlug: "srouby",
+        page: 1,
+        pageSize: 24,
+        sort: "name",
+        fields: "card",
+        includeCategories: false,
+      },
+    ]);
+    expect(
+      vi
+        .mocked(readRecords)
+        .mock.calls.map(catalogOf)
+        .every((query) => !query.includeCategories && !query.includeCategoryContent),
+    ).toBe(true);
   });
   it("warms only price-free navigation, skips young values, and leaves product reads to shoppers", async () => {
     expect(await server.warmCatalog(60_000)).toEqual({ fresh: 0, refreshed: 1, failed: 0 });
@@ -300,7 +354,8 @@ describe("OntOS catalog server reads", () => {
         pageSize: 24,
         sort: "name",
         fields: "card",
-        includeCategories: true,
+        includeCategories: false,
+        includeCategoryContent: true,
       },
     ]);
   });

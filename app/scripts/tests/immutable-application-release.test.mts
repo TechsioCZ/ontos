@@ -17,6 +17,7 @@ import {
   FileSystem,
   Layer,
   Match,
+  Option,
   Order,
   Redacted,
   Schedule,
@@ -24,7 +25,8 @@ import {
 } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http';
+import type { HttpClientRequest } from 'effect/unstable/http';
 
 import {
   ImmutableApplicationReleaseError,
@@ -924,6 +926,18 @@ it.effect('requires deployment receipts for exactly the reviewed full module set
   }),
 );
 
+/** Records every advisory lock statement and its key, in order, against the native release timeline. */
+const releaseLockDatabase = (timeline: string[]) =>
+  Layer.effect(
+    CoreDatabase,
+    makeTestDatabase((statement, params) =>
+      Effect.sync(() => {
+        timeline.push(`${statement.replace(/^select /u, '')} ${params.join(',')}`.trim());
+        return statement.includes('pg_advisory_unlock') ? [{ unlocked: true }] : [];
+      }),
+    ).pipe(Effect.map((executor) => ({ executor }))),
+  );
+
 const refusesExistingProviderRelease = (existingBackend: boolean) =>
   Effect.scoped(
     Effect.gen(function* existingProviderRelease() {
@@ -1013,15 +1027,18 @@ const refusesExistingProviderRelease = (existingBackend: boolean) =>
         `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/subdomain`,
       );
       expect(
-        requests
-          .slice(1)
-          .map(({ url }) => url)
-          .sort(),
+        EffectArray.sort(
+          requests.slice(1).map(({ url }) => url),
+          Order.String,
+        ),
       ).toEqual(
-        [
-          `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.backendScriptName}`,
-          `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.assetsScriptName}`,
-        ].sort(),
+        EffectArray.sort(
+          [
+            `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.backendScriptName}`,
+            `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.assetsScriptName}`,
+          ],
+          Order.String,
+        ),
       );
       expect(yield* fileSystem.exists(nodePath.join(output, '.wrangler-immutable-backend.json'))).toBe(false);
       expect(yield* fileSystem.exists(nodePath.join(output, '.wrangler-immutable-assets.json'))).toBe(false);
@@ -1037,16 +1054,57 @@ it.effect('refuses an existing assets identity before commands, secret writes, o
   refusesExistingProviderRelease(false),
 );
 
-/** Records every advisory lock statement and its key, in order, against the native release timeline. */
-const releaseLockDatabase = (timeline: string[]) =>
-  Layer.effect(
-    CoreDatabase,
-    makeTestDatabase((statement, params) =>
-      Effect.sync(() => {
-        timeline.push(`${statement.replace(/^select /u, '')} ${params.join(',')}`.trim());
-        return statement.includes('pg_advisory_unlock') ? [{ unlocked: true }] : [];
-      }),
-    ).pipe(Effect.map((executor) => ({ executor }))),
+const SECRETS_FILE_ARGUMENT = '--secrets-file';
+
+/** How the network loses one asset GET in a fixture. */
+const ASSET_TRANSPORT = {
+  bodyReset: 'body-reset',
+  connectionReset: 'connection-reset',
+  providerUnavailable: 'status-503',
+} as const;
+const AssetTransportFailureSchema = Schema.Literals([
+  ASSET_TRANSPORT.bodyReset,
+  ASSET_TRANSPORT.connectionReset,
+  ASSET_TRANSPORT.providerUnavailable,
+]);
+type AssetTransportFailure = typeof AssetTransportFailureSchema.Type;
+const CONNECTION_RESET = 'read ECONNRESET';
+
+/** The headers a ready immutable asset is served with. */
+const IMMUTABLE_ASSET_HEADERS = {
+  'access-control-allow-origin': '*',
+  'cache-control': 'public, max-age=31536000, immutable',
+  'x-content-type-options': 'nosniff',
+} as const;
+
+const resetAssetBody = (controller: ReadableStreamDefaultController<Uint8Array>) => {
+  controller.error(new Error(CONNECTION_RESET));
+};
+
+/** One asset GET the network loses: a reset before the response, a reset body, or a provider 5xx. */
+const assetTransportFailure = (request: HttpClientRequest.HttpClientRequest, kind: AssetTransportFailure) =>
+  Match.value(kind).pipe(
+    Match.when(ASSET_TRANSPORT.connectionReset, () =>
+      Effect.fail(
+        new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({ cause: new Error(CONNECTION_RESET), request }),
+        }),
+      ),
+    ),
+    Match.when(ASSET_TRANSPORT.bodyReset, () =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(new ReadableStream<Uint8Array>({ start: resetAssetBody }), {
+            headers: IMMUTABLE_ASSET_HEADERS,
+            status: 200,
+          }),
+        ),
+      ),
+    ),
+    Match.orElse(() =>
+      Effect.succeed(HttpClientResponse.fromWeb(request, new Response('upstream reset', { status: 503 }))),
+    ),
   );
 
 const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* prepareDeploymentEffect(
@@ -1071,6 +1129,8 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly assetStatus?: number;
     readonly assetsUploadCommand?: string;
     readonly assetsUploadError?: { readonly providerCode: number; readonly providerPath?: string };
+    /** Network failures of the contract asset's first GETs, before any answer: a reset, a body reset or a 5xx. */
+    readonly assetTransportFailures?: { readonly kind: AssetTransportFailure; readonly times: number };
     readonly backendDeploymentVersions?: readonly { readonly percentage: number; readonly version_id: string }[];
     readonly backendSubdomainEnabled?: boolean;
     readonly backendSubdomainStatus?: number;
@@ -1081,6 +1141,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly deleteStatus?: number;
     readonly deployedEntrypoint?: string | false;
     readonly envelopeUnitId?: string;
+    readonly existingRelease?: boolean;
     readonly initialAssetNotFound?: boolean;
     readonly initialSource?: string;
     readonly noBundle?: boolean;
@@ -1089,6 +1150,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly overflowingAssetStream?: 'always' | 'once';
     readonly oversizedAssetBody?: boolean;
     readonly ownerSecrets?: Readonly<Record<string, string>>;
+    readonly packagingFailure?: boolean;
     readonly pageJsPath?: string;
     readonly recoveryWorkerName?: string;
     readonly recoveryWorkerStatuses?: readonly number[];
@@ -1099,6 +1161,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly unboundFile?: boolean;
     readonly unboundFileDuringPackaging?: boolean;
     readonly wrongAssetBytes?: boolean | 'once';
+    readonly wrongRetainedModule?: boolean;
   } = {},
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1123,6 +1186,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
       compatibility_date: COMPATIBILITY_DATE,
       main: BACKEND_ENTRY_PATH,
       no_bundle: options.noBundle === true,
+      placement: { host: 'backend.example.com:443' },
       rules: [{ globs: ['**/*.mjs'], type: 'ESModule' }],
     }),
   );
@@ -1189,10 +1253,12 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     backendUploads += 1;
     return outcome;
   };
-  const backendUploadOutcome = (command: OpsCommand, capturedConfig: Readonly<Record<string, Schema.Json>>) =>
-    capturedConfig.name === plan.backendScriptName && !command.args.includes('--dry-run')
-      ? nextBackendUploadOutcome()
-      : 'success';
+  const backendUploadOutcome = (command: OpsCommand, capturedConfig: Readonly<Record<string, Schema.Json>>) => {
+    if (command.args.includes('--dry-run')) {
+      return options.packagingFailure === true ? 'transient' : 'success';
+    }
+    return capturedConfig.name === plan.backendScriptName ? nextBackendUploadOutcome() : 'success';
+  };
   const providerResponse = (destination: URL) =>
     Match.value(destination.pathname).pipe(
       Match.when(`/client/v4${recoveryWorkerPath}`, () =>
@@ -1256,7 +1322,8 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
           Effect.sync(() => {
             const content = new FormData();
             for (const module of capturedModules) {
-              content.append(module.path, new File([module.bytes], module.path));
+              const bytes = options.wrongRetainedModule === true ? text('different retained bytes') : module.bytes;
+              content.append(module.path, new File([bytes], module.path));
             }
             return new Response(content, {
               headers:
@@ -1304,14 +1371,14 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
       ),
       Match.orElse(() =>
         Effect.sync(() => {
-          const status = absentChecks < 2 ? 404 : 200;
+          const status = options.existingRelease !== true && absentChecks < 2 ? 404 : 200;
           absentChecks += 1;
           return new Response(null, { status });
         }),
       ),
     );
-  const client = HttpClient.make((request, destination) =>
-    Effect.gen(function* retainedProviderResponse() {
+  const retainedProviderResponse = (request: HttpClientRequest.HttpClientRequest, destination: URL) =>
+    Effect.gen(function* retainedProviderResponseEffect() {
       requests.push(destination.href);
       if (request.method !== 'GET') {
         providerWrites.push({ method: request.method, url: destination.href });
@@ -1387,12 +1454,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
             },
           });
         }
-        const headers = new Headers({
-          'access-control-allow-origin': '*',
-          'cache-control': 'public, max-age=31536000, immutable',
-          'x-content-type-options': 'nosniff',
-          ...options.assetHeaders,
-        });
+        const headers = new Headers({ ...IMMUTABLE_ASSET_HEADERS, ...options.assetHeaders });
         const unreadyHeaders = Match.value(options.assetHeaderReadiness).pipe(
           Match.when(
             Match.defined,
@@ -1429,7 +1491,28 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
         }
       }
       return HttpClientResponse.fromWeb(request, response);
-    }),
+    });
+  let injectedTransportFailures = 0;
+  /** The contract asset GETs the network loses first, before the fixture answers any of them. */
+  const injectTransportFailure = (request: HttpClientRequest.HttpClientRequest, destination: URL) => {
+    const injected = options.assetTransportFailures;
+    if (
+      injected === undefined ||
+      decodeURIComponent(destination.pathname) !== `/${CONTRACT_PATH}` ||
+      injectedTransportFailures >= injected.times
+    ) {
+      return Option.none();
+    }
+    injectedTransportFailures += 1;
+    requests.push(destination.href);
+    return Option.some(
+      Deferred.succeed(assetReadStarted, true).pipe(Effect.andThen(assetTransportFailure(request, injected.kind))),
+    );
+  };
+  const client = HttpClient.make((request, destination) =>
+    Option.getOrElse(injectTransportFailure(request, destination), () =>
+      retainedProviderResponse(request, destination),
+    ),
   );
   const shellLayer = Layer.succeed(OpsShell, {
     run: (command: OpsCommand) =>
@@ -1456,12 +1539,12 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
           Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
         )(yield* fileSystem.readFileString(config));
         capturedConfigs.push(capturedConfig);
-        if (command.args.includes('--secrets-file')) {
-          const file = command.args[command.args.indexOf('--secrets-file') + 1] ?? '';
+        if (command.args.includes(SECRETS_FILE_ARGUMENT)) {
+          const secretsPath = command.args[command.args.indexOf(SECRETS_FILE_ARGUMENT) + 1] ?? '';
           capturedSecrets.push({
-            file,
+            file: secretsPath,
             secrets: yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(
-              yield* fileSystem.readFileString(file),
+              yield* fileSystem.readFileString(secretsPath),
             ),
           });
         }
@@ -1568,6 +1651,65 @@ it.effect('uploads a release under its own identity lock, never the environment-
       expect(timeline[0]).toBe(`pg_advisory_lock(hashtextextended($1, 0)) ${identityKey}`);
       expect(timeline.at(-1)).toBe(`pg_advisory_unlock(hashtextextended($1, 0)) ${identityKey}`);
       expect(timeline.filter((entry) => entry.startsWith('exec wrangler deploy')).length).toBe(3);
+      const [packaged, uploaded, assets] = deployment.capturedConfigs;
+      expect(packaged?.placement).toEqual({ host: 'backend.example.com:443' });
+      expect(uploaded?.placement).toEqual(packaged?.placement);
+      expect(assets?.placement).toBeUndefined();
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('reuses an exact complete retained release without uploading, writing secrets, or deleting identities', () =>
+  Effect.scoped(
+    Effect.gen(function* reusesRetainedRelease() {
+      const deployment = yield* prepareDeployment({
+        existingRelease: true,
+        ownerSecrets: { PRIVATE_KEY: 'test-only' },
+      });
+      const receipt = yield* deployment.deploy;
+      expect(receipt.backend.workerName).toBe(deployment.plan.backendScriptName);
+      expect(receipt.backend.versionId).toBe(BACKEND_VERSION_ID);
+      expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
+      expect(deployment.commands).toHaveLength(1);
+      expect(deployment.commands[0]?.args).toContain('--dry-run');
+      expect(deployment.commands[0]?.classifyTransientProviderFailure).toBe(false);
+      expect(deployment.capturedSecrets).toEqual([]);
+      expect(deployment.providerWrites).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('rejects retained content, entrypoint, and deployment mismatches without modifying previous identities', () =>
+  Effect.scoped(
+    Effect.gen(function* rejectsRetainedReleaseMismatch() {
+      for (const mismatch of [
+        { wrongRetainedModule: true },
+        { wrongAssetBytes: true },
+        { deployedEntrypoint: 'different.js' },
+        { backendDeploymentVersions: [{ percentage: 50, version_id: BACKEND_VERSION_ID }] },
+        { assetsDeploymentVersions: [{ percentage: 50, version_id: ASSETS_VERSION_ID }] },
+      ]) {
+        const deployment = yield* prepareDeployment({ existingRelease: true, ...mismatch });
+        const failure = yield* deployment.deploy.pipe(Effect.flip);
+        expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+        expect(deployment.commands).toHaveLength(1);
+        expect(deployment.commands[0]?.args).toContain('--dry-run');
+        expect(deployment.capturedSecrets).toEqual([]);
+        expect(deployment.providerWrites).toEqual([]);
+      }
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('never deletes a previous release when rerun packaging fails transiently', () =>
+  Effect.scoped(
+    Effect.gen(function* preservesRetainedReleaseOnPackagingFailure() {
+      const deployment = yield* prepareDeployment({ existingRelease: true, packagingFailure: true });
+      const failure = yield* deployment.deploy.pipe(Effect.flip);
+      expect(Schema.is(OpsCommandError)(failure)).toBe(true);
+      expect(deployment.commands).toHaveLength(1);
+      expect(deployment.providerWrites).toEqual([]);
+      expect(deployment.capturedSecrets).toEqual([]);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
@@ -1741,7 +1883,7 @@ it.effect('publishes the complete captured native package and leaves compiled as
       expect(fixture.requests).toContain(`${backendEndpoint}/deployments`);
       // The secrets go up with the backend upload itself; nothing is written to the provider API afterwards.
       expect(fixture.providerWrites).toEqual([]);
-      expect(fixture.commands[1]?.args).toContain('--secrets-file');
+      expect(fixture.commands[1]?.args).toContain(SECRETS_FILE_ARGUMENT);
       expect(fixture.capturedSecrets.map(({ secrets }) => secrets)).toEqual([{ OWNER_BINDING: OWNER_SECRET_VALUE }]);
       expect(yield* fileSystem.exists(fixture.capturedSecrets[0]?.file ?? '')).toBe(false);
       expect(fixture.capturedSecrets[0]?.file.startsWith(fixture.output)).toBe(false);
@@ -1768,7 +1910,7 @@ it.effect('uploads a unit without secrets without a secrets file', () =>
       const fixture = yield* prepareDeployment();
       const receipt = yield* fixture.deploy;
       expect(receipt.backend.versionId).toBe(BACKEND_VERSION_ID);
-      expect(fixture.commands.every(({ args }) => !args.includes('--secrets-file'))).toBe(true);
+      expect(fixture.commands.every(({ args }) => !args.includes(SECRETS_FILE_ARGUMENT))).toBe(true);
       expect(fixture.capturedSecrets).toEqual([]);
       expect(fixture.providerWrites).toEqual([]);
     }),
@@ -1935,6 +2077,43 @@ it.effect('retries a transient 404 at the exact retained module URL and accepts 
       expect(fixture.requests.filter((url) => url === `${fixture.plan.assetsOrigin}${CONTRACT_PATH}`)).toHaveLength(2);
       expect(fixture.notFoundBodies).toHaveLength(1);
       expect(fixture.notFoundBodies.every((response) => response.bodyUsed)).toBe(true);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('retries a reset, a reset body and a provider 5xx of one asset GET, then accepts its exact bytes', () =>
+  Effect.scoped(
+    Effect.gen(function* transientAssetTransport() {
+      for (const kind of AssetTransportFailureSchema.literals) {
+        const fixture = yield* prepareDeployment({ assetTransportFailures: { kind, times: 2 } });
+        const fiber = yield* fixture.deploy.pipe(Effect.forkChild);
+        yield* Deferred.await(fixture.assetReadStarted);
+        yield* TestClock.adjust('3 seconds');
+        const receipt = yield* Fiber.join(fiber);
+        expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
+        expect(fixture.requests.filter((url) => url === `${fixture.plan.assetsOrigin}${CONTRACT_PATH}`)).toHaveLength(
+          3,
+        );
+      }
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('fails a persistently reset asset GET after its bounded transport attempts', () =>
+  Effect.scoped(
+    Effect.gen(function* persistentAssetTransport() {
+      const fixture = yield* prepareDeployment({
+        assetTransportFailures: { kind: ASSET_TRANSPORT.connectionReset, times: 99 },
+      });
+      const fiber = yield* fixture.deploy.pipe(Effect.flip, Effect.forkChild);
+      yield* Deferred.await(fixture.assetReadStarted);
+      yield* TestClock.adjust('3 seconds');
+      const failure = yield* Fiber.join(fiber);
+      expect(failure.message).toBe(ASSET_READBACK_FAILURE);
+      const cause = yield* Schema.decodeUnknownEffect(ImmutableApplicationReleaseError)(failure.cause);
+      expect(cause.message).toBe('the immutable public asset could not be read on any bounded transport attempt');
+      expect(cause.cause).toEqual({ path: CONTRACT_PATH, transport: 'TransportError' });
+      expect(fixture.requests.filter((url) => url === `${fixture.plan.assetsOrigin}${CONTRACT_PATH}`)).toHaveLength(3);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

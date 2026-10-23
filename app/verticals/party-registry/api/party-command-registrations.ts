@@ -1,3 +1,4 @@
+import { acceptRetailEnrollmentEvidenceAction } from '../src/actions/accept-retail-enrollment-evidence.action.ts';
 import { addContactPointAction } from '../src/actions/add-contact-point.action.ts';
 import { addPartyOfficialIdentifierAction } from '../src/actions/add-party-official-identifier.action.ts';
 import { archivePartyAction } from '../src/actions/archive-party.action.ts';
@@ -27,6 +28,7 @@ import { updatePartyAction } from '../src/actions/update-party.action.ts';
 // New generated registrations have one sorted owner-local composition slot. The HTTP group stays
 // explicit in party-command-server.ts; problem typing derives from this same catalog.
 export const partyCommandRegistrations = {
+  acceptRetailEnrollmentEvidence: acceptRetailEnrollmentEvidenceAction,
   addContactPoint: addContactPointAction,
   addPartyOfficialIdentifier: addPartyOfficialIdentifierAction,
   archiveParty: archivePartyAction,

@@ -14,6 +14,8 @@ import type { ManagedRuntime } from 'effect';
  */
 
 export interface ModulePageContext {
+  /** Signed-in principal name from the Shell session, never a demo persona lookup. */
+  readonly displayName?: string;
   readonly legalEntityId: string;
   readonly principalId: string;
   readonly tenantId: string;

@@ -80,6 +80,9 @@ export const acquireExternalIdentityWorkloadAssertion = Effect.fn('ExternalIdent
         providerUnavailable('The Shell workload is not authorized to call provider verification', cause),
       ),
     );
+    if (context.operation !== request.authenticationOperation) {
+      return yield* providerUnavailable('The provider authentication operation changed during admission');
+    }
     if (context.principal.tenantId !== request.tenantId) {
       return yield* providerUnavailable('The external identity workload tenant changed during admission');
     }

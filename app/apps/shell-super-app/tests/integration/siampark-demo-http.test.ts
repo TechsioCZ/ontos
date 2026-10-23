@@ -300,63 +300,50 @@ const prepareGoldenLease = Effect.fn('SiamparkLiveHttp.prepareGoldenLease')(func
     kind: 'LEASE',
     lifecycleState: 'FINAL',
     signedDocumentReference: `DEMO:live-signed:${contract.contractRef.resourceId}`,
-    title: 'Simulated signed A101 lease',
+    title: 'Signed A101 lease',
     updatedAt: referenceInstant,
   });
   return { agreements, contract, customer, document, finance, occupancies, occupancy, unit };
 });
 
-const executeGoldenSignature = Effect.fn('SiamparkLiveHttp.executeGoldenSignature')(function* signedGoldenContract(
-  session: LiveSession,
-  prepared: Effect.Success<ReturnType<typeof prepareGoldenLease>>,
-) {
-  const { contract, document } = prepared;
-  const created = yield* applyAgreementCommand(session, prepared.agreements.revision, {
-    _tag: 'CreateContract',
-    record: contract,
-  });
-  const sent = yield* applyAgreementCommand(session, created.revision, {
-    _tag: 'SendSignature',
-    contractRef: contract.contractRef,
-    signerContact: 'golden-a101@siampark.demo',
-  });
-  const pending = yield* readLiveAgreements(session);
-  expect(
-    pending.contracts.find((item) => item.contractRef.resourceId === contract.contractRef.resourceId)?.signatureState,
-  ).toBe('SENT');
-  expect(
-    pending.signatureObservations.find((item) => item.contractRef.resourceId === contract.contractRef.resourceId),
-  ).toMatchObject({
-    mode: 'SIMULATED',
-    signer: { counterpartyRef: prepared.customer.counterpartyRef, partyRef: prepared.customer.party.canonicalPartyRef },
-    state: 'SENT',
-  });
-  const signed = yield* applyAgreementCommand(session, sent.revision, {
-    _tag: 'ObserveSignature',
-    contractRef: contract.contractRef,
-    document,
-    outcome: 'SIGNED',
-  });
-  const active = yield* applyAgreementCommand(session, signed.revision, {
-    _tag: 'ActivateContract',
-    contractRef: contract.contractRef,
-  });
-  const after = yield* readLiveAgreements(session);
-  expect(after.revision).toBe(active.revision);
-  expect(after.contracts).toHaveLength(prepared.agreements.contracts.length + 1);
-  expect(after.documents).toHaveLength(prepared.agreements.documents.length + 1);
-  expect(after.contracts.find((item) => item.contractRef.resourceId === contract.contractRef.resourceId)).toMatchObject(
-    { lifecycleState: 'ACTIVE', signatureState: 'SIGNED' },
-  );
-  expect(after.documents.find((item) => item.documentRef.resourceId === document.documentRef.resourceId)).toMatchObject(
-    {
+const executeGoldenSignedDocument = Effect.fn('SiamparkLiveHttp.executeGoldenSignedDocument')(
+  function* signedGoldenContract(
+    session: LiveSession,
+    prepared: Effect.Success<ReturnType<typeof prepareGoldenLease>>,
+  ) {
+    const { contract, document } = prepared;
+    const created = yield* applyAgreementCommand(session, prepared.agreements.revision, {
+      _tag: 'CreateContract',
+      record: contract,
+    });
+    const signed = yield* applyAgreementCommand(session, created.revision, {
+      _tag: 'RecordSignedDocument',
+      contractRef: contract.contractRef,
+      document,
+      signedBy: 'Podepisující nájemce',
+      signedOn: referenceDate,
+    });
+    const active = yield* applyAgreementCommand(session, signed.revision, {
+      _tag: 'ActivateContract',
+      contractRef: contract.contractRef,
+    });
+    const after = yield* readLiveAgreements(session);
+    expect(after.revision).toBe(active.revision);
+    expect(after.contracts).toHaveLength(prepared.agreements.contracts.length + 1);
+    expect(after.documents).toHaveLength(prepared.agreements.documents.length + 1);
+    expect(
+      after.contracts.find((item) => item.contractRef.resourceId === contract.contractRef.resourceId),
+    ).toMatchObject({ lifecycleState: 'ACTIVE', signatureState: 'SIGNED' });
+    expect(
+      after.documents.find((item) => item.documentRef.resourceId === document.documentRef.resourceId),
+    ).toMatchObject({
       contractRef: contract.contractRef,
       lifecycleState: 'FINAL',
       signedDocumentReference: document.signedDocumentReference,
-    },
-  );
-  return active;
-});
+    });
+    return active;
+  },
+);
 
 const executeGoldenInvoice = Effect.fn('SiamparkLiveHttp.executeGoldenInvoice')(function* confirmedGoldenInvoice(
   session: LiveSession,
@@ -387,16 +374,17 @@ const executeGoldenInvoice = Effect.fn('SiamparkLiveHttp.executeGoldenInvoice')(
     'legal-agreements',
   ];
   const draft = yield* applyFinanceCommand(session, prepared.finance.revision, payload.command, providers);
+  const invoice = yield* Effect.fromNullishOr(draft.invoice);
   const ready = yield* applyFinanceCommand(
     session,
     draft.revision,
-    { _tag: 'MarkInvoicesPrepared', invoiceRefs: [draft.invoice.ref] },
+    { _tag: 'MarkInvoicesPrepared', invoiceRefs: [invoice.ref] },
     providers,
   );
   const confirmed = yield* applyFinanceCommand(
     session,
     ready.revision,
-    { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice.ref },
+    { _tag: 'ConfirmInvoice', invoiceRef: invoice.ref },
     providers,
   );
   expect(confirmed.invoice).toMatchObject({
@@ -404,35 +392,20 @@ const executeGoldenInvoice = Effect.fn('SiamparkLiveHttp.executeGoldenInvoice')(
     businessState: 'CONFIRMED',
     paymentState: 'UNPAID',
   });
-  const pending = yield* applyFinanceCommand(session, confirmed.revision, {
-    _tag: 'RequestAccountingSync',
-    invoiceRef: draft.invoice.ref,
-  });
-  expect(pending.invoice.accountingSyncState).toBe('PENDING');
-  const receipt = `DEMO:live-golden-receipt:${correlation()}`;
-  const synced = yield* applyFinanceCommand(session, pending.revision, {
-    _tag: 'ApplyAccountingObservation',
-    correlation: draft.invoice.accountingCorrelation,
-    invoiceRef: draft.invoice.ref,
-    receipt,
-    resultId: `live-golden-accounting:${correlation()}`,
-    status: 'SUCCESS',
-  });
   const after = yield* readLiveFinance(session);
-  expect(after.revision).toBe(synced.revision);
+  expect(after.revision).toBe(confirmed.revision);
   expect(after.state.invoices).toHaveLength(prepared.finance.state.invoices.length + 1);
-  expect(after.state.invoices.find((item) => item.ref.resourceId === draft.invoice.ref.resourceId)).toMatchObject({
-    accountingSyncState: 'SYNCED',
-    externalAccountingReference: receipt,
+  expect(after.state.invoices.find((item) => item.ref.resourceId === invoice.ref.resourceId)).toMatchObject({
+    accountingSyncState: 'NOT_SYNCED',
     totalMinor: 1_500_000,
     unitRef: prepared.unit.unitRef,
   });
   expect(after.indicators.revenueMinor).toBe(prepared.finance.indicators.revenueMinor + 1_500_000);
-  return synced;
+  return confirmed;
 });
 
 layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark live HTTP acceptance', (it) => {
-  it.effect('live Management reads Finance and simulated email evidence with read-only server capabilities', () =>
+  it.effect('live Management reads Finance and Activities with read-only server capabilities', () =>
     Effect.gen(function* managementReadOnlyFinance() {
       const session = yield* signIn('management@siampark.demo');
       const finance = yield* readLiveFinance(session);
@@ -442,20 +415,6 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
       const relationships = yield* authorize(session, 'crm-activities');
       const activities = yield* readActivities({}, relationships.credential, correlation(), relationships.options);
       expect(activities.canWrite).toBe(false);
-      expect(activities.emailObservations).toHaveLength(1);
-      expect(activities.emailObservations).toEqual([
-        expect.objectContaining({
-          integrationKind: 'EMAIL',
-          mode: 'SIMULATED',
-          providerLabel: 'DEMO',
-          status: 'SUCCESS',
-        }),
-      ]);
-      expect(
-        activities.items.some(
-          (item) => item.ref.resourceId === activities.emailObservations[0]?.ownerResourceRef.resourceId,
-        ),
-      ).toBe(true);
       return finance.revision;
     }).pipe(Effect.mapError(safeTransportFailure)),
   );
@@ -494,7 +453,7 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
           _tag: 'Confirm',
           occupancyRef: prepared.occupancy.occupancyRef,
         });
-        yield* executeGoldenSignature(session, prepared);
+        yield* executeGoldenSignedDocument(session, prepared);
         const activated = yield* applyOccupancyCommand(session, confirmed.revision, {
           _tag: 'Activate',
           contractRef: prepared.contract.contractRef,
@@ -645,84 +604,6 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
     }).pipe(Effect.mapError(safeTransportFailure)),
   );
 
-  it.effect('live Operations applies payment independently and retries accounting on the existing Invoice', () =>
-    Effect.gen(function* operationsPaymentAndAccounting() {
-      const session = yield* signIn('operations@siampark.demo');
-      const initialGrant = yield* authorize(session, 'finance-billing');
-      const before = yield* readInvoices({}, initialGrant.credential, correlation(), initialGrant.options);
-      const invoice = before.state.invoices.find((item) => item.ref.resourceId === overdueInvoiceId);
-      if (invoice === undefined || invoice.accountingSyncState !== 'FAILED') {
-        return yield* new LiveDemoPrerequisiteUnavailable({ reason: 'B201 requires the FAILED accounting fixture.' });
-      }
-      const paymentResultId = `live-payment:${correlation()}`;
-      const paymentCommand: FinanceCommand = {
-        _tag: 'ApplyPaymentObservation',
-        confirmedPaidMinor: invoice.totalMinor,
-        correlation: `payment:${overdueInvoiceId}`,
-        currency: 'CZK',
-        invoiceRef: invoice.ref,
-        resultId: paymentResultId,
-      };
-      const payment = yield* applyFinanceCommand(session, before.revision, paymentCommand);
-      expect(payment.changed).toBe(true);
-      expect(payment.revision).toBe(before.revision + 1);
-      expect(payment.invoice).toMatchObject({
-        accountingSyncState: 'FAILED',
-        paidMinor: invoice.totalMinor,
-        paymentState: 'PAID',
-      });
-      const replay = yield* applyFinanceCommand(session, payment.revision, paymentCommand);
-      expect(replay.changed).toBe(false);
-      expect(replay.revision).toBe(payment.revision);
-      const retry = yield* applyFinanceCommand(session, replay.revision, {
-        _tag: 'RetryAccountingSync',
-        invoiceRef: invoice.ref,
-      });
-      expect(retry.revision).toBe(payment.revision + 1);
-      expect(retry.invoice).toMatchObject({
-        accountingCorrelation: invoice.accountingCorrelation,
-        accountingSyncState: 'PENDING',
-        paymentState: 'PAID',
-      });
-      const accountingResultId = `live-accounting:${correlation()}`;
-      const receipt = `DEMO:live-receipt:${correlation()}`;
-      const accountingCommand: FinanceCommand = {
-        _tag: 'ApplyAccountingObservation',
-        correlation: invoice.accountingCorrelation,
-        invoiceRef: invoice.ref,
-        receipt,
-        resultId: accountingResultId,
-        status: 'SUCCESS',
-      };
-      const completed = yield* applyFinanceCommand(session, retry.revision, accountingCommand);
-      expect(completed.revision).toBe(retry.revision + 1);
-      expect(completed.invoice).toMatchObject({
-        accountingCorrelation: invoice.accountingCorrelation,
-        accountingSyncState: 'SYNCED',
-        externalAccountingReference: receipt,
-        paymentState: 'PAID',
-      });
-      const accountingReplay = yield* applyFinanceCommand(session, completed.revision, accountingCommand);
-      expect(accountingReplay.changed).toBe(false);
-      expect(accountingReplay.revision).toBe(completed.revision);
-      const finalGrant = yield* authorize(session, 'finance-billing');
-      const after = yield* readInvoices({}, finalGrant.credential, correlation(), finalGrant.options);
-      expect(after.revision).toBe(completed.revision);
-      expect(after.state.invoices).toHaveLength(before.state.invoices.length);
-      expect(after.state.invoices.filter((item) => item.ref.resourceId !== overdueInvoiceId)).toEqual(
-        before.state.invoices.filter((item) => item.ref.resourceId !== overdueInvoiceId),
-      );
-      expect(after.state.paymentObservations.filter((item) => item.resultId === paymentResultId)).toHaveLength(1);
-      expect(after.state.accountingObservations.filter((item) => item.resultId === accountingResultId)).toHaveLength(1);
-      expect(
-        after.state.accountingObservations.filter(
-          (item) => item.correlation === invoice.accountingCorrelation && item.latest,
-        ),
-      ).toEqual([expect.objectContaining({ receipt, resultId: accountingResultId, status: 'SUCCESS' })]);
-      return after.revision;
-    }).pipe(Effect.mapError(safeTransportFailure)),
-  );
-
   it.effect('live External reads only its assigned Task, Activity and B201 Counterparty', () =>
     Effect.gen(function* externalAssignedReads() {
       const session = yield* signIn('external@siampark.demo');
@@ -737,7 +618,6 @@ layer(NodeHttpClient.layerNodeHttp, { excludeTestServices: true })('Siampark liv
         relationships.options,
       );
       expect(activities.items.map((activity) => activity.ref.resourceId)).toEqual([assignedActivityId]);
-      expect(activities.emailObservations).toEqual([]);
       const [assignedActivity] = activities.items;
       if (assignedActivity?.counterpartyRef === undefined) {
         return yield* new LiveDemoPrerequisiteUnavailable({

@@ -22,7 +22,6 @@ it('retires only original fixtures, retains unrelated contracts and is idempoten
   const next = retireLegacyRental(legacyRentalScope, state, baseline);
   expect(next.contracts).toEqual([commercial]);
   expect(next.documents).toEqual([]);
-  expect(next.signatureObservations).toEqual([]);
   expect(retireLegacyRental(legacyRentalScope, next, baseline)).toBe(next);
   expect(state.contracts).toHaveLength(baseline.contracts.length + 1);
 });

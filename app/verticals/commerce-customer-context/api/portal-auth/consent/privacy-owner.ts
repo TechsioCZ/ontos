@@ -92,7 +92,7 @@ export const readCustomerNewsletterCatalog = Effect.fn('CustomerConsent.readCata
     template.noticeRef.tenantId !== scope.tenantId ||
     template.noticeRef.resourceId !== configured.noticeId ||
     template.wording === null ||
-    !template.wording.trim()
+    template.wording.trim().length === 0
   ) {
     return yield* Effect.fail(consentUnavailable());
   }
@@ -149,7 +149,7 @@ export const prepareCustomerNewsletterNotice = Effect.fn('CustomerConsent.prepar
 ) {
   if ((yield* readCustomerPrivacySubject(scope, catalog.consentScope)) === undefined) {
     const gateway = yield* acquireCustomerPrivacyGateway(scope);
-    const subject = yield* Schema.decodeUnknownEffect(PrivacySubjectSchema)({
+    const subject = yield* Schema.decodeEffect(PrivacySubjectSchema)({
       kind: 'DATA_SUBJECT',
       partyRef: {
         moduleId: 'party.registry',
@@ -272,7 +272,7 @@ export const readCustomerNewsletterState = Effect.fn('CustomerConsent.readCurren
   ) {
     return yield* Effect.fail(consentConflict());
   }
-  return yield* Schema.decodeUnknownEffect(CustomerOwnConsentSchema)({
+  return yield* Schema.decodeEffect(CustomerOwnConsentSchema)({
     decision: item.resolution.outcome === 'ABSENT' ? ('ABSENT' as const) : item.resolution.decision.decision,
     notice: {
       language: notice.language,

@@ -146,6 +146,7 @@ it.live(
       let searchLayerLoads = 0;
       let compositionLoads = 0;
       const actionRuntime: ActionRuntimeService = {
+        resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
         resolveActionCommit: () =>
           Effect.suspend(() => {
             actionCommitCalls += 1;

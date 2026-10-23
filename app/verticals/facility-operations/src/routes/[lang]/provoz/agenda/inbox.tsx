@@ -17,7 +17,7 @@ import {
 } from '../../../../../shared/domain/agenda.ts';
 import { daysUntil, urgencyOf } from '../../../../ui/ops-agenda/deadlines.ts';
 import type { Deadline } from '../../../../../shared/domain/ops-overview.ts';
-import { personaOf } from '../../../../ui/ops-agenda/personas.ts';
+import { useAgendaPeople } from '../../../../ui/ops-agenda/agenda-people.tsx';
 import {
   Icon,
   IconBadge,
@@ -72,6 +72,8 @@ export const NotificationCenter = ({
   readonly state: AgendaState | undefined;
 }) => {
   const { language, t } = useModernI18n();
+  const people = useAgendaPeople();
+  const personOf = (id: string | undefined) => people.find((person) => person.principalId === id);
   const lang = langOf(language);
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
   const all = myNotifications(state, me);
@@ -150,7 +152,7 @@ export const NotificationCenter = ({
           {rows.map((entry) => {
             const tone = notificationTone[entry.category];
             const isUnread = entry.readAt === undefined;
-            const from = personaOf(entry.createdBy.principalId);
+            const from = personOf(entry.createdBy.principalId);
             return (
               <li
                 className="ops-inbox-card facilityoperations:items-start facilityoperations:gap-3 facilityoperations:rounded-xl facilityoperations:p-3"
@@ -183,7 +185,7 @@ export const NotificationCenter = ({
                         : t(`${k}.category.${entry.detail}`, { defaultValue: entry.detail }),
                       from === undefined || entry.category !== 'ASSIGNED' || entry.source === 'work'
                         ? undefined
-                        : t(`${k}.notifications.from`, { who: from.email }),
+                        : t(`${k}.notifications.from`, { who: from.displayName }),
                       fmt.stamp(lang, DateTime.formatIso(entry.createdAt)),
                     ]
                       .filter((part) => part !== undefined)
@@ -264,6 +266,8 @@ export const MyAgenda = ({
   readonly workStatus: string;
 }) => {
   const { language, t } = useModernI18n();
+  const people = useAgendaPeople();
+  const personOf = (id: string | undefined) => people.find((person) => person.principalId === id);
   const lang = langOf(language);
   const mine = deadlines.filter((row) => row.ownerPrincipalId === me && !row.done);
   const tasks = mine.filter((row) => row.category === 'task');
@@ -272,7 +276,7 @@ export const MyAgenda = ({
   const todayRows = mine.filter((row) => row.date === today);
   const week = mine.filter((row) => row.date >= today && daysUntil(row.date, today) <= 7);
   const unread = myNotifications(state, me).filter((entry) => entry.readAt === undefined);
-  const persona = personaOf(me);
+  const person = personOf(me);
   const list = (rows: readonly Deadline[], empty: string) =>
     rows.length === 0 ? (
       <p className="facilityoperations:m-0 facilityoperations:text-sm" style={muted}>
@@ -326,7 +330,7 @@ export const MyAgenda = ({
   return (
     <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-4">
       <p className="facilityoperations:m-0 facilityoperations:text-sm" style={muted}>
-        {t(`${k}.mine.intro`, { who: persona?.email ?? t(`${k}.mine.you`) })}
+        {t(`${k}.mine.intro`, { who: person?.displayName ?? t(`${k}.mine.you`) })}
       </p>
       <StatRow>
         <StatCard label={t(`${k}.mine.overdue`)} value={formatNumber(overdue.length)} />
@@ -391,6 +395,8 @@ export const SettingsPanel = ({
   readonly state: AgendaState | undefined;
 }) => {
   const { language, t } = useModernI18n();
+  const people = useAgendaPeople();
+  const personOf = (id: string | undefined) => people.find((person) => person.principalId === id);
   const lang = langOf(language);
   const current = myPreference(state, me);
   const [leadDays, setLeadDays] = useState(String(current?.leadDays ?? DEFAULT_LEAD_DAYS));
@@ -403,7 +409,7 @@ export const SettingsPanel = ({
     ),
   );
   const provider = useEmailProvider();
-  const address = personaOf(me)?.email ?? t(`${k}.settings.yourAddress`);
+  const address = t(`${k}.settings.yourAddress`);
   const providerPill =
     provider.kind === 'ready' && provider.provider.configured ? (
       <Pill tone="success">{t(`${k}.settings.emailOn`)}</Pill>
@@ -550,7 +556,7 @@ export const SettingsPanel = ({
                       {fmt.stamp(lang, DateTime.formatIso(entry.exportedAt))}
                     </td>
                     <td className="facilityoperations:px-2 facilityoperations:py-1.5">
-                      {personaOf(entry.exportedBy.principalId)?.email ?? entry.exportedBy.principalId}
+                      {personOf(entry.exportedBy.principalId)?.displayName ?? ''}
                     </td>
                     <td className="facilityoperations:px-2 facilityoperations:py-1.5">
                       <div>

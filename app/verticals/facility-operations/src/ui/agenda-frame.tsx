@@ -1,7 +1,6 @@
 // Page frame shared by all Facility operations pages (owned by ops-scaffold).
 import { EmptyState, Toaster } from '@app/admin-ui';
 import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import type { ReactNode } from 'react';
 import { facilityOperationsI18nResources } from '../i18n/resources.ts';
@@ -29,16 +28,6 @@ export const AgendaFrame = ({ children }: { readonly children: ReactNode }) => (
     <div className="flex flex-col gap-300">{children}</div>
   </FederatedI18nBoundary>
 );
-
-/** Visible marker for simulated features (brief: be truthful in the UI). */
-export const SimulationBadge = () => {
-  const { t } = useModernI18n();
-  return (
-    <Badge size="sm" variant="warning">
-      {t('facility-operations.common.simulation')}
-    </Badge>
-  );
-};
 
 /** Pending (skeleton) / forbidden / error gate. Renders children only when data is ready. */
 export const AgendaGate = ({

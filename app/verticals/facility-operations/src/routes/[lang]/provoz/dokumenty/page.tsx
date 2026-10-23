@@ -27,14 +27,18 @@ import {
   SubjectChip,
   todayInPrague,
   useCategoryLabel,
-  usePrincipalLabel,
 } from '../../../../ui/documents-kit.tsx';
 import { preloadAgendaRecords, useAgendaRecords } from '../../../../ui/use-agenda.ts';
 import { exportCsv } from '../../../../ui/ops-agenda/ui-bits.tsx';
 import { LinkedDocuments } from '../../../../ui/linked-documents.tsx';
 import { LoadingSkeleton } from '../../../../ui/loading-skeleton.tsx';
 import { useTaskOptions } from '../../../../ui/task-options.ts';
-import { FinanceFilesList, financeFileText, financeInvoiceLabel, useFinanceFiles } from '../../../../ui/finance-files.tsx';
+import {
+  FinanceFilesList,
+  financeFileText,
+  financeInvoiceLabel,
+  useFinanceFiles,
+} from '../../../../ui/finance-files.tsx';
 import type { FinanceFileRow } from '../../../../ui/finance-files.tsx';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
 import { DocumentDetailPanel } from './document-detail.tsx';
@@ -76,7 +80,6 @@ const DocumentsView = () => {
   const lang = language?.startsWith('en') === true ? 'en' : 'cs';
   const financeFiles = useFinanceFiles();
   const categoryLabel = useCategoryLabel();
-  const principalLabel = usePrincipalLabel();
   const searchStr = useRouterState({ select: (state) => state.location.searchStr });
   const ops = useAgendaRecords(['documents']);
   const tasks = useTaskOptions();
@@ -107,17 +110,16 @@ const DocumentsView = () => {
   }, [searchStr]);
 
   const filter = { category: category === ALL ? '' : category, link: link === ALL ? '' : link, query };
-  /** Owner = contract owner when stated, otherwise the person who uploaded the current version (or created it). */
-  const ownerOf = (document: DocumentRecord) =>
-    document.contract?.owner ?? principalLabel(document.versions.at(-1)?.uploadedBy ?? document.createdBy);
+  /** A responsible person is shown only when the contract record states one. */
+  const ownerOf = (document: DocumentRecord) => document.contract?.owner ?? '';
   const pragueDay = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Prague' });
   /** Date of the last change (Europe/Prague business date). */
   const changedOn = (document: DocumentRecord) => pragueDay.format(DateTime.toEpochMillis(document.updatedAt));
-  const financeOwnerOf = (row: FinanceFileRow) => row.file.actorLabel ?? 'Finance';
+  const financeOwnerOf = (row: FinanceFileRow) => row.file.actorLabel ?? '';
   const financeAll = financeFiles.status === 'ready' ? financeFiles.rows : [];
-  const owners = [...new Set([...documents.map(ownerOf), ...financeAll.map(financeOwnerOf)])].toSorted((left, right) =>
-    left.localeCompare(right, 'cs'),
-  );
+  const owners = [
+    ...new Set([...documents.map(ownerOf), ...financeAll.map(financeOwnerOf)].filter((name) => name !== '')),
+  ].toSorted((left, right) => left.localeCompare(right, 'cs'));
   const financeChangedOn = (row: FinanceFileRow) => pragueDay.format(Date.parse(row.file.uploadedAt));
   const financeLinkMatches = (row: FinanceFileRow) => {
     if (link === ALL) return true;
@@ -177,7 +179,9 @@ const DocumentsView = () => {
           row.file.fileName,
           `${categoryLabel('invoice')} (Finance)`,
           financeOwnerOf(row),
-          [financeInvoiceLabel(row.invoice), row.invoice?.counterpartyName ?? ''].filter((part) => part !== '').join(', '),
+          [financeInvoiceLabel(row.invoice), row.invoice?.counterpartyName ?? '']
+            .filter((part) => part !== '')
+            .join(', '),
           row.file.fileName,
           financeChangedOn(row),
         ]),
@@ -276,15 +280,14 @@ const DocumentsView = () => {
       cell: ({ row }) => {
         const version = row.original.versions.at(-1);
         return version === undefined ? (
-          <span className="text-fg-secondary text-xs">{principalLabel(row.original.createdBy)}</span>
+          <span className="text-fg-secondary text-xs">{t(`${k}.noFileYet`)}</span>
         ) : (
           <span className="flex flex-col">
-            <span className="text-sm">{principalLabel(version.uploadedBy)}</span>
             <span className="text-fg-secondary text-xs">{formatWhen(version.uploadedAt)}</span>
           </span>
         );
       },
-      header: t(`${k}.fields.uploadedBy`),
+      header: t(`${k}.fields.uploadedAt`),
       id: 'uploaded',
       meta: { width: '16%' },
     },
@@ -313,10 +316,7 @@ const DocumentsView = () => {
       <AgendaGate onRetry={() => void ops.reload()} readable={envelope !== undefined} status={ops.status}>
         {taskSubject !== undefined && (
           <SectionCard title={`${t(`${k}.linked.taskTitle`)} · ${taskSubject.label}`}>
-            <a
-              className="text-sm underline"
-              href={`/cs/ukoly?resourceId=${encodeURIComponent(taskSubject.id)}`}
-            >
+            <a className="text-sm underline" href={`/cs/ukoly?resourceId=${encodeURIComponent(taskSubject.id)}`}>
               {t(`${k}.linked.backToTask`)}
             </a>
             <LinkedDocuments records={ops} subject={taskSubject} />
@@ -502,7 +502,7 @@ const DocumentsView = () => {
                       <span className="text-fg-secondary text-xs">
                         {version === undefined
                           ? t(`${k}.noFileYet`)
-                          : `${principalLabel(version.uploadedBy)} · ${formatWhen(version.uploadedAt)} · ${formatBytes(version.file.size)}`}
+                          : `${formatWhen(version.uploadedAt)} · ${formatBytes(version.file.size)}`}
                       </span>
                       <LinksCell document={document} />
                     </span>
@@ -513,17 +513,21 @@ const DocumentsView = () => {
             {financeFiles.status !== 'forbidden' && (
               <SectionCard title="Soubory faktur z Financí">
                 <p className="-mt-100 text-fg-secondary text-sm">
-                  Doklady a přílohy nahrané k fakturám ve Financích. Zobrazují se jen ke čtení podle vašeho oprávnění
-                  ve Financích; nahrávají a mění se u faktury.
+                  Doklady a přílohy nahrané k fakturám ve Financích. Zobrazují se jen ke čtení podle vašeho oprávnění ve
+                  Financích; nahrávají a mění se u faktury.
                 </p>
                 {financeFiles.status === 'loading' && <LoadingSkeleton rows={2} />}
                 {financeFiles.status === 'unavailable' && (
-                  <p className="text-fg-secondary text-sm">Soubory z Financí jsou teď nedostupné. Zkuste stránku obnovit.</p>
+                  <p className="text-fg-secondary text-sm">
+                    Soubory z Financí jsou teď nedostupné. Zkuste stránku obnovit.
+                  </p>
                 )}
                 {financeFiles.status === 'ready' &&
                   (financeFiltered.length === 0 ? (
                     <p className="text-fg-secondary text-sm">
-                      {financeAll.length === 0 ? 'Ve Financích zatím nejsou nahrané žádné soubory.' : t(`${k}.filters.noMatch`)}
+                      {financeAll.length === 0
+                        ? 'Ve Financích zatím nejsou nahrané žádné soubory.'
+                        : t(`${k}.filters.noMatch`)}
                     </p>
                   ) : (
                     <FinanceFilesList language={lang} rows={financeFiltered} />

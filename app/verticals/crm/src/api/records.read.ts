@@ -12,6 +12,7 @@ import { authorizedImportSamples } from '../../api/authorized-import-samples.ts'
 import type { RecordsRequest, RecordsResponse } from '../../shared/apis/records.ts';
 import { crmRecordsGrants, finishCrmRecords, persistenceService } from '../services/persistence.service.ts';
 import { RecordsRequestSchema, RecordsResponseSchema } from '../../shared/apis/records.ts';
+import { clientReadEvidence } from './agent-review.ts';
 
 type Services = Effect.Success<ReturnType<typeof persistenceService>>;
 
@@ -77,7 +78,7 @@ export const recordsRead = defineRead(
   {
     // oxlint-disable perfectionist/sort-objects -- Read steps stay in execution order; each step's types infer from the previous one.
     prepare: (_input, context) => crmRecordsGrants(context.scope).pipe(Effect.mapError(readFailure)),
-    load: (_input, context) => context.services.loadRecords().pipe(Effect.mapError(readFailure)),
+    load: (input, context) => context.services.loadRecords(input).pipe(Effect.mapError(readFailure)),
     finish: (input: RecordsRequest, context) =>
       finishCrmRecords(input, context.loaded, context.prepared, context.scope).pipe(
         Effect.mapError(readFailure),
@@ -91,7 +92,12 @@ export const recordsRead = defineRead(
             }),
         ),
         Effect.map((result) => ({
-          evidence: { resultCount: result.state.clients.items.length },
+          evidence: clientReadEvidence(
+            result.state.clients.items.length,
+            input.clientId === undefined
+              ? undefined
+              : result.state.clients.items.find((client) => client.id === input.clientId),
+          ),
           result: { ...result, importSamples: authorizedImportSamples(result.viewer) },
         })),
       ),

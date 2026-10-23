@@ -5,6 +5,7 @@ import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { partyRegistryManifest } from './vertical.manifest.ts';
 
 // <generated-module-registration-imports>
+import { acceptRetailEnrollmentEvidenceAction } from './src/actions/accept-retail-enrollment-evidence.action.ts';
 import { addContactPointAction } from './src/actions/add-contact-point.action.ts';
 import { addPartyOfficialIdentifierAction } from './src/actions/add-party-official-identifier.action.ts';
 import { archiveOrganizationEngagementAction } from './src/actions/archive-organization-engagement.action.ts';
@@ -58,6 +59,7 @@ import { updatePartyRelationshipAction } from './src/actions/update-party-relati
 export const partyRegistryRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
+    acceptRetailEnrollmentEvidenceAction,
     addContactPointAction,
     addPartyOfficialIdentifierAction,
     archiveOrganizationEngagementAction,

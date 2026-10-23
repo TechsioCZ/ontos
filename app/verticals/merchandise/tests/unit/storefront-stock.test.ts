@@ -289,3 +289,18 @@ it.effect('dry-run validates actual cart without fake contact or address and sav
     expect(rejected._tag).toBe('MerchandiseLifecycleConflict');
   }),
 );
+
+it('replenishment uses the product minimum, independently of variant availability', () => {
+  const product = state.products[0]!;
+  const base = { ...product, variants: undefined };
+  expect(toProductRecord({ ...base, lowStockThreshold: 0 }, { total: 0, variants: new Map() })).toMatchObject({
+    availability: 'OUT_OF_STOCK',
+    lowStock: false,
+  });
+  expect(toProductRecord({ ...base, lowStockThreshold: 5 }, { total: 5, variants: new Map() }).lowStock).toBe(false);
+  expect(toProductRecord({ ...base, lowStockThreshold: 5 }, { total: 4, variants: new Map() }).lowStock).toBe(true);
+  const mixed = { ...product, variants: [...product.variants!, { ...product.variants![0]!, id: 'empty-variant' }] };
+  const record = toProductRecord(mixed, { total: 500, variants: new Map([['item-1', 500]]) });
+  expect(record.lowStock).toBe(false);
+  expect(record.variantRecords?.find((variant) => variant.id === 'empty-variant')?.availability).toBe('OUT_OF_STOCK');
+});

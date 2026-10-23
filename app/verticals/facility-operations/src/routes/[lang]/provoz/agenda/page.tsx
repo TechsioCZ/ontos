@@ -2,6 +2,8 @@
 // Facility operations — Moje agenda (S13). OWNED BY THE `agenda` LANE (ops-agenda).
 // Tabs: shared calendar (month/week/list, read from source modules), Moje agenda (per person), notification centre
 // (deduplicated in-app notices), settings + export log.
+import type { ModulePageContext, ModulePageProps } from '@app/shared-contracts/page-data';
+import { AgendaPeopleContext } from '../../../../ui/ops-agenda/agenda-people.tsx';
 import { PageHeader } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -13,8 +15,12 @@ import { DEFAULT_LEAD_DAYS } from '../../../../../shared/domain/agenda.ts';
 import { AgendaFrame } from '../../../../ui/agenda-frame.tsx';
 import { notificationCandidates, taskAssignmentCandidates, pragueToday } from '../../../../ui/ops-agenda/deadlines.ts';
 import type { Deadline } from '../../../../../shared/domain/ops-overview.ts';
-import { currentAgendaState, buildDeadlines } from '../../../../ui/ops-agenda/model.ts';
-import { allSettled, preloadRentalOverviewSources, useRentalOverviewSources } from '../../../../ui/ops-agenda/sources.ts';
+import { currentAgendaState, buildDeadlines, agendaPeople } from '../../../../ui/ops-agenda/model.ts';
+import {
+  allSettled,
+  preloadRentalOverviewSources,
+  useRentalOverviewSources,
+} from '../../../../ui/ops-agenda/sources.ts';
 import { SourceHealth } from '../prehled/dashboard-parts.tsx';
 import { useAgendaCommands } from '../../../../ui/ops-agenda/use-agenda-commands.ts';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
@@ -27,9 +33,10 @@ type Tab = 'kalendar' | 'moje' | 'notifikace' | 'nastaveni';
 const tabs: readonly Tab[] = ['kalendar', 'moje', 'notifikace', 'nastaveni'];
 const k = 'facility-operations.agenda';
 
-const params = () => (typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.search));
+const params = () =>
+  typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.search);
 
-const AgendaView = () => {
+const AgendaView = ({ context }: { readonly context: ModulePageContext | undefined }) => {
   const { t } = useModernI18n();
   const toast = useToast();
   const { names, reload, sources } = useRentalOverviewSources();
@@ -96,7 +103,10 @@ const AgendaView = () => {
 
   /** Sync readable native assignments as well as deadlines; the reducer persists and deduplicates both. */
   const deliver = async (all: boolean) => {
-    const candidates = [...taskAssignmentCandidates(sources.work.data?.items ?? [], me), ...notificationCandidates(deadlines, today, leadDays, me)];
+    const candidates = [
+      ...taskAssignmentCandidates(sources.work.data?.items ?? [], me),
+      ...notificationCandidates(deadlines, today, leadDays, me),
+    ];
     const known = new Set(myNotifications(state, me).map((entry) => entry.eventKey));
     const items = (all ? candidates : candidates.filter((entry) => !known.has(entry.eventKey))).slice(0, 200);
     if (items.length === 0) {
@@ -104,7 +114,12 @@ const AgendaView = () => {
     }
     const outcome = await commands.run({ _tag: 'AgendaNotificationsDeliver', items });
     const delivered = outcome.ok ? outcome.result.entityIds.length : 0;
-    return { delivered, duplicates: outcome.ok ? items.length - delivered : 0, offered: items.length, failed: !outcome.ok };
+    return {
+      delivered,
+      duplicates: outcome.ok ? items.length - delivered : 0,
+      offered: items.length,
+      failed: !outcome.ok,
+    };
   };
 
   useEffect(() => {
@@ -143,11 +158,20 @@ const AgendaView = () => {
     await commands.run({ _tag: 'AgendaNotificationsMarkAllRead' });
     setBusy(false);
   };
-  const savePreferences = async (days: number, emailOptIn: boolean, emailCategories: readonly ('DEADLINE' | 'CHANGE')[]) => {
+  const savePreferences = async (
+    days: number,
+    emailOptIn: boolean,
+    emailCategories: readonly ('DEADLINE' | 'CHANGE')[],
+  ) => {
     setSaving(true);
     const outcome = await commands.run({ _tag: 'AgendaPreferencesSet', emailCategories, emailOptIn, leadDays: days });
     setSaving(false);
-    toast.create({ title: outcome.ok ? t('facility-operations.common.saved') : t(`facility-operations.common.errors.${outcome.reason}`), type: outcome.ok ? 'success' : 'error' });
+    toast.create({
+      title: outcome.ok
+        ? t('facility-operations.common.saved')
+        : t(`facility-operations.common.errors.${outcome.reason}`),
+      type: outcome.ok ? 'success' : 'error',
+    });
   };
 
   const opened: Deadline | undefined = deadlines.find((row) =>
@@ -156,7 +180,7 @@ const AgendaView = () => {
   const agendaReadable = sources.ops.status === 'ready' && sources.ops.data?.agenda !== undefined;
 
   return (
-    <>
+    <AgendaPeopleContext value={agendaPeople(state, context)}>
       <PageHeader
         actions={
           commands.canWrite ? (
@@ -177,12 +201,18 @@ const AgendaView = () => {
       />
       <SourceHealth sources={sources} />
       {sources.ops.data?.agenda?.assignedOnly === true && (
-        <p className="facilityoperations:m-0 facilityoperations:text-sm" style={{ color: 'var(--color-fg-secondary, #6b7280)' }}>
+        <p
+          className="facilityoperations:m-0 facilityoperations:text-sm"
+          style={{ color: 'var(--color-fg-secondary, #6b7280)' }}
+        >
           {t(`${k}.state.readOnly`)}
         </p>
       )}
       {!agendaReadable && sources.ops.status !== 'loading' && (
-        <p className="facilityoperations:m-0 facilityoperations:text-sm" style={{ color: 'var(--color-fg-secondary, #6b7280)' }}>
+        <p
+          className="facilityoperations:m-0 facilityoperations:text-sm"
+          style={{ color: 'var(--color-fg-secondary, #6b7280)' }}
+        >
           {t(`${k}.state.agendaUnavailable`)}
         </p>
       )}
@@ -190,7 +220,9 @@ const AgendaView = () => {
         <Tabs.List>
           <Tabs.Trigger value="kalendar">{t(`${k}.tabs.kalendar`)}</Tabs.Trigger>
           <Tabs.Trigger value="moje">{t(`${k}.tabs.moje`)}</Tabs.Trigger>
-          <Tabs.Trigger value="notifikace">{unread > 0 ? `${t(`${k}.tabs.notifikace`)} (${unread})` : t(`${k}.tabs.notifikace`)}</Tabs.Trigger>
+          <Tabs.Trigger value="notifikace">
+            {unread > 0 ? `${t(`${k}.tabs.notifikace`)} (${unread})` : t(`${k}.tabs.notifikace`)}
+          </Tabs.Trigger>
           <Tabs.Trigger value="nastaveni">{t(`${k}.tabs.nastaveni`)}</Tabs.Trigger>
         </Tabs.List>
       </Tabs>
@@ -209,7 +241,14 @@ const AgendaView = () => {
         />
       )}
       {tab === 'moje' && (
-        <MyAgenda deadlines={deadlines} me={me} onOpen={openRow} state={state} today={today} workStatus={sources.work.status} />
+        <MyAgenda
+          deadlines={deadlines}
+          me={me}
+          onOpen={openRow}
+          state={state}
+          today={today}
+          workStatus={sources.work.status}
+        />
       )}
       {tab === 'notifikace' && (
         <NotificationCenter
@@ -240,15 +279,20 @@ const AgendaView = () => {
         state={state}
         today={today}
       />
-      <CreateEventPanel initialDate={today} onClose={() => setCreating(false)} onRun={(command) => commands.run(command)} open={creating} />
-    </>
+      <CreateEventPanel
+        initialDate={today}
+        onClose={() => setCreating(false)}
+        onRun={(command) => commands.run(command)}
+        open={creating}
+      />
+    </AgendaPeopleContext>
   );
 };
 
-export const AgendaPage = () => (
+export const AgendaPage = ({ context }: Partial<ModulePageProps>) => (
   <AgendaFrame>
     <UltramodernRouteHead titleKey="facility-operations.agenda.title" />
-    <AgendaView />
+    <AgendaView context={context} />
   </AgendaFrame>
 );
 

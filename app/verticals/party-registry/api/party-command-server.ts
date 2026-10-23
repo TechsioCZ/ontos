@@ -1,13 +1,13 @@
-import { ActionRuntime } from '@app/core-runtime';
+import { ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Redacted, Schema } from 'effect';
 import type { HttpServerRequest } from 'effect/unstable/http';
 
+import { partyCommandResultRead } from '../src/api/party-command-result.read.ts';
 import { partyRegistryApi } from '../shared/api.ts';
 import type { ResolvePartyCommandCommitPayload, ResolvePartyCommandCommitResult } from '../shared/command-api.ts';
-import { ActionInvocationIdSchema } from '../shared/domain/correction-contracts.ts';
 import { bindActionHttpRunner } from './action-http-runner.ts';
 import { authenticateOperationPrincipal } from './auth/action-principal.ts';
 import {
@@ -123,6 +123,9 @@ const runWirePayloadPartyCommand = Effect.fn('PartyCommandServer.runWirePayloadP
 
 export const partyRegistryCommandsLive = HttpApiBuilder.group(partyRegistryApi, 'partyCommands', (handlers) =>
   handlers
+    .handle('acceptRetailEnrollmentEvidence', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.acceptRetailEnrollmentEvidence, payload, request),
+    )
     .handle('addContactPoint', ({ payload, request }) =>
       runWirePayloadPartyCommand(partyCommandRegistrations.addContactPoint, payload, request),
     )
@@ -211,31 +214,28 @@ const resolvePartyCommandCommit = Effect.fn('PartyCommandServer.resolvePartyComm
     }
     const principal = yield* verifyPrincipal(Redacted.make(request.headers['authorization']));
     const runtime = yield* ActionRuntime;
-    return yield* runtime.resolveActionCommit({ ...payload, principal }).pipe(
-      Effect.map((resolution): ResolvePartyCommandCommitResult => ({
-        _tag: 'PartyCommandCommitResolution',
-        invocationId: resolution.invocationId,
-        retryCommand: false,
-        state: 'OPEN',
-      })),
-      Effect.catchTag('ActionAlreadyCommitted', (committed) =>
-        Effect.succeed<ResolvePartyCommandCommitResult>({
-          _tag: 'PartyCommandCommitResolution',
-          invocationId: ActionInvocationIdSchema.make(committed.invocationId),
-          retryCommand: false,
-          state: 'COMMITTED',
-        }),
-      ),
+    const resolution = yield* runtime.resolveActionExecution({ ...payload, principal }).pipe(
       Effect.catchTags({
-        ActionCommitIndeterminate: (failure) =>
-          failPartyCommandProblem(partyCommandProblem.indeterminate(failure.invocationId)),
-        ActionInvocationNotFound: () => failPartyCommandProblem(partyCommandProblem.notFound()),
         ActionInvocationPersistenceError: () => failPartyCommandProblem(partyCommandProblem.unavailable()),
-        ActionInvocationStateError: (failure) => failPartyCommandProblem(partyCommandProblem.conflict(failure.code)),
         ActionPayloadValidationError: () => failPartyCommandProblem(partyCommandProblem.invalid()),
         ActionTrustedContextValidationError: () => failPartyCommandProblem(partyCommandProblem.authentication()),
       }),
     );
+    if (resolution.state !== 'COMMITTED') {
+      return { _tag: 'PartyCommandCommitResolution', ...resolution } satisfies ResolvePartyCommandCommitResult;
+    }
+    const readRuntime = yield* ReadRuntime;
+    const { createResult } = yield* readRuntime
+      .runRead({
+        registration: partyCommandResultRead,
+        decodedInput: { invocationId: resolution.invocationId },
+        inputFormat: 'decoded',
+        principal,
+        transport: { correlationId },
+      })
+      .pipe(Effect.mapError((cause) => Object.assign(partyCommandProblem.unavailable(), { cause })));
+    const result = { _tag: 'PartyCommandCommitResolution' as const, ...resolution };
+    return createResult === undefined ? result : { ...result, createResult };
   },
 );
 

@@ -44,10 +44,8 @@ const legacyInvoice: Invoice = {
   updatedAt: now,
 };
 const empty: FinanceState = {
-  accountingObservations: [],
   financialPlanEntries: [],
   invoices: [],
-  paymentObservations: [],
 };
 const lines: readonly InvoiceLine[] = [
   { description: 'Konzultace', productId: 'p-1', quantity: 3, unitPriceMinor: 333, vatRate: 21 },
@@ -151,8 +149,16 @@ describe('Invoice line snapshots', () => {
         run(relined.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice!.ref }, 'unused'),
       );
       expect(Exit.isFailure(plainConfirm)).toBe(true);
-      const prepared = yield* run(relined.state, { _tag: 'MarkInvoicesPrepared', invoiceRefs: [draft.invoice!.ref] }, 'unused');
-      const confirmed = yield* run(prepared.state, { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice!.ref }, 'unused');
+      const prepared = yield* run(
+        relined.state,
+        { _tag: 'MarkInvoicesPrepared', invoiceRefs: [draft.invoice!.ref] },
+        'unused',
+      );
+      const confirmed = yield* run(
+        prepared.state,
+        { _tag: 'ConfirmInvoice', invoiceRef: draft.invoice!.ref },
+        'unused',
+      );
       const {
         approvedAt: _approvedAt,
         businessState: _confirmedState,
@@ -165,7 +171,11 @@ describe('Invoice line snapshots', () => {
       expect(confirmed.invoice!.lines).toBe(relined.invoice!.lines);
 
       const lateEdit = yield* Effect.exit(
-        run(confirmed.state, { ...create, _tag: 'UpdateInvoiceDraft', invoiceRef: draft.invoice!.ref, lines }, 'unused'),
+        run(
+          confirmed.state,
+          { ...create, _tag: 'UpdateInvoiceDraft', invoiceRef: draft.invoice!.ref, lines },
+          'unused',
+        ),
       );
       expect(Exit.isFailure(lateEdit)).toBe(true);
 

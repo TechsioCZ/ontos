@@ -243,12 +243,12 @@ const linkColumns = (records: RecordsResponse): ColumnDef<CustomerLink>[] => [
     cell: (info) => {
       const party = partyOfLink(records, info.row.original);
       return party === undefined ? (
-        <span className="text-fg-secondary">jen klient CRM (bez Party)</span>
+        <span className="text-fg-secondary">pouze klient v CRM</span>
       ) : (
-        <span title="Vazba vede na Counterparty v Party Registry">{party}</span>
+        <span title="Vazba vede na zákazníka v evidenci zákazníků">{party}</span>
       );
     },
-    header: 'Party Registry',
+    header: 'Evidence zákazníků',
     id: 'party',
     meta: { type: 'string', width: 200 },
   },

@@ -9,10 +9,9 @@ import { agendaIds } from '../../../../../shared/agendas.ts';
 import { daysUntil, urgencyOf } from '../../../../ui/ops-agenda/deadlines.ts';
 import { opsSegments } from '../../../../../shared/domain/ops-overview.ts';
 import type { Deadline } from '../../../../../shared/domain/ops-overview.ts';
-import { searchRows, unitAvailability } from '../../../../ui/ops-agenda/model.ts';
+import { personalGreetingName, searchRows, unitAvailability } from '../../../../ui/ops-agenda/model.ts';
 import type { DrillRow, Kpi, KpiId, SearchKind, SearchRow, Tone } from '../../../../ui/ops-agenda/model.ts';
 import { LoadingSkeleton } from '../../../../ui/loading-skeleton.tsx';
-import { personaOf } from '../../../../ui/ops-agenda/personas.ts';
 import { sourceKeys } from '../../../../ui/ops-agenda/sources.ts';
 import type { RentalOverviewSources } from '../../../../ui/ops-agenda/sources.ts';
 import {
@@ -47,7 +46,9 @@ const linkTo = (lang: string, href: string) => `/${lang}${href}`;
 // ---- Hero ----------------------------------------------------------------------------------------------------------
 
 const pragueHour = () =>
-  Number(new Intl.DateTimeFormat('en-GB', { hour: 'numeric', hour12: false, timeZone: 'Europe/Prague' }).format(new Date()));
+  Number(
+    new Intl.DateTimeFormat('en-GB', { hour: 'numeric', hour12: false, timeZone: 'Europe/Prague' }).format(new Date()),
+  );
 
 const OccupancyFigure = ({ kpi }: { readonly kpi: Kpi | undefined }) => {
   const { t } = useLang();
@@ -56,8 +57,13 @@ const OccupancyFigure = ({ kpi }: { readonly kpi: Kpi | undefined }) => {
   const reserved = Number(kpi?.secondary?.['reserved'] ?? 0);
   const ready = kpi?.status === 'ready' && kpi.value !== undefined && total > 0;
   return (
-    <div className="facilityoperations:flex facilityoperations:w-full facilityoperations:flex-col facilityoperations:gap-3" style={{ maxWidth: 300 }}>
-      <span className="facilityoperations:text-sm facilityoperations:font-medium" style={muted}>{t(`${k}.overview.occupiedToday`)}</span>
+    <div
+      className="facilityoperations:flex facilityoperations:w-full facilityoperations:flex-col facilityoperations:gap-3"
+      style={{ maxWidth: 300 }}
+    >
+      <span className="facilityoperations:text-sm facilityoperations:font-medium" style={muted}>
+        {t(`${k}.overview.occupiedToday`)}
+      </span>
       <strong style={{ fontSize: 56, fontWeight: 600, letterSpacing: '-0.04em', lineHeight: 1.1 }}>
         {ready ? formatPercent(kpi.value ?? 0) : '—'}
       </strong>
@@ -72,9 +78,19 @@ const OccupancyFigure = ({ kpi }: { readonly kpi: Kpi | undefined }) => {
             role="meter"
             style={{ background: '#fef3c7', borderRadius: 4, height: 10, overflow: 'hidden' }}
           >
-            <span style={{ background: 'var(--color-primary-500, #ffc627)', display: 'block', height: '100%', width: `${(occupied / total) * 100}%` }} />
+            <span
+              style={{
+                background: 'var(--color-primary-500, #ffc627)',
+                display: 'block',
+                height: '100%',
+                width: `${(occupied / total) * 100}%`,
+              }}
+            />
           </div>
-          <div className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:gap-x-4 facilityoperations:gap-y-1 facilityoperations:text-xs" style={muted}>
+          <div
+            className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:gap-x-4 facilityoperations:gap-y-1 facilityoperations:text-xs"
+            style={muted}
+          >
             <span>{t(`${k}.overview.legend.occupied`, { count: occupied })}</span>
             <span>{t(`${k}.overview.legend.reserved`, { count: reserved })}</span>
             <span>{t(`${k}.overview.legend.free`, { count: total - occupied - reserved })}</span>
@@ -82,7 +98,11 @@ const OccupancyFigure = ({ kpi }: { readonly kpi: Kpi | undefined }) => {
         </>
       ) : (
         <span className="facilityoperations:text-sm" style={muted}>
-          {kpi === undefined || kpi.status === 'loading' ? <PendingBar /> : t(`${k}.state.${kpi.status === 'ready' ? 'noData' : kpi.status}`)}
+          {kpi === undefined || kpi.status === 'loading' ? (
+            <PendingBar />
+          ) : (
+            t(`${k}.state.${kpi.status === 'ready' ? 'noData' : kpi.status}`)
+          )}
         </span>
       )}
     </div>
@@ -90,18 +110,18 @@ const OccupancyFigure = ({ kpi }: { readonly kpi: Kpi | undefined }) => {
 };
 
 export const Hero = ({
+  displayName,
   deadlines,
   kpis,
-  me,
   onQuery,
   query,
   sources,
   today,
   unread,
 }: {
+  readonly displayName: string | undefined;
   readonly deadlines: readonly Deadline[];
   readonly kpis: readonly Kpi[];
-  readonly me: string | undefined;
   readonly onQuery: (value: string) => void;
   readonly query: string;
   readonly sources: RentalOverviewSources;
@@ -109,9 +129,9 @@ export const Hero = ({
   readonly unread: number;
 }) => {
   const { lang, t } = useLang();
+  const personalName = personalGreetingName(displayName);
   const hour = pragueHour();
   const greeting = hour < 10 ? 'morning' : hour < 18 ? 'day' : 'evening';
-  const persona = personaOf(me);
   const open = deadlines.filter((row) => !row.done);
   const todayCount = open.filter((row) => row.date === today).length;
   const overdue = open.filter((row) => row.date < today && daysUntil(row.date, today) >= -60).length;
@@ -126,12 +146,15 @@ export const Hero = ({
     >
       <div className="facilityoperations:flex facilityoperations:min-w-0 facilityoperations:flex-col facilityoperations:gap-4">
         <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-1">
-          <span className="facilityoperations:text-xs facilityoperations:font-medium facilityoperations:uppercase facilityoperations:tracking-wider" style={muted}>
+          <span
+            className="facilityoperations:text-xs facilityoperations:font-medium facilityoperations:uppercase facilityoperations:tracking-wider"
+            style={muted}
+          >
             {fmt.long(lang, today)}
           </span>
           <h2 className="facilityoperations:m-0 facilityoperations:text-2xl facilityoperations:font-semibold">
             {t(`${k}.overview.greeting.${greeting}`)}
-            {persona === undefined ? '' : `, ${t(`${k}.personas.${persona.role}`)}`}
+            {personalName === undefined ? '' : `, ${personalName}`}
           </h2>
           <p className="facilityoperations:m-0 facilityoperations:text-sm" style={muted}>
             {t(`${k}.overview.summary`, { overdue, today: todayCount, unread, week })}
@@ -141,13 +164,20 @@ export const Hero = ({
           <HeroStat label={t(`${k}.overview.todayLabel`)} tone="primary" value={todayCount} />
           <HeroStat label={t(`${k}.overview.weekLabel`)} tone="info" value={week} />
           <HeroStat label={t(`${k}.overview.overdueLabel`)} tone={overdue > 0 ? 'danger' : 'success'} value={overdue} />
-          <a className="facilityoperations:no-underline" href={`/${lang}/provoz/agenda?tab=notifikace`} style={{ color: 'inherit' }}>
+          <a
+            className="facilityoperations:no-underline"
+            href={`/${lang}/provoz/agenda?tab=notifikace`}
+            style={{ color: 'inherit' }}
+          >
             <HeroStat label={t(`${k}.overview.unreadLabel`)} tone={unread > 0 ? 'warning' : 'neutral'} value={unread} />
           </a>
         </div>
         <label className="facilityoperations:relative facilityoperations:block facilityoperations:max-w-2xl">
           <span className="facilityoperations:sr-only">{t(`${k}.search.label`)}</span>
-          <span className="facilityoperations:pointer-events-none facilityoperations:absolute facilityoperations:left-3 facilityoperations:top-1/2 facilityoperations:-translate-y-1/2" style={muted}>
+          <span
+            className="facilityoperations:pointer-events-none facilityoperations:absolute facilityoperations:left-3 facilityoperations:top-1/2 facilityoperations:-translate-y-1/2"
+            style={muted}
+          >
             <Icon name="magnify" size={20} />
           </span>
           <input
@@ -155,7 +185,11 @@ export const Hero = ({
             id="ops-global-search"
             onChange={(event) => onQuery(event.target.value)}
             placeholder={t(`${k}.search.placeholder`)}
-            style={{ background: '#ffffff', border: '1px solid var(--color-border-primary, #d1d5db)', boxShadow: '0 1px 2px rgba(0,0,0,.04)' }}
+            style={{
+              background: '#ffffff',
+              border: '1px solid var(--color-border-primary, #d1d5db)',
+              boxShadow: '0 1px 2px rgba(0,0,0,.04)',
+            }}
             type="search"
             value={query}
           />
@@ -176,7 +210,9 @@ const HeroStat = ({ label, tone, value }: { readonly label: string; readonly ton
       className="facilityoperations:inline-flex facilityoperations:items-baseline facilityoperations:gap-2 facilityoperations:rounded-xl facilityoperations:px-3 facilityoperations:py-2"
       style={{ background: colors.bg, color: 'var(--color-fg-primary, #111827)' }}
     >
-      <span className="facilityoperations:text-xl facilityoperations:font-semibold facilityoperations:tabular-nums">{formatNumber(value)}</span>
+      <span className="facilityoperations:text-xl facilityoperations:font-semibold facilityoperations:tabular-nums">
+        {formatNumber(value)}
+      </span>
       <span className="facilityoperations:text-xs facilityoperations:font-medium">{label}</span>
     </span>
   );
@@ -185,7 +221,10 @@ const HeroStat = ({ label, tone, value }: { readonly label: string; readonly ton
 export const SourceHealth = ({ sources }: { readonly sources: RentalOverviewSources }) => {
   const { lang, t } = useLang();
   return (
-    <div className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:items-center facilityoperations:gap-x-3 facilityoperations:gap-y-1 facilityoperations:text-xs" style={muted}>
+    <div
+      className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:items-center facilityoperations:gap-x-3 facilityoperations:gap-y-1 facilityoperations:text-xs"
+      style={muted}
+    >
       <span className="facilityoperations:font-medium">{t(`${k}.overview.sourcesLabel`)}</span>
       {sourceKeys.map((key) => {
         const source = sources[key];
@@ -258,7 +297,10 @@ const KpiValue = ({ kpi }: { readonly kpi: Kpi }) => {
   if (kpi.status !== 'ready' || kpi.value === undefined) {
     const state = kpi.status === 'ready' ? 'noData' : kpi.status;
     return (
-      <span className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-2 facilityoperations:text-lg facilityoperations:font-semibold" style={muted}>
+      <span
+        className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-2 facilityoperations:text-lg facilityoperations:font-semibold"
+        style={muted}
+      >
         <Icon name={state === 'forbidden' ? 'lock' : state === 'unavailable' ? 'alert' : 'info'} size={18} />
         {t(`${k}.state.${state}`)}
       </span>
@@ -284,7 +326,11 @@ export const KpiGrid = ({
 }) => {
   const { lang, t } = useLang();
   return (
-    <section aria-busy={!settled} aria-label={t(`${k}.overview.kpiSection`)} className="facilityoperations:grid facilityoperations:grid-cols-1 facilityoperations:gap-4 facilityoperations:sm:grid-cols-2 facilityoperations:xl:grid-cols-4">
+    <section
+      aria-busy={!settled}
+      aria-label={t(`${k}.overview.kpiSection`)}
+      className="facilityoperations:grid facilityoperations:grid-cols-1 facilityoperations:gap-4 facilityoperations:sm:grid-cols-2 facilityoperations:xl:grid-cols-4"
+    >
       {kpis.map((kpi) => {
         const colors = toneColors(kpi.tone);
         const active = kpi.id === selected;
@@ -309,7 +355,10 @@ export const KpiGrid = ({
           >
             <div className="facilityoperations:flex facilityoperations:items-start facilityoperations:justify-between facilityoperations:gap-2">
               <IconBadge name={kpiIcon[kpi.id]} tone={ready ? kpi.tone : 'neutral'} />
-              <span className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-xs facilityoperations:font-medium" style={{ color: 'var(--color-fg-secondary, #4b5563)' }}>
+              <span
+                className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-xs facilityoperations:font-medium"
+                style={{ color: 'var(--color-fg-secondary, #4b5563)' }}
+              >
                 {t(`${k}.overview.drill`)}
                 <Icon name="arrowRight" size={14} />
               </span>
@@ -319,14 +368,25 @@ export const KpiGrid = ({
             </span>
             <KpiValue kpi={kpi} />
             {kpi.kind === 'percent' && ready && (
-              <span className="facilityoperations:block facilityoperations:h-1.5 facilityoperations:w-full facilityoperations:overflow-hidden facilityoperations:rounded-full" style={{ background: 'var(--color-neutral-200, #e5e7eb)' }}>
-                <span className="facilityoperations:block facilityoperations:h-full facilityoperations:rounded-full" style={{ background: colors.accent, width: `${Math.round((kpi.value ?? 0) * 100)}%` }} />
+              <span
+                className="facilityoperations:block facilityoperations:h-1.5 facilityoperations:w-full facilityoperations:overflow-hidden facilityoperations:rounded-full"
+                style={{ background: 'var(--color-neutral-200, #e5e7eb)' }}
+              >
+                <span
+                  className="facilityoperations:block facilityoperations:h-full facilityoperations:rounded-full"
+                  style={{ background: colors.accent, width: `${Math.round((kpi.value ?? 0) * 100)}%` }}
+                />
               </span>
             )}
             {ready && kpi.secondary !== undefined && (
-              <span className="facilityoperations:text-sm">{t(`${k}.kpi.${kpi.id}.secondary`, secondaryValues(kpi))}</span>
+              <span className="facilityoperations:text-sm">
+                {t(`${k}.kpi.${kpi.id}.secondary`, secondaryValues(kpi))}
+              </span>
             )}
-            <span className="facilityoperations:mt-auto facilityoperations:text-[11px] facilityoperations:leading-snug" style={muted}>
+            <span
+              className="facilityoperations:mt-auto facilityoperations:text-[11px] facilityoperations:leading-snug"
+              style={muted}
+            >
               {t(`${k}.overview.sourceLine`, {
                 sources: kpi.sources.map((source) => t(`${k}.sources.${source}`)).join(', ') || '—',
                 time: kpi.loadedAt === undefined ? '—' : fmt.clock(lang, kpi.loadedAt),
@@ -361,7 +421,14 @@ export const DrillDown = ({
     void exportCsv({
       fileName: `provoz-${kpi.id}-${new Date().toISOString().slice(0, 10)}.csv`,
       filter: `kpi=${kpi.id}`,
-      header: [t(`${k}.columns.title`), t(`${k}.columns.detail`), t(`${k}.columns.date`), t(`${k}.columns.status`), t(`${k}.columns.amount`), t(`${k}.columns.link`)],
+      header: [
+        t(`${k}.columns.title`),
+        t(`${k}.columns.detail`),
+        t(`${k}.columns.date`),
+        t(`${k}.columns.status`),
+        t(`${k}.columns.amount`),
+        t(`${k}.columns.link`),
+      ],
       list: `overview:${kpi.id}`,
       log: canLog,
       revision: agendaRevision,
@@ -391,7 +458,10 @@ export const DrillDown = ({
         }
         title={`${label} — ${kpi.status === 'ready' ? t(`${k}.overview.records`, { count: kpi.rows.length }) : t(`${k}.state.${kpi.status}`)}`}
       >
-        <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-1 facilityoperations:rounded-xl facilityoperations:p-3 facilityoperations:text-sm" style={{ background: 'var(--color-surface-subtle, #f8fafc)' }}>
+        <div
+          className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-1 facilityoperations:rounded-xl facilityoperations:p-3 facilityoperations:text-sm"
+          style={{ background: 'var(--color-surface-subtle, #f8fafc)' }}
+        >
           <span>
             <strong>{t(`${k}.overview.definition`)}:</strong> {t(`${k}.kpi.${kpi.id}.definition`)}
           </span>
@@ -418,13 +488,24 @@ const RecordTable = ({ rows }: { readonly rows: readonly DrillRow[] }) => {
   const { lang, t } = useLang();
   return (
     <div className="facilityoperations:overflow-x-auto">
-      <table className="facilityoperations:w-full facilityoperations:border-collapse facilityoperations:text-sm" data-testid="ops-drill-table">
+      <table
+        className="facilityoperations:w-full facilityoperations:border-collapse facilityoperations:text-sm"
+        data-testid="ops-drill-table"
+      >
         <thead>
           <tr className="facilityoperations:text-left" style={muted}>
-            <th className="facilityoperations:px-3 facilityoperations:py-2 facilityoperations:font-medium">{t(`${k}.columns.title`)}</th>
-            <th className="facilityoperations:px-3 facilityoperations:py-2 facilityoperations:font-medium">{t(`${k}.columns.date`)}</th>
-            <th className="facilityoperations:px-3 facilityoperations:py-2 facilityoperations:font-medium">{t(`${k}.columns.status`)}</th>
-            <th className="facilityoperations:px-3 facilityoperations:py-2 facilityoperations:text-right facilityoperations:font-medium">{t(`${k}.columns.amount`)}</th>
+            <th className="facilityoperations:px-3 facilityoperations:py-2 facilityoperations:font-medium">
+              {t(`${k}.columns.title`)}
+            </th>
+            <th className="facilityoperations:px-3 facilityoperations:py-2 facilityoperations:font-medium">
+              {t(`${k}.columns.date`)}
+            </th>
+            <th className="facilityoperations:px-3 facilityoperations:py-2 facilityoperations:font-medium">
+              {t(`${k}.columns.status`)}
+            </th>
+            <th className="facilityoperations:px-3 facilityoperations:py-2 facilityoperations:text-right facilityoperations:font-medium">
+              {t(`${k}.columns.amount`)}
+            </th>
             <th className="facilityoperations:px-3 facilityoperations:py-2" />
           </tr>
         </thead>
@@ -439,13 +520,24 @@ const RecordTable = ({ rows }: { readonly rows: readonly DrillRow[] }) => {
                   </div>
                 )}
               </td>
-              <td className="facilityoperations:whitespace-nowrap facilityoperations:px-3 facilityoperations:py-2.5 facilityoperations:tabular-nums">{row.date === undefined ? '—' : fmt.short(lang, row.date)}</td>
-              <td className="facilityoperations:px-3 facilityoperations:py-2.5">{row.status === undefined ? '—' : <Pill tone={row.tone ?? 'neutral'}>{statusLabel(t, row.status)}</Pill>}</td>
+              <td className="facilityoperations:whitespace-nowrap facilityoperations:px-3 facilityoperations:py-2.5 facilityoperations:tabular-nums">
+                {row.date === undefined ? '—' : fmt.short(lang, row.date)}
+              </td>
+              <td className="facilityoperations:px-3 facilityoperations:py-2.5">
+                {row.status === undefined ? (
+                  '—'
+                ) : (
+                  <Pill tone={row.tone ?? 'neutral'}>{statusLabel(t, row.status)}</Pill>
+                )}
+              </td>
               <td className="facilityoperations:whitespace-nowrap facilityoperations:px-3 facilityoperations:py-2.5 facilityoperations:text-right facilityoperations:tabular-nums">
                 {row.amountMinor === undefined ? '' : formatMoney(row.amountMinor)}
               </td>
               <td className="facilityoperations:whitespace-nowrap facilityoperations:px-3 facilityoperations:py-2.5 facilityoperations:text-right">
-                <a className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:font-medium" href={linkTo(lang, row.href)}>
+                <a
+                  className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:font-medium"
+                  href={linkTo(lang, row.href)}
+                >
                   {t(`${k}.open`)}
                   <Icon name="arrowRight" size={14} />
                 </a>
@@ -490,12 +582,20 @@ export const SearchResults = ({
 }) => {
   const { lang, t } = useLang();
   const results = useMemo(() => searchRows(index, query, 80), [index, query]);
-  const hidden = sourceKeys.filter((key) => sources[key].status === 'forbidden' || sources[key].status === 'unavailable');
+  const hidden = sourceKeys.filter(
+    (key) => sources[key].status === 'forbidden' || sources[key].status === 'unavailable',
+  );
   const csv = () =>
     void exportCsv({
       fileName: `provoz-hledani-${new Date().toISOString().slice(0, 10)}.csv`,
       filter: `q=${query}`,
-      header: [t(`${k}.columns.type`), t(`${k}.columns.title`), t(`${k}.columns.detail`), t(`${k}.columns.source`), t(`${k}.columns.link`)],
+      header: [
+        t(`${k}.columns.type`),
+        t(`${k}.columns.title`),
+        t(`${k}.columns.detail`),
+        t(`${k}.columns.source`),
+        t(`${k}.columns.link`),
+      ],
       list: 'search',
       log: canLog,
       revision: agendaRevision,
@@ -525,12 +625,16 @@ export const SearchResults = ({
     >
       <p className="facilityoperations:m-0 facilityoperations:text-xs" style={muted}>
         {t(`${k}.search.scope`, { count: index.length })}
-        {hidden.length > 0 && ` ${t(`${k}.search.hidden`, { sources: hidden.map((key) => t(`${k}.sources.${key}`)).join(', ') })}`}
+        {hidden.length > 0 &&
+          ` ${t(`${k}.search.hidden`, { sources: hidden.map((key) => t(`${k}.sources.${key}`)).join(', ') })}`}
       </p>
       {results.length === 0 ? (
         <EmptyState description={t(`${k}.search.emptyDescription`)} title={t(`${k}.search.empty`)} />
       ) : (
-        <ul className="facilityoperations:m-0 facilityoperations:grid facilityoperations:list-none facilityoperations:grid-cols-1 facilityoperations:gap-2 facilityoperations:p-0 facilityoperations:md:grid-cols-2" data-testid="ops-search-results">
+        <ul
+          className="facilityoperations:m-0 facilityoperations:grid facilityoperations:list-none facilityoperations:grid-cols-1 facilityoperations:gap-2 facilityoperations:p-0 facilityoperations:md:grid-cols-2"
+          data-testid="ops-search-results"
+        >
           {results.map((row) => (
             <li key={`${row.kind}:${row.id}`}>
               <a
@@ -579,11 +683,16 @@ export const UpcomingTimeline = ({
   for (const row of visible) {
     groups.set(row.date, [...(groups.get(row.date) ?? []), row]);
   }
-  const missing = sourceKeys.filter((key) => key !== 'parties' && sources[key].status !== 'ready' && sources[key].status !== 'loading');
+  const missing = sourceKeys.filter(
+    (key) => key !== 'parties' && sources[key].status !== 'ready' && sources[key].status !== 'loading',
+  );
   return (
     <SectionCard
       actions={
-        <a className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-sm facilityoperations:font-medium" href={`/${lang}/provoz/agenda`}>
+        <a
+          className="facilityoperations:inline-flex facilityoperations:items-center facilityoperations:gap-1 facilityoperations:text-sm facilityoperations:font-medium"
+          href={`/${lang}/provoz/agenda`}
+        >
           {t(`${k}.overview.fullCalendar`)}
           <Icon name="arrowRight" size={14} />
         </a>
@@ -614,12 +723,17 @@ export const UpcomingTimeline = ({
                   className="facilityoperations:flex facilityoperations:h-14 facilityoperations:w-14 facilityoperations:shrink-0 facilityoperations:flex-col facilityoperations:items-center facilityoperations:justify-center facilityoperations:rounded-xl"
                   style={{ background: toneColors(tone).bg, color: toneColors(tone).fg }}
                 >
-                  <span className="facilityoperations:text-lg facilityoperations:font-semibold facilityoperations:leading-none">{Number(date.slice(8, 10))}</span>
-                  <span className="facilityoperations:text-[11px] facilityoperations:uppercase">{fmt.weekday(lang, date)}</span>
+                  <span className="facilityoperations:text-lg facilityoperations:font-semibold facilityoperations:leading-none">
+                    {Number(date.slice(8, 10))}
+                  </span>
+                  <span className="facilityoperations:text-[11px] facilityoperations:uppercase">
+                    {fmt.weekday(lang, date)}
+                  </span>
                 </div>
                 <div className="facilityoperations:flex facilityoperations:min-w-0 facilityoperations:flex-1 facilityoperations:flex-col facilityoperations:gap-1.5">
                   <span className="facilityoperations:text-xs facilityoperations:font-medium" style={muted}>
-                    {fmt.dayMonth(lang, date)} · {days === 0 ? t(`${k}.relative.today`) : t(`${k}.relative.inDays`, { count: days })}
+                    {fmt.dayMonth(lang, date)} ·{' '}
+                    {days === 0 ? t(`${k}.relative.today`) : t(`${k}.relative.inDays`, { count: days })}
                   </span>
                   {rows.map((row) => (
                     <a
@@ -629,9 +743,14 @@ export const UpcomingTimeline = ({
                       style={{ color: 'inherit', background: 'var(--color-surface-subtle, #f8fafc)' }}
                     >
                       <Pill tone={categoryTone[row.category]}>{t(`${k}.category.${row.category}`)}</Pill>
-                      <span className="facilityoperations:truncate facilityoperations:text-sm facilityoperations:font-medium">{row.title}</span>
+                      <span className="facilityoperations:truncate facilityoperations:text-sm facilityoperations:font-medium">
+                        {row.title}
+                      </span>
                       {row.location !== undefined && (
-                        <span className="facilityoperations:hidden facilityoperations:truncate facilityoperations:text-xs facilityoperations:md:inline" style={muted}>
+                        <span
+                          className="facilityoperations:hidden facilityoperations:truncate facilityoperations:text-xs facilityoperations:md:inline"
+                          style={muted}
+                        >
                           {row.location}
                         </span>
                       )}
@@ -645,12 +764,18 @@ export const UpcomingTimeline = ({
       )}
       {upcoming.length > 8 && (
         <Button onClick={() => setShowAll((value) => !value)} size="sm" theme="borderless" variant="secondary">
-          {showAll ? t(`${k}.overview.showLess`) : t(`${k}.overview.showMore`, { count: Math.min(upcoming.length, 24) - 8 })}
+          {showAll
+            ? t(`${k}.overview.showLess`)
+            : t(`${k}.overview.showMore`, { count: Math.min(upcoming.length, 24) - 8 })}
         </Button>
       )}
       {missing.length > 0 && (
         <p className="facilityoperations:m-0 facilityoperations:text-xs" style={muted}>
-          {t(`${k}.calendar.missingSources`, { sources: missing.map((key) => `${t(`${k}.sources.${key}`)} (${t(`${k}.state.${sources[key].status}`)})`).join(', ') })}
+          {t(`${k}.calendar.missingSources`, {
+            sources: missing
+              .map((key) => `${t(`${k}.sources.${key}`)} (${t(`${k}.state.${sources[key].status}`)})`)
+              .join(', '),
+          })}
         </p>
       )}
     </SectionCard>
@@ -659,7 +784,13 @@ export const UpcomingTimeline = ({
 
 // ---- Occupancy by building -------------------------------------------------------------------------------------------
 
-export const OccupancyByBuilding = ({ sources, today }: { readonly sources: RentalOverviewSources; readonly today: string }) => {
+export const OccupancyByBuilding = ({
+  sources,
+  today,
+}: {
+  readonly sources: RentalOverviewSources;
+  readonly today: string;
+}) => {
   const { lang, t } = useLang();
   const property = sources.property.data;
   const occupancy = sources.occupancy.data;
@@ -696,25 +827,50 @@ export const OccupancyByBuilding = ({ sources, today }: { readonly sources: Rent
       ) : (
         <ul className="facilityoperations:m-0 facilityoperations:flex facilityoperations:list-none facilityoperations:flex-col facilityoperations:gap-4 facilityoperations:p-0">
           {buildings.map((building) => (
-            <li className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-1.5" key={building.id}>
+            <li
+              className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-1.5"
+              key={building.id}
+            >
               <div className="facilityoperations:flex facilityoperations:items-baseline facilityoperations:justify-between facilityoperations:gap-2">
-                <a className="facilityoperations:truncate facilityoperations:font-medium" href={`/${lang}/nemovitosti?resourceId=${building.id}`}>
+                <a
+                  className="facilityoperations:truncate facilityoperations:font-medium"
+                  href={`/${lang}/nemovitosti?resourceId=${building.id}`}
+                >
                   {building.name}
                 </a>
                 <span className="facilityoperations:text-sm facilityoperations:tabular-nums" style={muted}>
-                  {building.total === 0 ? t(`${k}.state.noData`) : `${formatPercent(building.occupied / building.total)} · ${building.occupied}/${building.total}`}
+                  {building.total === 0
+                    ? t(`${k}.state.noData`)
+                    : `${formatPercent(building.occupied / building.total)} · ${building.occupied}/${building.total}`}
                 </span>
               </div>
-              <div className="facilityoperations:flex facilityoperations:h-3 facilityoperations:w-full facilityoperations:overflow-hidden facilityoperations:rounded-full" style={{ background: 'var(--color-neutral-200, #e5e7eb)' }}>
+              <div
+                className="facilityoperations:flex facilityoperations:h-3 facilityoperations:w-full facilityoperations:overflow-hidden facilityoperations:rounded-full"
+                style={{ background: 'var(--color-neutral-200, #e5e7eb)' }}
+              >
                 {building.total > 0 && (
                   <>
-                    <span style={{ background: toneColors('primary').accent, width: `${(building.occupied / building.total) * 100}%` }} />
-                    <span style={{ background: toneColors('warning').accent, width: `${(building.reserved / building.total) * 100}%` }} />
+                    <span
+                      style={{
+                        background: toneColors('primary').accent,
+                        width: `${(building.occupied / building.total) * 100}%`,
+                      }}
+                    />
+                    <span
+                      style={{
+                        background: toneColors('warning').accent,
+                        width: `${(building.reserved / building.total) * 100}%`,
+                      }}
+                    />
                   </>
                 )}
               </div>
               <span className="facilityoperations:text-xs" style={muted}>
-                {t(`${k}.overview.buildingLine`, { free: building.free, occupied: building.occupied, reserved: building.reserved })}
+                {t(`${k}.overview.buildingLine`, {
+                  free: building.free,
+                  occupied: building.occupied,
+                  reserved: building.reserved,
+                })}
               </span>
             </li>
           ))}
@@ -752,18 +908,26 @@ export const OpsAgendas = ({ sources }: { readonly sources: RentalOverviewSource
               key={agenda}
               style={{ ...card, color: 'inherit', opacity: locked ? 0.7 : 1 }}
             >
-              <IconBadge name={locked ? 'lock' : (agendaIcon[agenda] ?? 'clipboard')} size={34} tone={locked ? 'neutral' : 'primary'} />
-              <span className="facilityoperations:text-sm facilityoperations:font-medium">{t(`facility-operations.${agenda}.title`)}</span>
+              <IconBadge
+                name={locked ? 'lock' : (agendaIcon[agenda] ?? 'clipboard')}
+                size={34}
+                tone={locked ? 'neutral' : 'primary'}
+              />
+              <span className="facilityoperations:text-sm facilityoperations:font-medium">
+                {t(`facility-operations.${agenda}.title`)}
+              </span>
               <span className="facilityoperations:text-xs" style={muted}>
-                {ops.status === 'loading'
-                  ? <PendingBar />
-                  : locked || ops.status === 'forbidden'
-                    ? t(`${k}.state.forbidden`)
-                    : envelope === undefined
-                      ? t(`${k}.state.unavailable`)
-                      : envelope.revision === 0 && envelope.records === 0
-                        ? t(`${k}.state.noData`)
-                        : t(`${k}.overview.records`, { count: envelope.records })}
+                {ops.status === 'loading' ? (
+                  <PendingBar />
+                ) : locked || ops.status === 'forbidden' ? (
+                  t(`${k}.state.forbidden`)
+                ) : envelope === undefined ? (
+                  t(`${k}.state.unavailable`)
+                ) : envelope.revision === 0 && envelope.records === 0 ? (
+                  t(`${k}.state.noData`)
+                ) : (
+                  t(`${k}.overview.records`, { count: envelope.records })
+                )}
               </span>
             </a>
           );
@@ -772,4 +936,3 @@ export const OpsAgendas = ({ sources }: { readonly sources: RentalOverviewSource
     </SectionCard>
   );
 };
-

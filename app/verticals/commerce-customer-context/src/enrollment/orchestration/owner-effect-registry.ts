@@ -18,6 +18,7 @@ import {
   commerceCoreIdentityClientOptions,
 } from '../../../api/portal-auth/provider/core-identity-client-config.ts';
 import { EnrollmentDigestSchema } from '../../../shared/enrollment-contracts.ts';
+import { CommerceEnrollmentAuthenticationReferenceJsonSchema } from '../../../shared/portal-auth-enrollment-reference.ts';
 import type {
   EnrollmentAttemptSnapshot,
   EnrollmentOwnerOperationSnapshot,
@@ -57,6 +58,7 @@ import type { RetailPartyCandidateOwnerInput } from '../journeys/retail-self-enr
 import type { RetailSelfEnrollmentPreparationSubject } from '../journeys/retail-self-enrollment-preparation.ts';
 import {
   CommerceActionCommitResolutionFailed,
+  resolveRetailOwnerCommand,
   retailCustomerProfileActionExecutor,
   retailCustomerProfileOwnerEffect,
   retailPortalBindingActionExecutor,
@@ -153,7 +155,6 @@ export class CommerceEnrollmentOwnerEffectRegistry extends Context.Service<
   '@app/commerce-customer-context/enrollment/orchestration/owner-effect-registry/CommerceEnrollmentOwnerEffectRegistry',
 ) {}
 
-const CORE_BINDING_AUTHENTICATION_REF_PURPOSE = 'commerce.portal-enrollment.core-binding.authentication-ref';
 const CORE_BINDING_RECONCILIATION_PURPOSE = 'commerce.portal-enrollment.core-binding.reconciliation';
 const PARTY_CANDIDATE_EVIDENCE_PURPOSE = 'commerce.portal-enrollment.party-candidate.evidence';
 const RETAIL_PORTAL_BINDING_REASON = 'Retail self-enrollment established the portal profile binding';
@@ -269,7 +270,72 @@ const partyCandidateFor = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party
   },
 );
 
-const partyEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): RegistryEntry =>
+export const verifiedRetailEnrollmentEvidence = Effect.fn(
+  'CommerceEnrollmentOwnerEffectRegistry.verifiedRetailEnrollmentEvidence',
+)(function* verifiedEvidence(
+  input: {
+    readonly attempt: EnrollmentAttemptSnapshot;
+    readonly operations: readonly EnrollmentOwnerOperationSnapshot[];
+    readonly sellingLegalEntityId: string;
+  },
+  candidate: (typeof PartyMatchRequestSchema.Type)['candidate'],
+  accountLookup: CommercePortalAuthAccountLookup,
+) {
+  const { attempt, operations, sellingLegalEntityId } = input;
+  const providerOperation = operations.find(
+    (operation) =>
+      operation.ownerModuleKey === PORTAL_AUTH_OWNER_MODULE_KEY &&
+      operation.transitionKey === PORTAL_ACCOUNT_CREATION_TRANSITION_KEY &&
+      operation.status === 'SUCCEEDED' &&
+      operation.tenantId === attempt.tenantId &&
+      operation.portalEnrollmentAttemptId === attempt.portalEnrollmentAttemptId,
+  );
+  const { accountSubject } = attempt;
+  const [candidateEvidenceRef] = candidate.evidenceRefs;
+  if (
+    attempt.journey !== 'RETAIL_SELF_ENROLLMENT' ||
+    attempt.targetLegalEntityId !== sellingLegalEntityId ||
+    providerOperation === undefined ||
+    accountSubject === undefined ||
+    candidateEvidenceRef === undefined ||
+    accountSubject.authenticationNamespaceId !== 'ontos.commerce.portal.better-auth.v1' ||
+    !(yield* accountLookup
+      .verifiedEmailForOwnerInvocation({
+        ownerInvocationId: providerOperation.ownerInvocationId,
+        providerSubjectId: accountSubject.providerSubjectId,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          ownerUnavailable(
+            'provider_verification_unavailable',
+            'Current provider email verification is unavailable',
+            cause,
+          ),
+        ),
+      ))
+  ) {
+    return yield* ownerUnavailable(
+      'provider_email_verification_required',
+      'This exact Enrollment Attempt requires verified provider email ownership',
+    );
+  }
+  return {
+    authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1' as const,
+    candidateEvidenceRef,
+    emailOwnership: 'VERIFIED' as const,
+    enrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+    journey: 'RETAIL_SELF_ENROLLMENT' as const,
+    providerOwnerInvocationId: providerOperation.ownerInvocationId,
+    providerSubjectId: accountSubject.providerSubjectId,
+    sellingLegalEntityId,
+    tenantId: attempt.tenantId,
+  };
+});
+
+const partyEntry = (
+  run: Option.Option<CommerceEnrollmentOwnerTransactionRun>,
+  accountLookup: CommercePortalAuthAccountLookup,
+): RegistryEntry =>
   Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party')(function* partyEntryEffect(
     transition: JourneyTransitionSpec,
     context: CommerceEnrollmentOwnerEffectContext,
@@ -304,6 +370,15 @@ const partyEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): 
         legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
         requestCorrelation: context.requestCorrelation,
         tenantId: context.attempt.tenantId,
+        verifiedEvidence: verifiedRetailEnrollmentEvidence(
+          {
+            attempt: context.attempt,
+            operations: context.operations,
+            sellingLegalEntityId: context.subject.sellingLegalEntityRef.resourceId,
+          },
+          candidate,
+          accountLookup,
+        ),
       }),
       requestDigest,
     );
@@ -372,16 +447,7 @@ const commitResolutionUnavailable = (reason: string, cause: unknown): CommerceAc
     cause,
   );
 
-/**
- * One SELECT-only owner read, in its own transaction, under the Tenant and Selling Legal Entity the
- * durable Attempt already verified — the very scope the governed Action wrote under.
- *
- * These two transitions are the ones Commerce owns itself: the owner routines and the Commerce
- * Action commit in the same database and the same transaction. So the owner's durable state *is*
- * this invocation's commit resolution, and the one thing the Action runtime cannot republish — the
- * result reference — is read back from the row the Action wrote. A row the owner does not hold is a
- * transition that never committed, and the driver may dispatch it again.
- */
+/** Read owner result only after exact native caller-owned command commit is proven. */
 const ownerReadFor =
   (run: CommerceEnrollmentOwnerTransactionRun, context: CommerceEnrollmentOwnerEffectContext) =>
   <Value>(
@@ -412,17 +478,36 @@ const ensureProfileCommitResolution = (
 ): RetailCustomerProfileOwnerExecutors['commitResolution'] =>
   Option.isNone(run)
     ? actionResultNotRepublished
-    : () =>
-        ownerReadFor(
+    : Effect.fn('RetailOwnerEffectRegistry.resolveExactCommand')(function* resolveExactCommand(idempotencyKey) {
+        const resolution = yield* resolveRetailOwnerCommand(
+          {
+            compositionRevision: context.attempt.compositionRevision,
+            legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
+            requestCorrelation: context.requestCorrelation,
+            tenantId: context.attempt.tenantId,
+          },
+          { actionKey: 'commerce.customer-context.ensure-retail-customer-profile', idempotencyKey },
+        ).pipe(
+          Effect.mapError((cause) =>
+            commitResolutionUnavailable('The exact native Commerce command could not be resolved', cause),
+          ),
+        );
+        if (resolution.state !== 'COMMITTED') {
+          return { state: resolution.state };
+        }
+        return yield* ownerReadFor(
           run.value,
           context,
         )((invoker) => readRetailProfileByParty(invoker, partyResourceId)).pipe(
-          Effect.map((found) =>
+          Effect.flatMap((found) =>
             Option.isNone(found)
-              ? ({ state: 'OPEN' } as const)
-              : ({ result: found.value, state: 'COMMITTED' } as const),
+              ? Effect.fail(
+                  commitResolutionUnavailable('The committed command has no retained owner result', resolution),
+                )
+              : Effect.succeed({ result: found.value, state: 'COMMITTED' as const }),
           ),
         );
+      });
 
 /**
  * The binding Action's own result, rebuilt from the Retail Portal Profile Binding the owner holds
@@ -436,8 +521,24 @@ const bindProfileCommitResolution = (
 ): RetailPortalBindingOwnerExecutors['commitResolution'] =>
   Option.isNone(run)
     ? actionResultNotRepublished
-    : () =>
-        ownerReadFor(
+    : Effect.fn('RetailOwnerEffectRegistry.resolveExactCommand')(function* resolveExactCommand(idempotencyKey) {
+        const resolution = yield* resolveRetailOwnerCommand(
+          {
+            compositionRevision: context.attempt.compositionRevision,
+            legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
+            requestCorrelation: context.requestCorrelation,
+            tenantId: context.attempt.tenantId,
+          },
+          { actionKey: 'commerce.customer-context.bind-retail-portal-profile', idempotencyKey },
+        ).pipe(
+          Effect.mapError((cause) =>
+            commitResolutionUnavailable('The exact native Commerce command could not be resolved', cause),
+          ),
+        );
+        if (resolution.state !== 'COMMITTED') {
+          return { state: resolution.state };
+        }
+        return yield* ownerReadFor(
           run.value,
           context,
         )((invoker) =>
@@ -451,12 +552,15 @@ const bindProfileCommitResolution = (
             profileResourceId,
           ),
         ).pipe(
-          Effect.map((found) =>
+          Effect.flatMap((found) =>
             Option.isNone(found)
-              ? ({ state: 'OPEN' } as const)
-              : ({ result: found.value, state: 'COMMITTED' } as const),
+              ? Effect.fail(
+                  commitResolutionUnavailable('The committed command has no retained owner result', resolution),
+                )
+              : Effect.succeed({ result: found.value, state: 'COMMITTED' as const }),
           ),
         );
+      });
 
 const ensureProfileEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): RegistryEntry =>
   Effect.fn('CommerceEnrollmentOwnerEffectRegistry.ensureProfile')(function* ensureProfileEntryEffect(
@@ -756,12 +860,30 @@ interface CoreIdentitySeam {
   readonly clientOptions: (context: CommerceEnrollmentOwnerEffectContext) => ExternalIdentityClientOptions;
 }
 
-const coreAuthenticationRef = (context: CommerceEnrollmentOwnerEffectContext): string =>
-  retailSelfEnrollmentEvidenceReference([
-    CORE_BINDING_AUTHENTICATION_REF_PURPOSE,
-    context.attempt.tenantId,
-    context.attempt.portalEnrollmentAttemptId,
-  ]);
+const coreAuthenticationRef = (context: CommerceEnrollmentOwnerEffectContext) => {
+  const provider = context.operations.find(
+    (operation) =>
+      operation.ownerModuleKey === PORTAL_AUTH_OWNER_MODULE_KEY &&
+      operation.transitionKey ===
+        (context.attempt.journey === 'EXISTING_ACCOUNT'
+          ? PORTAL_ACCOUNT_VERIFICATION_TRANSITION_KEY
+          : PORTAL_ACCOUNT_CREATION_TRANSITION_KEY) &&
+      operation.status === 'SUCCEEDED',
+  );
+  return provider === undefined
+    ? Effect.fail(
+        attemptRejected(
+          'The enrollment binding has no original provider proof',
+          context.attempt.portalEnrollmentAttemptId,
+        ),
+      )
+    : Schema.encodeUnknownEffect(CommerceEnrollmentAuthenticationReferenceJsonSchema)({
+        enrollmentAttemptId: context.attempt.portalEnrollmentAttemptId,
+        kind: 'commerce-enrollment-binding.v1',
+        providerOwnerOperationId: provider.portalEnrollmentOwnerOperationId,
+        sellingLegalEntityId: context.subject.sellingLegalEntityRef.resourceId,
+      }).pipe(Effect.mapError(rejectFor(context, 'The enrollment binding reference is invalid')));
+};
 
 const coreIdentityDigest = (
   context: CommerceEnrollmentOwnerEffectContext,
@@ -848,7 +970,7 @@ const coreReserveEntry = (seam: CoreIdentitySeam): RegistryEntry =>
     if (accountSubject === undefined) {
       return none;
     }
-    const authenticationRef = coreAuthenticationRef(context);
+    const authenticationRef = yield* coreAuthenticationRef(context);
     const { readRequest, request, requestDigest } = yield* Effect.all(
       {
         // Reserve has no binding identifier of its own yet, so its reconciliation is the exact
@@ -918,11 +1040,12 @@ const coreActivateEntry = (seam: CoreIdentitySeam): RegistryEntry =>
     if (binding.outcome !== 'FOUND') {
       return none;
     }
+    const authenticationRef = yield* coreAuthenticationRef(context);
     const { request, requestDigest } = yield* Effect.all(
       {
         request: existingAccountCoreIdentityActivateRequest({
           authBindingId: reserved.value,
-          authenticationRef: coreAuthenticationRef(context),
+          authenticationRef,
           compositionRevision: context.attempt.compositionRevision,
           expectedRevision: binding.bindingRevision,
         }).pipe(
@@ -974,7 +1097,7 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
     const entries: ReadonlyMap<string, RegistryEntry> = new Map([
       [
         registryKey(PARTY_REGISTRY_OWNER_MODULE_KEY, PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY),
-        partyEntry(ownerTransactionRun),
+        partyEntry(ownerTransactionRun, accountLookup),
       ],
       [
         registryKey(PARTY_REGISTRY_OWNER_MODULE_KEY, RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY),

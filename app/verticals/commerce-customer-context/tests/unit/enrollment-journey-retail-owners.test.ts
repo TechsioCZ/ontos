@@ -1,4 +1,4 @@
-import { PartyCommandNotFoundProblemSchema, PartyCommandUnavailableProblemSchema } from '@app/party-registry/api';
+import { RetailEnrollmentEvidenceSchema, PartyCommandUnavailableProblemSchema } from '@app/party-registry/api';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -54,10 +54,7 @@ import type {
 } from '../../src/enrollment/journeys/retail-self-enrollment-profile-owners.ts';
 import { CommerceEnrollmentOwnerTransitionSchema } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
 import type { CommerceEnrollmentOwnerReconciliationInput } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
-import {
-  CommerceEnrollmentOwnerEffectRejected,
-  CommerceEnrollmentOwnerEffectUnavailable,
-} from '../../src/enrollment/orchestration/owner-transition-errors.ts';
+import { CommerceEnrollmentOwnerEffectUnavailable } from '../../src/enrollment/orchestration/owner-transition-errors.ts';
 import type { CommerceEnrollmentPreparedOwnerBinding } from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
 
 const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)('10000000-0000-4000-8000-000000000001');
@@ -83,7 +80,6 @@ const partyRef: TestPartyRef = {
   resourceType: 'party.registry.party',
   tenantId,
 };
-const otherPartyRef: TestPartyRef = { ...partyRef, resourceId: 'party-2' };
 const decisionRef = {
   moduleId: 'party.registry',
   resourceId: 'decision-1',
@@ -129,12 +125,25 @@ const candidate: RetailPartyCandidateOwnerInput['candidate'] = {
   validFrom: effectiveAt,
 };
 
-const partyOwnerInput: RetailPartyCandidateOwnerInput = {
+const partyOwnerInput = {
   candidate,
   compositionRevision: 'c'.repeat(64),
   legalEntityId: '50000000-0000-4000-8000-000000000001',
   requestCorrelation,
   tenantId,
+  verifiedEvidence: Effect.succeed(
+    Schema.decodeUnknownSync(RetailEnrollmentEvidenceSchema)({
+      authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1' as const,
+      candidateEvidenceRef: '10000000-0000-4000-8000-000000000001',
+      emailOwnership: 'VERIFIED' as const,
+      enrollmentAttemptId: '20000000-0000-4000-8000-000000000001',
+      journey: 'RETAIL_SELF_ENROLLMENT' as const,
+      providerOwnerInvocationId: ownerInvocationId,
+      providerSubjectId: 'provider-subject',
+      sellingLegalEntityId: '50000000-0000-4000-8000-000000000001',
+      tenantId,
+    }),
+  ),
 };
 
 const transition = Schema.decodeSync(CommerceEnrollmentOwnerTransitionSchema)({
@@ -156,28 +165,24 @@ const reconciliationInput: CommerceEnrollmentOwnerReconciliationInput = {
   ownerOperationRevision: 1,
 };
 
-const matchResponse = (outcome: 'AMBIGUOUS' | 'MATCHED' | 'NO_MATCH', candidateParties: readonly TestPartyRef[]) => ({
-  candidateParties,
-  caseRef: outcome === 'AMBIGUOUS' ? caseRef : null,
-  decisionRef,
-  evidenceExplanation: [],
-  matchRuleVersion: '1',
-  outcome,
-});
-
 const partyExecutors = (
   overrides: Partial<RetailPartyCandidateOwnerExecutors> = {},
 ): RetailPartyCandidateOwnerExecutors => ({
+  acceptEvidence: () => Effect.succeed({ caseRef, decisionRef, outcome: 'AMBIGUOUS' }),
   createParty: () => Effect.succeed({ decisionRef, outcome: 'CREATED', partyRef }),
-  matchParty: () => Effect.succeed(matchResponse('MATCHED', [partyRef])),
+
   recoverPartyCreate: () =>
     Effect.succeed({ _tag: 'PartyCreateRecovered', result: { decisionRef, outcome: 'CREATED', partyRef } }),
+  resolveOriginalInvocation: () => Effect.succeed(ownerInvocationId),
   ...overrides,
 });
 
 it.effect('records an exact matched Party as the owner outcome', () =>
   Effect.gen(function* matched() {
-    const outcome = yield* retailPartyCandidateOwnerEffect(partyOwnerInput, partyExecutors()).dispatch(transition);
+    const outcome = yield* retailPartyCandidateOwnerEffect(
+      partyOwnerInput,
+      partyExecutors({ createParty: () => Effect.succeed({ decisionRef, outcome: 'MATCHED_EXISTING', partyRef }) }),
+    ).dispatch(transition);
     expect(outcome.status).toBe('SUCCEEDED');
     expect(outcome.outcomeCode).toBe(PARTY_CANDIDATE_MATCHED_OUTCOME_CODE);
     expect(outcome.resultReference).toBe(partyRef.resourceId);
@@ -188,7 +193,7 @@ it.effect('halts into reconciliation when the Party match is ambiguous', () =>
   Effect.gen(function* ambiguous() {
     const outcome = yield* retailPartyCandidateOwnerEffect(
       partyOwnerInput,
-      partyExecutors({ matchParty: () => Effect.succeed(matchResponse('AMBIGUOUS', [partyRef, otherPartyRef])) }),
+      partyExecutors({ createParty: () => Effect.succeed({ caseRef, decisionRef, outcome: 'AMBIGUOUS' }) }),
     ).dispatch(transition);
     expect(outcome.status).toBe('FAILED');
     expect(outcome.outcomeCode).toBe(PARTY_CANDIDATE_AMBIGUOUS_OUTCOME_CODE);
@@ -200,14 +205,14 @@ it.effect('never picks one Party when a match names several inside the Tenant', 
   Effect.gen(function* multipleMatches() {
     const outcome = yield* retailPartyCandidateOwnerEffect(
       partyOwnerInput,
-      partyExecutors({ matchParty: () => Effect.succeed(matchResponse('MATCHED', [partyRef, otherPartyRef])) }),
+      partyExecutors({ createParty: () => Effect.succeed({ caseRef, decisionRef, outcome: 'AMBIGUOUS' }) }),
     ).dispatch(transition);
     expect(outcome.status).toBe('FAILED');
     expect(outcome.outcomeCode).toBe(PARTY_CANDIDATE_AMBIGUOUS_OUTCOME_CODE);
   }),
 );
 
-it.effect('creates a Party only on NO_MATCH and keys the create by the immutable owner invocation', () =>
+it.effect('submits canonical Create with the immutable owner invocation key', () =>
   Effect.gen(function* createdOnNoMatch() {
     let idempotencyKey: string | null = null;
     const outcome = yield* retailPartyCandidateOwnerEffect(
@@ -218,7 +223,6 @@ it.effect('creates a Party only on NO_MATCH and keys the create by the immutable
             ({ idempotencyKey } = options);
             return { decisionRef, outcome: 'CREATED' as const, partyRef };
           }),
-        matchParty: () => Effect.succeed(matchResponse('NO_MATCH', [])),
       }),
     ).dispatch(transition);
     expect(outcome.status).toBe('SUCCEEDED');
@@ -233,7 +237,6 @@ it.effect('records an ambiguous committed create as a reconciliation halt', () =
       partyOwnerInput,
       partyExecutors({
         createParty: () => Effect.succeed({ caseRef, decisionRef, outcome: 'AMBIGUOUS' }),
-        matchParty: () => Effect.succeed(matchResponse('NO_MATCH', [])),
       }),
     ).dispatch(transition);
     expect(outcome.status).toBe('FAILED');
@@ -265,34 +268,28 @@ it.effect('never resubmits a Party create while the original invocation is still
               _tag: 'PartyCommandCommitResolution',
               invocationId: ownerInvocationId,
               retryCommand: false,
-              state: 'OPEN',
+              state: 'RUNNING',
             },
           }),
       }),
     )
       .reconcile(reconciliationInput)
       .pipe(Effect.flip);
-    expect(Schema.is(CommerceEnrollmentOwnerEffectRejected)(error)).toBe(true);
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(error)).toBe(true);
   }),
 );
 
-/**
- * The match is the first Party Registry call this transition makes and it is read-only, so a match
- * outage fences the transition indeterminate without any Create having been dispatched. The Party
- * Registry then holds no invocation of that identity at all and answers the commit resolution with
- * its 404: that absence is the proof nothing committed.
- */
-const commitResolutionNotFound = () =>
-  Effect.fail(
-    PartyCommandNotFoundProblemSchema.make({
-      detail: 'The Party Registry holds no invocation of this identity.',
-      status: 404,
-      title: 'Not found',
-      type: 'https://ontos.dev/problems/party-command-not-found',
-    }),
-  );
+const commitResolutionNotStarted = () =>
+  Effect.succeed({
+    _tag: 'PartyCreateRecoveryPending' as const,
+    resolution: {
+      _tag: 'PartyCommandCommitResolution' as const,
+      retryCommand: true as const,
+      state: 'NOT_STARTED' as const,
+    },
+  });
 
-it.effect('re-runs the read-only match when the Party Registry holds no Create for this invocation', () =>
+it.effect('submits the same canonical Create only when native recovery proves no invocation', () =>
   Effect.gen(function* reconcileAfterMatchOutage() {
     let idempotencyKey: string | null = null;
     const resolution = yield* retailPartyCandidateOwnerEffect(
@@ -303,13 +300,12 @@ it.effect('re-runs the read-only match when the Party Registry holds no Create f
             ({ idempotencyKey } = options);
             return { decisionRef, outcome: 'CREATED' as const, partyRef };
           }),
-        matchParty: () => Effect.succeed(matchResponse('NO_MATCH', [])),
-        recoverPartyCreate: commitResolutionNotFound,
+
+        recoverPartyCreate: commitResolutionNotStarted,
       }),
     ).reconcile(reconciliationInput);
 
-    // Without this, the 404 is read as "the commit resolution is unavailable" and the transition
-    // stays indeterminate on every later pass: the Party is never submitted and the journey stalls.
+    // Native absence authorizes only the same immutable original request/key.
     expect(resolution.status).toBe('SUCCEEDED');
     expect(resolution.outcomeCode).toBe(PARTY_CANDIDATE_CREATED_OUTCOME_CODE);
     expect(resolution.resultReference).toBe(partyRef.resourceId);
@@ -320,8 +316,8 @@ it.effect('re-runs the read-only match when the Party Registry holds no Create f
   }),
 );
 
-it.effect('creates no Party when the re-run match names the one Party this Tenant already holds', () =>
-  Effect.gen(function* reconcileAfterMatchOutageMatches() {
+it.effect('recovery consumes a governed MATCH_EXISTING result without dispatching another Create', () =>
+  Effect.gen(function* recoveredMatch() {
     let created = 0;
     const resolution = yield* retailPartyCandidateOwnerEffect(
       partyOwnerInput,
@@ -331,11 +327,13 @@ it.effect('creates no Party when the re-run match names the one Party this Tenan
             created += 1;
             return { decisionRef, outcome: 'CREATED' as const, partyRef };
           }),
-        matchParty: () => Effect.succeed(matchResponse('MATCHED', [partyRef])),
-        recoverPartyCreate: commitResolutionNotFound,
+        recoverPartyCreate: () =>
+          Effect.succeed({
+            _tag: 'PartyCreateRecovered',
+            result: { decisionRef, outcome: 'MATCHED_EXISTING', partyRef },
+          }),
       }),
     ).reconcile(reconciliationInput);
-
     expect(resolution.status).toBe('SUCCEEDED');
     expect(resolution.outcomeCode).toBe(PARTY_CANDIDATE_MATCHED_OUTCOME_CODE);
     expect(created).toBe(0);
@@ -348,10 +346,10 @@ it.effect('surfaces a commit resolution that is merely unavailable as an unavail
     const error = yield* retailPartyCandidateOwnerEffect(
       partyOwnerInput,
       partyExecutors({
-        matchParty: () =>
+        createParty: () =>
           Effect.sync(() => {
             matched += 1;
-            return matchResponse('NO_MATCH', []);
+            return { decisionRef, outcome: 'CREATED' as const, partyRef };
           }),
         recoverPartyCreate: () =>
           Effect.fail(
@@ -442,15 +440,15 @@ it.effect('reconciles an indeterminate profile ensure through its committed invo
   }),
 );
 
-it.effect('leaves an uncommitted profile ensure to a later retry', () =>
+it.effect('leaves a running profile ensure to later reconciliation', () =>
   Effect.gen(function* openEnsure() {
     const error = yield* retailCustomerProfileOwnerEffect(
       profileOwnerInput,
-      profileExecutors({ commitResolution: () => Effect.succeed({ state: 'OPEN' }) }),
+      profileExecutors({ commitResolution: () => Effect.succeed({ state: 'RUNNING' }) }),
     )
       .reconcile(reconciliationInput)
       .pipe(Effect.flip);
-    expect(Schema.is(CommerceEnrollmentOwnerEffectRejected)(error)).toBe(true);
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(error)).toBe(true);
   }),
 );
 
@@ -646,7 +644,6 @@ it.effect('rejects a Create result that would link the Attempt to a Party in ano
       partyExecutors({
         createParty: () =>
           Effect.succeed({ decisionRef, outcome: 'CREATED', partyRef: { ...partyRef, tenantId: foreignTenantId } }),
-        matchParty: () => Effect.succeed(matchResponse('NO_MATCH', [])),
       }),
     )
       .dispatch(transition)
@@ -679,3 +676,84 @@ it.effect('rejects a recovered decision owned by another Tenant before producing
     expect(failure.reason).toContain('original Attempt Tenant');
   }),
 );
+
+for (const state of ['NOT_STARTED', 'RETRYABLE'] as const) {
+  it.effect(`recovers ${state} profile and binding with the exact original payload and owner key`, () =>
+    Effect.gen(function* originalKeyRetry() {
+      const profileRequests: unknown[] = [];
+      const bindingRequests: unknown[] = [];
+      const profile = retailCustomerProfileOwnerEffect(
+        profileOwnerInput,
+        profileExecutors({
+          commitResolution: () => Effect.succeed({ state }),
+          ensureProfile: (payload, correlation, options) =>
+            Effect.sync(() => {
+              profileRequests.push({ correlation, options, payload });
+              return ensureResult('ACTIVE');
+            }),
+        }),
+      );
+      const binding = retailPortalBindingOwnerEffect(
+        bindingOwnerInput,
+        bindingExecutors({
+          bindProfile: (payload, correlation, options) =>
+            Effect.sync(() => {
+              bindingRequests.push({ correlation, options, payload });
+              return bindingResult(true);
+            }),
+          commitResolution: () => Effect.succeed({ state }),
+        }),
+      );
+      yield* profile.dispatch(transition);
+      expect((yield* profile.reconcile(reconciliationInput)).status).toBe('SUCCEEDED');
+      expect(profileRequests).toHaveLength(2);
+      expect(profileRequests[0]).toEqual(profileRequests[1]);
+      yield* binding.dispatch(transition);
+      expect((yield* binding.reconcile(reconciliationInput)).status).toBe('SUCCEEDED');
+      expect(bindingRequests).toHaveLength(2);
+      expect(bindingRequests[0]).toEqual(bindingRequests[1]);
+      expect(bindingRequests[1]).toMatchObject({ options: { idempotencyKey: ownerInvocationId } });
+    }),
+  );
+}
+for (const state of ['COMMITTED', 'RUNNING', 'REJECTED'] as const) {
+  it.effect(`never redispatches profile or binding in ${state} state`, () =>
+    Effect.gen(function* noNativeReplay() {
+      const profile = retailCustomerProfileOwnerEffect(
+        profileOwnerInput,
+        profileExecutors({
+          commitResolution: () =>
+            Effect.succeed(state === 'COMMITTED' ? { result: ensureResult('ACTIVE'), state } : { state }),
+          ensureProfile: () => Effect.die('A nonretryable profile was dispatched'),
+        }),
+      );
+      const binding = retailPortalBindingOwnerEffect(
+        bindingOwnerInput,
+        bindingExecutors({
+          bindProfile: () => Effect.die('A nonretryable binding was dispatched'),
+          commitResolution: () =>
+            Effect.succeed(state === 'COMMITTED' ? { result: bindingResult(true), state } : { state }),
+        }),
+      );
+      if (state === 'RUNNING') {
+        expect(
+          Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(
+            yield* profile.reconcile(reconciliationInput).pipe(Effect.flip),
+          ),
+        ).toBe(true);
+        expect(
+          Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(
+            yield* binding.reconcile(reconciliationInput).pipe(Effect.flip),
+          ),
+        ).toBe(true);
+      } else {
+        const profileResult = yield* profile.reconcile(reconciliationInput);
+        const bindingResultValue = yield* binding.reconcile(reconciliationInput);
+        expect(profileResult.status).toBe(state === 'COMMITTED' ? 'SUCCEEDED' : 'FAILED');
+        expect(bindingResultValue.status).toBe(state === 'COMMITTED' ? 'SUCCEEDED' : 'FAILED');
+        expect(profileResult.nextState).toBeUndefined();
+        expect(bindingResultValue.nextState).toBeUndefined();
+      }
+    }),
+  );
+}

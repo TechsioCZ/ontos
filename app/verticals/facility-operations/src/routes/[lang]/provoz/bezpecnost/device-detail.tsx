@@ -27,7 +27,6 @@ import {
   addDays,
   deviceStateVariant,
   incidentStateVariant,
-  personaName,
   severityVariant,
   todayPrague,
   useLiveTaskStates,
@@ -94,9 +93,7 @@ const IncidentCard = ({
       <div className="flex flex-wrap items-start justify-between gap-100">
         <div className="flex min-w-0 flex-col gap-50">
           <span className="font-semibold text-sm">{incident.title}</span>
-          <span className="text-fg-secondary text-xs">
-            {formatDate(incident.occurredOn)} · {k('fields.reportedBy')}: {personaName(k, incident.createdBy)}
-          </span>
+          <span className="text-fg-secondary text-xs">{formatDate(incident.occurredOn)}</span>
         </div>
         <div className="flex flex-wrap gap-50">
           <Badge size="sm" variant={severityVariant(incident.severity)}>
@@ -380,9 +377,9 @@ export const DeviceDetailPanel = ({
             <p className="whitespace-pre-line rounded-md bg-surface-secondary p-150 text-sm">{device.note}</p>
           )}
           <p className="text-fg-secondary text-xs">
-            {k('detail.createdInfo', { at: stamp(device.createdAt), by: personaName(k, device.createdBy) })}
+            {k('detail.createdInfo', { at: stamp(device.createdAt) })}
             {' · '}
-            {k('detail.updatedInfo', { at: stamp(device.updatedAt), by: personaName(k, device.updatedBy) })}
+            {k('detail.updatedInfo', { at: stamp(device.updatedAt) })}
           </p>
         </SectionCard>
 
@@ -468,7 +465,7 @@ export const DeviceDetailPanel = ({
                       <span className="truncate font-medium text-sm">{attachment.file.name}</span>
                       <span className="text-fg-secondary text-xs">
                         {k(`attachmentKind.${attachment.kind}`)} · {formatSize(attachment.file.size)} ·{' '}
-                        {stamp(attachment.addedAt)} · {personaName(k, attachment.addedBy)}
+                        {stamp(attachment.addedAt)}
                       </span>
                     </div>
                   </div>
@@ -513,9 +510,7 @@ export const DeviceDetailPanel = ({
                 <span className="text-sm">
                   <span className="font-medium">{k(`history.${entry.event}`)}</span> · {entry.summary}
                 </span>
-                <span className="text-fg-secondary text-xs">
-                  {stamp(entry.at)} · {personaName(k, entry.by)}
-                </span>
+                <span className="text-fg-secondary text-xs">{stamp(entry.at)}</span>
               </li>
             ))}
           </ol>

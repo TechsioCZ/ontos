@@ -7,7 +7,7 @@ import { Checkbox } from '@techsio/ui-kit/atoms/checkbox';
 import { Icon } from '@techsio/ui-kit/atoms/icon';
 import type { IconType } from '@techsio/ui-kit/atoms/icon';
 import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
-import { useLayoutEffect, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { KeyboardEvent, MouseEvent, PointerEvent } from 'react';
 
 import {
@@ -330,6 +330,15 @@ const BoundariesSection = ({ boundaries }: { readonly boundaries: DemoGuideBound
  * reaches the panel through the `--demo-guide-width` variable the shell frame sets).
  */
 export const DemoGuidePanel = ({ guide, identityEmail }: DemoGuidePanelProps) => {
+  useEffect(() => {
+    const onEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape' && !event.defaultPrevented) {
+        setDemoGuideOpen(false);
+      }
+    };
+    document.addEventListener('keydown', onEscape);
+    return () => document.removeEventListener('keydown', onEscape);
+  }, []);
   const doneIds = useDemoGuideProgress(guide.id);
   const summary = summarizeGuideProgress(guide, doneIds);
   const percent = summary.total === 0 ? 0 : Math.round((summary.done / summary.total) * 100);

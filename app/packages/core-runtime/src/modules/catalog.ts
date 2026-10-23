@@ -148,6 +148,15 @@ const assembleInstalledModuleCatalog = (
   contractsInput: readonly OntosModuleDeploymentContract[],
   deploymentStatuses: readonly InstalledDeploymentStatus[],
 ): InstalledModuleCatalog => {
+  const cookieRealms = new Set<string>();
+  for (const contract of contractsInput) {
+    for (const { realmPrefix } of contract.manifest.publicSurface.apiCookieTransport ?? []) {
+      if (cookieRealms.has(realmPrefix)) {
+        throw invalid('an authentication cookie realm may be claimed by only one installed module');
+      }
+      cookieRealms.add(realmPrefix);
+    }
+  }
   const byAppId = new Map(contractsInput.map((contract) => [contract.deployment.appId, contract] as const));
   const byModuleId = new Map(contractsInput.map((contract) => [contract.manifest.module.id, contract] as const));
   const outboxSubscriptions = Object.freeze(
@@ -257,6 +266,7 @@ const findConflictingDeploymentAppIds = (
   const byAppId = new Map<OntosDeploymentAppId, OntosModuleDeploymentContract[]>();
   const byModuleId = new Map<OntosModuleId, OntosModuleDeploymentContract[]>();
   const byWorkerKey = new Map<string, OntosModuleDeploymentContract[]>();
+  const byCookieRealm = new Map<string, OntosModuleDeploymentContract[]>();
   for (const contract of candidates) {
     const {
       deployment: { appId },
@@ -266,11 +276,19 @@ const findConflictingDeploymentAppIds = (
     } = contract;
     byAppId.set(appId, [...(byAppId.get(appId) ?? []), contract]);
     byModuleId.set(moduleId, [...(byModuleId.get(moduleId) ?? []), contract]);
+    for (const { realmPrefix } of contract.manifest.publicSurface.apiCookieTransport ?? []) {
+      byCookieRealm.set(realmPrefix, [...(byCookieRealm.get(realmPrefix) ?? []), contract]);
+    }
     for (const { workerKey } of contract.runtime.outboxSubscriptions) {
       byWorkerKey.set(workerKey, [...(byWorkerKey.get(workerKey) ?? []), contract]);
     }
   }
-  for (const conflicts of [...byAppId.values(), ...byModuleId.values(), ...byWorkerKey.values()]) {
+  for (const conflicts of [
+    ...byAppId.values(),
+    ...byModuleId.values(),
+    ...byWorkerKey.values(),
+    ...byCookieRealm.values(),
+  ]) {
     if (conflicts.length > 1) {
       for (const contract of conflicts) {
         conflictingAppIds.add(contract.deployment.appId);

@@ -26,7 +26,6 @@ it('uses Czech cardinal day forms in overdue invoice attention details', () => {
         costVarianceMinor: 0,
         draftCount: 0,
         grossOutstandingMinor: 60_000,
-        integrationWarnings: 0,
         openIncomingInvoices: 0,
         openInvoices: 1,
         openOutgoingInvoices: 1,
@@ -39,9 +38,8 @@ it('uses Czech cardinal day forms in overdue invoice attention details', () => {
         revenueVarianceMinor: 100_000,
       },
       state: {
-        accountingObservations: [],
         financialPlanEntries: [],
-        paymentObservations: [],
+
         invoices: [
           {
             accountingCorrelation: 'invoice-correlation',

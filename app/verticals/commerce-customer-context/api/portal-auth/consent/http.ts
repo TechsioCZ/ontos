@@ -29,8 +29,6 @@ import {
   customerConsentReadOwnEntrypoint,
   customerConsentUpdateOwnEntrypoint,
 } from '../../../shared/portal-auth/consent-entrypoints.ts';
-import { readRetailEnrollmentAccountParty } from '../../../src/enrollment/attempts/registration-persistence.ts';
-import { CommerceEnrollmentOwnerTransactionRunner } from '../../../src/enrollment/orchestration/owner-transition-production.ts';
 import { CommercePortalAuthAudit } from '../../../src/portal-auth/audit/audit.ts';
 import { authenticateOperationPrincipal } from '../../auth/action-principal.ts';
 import { noStoreHeaders, requireTrustedOrigin } from '../http-transport.ts';
@@ -38,6 +36,7 @@ import { authorizeCustomerProfile } from '../profile/http.ts';
 import { readCustomerPartyProfile } from '../profile/party-profile.ts';
 import { admitCustomerAccount } from '../session/http.ts';
 import { CommercePortalAuthSessionLifecycle } from '../session/lifecycle.ts';
+import { CommerceCustomerAuthority, CustomerAuthorityRejected } from '../session/customer-authority.ts';
 import {
   CustomerConsentReceiptSchema,
   matchesCustomerConsentReceipt,
@@ -78,7 +77,7 @@ const admitted = Effect.fn('CustomerConsent.admit')(function* admit(
   entrypoint: ModuleEntrypointDescriptor,
 ) {
   yield* noStoreHeaders;
-  const current = yield* admitCustomerAccount(request).pipe(
+  const current = yield* admitCustomerAccount(request, 'retail.consent.manage').pipe(
     Effect.mapError((problem) => {
       if (problem.status === 401) {
         return consentAuthentication();
@@ -92,16 +91,16 @@ const admitted = Effect.fn('CustomerConsent.admit')(function* admit(
   if (current.state !== 'authenticated') {
     return yield* Effect.fail(consentAuthentication());
   }
-  yield* authorize(current.principal, entrypoint);
-  if (current.principal.legalEntityId === undefined) {
+  yield* authorize(current.workloadPrincipal, entrypoint);
+  if (current.workloadPrincipal.legalEntityId === undefined) {
     return yield* Effect.fail(consentForbidden());
   }
   const scope: CustomerConsentScope = {
     compositionRevision: yield* activeRevision,
-    legalEntityId: current.principal.legalEntityId,
+    legalEntityId: current.workloadPrincipal.legalEntityId,
     partyId: current.account.partyId,
     requestCorrelation: randomUUID(),
-    tenantId: current.principal.tenantId,
+    tenantId: current.workloadPrincipal.tenantId,
   };
   // Archived/merged/aliased Parties require real owner reconciliation, not a guessed successor.
   yield* readCustomerPartyProfile(scope).pipe(Effect.mapError(consentUnavailable));
@@ -143,7 +142,7 @@ const update = Effect.fn('CustomerConsent.update')(function* updateConsent(
       outcome: 'requested',
     })
     .pipe(Effect.mapError(consentUnavailable));
-  const acknowledged = yield* Schema.decodeUnknownEffect(CustomerConsentReceiptSchema)({
+  const acknowledged = yield* Schema.decodeEffect(CustomerConsentReceiptSchema)({
     acknowledgedAt: DateTime.formatIso(yield* DateTime.now),
     decision: input.decision,
     noticeVersionId: notice.versionId,
@@ -263,14 +262,24 @@ const verifiedReceipt = Effect.fn('CustomerConsent.verifyReceipt')(function* ver
         ),
       ),
     );
-  const runner = yield* CommerceEnrollmentOwnerTransactionRunner;
-  const party = yield* runner
-    .run(base, (transaction) => readRetailEnrollmentAccountParty(transaction, evidence.providerSubjectId))
-    .pipe(Effect.mapError(consentUnavailable));
-  if (Option.isNone(party) || party.value !== receipt.partyId) {
+  const authority = yield* CommerceCustomerAuthority;
+  const customer = yield* authority
+    .admit({
+      legalEntityId: base.legalEntityId,
+      permission: 'retail.consent.manage',
+      providerSubjectId: evidence.providerSubjectId,
+      sessionRef: evidence.sessionRef,
+      tenantId: base.tenantId,
+    })
+    .pipe(
+      Effect.mapError((cause) =>
+        Schema.is(CustomerAuthorityRejected)(cause) ? consentForbidden() : consentUnavailable(),
+      ),
+    );
+  if (customer.partyId !== receipt.partyId) {
     return yield* Effect.fail(consentForbidden());
   }
-  const scope = { ...base, partyId: party.value };
+  const scope = { ...base, partyId: customer.partyId };
   const catalog = yield* readCustomerNewsletterCatalog(scope);
   if (
     !sameCustomerConsentScope(catalog.consentScope, receipt.scope) ||

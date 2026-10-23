@@ -6,6 +6,9 @@ import { expect, it } from 'effect-rstest';
 import { akrosBaselineParts } from '../../scripts/akros-baseline-parts.ts';
 import { buildAkrosEncoded } from '../../scripts/akros-catalog.mts';
 import { loadAkrosBaselineParts } from '../../src/services/akros-baseline.generated.ts';
+import { computeProductRecords } from '../../src/services/stock-levels.ts';
+import { MerchandiseStateSchema } from '../../shared/apis/records.ts';
+import { Schema } from 'effect';
 import { decodeAkrosBaselinePart } from '../../src/services/akros-demo-reset.ts';
 
 const built = buildAkrosEncoded();
@@ -41,3 +44,16 @@ it.effect('every bundled part decodes through the runtime path (Web streams, no 
     expect(products).toBe(built.products.length);
   }),
 );
+
+it('catalogue-only products have no replenishment minimum, with only a handful of genuine shortages', () => {
+  const records = computeProductRecords(Schema.decodeUnknownSync(MerchandiseStateSchema)(built));
+  expect(records).toHaveLength(1289);
+  expect(
+    records
+      .filter((record) => record.stockOnHand <= 0)
+      .every((record) => record.lowStockThreshold === 0 && !record.lowStock),
+  ).toBe(true);
+  const shortages = records.filter((record) => record.lowStock);
+  expect(shortages.length).toBeGreaterThan(0);
+  expect(shortages.length).toBeLessThan(10);
+});

@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 
-import { ConfigProvider, DateTime, Effect, Fiber, Layer, Schema } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+import { ConfigProvider, DateTime, Effect, Fiber, FileSystem, Layer, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientResponse, HttpEffect } from 'effect/unstable/http';
+import type { HttpServerRequest } from 'effect/unstable/http';
 
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
@@ -30,6 +32,10 @@ import {
 import { verifyInitialCutoverProviderInventory } from '../initial-composition-cutover-provider.mts';
 import { assertPublishedShellIngressSnapshot } from '../publish-active-application-composition.mts';
 import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
+import {
+  developmentCompositionApplication,
+  makeDevelopmentCompositionPointer,
+} from '../siampark/development-composition.mts';
 
 const KV_URL = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/storage/kv/namespaces/${'b'.repeat(32)}/values/active`;
 const OBSERVED_AT = '2026-10-02T16:00:00.000Z';
@@ -46,6 +52,7 @@ const SESSION_UNLOCK = 'SESSION UNLOCK';
 const MIGRATION_EVENT = 'MIGRATION';
 const COMMITTED_DRAINING = 'COMMITTED draining';
 const DURABLE_COMPLETE = 'DURABLE COMPLETE';
+const DURABLE_BLOCKED = 'DURABLE BLOCKED';
 const ROLLBACK_EVENT = 'TRANSACTION ROLLBACK';
 const AUTHORITY_FROM = 'from "core"."application_composition_authority"';
 const initialProviderProof = verifyInitialCutoverProviderInventory({
@@ -322,6 +329,8 @@ it.effect('never admits a Shell from missing, malformed, unavailable, or expired
 );
 
 interface MigrationFixtureOptions {
+  readonly currentSnapshot?: ActiveApplicationCompositionSnapshot;
+  readonly durableBlocked?: () => boolean;
   readonly durableBlocks?: readonly boolean[];
   readonly initialPhase?: 'active' | 'draining' | 'sealed' | 'migrated';
   readonly leaseRemainingMillis?: number;
@@ -336,6 +345,11 @@ interface MigrationFixtureOptions {
 }
 
 const migrationFixture = (options: MigrationFixtureOptions = {}) => {
+  const oldRevision = options.currentSnapshot?.composition.revision ?? OLD_REVISION;
+  const validUntil =
+    options.currentSnapshot === undefined
+      ? new Date('2026-10-03T16:00:00.000Z')
+      : DateTime.toDateUtc(options.currentSnapshot.validUntil);
   let phase = options.initialPhase ?? 'active';
   let admission = 'open';
   let progressRead = 0;
@@ -382,16 +396,17 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
     }
     if (durablePoll) {
       durablePoll = false;
-      const blocked = options.durableBlocks?.[durableRead] ?? options.ownerWorkPending ?? false;
+      const blocked =
+        options.durableBlocked?.() ?? options.durableBlocks?.[durableRead] ?? options.ownerWorkPending ?? false;
       durableRead += 1;
-      events.push(blocked ? 'DURABLE BLOCKED' : DURABLE_COMPLETE);
+      events.push(blocked ? DURABLE_BLOCKED : DURABLE_COMPLETE);
       return [{ blocked }];
     }
     return [{ blocked: durableWork ? (options.ownerWorkPending ?? false) : (options.sealOutboxPending ?? false) }];
   };
   const stageAuthorityChange = (params: readonly unknown[]) => {
     const [next, , expectedRevision] = params;
-    if (expectedRevision !== OLD_REVISION || (next === 'sealed' && options.sealRevisionChanged === true)) {
+    if (expectedRevision !== oldRevision || (next === 'sealed' && options.sealRevisionChanged === true)) {
       return [];
     }
     if (next === 'closed' || next === 'open') {
@@ -399,11 +414,11 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
         return [];
       }
       pendingAdmissions[pendingAdmissions.length - 1] = next;
-      return [{ revision: OLD_REVISION }];
+      return [{ revision: oldRevision }];
     }
     if (next === 'active' || next === 'draining' || next === 'sealed' || next === 'migrated') {
       pendingPhases[pendingPhases.length - 1] = next;
-      return [{ revision: OLD_REVISION }];
+      return [{ revision: oldRevision }];
     }
     return [];
   };
@@ -452,17 +467,19 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
             return [{ isolation: 'read committed' }];
           } else if (sql.includes('as remaining')) {
             return [{ remaining: options.leaseRemainingMillis ?? 1_230_000 }];
+          } else if (sql.includes('as "validUntilMillis"')) {
+            return [{ phase, revision: oldRevision, validUntilMillis: validUntil.getTime() }];
           } else if (sql.startsWith('select') && sql.includes(AUTHORITY_FROM)) {
             if (options.missingAuthority === true) {
               return [];
             }
             if (sql.includes('"durable_work_admission"')) {
               durablePoll = true;
-              return [{ durableWorkAdmission: admission, phase, revision: OLD_REVISION }];
+              return [{ durableWorkAdmission: admission, phase, revision: oldRevision }];
             }
             return sql.includes('"valid_until"')
-              ? [{ phase, revision: OLD_REVISION, validUntil: new Date('2026-10-03T16:00:00.000Z') }]
-              : [{ phase, revision: OLD_REVISION }];
+              ? [{ phase, revision: oldRevision, validUntil }]
+              : [{ phase, revision: oldRevision }];
           } else if (sql.includes('as blocked')) {
             return blockedWork(sql);
           } else if (sql.startsWith('update "core"."application_composition_authority"')) {
@@ -543,7 +560,7 @@ it.effect('closes new durable admission and leaves existing jobs active until th
     yield* TestClock.adjust('0 seconds');
     expect(fixture.phase()).toBe('active');
     expect(fixture.admission()).toBe('closed');
-    expect(fixture.events).toContain('DURABLE BLOCKED');
+    expect(fixture.events).toContain(DURABLE_BLOCKED);
     expect(fixture.events).not.toContain(COMMITTED_DRAINING);
     expect(fixture.events).not.toContain(MIGRATION_EVENT);
 
@@ -658,4 +675,74 @@ it.effect('refuses operator resumption for an expired, different, or already ret
       expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
     }
   }),
+);
+
+it.effect('serves the restored /active authority to the durable job that a native drain is waiting on', () =>
+  Effect.gen(function* resumesDurableJobAfterPublisherRestart() {
+    const snapshot = yield* completeSnapshot;
+    const fs = yield* FileSystem.FileSystem;
+    const statePath = `${yield* fs.makeTempDirectoryScoped()}/pointer.json`;
+    let durablePending = true;
+    const fixture = migrationFixture({ currentSnapshot: snapshot, durableBlocked: () => durablePending });
+    const original = yield* makeDevelopmentCompositionPointer(statePath).pipe(Effect.provide(fixture.layer));
+    yield* original.publish(snapshot);
+    // A new publisher has no in-memory pointer. Its exact approved bytes survive the restart.
+    const restarted = yield* makeDevelopmentCompositionPointer(statePath).pipe(Effect.provide(fixture.layer));
+    const migration = yield* runApplicationCompositionMigration(Effect.void, initialProviderProof).pipe(
+      Effect.provide(fixture.layer),
+      Effect.forkChild,
+    );
+    yield* TestClock.adjust('0 seconds');
+    expect(fixture.admission()).toBe('closed');
+    expect(fixture.phase()).toBe('active');
+    expect(fixture.events).toContain(DURABLE_BLOCKED);
+    const handler = HttpEffect.toWebHandlerWith<never, HttpServerRequest.HttpServerRequest>(yield* Effect.context())(
+      developmentCompositionApplication(restarted.load),
+    );
+    const response = yield* Effect.promise(() => handler(new Request('http://127.0.0.1/active')));
+    expect(response.status).toBe(200);
+    expect(yield* Effect.promise(() => response.text())).toBe(
+      yield* encodeActiveApplicationCompositionSnapshot(snapshot),
+    );
+    durablePending = false;
+    yield* TestClock.adjust('3 seconds');
+    yield* Fiber.join(migration);
+    expect(fixture.phase()).toBe('migrated');
+    expect(Option.isNone(yield* restarted.load)).toBe(true);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('keeps the committed bytes across a crash before renewal commits and rejects stale or forged authority', () =>
+  Effect.gen(function* restoresOnlyExactDatabaseApproval() {
+    const snapshot = yield* completeSnapshot;
+    const fs = yield* FileSystem.FileSystem;
+    const statePath = `${yield* fs.makeTempDirectoryScoped()}/pointer.json`;
+    const { revision: approvedRevision } = snapshot.composition;
+    let revision = approvedRevision;
+    let phase = 'active';
+    let validUntilMillis = DateTime.toEpochMillis(snapshot.validUntil);
+    const database = Layer.effect(
+      CoreDatabase,
+      makeTestDatabase(() => Effect.sync(() => [{ phase, revision, validUntilMillis }])).pipe(
+        Effect.map((executor) => ({ executor })),
+      ),
+    );
+    const pointer = yield* makeDevelopmentCompositionPointer(statePath).pipe(Effect.provide(database));
+    yield* pointer.publish(snapshot);
+    const renewed = { ...snapshot, validUntil: DateTime.add(snapshot.validUntil, { minutes: 1 }) };
+    yield* pointer.publish(renewed);
+    const restarted = yield* makeDevelopmentCompositionPointer(statePath).pipe(Effect.provide(database));
+    expect(yield* restarted.load).toEqual(Option.some(yield* encodeActiveApplicationCompositionSnapshot(snapshot)));
+    validUntilMillis = DateTime.toEpochMillis(renewed.validUntil);
+    expect(yield* restarted.load).toEqual(Option.some(yield* encodeActiveApplicationCompositionSnapshot(renewed)));
+    revision = '0'.repeat(64);
+    expect(Option.isNone(yield* restarted.load)).toBe(true);
+    revision = approvedRevision;
+    phase = 'sealed';
+    expect(Option.isNone(yield* restarted.load)).toBe(true);
+    phase = 'draining';
+    expect(Option.isSome(yield* restarted.load)).toBe(true);
+    yield* TestClock.adjust('25 hours');
+    expect(Option.isNone(yield* restarted.load)).toBe(true);
+  }).pipe(Effect.provide(NodeServices.layer)),
 );

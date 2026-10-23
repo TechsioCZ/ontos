@@ -1,4 +1,8 @@
-import { AddContactPointPayloadSchema, CounterpartyCustomerOnboardPayloadSchema } from '@app/party-registry/api';
+import {
+  RetailEnrollmentEvidenceSchema,
+  AddContactPointPayloadSchema,
+  CounterpartyCustomerOnboardPayloadSchema,
+} from '@app/party-registry/api';
 import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
 import { ConfigProvider, DateTime, Effect, Encoding, Result, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
@@ -8,10 +12,7 @@ import { retailCustomerDirectoryOwnerEffect } from '../../src/enrollment/journey
 import { retailPartyCandidateOwnerEffect } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import type { RetailPartyCandidateOwnerInput } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import { CommerceEnrollmentOwnerTransitionSchema } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
-import {
-  CommerceEnrollmentOwnerEffectRejected,
-  CommerceEnrollmentOwnerEffectUnavailable,
-} from '../../src/enrollment/orchestration/owner-transition-errors.ts';
+import { CommerceEnrollmentOwnerEffectUnavailable } from '../../src/enrollment/orchestration/owner-transition-errors.ts';
 
 const compositionRevision = 'c'.repeat(64);
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -27,7 +28,9 @@ const decisionRef = {
   resourceType: 'party.registry.party-match-decision',
   tenantId,
 };
-const input: RetailPartyCandidateOwnerInput = {
+const input: RetailPartyCandidateOwnerInput & {
+  readonly verifiedEvidence: Effect.Effect<typeof RetailEnrollmentEvidenceSchema.Type>;
+} = {
   candidate: {
     evidenceRefs: [],
     officialIdentifiers: [],
@@ -39,6 +42,19 @@ const input: RetailPartyCandidateOwnerInput = {
   legalEntityId,
   requestCorrelation,
   tenantId,
+  verifiedEvidence: Effect.succeed(
+    Schema.decodeUnknownSync(RetailEnrollmentEvidenceSchema)({
+      authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1' as const,
+      candidateEvidenceRef: '10000000-0000-4000-8000-000000000001',
+      emailOwnership: 'VERIFIED' as const,
+      enrollmentAttemptId: '20000000-0000-4000-8000-000000000001',
+      journey: 'RETAIL_SELF_ENROLLMENT' as const,
+      providerOwnerInvocationId: ownerInvocationId,
+      providerSubjectId: 'provider-subject',
+      sellingLegalEntityId: '50000000-0000-4000-8000-000000000001',
+      tenantId,
+    }),
+  ),
 };
 const transition = Schema.decodeSync(CommerceEnrollmentOwnerTransitionSchema)({
   actorPrincipalId,
@@ -91,12 +107,7 @@ it.effect('scheduled dispatch uses native issuance and selected-release Party HT
   Effect.gen(function* nativeScheduledDispatch() {
     expect(globalThis.document).toBeUndefined();
     const requests: Request[] = [];
-    const responses = [
-      gatewayResponse(),
-      { candidateParties: [], evidenceExplanation: [], matchRuleVersion: '1', outcome: 'NO_MATCH' },
-      gatewayResponse(tenantId, 2),
-      { decisionRef, outcome: 'CREATED', partyRef },
-    ];
+    const responses = [gatewayResponse(), { decisionRef, outcome: 'CREATED', partyRef }];
     const fakeFetch: typeof fetch = (target, init) => {
       requests.push(new Request(target, init));
       return Promise.resolve(Response.json(responses.shift()));
@@ -107,11 +118,9 @@ it.effect('scheduled dispatch uses native issuance and selected-release Party HT
     expect(outcome.status).toBe('SUCCEEDED');
     expect(requests.map((request) => request.url)).toEqual([
       'https://shell.example.test/shell-super-app-api/auth/api-key/gateway-context',
-      'https://shell.example.test/api/approved/party-registry/reads/party-match',
-      'https://shell.example.test/shell-super-app-api/auth/api-key/gateway-context',
       'https://shell.example.test/api/approved/party-registry/party-registry/actions/create-party',
     ]);
-    for (const request of [requests[0], requests[2]]) {
+    for (const request of [requests[0]]) {
       expect(request?.headers.get('x-api-key')).toBe('scheduled-service-api-key');
       expect(yield* Effect.promise(() => request.json())).toEqual({
         audience: 'party-registry',
@@ -120,12 +129,11 @@ it.effect('scheduled dispatch uses native issuance and selected-release Party HT
       });
     }
     expect(requests[1]?.headers.get('authorization')).toBe(`Bearer ${tokenFor(tenantId, compositionRevision, 1)}`);
-    expect(requests[3]?.headers.get('authorization')).toBe(`Bearer ${tokenFor(tenantId, compositionRevision, 2)}`);
-    for (const request of [requests[1], requests[3]]) {
+    for (const request of [requests[1]]) {
       expect(request?.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
       expect(request?.headers.get('x-correlation-id')).toBe(requestCorrelation);
     }
-    expect(requests[3]?.headers.get('idempotency-key')).toBe(ownerInvocationId);
+    expect(requests[1]?.headers.get('idempotency-key')).toBe(ownerInvocationId);
   }),
 );
 
@@ -171,7 +179,7 @@ it.effect('a mismatched issuer Tenant fails before any Party match or create', (
       .dispatch(transition)
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration), Effect.flip);
     expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
-    expect(failure.reason).toContain('match operation is unavailable');
+    expect(failure.reason).toContain('create operation is unavailable');
     expect(requests).toHaveLength(1);
   }),
 );
@@ -195,10 +203,9 @@ it.effect('keeps the original Attempt revision and scope when a caller later mut
           requests.length === 1
             ? gatewayResponse()
             : {
-                candidateParties: [partyRef],
-                evidenceExplanation: [],
-                matchRuleVersion: '1',
-                outcome: 'MATCHED',
+                decisionRef,
+                outcome: 'MATCHED_EXISTING',
+                partyRef,
               },
         ),
       );
@@ -231,7 +238,7 @@ it.effect('scheduled reconciliation reads the original invocation through native
                 _tag: 'PartyCommandCommitResolution',
                 invocationId: ownerInvocationId,
                 retryCommand: false,
-                state: 'OPEN',
+                state: 'RUNNING',
               },
         ),
       );
@@ -243,7 +250,7 @@ it.effect('scheduled reconciliation reads the original invocation through native
         ownerOperationRevision: 1,
       })
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration), Effect.flip);
-    expect(Schema.is(CommerceEnrollmentOwnerEffectRejected)(failure)).toBe(true);
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
     expect(requests).toHaveLength(2);
     expect(requests[1]?.url).toBe(
       'https://shell.example.test/api/approved/party-registry/party-registry/action-commits/resolve',
@@ -257,7 +264,7 @@ it.effect('scheduled reconciliation reads the original invocation through native
   }),
 );
 
-it.effect('committed native recovery acquires distinct one-use assertions for commit and decision reads', () =>
+it.effect('committed native recovery uses one owned-result assertion without reviewer reads', () =>
   Effect.gen(function* singleUseGatewayRecovery() {
     expect(globalThis.document).toBeUndefined();
     const requests: Request[] = [];
@@ -294,6 +301,7 @@ it.effect('committed native recovery acquires distinct one-use assertions for co
           request.url.endsWith('/action-commits/resolve')
             ? {
                 _tag: 'PartyCommandCommitResolution',
+                createResult: { decisionRef, outcome: 'CREATED', partyRef },
                 invocationId: ownerInvocationId,
                 retryCommand: false,
                 state: 'COMMITTED',
@@ -322,13 +330,12 @@ it.effect('committed native recovery acquires distinct one-use assertions for co
       .pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch), Effect.provide(configuration));
     expect(resolution.status).toBe('SUCCEEDED');
     expect(resolution.resultReference).toBe(partyRef.resourceId);
-    expect(issued).toBe(2);
-    expect(consumed.size).toBe(2);
-    expect([...consumed]).toEqual(['70000000-0000-4000-8000-000000000001', '70000000-0000-4000-8000-000000000002']);
-    expect(requests).toHaveLength(4);
+    expect(issued).toBe(1);
+    expect(consumed.size).toBe(1);
+    expect([...consumed]).toEqual(['70000000-0000-4000-8000-000000000001']);
+    expect(requests).toHaveLength(2);
     expect(requests[1]?.headers.get('authorization')).toBe(`Bearer ${tokenFor(tenantId, compositionRevision, 1)}`);
-    expect(requests[3]?.headers.get('authorization')).toBe(`Bearer ${tokenFor(tenantId, compositionRevision, 2)}`);
-    for (const request of [requests[1], requests[3]]) {
+    for (const request of [requests[1]]) {
       expect(request?.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
       expect(request?.url.startsWith('https://shell.example.test/api/approved/party-registry/')).toBe(true);
     }
@@ -355,7 +362,7 @@ const customerCommandPayloadSchema = Schema.Union([
   Schema.toEncoded(CounterpartyCustomerOnboardPayloadSchema),
 ]);
 
-const customerDirectoryTransport = (state: 'ABSENT' | 'OPEN' | 'COMMITTED', failCommand = false) => {
+const customerDirectoryTransport = (state: 'ABSENT' | 'RUNNING' | 'COMMITTED', failCommand = false) => {
   const requests: Request[] = [];
   const commands: (typeof customerCommandPayloadSchema.Type)[] = [];
   let issued = 0;
@@ -369,16 +376,7 @@ const customerDirectoryTransport = (state: 'ABSENT' | 'OPEN' | 'COMMITTED', fail
     if (request.url.endsWith('/action-commits/resolve')) {
       return Promise.resolve(
         state === 'ABSENT'
-          ? Response.json(
-              {
-                _tag: 'PartyCommandNotFoundProblem',
-                detail: 'Unknown scoped command',
-                status: 404,
-                title: 'Not found',
-                type: 'urn:test:not-found',
-              },
-              { status: 404 },
-            )
+          ? Response.json({ _tag: 'PartyCommandCommitResolution', retryCommand: true, state: 'NOT_STARTED' })
           : Response.json({
               _tag: 'PartyCommandCommitResolution',
               invocationId: '99000000-0000-4000-8000-000000000001',
@@ -508,7 +506,7 @@ it.effect('reconciles committed customer commands without replaying any mutation
 
 it.effect('halts on an OPEN customer command without dispatching a duplicate', () =>
   Effect.gen(function* openCustomerDirectory() {
-    const transport = customerDirectoryTransport('OPEN');
+    const transport = customerDirectoryTransport('RUNNING');
     const failure = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
       .dispatch(transition)
       .pipe(

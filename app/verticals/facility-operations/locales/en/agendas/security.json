@@ -1,6 +1,6 @@
 {
   "title": "Security devices",
-  "description": "Cameras, access systems and alarms, service dates and faults (S11).",
+  "description": "Cameras, access systems and alarms, service dates and faults.",
   "evidenceOnly": "Records only",
   "evidenceOnlyHint": "OntOS never controls devices: no camera streams, alarm, reader or door control.",
   "restrictedHint": "Sensitive agenda: internal roles only.",
@@ -114,8 +114,8 @@
     "taskLive": "Current state in Tasks: {{state}}",
     "taskLiveUnavailable": "Task state could not be loaded.",
     "maxSize": "PDF, image or document up to 5 MB.",
-    "createdInfo": "Created {{at}} · {{by}}",
-    "updatedInfo": "Changed {{at}} · {{by}}",
+    "createdInfo": "Created {{at}}",
+    "updatedInfo": "Changed {{at}}",
     "comments": "Device comments",
     "linkedDocuments": "Documents from the Documents agenda"
   },
@@ -170,12 +170,5 @@
     "emptyDescription": "Create the first camera, access system or alarm.",
     "noResults": "No device matches the filter.",
     "noIncidents": "No faults to show."
-  },
-  "persona": {
-    "management": "Siampark management",
-    "operations": "Siampark operations",
-    "finance": "Siampark finance",
-    "external": "External partner",
-    "unknown": "User {{id}}"
   }
 }

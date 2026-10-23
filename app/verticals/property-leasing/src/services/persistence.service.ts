@@ -208,68 +208,6 @@ const findOccupancy = (state: OccupancyState, ref: OccupancyRef, scope: Occupanc
       )
     : Effect.succeed(record);
 };
-const importBooking = Effect.fn('Occupancy.importBooking')(function* importBooking(
-  state: OccupancyState,
-  command: Extract<OccupancyCommand, { readonly _tag: 'ImportBooking' }>,
-  scope: OccupancyGuardScope,
-  validators: OccupancyValidators,
-  attempts: number,
-) {
-  yield* ensureRecordScope(command.record, scope);
-  if (command.record.kind !== 'SHORT_STAY' || command.record.state !== 'CONFIRMED') {
-    return yield* rejected('booking_requires_confirmed_short_stay');
-  }
-  if (
-    state.occupancies.some(
-      (value) =>
-        value.externalBookingCorrelation === command.correlation ||
-        refMatches(value.occupancyRef, command.record.occupancyRef),
-    )
-  ) {
-    return yield* conflict('booking_already_imported');
-  }
-  if (
-    attempts === 1 &&
-    state.bookingObservations.some(
-      (value) => value.observationId === command.observationId || value.correlation === command.correlation,
-    )
-  ) {
-    return yield* conflict('booking_observation_already_exists');
-  }
-  yield* validateOccupancy(command.record, scope, validators);
-  let status: 'FAILED' | 'CONFLICT' | 'SUCCESS' = 'FAILED';
-  if (command.outcome === 'SUCCESS') {
-    status = occupancyHasConflict(state, command.record) ? 'CONFLICT' : 'SUCCESS';
-  }
-  const record = { ...command.record, externalBookingCorrelation: command.correlation };
-  const resourceRef = status === 'SUCCESS' ? record.occupancyRef : null;
-  const observedAt = DateTime.formatIso(yield* DateTime.now);
-  return {
-    resourceRef,
-    snapshot: {
-      ...state,
-      bookingObservations: [
-        ...state.bookingObservations.filter((value) => value.observationId !== command.observationId),
-        {
-          attemptedAt: observedAt,
-          attempts,
-          completedAt: observedAt,
-          correlation: command.correlation,
-          integrationKind: 'BOOKING' as const,
-          mode: 'SIMULATED' as const,
-          observationId: command.observationId,
-          occupancyRef: resourceRef,
-          ownerResourceRef: resourceRef ?? record.unitRef,
-          providerLabel: 'DEMO',
-          requestSummary: `Unit ${record.unitRef.resourceId}; ${record.startDate} → ${record.endDate}; guests ${record.peopleCount ?? 0}`,
-          resultSummary: `SIMULATED: ${status}; ${command.correlation}`,
-          state: status,
-        },
-      ],
-      occupancies: status === 'SUCCESS' ? [...state.occupancies, record] : state.occupancies,
-    },
-  } satisfies OccupancyTransition;
-});
 type DossierChanges = Pick<
   Extract<OccupancyCommand, { readonly _tag: 'UpdateTenantDossier' }>,
   'activity' | 'archived' | 'caseDetails' | 'caseState' | 'contacts'
@@ -398,11 +336,6 @@ const historyFor = (
       occupancyId: id,
       kind: 'CANCELLED' as const,
       summary: `Stav: ${transition}. Období ${periodLabel(record)} se v kalendáři uvolnilo.`,
-    })),
-    Match.tag('ImportBooking', 'RetryBooking', () => ({
-      occupancyId: id,
-      kind: 'IMPORTED' as const,
-      summary: `Rezervace importována (simulace) na období ${periodLabel(record)}.`,
     })),
     Match.orElse(() => undefined),
   );
@@ -702,35 +635,6 @@ const transitionOccupancyState = (
         return replaceOccupancy(state, { ...record, state: 'CANCELLED' });
       }),
     ),
-    Match.tag('ImportBooking', (value) => importBooking(state, value, scope, validators, 1)),
-    Match.tag(
-      'RetryBooking',
-      Effect.fn('Occupancy.RetryBooking')(function* retryBooking({
-        observationId,
-        record,
-      }: Extract<OccupancyCommand, { readonly _tag: 'RetryBooking' }>) {
-        const observation = state.bookingObservations.find((value) => value.observationId === observationId);
-        if (observation === undefined) {
-          return yield* new OccupancyNotFound({
-            code: 'occupancy_not_found',
-            reason: 'Booking observation was not found',
-          });
-        }
-        if (observation.state === 'SUCCESS') {
-          return yield* conflict('booking_already_imported');
-        }
-        if (!refMatches(observation.ownerResourceRef, record.unitRef)) {
-          return yield* rejected('booking_retry_unit_mismatch');
-        }
-        return yield* importBooking(
-          state,
-          { _tag: 'ImportBooking', correlation: observation.correlation, observationId, outcome: 'SUCCESS', record },
-          scope,
-          validators,
-          observation.attempts + 1,
-        );
-      }),
-    ),
     Match.exhaustive,
   );
 export const filterOccupancyRecords = (
@@ -756,22 +660,6 @@ export const filterOccupancyRecords = (
     input.toDate === undefined;
   const visibleIds = new Set(occupancies.map((record) => record.occupancyRef.resourceId));
   return {
-    bookingObservations:
-      input.resourceId === undefined &&
-      input.unitRef === undefined &&
-      input.kind === undefined &&
-      input.state === undefined &&
-      input.fromDate === undefined &&
-      input.toDate === undefined
-        ? state.bookingObservations
-        : state.bookingObservations.filter(
-            (observation) =>
-              observation.occupancyRef !== null &&
-              occupancies.some(
-                (record) =>
-                  observation.occupancyRef !== null && refMatches(record.occupancyRef, observation.occupancyRef),
-              ),
-          ),
     // Unfiltered reads list every counterparty dossier, including prospects without a lease (S01).
     tenantDossiers: (state.tenantDossiers ?? []).filter(
       (dossier) =>
@@ -817,7 +705,7 @@ export const persistenceService = (
             row === undefined
               ? Effect.succeed<{ readonly revision: number; readonly snapshot: OccupancyState }>({
                   revision: 0,
-                  snapshot: { bookingObservations: [], occupancies: [] } satisfies OccupancyState,
+                  snapshot: { occupancies: [] } satisfies OccupancyState,
                 })
               : Schema.decodeEffect(OccupancyStateSchema)(row.snapshot).pipe(
                   Effect.mapError(unavailable),

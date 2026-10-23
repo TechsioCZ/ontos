@@ -14,7 +14,6 @@ import {
 } from '../../shared/command-api.ts';
 import { ActionInvocationIdSchema } from '../../shared/domain/correction-contracts.ts';
 import { PartyCreateRecoveryUnavailable } from '../../shared/domain/matching-contracts.ts';
-import { PartyMatchDecisionAuthenticationProblemSchema } from '../../shared/apis/party-match-decision.ts';
 import {
   requestSearchRebuildWithAuthorization,
   resolvePartyCommandCommit,
@@ -128,24 +127,17 @@ const makeRecoveryAssertionFetch = (ownerResponse: (request: Request) => Respons
   return { assertions: () => assertions, fakeFetch, requests };
 };
 
-const createDecision = (outcome: 'CREATED' | 'MATCHED_EXISTING' | 'AMBIGUOUS') => {
+const createResult = (outcome: 'CREATED' | 'MATCHED_EXISTING' | 'AMBIGUOUS') => {
   const partyRef = {
     moduleId: 'party.registry',
     resourceId: invocationId,
     resourceType: 'party.registry.party',
     tenantId: invocationId,
   };
-  return {
-    caseRef: outcome === 'AMBIGUOUS' ? { ...partyRef, resourceType: 'party.registry.duplicate-candidate-case' } : null,
-    committedCreateOutcome: outcome,
-    decidedAt: '2026-09-04T00:00:00Z',
-    decisionRef: { ...partyRef, resourceType: 'party.registry.party-match-decision' },
-    evidenceExplanation: [],
-    matchRuleVersion: 'party-exact-claims.v1',
-    operation: 'CREATE',
-    outcome: outcome === 'MATCHED_EXISTING' ? 'MATCHED' : outcome,
-    partyRef: outcome === 'AMBIGUOUS' ? null : partyRef,
-  };
+  const decisionRef = { ...partyRef, resourceType: 'party.registry.party-match-decision' };
+  return outcome === 'AMBIGUOUS'
+    ? { outcome, decisionRef, caseRef: { ...partyRef, resourceType: 'party.registry.duplicate-candidate-case' } }
+    : { outcome, decisionRef, partyRef };
 };
 
 const recoveryProblems = [
@@ -227,15 +219,16 @@ it('keyed recovery admits only scoped Party actions and rejects mixed lookup ide
     { actionKey: 'party.registry.create-party', idempotencyKey: 'x'.repeat(201) },
     { invocationId, actionKey: 'party.registry.create-party', idempotencyKey: 'key' },
     { idempotencyKey: 'key' },
-  ])
+  ]) {
     expect(() => Schema.decodeUnknownSync(ResolvePartyCommandCommitPayloadSchema)(invalid)).toThrow();
+  }
 });
 
 it.effect('recovery is separate from the unchanged set of explicit mutation endpoints', () =>
   Effect.gen(function* decodeContract3() {
     const endpoint = partyRegistryCommandRecoveryApi.groups.partyCommandRecovery.endpoints.resolve;
     expect(endpoint.path).toBe('/party-registry/action-commits/resolve');
-    for (const state of ['OPEN', 'COMMITTED']) {
+    for (const state of ['RUNNING', 'COMMITTED']) {
       const resolution = yield* Schema.decodeUnknownEffect(ResolvePartyCommandCommitResultSchema)({
         _tag: 'PartyCommandCommitResolution',
         invocationId,
@@ -332,356 +325,131 @@ it.effect('recovery acquires a fresh assertion without submitting an idempotency
   }),
 );
 
-it.effect('Create recovery resolves commit and returns exact original operation result with fresh read authority', () =>
-  Effect.all(
-    (['CREATED', 'MATCHED_EXISTING', 'AMBIGUOUS'] as const).map((outcome) =>
-      Effect.gen(function* testProgram5() {
-        yield* pinRecoveryDocument;
-        const { requests, assertions, fakeFetch } = makeRecoveryAssertionFetch((request) => {
-          if (request.url.endsWith('/resolve')) {
-            return Response.json({
-              _tag: 'PartyCommandCommitResolution',
-              invocationId,
-              retryCommand: false,
-              state: 'COMMITTED',
-            });
-          }
-          return Response.json(createDecision(outcome));
-        });
-        const recovered = yield* recoverPartyCreate(
-          { invocationId },
-          {
-            baseUrl: 'https://party.example/party-registry-api',
-            correlationId: 'recover',
-            gateway: { baseUrl: 'https://shell.example/shell-super-app-api' },
-          },
-        ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-        const recoveredResult = Match.value(recovered).pipe(
-          Match.tag('PartyCreateRecovered', ({ result }) => result),
-          Match.tag('PartyCreateRecoveryPending', ({ resolution }) =>
-            (() => {
-              throw new Error(`Expected committed recovery, received ${resolution.state}`);
-            })(),
-          ),
-          Match.exhaustive,
-        );
-        expect(recoveredResult.outcome).toBe(outcome);
-        expect(assertions()).toBe(2);
-        expect(requests.length).toBe(4);
-        expect(
-          requests
-            .filter((request) => new URL(request.url).pathname !== '/shell-super-app-api/auth/gateway-context')
-            .map((request) => request.headers.get('authorization')),
-        ).toEqual([recoveryCredential('fresh-1'), recoveryCredential('fresh-2')]);
-        expect(
-          requests.every(
-            (request) => !request.url.includes('/commands/') && request.headers.get('idempotency-key') === null,
-          ),
-        ).toBe(true);
-      }),
-    ),
-  ),
-);
+for (const outcome of ['CREATED', 'MATCHED_EXISTING', 'AMBIGUOUS'] as const) {
+  it.effect(`native owned recovery returns ${outcome} without reviewer-only reads or resubmission`, () =>
+    Effect.gen(function* recoverOwnedResult() {
+      const { acquire, acquisitions } = makeNativeRecoveryAcquirer();
+      const { requests, assertions, consumedJtis, fakeFetch } = makeNativeRecoveryFetch(() =>
+        Response.json({
+          _tag: 'PartyCommandCommitResolution',
+          invocationId,
+          retryCommand: false,
+          state: 'COMMITTED',
+          createResult: createResult(outcome),
+        }),
+      );
+      const result = yield* recoverPartyCreateWithAuthorization(
+        { actionKey: 'party.registry.create-party', idempotencyKey: 'immutable-owner-key' },
+        acquire,
+        { compositionRevision, correlationId: 'native-owned', traceId: 'trace-owned' },
+      ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
+      Match.value(result).pipe(
+        Match.tag('PartyCreateRecovered', (recovered) => expect(recovered.result).toEqual(createResult(outcome))),
+        Match.orElse(() => expect.unreachable('Expected committed recovery')),
+      );
+      expect(acquisitions()).toBe(1);
+      expect(assertions()).toBe(0);
+      expect([...consumedJtis]).toEqual(['native-1']);
+      expect(requests.map((request) => request.url)).toEqual([
+        `${approvedApiBaseUrl}/party-registry/action-commits/resolve`,
+      ]);
+      expect(requests[0]?.headers.get('idempotency-key')).toBe(null);
+      expect(requests[0]?.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
+      expect(requests[0]?.headers.get('x-trace-id')).toBe('trace-owned');
+      const [request] = requests;
+      if (request === undefined) {
+        throw new Error('Missing native recovery request');
+      }
+      expect(yield* Effect.promise(() => request.json())).toEqual({
+        actionKey: 'party.registry.create-party',
+        idempotencyKey: 'immutable-owner-key',
+      });
+    }),
+  );
+}
 
-it.effect('native Create recovery acquires a fresh single-use credential for each read of the captured release', () =>
-  Effect.gen(function* nativeCreateRecovery() {
-    const baseUrl = 'https://immutable-party-release.example/party-registry-api';
-    const { acquire, acquisitions } = makeNativeRecoveryAcquirer(baseUrl);
-    const { requests, assertions, fakeFetch, consumedJtis } = makeNativeRecoveryFetch((request) =>
-      request.url.endsWith('/resolve')
-        ? Response.json({
-            _tag: 'PartyCommandCommitResolution',
-            invocationId,
-            retryCommand: false,
-            state: 'COMMITTED',
-          })
-        : Response.json(createDecision('CREATED')),
-    );
-    const keyedIdentity = { actionKey: 'party.registry.create-party', idempotencyKey: 'create-operation-key' } as const;
-    const recovered = yield* recoverPartyCreateWithAuthorization(keyedIdentity, acquire, {
-      baseUrl,
-      compositionRevision,
-      correlationId: 'native-recovery',
-      gateway: { baseUrl: 'https://shell.example/shell-super-app-api' },
-    }).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-    Match.value(recovered).pipe(
-      Match.tag('PartyCreateRecovered', ({ result }) => expect(result.outcome).toBe('CREATED')),
-      Match.tag('PartyCreateRecoveryPending', () => expect.unreachable('Expected committed Create recovery')),
-      Match.exhaustive,
-    );
-    expect(acquisitions()).toBe(2);
-    expect([...consumedJtis]).toEqual(['native-1', 'native-2']);
-    expect(assertions()).toBe(0);
-    expect(requests.map((request) => request.url)).toEqual([
-      `${baseUrl}/party-registry/action-commits/resolve`,
-      `${baseUrl}/reads/party-match-decision`,
-    ]);
-    expect(requests.map((request) => request.headers.get('authorization'))).toEqual([
-      recoveryCredential('native-1'),
-      recoveryCredential('native-2'),
-    ]);
-    for (const request of requests) {
-      expect(request.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
-      expect(request.headers.get('x-correlation-id')).toBe('native-recovery');
-      expect(request.headers.get('idempotency-key')).toBe(null);
-    }
-    const [commitRequest, decisionRequest] = requests;
-    if (commitRequest === undefined || decisionRequest === undefined) {
-      return expect.unreachable('Expected commit and decision reads');
-    }
-    expect(yield* Effect.promise(() => commitRequest.json())).toEqual(keyedIdentity);
-    expect(yield* Effect.promise(() => decisionRequest.json())).toEqual({ actionInvocationId: invocationId });
-  }),
-);
-
-it.effect('native Create recovery leaves an open commit pending without reading a decision', () =>
-  Effect.gen(function* nativePendingRecovery() {
-    const { acquire, acquisitions } = makeNativeRecoveryAcquirer();
-    const { requests, assertions, fakeFetch } = makeNativeRecoveryFetch(() =>
+it.effect('browser recovery uses the same owned invocation result, not reviewer authority', () =>
+  Effect.gen(function* browserOwned() {
+    yield* pinRecoveryDocument;
+    const { requests, assertions, fakeFetch } = makeRecoveryAssertionFetch(() =>
       Response.json({
         _tag: 'PartyCommandCommitResolution',
         invocationId,
         retryCommand: false,
-        state: 'OPEN',
+        state: 'COMMITTED',
+        createResult: createResult('CREATED'),
       }),
     );
-    const recovered = yield* recoverPartyCreateWithAuthorization({ invocationId }, acquire, {
-      baseUrl: approvedApiBaseUrl,
-      compositionRevision,
-      correlationId: 'native-pending',
-    }).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-    Match.value(recovered).pipe(
-      Match.tag('PartyCreateRecoveryPending', ({ resolution }) =>
-        expect(Struct.omit(resolution, ['_tag'])).toEqual({ invocationId, retryCommand: false, state: 'OPEN' }),
-      ),
-      Match.tag('PartyCreateRecovered', () => expect.unreachable('Expected pending Create recovery')),
-      Match.exhaustive,
-    );
-    expect(acquisitions()).toBe(1);
-    expect(assertions()).toBe(0);
-    expect(requests.map((request) => request.url)).toEqual([
-      `${approvedApiBaseUrl}/party-registry/action-commits/resolve`,
-    ]);
-  }),
-);
-
-it.effect('native Create recovery rejects a committed invocation without a proven Create result', () =>
-  Effect.gen(function* nativeUnavailableRecovery() {
-    const { acquire, acquisitions } = makeNativeRecoveryAcquirer();
-    const { requests, assertions, fakeFetch } = makeNativeRecoveryFetch((request) =>
-      request.url.endsWith('/resolve')
-        ? Response.json({
-            _tag: 'PartyCommandCommitResolution',
-            invocationId,
-            retryCommand: false,
-            state: 'COMMITTED',
-          })
-        : Response.json({ ...createDecision('CREATED'), committedCreateOutcome: null, operation: 'LEGACY' }),
-    );
-    const result = yield* recoverPartyCreateWithAuthorization({ invocationId }, acquire, {
-      baseUrl: approvedApiBaseUrl,
-      compositionRevision,
-      correlationId: 'native-unavailable',
-    }).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-    expect(Result.isFailure(result)).toBe(true);
-    if (!Result.isFailure(result)) {
-      return expect.unreachable('Expected unavailable Create recovery');
-    }
-    expect(Schema.is(PartyCreateRecoveryUnavailable)(result.failure)).toBe(true);
-    expect(acquisitions()).toBe(2);
-    expect(assertions()).toBe(0);
-    expect(requests).toHaveLength(2);
-  }),
-);
-
-const committedRecoveryResponse = (request: Request) =>
-  request.url.endsWith('/resolve')
-    ? Response.json({
-        _tag: 'PartyCommandCommitResolution',
-        invocationId,
-        retryCommand: false,
-        state: 'COMMITTED',
-      })
-    : Response.json(createDecision('CREATED'));
-
-it.effect(
-  'native recovery retains the invocation and request context when caller inputs change during the commit read',
-  () =>
-    Effect.gen(function* mutatedRecoveryInputs() {
-      const payload = { invocationId };
-      const options = {
-        compositionRevision,
-        correlationId: 'captured-correlation',
-        traceId: 'captured-trace',
-      };
-      const { acquire, acquisitions } = makeNativeRecoveryAcquirer();
-      const { requests, fakeFetch } = makeNativeRecoveryFetch((request) => {
-        if (request.url.endsWith('/resolve')) {
-          payload.invocationId = Schema.decodeSync(ActionInvocationIdSchema)('10000000-0000-4000-8000-000000000002');
-          options.compositionRevision = 'b'.repeat(64);
-          options.correlationId = 'changed-correlation';
-          options.traceId = 'changed-trace';
-        }
-        return committedRecoveryResponse(request);
-      });
-      const recovered = yield* recoverPartyCreateWithAuthorization(payload, acquire, options).pipe(
-        Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
-      );
+    const recovered = yield* recoverPartyCreate(
+      { invocationId },
+      { correlationId: 'browser-owned', gateway: { baseUrl: 'https://shell.example/shell-super-app-api' } },
+    ).pipe(Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
+    expect(
       Match.value(recovered).pipe(
-        Match.tag('PartyCreateRecovered', ({ result }) => expect(result.outcome).toBe('CREATED')),
-        Match.tag('PartyCreateRecoveryPending', () => expect.unreachable('Expected committed Create recovery')),
-        Match.exhaustive,
-      );
-      expect(acquisitions()).toBe(2);
-      const [commitRequest, decisionRequest] = requests;
-      if (commitRequest === undefined || decisionRequest === undefined) {
-        return expect.unreachable('Expected commit and decision reads');
-      }
-      expect(yield* Effect.promise(() => commitRequest.json())).toEqual({ invocationId });
-      expect(yield* Effect.promise(() => decisionRequest.json())).toEqual({ actionInvocationId: invocationId });
-      expect(commitRequest.headers.get('x-trace-id')).toBe('captured-trace');
-      for (const request of requests) {
-        expect(request.headers.get('x-correlation-id')).toBe('captured-correlation');
-        expect(request.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
-      }
-    }),
-);
-
-it.effect('native Create recovery rejects a reused credential before the decision HTTP request', () =>
-  Effect.gen(function* reusedCredentialRecovery() {
-    let acquisitions = 0;
-    const acquire = () =>
-      Effect.sync(() => {
-        acquisitions += 1;
-        return {
-          credential: Redacted.make(recoveryCredential('reused')),
-          options: { baseUrl: approvedApiBaseUrl, compositionRevision },
-        };
-      });
-    const { requests, consumedJtis, fakeFetch } = makeNativeRecoveryFetch(committedRecoveryResponse);
-    const result = yield* recoverPartyCreateWithAuthorization({ invocationId }, acquire, {
-      compositionRevision,
-      correlationId: 'native-reused-credential',
-    }).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-    expect(Result.isFailure(result)).toBe(true);
-    if (!Result.isFailure(result)) {
-      return expect.unreachable('Expected credential reuse rejection');
-    }
-    expect(Schema.is(PartyCreateRecoveryUnavailable)(result.failure)).toBe(true);
-    expect(acquisitions).toBe(2);
-    expect(requests).toHaveLength(1);
-    expect([...consumedJtis]).toEqual(['reused']);
-  }),
-);
-
-it.effect('the owner rejects two distinct JWT strings that reuse one consumed jti during native recovery', () =>
-  Effect.gen(function* reusedJtiRecovery() {
-    let acquisitions = 0;
-    const acquire = () =>
-      Effect.sync(() => {
-        acquisitions += 1;
-        return {
-          credential: Redacted.make(recoveryCredential('reused-jti', `signature-${acquisitions}`)),
-          options: { baseUrl: approvedApiBaseUrl, compositionRevision },
-        };
-      });
-    const { requests, consumedJtis, rejectedJtis, fakeFetch } = makeNativeRecoveryFetch(committedRecoveryResponse);
-    const result = yield* recoverPartyCreateWithAuthorization({ invocationId }, acquire, {
-      compositionRevision,
-      correlationId: 'native-reused-jti',
-    }).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-    expect(Result.isFailure(result)).toBe(true);
-    if (!Result.isFailure(result)) {
-      return expect.unreachable('Expected single-use JWT rejection');
-    }
-    expect(Schema.is(PartyMatchDecisionAuthenticationProblemSchema)(result.failure)).toBe(true);
-    expect(acquisitions).toBe(2);
+        Match.tag('PartyCreateRecovered', () => true),
+        Match.orElse(() => false),
+      ),
+    ).toBe(true);
+    expect(assertions()).toBe(1);
     expect(requests).toHaveLength(2);
-    expect([...consumedJtis]).toEqual(['reused-jti']);
-    expect(rejectedJtis).toEqual(['reused-jti']);
+    expect(requests.every((request) => !request.url.includes('party-match-decision'))).toBe(true);
   }),
 );
 
-const approvedRecoveryTarget = { baseUrl: approvedApiBaseUrl, compositionRevision };
-
-for (const { name, firstTarget, secondTarget, expectedRequests, expectedAcquisitions } of [
-  {
-    name: 'native recovery rejects a first credential for a different revision before any HTTP request',
-    firstTarget: { ...approvedRecoveryTarget, compositionRevision: 'b'.repeat(64) },
-    secondTarget: approvedRecoveryTarget,
-    expectedRequests: 0,
-    expectedAcquisitions: 1,
-  },
-  {
-    name: 'native recovery rejects a changed revision before the decision HTTP request',
-    firstTarget: approvedRecoveryTarget,
-    secondTarget: { ...approvedRecoveryTarget, compositionRevision: 'b'.repeat(64) },
-    expectedRequests: 1,
-    expectedAcquisitions: 2,
-  },
-  {
-    name: 'native recovery rejects a changed API URL before the decision HTTP request',
-    firstTarget: approvedRecoveryTarget,
-    secondTarget: { ...approvedRecoveryTarget, baseUrl: 'https://other-release.example/party-registry-api' },
-    expectedRequests: 1,
-    expectedAcquisitions: 2,
-  },
-]) {
-  it.effect(name, () =>
-    Effect.gen(function* changedReleaseRecovery() {
-      let acquisitions = 0;
-      const acquire = () =>
-        Effect.sync(() => {
-          acquisitions += 1;
-          return {
-            credential: Redacted.make(recoveryCredential(`changed-release-${acquisitions}`)),
-            options: acquisitions === 1 ? firstTarget : secondTarget,
-          };
-        });
-      const { requests, fakeFetch } = makeNativeRecoveryFetch(committedRecoveryResponse);
-      const result = yield* recoverPartyCreateWithAuthorization({ invocationId }, acquire, {
-        compositionRevision,
-        correlationId: 'native-changed-release',
-      }).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-      expect(Result.isFailure(result)).toBe(true);
-      if (!Result.isFailure(result)) {
-        return expect.unreachable('Expected release identity rejection');
-      }
-      expect(Schema.is(PartyCreateRecoveryUnavailable)(result.failure)).toBe(true);
-      expect(acquisitions).toBe(expectedAcquisitions);
-      expect(requests).toHaveLength(expectedRequests);
-    }),
+for (const state of ['RUNNING', 'COMMITTED'] as const) {
+  it.effect(
+    `native recovery ${state === 'RUNNING' ? 'waits for an open commit' : 'rejects an unproven committed result'}`,
+    () =>
+      Effect.gen(function* missingResult() {
+        const { acquire, acquisitions } = makeNativeRecoveryAcquirer();
+        const { requests, fakeFetch } = makeNativeRecoveryFetch(() =>
+          Response.json({ _tag: 'PartyCommandCommitResolution', invocationId, retryCommand: false, state }),
+        );
+        const result = yield* recoverPartyCreateWithAuthorization({ invocationId }, acquire, {
+          compositionRevision,
+          correlationId: 'missing-result',
+        }).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
+        if (state === 'RUNNING') {
+          expect(
+            Result.isSuccess(result) &&
+              Match.value(result.success).pipe(
+                Match.tag('PartyCreateRecoveryPending', () => true),
+                Match.orElse(() => false),
+              ),
+          ).toBe(true);
+        } else {
+          expect(Result.isFailure(result) && Schema.is(PartyCreateRecoveryUnavailable)(result.failure)).toBe(true);
+        }
+        expect(acquisitions()).toBe(1);
+        expect(requests).toHaveLength(1);
+      }),
   );
 }
 
-for (const failedAcquisition of [1, 2]) {
-  it.effect(`native recovery stops immediately when credential acquisition ${failedAcquisition} fails`, () =>
-    Effect.gen(function* unavailableCredentialRecovery() {
-      let acquisitions = 0;
-      const acquisitionFailure = new PartyCreateRecoveryUnavailable({ reason: 'Credential issuer unavailable' });
-      const acquire = () =>
-        Effect.gen(function* acquireRecoveryCredential() {
-          acquisitions += 1;
-          if (acquisitions === failedAcquisition) {
-            return yield* acquisitionFailure;
-          }
-          return {
-            credential: Redacted.make(recoveryCredential(`available-${acquisitions}`)),
-            options: approvedRecoveryTarget,
-          };
-        });
-      const { requests, fakeFetch } = makeNativeRecoveryFetch(committedRecoveryResponse);
-      const result = yield* recoverPartyCreateWithAuthorization({ invocationId }, acquire, {
-        compositionRevision,
-        correlationId: 'native-failed-acquisition',
-      }).pipe(Effect.result, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
-      expect(Result.isFailure(result)).toBe(true);
-      if (!Result.isFailure(result)) {
-        return expect.unreachable('Expected credential acquisition failure');
-      }
-      expect(result.failure).toBe(acquisitionFailure);
-      expect(acquisitions).toBe(failedAcquisition);
-      expect(requests).toHaveLength(failedAcquisition - 1);
-    }),
-  );
-}
+it.effect('rejects a credential for another release before contacting Party', () =>
+  Effect.gen(function* wrongRelease() {
+    const { requests, fakeFetch } = makeNativeRecoveryFetch(() => Response.json({}));
+    const acquire = () =>
+      Effect.succeed({
+        credential: Redacted.make('Bearer wrong-release'),
+        options: { baseUrl: approvedApiBaseUrl, compositionRevision: 'b'.repeat(64) },
+      });
+    const failure = yield* recoverPartyCreateWithAuthorization({ invocationId }, acquire, {
+      compositionRevision,
+      correlationId: 'wrong-release',
+    }).pipe(Effect.flip, Effect.provideService(FetchHttpClient.Fetch, fakeFetch));
+    expect(Schema.is(PartyCreateRecoveryUnavailable)(failure)).toBe(true);
+    expect(requests).toHaveLength(0);
+  }),
+);
+
+it.effect('stops immediately when native credential acquisition fails', () =>
+  Effect.gen(function* failedAcquisition() {
+    const failure = new PartyCreateRecoveryUnavailable({ reason: 'Issuer unavailable' });
+    const result = yield* recoverPartyCreateWithAuthorization({ invocationId }, () => Effect.fail(failure), {
+      compositionRevision,
+      correlationId: 'issuer-failure',
+    }).pipe(Effect.flip);
+    expect(result).toBe(failure);
+  }),
+);

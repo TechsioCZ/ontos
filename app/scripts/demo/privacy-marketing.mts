@@ -14,6 +14,7 @@ import { Config, Console, DateTime, Effect, Exit, FileSystem, Layer, Option, Sch
 import { Command, Flag } from 'effect/unstable/cli';
 import { FetchHttpClient } from 'effect/unstable/http';
 import { akrosDemoLegalEntityId, demoId, demoTenantId } from './fixture-ids.mts';
+import { privacyMarketingOperator } from './permissions.mts';
 import { connectSeedClient, DemoSeedError } from './seed-client.mts';
 import type { SeedClient, SeedTarget } from './seed-client.mts';
 
@@ -34,12 +35,8 @@ const StoredCheckpointSchema = Schema.Struct({
 });
 type Checkpoint = typeof StoredCheckpointSchema.Type;
 const configuration = Config.all({
-  email: Config.String('ONTOS_DEMO_SEED_EMAIL'),
-  governanceOwnerId: Config.schema(Schema.String.check(Schema.isUUID()), 'ONTOS_DEMO_SEED_GOVERNANCE_OWNER_ID'),
-  legalEntityId: Config.String('ONTOS_DEMO_SEED_LEGAL_ENTITY_ID'),
   password: Config.Redacted('ONTOS_DEMO_SEED_PASSWORD'),
   shellUrl: Config.String('ONTOS_DEMO_SEED_URL'),
-  tenantId: Config.String('ONTOS_DEMO_SEED_TENANT_ID'),
 });
 const persistCheckpoint = (path: string, checkpoint: Checkpoint) =>
   Effect.gen(function* persist() {
@@ -216,7 +213,9 @@ export const seedPrivacyMarketing = (
   });
 const main = (apply: boolean, checkpoint: string, envFile: string) =>
   Effect.gen(function* run() {
-    const { email, governanceOwnerId, password, ...target } = yield* configuration;
+    const { password, shellUrl } = yield* configuration;
+    const { email, principalId: governanceOwnerId } = privacyMarketingOperator;
+    const target = { legalEntityId: akrosDemoLegalEntityId, shellUrl, tenantId: demoTenantId };
     if (!checkpoint.startsWith('/Volumes/') || !envFile.startsWith('/Volumes/')) {
       return yield* new DemoSeedError({ reason: 'Use explicit external-volume checkpoint and environment paths.' });
     }

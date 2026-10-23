@@ -19,12 +19,17 @@ const defaultEvidenceReference = 'demo:sales-rental-v1:customer';
 const seedSource = 'demo.sales-rental-v1';
 const partyAudience = 'party-registry';
 export const rentalCustomerName = 'Ukázkový nájemce Siampark';
-/** One synthetic tenant organization: display name plus a stable key for its evidence reference. */
+/** One synthetic customer: subject kind, display name and a stable evidence key. */
 export interface SeedCustomerSpec {
   readonly evidenceKey: string;
   readonly name: string;
+  readonly partyType?: 'ORGANIZATION' | 'PERSON';
 }
-const defaultCustomer: SeedCustomerSpec = { evidenceKey: 'customer', name: rentalCustomerName };
+const defaultCustomer: SeedCustomerSpec = {
+  evidenceKey: 'customer',
+  name: rentalCustomerName,
+  partyType: 'ORGANIZATION',
+};
 const Customer = Schema.Struct({
   counterpartyRef: Schema.toEncoded(CounterpartyRefSchema),
   displayName: Schema.toEncoded(Schema.OptionFromNullOr(Schema.String)),
@@ -73,6 +78,7 @@ export const ensureSeedCustomer = (
   spec: SeedCustomerSpec = defaultCustomer,
 ) =>
   Effect.gen(function* ensureCustomer() {
+    const { partyType = 'ORGANIZATION' } = spec;
     const customerEvidenceReference =
       spec.evidenceKey === defaultCustomer.evidenceKey
         ? defaultEvidenceReference
@@ -108,15 +114,15 @@ export const ensureSeedCustomer = (
             displayName: spec.name,
             evidenceRefs: [customerEvidenceReference],
             officialIdentifiers: [],
-            partyType: 'ORGANIZATION',
+            partyType,
             provenance: { method: 'MANUAL_ENTRY', source: seedSource },
             subjectEvidence: [
               {
                 basis: 'DIRECT_INTERACTION',
                 evidenceRef: customerEvidenceReference,
                 kind: 'ACTOR_ATTESTATION',
-                observedSubject: 'ORGANIZATION',
-                statement: 'Synthetic organization for an operator-requested rental demo, not a real customer.',
+                observedSubject: partyType,
+                statement: 'Synthetic party for an operator-requested rental demo, not a real customer.',
                 subjectKey: customerEvidenceReference,
               },
             ],
@@ -146,7 +152,7 @@ export const ensureSeedCustomer = (
           {
             caseRef: created.caseRef,
             expectedRevision: detail.revision,
-            reason: 'Operator-requested synthetic demo organization; the case has no candidate Party.',
+            reason: 'Operator-requested synthetic demo party; the case has no candidate Party.',
           },
           Schema.toEncoded(ResolveDuplicateCandidateCreateResultSchema),
           true,

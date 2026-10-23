@@ -1,3 +1,4 @@
+import { OntosModuleDeploymentContractSchema } from '@app/core-runtime';
 import type { ApplicationComposition } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
@@ -15,6 +16,7 @@ const hopByHopHeaders = [
 ];
 const governedHeaders = new Set([
   'authorization',
+  'cookie',
   MODULE_API_REVISION_HEADER,
   'idempotency-key',
   'x-correlation-id',
@@ -27,6 +29,34 @@ export class ModuleApiDispatchError extends Schema.TaggedError<ModuleApiDispatch
   reason: Schema.String,
   status: Schema.Literals([400, 404, 409, 503]),
 }) {}
+
+const moduleApiCookies = Effect.fn('ModuleApi.cookies')(function* moduleApiCookiesEffect(
+  request: Request,
+  contractDocument: string,
+  relativePath: string,
+) {
+  const contract = yield* Schema.decodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema), {
+    onExcessProperty: 'error',
+  })(contractDocument).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ModuleApiDispatchError({ cause, reason: 'Approved module credential contract is invalid', status: 503 }),
+    ),
+  );
+  const allowedCookies = new Set(
+    (contract.manifest.publicSurface.apiCookieTransport ?? []).flatMap(({ cookieNames, routes }) =>
+      routes.some(({ method, path }) => method === request.method && path === relativePath) ? cookieNames : [],
+    ),
+  );
+  const selectedCookies = (request.headers.get('cookie') ?? '')
+    .split(';')
+    .map((part) => part.trim())
+    .filter((part) => allowedCookies.has(part.slice(0, part.indexOf('='))));
+  if (new Set(selectedCookies.map((part) => part.slice(0, part.indexOf('=')))).size !== selectedCookies.length) {
+    return yield* new ModuleApiDispatchError({ reason: 'Module credential cookie is ambiguous', status: 400 });
+  }
+  return selectedCookies.join('; ');
+});
 
 /** Resolve only the reviewed native BFF convention under an admitted release, never an input URL. */
 export const admitModuleApiRequest = Effect.fn('ModuleApi.admitRequest')(function* admitRequest(
@@ -81,9 +111,13 @@ export const admitModuleApiRequest = Effect.fn('ModuleApi.admitRequest')(functio
   if (connectionHeaders.some((token) => !connectionToken.test(token) || governedHeaders.has(token))) {
     return yield* new ModuleApiDispatchError({ reason: 'Module API Connection header is invalid', status: 400 });
   }
+  const cookieHeader = yield* moduleApiCookies(request, module.contractDocument, ownerPath.slice(ownerPrefix.length));
   const forwardedRequest = new Request(forwardedUrl, request);
   for (const name of ['cookie', 'host', ...hopByHopHeaders, ...connectionHeaders]) {
     forwardedRequest.headers.delete(name);
+  }
+  if (cookieHeader.length > 0) {
+    forwardedRequest.headers.set('cookie', cookieHeader);
   }
   return { forwardedRequest, forwardedUrl, module };
 });

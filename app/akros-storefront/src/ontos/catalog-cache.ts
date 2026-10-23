@@ -6,7 +6,9 @@ import { after } from "next/server";
 /**
  * Public catalog cache (never for carts, quotes or orders). Price/stock-bearing entries set
  * freshMs = staleMs = keepMs, so they never render after the fresh window or on owner failure.
- * Only price-free category/navigation entries allow stale-while-revalidate and failure retention.
+ * Prices use only the isolate's bounded map: a shared lookup can outlast their ten-second lifetime,
+ * and KV's minimum lookup TTL is thirty seconds. Missing/expired prices read the owner immediately.
+ * Only price-free category/navigation entries use shared storage, stale refresh and failure retention.
  *
  * Level 1 is the isolate's bounded map. On Workers, level 2 is the colo's Cache API (every isolate of the
  * storefront in that data center) and level 3 the storefront's catalog KV namespace (every data center, so
@@ -44,6 +46,8 @@ declare global {
   }
 }
 export interface CatalogCacheOptions {
+  /** Short-lived prices stay local; only price-free navigation uses Cache API and KV. */
+  readonly storage: "isolate" | "shared";
   readonly freshMs: number;
   readonly staleMs: number;
   readonly keepMs: number;
@@ -105,7 +109,12 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
   const keyOf = (id: string) => new Request(`${EDGE_ORIGIN}/${id}`);
 
   /** The newest shared copy of `key` (colo cache or KV) by its timestamp; nothing is parsed yet. */
-  const shared = async (key: string, { edge, store }: Runtime): Promise<SharedCopy | undefined> => {
+  const shared = async (
+    key: string,
+    context: Runtime | undefined,
+  ): Promise<SharedCopy | undefined> => {
+    if (context === undefined) return undefined;
+    const { edge, store } = context;
     const id = hashed(key);
     const [colo, global] = await Promise.all([
       edge
@@ -143,7 +152,7 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
    * The isolate's own value while it may still render (younger than `staleMs`); otherwise the newest of the
    * isolate's and the shared copies.
    */
-  const recall = async (key: string, context: Runtime) => {
+  const recall = async (key: string, context: Runtime | undefined) => {
     const own = local.get(key);
     if (own !== undefined && age(own) < options.staleMs) return own;
     const copy = await shared(key, context);
@@ -152,8 +161,10 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
     return found === undefined || age(found) >= options.keepMs ? undefined : found;
   };
 
-  const save = (key: string, entry: Entry<T>, { edge, store, waitUntil }: Runtime) => {
+  const save = (key: string, entry: Entry<T>, context: Runtime | undefined) => {
     remember(key, entry);
+    if (context === undefined) return;
+    const { edge, store, waitUntil } = context;
     const id = hashed(key);
     const body = JSON.stringify(entry);
     const keepS = Math.ceil(options.keepMs / 1000);
@@ -177,14 +188,14 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
       );
   };
 
-  const read = async (key: string, load: () => Promise<T>, context: Runtime) => {
+  const read = async (key: string, load: () => Promise<T>, context: Runtime | undefined) => {
     const value = await load();
     save(key, { at: Date.now(), value }, context);
     return value;
   };
 
   /** A shared copy another isolate or the warm-up refreshed recently enough, else an owner read. */
-  const refresh = async (key: string, load: () => Promise<T>, context: Runtime) => {
+  const refresh = async (key: string, load: () => Promise<T>, context: Runtime | undefined) => {
     const copy = await shared(key, context);
     if (copy !== undefined && Date.now() - copy.at < options.freshMs) {
       await adopt(key, copy);
@@ -195,7 +206,11 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
 
   /** Start only after the response: owner reads and gateway mints cannot contend with the render.
    * Next's after() keeps the callback alive via the Worker's waitUntil; shared-cache writes use ctx too. */
-  const refreshInBackground = (key: string, load: () => Promise<T>, context: Runtime) => {
+  const refreshInBackground = (
+    key: string,
+    load: () => Promise<T>,
+    context: Runtime | undefined,
+  ) => {
     const started = refreshing.get(key);
     if (started !== undefined && Date.now() - started < REFRESH_GUARD_MS) return;
     refreshing.set(key, Date.now());
@@ -209,7 +224,7 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
   return {
     /** The cached value of `key`, refreshed through `load` as described above. */
     get: async (key: string, load: () => Promise<T>): Promise<T> => {
-      const context = runtime();
+      const context = options.storage === "shared" ? runtime() : undefined;
       const entry = await recall(key, context);
       if (entry !== undefined && age(entry) < options.freshMs) return entry.value;
       if (entry !== undefined && age(entry) < options.staleMs) {
@@ -225,7 +240,7 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
     },
     /** Reads `key` from the owner unless a cached value is younger than `minAgeMs` (scheduled warm-up). */
     warm: async (key: string, load: () => Promise<T>, minAgeMs: number): Promise<WarmResult> => {
-      const context = runtime();
+      const context = options.storage === "shared" ? runtime() : undefined;
       const own = local.get(key);
       const copy = await shared(key, context);
       const at = Math.max(own?.at ?? 0, copy?.at ?? 0);

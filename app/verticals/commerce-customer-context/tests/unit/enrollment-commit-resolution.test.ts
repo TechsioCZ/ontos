@@ -85,6 +85,7 @@ const input = (overrides: Partial<EnrollmentCommitResolutionInput> = {}): Enroll
 
 const runtimeDouble = (resolveActionCommit: ActionRuntimeService['resolveActionCommit']): ActionRuntimeService => ({
   resolveActionCommit,
+  resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
   runAction: () => Effect.die('unused'),
 });
 
@@ -129,6 +130,7 @@ it.effect('resolves an uncertain write that actually succeeded, converging on th
             reason: 'This idempotency key already committed successfully',
           }),
         ),
+      resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
     };
     const client: ExternalIdentityClientPort = {
       ...unusedClient,
@@ -155,6 +157,7 @@ it.effect('resolves an uncertain write that actually failed, recording the real 
             reason: 'This Action invocation has a terminal non-committed state',
           }),
         ),
+      resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
     };
     const client: ExternalIdentityClientPort = {
       ...unusedClient,
@@ -182,6 +185,7 @@ it.effect('converges two attempts against the same subject onto the single retai
             reason: 'This idempotency key already committed successfully',
           }),
         ),
+      resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
     };
     const client: ExternalIdentityClientPort = {
       ...unusedClient,
@@ -207,6 +211,7 @@ it.effect('fails closed (T20) when a historical commit read finds the current re
             reason: 'This idempotency key already committed successfully',
           }),
         ),
+      resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
     };
     const client: ExternalIdentityClientPort = {
       ...unusedClient,
@@ -238,6 +243,7 @@ it.effect(
               reason: 'This idempotency key already committed successfully',
             }),
           ),
+        resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
       };
       const client: ExternalIdentityClientPort = {
         ...unusedClient,

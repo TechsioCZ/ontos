@@ -11,6 +11,7 @@ import {
 import { commitActionThenReject } from '../../src/actions/context.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import {
+  ActionInvocationNotFound,
   ActionInvocationPersistenceError,
   ActionInvocationStateError,
   ActionPermissionCheckError,
@@ -161,6 +162,7 @@ interface HarnessOptions {
   /** Simulates a concurrent request whose rejection committed before this one finalizes. */
   readonly recordedByConcurrentRequest?: ActionRecordedRejection;
   readonly rejectionFailure?: boolean;
+  readonly resolutionMissing?: boolean;
   readonly resolutionUnavailable?: boolean;
   readonly resolveCompositionRevision?: Effect.Effect<string, ActionTransactionError>;
   readonly resourcePermissionDecision?: PermissionDecision;
@@ -271,15 +273,25 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       };
       return Effect.succeed(Option.fromNullishOr(options.recordedByConcurrentRequest));
     },
-    resolveInvocation: () =>
-      options.resolutionUnavailable === true
-        ? Effect.fail(
-            new ActionInvocationPersistenceError({
-              code: 'action_invocation_persistence_failed',
-              reason: 'test database unavailable',
-            }),
-          )
-        : Effect.succeed(currentInvocation),
+    resolveInvocation: () => {
+      if (options.resolutionUnavailable === true) {
+        return Effect.fail(
+          new ActionInvocationPersistenceError({
+            code: 'action_invocation_persistence_failed',
+            reason: 'test database unavailable',
+          }),
+        );
+      }
+      if (options.resolutionMissing === true) {
+        return Effect.fail(
+          new ActionInvocationNotFound({
+            code: 'action_invocation_not_found',
+            reason: 'No exact caller-owned invocation',
+          }),
+        );
+      }
+      return Effect.succeed(currentInvocation);
+    },
     transitionInvocationToRunning: () => {
       transitionCount += 1;
       if (
@@ -4257,3 +4269,54 @@ it.effect(
 it('the Core database service identity remains server-only', () => {
   expect(Predicate.isFunction(CoreDatabase)).toBe(true);
 });
+
+for (const scenario of [
+  { completed: false, retryCommand: true, state: 'RETRYABLE', status: 'received' },
+  { completed: false, retryCommand: false, state: 'RUNNING', status: 'running' },
+  { completed: false, retryCommand: false, state: 'RUNNING', status: 'indeterminate' },
+  { completed: true, retryCommand: false, state: 'COMMITTED', status: 'succeeded' },
+  { completed: true, retryCommand: false, state: 'REJECTED', status: 'rejected' },
+  { completed: true, retryCommand: false, state: 'REJECTED', status: 'failed' },
+  { completed: true, retryCommand: false, state: 'REJECTED', status: 'received' },
+] as const) {
+  it.effect(
+    `projects native execution ${scenario.status}/${String(scenario.completed)} as ${scenario.state} without executing`,
+    () =>
+      Effect.gen(function* nativeExecutionState() {
+        const invocationId = '00000000-0000-4000-8000-000000000099';
+        const h = yield* makeHarness({
+          createRecord: {
+            actionInvocationId: invocationId,
+            completedAt: scenario.completed ? completionTime() : null,
+            requestHash: 'original',
+            status: scenario.status,
+          },
+        });
+        const expected = { invocationId, retryCommand: scenario.retryCommand, state: scenario.state };
+        expect(yield* h.runtime.resolveActionExecution({ invocationId, principal })).toEqual(expected);
+        expect(
+          yield* h.runtime.resolveActionExecution({
+            actionKey: 'shell.counter.write',
+            idempotencyKey: 'original-key',
+            principal,
+          }),
+        ).toEqual(expected);
+        expect(h.counts()).toEqual({ createCount: 0, lockCount: 0, transactionCount: 0, transitionCount: 0 });
+      }),
+  );
+}
+it.effect('distinguishes native absence from unavailable persistence and invalid recovery identities', () =>
+  Effect.gen(function* exactRecoveryFailures() {
+    const input = { actionKey: 'shell.counter.write', idempotencyKey: 'original-key', principal };
+    const missing = yield* makeHarness({ resolutionMissing: true });
+    expect(yield* missing.runtime.resolveActionExecution(input)).toEqual({ retryCommand: true, state: 'NOT_STARTED' });
+    const unavailable = yield* makeHarness({ resolutionUnavailable: true });
+    expect(
+      Schema.is(ActionInvocationPersistenceError)(
+        yield* unavailable.runtime.resolveActionExecution(input).pipe(Effect.flip),
+      ),
+    ).toBe(true);
+    const malformed = yield* missing.runtime.resolveActionExecution({ ...input, idempotencyKey: '' }).pipe(Effect.flip);
+    expect(Predicate.isTagged(malformed, 'ActionPayloadValidationError')).toBe(true);
+  }),
+);

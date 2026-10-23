@@ -52,6 +52,14 @@ const makeCommercePortalAuthAccountLookup = (
           ? eq(user.id, providerSubjectId)
           : and(eq(user.id, providerSubjectId), eq(user.email, normalizeCommercePortalAuthEmail(email))),
       ),
+    verifiedEmailForOwnerInvocation: ({ ownerInvocationId, providerSubjectId }) =>
+      existsWhere(
+        and(
+          eq(user.enrollmentOwnerInvocationId, ownerInvocationId),
+          eq(user.id, providerSubjectId),
+          eq(user.emailVerified, true),
+        ),
+      ),
     // The correlation is keyed by the governed invocation alone: an address is never part of this
     // probe, so a lost provider answer is resolved from what the deployment itself dispatched
     // rather than from a login identifier a caller could supply. It is read off the account row the

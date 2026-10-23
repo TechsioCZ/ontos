@@ -20,7 +20,7 @@ const handleApplyCommand = (
 ): Effect.Effect<
   Effect.Success<ReturnType<Services['apply']>>,
   Effect.Error<ReturnType<Services['apply']>>,
-  Effect.Services<ReturnType<typeof persistenceService>>
+  Effect.Services<ReturnType<typeof persistenceService>> | Effect.Services<ReturnType<Services['apply']>>
 > => context.services.apply(payload.command, payload.expectedRevision, context.actionInvocationId);
 
 export const applyCommandAction = defineAction(

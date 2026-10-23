@@ -396,7 +396,8 @@ const summariesOf = Effect.fn('OAuthConnectionService.summariesOf')(function* (
             Effect.map((live) => summaryOf(row, names, legalNames, Option.getOrUndefined(live), labelOf)),
           )
         : Effect.succeed(summaryOf(row, names, legalNames, undefined, labelOf)),
-    { concurrency: 4 },
+    // loadLiveConnection eventually opens two authority reads; keep room for the PostgreSQL connection.
+    { concurrency: 2 },
   );
 });
 

@@ -1,5 +1,5 @@
 import { v1 } from '@authzed/authzed-node';
-import { Deferred, Effect, Fiber, Schema } from 'effect';
+import { Cause, Deferred, Effect, Fiber, Logger, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { spiceDbPermissionClientError } from '../../src/permissions/client.ts';
@@ -974,7 +974,14 @@ it.effect('supports empty batches and exact resource filtering', () =>
 it.effect('classifies client, partial, duplicate, malformed, and conditional results as unavailable', () =>
   Effect.gen(function* classifiesUnavailableResults() {
     const input = { legalEntityIds: [legalEntityId], principalId, tenantId };
+    const entries: string[] = [];
+    const diagnostics = Logger.layer([
+      Logger.make((options) => {
+        entries.push(JSON.stringify(Logger.formatStructured.log(options)));
+      }),
+    ]);
     const failures = [
+      makeClient(() => Effect.fail(spiceDbPermissionClientError(new Cause.TimeoutError('secret timeout diagnostic')))),
       makeClient(() => Effect.fail(spiceDbPermissionClientError(new Error('secret SpiceDB diagnostic')))),
       makeClient(() => Effect.succeed(v1.CheckBulkPermissionsResponse.create({ pairs: [] }))),
       makeClient((request) =>
@@ -1002,7 +1009,27 @@ it.effect('classifies client, partial, duplicate, malformed, and conditional res
           .legalEntities(input)
           .pipe(Effect.map((result) => expect(result).toEqual([{ decision: 'unavailable', key: legalEntityId }]))),
       { concurrency: 1 },
+    ).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- Test-owned diagnostic logger capture.
+      Effect.provide(diagnostics),
     );
+    expect(entries).toHaveLength(5);
+    for (const [index, failureKind] of [
+      'timeout',
+      'client_failure',
+      'response_count_mismatch',
+      'response_unavailable',
+      'response_request_mismatch',
+    ].entries()) {
+      expect(entries[index]).toContain(`"failureKind":"${failureKind}"`);
+      expect(entries[index]).toContain('"elapsedMs":0');
+      expect(entries[index]).toContain('"operation":"CheckBulkPermissions"');
+      expect(entries[index]).toContain('"requestCount":1');
+    }
+    const logged = entries.join('\n');
+    for (const sensitive of [tenantId, legalEntityId, principalId, 'secret', 'cause', 'resourceId']) {
+      expect(logged).not.toContain(sensitive);
+    }
     expect(
       yield* makeContextAccess(failingClient).legalEntities({
         ...input,

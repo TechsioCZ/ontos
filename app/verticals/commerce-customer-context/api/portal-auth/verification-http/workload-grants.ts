@@ -41,7 +41,7 @@ export const CommercePortalAuthVerificationWorkloadGrantConfigurationLive = Laye
   Config.option(Config.String('COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS')).pipe(
     Effect.flatMap((value) =>
       Option.isSome(value)
-        ? Schema.decodeUnknownEffect(Schema.fromJsonString(CommercePortalAuthVerificationWorkloadGrantsSchema), {
+        ? Schema.decodeEffect(Schema.fromJsonString(CommercePortalAuthVerificationWorkloadGrantsSchema), {
             onExcessProperty: 'error',
           })(value.value)
         : Effect.succeed({ grants: [], providerEndpointAudience: ultramodernApiMarker.appId }),

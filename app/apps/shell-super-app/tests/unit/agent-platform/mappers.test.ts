@@ -350,3 +350,62 @@ it('carries an exact proposal and module-owned record reference for every propos
     expect(entry.recordReference).toEqual({ resourceId: 'record-1', resourceType: 'fixture.note' });
   }
 });
+
+it('pages timestamp ties by the complete event ID without gaps or repeated entries', () => {
+  const at = new Date('2026-10-23T10:00:00.000Z');
+  const entries = Array.from({ length: 41 }, (_, index) =>
+    proposalRowToEntries(
+      {
+        ...baseRow,
+        createdAt: at,
+        decidedAt: at,
+        status: 'rejected',
+        proposalId: `66666666-6666-4666-8666-${String(index).padStart(12, '0')}`,
+      },
+      names,
+      modules,
+    ),
+  ).flat();
+  const ids: string[] = [];
+  let page = buildActivityResponse(entries, {});
+  expect(page.entries).toHaveLength(30);
+  while (true) {
+    ids.push(...page.entries.map((entry) => entry.id));
+    if (page.nextCursor === undefined) break;
+    page = buildActivityResponse(entries, { cursor: page.nextCursor });
+  }
+  expect(ids).toHaveLength(entries.length);
+  expect(new Set(ids).size).toBe(entries.length);
+  // At equal times, proposal: sorts before decision: regardless of the proposal UUID.
+  expect(ids.slice(0, 41).every((id) => id.startsWith('proposal:'))).toBe(true);
+  expect(page.nextCursor).toBeUndefined();
+});
+
+it('applies activity filters before page size and finds a recent decision on an old proposal', () => {
+  const entries = [
+    ...proposalRowToEntries(baseRow, names, modules),
+    ...proposalRowToEntries(
+      {
+        ...baseRow,
+        createdAt: new Date('2025-01-01T00:00:00.000Z'),
+        decidedAt: new Date('2026-10-23T10:00:00.000Z'),
+        proposalId: '66666666-6666-4666-8666-666666666661',
+        status: 'rejected',
+      },
+      names,
+      modules,
+    ),
+  ];
+  const first = buildActivityResponse(entries, {
+    kind: 'decision',
+    limit: 1,
+    agentPrincipalId: AGENT,
+    moduleKey: 'demo.crm',
+  });
+  expect(first.entries.map((entry) => entry.id)).toEqual(['decision:66666666-6666-4666-8666-666666666661']);
+  expect(first.nextCursor).toBeUndefined();
+  expect(buildActivityResponse(entries, { kind: 'read' }).entries).toEqual([]);
+  expect(buildActivityResponse(entries, { cursor: { at: '2024-01-01T00:00:00.000Z', id: 'last' } }).entries).toEqual(
+    [],
+  );
+});

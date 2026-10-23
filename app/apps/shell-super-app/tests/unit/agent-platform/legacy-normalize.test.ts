@@ -1,9 +1,10 @@
+import { parseLegacyKey } from '../../../shared/proposal-key.ts';
 import { expect, test } from 'effect-rstest';
 
 import {
   legacyBatchKey,
   normalizeLegacySlice,
-  parseLegacyKey,
+  moduleActivityFromRecords,
   sliceFromRecords,
 } from '../../../api/agent-platform/legacy-normalize.ts';
 import type { LegacyEngineModule } from '../../../api/agent-platform/legacy-normalize.ts';
@@ -117,4 +118,36 @@ test('CreateClient contacts are expanded into per-contact diff lines', () => {
   expect(labels).toContain('Kontakt 1 · Hlavní kontakt');
   const primary = pending?.diff.find((line) => line.label === 'Kontakt 1 · Hlavní kontakt');
   expect(primary?.after).toBe('ano');
+});
+
+test('projects exact module-native proposals and their declared, stored record references', () => {
+  const operation = { _tag: 'UpdateClient', id: 'client-1', patch: { name: 'Nové jméno' } };
+  const native = {
+    ...slice,
+    changes: [{ ...slice.changes[1], operation, target: { id: 'client-1', kind: 'client', label: 'Klient' } }],
+    log: [{ action: 'proposed', batchId: 'batch-1', changeId: 'change-applied', invocationId: 'invocation-1' }],
+  };
+  const recordLinks = [
+    {
+      commands: [],
+      idField: 'id',
+      labelField: 'name',
+      path: '/notes',
+      proposalTargetKind: 'client',
+      queryParam: 'note',
+      recordsPath: 'state.notes',
+      resourceType: 'fixture.note',
+    },
+  ];
+  const entries = moduleActivityFromRecords(crm, { state: { aiChanges: native } }, { names, recordLinks });
+  expect(entries.map((entry) => entry.kind)).toEqual(['proposal', 'decision']);
+  for (const entry of entries) {
+    expect(entry.proposal).toEqual({ batchKey: 'legacy:crm:batch-1', itemKey: 'legacy:crm:change-applied' });
+    expect(entry.recordReference).toEqual({ resourceId: 'client-1', resourceType: 'fixture.note' });
+  }
+  expect(entries[0]?.actionInvocationId).toBe('invocation-1');
+  expect(entries[1]?.actionLabel).toBe('Schváleno: Jana Nováková');
+  const unknown = moduleActivityFromRecords(crm, { aiChanges: native }, { names, recordLinks: [] });
+  expect(unknown[0]?.recordReference).toBeUndefined();
+  expect(moduleActivityFromRecords(crm, undefined, { names, recordLinks })).toEqual([]);
 });

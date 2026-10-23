@@ -4,7 +4,7 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { AGENT_APPROVALS_PATH } from '@app/shared-contracts/agent-proposals';
+import { AGENT_APPROVALS_PATH, AGENT_PAGE_SIZE, compareAgentPage } from '@app/shared-contracts/agent-proposals';
 import type {
   AgentActivityRequest,
   AgentCommand,
@@ -12,6 +12,7 @@ import type {
   AgentProposalSubmitResponse,
   AgentQueueBatch,
   AgentQueueResponse,
+  AgentQueueRequest,
 } from '@app/shared-contracts/agent-proposals';
 import { agentCommandDiff } from '@app/shared-contracts/agent-diff';
 import { Effect } from 'effect';
@@ -33,9 +34,10 @@ import { loadComposedModules } from './composed-modules.ts';
 import type { ComposedModules } from './composed-modules.ts';
 import type { AgentPlatformCaller } from './caller.ts';
 import { readLegacyBatches } from './legacy-queue.ts';
-import { rowsToQueueBatches } from './mappers.ts';
+import { moduleActivityFromRecords } from './legacy-normalize.ts';
+import { buildActivityResponse, rowsToQueueBatches } from './mappers.ts';
 import type { AgentProposalRow } from './mappers.ts';
-import { readModuleRecords } from './module-call.ts';
+import { recordsReadOf, callModuleAs } from './module-call.ts';
 import { reviewByModule, reviewedItem, reviewInModule } from './module-review.ts';
 import {
   AgentStoreUnavailable,
@@ -44,6 +46,7 @@ import {
   listAgentActivity,
   listCompanyAgentIds,
   listCompanyProposals,
+  listCompanyProposalPage,
   principalNames,
 } from './proposal-store.ts';
 import type { NewAgentProposal } from './proposal-store.ts';
@@ -243,6 +246,7 @@ export const listOwnAgentBatches = Effect.fn('AgentPlatform.listOwnAgentBatches'
 /** One queue for the person: core proposals of modules they can open plus legacy module engines. */
 export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function* loadAgentQueue(
   caller: AgentPlatformCaller,
+  request: AgentQueueRequest = {},
 ) {
   const { legalEntityId, tenantId } = caller.principal;
   const modules = yield* callerModuleAccess(caller);
@@ -251,11 +255,15 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
   }
   const names = yield* principalNames(tenantId);
   const composed = yield* loadComposedModules;
-  const moduleRows = (yield* listCompanyProposals(tenantId, legalEntityId, { limit: QUEUE_LIMIT })).filter(
-    (row) => modules.access.has(row.moduleKey) || modules.write.has(row.moduleKey),
+  const moduleRows = yield* listCompanyProposalPage(
+    tenantId,
+    legalEntityId,
+    request,
+    new Set([...modules.access, ...modules.write]),
   );
   // Approval runs as the approver: each module reviews its proposals once as this person (visibility, whether they
-  // can carry them out, live before -> after lines). Modules without a review are read once for their write flag.
+  // can carry them out, live before -> after lines). Other modules use the existing SpiceDB write grant;
+  // their governed Action checks its command-specific permissions again when approved.
   const reviews = yield* reviewByModule(
     caller.principal,
     composed.byAppId,
@@ -270,19 +278,8 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
   const itemOf = (row: AgentProposalRow) => reviewedItem(reviews.get(row.appId), row.proposalId);
   const visible = moduleRows.filter((row) => !hiddenByReview(reviews.get(row.appId), itemOf(row)));
   const pending = visible.filter((row) => row.status === 'pending');
-  const unreviewed = [...new Set(pending.filter((row) => itemOf(row) === undefined).map((row) => row.appId))];
-  const moduleReads = new Map(
-    yield* Effect.forEach(
-      unreviewed,
-      (appId) => readModuleRecords(caller.principal, appId).pipe(Effect.map((body) => [appId, body] as const)),
-      { concurrency: 3 },
-    ),
-  );
   const checks = new Map(
-    pending.map(
-      (row) =>
-        [row.proposalId, approverCheck(reviews.get(row.appId), itemOf(row), moduleReads.get(row.appId))] as const,
-    ),
+    pending.map((row) => [row.proposalId, approverCheck(reviews.get(row.appId), itemOf(row), {})] as const),
   );
   const coreBatches = rowsToQueueBatches(visible, {
     canDecide: (row) => {
@@ -300,7 +297,12 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
     reviewOf: itemOf,
   });
   const legacyModules = composed.all
-    .filter((module) => module.ownProposalEngine && modules.access.has(module.moduleId))
+    .filter(
+      (module) =>
+        module.ownProposalEngine &&
+        modules.access.has(module.moduleId) &&
+        (request.moduleKey === undefined || request.moduleKey === module.moduleId),
+    )
     .map((module) => ({
       appId: module.appId,
       label: module.label.cs,
@@ -310,24 +312,41 @@ export const loadAgentQueue = Effect.fn('AgentPlatform.loadAgentQueue')(function
   const legacy = yield* Effect.forEach(
     legacyModules,
     (module) =>
-      readLegacyBatches(caller.principal, module, { canDecide: modules.write.has(module.moduleKey), names }).pipe(
-        Effect.map((result) => ({ module, result })),
-      ),
+      readLegacyBatches(caller.principal, module, {
+        canDecide: modules.write.has(module.moduleKey),
+        names,
+        request,
+      }).pipe(Effect.map((result) => ({ module, result }))),
     { concurrency: 3 },
   );
   const legacyBatches = legacy.flatMap(({ result }) => (result.state === 'ok' ? result.batches : []));
   const unavailableModules = legacy
     .filter(({ result }) => result.state === 'unavailable')
     .map(({ module }) => module.label);
-  const batches = [...coreBatches, ...legacyBatches].sort((left, right) =>
-    right.createdAt.localeCompare(left.createdAt),
-  );
-  return {
+  const candidates = [
+    ...new Map(
+      moduleRows.map((row) => [`core:${row.batchId}`, { at: row.createdAt.toISOString(), id: `core:${row.batchId}` }]),
+    ).values(),
+    ...legacyBatches.map((batch) => ({ at: batch.createdAt, id: batch.key })),
+  ].toSorted(compareAgentPage);
+  const selected = candidates.slice(0, AGENT_PAGE_SIZE);
+  const selectedKeys = new Set(selected.map((entry) => entry.id));
+  const batches = [...coreBatches, ...legacyBatches]
+    .filter((batch) => selectedKeys.has(batch.key))
+    .toSorted((left, right) =>
+      compareAgentPage({ at: left.createdAt, id: left.key }, { at: right.createdAt, id: right.key }),
+    );
+  const last = selected.at(-1);
+  const response = {
     batches,
+    modules: composed.all.flatMap((module) =>
+      modules.access.has(module.moduleId) ? [{ label: module.label.cs, moduleKey: module.moduleId }] : [],
+    ),
     company: { legalEntityId, legalName: caller.legalName },
     pendingCount: countPending(batches, true),
     unavailableModules,
   } satisfies AgentQueueResponse;
+  return candidates.length > AGENT_PAGE_SIZE && last !== undefined ? { ...response, nextCursor: last } : response;
 });
 
 /** Agent reads, writes, denials, proposals and decisions in the modules where the person approves changes. */
@@ -369,48 +388,81 @@ export const loadAgentActivity = Effect.fn('AgentPlatform.loadAgentActivity')(fu
   const recordModules = composed.all.filter(
     (module) =>
       modules.access.has(module.moduleId) &&
-      (module.recordLinks?.length ?? 0) > 0 &&
-      activity.entries.some((entry) => entry.moduleKey === module.moduleId && entry.recordReference !== undefined),
+      modules.write.has(module.moduleId) &&
+      !hidden.has(module.moduleId) &&
+      module.ownProposalEngine &&
+      (request.moduleKey === undefined || request.moduleKey === module.moduleId),
   );
   const records = new Map(
     yield* Effect.forEach(
       recordModules,
       (module) =>
-        readModuleRecords(caller.principal, module.appId).pipe(Effect.map((body) => [module.moduleId, body] as const)),
+        recordsReadOf(module.appId).pipe(
+          Effect.flatMap((read) =>
+            callModuleAs(caller.principal, module.appId, read.path, {
+              ...read.query,
+              agentHistory: { ...request, mode: 'activity' },
+            }),
+          ),
+          Effect.map((result) => [module.moduleId, result.status === 200 ? result.body : undefined] as const),
+          Effect.mapError((cause) => new AgentStoreUnavailable({ cause })),
+        ),
       { concurrency: 2 },
     ),
   );
+  const names = yield* principalNames(tenantId);
+  const native = recordModules.flatMap((module) =>
+    module.ownProposalEngine
+      ? moduleActivityFromRecords(
+          { appId: module.appId, label: module.label.cs, moduleKey: module.moduleId },
+          records.get(module.moduleId),
+          {
+            names,
+            recordLinks: module.recordLinks,
+          },
+        )
+      : [],
+  );
+  const combined = buildActivityResponse([...activity.entries, ...native], request);
   // Same live capability as the destination. Never turn approval rights into identity-administration rights.
   const canManage = yield* demoAccountCapability(caller).pipe(
     Effect.map((capability) => capability.canManage),
     Effect.orElseSucceed(() => false),
   );
-  const visibleAgents = canManage
+  const visiblePrincipals = canManage
     ? yield* companyDirectoryLive.members(tenantId, legalEntityId).pipe(
-        Effect.flatMap((members) => companyDirectoryLive.agents(tenantId, members)),
-        Effect.map(
-          (agents) => new Set(agents.filter((agent) => agent.status !== 'archived').map((agent) => agent.principalId)),
+        Effect.flatMap((members) =>
+          Effect.all([companyDirectoryLive.agents(tenantId, members), companyDirectoryLive.people(tenantId, members)], {
+            concurrency: 1,
+          }),
         ),
-        Effect.orElseSucceed(() => new Set<string>()),
+        Effect.map(([agents, people]) => ({
+          agents: new Set(agents.filter((agent) => agent.status !== 'archived').map((agent) => agent.principalId)),
+          people: new Set(people.map((person) => person.principalId)),
+        })),
+        Effect.orElseSucceed(() => ({ agents: new Set<string>(), people: new Set<string>() })),
       )
-    : new Set<string>();
+    : { agents: new Set<string>(), people: new Set<string>() };
   const grants = canManage ? yield* listGrants({ tenantId, legalEntityId }).pipe(Effect.orElseSucceed(() => [])) : [];
-  const identityPage = canManage
-    ? composed.all.find((module) => module.agentAdministrationPage !== undefined && modules.access.has(module.moduleId))
-        ?.agentAdministrationPage
-    : undefined;
+  // Identity management belongs to the Shell, independent of installed workforce modules.
+  const identityPage = canManage ? '/sprava/lide-a-role' : undefined;
   return {
-    ...activity,
-    entries: activity.entries.map((entry) => {
+    ...combined,
+    agents: [...new Map([...activity.agents, ...combined.agents].map((agent) => [agent.principalId, agent])).values()],
+    modules: [
+      ...new Map([...activity.modules, ...combined.modules].map((module) => [module.moduleKey, module])).values(),
+    ],
+    entries: combined.entries.map((entry) => {
       const module = entry.moduleKey === null ? undefined : composed.byModuleId(entry.moduleKey);
       return resolveActivityLinks(entry, {
-        agentExists: visibleAgents.has(entry.agentPrincipalId),
+        agentExists: visiblePrincipals.agents.has(entry.agentPrincipalId),
         canManageAgents: canManage,
         canOpenModule: module !== undefined && modules.access.has(module.moduleId),
         canReviewProposals: true,
         grants,
         identityPage,
         module,
+        personExists: visiblePrincipals.people.has(entry.agentPrincipalId),
         records: entry.moduleKey === null ? undefined : records.get(entry.moduleKey),
       });
     }),

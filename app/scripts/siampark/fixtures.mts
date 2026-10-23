@@ -43,65 +43,58 @@ const fixtureCounterpartyResourceType = 'party.registry.counterparty';
 const fixturePropertyPortfolio = 'property.portfolio';
 const fixtureLegalAgreements = 'legal.agreements';
 const fixtureFinanceBilling = 'finance.billing';
-const fixtureBookingConflict = 'booking.conflict';
-const fixtureSignatureA102 = 'signature.a102';
 const fixtureActivityFollowup = 'activity.followup';
 const fixture20260101 = '2026-01-01';
 const fixture20261015 = '2026-10-15';
 const fixtureCrmActivities = 'crm.activities';
 const fixtureFinancialPlanEntry = 'financial-plan-entry';
-const aliases = [
-  fixturePropertyParkova,
-  fixturePropertyRiverside,
-  'unit.parkova.a101',
-  fixtureUnitParkovaA102,
-  fixtureUnitParkovaA103,
-  fixtureUnitRiversideB201,
-  'unit.riverside.b202',
-  fixtureAssetParkovaHvac01,
-  fixtureCustomerA102Tenant,
-  fixtureCustomerB201Tenant,
-  fixtureCustomerGoldenA101,
-  fixtureGuestA103Shortstay,
-  fixtureSupplierMaintenance,
-  fixtureSupplierUtilities,
-  fixtureCounterpartyA102,
-  fixtureCounterpartyB201,
-  'counterparty.golden',
-  fixtureCounterpartyMaintenance,
-  fixtureCounterpartyUtilities,
-  fixtureOccupancyA102,
-  fixtureOccupancyA103,
-  fixtureOccupancyB201,
-  fixtureContractA102Lease,
-  fixtureContractB201Lease,
-  fixtureDocumentA102Lease,
-  'document.b201.lease',
-  fixtureInvoiceA102Paid,
-  'invoice.b201.overdue',
-  'invoice.parkova.supplier',
-  'invoice.riverside.supplier',
-  'task-collection.operations',
-  fixtureTaskHvacMaintenance,
-  fixtureTaskB201Renewal,
-  'task.operations-followup',
-  fixtureTaskExternalAgentAssigned,
-  'activity.completed',
-  fixtureActivityFollowup,
-  'activity.external',
-  'booking.success',
-  fixtureBookingConflict,
-  'plan.parkova.revenue',
-  'plan.parkova.cost',
-  'plan.riverside.revenue',
-  'plan.riverside.cost',
-  'seed.invocation',
-  fixtureSignatureA102,
-  'email.followup',
-] as const;
-export type DemoAlias = (typeof aliases)[number];
-export const demoId = (alias: DemoAlias): string =>
-  `76000000-0000-4000-8000-${String(aliases.indexOf(alias) + 1).padStart(12, '0')}`;
+const fixtureIds = {
+  [fixturePropertyParkova]: '76000000-0000-4000-8000-000000000001',
+  [fixturePropertyRiverside]: '76000000-0000-4000-8000-000000000002',
+  'unit.parkova.a101': '76000000-0000-4000-8000-000000000003',
+  [fixtureUnitParkovaA102]: '76000000-0000-4000-8000-000000000004',
+  [fixtureUnitParkovaA103]: '76000000-0000-4000-8000-000000000005',
+  [fixtureUnitRiversideB201]: '76000000-0000-4000-8000-000000000006',
+  'unit.riverside.b202': '76000000-0000-4000-8000-000000000007',
+  [fixtureAssetParkovaHvac01]: '76000000-0000-4000-8000-000000000008',
+  [fixtureCustomerA102Tenant]: '76000000-0000-4000-8000-000000000009',
+  [fixtureCustomerB201Tenant]: '76000000-0000-4000-8000-000000000010',
+  [fixtureCustomerGoldenA101]: '76000000-0000-4000-8000-000000000011',
+  [fixtureGuestA103Shortstay]: '76000000-0000-4000-8000-000000000012',
+  [fixtureSupplierMaintenance]: '76000000-0000-4000-8000-000000000013',
+  [fixtureSupplierUtilities]: '76000000-0000-4000-8000-000000000014',
+  [fixtureCounterpartyA102]: '76000000-0000-4000-8000-000000000015',
+  [fixtureCounterpartyB201]: '76000000-0000-4000-8000-000000000016',
+  'counterparty.golden': '76000000-0000-4000-8000-000000000017',
+  [fixtureCounterpartyMaintenance]: '76000000-0000-4000-8000-000000000018',
+  [fixtureCounterpartyUtilities]: '76000000-0000-4000-8000-000000000019',
+  [fixtureOccupancyA102]: '76000000-0000-4000-8000-000000000020',
+  [fixtureOccupancyA103]: '76000000-0000-4000-8000-000000000021',
+  [fixtureOccupancyB201]: '76000000-0000-4000-8000-000000000022',
+  [fixtureContractA102Lease]: '76000000-0000-4000-8000-000000000023',
+  [fixtureContractB201Lease]: '76000000-0000-4000-8000-000000000024',
+  [fixtureDocumentA102Lease]: '76000000-0000-4000-8000-000000000025',
+  'document.b201.lease': '76000000-0000-4000-8000-000000000026',
+  [fixtureInvoiceA102Paid]: '76000000-0000-4000-8000-000000000027',
+  'invoice.b201.overdue': '76000000-0000-4000-8000-000000000028',
+  'invoice.parkova.supplier': '76000000-0000-4000-8000-000000000029',
+  'invoice.riverside.supplier': '76000000-0000-4000-8000-000000000030',
+  'task-collection.operations': '76000000-0000-4000-8000-000000000031',
+  [fixtureTaskHvacMaintenance]: '76000000-0000-4000-8000-000000000032',
+  [fixtureTaskB201Renewal]: '76000000-0000-4000-8000-000000000033',
+  'task.operations-followup': '76000000-0000-4000-8000-000000000034',
+  [fixtureTaskExternalAgentAssigned]: '76000000-0000-4000-8000-000000000035',
+  'activity.completed': '76000000-0000-4000-8000-000000000036',
+  [fixtureActivityFollowup]: '76000000-0000-4000-8000-000000000037',
+  'activity.external': '76000000-0000-4000-8000-000000000038',
+  'plan.parkova.revenue': '76000000-0000-4000-8000-000000000041',
+  'plan.parkova.cost': '76000000-0000-4000-8000-000000000042',
+  'plan.riverside.revenue': '76000000-0000-4000-8000-000000000043',
+  'plan.riverside.cost': '76000000-0000-4000-8000-000000000044',
+  'seed.invocation': '76000000-0000-4000-8000-000000000045',
+} as const;
+export type DemoAlias = keyof typeof fixtureIds;
+export const demoId = (alias: DemoAlias): string => fixtureIds[alias];
 export const demoRef = (moduleId: string, resource: string, alias: DemoAlias) => ({
   moduleId,
   resourceId: demoId(alias),
@@ -240,6 +233,8 @@ const propertyState = {
       name: 'Rezidence Parková',
       note: null,
       propertyRef: property(fixturePropertyParkova),
+      propertyType: 'Bytový dům',
+      responsiblePerson: 'Provoz Siampark',
       ...timestamps,
     },
     {
@@ -255,6 +250,8 @@ const propertyState = {
       name: 'Apartmány Riverside',
       note: null,
       propertyRef: property(fixturePropertyRiverside),
+      propertyType: 'Apartmánový dům',
+      responsiblePerson: 'Provoz Siampark',
       ...timestamps,
     },
   ],
@@ -278,38 +275,6 @@ const propertyState = {
   })),
 };
 const occupancyState = {
-  bookingObservations: [
-    {
-      attemptedAt: demoTimestamp,
-      attempts: 1,
-      completedAt: demoTimestamp,
-      correlation: 'booking:A103:baseline',
-      integrationKind: 'BOOKING',
-      mode: 'SIMULATED',
-      observationId: demoId('booking.success'),
-      occupancyRef: occupancy(fixtureOccupancyA103),
-      ownerResourceRef: occupancy(fixtureOccupancyA103),
-      providerLabel: 'DEMO',
-      requestSummary: 'Synthetic fixture: A103; 2026-10-03 → 2026-10-08; guests 2',
-      resultSummary: 'SIMULATED: SUCCESS; booking:A103:baseline',
-      state: 'SUCCESS',
-    },
-    {
-      attemptedAt: demoTimestamp,
-      attempts: 1,
-      completedAt: demoTimestamp,
-      correlation: 'booking:A103:conflict',
-      integrationKind: 'BOOKING',
-      mode: 'SIMULATED',
-      observationId: demoId(fixtureBookingConflict),
-      occupancyRef: null,
-      ownerResourceRef: unit(fixtureUnitParkovaA103),
-      providerLabel: 'DEMO',
-      requestSummary: 'Synthetic fixture: A103; overlap with imported short stay',
-      resultSummary: 'SIMULATED: CONFLICT; booking:A103:conflict',
-      state: 'CONFLICT',
-    },
-  ],
   occupancies: [
     {
       contractRef: contract(fixtureContractA102Lease),
@@ -408,29 +373,6 @@ const agreementsState = {
       signedDocumentReference: 'demo:signed:B201',
       title: 'Podepsaná nájemní smlouva B201',
       ...timestamps,
-    },
-  ],
-  signatureObservations: [
-    {
-      attemptedAt: demoTimestamp,
-      completedAt: demoTimestamp,
-      contractRef: contract(fixtureContractA102Lease),
-      correlation: 'signature:A102:baseline',
-      documentRef: demoRef(fixtureLegalAgreements, 'document', fixtureDocumentA102Lease),
-      integrationKind: 'ELECTRONIC_SIGNATURE',
-      mode: 'SIMULATED',
-      observationId: demoId(fixtureSignatureA102),
-      ownerResourceRef: contract(fixtureContractA102Lease),
-      providerLabel: 'DEMO',
-      requestSummary: 'Synthetic fixture: A102 lease signature request',
-      resultSummary: 'SIMULATED: SIGNED; historical fixture receipt',
-      signer: {
-        contact: 'jana.novakova@example.test',
-        counterpartyRef: cp(fixtureCounterpartyA102),
-        displayName: 'Jana Nováková',
-        partyRef: party(fixtureCustomerA102Tenant),
-      },
-      state: 'SIGNED',
     },
   ],
 };
@@ -533,22 +475,6 @@ const relationshipsState = {
       summary: 'Přiřazená návštěva B201',
     },
   ],
-  emailObservations: [
-    {
-      attemptedAt: demoTimestamp,
-      completedAt: demoTimestamp,
-      correlation: 'notification:activity.b201.followup',
-      integrationKind: 'EMAIL',
-      mode: 'SIMULATED',
-      observationId: demoId('email.followup'),
-      ownerResourceRef: demoRef(fixtureCrmActivities, 'activity', fixtureActivityFollowup),
-      providerLabel: 'DEMO',
-      receipt: 'DEMO-NOTIFICATION:activity.b201.followup',
-      requestSummary: 'Notification for the recorded B201 renewal follow-up',
-      resultSummary: 'SIMULATED: submission accepted; no message was sent',
-      status: 'SUCCESS',
-    },
-  ],
 };
 const invoiceRows = [
   {
@@ -608,26 +534,6 @@ const invoiceRows = [
   },
 ] as const;
 const financeState = {
-  accountingObservations: invoiceRows.map(({ accountingSyncState, alias }) => {
-    const observation = {
-      attemptedAt: demoTimestamp,
-      attemptId: `attempt:${alias}:1`,
-      completedAt: demoTimestamp,
-      correlation: `accounting:${alias}`,
-      integrationKind: 'ACCOUNTING',
-      invoiceRef: invoice(alias),
-      latest: true,
-      mode: 'SIMULATED',
-      providerLabel: 'DEMO',
-      requestSummary: 'Simulované zaúčtování',
-      resultId: `result:${alias}:1`,
-      resultSummary:
-        accountingSyncState === 'FAILED' ? 'Simulovaná chyba poskytovatele' : 'Simulované zaúčtování potvrzeno',
-      revision: 1,
-      status: accountingSyncState === 'FAILED' ? 'FAILED' : 'SUCCESS',
-    };
-    return accountingSyncState === 'FAILED' ? observation : { ...observation, receipt: `DEMO-RECEIPT:${alias}` };
-  }),
   financialPlanEntries: [
     {
       category: 'Nájemné',
@@ -678,34 +584,23 @@ const financeState = {
       ? { ...record, externalAccountingReference: `DEMO-RECEIPT:${alias}` }
       : record;
   }),
-  paymentObservations: [
-    {
-      confirmedPaidMinor: 1_600_000,
-      correlation: 'payment:A102:baseline',
-      currency: 'CZK',
-      invoiceRef: invoice(fixtureInvoiceA102Paid),
-      mode: 'SIMULATED',
-      observedAt: demoTimestamp,
-      resultId: 'payment:A102:baseline',
-    },
-  ],
 };
 export const demoOwnerStates = {
-  'legal-agreements': agreementsState,
+  'crm-activities': relationshipsState,
   'finance-billing': financeState,
+  'legal-agreements': agreementsState,
   'property-leasing': occupancyState,
   'property-portfolio': propertyState,
-  'crm-activities': relationshipsState,
   'work-tasks': workState,
 };
 
 // The operator serializes wire snapshots through each owner's published read contract.
 const DemoOwnerStatesSchema = Schema.Struct({
-  'legal-agreements': Schema.toEncoded(AgreementsStateSchema),
+  'crm-activities': Schema.toEncoded(RelationshipsStateSchema),
   'finance-billing': Schema.toEncoded(FinanceStateSchema),
+  'legal-agreements': Schema.toEncoded(AgreementsStateSchema),
   'property-leasing': Schema.toEncoded(OccupancyStateSchema),
   'property-portfolio': Schema.toEncoded(PropertyStateSchema),
-  'crm-activities': Schema.toEncoded(RelationshipsStateSchema),
   'work-tasks': Schema.toEncoded(WorkStateSchema),
 });
 const encodeOwnerFixture = <S extends Schema.Top>(schema: S, state: S['Encoded']) => {

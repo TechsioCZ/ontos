@@ -25,8 +25,6 @@ export const financeBillingMcpContribution = defineOntosMcpContribution({
     unitRef: 'Jednotka',
   },
   commands: {
-    ApplyAccountingObservation: 'hidden',
-    ApplyPaymentObservation: 'hidden',
     AttachDocument: { title: { cs: 'Přiložit dokument', en: 'Attach a document' } },
     ConfirmAccountingExport: { title: { cs: 'Potvrdit export do účetnictví', en: 'Confirm an accounting export' } },
     ConfirmInvoice: { title: { cs: 'Schválit fakturu', en: 'Confirm an invoice' } },
@@ -49,12 +47,6 @@ export const financeBillingMcpContribution = defineOntosMcpContribution({
     RecordIncomingInvoice: { title: { cs: 'Zaevidovat přijatou fakturu', en: 'Record an incoming invoice' } },
     RecordManualPayment: { title: { cs: 'Zaznamenat platbu', en: 'Record a manual payment' } },
     RecordReminder: { title: { cs: 'Zaznamenat upomínku', en: 'Record a payment reminder' } },
-    RequestAccountingSync: {
-      title: { cs: 'Vyžádat synchronizaci s účetnictvím', en: 'Request accounting synchronization' },
-    },
-    RetryAccountingSync: {
-      title: { cs: 'Zopakovat synchronizaci s účetnictvím', en: 'Retry accounting synchronization' },
-    },
     ReturnInvoiceToDraft: { title: { cs: 'Vrátit fakturu do konceptu', en: 'Return an invoice to draft' } },
     SetInvoiceDetails: { title: { cs: 'Nastavit údaje faktury', en: 'Set invoice details' } },
     SetOpeningBalance: { title: { cs: 'Nastavit počáteční zůstatek', en: 'Set an opening balance' } },

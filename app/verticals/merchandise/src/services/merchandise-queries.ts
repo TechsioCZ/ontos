@@ -11,7 +11,12 @@ import type {
   StorefrontCatalogQuery,
   StorefrontOrderStatus,
 } from '../../shared/apis/records.ts';
-import { CATEGORY_RESULT_LIMIT, categoryQueryWords, rankCategories } from '../../shared/domain/category-search.ts';
+import {
+  CATEGORY_RESULT_LIMIT,
+  categoryQueryWords,
+  normalizeCategoryName,
+  rankCategories,
+} from '../../shared/domain/category-search.ts';
 import { CatalogChangeSchema } from '../../shared/domain/merchandise-model.ts';
 import type {
   CategoryNode,
@@ -93,10 +98,20 @@ type VariantSummary = NonNullable<ProductRecord['variantSummary']>;
  * Active sellable variants of the row's product in aggregate, computed inside the page query (no N+1). The scope
  * is bound as parameters: an unqualified outer column would resolve to the variant row itself.
  */
+// A positive ledger balance is not available stock when it cannot cover one mandatory package.
+// Match order-quantity and the detail purchase constraints, per variant (never pool partial packages).
+const variantMinimumSql = sql`coalesce((v.document->>'minimumQuantity')::numeric,
+  (${sql.raw('"products"."document"')}->>'minimumQuantity')::numeric, 1)`;
+const variantPackageSql = sql`coalesce((v.document->>'packageQuantity')::numeric,
+  (${sql.raw('"products"."document"')}->>'packageQuantity')::numeric)`;
+const variantOrderMinimumSql = sql`case when ${variantPackageSql} > 0
+  then ceil(${variantMinimumSql} / ${variantPackageSql} - 0.000001) * ${variantPackageSql}
+  else ${variantMinimumSql} end`;
 const variantSummarySql = (scope: StoreScope) => sql<VariantSummary>`(select json_build_object(
     'count', count(*)::int,
     'minGrossPriceMinor', min(v.gross_price_minor),
-    'stockOnHand', coalesce(sum(v.stock_on_hand), 0),
+    'stockOnHand', coalesce(sum(case when v.stock_on_hand >= ${variantOrderMinimumSql}
+      then v.stock_on_hand else 0 end), 0),
     'units', coalesce(array_agg(distinct v.unit order by v.unit), '{}'::text[]))
   from ${productVariants} v
   where v.tenant_id = ${scope.tenantId}::uuid and v.legal_entity_id = ${scope.legalEntityId}::uuid
@@ -357,15 +372,13 @@ export const productCategoryCounts = Effect.fn('MerchandiseQueries.productCatego
   },
 );
 
-/** Category id of a storefront slug, or undefined. */
+/** Scoped scalar subquery: resolve a slug in the consuming statement, not a separate round trip. */
 const categoryIdBySlug = (db: MerchandiseDb, scope: StoreScope, slug: string) =>
-  query(
-    db
-      .select({ id: categories.id })
-      .from(categories)
-      .where(and(whereScope(categories, scope), eq(categories.slug, slug)))
-      .limit(1),
-  ).pipe(Effect.map((rows) => rows[0]?.id));
+  db
+    .select({ id: categories.id })
+    .from(categories)
+    .where(and(whereScope(categories, scope), eq(categories.slug, slug)))
+    .limit(1);
 
 const labelFilter = (label: NonNullable<StorefrontCatalogQuery['label']>) =>
   label === 'action'
@@ -390,8 +403,7 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
   const catalog = input.query;
   const featuredIds = sql`((select h.homepage_featured_product_ids from ${catalogHeads} h
     where h.tenant_id = ${scope.tenantId}::uuid and h.legal_entity_id = ${scope.legalEntityId}::uuid))::text[]`;
-  const categoryId =
-    catalog.categorySlug === undefined ? undefined : yield* categoryIdBySlug(db, scope, catalog.categorySlug);
+  const categoryId = catalog.categorySlug === undefined ? undefined : categoryIdBySlug(db, scope, catalog.categorySlug);
   const words = wordsOf(catalog.q);
   const needle = normalizeSearchText(catalog.q ?? '');
   const filters: (SQL | undefined)[] = [
@@ -403,11 +415,9 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
       : undefined,
     catalog.productIds === undefined ? undefined : idsFilter(products.id, catalog.productIds),
     catalog.slug === undefined ? undefined : eq(products.slug, catalog.slug),
-    catalog.categorySlug === undefined
+    categoryId === undefined
       ? undefined
-      : categoryId === undefined
-        ? sql`false`
-        : or(eq(products.categoryId, categoryId), sql`${products.categoryPathIds} @> ${textArray([categoryId])}`),
+      : or(eq(products.categoryId, categoryId), sql`${products.categoryPathIds} @> array[${categoryId}]::text[]`),
     catalog.label === undefined ? undefined : labelFilter(catalog.label),
     ...containsAll(products.searchText, words),
     catalog.minMinor === undefined ? undefined : sql`coalesce(${products.grossPriceMinor}, 0) >= ${catalog.minMinor}`,
@@ -604,18 +614,34 @@ export const hasCategoryTree = (db: MerchandiseDb, scope: StoreScope) =>
  * content (storefront: roots, the active category and its children; staff: the selected one with its history).
  * The storefront tree hides every category below an unpublished one.
  */
+interface CategoryDisplayLabels {
+  heading?: string;
+  imageAlt?: string;
+}
+
+const categoryDisplayLabels = (row: { readonly heading: string | null; readonly imageAlt: string | null }) => {
+  const labels: CategoryDisplayLabels = {};
+  if (row.heading !== null) {
+    labels.heading = normalizeCategoryName(row.heading);
+  }
+  if (row.imageAlt !== null) {
+    labels.imageAlt = normalizeCategoryName(row.imageAlt);
+  }
+  return labels;
+};
+
 export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(function* categoryTree(
   db: MerchandiseDb,
   scope: StoreScope,
   input: {
     readonly activeId?: string | undefined;
     readonly activeSlug?: string | undefined;
+    readonly contentOnly?: boolean;
     readonly storefront: boolean;
   },
 ) {
   const activeId =
-    input.activeId ??
-    (input.activeSlug === undefined ? undefined : yield* categoryIdBySlug(db, scope, input.activeSlug));
+    input.activeId ?? (input.activeSlug === undefined ? undefined : categoryIdBySlug(db, scope, input.activeSlug));
   const active = activeId === undefined ? sql`false` : eq(categories.id, activeId);
   // Storefront tiles and the sidebar show images of roots and of the active category's children.
   const shown = input.storefront
@@ -625,6 +651,26 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
         activeId === undefined ? sql`false` : eq(categories.parentId, activeId),
       )
     : active;
+  // A content read needs only the active branch and its ancestors for the publication check below.
+  // UNION terminates even a cyclic stored path; every recursive step stays in this company scope.
+  const contentBranch =
+    input.contentOnly === true
+      ? inArray(
+          categories.id,
+          sql`(with recursive content_branch(id, parent_id) as (
+            select ${categories.id}, ${categories.parentId} from ${categories}
+            where ${and(
+              whereScope(categories, scope),
+              or(active, activeId === undefined ? sql`false` : eq(categories.parentId, activeId)),
+            )}
+            union
+            select parent.id, parent.parent_id from ${categories} parent
+            inner join content_branch child on parent.id = child.parent_id
+            where parent.tenant_id = ${scope.tenantId}::uuid
+              and parent.legal_entity_id = ${scope.legalEntityId}::uuid
+          ) select id from content_branch)`,
+        )
+      : undefined;
   const rows = yield* query(
     db
       .select({
@@ -645,11 +691,12 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
         slug: categories.slug,
       })
       .from(categories)
-      .where(whereScope(categories, scope))
+      .where(and(whereScope(categories, scope), contentBranch))
       .orderBy(asc(categories.ordinal)),
     'Categories could not be read',
   );
   const byId = new Map(rows.map((row) => [row.id, row] as const));
+  const contentId = input.activeId ?? rows.find((row) => row.slug === input.activeSlug)?.id;
   const visible = (id: string) => {
     const seen = new Set<string>();
     let current = byId.get(id);
@@ -664,20 +711,23 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
     catch: (cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored rows do not decode' }),
     try: () =>
       rows
-        .filter((row) => !input.storefront || visible(row.id))
+        .filter(
+          (row) =>
+            (!input.storefront || visible(row.id)) &&
+            (input.contentOnly !== true || row.id === contentId || row.parentId === contentId),
+        )
         .map((row): CategoryNode => ({
           hasChildren: row.hasChildren,
           id: row.id,
-          name: row.name,
+          name: normalizeCategoryName(row.name),
           parentId: row.parentId,
           position: row.position,
           slug: row.slug,
           ...(row.published === null ? {} : { published: row.published }),
-          ...(row.heading === null ? {} : { heading: row.heading }),
+          ...categoryDisplayLabels(row),
           ...(row.description === null ? {} : { description: row.description }),
           ...(row.longDescription === null ? {} : { longDescription: row.longDescription }),
           ...(row.imageSrc === null ? {} : { imageSrc: row.imageSrc }),
-          ...(row.imageAlt === null ? {} : { imageAlt: row.imageAlt }),
           ...(row.history === null || row.history === undefined ? {} : { history: decodeHistory(row.history) }),
         })),
   });

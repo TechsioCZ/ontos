@@ -1,3 +1,5 @@
+import { agentHistoryPageSql } from '@app/core-runtime/db/agent-history-page';
+import type { AgentHistoryRequest } from '@app/shared-contracts/agent-proposals';
 // Row mapping between the merchandise domain values and the normalized tables (src/database/schema.ts), plus the
 // three write paths: replace a company snapshot (seeds, demo reset), load a command's working set, and persist
 // only the rows a command changed. Bounded reads live in merchandise-queries.ts.
@@ -203,7 +205,10 @@ export const productRowsOf = (scope: StoreScope, product: Product, stock: StockL
 };
 
 type StoredProduct = Pick<typeof products.$inferSelect, 'document' | 'id' | 'stockOnHand'>;
-type StoredVariant = Pick<typeof productVariants.$inferSelect, 'document' | 'position' | 'productId' | 'stockOnHand' | 'variantId'>;
+type StoredVariant = Pick<
+  typeof productVariants.$inferSelect,
+  'document' | 'position' | 'productId' | 'stockOnHand' | 'variantId'
+>;
 type StoredTier = Pick<
   typeof priceTiers.$inferSelect,
   'minimumQuantity' | 'position' | 'priceExcludingVatMinor' | 'priceMinor' | 'productId' | 'variantPosition'
@@ -358,10 +363,7 @@ export const decodeAiSlice = (value: unknown): MerchandiseAiSlice | undefined =>
 
 // ------------------------------------------------------------------------------------------------ writes
 
-const insertProductRows = (
-  db: MerchandiseDb,
-  rows: readonly ReturnType<typeof productRowsOf>[],
-) =>
+const insertProductRows = (db: MerchandiseDb, rows: readonly ReturnType<typeof productRowsOf>[]) =>
   Effect.gen(function* insertProductRows() {
     for (const batch of inBatches(
       rows.map((entry) => entry.row),
@@ -502,7 +504,12 @@ export const loadProducts = Effect.fn('MerchandiseStore.loadProducts')(function*
   db: MerchandiseDb,
   scope: StoreScope,
   where: SQL | undefined,
-  options: { readonly limit?: number; readonly orderBy?: readonly SQL[]; readonly offset?: number; readonly variants?: boolean } = {},
+  options: {
+    readonly limit?: number;
+    readonly orderBy?: readonly SQL[];
+    readonly offset?: number;
+    readonly variants?: boolean;
+  } = {},
 ) {
   const base = db
     .select(productColumns)
@@ -551,11 +558,15 @@ export interface CatalogHead {
 export const loadHead = Effect.fn('MerchandiseStore.loadHead')(function* loadHead(
   db: MerchandiseDb,
   scope: StoreScope,
-  options: { readonly aiChanges?: boolean; readonly lock?: boolean } = {},
+  options: { readonly aiChanges?: boolean; readonly history?: AgentHistoryRequest; readonly lock?: boolean } = {},
 ) {
+  const history =
+    options.history === undefined
+      ? catalogHeads.aiChanges
+      : agentHistoryPageSql(catalogHeads.aiChanges, 'merchandise', options.history);
   const base = db
     .select({
-      aiChanges: options.aiChanges === true ? catalogHeads.aiChanges : sql<null>`null`,
+      aiChanges: options.aiChanges === true ? history : sql<null>`null`,
       homepageFeaturedProductIds: catalogHeads.homepageFeaturedProductIds,
       revision: catalogHeads.revision,
     })
@@ -565,14 +576,11 @@ export const loadHead = Effect.fn('MerchandiseStore.loadHead')(function* loadHea
   const rows = yield* query(options.lock === true ? base.for('update') : base, 'Merchandise head could not be read');
   const [row] = rows;
   if (row === undefined) return undefined;
-  return yield* attempt(
-    'AI changes do not decode',
-    (): CatalogHead => ({
-      aiChanges: decodeAiSlice(row.aiChanges),
-      homepageFeaturedProductIds: row.homepageFeaturedProductIds,
-      revision: row.revision,
-    }),
-  );
+  return yield* attempt('AI changes do not decode', (): CatalogHead => ({
+    aiChanges: decodeAiSlice(row.aiChanges),
+    homepageFeaturedProductIds: row.homepageFeaturedProductIds,
+    revision: row.revision,
+  }));
 });
 
 /** What one command needs to see; everything else stays in the database. */
@@ -610,7 +618,9 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
   request: WorkingSetRequest,
 ) {
   const orderFilters = [
-    ...(request.orderIds !== undefined && request.orderIds.length > 0 ? [inArray(orders.id, [...request.orderIds])] : []),
+    ...(request.orderIds !== undefined && request.orderIds.length > 0
+      ? [inArray(orders.id, [...request.orderIds])]
+      : []),
     ...(request.orderClientRequestId === undefined ? [] : [eq(orders.clientRequestId, request.orderClientRequestId)]),
   ];
   const orderRows =
@@ -647,11 +657,7 @@ export const loadWorkingSet = Effect.fn('MerchandiseStore.loadWorkingSet')(funct
         )).map((row) => row.productId)
       : [];
   const productIds = [
-    ...new Set([
-      ...(request.productIds ?? []),
-      ...loadedOrders.flatMap(orderLineProductIds),
-      ...referencedProductIds,
-    ]),
+    ...new Set([...(request.productIds ?? []), ...loadedOrders.flatMap(orderLineProductIds), ...referencedProductIds]),
   ];
   const keys = request.productKeys;
   const keyFilters = [
@@ -821,7 +827,9 @@ export const persistChange = Effect.fn('MerchandiseStore.persistChange')(functio
     const ids = rewritten.map((entry) => entry.row.id);
     yield* query(db.delete(priceTiers).where(and(whereScope(priceTiers, scope), inArray(priceTiers.productId, ids))));
     yield* query(
-      db.delete(productVariants).where(and(whereScope(productVariants, scope), inArray(productVariants.productId, ids))),
+      db
+        .delete(productVariants)
+        .where(and(whereScope(productVariants, scope), inArray(productVariants.productId, ids))),
     );
     for (const entry of rewritten) {
       yield* query(

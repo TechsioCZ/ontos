@@ -31,8 +31,8 @@ export default async function ShippingPage() {
           <section aria-labelledby="payment-methods-title">
             <h2 id="payment-methods-title">Platba</h2>
             <p>
-              Online platby ani evidence úhrady nejsou v OntOS pro tento obchod dostupné. Odesláním
-              košíku vznikne skutečná objednávka, nikoli úhrada.
+              Objednávku předáme obchodu k vyřízení. Její stav najdete ve svém účtu. E-shop nyní
+              nenabízí online platbu; odesláním objednávky neprovádíte úhradu.
             </p>
           </section>
         </div>

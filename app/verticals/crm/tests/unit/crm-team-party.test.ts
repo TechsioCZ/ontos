@@ -179,12 +179,14 @@ describe('Party Registry links (CRM.md §3)', () => {
       displayName: 'Firma Z s.r.o.',
       partyId: 'party-1',
     });
-    expect(verifiedPartyOf(link, answer, 'le-other', '2026-10-21')).toBe('Zákazník v Party Registry patří jiné firmě');
+    expect(verifiedPartyOf(link, answer, 'le-other', '2026-10-21')).toBe(
+      'Zákazník v evidenci zákazníků patří jiné firmě',
+    );
     expect(verifiedPartyOf(link, { ...answer, currentRoles: [] }, 'le-1', '2026-10-21')).toBe(
-      'Firma nemá v Party Registry platnou roli zákazníka',
+      'Firma nemá v evidenci zákazníků platnou roli zákazníka',
     );
     expect(verifiedPartyOf({ ...link, partyId: 'party-2' }, answer, 'le-1', '2026-10-21')).toBe(
-      'Party a Counterparty v Party Registry k sobě nepatří',
+      'Údaje o firmě a zákazníkovi k sobě nepatří',
     );
   });
 });

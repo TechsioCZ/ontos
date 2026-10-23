@@ -15,8 +15,6 @@ import { FinancialPlanEntryRefSchema } from '../resources/financial-plan-entry.t
 export const DEMO_BUSINESS_DATE = '2026-10-05';
 export const CalendarDateSchema = CalendarDateWireSchema;
 export const FinanceTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
-export const FinanceAttemptIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Schema.brand('FinanceAttemptId')));
-export const FinanceResultIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Schema.brand('FinanceResultId')));
 const FinancePropertyIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Schema.brand('FinancePropertyId')));
 const FinanceResourceIdSchema = Schema.toEncoded(FinanceTextSchema.pipe(Schema.brand('FinanceResourceId')));
 /** Opaque customer identity owned by the party registry; never dereferenced by billing state. */
@@ -186,34 +184,6 @@ export const FinancialPlanEntrySchema = Schema.Struct({
   state: Schema.Literals(['PLANNED', 'CONFIRMED', 'CANCELLED']),
 });
 export type FinancialPlanEntry = typeof FinancialPlanEntrySchema.Type;
-export const AccountingObservationSchema = Schema.Struct({
-  attemptedAt: Schema.DateTimeUtcFromString,
-  attemptId: FinanceAttemptIdSchema,
-  completedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
-  correlation: FinanceTextSchema,
-  integrationKind: Schema.Literal('ACCOUNTING'),
-  invoiceRef: InvoiceRefSchema,
-  latest: Schema.Boolean,
-  mode: Schema.Literal('SIMULATED'),
-  providerLabel: Schema.Literal('DEMO'),
-  receipt: Schema.optionalKey(FinanceTextSchema),
-  requestSummary: FinanceTextSchema,
-  resultId: Schema.optionalKey(FinanceResultIdSchema),
-  resultSummary: FinanceTextSchema,
-  revision: Schema.Int.check(Schema.isGreaterThan(0)),
-  status: Schema.Literals(['PENDING', 'SUCCESS', 'FAILED']),
-});
-export type AccountingObservation = typeof AccountingObservationSchema.Type;
-export const PaymentObservationSchema = Schema.Struct({
-  confirmedPaidMinor: MoneyMinorSchema,
-  correlation: FinanceTextSchema,
-  currency: Schema.Literal('CZK'),
-  invoiceRef: InvoiceRefSchema,
-  mode: Schema.Literal('SIMULATED'),
-  observedAt: Schema.DateTimeUtcFromString,
-  resultId: FinanceResultIdSchema,
-});
-export type PaymentObservation = typeof PaymentObservationSchema.Type;
 const ActorFields = {
   actorLabel: Schema.optionalKey(FinanceTextSchema),
   actorPrincipalId: Schema.optionalKey(FinanceTextSchema),
@@ -230,7 +200,7 @@ export const FinanceDocumentSchema = Schema.Struct({
   uploadedAt: Schema.DateTimeUtcFromString,
 });
 export type FinanceDocument = typeof FinanceDocumentSchema.Type;
-/** A payment confirmed by hand by a user (S07.R5); the only non-simulated payment evidence. */
+/** A payment confirmed by a user. */
 export const ManualPaymentSchema = Schema.Struct({
   ...ActorFields,
   amountMinor: MoneyMinorSchema.check(Schema.isGreaterThan(0)),
@@ -258,15 +228,15 @@ export const RecurringTemplateSchema = Schema.Struct({
   unitRef: Schema.optionalKey(UnitRefSchema),
 });
 export type RecurringTemplate = typeof RecurringTemplateSchema.Type;
-/** Payment reminder. SIMULATED = legacy record (never sent). EMAIL = sent once over SMTP after commit by the demo e-mail dispatcher; the receipt lives in its ledger. */
+/** Payment reminder queued for SMTP dispatch; delivery receipts live in the mail ledger. */
 export const InvoiceReminderSchema = Schema.Struct({
   ...ActorFields,
   createdAt: Schema.DateTimeUtcFromString,
-  deliveryMode: Schema.Literals(['SIMULATED', 'EMAIL']),
+  deliveryMode: Schema.Literal('EMAIL'),
   id: FinanceTextSchema,
   invoiceResourceId: FinanceTextSchema,
   recipient: FinanceTextSchema,
-  status: Schema.Literals(['SIMULATED_SENT', 'QUEUED']),
+  status: Schema.Literal('QUEUED'),
   text: FinanceLongTextSchema,
 });
 export type InvoiceReminder = typeof InvoiceReminderSchema.Type;
@@ -399,7 +369,6 @@ export const CashFlowOpeningSchema = Schema.Struct({
 export type CashFlowOpening = typeof CashFlowOpeningSchema.Type;
 export const FinanceStateSchema = Schema.Struct({
   accountingExports: Schema.optionalKey(Schema.Array(AccountingExportSchema).check(Schema.isMaxLength(200))),
-  accountingObservations: Schema.Array(AccountingObservationSchema).check(Schema.isMaxLength(5000)),
   accountingSetup: Schema.optionalKey(AccountingSetupSchema),
   budgets: Schema.optionalKey(Schema.Array(BudgetLineSchema).check(Schema.isMaxLength(2000))),
   cashFlowOpening: Schema.optionalKey(CashFlowOpeningSchema),
@@ -407,7 +376,6 @@ export const FinanceStateSchema = Schema.Struct({
   financialPlanEntries: Schema.Array(FinancialPlanEntrySchema).check(Schema.isMaxLength(1000)),
   invoices: Schema.Array(InvoiceSchema).check(Schema.isMaxLength(1000)),
   manualPayments: Schema.optionalKey(Schema.Array(ManualPaymentSchema).check(Schema.isMaxLength(5000))),
-  paymentObservations: Schema.Array(PaymentObservationSchema).check(Schema.isMaxLength(5000)),
   planItems: Schema.optionalKey(Schema.Array(PlanItemSchema).check(Schema.isMaxLength(2000))),
   priceList: Schema.optionalKey(Schema.Array(PriceListItemSchema).check(Schema.isMaxLength(500))),
   recurringTemplates: Schema.optionalKey(Schema.Array(RecurringTemplateSchema).check(Schema.isMaxLength(500))),
@@ -433,7 +401,6 @@ export const FinanceIndicatorsSchema = Schema.Struct({
   costVarianceMinor: Schema.Int,
   draftCount: Schema.Int,
   grossOutstandingMinor: AggregateMinorSchema,
-  integrationWarnings: Schema.Int,
   openIncomingInvoices: Schema.Int,
   openInvoices: Schema.Int,
   openOutgoingInvoices: Schema.Int,

@@ -1,5 +1,6 @@
 import { definePageData } from '@app/shared-contracts/page-data';
-import type { AgentActivityRequest } from '@app/shared-contracts/agent-proposals';
+import { AGENT_PAGE_SIZE } from '@app/shared-contracts/agent-proposals';
+import type { AgentActivityRequest, AgentQueueRequest } from '@app/shared-contracts/agent-proposals';
 import { Effect } from 'effect';
 
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
@@ -26,21 +27,38 @@ const settled = <A>(call: () => Promise<AgentPlatformResult<A>>): Effect.Effect<
 
 /** The approval queue of the signed-in person (one per document; a company switch reloads the document). */
 export const agentQueueData = definePageData({
-  key: (scope: 'queue') => scope,
-  load: () => settled(loadAgentQueue),
+  key: (request: AgentQueueRequest) =>
+    [
+      request.pendingOnly ?? '',
+      request.moduleKey ?? '',
+      request.batchKey ?? '',
+      request.cursor?.at ?? '',
+      request.cursor?.id ?? '',
+    ].join('|'),
+  load: (request: AgentQueueRequest) => settled(() => loadAgentQueue(request)),
   runtime: browserRuntime,
 });
 
 /** The activity the page opens with: every agent, module and outcome. */
-export const DEFAULT_ACTIVITY_REQUEST: AgentActivityRequest = { limit: 150 };
+export const DEFAULT_ACTIVITY_REQUEST: AgentActivityRequest = { limit: AGENT_PAGE_SIZE };
+export const DEFAULT_QUEUE_REQUEST: AgentQueueRequest = { pendingOnly: true };
 
 export const agentActivityData = definePageData({
   key: (request: AgentActivityRequest) =>
-    [request.agentPrincipalId ?? '', request.moduleKey ?? '', request.kind ?? '', request.limit ?? ''].join('|'),
+    [
+      request.agentPrincipalId ?? '',
+      request.moduleKey ?? '',
+      request.kind ?? '',
+      request.limit ?? '',
+      request.cursor?.at ?? '',
+      request.cursor?.id ?? '',
+    ].join('|'),
   load: (request: AgentActivityRequest) => settled(() => loadAgentActivity(request)),
   runtime: browserRuntime,
 });
 
 /** Primary data of a platform page, prepared before the router reveals it. */
 export const preloadAgentPlatformPage = (page: AgentPlatformPage): Effect.Effect<void> =>
-  page === 'approvals' ? agentQueueData.preload('queue') : agentActivityData.preload(DEFAULT_ACTIVITY_REQUEST);
+  page === 'approvals'
+    ? agentQueueData.preload(DEFAULT_QUEUE_REQUEST)
+    : agentActivityData.preload(DEFAULT_ACTIVITY_REQUEST);

@@ -4,7 +4,10 @@ import {
   commerceConsentAuthorityApiLive,
   commerceConsentNoticeAuthorityApiLive,
 } from './portal-auth/consent/http.ts';
-import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+} from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
@@ -35,6 +38,16 @@ import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Context, Layer as GovernedReadLayer, Logger, Option, References, Schema, Tracer } from 'effect';
+import {
+  PartyRegistryRetailPartyResolverFactory,
+  preparedRetailPartyResolution,
+} from '../src/integrations/party-registry-retail-party-resolver.ts';
+import {
+  RetailEnrollmentBindingAuthority,
+  RetailEnrollmentBindingCapability,
+  prepareRetailEnrollmentBinding,
+} from '../src/integrations/retail-enrollment-binding.ts';
+import { retailEnrollmentBindingAuthorityLive } from '../src/integrations/retail-enrollment-binding-live.ts';
 import { CommercePortalAuthDatabaseLive } from '../src/portal-auth/persistence/portal-auth-database.ts';
 import { CommercePortalAuthAuditLive } from '../src/portal-auth/audit/audit.ts';
 import { CommercePortalAuthAccountLookupLive } from '../src/portal-auth/persistence/portal-auth-account-lookup.ts';
@@ -66,6 +79,7 @@ import { portalAuthMfaApiLive } from './portal-auth/provider/mfa/http.ts';
 import { CommercePortalAuthMfaProviderLive } from './portal-auth/provider/mfa/better-auth-provider.ts';
 import { CommercePortalAuthMfaServiceLive } from './portal-auth/provider/mfa/service.ts';
 import { CommercePortalAuthMfaStepUpCodeVerifierLive } from './portal-auth/provider/mfa/step-up-verifier.ts';
+import { enrollmentCommandRecoveryLive } from './enrollment-command-recovery.ts';
 import { portalAuthEnrollmentApiLive } from './portal-auth/enrollment/http.ts';
 import { customerOwnProfileReadApiLive, customerOwnProfileUpdateApiLive } from './portal-auth/profile/http.ts';
 import {
@@ -105,6 +119,10 @@ import { CommercePortalAuthSessionLifecycleLive } from './portal-auth/session/li
 import { CommercePortalAuthSessionProviderLive } from './portal-auth/session/provider.ts';
 import { CommercePortalAuthSessionStoreLive } from '../src/portal-auth/persistence/portal-auth-session-store.ts';
 import { CommercePortalAuthServiceLive, portalAuthSessionApiLive } from './portal-auth/session/http.ts';
+import {
+  commerceCustomerAuthorityLive,
+  commerceCustomerAuthorityUnavailableLive,
+} from './portal-auth/session/customer-authority.ts';
 import { commercePortalAuthPlatformCryptoLive } from './portal-auth/deployment.ts';
 import { FetchHttpClient } from 'effect/unstable/http';
 import {
@@ -465,13 +483,16 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
   | ActionRuntime
   | ActionAuthorizationPreflight
   | CommerceEnrollmentOwnerTransitionPreparation
+  | ActiveApplicationCompositionService
   | Layer.Services<ReturnType<typeof makeActionRuntimeLive>>
 > = Layer.effect(
   ActionRuntime,
   Effect.gen(function* commerceEnrollmentActionRuntime() {
+    const bindingAuthority = yield* RetailEnrollmentBindingAuthority;
     const existingRuntime = yield* ActionRuntime;
     const existingPreflight = yield* ActionAuthorizationPreflight;
     const preparation = yield* CommerceEnrollmentOwnerTransitionPreparation;
+    const compositions = yield* ActiveApplicationCompositionService;
     const dependencies = yield* Effect.context<Layer.Services<ReturnType<typeof makeActionRuntimeLive>>>();
     const runAction: ActionRuntimeService['runAction'] = (input) =>
       Effect.scoped(
@@ -482,17 +503,31 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
             scope,
           ).pipe(Effect.provideService(CommerceEnrollmentOwnerTransitionPreparation, preparation));
           const execution = Context.get(executionContext, CommerceEnrollmentPreparedOwnerExecutionService);
-          const preflight = composeActionAuthorizationPreflights([execution.preflight, existingPreflight]);
+          const retailParty = yield* preparedRetailPartyResolution.pipe(
+            Effect.provideService(ActiveApplicationCompositionService, compositions),
+          );
+          const binding = prepareRetailEnrollmentBinding(bindingAuthority);
+          yield* Effect.addFinalizer(() => Effect.sync(binding.clear));
+          const preflight = composeActionAuthorizationPreflights([
+            execution.preflight,
+            binding.preflight,
+            retailParty.preflight,
+            existingPreflight,
+          ]);
           const runtimeContext = yield* Layer.buildWithScope(
             Layer.fresh(makeActionRuntimeLive(ultramodernDeliveryUnit)),
             scope,
           ).pipe(Effect.provideContext(Context.add(dependencies, ActionAuthorizationPreflight, preflight)));
           return yield* Context.get(runtimeContext, ActionRuntime)
             .runAction(input)
-            .pipe(Effect.provideService(CommerceEnrollmentPreparedOwnerCapability, execution.capability));
+            .pipe(
+              Effect.provideService(CommerceEnrollmentPreparedOwnerCapability, execution.capability),
+              Effect.provideService(RetailEnrollmentBindingCapability, binding.capability),
+              Effect.provideService(PartyRegistryRetailPartyResolverFactory, retailParty.factory),
+            );
         }),
       );
-    return { resolveActionCommit: existingRuntime.resolveActionCommit, runAction };
+    return { ...existingRuntime, runAction };
   }),
 );
 
@@ -565,6 +600,32 @@ const deploymentPortalAuthRuntimeLive = Layer.unwrap(
  */
 const commerceCoreIdentityRealmLive = CommerceCoreIdentityClientLive.pipe(
   Layer.provideMerge(CommerceCoreIdentityClientConfigLive),
+);
+const deploymentCustomerAuthorityLive = Layer.unwrap(
+  coreIdentityTransportConfigured.pipe(
+    Effect.map((configured) =>
+      configured
+        ? commerceCustomerAuthorityLive.pipe(Layer.provide(commerceCoreIdentityRealmLive))
+        : commerceCustomerAuthorityUnavailableLive,
+    ),
+  ),
+);
+const deploymentRetailEnrollmentBindingAuthorityLive = Layer.unwrap(
+  Effect.all({ core: coreIdentityTransportConfigured, realm: portalAuthRealmConfigured }, { concurrency: 2 }).pipe(
+    Effect.map(({ core, realm }) =>
+      core && realm
+        ? retailEnrollmentBindingAuthorityLive.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                commerceCoreIdentityRealmLive,
+                commerceEnrollmentOwnerTransactionRunnerProductionLive,
+                commercePortalAuthAccountLookupRealmLive.pipe(Layer.provide(CommercePortalAuthConfigLive)),
+              ),
+            ),
+          )
+        : Layer.succeed(RetailEnrollmentBindingAuthority, null),
+    ),
+  ),
 );
 const commerceEnrollmentPreparationSubjectRealmLive = CommerceEnrollmentPreparationSubjectResolverLive.pipe(
   Layer.provide(Layer.mergeAll(commerceEnrollmentOwnerTransactionRunnerProductionLive, commerceCoreIdentityRealmLive)),
@@ -702,6 +763,7 @@ const commercePortalAuthAccountLookupUnavailableLive = Layer.succeed(CommercePor
   existsByEmail: commercePortalAuthAccountDirectoryUnavailable,
   existsByProviderSubject: commercePortalAuthAccountDirectoryUnavailable,
   subjectForOwnerInvocation: commercePortalAuthAccountDirectoryUnavailable,
+  verifiedEmailForOwnerInvocation: commercePortalAuthAccountDirectoryUnavailable,
 });
 const deploymentEnrollmentAccountLookupLive = Layer.unwrap(
   portalAuthRealmConfigured.pipe(
@@ -713,6 +775,7 @@ const deploymentEnrollmentAccountLookupLive = Layer.unwrap(
   ),
 );
 const enrollmentAwareActionRuntimeLive = commerceEnrollmentActionRuntimeLive.pipe(
+  Layer.provide(deploymentRetailEnrollmentBindingAuthorityLive.pipe(Layer.provide(DatabaseConfigLive))),
   Layer.provide(Layer.mergeAll(actionRuntimeCoreLive, actionRuntimeServicesLive)),
 );
 /**
@@ -829,6 +892,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     portalAuthRecoveryApiLive,
     portalAuthStepUpApiLive,
     portalAuthEnrollmentApiLive,
+    enrollmentCommandRecoveryLive,
     commercePortalAuthVerificationApiLive,
     customerOwnConsentReadApiLive,
     customerOwnConsentUpdateApiLive,
@@ -970,6 +1034,14 @@ export const makeCommerceCustomerContextApiRuntime = (
     deploymentEnrollmentAccountLookupLive,
     // Invitation claims digest the one-time secret and dispatch an owner Action in the same transaction.
     commercePortalAuthPlatformCryptoLive,
+    deploymentCustomerAuthorityLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          contextAccess,
+          commerceEnrollmentOwnerTransactionRunnerProductionLive.pipe(GovernedReadLayer.provide(databaseConfiguration)),
+        ),
+      ),
+    ),
     contextAccess,
     compositionHttpClientLive,
     moduleEntrypointGatewayLive.pipe(Layer.provide(databaseConfiguration)),

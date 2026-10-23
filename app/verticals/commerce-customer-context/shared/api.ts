@@ -9,6 +9,7 @@ import {
 import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { CommercePortalAuthVerificationApi } from './portal-auth-verification.ts';
+import { EnrollmentCommandRecoveryApi } from './enrollment-command-recovery-api.ts';
 import { CommercePortalAuthEnrollmentApi } from './portal-auth/enrollment-api.ts';
 import { CommercePortalAuthMfaApi } from './portal-auth/mfa-api.ts';
 import { CommercePortalAuthRecoveryApi } from './portal-auth/recovery-api.ts';
@@ -171,6 +172,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(CommercePortalAuthRecoveryApi)
   .addHttpApi(CommercePortalAuthStepUpApi)
   .addHttpApi(CommercePortalAuthEnrollmentApi)
+  .addHttpApi(EnrollmentCommandRecoveryApi)
   .addHttpApi(CommercePortalAuthVerificationApi)
   .addHttpApi(CommerceConsentAuthorityApi)
   .addHttpApi(CommerceConsentNoticeAuthorityApi)

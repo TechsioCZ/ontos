@@ -4,7 +4,15 @@
 import { isDeepStrictEqual } from 'node:util';
 import { decodeJwt } from 'jose';
 import type { Client } from '@modelcontextprotocol/client';
-import { E2E, PERSONA, AGENT_OPERATOR_PERSONA, CIMD_CLIENT_ID, GRANT_CLAIM, sleep } from './env.mts';
+import {
+  E2E,
+  PERSONA,
+  VERIFICATION_PERSONA,
+  AGENT_OPERATOR_PERSONA,
+  CIMD_CLIENT_ID,
+  GRANT_CLAIM,
+  sleep,
+} from './env.mts';
 import { Recorder } from './report.mts';
 import { startLoopbackCallback } from './loopback.mts';
 import type { LoopbackCallback } from './loopback.mts';
@@ -43,10 +51,14 @@ function argValue(name: string): string | undefined {
 }
 
 const variantArg = argValue('variant') ?? 'all';
-if (variantArg !== '1' && variantArg !== '2' && variantArg !== 'all') {
-  throw new Error(`Neplatná hodnota --variant=${variantArg} (očekává se 1, 2 nebo all).`);
-}
+const verification = argv.includes('--verification');
 const keep = argv.includes('--keep');
+if (
+  (variantArg !== '1' && variantArg !== '2' && variantArg !== 'all') ||
+  (verification && (variantArg !== '1' || keep))
+) {
+  throw new Error(`Neplatné volby: --variant=${variantArg}; ověření vyžaduje --variant=1 bez --keep.`);
+}
 const checkToken = argValue('check-token');
 
 type Json = Record<string, unknown>;
@@ -138,7 +150,7 @@ const VARIANTS: readonly VariantDef[] = [
   {
     key: 'v1',
     label: 'CIMD Claude Code · Za mě · ke schválení',
-    persona: PERSONA,
+    persona: verification ? VERIFICATION_PERSONA : PERSONA,
     actAs: { kind: 'me' },
     writeMode: 'approval',
   },
@@ -271,7 +283,14 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
       const profileOk = !outcome.isError && profileId !== '';
       const pass =
         def.key === 'v1'
-          ? profileOk && acting.kind === 'human' && value.writePolicy === 'approval'
+          ? profileOk &&
+            acting.kind === 'human' &&
+            value.writePolicy === 'approval' &&
+            (!verification ||
+              (acting.principalId === '72000000-0000-4000-8000-000000000090' &&
+                asRecord(value.company).legalEntityId === '71000000-0000-4000-8000-000000000090' &&
+                modules.length === 1 &&
+                modules[0]?.moduleId === 'work.tasks'))
           : profileOk &&
             acting.kind === 'agent' &&
             delegatedBy !== null &&
@@ -286,6 +305,9 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
     });
     summary.profileId = whoami?.profileId ? whoami.profileId : null;
     const writable = whoami?.writable ?? [];
+    if (verification && (whoami === undefined || !rec.pass)) {
+      return;
+    }
 
     await rec.step(k, 'čtení', async () => {
       const outcome = await callJson(client, 'ontos_read', { id: 'work.tasks/read/records', limit: 3 });
@@ -339,7 +361,15 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
             },
             { 'idempotency-key': `${runId}-decide` },
           );
-          return { pass: decided.status === 200, detail: `status ${decided.status}` };
+          const results = asArray(asRecord(decided.json).results).map(asRecord);
+          return {
+            detail: `status ${decided.status}`,
+            pass:
+              decided.status === 200 &&
+              proposal.proposalIds.length > 0 &&
+              results.length === proposal.proposalIds.length &&
+              results.every((entry) => entry.outcome === 'rejected'),
+          };
         });
       }
     } else {
@@ -376,6 +406,7 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
 
       // Direct era: the write executes at once; the task is cancelled again so the board stays clean.
       await rec.step(k, 'zápis přímo: úkol vytvořen, zrušen a skryt', async () => {
+        rec.log(`[${k}] přímý zápis: CreateTask`);
         const created = await callJson(client, 'ontos_execute', {
           id: 'work.tasks/command/CreateTask',
           input: { title: `${PROOF_TASK_PREFIX} ${runId}` },
@@ -386,8 +417,12 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
         const taskRef = asRecord(asRecord(asRecord(createdValue.result).task).ref);
         const taskId = asString(taskRef.resourceId);
         if (created.isError || createdValue.status !== 'executed' || taskId === undefined) {
-          return { pass: false, detail: `vytvoření: status ${String(createdValue.status)}, isError=${created.isError}` };
+          return {
+            pass: false,
+            detail: `vytvoření: status ${String(createdValue.status)}, isError=${created.isError}`,
+          };
         }
+        rec.log(`[${k}] přímý zápis: ChangeTaskState`);
         const cancelled = await callJson(client, 'ontos_execute', {
           id: 'work.tasks/command/ChangeTaskState',
           input: { state: 'CANCELLED', taskRef },
@@ -395,14 +430,16 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
         });
         const cancelledStatus = asRecord(cancelled.value).status;
         // Cancelled stays in the journal; hiding it keeps the demo task lists clean.
+        rec.log(`[${k}] přímý zápis: SetTaskArchived`);
         const hidden = await callJson(client, 'ontos_execute', {
           id: 'work.tasks/command/SetTaskArchived',
           input: { archived: true, taskRef },
           idempotencyKey: `${runId}-v2-hide`,
         });
+        const hiddenStatus = asRecord(hidden.value).status;
         return {
-          pass: !cancelled.isError && cancelledStatus === 'executed' && !hidden.isError,
-          detail: `úkol ${taskId} vytvořen, zrušen a skryt (status ${String(cancelledStatus)}, skrytí ${hidden.isError ? 'selhalo' : 'OK'})`,
+          pass: !cancelled.isError && cancelledStatus === 'executed' && !hidden.isError && hiddenStatus === 'executed',
+          detail: `úkol ${taskId}: zrušení ${String(cancelledStatus)}${cancelled.isError ? ` (${cancelled.text})` : ''}; skrytí ${String(hiddenStatus)}${hidden.isError ? ` (${hidden.text})` : ''}`,
         };
       });
     }

@@ -29,7 +29,6 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     tsConfigPath: './tsconfig.mf-types.json',
   },
   exposes: {
-    './PageIntegrations': './src/routes/[lang]/nemovitosti/integrace/page.tsx',
     './PageOverview': './src/routes/[lang]/nemovitosti/prehled/page.tsx',
     './PageRecords': './src/routes/[lang]/nemovitosti/page.tsx',
     './Route': './src/federation-entry.tsx',

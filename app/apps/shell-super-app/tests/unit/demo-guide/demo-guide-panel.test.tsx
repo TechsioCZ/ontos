@@ -117,3 +117,14 @@ it('keeps the step list scroll position when the panel mounts again', () => {
   render(<DemoGuidePanel guide={guide} identityEmail={undefined} />);
   expect(stepList().scrollTop).toBe(240);
 });
+
+it('closes the guide on Escape anywhere in the page and removes the handler on unmount', () => {
+  globalThis.localStorage.setItem(DEMO_GUIDE_OPEN_KEY, 'open');
+  const { unmount } = render(<DemoGuidePanel guide={guide} identityEmail={undefined} />);
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(globalThis.localStorage.getItem(DEMO_GUIDE_OPEN_KEY)).toBeNull();
+  unmount();
+  globalThis.localStorage.setItem(DEMO_GUIDE_OPEN_KEY, 'open');
+  fireEvent.keyDown(document, { key: 'Escape' });
+  expect(globalThis.localStorage.getItem(DEMO_GUIDE_OPEN_KEY)).toBe('open');
+});

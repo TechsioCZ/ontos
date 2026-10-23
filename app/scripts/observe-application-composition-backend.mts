@@ -14,8 +14,8 @@ import {
 import type { ApplicationCompositionBackend } from '../packages/core-runtime/src/modules/application-composition.ts';
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
-  ARTIFACT_FETCH_TIMEOUT,
   ActiveApplicationCompositionPublicationError,
+  retryTransientCompositionRead,
 } from './active-application-composition.mts';
 import type { ObservedArtifact } from './active-application-composition.mts';
 import { validateNativeCompositionSourceUrl } from './configure-runtime-composition-source.mts';
@@ -82,10 +82,7 @@ const readBackendBytes = (appId: string, request: HttpClientRequest.HttpClientRe
     }
     return bytes;
   }).pipe(
-    Effect.timeoutOrElse({
-      duration: ARTIFACT_FETCH_TIMEOUT,
-      orElse: () => Effect.fail(observationFailed(appId)),
-    }),
+    retryTransientCompositionRead,
     Effect.mapError(() => observationFailed(appId)),
   );
 

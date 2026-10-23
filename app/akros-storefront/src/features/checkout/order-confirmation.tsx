@@ -8,8 +8,8 @@ export function OrderConfirmation({ order }: { order: CustomerOrder }) {
       <header>
         <h1 className="text-lg font-bold">Objednávka č. {order.number} byla uložena do OntOS</h1>
         <p className="mt-4">
-          Objednávka je dostupná ve vašem účtu i v administraci obchodu. Online platba nebyla
-          provedena; OntOS zde nemá platební metodu ani evidenci úhrady.
+          Objednávku jsme předali obchodu k vyřízení. Její stav najdete ve svém účtu. Odesláním
+          objednávky nebyla provedena platba.
         </p>
       </header>
       <AccountOrderDetail order={order} />

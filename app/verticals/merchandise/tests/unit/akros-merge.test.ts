@@ -189,3 +189,12 @@ it('stores the source "NULL" description placeholder as empty text', () => {
     heading: 'Šrouby',
   });
 });
+
+it('normalizes stainless grade labels at the owner import source without changing category identities', () => {
+  expect(decodeCategoryText({ heading: 'DIN 933 – A 2', imageAlt: 'A 5', name: 'A 4', slug: 'a-4' })).toEqual({
+    heading: 'DIN 933 – A2',
+    imageAlt: 'A5',
+    name: 'A4',
+    slug: 'a-4',
+  });
+});

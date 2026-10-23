@@ -207,8 +207,8 @@ export interface PrepareActionInvocationInput {
 }
 
 type ResolveActionInvocationInput = { readonly principal: TrustedPrincipalContext } & (
-  | { readonly invocationId: string; readonly actionKey?: never; readonly idempotencyKey?: never }
-  | { readonly invocationId?: never; readonly actionKey: string; readonly idempotencyKey: string }
+  | { readonly actionKey?: never; readonly idempotencyKey?: never; readonly invocationId: string }
+  | { readonly actionKey: string; readonly idempotencyKey: string; readonly invocationId?: never }
 );
 
 export interface ActionInvocationRecord {
@@ -510,21 +510,22 @@ export const makeActionRepository = (): ActionRepositoryService => {
       ),
     );
 
-  const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executor, input) =>
-    executor
+  const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executor, input) => {
+    const hasInvocationId = input.invocationId !== undefined;
+    return executor
       .select(invocationSelection)
       .from(actionInvocations)
       .where(
         and(
-          input.invocationId !== undefined
+          hasInvocationId
             ? eq(actionInvocations.actionInvocationId, input.invocationId)
             : and(
                 eq(actionInvocations.actionKey, input.actionKey),
                 eq(actionInvocations.idempotencyKey, input.idempotencyKey),
-                input.principal.legalEntityId === undefined
-                  ? isNull(actionInvocations.legalEntityId)
-                  : eq(actionInvocations.legalEntityId, input.principal.legalEntityId),
               ),
+          input.principal.legalEntityId === undefined
+            ? isNull(actionInvocations.legalEntityId)
+            : eq(actionInvocations.legalEntityId, input.principal.legalEntityId),
           eq(actionInvocations.tenantId, input.principal.tenantId),
           eq(actionInvocations.principalId, input.principal.principalId),
         ),
@@ -544,6 +545,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
             : Effect.succeed(invocation),
         ),
       );
+  };
 
   const transitionInvocationToRunning: ActionRepositoryService['transitionInvocationToRunning'] = Effect.fn(
     'makeActionRepository.transitionInvocationToRunning',

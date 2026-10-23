@@ -6,7 +6,12 @@ import { LinkButton } from '@techsio/ui-kit/atoms/link-button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { agentItemStatusLabel, agentRiskLabel } from '@app/shared-contracts/agent-proposals';
-import type { AgentQueueBatch, AgentQueueItem } from '@app/shared-contracts/agent-proposals';
+import type {
+  AgentQueueBatch,
+  AgentQueueItem,
+  AgentQueueRequest,
+  AgentPageCursor,
+} from '@app/shared-contracts/agent-proposals';
 import { pageDataPending } from '@app/shared-contracts/page-data';
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 
@@ -17,9 +22,6 @@ import { agentQueueData } from './platform-page-data.ts';
 import { batchKeyFromSearch, itemKeyFromSearch } from './batch-link.ts';
 
 type Decision = 'approve' | 'reject';
-
-/** Batches shown per step in „Všechny dávky“. */
-const HISTORY_PAGE = 12;
 
 /** Neutral outline for settled items; the theme's secondary badge is the brand green and reads as success. */
 const itemBadgeVariant = (status: AgentQueueItem['status']) =>
@@ -328,36 +330,58 @@ const BatchCard = ({
   );
 };
 
-/** Reloads the queue in place: the current batches stay on screen until the new list arrives. */
-const refresh = () => {
-  browserRuntime.runFork(agentQueueData.refresh('queue'));
+const queueRequest = (
+  filter: 'all' | 'pending',
+  moduleKey: string,
+  cursor: AgentPageCursor | undefined,
+  batchKey: string | undefined,
+): AgentQueueRequest => {
+  let request: AgentQueueRequest = { pendingOnly: filter === 'pending' };
+  if (moduleKey !== '') {
+    request = { ...request, moduleKey };
+  }
+  if (cursor !== undefined) {
+    request = { ...request, cursor };
+  }
+  if (batchKey !== undefined) {
+    request = { ...request, batchKey };
+  }
+  return request;
 };
 
 export const ApprovalsPanel = () => {
-  // The Shell prepared the queue before it revealed the page.
-  const queue = useSyncExternalStore(
-    agentQueueData.subscribe,
-    () => agentQueueData.snapshot('queue'),
-    () => pageDataPending,
-  );
-  const [filter, setFilter] = useState<'all' | 'pending'>('pending');
-  const [shownCount, setShownCount] = useState(HISTORY_PAGE);
-  const [moduleFilter, setModuleFilter] = useState('');
-  const [message, setMessage] = useState('');
-  const [busy, setBusy] = useState(false);
-  /** Batches decided or reverted on this visit stay in „Čeká na schválení“ so the result and Vrátit vše stay visible. */
-  const [touched, setTouched] = useState<ReadonlySet<string>>(new Set());
-  const touch = (batchKey: string) => setTouched((previous) => new Set([...previous, batchKey]));
-
-  useEffect(() => agentQueueData.ensure('queue'), []);
-
-  /** `?davka=<batchId>` from an MCP review link: show that batch, scroll to it once and highlight it. */
   const search = useRouterState({ select: (routerState) => routerState.location.searchStr });
   const targetKey = batchKeyFromSearch(search);
   const targetItemKey = itemKeyFromSearch(search);
+  const [filter, setFilter] = useState<'all' | 'pending'>(targetKey === undefined ? 'pending' : 'all');
+  const [moduleFilter, setModuleFilter] = useState('');
+  const [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [browse, setBrowse] = useState(false);
+  const filterKey = [filter, moduleFilter, browse ? '' : (targetKey ?? '')].join('|');
+  const [page, setPage] = useState<{ readonly cursor: AgentPageCursor; readonly filter: string }>();
+  const cursor = page?.filter === filterKey ? page.cursor : undefined;
+  const batchKey = browse ? undefined : targetKey;
+  const request = queueRequest(filter, moduleFilter, cursor, batchKey);
+  const queue = useSyncExternalStore(
+    agentQueueData.subscribe,
+    () => agentQueueData.snapshot(request),
+    () => pageDataPending,
+  );
+  useEffect(
+    () => agentQueueData.ensure(queueRequest(filter, moduleFilter, cursor, batchKey)),
+    [filter, moduleFilter, cursor, batchKey],
+  );
+  const refresh = () => {
+    setPage(undefined);
+    const { cursor: _cursor, ...firstPage } = request;
+    browserRuntime.runFork(agentQueueData.refresh(firstPage));
+  };
+
+  /** `?davka=<batchId>` from an MCP review link: show that batch, scroll to it once and highlight it. */
   const scrolledTo = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (queue.state !== 'ready' || targetKey === undefined || scrolledTo.current === targetKey) {
+    if (queue.state !== 'ready' || targetKey === undefined || scrolledTo.current === (targetItemKey ?? targetKey)) {
       return;
     }
     const index = queue.value.batches.findIndex((batch) => batch.key === targetKey);
@@ -374,10 +398,6 @@ export const ApprovalsPanel = () => {
       setFilter('all');
       return;
     }
-    if (filter === 'all' && shownCount < index + 1) {
-      setShownCount(index + 1);
-      return;
-    }
     const batchElement = document.querySelector<HTMLElement>(`[data-batch-key="${CSS.escape(targetKey)}"]`);
     const element =
       targetItemKey === undefined
@@ -387,10 +407,10 @@ export const ApprovalsPanel = () => {
       element.focus({ preventScroll: true });
     }
     if (element != null) {
-      scrolledTo.current = targetKey;
+      scrolledTo.current = targetItemKey ?? targetKey;
       element.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
-  }, [queue, targetKey, targetItemKey, filter, moduleFilter, shownCount]);
+  }, [queue, targetKey, targetItemKey, filter, moduleFilter]);
 
   const finish = (text: string) => {
     setMessage(text);
@@ -400,7 +420,6 @@ export const ApprovalsPanel = () => {
 
   const onDecide = (batch: AgentQueueBatch, keys: readonly string[], decision: Decision, note: string) => {
     setBusy(true);
-    touch(batch.key);
     void decideAgentItems({
       batchKey: batch.key,
       decision,
@@ -431,7 +450,6 @@ export const ApprovalsPanel = () => {
 
   const onRevert = (batch: AgentQueueBatch, note: string) => {
     setBusy(true);
-    touch(batch.key);
     void revertAgentBatch({ batchKey: batch.key, ...(note === '' ? {} : { note }) }).then((result) => {
       finish(result.status === 'ok' ? result.value.message : 'Dávku se nepodařilo vrátit. Zkuste to prosím znovu.');
     });
@@ -456,15 +474,8 @@ export const ApprovalsPanel = () => {
   }
 
   const response = queue.value;
-  const moduleLabels = Array.from(new Set(response.batches.flatMap((batch) => batch.moduleLabels)));
-  const visibleBatches = response.batches.filter(
-    (batch) =>
-      (filter === 'all' || touched.has(batch.key) || batch.items.some((item) => item.status === 'pending')) &&
-      (moduleFilter === '' || batch.moduleLabels.includes(moduleFilter)),
-  );
-  // „Všechny dávky“ shows the newest batches first and older history on request.
-  const shownBatches = filter === 'all' ? visibleBatches.slice(0, shownCount) : visibleBatches;
-  const hiddenCount = visibleBatches.length - shownBatches.length;
+  const moduleOptions = response.modules ?? [];
+  const visibleBatches = response.batches;
   const targetBatch = response.batches.find((batch) => batch.key === targetKey);
   const missingTarget =
     targetKey !== undefined &&
@@ -496,7 +507,10 @@ export const ApprovalsPanel = () => {
       <div className="ai-review-actions agent-filters" role="group" aria-label="Zobrazení dávek">
         <Button
           aria-pressed={filter === 'pending'}
-          onClick={() => setFilter('pending')}
+          onClick={() => {
+            setBrowse(true);
+            setFilter('pending');
+          }}
           size="sm"
           theme={filter === 'pending' ? 'solid' : 'outlined'}
           variant={filter === 'pending' ? 'primary' : 'secondary'}
@@ -505,7 +519,10 @@ export const ApprovalsPanel = () => {
         </Button>
         <Button
           aria-pressed={filter === 'all'}
-          onClick={() => setFilter('all')}
+          onClick={() => {
+            setBrowse(true);
+            setFilter('all');
+          }}
           size="sm"
           theme={filter === 'all' ? 'solid' : 'outlined'}
           variant={filter === 'all' ? 'primary' : 'secondary'}
@@ -516,9 +533,9 @@ export const ApprovalsPanel = () => {
           <span>Modul</span>
           <select onChange={(event) => setModuleFilter(event.target.value)} value={moduleFilter}>
             <option value="">Všechny moduly</option>
-            {moduleLabels.map((label) => (
-              <option key={label} value={label}>
-                {label}
+            {moduleOptions.map((module) => (
+              <option key={module.moduleKey} value={module.moduleKey}>
+                {module.label}
               </option>
             ))}
           </select>
@@ -544,7 +561,7 @@ export const ApprovalsPanel = () => {
           <p className="text-fg-secondary text-sm">Zatím tu nejsou žádné dávky návrhů.</p>
         )
       ) : (
-        shownBatches.map((batch) => (
+        visibleBatches.map((batch) => (
           <BatchCard
             batch={batch}
             busy={busy}
@@ -556,17 +573,20 @@ export const ApprovalsPanel = () => {
           />
         ))
       )}
-      {hiddenCount > 0 && (
-        <div>
-          <Button
-            onClick={() => setShownCount((count) => count + HISTORY_PAGE)}
-            size="sm"
-            theme="outlined"
-            variant="secondary"
-          >
-            {`Zobrazit starší dávky (${hiddenCount})`}
-          </Button>
-        </div>
+      {response.nextCursor !== undefined && (
+        <Button
+          disabled={busy}
+          onClick={() => {
+            if (response.nextCursor !== undefined) {
+              setPage({ cursor: response.nextCursor, filter: filterKey });
+            }
+          }}
+          size="sm"
+          theme="outlined"
+          variant="secondary"
+        >
+          Načíst další
+        </Button>
       )}
       <div>
         <LinkButton as={LocalizedLink} size="sm" theme="outlined" to="/sprava/aktivita-agentu" variant="primary">

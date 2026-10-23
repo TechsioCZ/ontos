@@ -48,6 +48,7 @@ import {
 const broadRequest = { mode: 'POTENTIALLY_RELEVANT_POSITIONS', scope: request.scope } as const;
 const unusedActionRuntime: ActionRuntimeService = {
   resolveActionCommit: () => Effect.die('Action runtime is outside the Position-set Read proof'),
+  resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
   runAction: () => Effect.die('Action runtime is outside the Position-set Read proof'),
 };
 

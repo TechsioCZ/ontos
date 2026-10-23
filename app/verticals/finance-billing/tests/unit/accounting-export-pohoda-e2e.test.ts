@@ -55,10 +55,8 @@ const invoice = (id: string, overrides: Partial<Invoice> = {}): Invoice => ({
   ...overrides,
 });
 const empty: FinanceState = {
-  accountingObservations: [],
   financialPlanEntries: [],
   invoices: [],
-  paymentObservations: [],
 };
 let counter = 0;
 const run = (state: FinanceState, command: FinanceCommand, validators = trustedReferences('Siampark')) => {

@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 
 import { NodeServices } from '@effect/platform-node';
-import { ConfigProvider, DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
+import { ConfigProvider, DateTime, Effect, Fiber, Layer, Match, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http';
 
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
@@ -685,9 +685,10 @@ it.effect('accepts a missing initial value but fails closed on every other unsuc
 
     for (const status of [204, 301, 403, 429, 503]) {
       const { layer, requests } = provider(() => new Response(null, { status }));
-      const failure = yield* readPublishedSnapshot.pipe(Effect.provide(layer), Effect.flip);
-      expect(failure).toMatchObject({ reason: 'publication_failed' });
-      expect(requests.map(({ method }) => method)).toEqual(['GET']);
+      const fiber = yield* readPublishedSnapshot.pipe(Effect.provide(layer), Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust('3 seconds');
+      expect(yield* Fiber.join(fiber)).toMatchObject({ reason: 'publication_failed' });
+      expect(requests.map(({ method }) => method)).toEqual(status >= 500 ? ['GET', 'GET', 'GET'] : ['GET']);
     }
   }),
 );
@@ -886,6 +887,85 @@ it.effect('observes exact artifact bytes without leaking the publication credent
     expect(observed).toEqual({ bytes, url });
     expect(requests.map(({ method }) => method)).toEqual(['GET']);
     expect(requests[0]?.authorization).toBeUndefined();
+  }),
+);
+
+it.effect('retries transient artifact transport and 5xx reads with backoff, without a publication credential', () =>
+  Effect.gen(function* retriesTransientArtifactRead() {
+    let attempts = 0;
+    const authorizations: (string | undefined)[] = [];
+    const client = HttpClient.make((request) =>
+      Effect.suspend(() => {
+        attempts += 1;
+        authorizations.push(request.headers.authorization);
+        if (attempts === 1) {
+          return Effect.fail(
+            new HttpClientError.HttpClientError({
+              reason: new HttpClientError.TransportError({
+                cause: new Error('ECONNRESET'),
+                request,
+              }),
+            }),
+          );
+        }
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response('exact bytes', {
+              status: attempts === 2 ? 503 : 200,
+            }),
+          ),
+        );
+      }),
+    );
+    const fiber = yield* fetchArtifact('catalog', 'https://catalog.example/contract.json').pipe(
+      Effect.provideService(HttpClient.HttpClient, client),
+      Effect.forkChild,
+    );
+    yield* TestClock.adjust('3 seconds');
+    expect(new TextDecoder().decode((yield* Fiber.join(fiber)).bytes)).toBe('exact bytes');
+    expect(attempts).toBe(3);
+    expect(authorizations).toEqual([undefined, undefined, undefined]);
+  }),
+);
+
+it.effect('bounds persistent artifact timeouts to three attempts and cancels each response body', () =>
+  Effect.gen(function* boundsArtifactReadTimeouts() {
+    let canceled = 0;
+    const { layer, requests } = provider(
+      () =>
+        new Response(
+          new ReadableStream({
+            cancel() {
+              canceled += 1;
+            },
+          }),
+        ),
+    );
+    const fiber = yield* fetchArtifact('catalog', 'https://catalog.example/contract.json').pipe(
+      Effect.provide(layer),
+      Effect.flip,
+      Effect.forkChild,
+    );
+    yield* TestClock.adjust('33 seconds');
+    expect(Schema.is(ActiveApplicationCompositionObservationError)(yield* Fiber.join(fiber))).toBe(true);
+    expect(requests).toHaveLength(3);
+    expect(canceled).toBe(3);
+  }),
+);
+
+it.effect('retries transient storage reads but never retries a successful body with invalid snapshot content', () =>
+  Effect.gen(function* retriesStorageReadOnly() {
+    const { layer, requests } = provider(
+      (_request, index) => new Response('not a valid snapshot', { status: index < 2 ? 502 : 200 }),
+    );
+    const fiber = yield* readPublishedSnapshot.pipe(Effect.provide(layer), Effect.forkChild);
+    yield* TestClock.adjust('3 seconds');
+    expect(yield* Fiber.join(fiber)).toEqual(Option.some('not a valid snapshot'));
+    expect(requests).toHaveLength(3);
+    const permanent = provider(() => new Response(null, { status: 403 }));
+    yield* readPublishedSnapshot.pipe(Effect.provide(permanent.layer), Effect.flip);
+    expect(permanent.requests).toHaveLength(1);
   }),
 );
 

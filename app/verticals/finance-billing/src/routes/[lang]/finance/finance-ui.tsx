@@ -2,17 +2,9 @@
 // @effect-diagnostics newPromise:off
 // @effect-diagnostics globalTimers:off
 // @effect-diagnostics globalDate:off
-import { Badge } from '@techsio/ui-kit/atoms/badge';
 import type { useFinanceRecords } from './use-finance-records.ts';
 
 export type FinanceViewModel = ReturnType<typeof useFinanceRecords>;
-
-/** Visible marker for anything the demo only simulates (delivery, foreign formats). */
-export const SimulationBadge = ({ children = 'SIMULACE' }: { readonly children?: string }) => (
-  <Badge size="sm" variant="warning">
-    {children}
-  </Badge>
-);
 
 export const ACCEPTED_DOCUMENT_TYPES = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'] as const;
 export const MAX_UPLOAD_BYTES = 3 * 1024 * 1024;

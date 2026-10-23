@@ -9,6 +9,8 @@ import {
   outboxMessages,
 } from '../db/schema.ts';
 import type { CoreTransaction } from '../db/types.ts';
+import { installOperationalScopeAt } from '../db/scoped-transaction.ts';
+import type { OperationalScope } from '../operations/context.ts';
 import { validateOutboxWorkerSubscriptions } from '../outbox/definition.ts';
 import type { OutboxWorkerSubscription } from '../outbox/definition.ts';
 import { CORE_SYSTEM_OUTBOX_SUBSCRIPTIONS } from '../outbox/core-system-subscriptions.ts';
@@ -28,14 +30,16 @@ export class ApplicationCompositionAuthorityError extends Schema.TaggedError<App
 const unavailable = (reason: string, cause?: unknown) =>
   new ApplicationCompositionAuthorityError({ cause, code: 'application_composition_authority_unavailable', reason });
 
+const READ_COMMITTED_ISOLATION = 'read committed';
+
 /** The CASE prevents acquiring either publication lock under an unsupported snapshot. */
 const lockReadCommitted = Effect.fn('ApplicationCompositionAuthority.lockReadCommitted')(
   function* lockReadCommittedEffect(transaction: CoreTransaction, acquire: SQL) {
     const [isolation] = yield* transaction.execute<{ readonly isolation: string }>(
-      sql`select current_setting('transaction_isolation') as isolation, case when current_setting('transaction_isolation') = ${'read committed'} then ${acquire} end as publication_lock`,
+      sql`select current_setting('transaction_isolation') as isolation, case when current_setting('transaction_isolation') = ${READ_COMMITTED_ISOLATION} then ${acquire} end as publication_lock`,
       'objects',
     );
-    if (isolation?.isolation !== 'read committed') {
+    if (isolation?.isolation !== READ_COMMITTED_ISOLATION) {
       return yield* unavailable('Application Composition admission requires READ COMMITTED transaction isolation');
     }
     return yield* Effect.void;
@@ -123,6 +127,25 @@ export const lockApplicationCompositionAuthority = Effect.fn('ApplicationComposi
           ),
         ),
     });
+  },
+);
+
+/** Installs verified RLS scope while acquiring the fence, then admits from a fresh post-lock snapshot. */
+export const lockApplicationCompositionReadScope = Effect.fn('ApplicationCompositionAuthority.lockReadScope')(
+  function* lockApplicationCompositionReadScopeEffect(
+    transaction: CoreTransaction,
+    expectedRevision: string,
+    scope: OperationalScope,
+  ) {
+    const installed = yield* installOperationalScopeAt(transaction, scope, {
+      acquire: sql`pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0))`,
+      isolation: READ_COMMITTED_ISOLATION,
+    }).pipe(
+      Effect.mapError((cause) => unavailable('Application Composition read scope could not be installed', cause)),
+    );
+    // Never move this admission into the lock statement, including a CTE: its snapshot would predate a lock wait.
+    yield* admitAuthority(transaction, expectedRevision, 'read');
+    return installed;
   },
 );
 

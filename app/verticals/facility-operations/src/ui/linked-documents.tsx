@@ -11,14 +11,7 @@ import { SelectTemplate as Select } from '@techsio/ui-kit/templates/select';
 import { useState } from 'react';
 import type { StoredFileRef, SubjectRef } from '../../shared/domain/documents.ts';
 import { documentLinks, sameSubject } from '../../shared/domain/documents.ts';
-import {
-  CategoryBadge,
-  currentVersion,
-  FileTypeIcon,
-  formatBytes,
-  formatWhen,
-  usePrincipalLabel,
-} from './documents-kit.tsx';
+import { CategoryBadge, currentVersion, FileTypeIcon, formatBytes, formatWhen } from './documents-kit.tsx';
 import { canPreview, DownloadButton, FilePreviewDialog } from './file-preview.tsx';
 import { LoadingSkeleton } from './loading-skeleton.tsx';
 import { MAX_UPLOAD_BYTES, uploadFile, useAgendaRecords } from './use-agenda.ts';
@@ -36,7 +29,6 @@ export const LinkedDocuments = ({
   readonly hideWhenForbidden?: boolean;
 }) => {
   const { language, t } = useModernI18n();
-  const principalLabel = usePrincipalLabel();
   // The page's records when it passes them (same store entry, no second read), else this panel's own documents read.
   const own = useAgendaRecords(['documents'], { enabled: records === undefined });
   const ops = records ?? own;
@@ -109,8 +101,7 @@ export const LinkedDocuments = ({
     );
   };
 
-  const hrefOf = (documentId: string) =>
-    `/${language ?? 'cs'}/provoz/dokumenty?doc=${encodeURIComponent(documentId)}`;
+  const hrefOf = (documentId: string) => `/${language ?? 'cs'}/provoz/dokumenty?doc=${encodeURIComponent(documentId)}`;
 
   return (
     <section className="facility-linked-documents flex flex-col gap-150" data-testid="linked-documents">
@@ -134,7 +125,7 @@ export const LinkedDocuments = ({
                   <span className="text-fg-secondary text-xs">
                     {version === undefined
                       ? t(`${k}.noFileYet`)
-                      : `v${version.version} · ${formatBytes(version.file.size)} · ${principalLabel(version.uploadedBy)} · ${formatWhen(version.uploadedAt)}`}
+                      : `v${version.version} · ${formatBytes(version.file.size)} · ${formatWhen(version.uploadedAt)}`}
                   </span>
                 </div>
                 <CategoryBadge category={document.category} />

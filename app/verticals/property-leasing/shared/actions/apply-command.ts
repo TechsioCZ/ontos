@@ -71,16 +71,6 @@ export const OccupancyCommandSchema = Schema.Union([
   }),
   Schema.TaggedStruct('Complete', { occupancyRef: OccupancyRefSchema }),
   Schema.TaggedStruct('Cancel', { occupancyRef: OccupancyRefSchema }),
-  Schema.TaggedStruct('ImportBooking', {
-    correlation: Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
-    observationId: Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('ResourceId'))),
-    outcome: Schema.Literals(['SUCCESS', 'FAILED']),
-    record: OccupancySchema,
-  }),
-  Schema.TaggedStruct('RetryBooking', {
-    observationId: Schema.toEncoded(Schema.String.check(Schema.isUUID()).pipe(Schema.brand('ResourceId'))),
-    record: OccupancySchema,
-  }),
 ]);
 export type OccupancyCommand = typeof OccupancyCommandSchema.Type;
 export const ApplyCommandPayloadSchema = Schema.Struct({

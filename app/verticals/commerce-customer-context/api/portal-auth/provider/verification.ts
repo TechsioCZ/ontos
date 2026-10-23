@@ -10,6 +10,7 @@ import type {
   VerifyExternalAuthenticationResult,
 } from '../../../shared/portal-auth-contracts.ts';
 import { CommerceEnrollmentProofService } from '../enrollment-proof-port.ts';
+import { decodeCommerceEnrollmentAuthenticationReference } from '../../../shared/portal-auth-enrollment-reference.ts';
 import type { CommerceEnrollmentProof } from '../enrollment-proof-port.ts';
 import { COMMERCE_PORTAL_AUTH_POLICY } from './config.ts';
 import { parseCommerceSessionReference } from './session-reference.ts';
@@ -182,6 +183,46 @@ export const makeCommercePortalAuthVerificationService = Effect.fn('CommercePort
       }
       if (authorization === 'UNAVAILABLE') {
         return unavailableResult(request.nonce, observedAt);
+      }
+
+      const enrollmentReference = decodeCommerceEnrollmentAuthenticationReference(request.sessionRef);
+      if (Option.isSome(enrollmentReference)) {
+        if (
+          (request.authenticationOperation !== 'reserve' && request.authenticationOperation !== 'activate') ||
+          (request.enrollmentAttemptId !== undefined &&
+            request.enrollmentAttemptId !== enrollmentReference.value.enrollmentAttemptId)
+        ) {
+          return rejectedResult(request.nonce, observedAt);
+        }
+        const proof = yield* enrollmentProof
+          .verifyBinding({
+            ...enrollmentReference.value,
+            authenticationNamespaceId: request.authenticationNamespaceId,
+            providerSubjectId: request.providerSubjectId,
+            subjectType: request.subjectType,
+            tenantId: request.tenantId,
+          })
+          .pipe(
+            Effect.map((value) => ({ outcome: 'ALLOWED' as const, value })),
+            Effect.catchTags({
+              CommerceEnrollmentProofRejected: enrollmentProofRejected,
+              CommerceEnrollmentProofUnavailable: enrollmentProofUnavailable,
+            }),
+          );
+        if (proof.outcome === 'REJECTED') {
+          return rejectedResult(request.nonce, observedAt);
+        }
+        if (proof.outcome === 'UNAVAILABLE') {
+          return unavailableResult(request.nonce, observedAt);
+        }
+        return {
+          ...request,
+          authenticatedAt: proof.value.observedAt,
+          emailVerified: false,
+          enrollmentProof: proof.value,
+          observedAt,
+          outcome: 'ALLOWED' as const,
+        };
       }
 
       const sessionId = yield* parseCommerceSessionReference(request.sessionRef).pipe(

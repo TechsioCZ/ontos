@@ -43,6 +43,7 @@ export const makeActiveApplicationCompositionLayer = (
 const activeApplicationCompositionSnapshotJsonSchema = Schema.fromJsonString(
   ActiveApplicationCompositionSnapshotSchema,
 );
+const encodeComposition = Schema.encodeEffect(Schema.fromJsonString(ApplicationCompositionSchema));
 
 const unavailableActiveApplicationComposition = (cause: unknown): ActiveApplicationCompositionUnavailableError =>
   new ActiveApplicationCompositionUnavailableError({
@@ -118,6 +119,7 @@ export const validateActiveApplicationCompositionSnapshot = Effect.fn('ActiveApp
 // revision, identifies the cache entry: the wire value is decoded and verified once per isolate,
 // while each source read and each lease check still runs per request.
 const configuredSnapshot = Ref.makeUnsafe<{
+  readonly compositionEncoded: string;
   readonly encoded: string;
   readonly snapshot: ActiveApplicationCompositionSnapshot;
 } | null>(null);
@@ -138,8 +140,16 @@ const configuredActiveApplicationCompositionSnapshot = Effect.fn(
   const decoded = yield* Schema.decodeEffect(activeApplicationCompositionSnapshotJsonSchema, {
     onExcessProperty: 'error',
   })(encoded).pipe(Effect.mapError(unavailableActiveApplicationComposition));
-  const snapshot = yield* approveDecodedSnapshot(decoded);
-  yield* Ref.set(configuredSnapshot, { encoded, snapshot });
+  // Publication renews the observation lease without changing the immutable deployment. Reuse only
+  // an exact, schema-decoded composition value, never a claimed revision: a same-revision edit must
+  // still pass digest/catalog validation. Every new envelope is decoded and its own lease checked.
+  const compositionEncoded = yield* encodeComposition(decoded.composition).pipe(
+    Effect.mapError(unavailableActiveApplicationComposition),
+  );
+  const composition =
+    cached?.compositionEncoded === compositionEncoded ? cached.snapshot.composition : decoded.composition;
+  const snapshot = yield* approveDecodedSnapshot({ ...decoded, composition });
+  yield* Ref.set(configuredSnapshot, { compositionEncoded, encoded, snapshot });
   return snapshot;
 });
 

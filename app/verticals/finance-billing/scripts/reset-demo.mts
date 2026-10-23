@@ -81,8 +81,6 @@ const reset = Effect.fn('Finance.resetDemo')(function* resetDemo(fixturePath: st
       record.taskRef,
     ]),
     ...input.state.financialPlanEntries.flatMap((record) => [record.ref, record.propertyRef]),
-    ...input.state.accountingObservations.map((record) => record.invoiceRef),
-    ...input.state.paymentObservations.map((record) => record.invoiceRef),
   ];
   if (refs.some((ref) => ref !== undefined && ref.tenantId !== input.tenantId)) {
     return yield* new ResetInputError({ reason: 'Every fixture reference must match the fixed demo tenant' });
@@ -106,9 +104,6 @@ const reset = Effect.fn('Finance.resetDemo')(function* resetDemo(fixturePath: st
   const invoiceIds = new Set(input.state.invoices.map((invoice) => invoice.ref.resourceId));
   if (
     invoiceIds.size !== input.state.invoices.length ||
-    [...input.state.accountingObservations, ...input.state.paymentObservations].some(
-      (observation) => !invoiceIds.has(observation.invoiceRef.resourceId),
-    ) ||
     input.state.financialPlanEntries.some((entry) => entry.periodEndExclusive <= entry.periodStart)
   ) {
     return yield* new ResetInputError({
@@ -216,19 +211,7 @@ const salesDemoInvoice = Effect.fn('ResetDemo.salesDemoInvoice')(function* sales
     vatMinor: totals.vatMinor,
     vatRecap: totals.vatRecap,
   };
-  const observation =
-    paidMinor > 0
-      ? {
-          confirmedPaidMinor: paidMinor,
-          correlation: `demo-payment:${resourceId}`,
-          currency: 'CZK',
-          invoiceRef: ref,
-          mode: 'SIMULATED',
-          observedAt: DateTime.formatIso(paidAt),
-          resultId: demoId('billing.payment-result', planned.key),
-        }
-      : undefined;
-  return { invoice, observation };
+  return { invoice };
 });
 
 const summarizeSalesDemo = (state: FinanceState) => {
@@ -252,10 +235,8 @@ const seedSalesDemo = Effect.fn('ResetDemo.seedSalesDemo')(function* seedSalesDe
     ),
   );
   const state = yield* Schema.decodeUnknownEffect(FinanceStateSchema)({
-    accountingObservations: [],
     financialPlanEntries: [],
     invoices: built.map((entry) => entry.invoice),
-    paymentObservations: built.flatMap((entry) => (entry.observation === undefined ? [] : [entry.observation])),
   });
   const summary = summarizeSalesDemo(state);
   if (validateOnly) {

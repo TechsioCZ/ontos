@@ -9,7 +9,6 @@ import {
   StatRow,
   dividedListClassName,
   formatNumber,
-  surfaceTileClassName,
 } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -45,14 +44,13 @@ import { CompletePlanPanel, PlanContactPanel } from './plan-panels.tsx';
 const ALL = '__all__';
 
 type Bucket = 'overdue' | 'today' | 'tomorrow' | 'week' | 'later';
-const bucketMeta: Record<Bucket, { readonly label: string; readonly tone: 'danger' | 'warning' | 'info' | 'plain' }> =
-  {
-    later: { label: 'Později', tone: 'plain' },
-    overdue: { label: 'Po termínu', tone: 'danger' },
-    today: { label: 'Dnes', tone: 'warning' },
-    tomorrow: { label: 'Zítra', tone: 'info' },
-    week: { label: 'Do 7 dní', tone: 'plain' },
-  };
+const bucketMeta: Record<Bucket, { readonly label: string; readonly tone: 'danger' | 'warning' | 'info' | 'plain' }> = {
+  later: { label: 'Později', tone: 'plain' },
+  overdue: { label: 'Po termínu', tone: 'danger' },
+  today: { label: 'Dnes', tone: 'warning' },
+  tomorrow: { label: 'Zítra', tone: 'info' },
+  week: { label: 'Do 7 dní', tone: 'plain' },
+};
 const bucketOrder: readonly Bucket[] = ['overdue', 'today', 'tomorrow', 'week', 'later'];
 
 const bucketOf = (item: PlanItem, today: string): Bucket => {
@@ -68,22 +66,6 @@ const bucketOf = (item: PlanItem, today: string): Bucket => {
   }
   return diff <= 7 ? 'week' : 'later';
 };
-
-const RecommendationsParked = () => (
-  <div className={`${surfaceTileClassName} flex items-start gap-200 p-250`}>
-    <span aria-hidden="true" className="icon-[mdi--lightbulb-off-outline] mt-50 size-300 shrink-0 text-fg-secondary" />
-    <div className="flex flex-col gap-50">
-      <span className="flex flex-wrap items-center gap-100 font-semibold text-sm">
-        Doporučení – připravujeme
-        <span className="font-normal text-fg-secondary">· pravidla nebyla schválena</span>
-      </span>
-      <p className="max-w-prose text-fg-secondary text-sm">
-        Automatický výběr klientů k oslovení (C07) zatím není zapnutý, protože obchodní pravidla opakovaných objednávek
-        nebyla schválena. Tento seznam obsahuje výhradně ručně naplánované kontakty.
-      </p>
-    </div>
-  </div>
-);
 
 const PlanRow = ({
   canWrite,
@@ -289,10 +271,7 @@ const DoneList = ({ items, records }: { readonly items: readonly PlanItem[]; rea
           .map((item) => {
             const visit = records.state.visits.items.find((entry) => entry.id === item.doneVisitId);
             return (
-              <li
-                className="flex flex-wrap items-start gap-200 px-250 py-200"
-                key={item.id}
-              >
+              <li className="flex flex-wrap items-start gap-200 px-250 py-200" key={item.id}>
                 <span aria-hidden="true" className="icon-[mdi--check-circle] mt-50 size-250 shrink-0 text-success" />
                 <div className="flex min-w-0 flex-1 flex-col gap-50">
                   <span className="flex flex-wrap items-center gap-100">
@@ -340,7 +319,7 @@ const PlanContent = () => {
         const plan = records.state.visits.plan;
         const open = plan.filter((item) => item.status === 'open');
         const mine = open.filter((item) => item.salespersonId === own);
-        const activeTab = tab ?? (own === undefined && lead ? 'team' : 'mine');
+        const activeTab = tab ?? (lead && (own === undefined || mine.length === 0) ? 'team' : 'mine');
         const teamItems = open.filter(
           (item) => salespersonFilter === ALL || (item.salespersonId ?? 'none') === salespersonFilter,
         );
@@ -403,7 +382,6 @@ const PlanContent = () => {
               />
             </StatRow>
             <CrmScopeNote records={records} />
-            <RecommendationsParked />
 
             <div className="flex flex-wrap items-end justify-between gap-150">
               <Tabs onValueChange={setTab} value={activeTab} variant="line">

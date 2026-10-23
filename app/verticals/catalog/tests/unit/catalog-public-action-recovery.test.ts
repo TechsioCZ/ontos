@@ -27,6 +27,7 @@ const scope = {
 };
 const unusedRuntime = {
   resolveActionCommit: () => Effect.die('Mocked recovery must not resolve an Action commit'),
+  resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
   runAction: () => Effect.die('Mocked recovery must not run an Action'),
 };
 

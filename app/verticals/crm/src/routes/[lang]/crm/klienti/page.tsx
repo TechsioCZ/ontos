@@ -280,7 +280,7 @@ const ClientsList = ({
                 ? 'všichni aktivní klienti mají ověřenou identitu'
                 : `${formatNumber(active.length - linkedCount)} čeká na propojení`
             }
-            label="Propojeno s Party Registry"
+            label="Propojeno s evidencí zákazníků"
             value={`${formatNumber(linkedCount)} z ${formatNumber(active.length)}`}
           />
         )}
@@ -289,8 +289,8 @@ const ClientsList = ({
         <div className="flex flex-wrap items-center justify-between gap-150 rounded-lg bg-bg-light-warning-base px-200 py-150">
           <p className="text-sm">
             {active.length > linkedCount
-              ? `${formatNumber(active.length - linkedCount)} aktivních klientů zatím nemá identitu v Party Registry.`
-              : `${formatNumber(pendingCorrelations)} schválených externích ID zákazníků čeká na převod na Party Registry.`}{' '}
+              ? `${formatNumber(active.length - linkedCount)} aktivních klientů zatím nemá identitu v evidenci zákazníků.`
+              : `${formatNumber(pendingCorrelations)} schválených externích ID zákazníků čeká na převod na evidenci zákazníků.`}{' '}
             Systém je založí nebo dohledá podle IČO a názvu a propojí.
           </p>
           <Button
@@ -300,7 +300,7 @@ const ClientsList = ({
               void submit({ _tag: 'SyncClientParties' }).then((outcome) =>
                 toaster.create(
                   outcome.ok
-                    ? { title: 'Klienti propojeni s Party Registry', type: 'success' }
+                    ? { title: 'Klienti propojeni s evidencí zákazníků', type: 'success' }
                     : {
                         description: outcome.message ?? 'Zkuste to prosím znovu.',
                         title: 'Propojení se nezdařilo',
@@ -313,15 +313,13 @@ const ClientsList = ({
             theme="outlined"
             variant="secondary"
           >
-            Propojit s Party Registry
+            Propojit s evidencí zákazníků
           </Button>
         </div>
       )}
       {/* Order statistics only where the company has imported wholesale orders (Hanák); a firm without orders, such as
           Siampark, never sees the wholesale "Prodeje v kostce" block. */}
-      {records.state.imports.orders.length > 0 && (
-        <CrmSalesKpiStrip records={records} />
-      )}
+      {records.state.imports.orders.length > 0 && <CrmSalesKpiStrip records={records} />}
     </>
   );
 
@@ -446,7 +444,7 @@ const ClientsList = ({
         {manager && (
           <div className="w-full sm:w-52">
             <SelectTemplate
-              label="Party Registry"
+              label="Evidence zákazníků"
               items={[
                 { label: 'Propojení i nepropojení', value: 'all' },
                 { label: 'Propojení s registrem', value: 'linked' },

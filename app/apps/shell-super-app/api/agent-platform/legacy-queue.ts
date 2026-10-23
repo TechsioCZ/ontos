@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { TrustedPrincipalContext } from '@app/core-runtime';
-import type { AgentQueueBatch } from '@app/shared-contracts/agent-proposals';
+import type { AgentQueueBatch, AgentQueueRequest } from '@app/shared-contracts/agent-proposals';
 import { Effect } from 'effect';
 
 import { applyModuleCommand, callModuleAs, recordsReadOf } from './module-call.ts';
@@ -22,11 +22,20 @@ const UNAVAILABLE: LegacyBatchesResult = { state: 'unavailable' };
 const readLegacyOnce = (
   principal: TrustedPrincipalContext,
   module: LegacyEngineModule,
-  options: { readonly canDecide: boolean; readonly names: ReadonlyMap<string, string> },
+  options: {
+    readonly canDecide: boolean;
+    readonly names: ReadonlyMap<string, string>;
+    readonly request: AgentQueueRequest;
+  },
 ) =>
   Effect.gen(function* readLegacyOnce() {
     const result = yield* recordsReadOf(module.appId).pipe(
-      Effect.flatMap((read) => callModuleAs(principal, module.appId, read.path, read.query)),
+      Effect.flatMap((read) =>
+        callModuleAs(principal, module.appId, read.path, {
+          ...read.query,
+          agentHistory: { ...options.request, mode: 'queue' },
+        }),
+      ),
       Effect.result,
     );
     if (result._tag === 'Failure') {
@@ -53,7 +62,11 @@ const readLegacyOnce = (
 export const readLegacyBatches = Effect.fn('AgentPlatform.readLegacyBatches')(function* readLegacyBatches(
   principal: TrustedPrincipalContext,
   module: LegacyEngineModule,
-  options: { readonly canDecide: boolean; readonly names: ReadonlyMap<string, string> },
+  options: {
+    readonly canDecide: boolean;
+    readonly names: ReadonlyMap<string, string>;
+    readonly request: AgentQueueRequest;
+  },
 ) {
   const first = yield* readLegacyOnce(principal, module, options);
   if (first.state !== 'unavailable') {

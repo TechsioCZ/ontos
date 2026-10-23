@@ -102,6 +102,7 @@ const grantedRoutines = [
   'read_access_invitation_claim_reconciliation',
   'read_access_reconciliation',
   'read_address_defaults',
+  'read_counterparty_customer_group_memberships',
   'read_counterparty_invitation_claimability',
   'read_current_purchase_approval_revalidation',
   'read_current_purchase_proposal_revision',
@@ -121,6 +122,8 @@ const grantedRoutines = [
   'read_profile_reconciliation',
   'read_profile_trading_gate',
   'read_purchase_limit_policies',
+  'read_retail_enrollment_account_party',
+  'read_retail_enrollment_registration',
   'read_retail_portal_binding',
   'read_retail_portal_binding_authorization',
   'read_retail_portal_profile_binding_permission_mutation',
@@ -158,6 +161,7 @@ const grantedRoutines = [
   'verify_invitation_claim_authority',
   'verify_payment_terms_reconciliation_owner',
   'write_customer_consent_receipt',
+  'write_retail_enrollment_registration',
 ] as const;
 
 const appendOnlyTriggers = [

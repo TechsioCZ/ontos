@@ -226,8 +226,7 @@ const usePropertyRecords = (legalEntityId: string) => {
   const assets = records?.assets.filter((item) => item.propertyRef.resourceId === propertyId) ?? [];
   const unit = units.find((item) => item.unitRef.resourceId === unitId);
   const asset = assets.find((item) => item.assetRef.resourceId === assetId);
-  const ownerHref = (owner: string, id: string) =>
-    `/${language ?? 'cs'}/${owner}?resourceId=${encodeURIComponent(id)}`;
+  const ownerHref = (owner: string, id: string) => `/${language ?? 'cs'}/${owner}?resourceId=${encodeURIComponent(id)}`;
   const loadSummary = () => {
     if (property === undefined) {
       return;
@@ -339,7 +338,7 @@ const usePropertyRecords = (legalEntityId: string) => {
       enabled: agreements !== undefined,
       items: propertyDocuments.map((item) => ({
         href: ownerHref('smlouvy', item.contractRef?.resourceId ?? ''),
-        label: [item.title, item.fileName ?? '—', item.signedDocumentReference ?? '—'].join(' · '),
+        label: [item.title, item.fileName].filter(Boolean).join(' · '),
       })),
       title: t(`${key}.documents`),
     },
@@ -423,8 +422,7 @@ const detailCardClass =
 const relatedCardClass =
   'ontos-tile rounded-lg bg-surface [&_.ontos-tile]:bg-base propertyportfolio:min-w-0 propertyportfolio:space-y-3 propertyportfolio:p-4';
 const detailHeadingClass = 'propertyportfolio:text-sm propertyportfolio:font-semibold';
-const tableWrapperClass =
-  'propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto';
+const tableWrapperClass = 'propertyportfolio:min-w-0 propertyportfolio:overflow-x-auto';
 const messageClass = 'propertyportfolio:block propertyportfolio:text-sm propertyportfolio:text-(--color-fg-secondary)';
 const archivedAtFormat = new Intl.DateTimeFormat('cs-CZ', { dateStyle: 'medium', timeZone: 'Europe/Prague' });
 const formatArchivedAt = (value: string) => archivedAtFormat.format(DateTime.toEpochMillis(DateTime.makeUnsafe(value)));
@@ -598,10 +596,10 @@ const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
                               (item) =>
                                 (showArchived || !item.archived) &&
                                 (showClosed ||
-                                group.kind === 'assets' ||
-                                ['ACTIVE', 'PLANNED', 'OUT_OF_SERVICE'].includes(item.state) ||
-                                item.id === model.property?.propertyRef.resourceId ||
-                                item.id === unit?.unitRef.resourceId),
+                                  group.kind === 'assets' ||
+                                  ['ACTIVE', 'PLANNED', 'OUT_OF_SERVICE'].includes(item.state) ||
+                                  item.id === model.property?.propertyRef.resourceId ||
+                                  item.id === unit?.unitRef.resourceId),
                             )
                             .map((item) => (
                               <Table.Row key={item.id}>
@@ -679,47 +677,47 @@ const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
                 <div className="propertyportfolio:flex propertyportfolio:flex-wrap propertyportfolio:gap-2">
                   {model.property.archive === undefined ? (
                     <>
-                  <Button
-                    disabled={editor.busy}
-                    onClick={() => {
-                      if (model.property !== undefined) {
-                        editor.toggleLifecycle(model.property);
-                      }
-                    }}
-                    size="sm"
-                    theme="outlined"
-                    variant="secondary"
-                  >
-                    {t(`${key}.editor.${model.property.lifecycleState === 'ACTIVE' ? 'deactivate' : 'activate'}`)}
-                  </Button>
-                  <Button
-                    disabled={editor.busy}
-                    onClick={() => {
-                      if (model.property !== undefined) {
-                        editor.beginUnit(model.property);
-                      }
-                    }}
-                    size="sm"
-                    variant="warning"
-                  >
-                    {t(`${key}.editor.createUnit`)}
-                  </Button>
-                  {model.property.lifecycleState !== 'ACTIVE' && (
-                    <Button
-                      disabled={editor.busy}
-                      onClick={() => {
-                        const property = model.property;
-                        const reason = property === undefined ? null : archiveReason(`nemovitost ${property.code}`);
-                        if (property !== undefined && reason !== null && reason.trim() !== '')
-                          editor.archiveProperty(property, reason.trim());
-                      }}
-                      size="sm"
-                      theme="outlined"
-                      variant="danger"
-                    >
-                      Archivovat záznam
-                    </Button>
-                  )}
+                      <Button
+                        disabled={editor.busy}
+                        onClick={() => {
+                          if (model.property !== undefined) {
+                            editor.toggleLifecycle(model.property);
+                          }
+                        }}
+                        size="sm"
+                        theme="outlined"
+                        variant="secondary"
+                      >
+                        {t(`${key}.editor.${model.property.lifecycleState === 'ACTIVE' ? 'deactivate' : 'activate'}`)}
+                      </Button>
+                      <Button
+                        disabled={editor.busy}
+                        onClick={() => {
+                          if (model.property !== undefined) {
+                            editor.beginUnit(model.property);
+                          }
+                        }}
+                        size="sm"
+                        variant="warning"
+                      >
+                        {t(`${key}.editor.createUnit`)}
+                      </Button>
+                      {model.property.lifecycleState !== 'ACTIVE' && (
+                        <Button
+                          disabled={editor.busy}
+                          onClick={() => {
+                            const property = model.property;
+                            const reason = property === undefined ? null : archiveReason(`nemovitost ${property.code}`);
+                            if (property !== undefined && reason !== null && reason.trim() !== '')
+                              editor.archiveProperty(property, reason.trim());
+                          }}
+                          size="sm"
+                          theme="outlined"
+                          variant="danger"
+                        >
+                          Archivovat záznam
+                        </Button>
+                      )}
                     </>
                   ) : (
                     <Button
@@ -832,16 +830,16 @@ const RecordsPageContent = ({ legalEntityId }: RecordsInput) => {
                       {unitArchive === undefined &&
                         unit.lifecycleState === 'OUT_OF_SERVICE' &&
                         model.property?.lifecycleState !== 'DISPOSED' && (
-                        <Button
-                          disabled={editor.busy}
-                          onClick={() => editor.changeUnitLifecycle(unit, 'ACTIVE')}
-                          size="sm"
-                          theme="outlined"
-                          variant="secondary"
-                        >
-                          Vrátit do provozu
-                        </Button>
-                      )}
+                          <Button
+                            disabled={editor.busy}
+                            onClick={() => editor.changeUnitLifecycle(unit, 'ACTIVE')}
+                            size="sm"
+                            theme="outlined"
+                            variant="secondary"
+                          >
+                            Vrátit do provozu
+                          </Button>
+                        )}
                       {unitArchive === undefined && unit.lifecycleState !== 'RETIRED' && (
                         <Button
                           disabled={editor.busy}

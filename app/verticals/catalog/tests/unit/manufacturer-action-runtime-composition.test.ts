@@ -71,6 +71,7 @@ it.live('makes the governed Core read available to all manufacturer Action HTTP 
     const readRuntime: ReadRuntimeService = { runRead: () => Effect.die('not needed in composition proof') };
     const actionRuntime: ActionRuntimeService = {
       resolveActionCommit: () => Effect.die('not needed in composition proof'),
+      resolveActionExecution: () => Effect.die('Action execution recovery is outside this fixture'),
       runAction: () =>
         Effect.context().pipe(
           Effect.flatMap((context) => {

@@ -44,10 +44,8 @@ export const decodeFinanceState = Effect.fn('Finance.decodeState')(function* dec
     return {
       revision: 0,
       state: {
-        accountingObservations: [],
         financialPlanEntries: [],
         invoices: [],
-        paymentObservations: [],
       } satisfies FinanceState,
     };
   }

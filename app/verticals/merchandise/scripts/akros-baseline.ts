@@ -8,67 +8,67 @@ export type AkrosEncodedState = typeof MerchandiseStateSchema.Encoded;
 type Encoded = AkrosEncodedState;
 interface Tier {
   minimumQuantity: number;
-  priceMinor: number;
   priceExcludingVatMinor: number;
+  priceMinor: number;
 }
 interface Parameter {
   label: string;
-  value: string;
   unit: string;
+  value: string;
 }
 interface Variant {
   id: string;
-  sourceId: string;
-  sku: string;
+  imageSrc?: string;
+  isAction: boolean;
+  isNew: boolean;
+  isRecommended: boolean;
+  isSale: boolean;
   label: string;
   minimumQuantity: number;
   packageQuantity?: number;
+  parameters: Parameter[];
   priceMinor: number;
+  priceTiers: Tier[];
+  sku: string;
+  sourceId: string;
   stockCount: number;
   unit: string;
-  priceTiers: Tier[];
-  parameters: Parameter[];
-  imageSrc?: string;
-  isAction: boolean;
-  isRecommended: boolean;
-  isSale: boolean;
-  isNew: boolean;
 }
 export interface SourceProduct {
-  id: string;
-  sourceGroupId: string;
-  slug: string;
   categoryId: string;
-  name: string;
-  sku: string;
   description: string;
-  priceMinor: number;
-  minimumQuantity: number;
-  packageQuantity?: number;
-  stockCount: number;
-  unit: string;
-  imageSrc: string;
-  imageAlt: string;
-  secondaryImageSrc?: string;
+  detail: { descriptionParagraphs: string[]; parameters: Parameter[]; priceTiers: Tier[]; variants: Variant[] };
   featuredPosition: number | null;
+  id: string;
+  imageAlt: string;
+  imageSrc: string;
   isAction: boolean;
+  isNew: boolean;
   isRecommended: boolean;
   isSale: boolean;
-  isNew: boolean;
-  detail: { descriptionParagraphs: string[]; parameters: Parameter[]; priceTiers: Tier[]; variants: Variant[] };
+  minimumQuantity: number;
+  name: string;
+  packageQuantity?: number;
+  priceMinor: number;
+  secondaryImageSrc?: string;
+  sku: string;
+  slug: string;
+  sourceGroupId: string;
+  stockCount: number;
+  unit: string;
 }
 export interface Category {
-  id: string;
-  parentId: string | null;
-  name: string;
-  slug: string;
-  heading?: string;
   description?: string;
-  longDescription?: string;
-  position?: number;
-  imageSrc?: string;
-  imageAlt?: string;
   hasChildren?: boolean;
+  heading?: string;
+  id: string;
+  imageAlt?: string;
+  imageSrc?: string;
+  longDescription?: string;
+  name: string;
+  parentId: string | null;
+  position?: number;
+  slug: string;
 }
 export interface AkrosSource {
   readonly catalog: { homepageFeaturedProductIds: string[]; products: SourceProduct[] };
@@ -82,8 +82,8 @@ const at = '2026-10-19T08:00:00.000Z';
 const fieldsFor = (source: {
   minimumQuantity: number;
   packageQuantity?: number;
-  priceTiers: Tier[];
   parameters: Parameter[];
+  priceTiers: Tier[];
   unit: string;
 }) => ({
   minimumQuantity: source.minimumQuantity,
@@ -94,6 +94,10 @@ const fieldsFor = (source: {
 });
 /** Feed root branches AKROS keeps out of the storefront navigation (internal „Mimo menu“, UNC thread nuts). */
 export const AKROS_HIDDEN_CATEGORY_IDS: ReadonlySet<string> = new Set(['322', '3504']);
+
+/** Catalogue-only groups are not replenished. Stocked groups keep a small, unit-aware reserve. */
+export const akrosMinimumStock = (stock: number): number =>
+  stock <= 0 ? 0 : Math.min(100, Math.max(1, Math.floor(stock / 5)));
 
 export const buildAkrosEncodedFrom = (source: AkrosSource, demoId: DemoId): Encoded => {
   const { catalog, categories } = source;
@@ -116,30 +120,33 @@ export const buildAkrosEncodedFrom = (source: AkrosSource, demoId: DemoId): Enco
     categoryId: product.categoryId,
     categoryPathIds: pathFor(product.categoryId),
     createdAt: at,
-    updatedAt: at,
     currentPriceMinor: product.detail.priceTiers[0]?.priceExcludingVatMinor ?? Math.round(product.priceMinor / 1.21),
-    id: product.id,
-    name: product.name,
-    sku: product.sku,
-    slug: product.slug,
-    unit: productUnitOf(product.unit),
-    vatRate: 21,
-    lowStockThreshold: 5,
-    published: true,
-    stockTracked: true,
-    priceHistory: [],
-    sourceProductId: product.id,
-    sourceGroupId: product.sourceGroupId,
+    description: stripUnbackedDiscount(product.detail.descriptionParagraphs.join('\n\n') || product.description),
     featuredPosition: product.featuredPosition,
+    id: product.id,
+    imageAlt: product.imageAlt.slice(0, 300),
+    images: [product.imageSrc, ...(product.secondaryImageSrc === undefined ? [] : [product.secondaryImageSrc])],
+    imageSrc: product.imageSrc,
     isAction: product.isAction,
+    isNew: product.isNew,
     isRecommended: product.isRecommended,
     isSale: product.isSale,
-    isNew: product.isNew,
+    lowStockThreshold: akrosMinimumStock(
+      product.detail.variants.length === 0
+        ? product.stockCount
+        : product.detail.variants.reduce((stock, variant) => stock + variant.stockCount, 0),
+    ),
+    name: product.name,
+    priceHistory: [],
+    published: true,
     shortDescription: stripUnbackedDiscount(product.description).slice(0, 500),
-    imageSrc: product.imageSrc,
-    imageAlt: product.imageAlt.slice(0, 300),
-    description: stripUnbackedDiscount(product.detail.descriptionParagraphs.join('\n\n') || product.description),
-    images: [product.imageSrc, ...(product.secondaryImageSrc === undefined ? [] : [product.secondaryImageSrc])],
+    sku: product.sku,
+    slug: product.slug,
+    sourceGroupId: product.sourceGroupId,
+    sourceProductId: product.id,
+    stockTracked: true,
+    unit: productUnitOf(product.unit),
+    updatedAt: at,
     variants: product.detail.variants.map((variant) => ({
       ...fieldsFor(variant),
       unit: variant.unit,
@@ -160,6 +167,7 @@ export const buildAkrosEncodedFrom = (source: AkrosSource, demoId: DemoId): Enco
       isSale: variant.isSale,
       isNew: variant.isNew,
     })),
+    vatRate: 21,
   }));
   const products = sourceProducts.map(applyDemoPriceTiers);
   const movements: Encoded['movements'] = akrosSourceProducts.flatMap((product) => {
@@ -193,18 +201,14 @@ export const buildAkrosEncodedFrom = (source: AkrosSource, demoId: DemoId): Enco
       variant.priceTiers.filter((entry) => entry.minimumQuantity <= quantity).at(-1) ?? variant.priceTiers[0]!;
     const totalMinor = Math.round(quantity * tier.priceMinor);
     return {
-      id: demoId('akros.order', String(index)),
-      clientRequestId: `akros-sample-order-${index}`,
-      number: `OBJ-2026-${String(index + 1).padStart(4, '0')}`,
       channel: 'STOREFRONT',
-      demo: true,
-      status,
-      pricesIncludeVat: true,
-      createdAt: at,
-      updatedAt: at,
-      partyId: 'storefront-guest',
+      clientRequestId: `akros-sample-order-${index}`,
       contact: akrosSampleContacts[index]!,
+      createdAt: at,
       deliveryAddress: { city: 'Brno', postalCode: '602 00', street: 'Ukázková 12', country: 'CZ' },
+      demo: true,
+      history: [{ kind: 'CREATED', at, actorLabel: 'Zákazník – AKROS (DEMO)', after: status }],
+      id: demoId('akros.order', String(index)),
       lines: [
         {
           productId: source.id,
@@ -217,16 +221,17 @@ export const buildAkrosEncodedFrom = (source: AkrosSource, demoId: DemoId): Enco
           vatRate: 21,
         },
       ],
+      number: `OBJ-2026-${String(index + 1).padStart(4, '0')}`,
+      partyId: 'storefront-guest',
+      pricesIncludeVat: true,
       shipping: { method: 'OSOBNI_ODBER', label: 'Osobní odběr – AKROS (simulace)', priceMinor: 0, vatRate: 21 },
+      status,
       totalMinor,
       totalVatMinor: totalMinor - Math.round(totalMinor / 1.21),
-      history: [{ kind: 'CREATED', at, actorLabel: 'Zákazník – AKROS (DEMO)', after: status }],
+      updatedAt: at,
     };
   });
   return {
-    products,
-    movements,
-    orders,
     categories: orderCategoryPositions(
       categories
         .map((source) => decodeCategoryText(source))
@@ -243,5 +248,8 @@ export const buildAkrosEncodedFrom = (source: AkrosSource, demoId: DemoId): Enco
         })),
     ),
     homepageFeaturedProductIds: catalog.homepageFeaturedProductIds,
+    movements,
+    orders,
+    products,
   };
 };

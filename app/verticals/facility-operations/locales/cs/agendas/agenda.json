@@ -1,6 +1,6 @@
 {
   "title": "Moje agenda",
-  "description": "Společný kalendář termínů ze smluv, nájmů, úkolů, faktur, majetku a provozu, vaše upozornění a vlastní události (S13).",
+  "description": "Společný kalendář termínů ze smluv, nájmů, úkolů, faktur, majetku a provozu, vaše upozornění a vlastní události.",
   "open": "Otevřít",
   "tabs": {
     "kalendar": "Kalendář",
@@ -14,7 +14,9 @@
     "kind": "Druh",
     "assignee": "Přiřazeno",
     "nobody": "Nikomu",
-    "owner": "Odpovídá"
+    "owner": "Odpovídá",
+    "knownAssignee": "Přiřadit mně nebo účastníkovi událostí",
+    "currentAssignee": "Stávající přiřazení"
   },
   "kind": {
     "DEADLINE": "Termín",
@@ -45,12 +47,6 @@
     "openSource": "Otevřít v modulu {{source}}",
     "derivedNote": "Termín se čte ze zdroje ({{source}}). Změňte ho v původním záznamu – kalendář ho po načtení ukáže sám, bez druhého zápisu.",
     "draftContract": "Návrh smlouvy"
-  },
-  "personas": {
-    "management": "Vedení",
-    "operations": "Provoz",
-    "finance": "Účetní",
-    "external": "Externí obchodník"
   },
   "sources": {
     "property": "Nemovitosti",
@@ -376,7 +372,7 @@
   },
   "overview": {
     "title": "Přehled provozu",
-    "description": "Klíčové ukazatele z řízených zdrojů, nejbližší termíny a vyhledávání napříč záznamy, ke kterým máte oprávnění (S15).",
+    "description": "Klíčové ukazatele z řízených zdrojů, nejbližší termíny a vyhledávání napříč záznamy, ke kterým máte oprávnění.",
     "refresh": "Obnovit data",
     "openCalendar": "Kalendář",
     "dataAt": "Data k {{time}}",

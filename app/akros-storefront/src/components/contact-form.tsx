@@ -10,10 +10,12 @@ export function ContactForm({
   compact = false,
   kind = "CONTACT",
   productId,
+  productName,
 }: {
   compact?: boolean;
   kind?: InquiryKind;
   productId?: string;
+  productName?: string;
 }) {
   const [pending, setPending] = useState(false);
   const [taskId, setTaskId] = useState<string | null>(null);
@@ -79,7 +81,7 @@ export function ContactForm({
   if (taskId !== null)
     return (
       <output className="akros-form-success">
-        Děkujeme. Dotaz je uložen v OntOS pro tým AKROS k vyřízení. Číslo požadavku: {taskId}.
+        Děkujeme. Dotaz jsme předali týmu AKROS k vyřízení. Číslo požadavku: {taskId}.
       </output>
     );
   return (
@@ -116,11 +118,17 @@ export function ContactForm({
             type="email"
           />
         </div>
+        {productName && (
+          <p>
+            Dotaz na produkt: <strong>{productName}</strong>
+          </p>
+        )}
         {!compact && (
           <FormInput
             id="contact-subject"
             label="Předmět"
             name="subject"
+            defaultValue={productName ? `Dotaz na produkt: ${productName}`.slice(0, 160) : ""}
             maxLength={160}
             placeholder="S čím vám můžeme pomoci?"
             size="md"
@@ -140,10 +148,7 @@ export function ContactForm({
           rows={compact ? 4 : 6}
           size={compact ? "sm" : "md"}
         />
-        <p>
-          Údaje odešleme týmu AKROS v OntOS k vyřízení vašeho dotazu. Nejde o přihlášení k
-          newsletteru.
-        </p>
+        <p>Údaje odešleme týmu AKROS k vyřízení vašeho dotazu. Nejde o přihlášení k newsletteru.</p>
         {kind === "COMPLAINT" && (
           <p>
             Odesláním vznikne úkol pro podporu, nikoli automaticky zaevidovaný reklamační případ.

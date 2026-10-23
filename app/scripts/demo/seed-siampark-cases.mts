@@ -18,20 +18,29 @@
  * ONTOS_DEMO_ENV_FILE (the running runtime's .env when its SpiceDB TLS certificate differs from app/.env; do not
  * also pass --env-file=.env, process variables win over the file).
  */
+import path from 'node:path';
+
 import { v1 } from '@authzed/authzed-node';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import { Config, ConfigProvider, Console, DateTime, Effect, Layer, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, Console, DateTime, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 import { bootstrapRelationshipRequest } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
-import { toModuleAccessObjectId, toResourceAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
+import {
+  toModuleAccessObjectId,
+  toResourceAccessObjectId,
+} from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { CreateOpportunityCommandSchema } from '../../verticals/sales-pipeline/shared/actions/apply-command.ts';
-import { demoTenantId, rentalDemoLegalEntityId } from './fixture-ids.mts';
+import { PartyIdSchema } from '../../verticals/sales-pipeline/shared/outbox/sales-pipeline-opportunity-stage-changed-v1.ts';
+import { EmployeeIdSchema } from '../../verticals/workforce/shared/resources/employee.ts';
+import { demoId, demoTenantId, rentalDemoLegalEntityId } from './fixture-ids.mts';
 import type { DemoRelationship } from './permissions.mts';
 import { siamparkRentalPersonas } from './permissions.mts';
+import { ensureSeedCustomer, existingSeedCustomer, seedCustomerList } from './rental-seed-customer.mts';
 import { connectSeedClient, DemoSeedError } from './seed-client.mts';
+import type { SeedClient, SeedTarget } from './seed-client.mts';
 
 const moduleId = 'demo.sales-pipeline';
 const resourceType = 'demo.sales-pipeline.opportunity';
@@ -96,32 +105,35 @@ const cases: readonly CaseSeed[] = [
   },
 ];
 
+const recordsPath = '/reads/records';
+const pipelineAudience = 'sales-pipeline';
+const EmployeeId = Schema.toEncoded(EmployeeIdSchema);
+const PartyId = Schema.toEncoded(PartyIdSchema);
 const Empty = Schema.Struct({});
 const Opportunity = Schema.Struct({
   id: Schema.String,
-  ownerEmployeeId: Schema.optionalKey(Schema.String),
+  ownerEmployeeId: Schema.optionalKey(EmployeeId),
   title: Schema.String,
 });
 const Pipeline = Schema.Struct({ items: Schema.Array(Opportunity), revision: Schema.Int });
 const Employees = Schema.Struct({
-  items: Schema.Array(Schema.Struct({ active: Schema.Boolean, email: Schema.optionalKey(Schema.String), id: Schema.String })),
+  items: Schema.Array(
+    Schema.Struct({ active: Schema.Boolean, email: Schema.optionalKey(Schema.String), id: Schema.String }),
+  ),
 });
 const CrmRecords = Schema.Struct({
   state: Schema.Struct({
     clients: Schema.Struct({
       items: Schema.Array(
         Schema.Struct({
+          kind: Schema.Literals(['organization', 'person']),
           name: Schema.String,
-          partyRef: Schema.optionalKey(Schema.Struct({ partyId: Schema.optionalKey(Schema.String) })),
+          partyRef: Schema.optionalKey(Schema.Struct({ partyId: PartyId })),
         }),
       ),
     }),
   }),
 });
-const Customers = Schema.Struct({
-  items: Schema.Array(Schema.Struct({ displayName: Schema.NullOr(Schema.String), partyId: Schema.String })),
-});
-const ListRequest = Schema.Struct({ includeArchived: Schema.Boolean, limit: Schema.Int });
 const ApplyPayload = Schema.Struct({ command: CreateOpportunityCommandSchema, expectedRevision: Schema.Int });
 const Revision = Schema.Struct({ revision: Schema.Int });
 
@@ -136,14 +148,22 @@ const caseGrant = (opportunityId: string): readonly DemoRelationship[] => {
     }) ?? '';
   return [
     { relation: 'module', resourceId, resourceType: 'resource', subjectId: moduleAccess, subjectType: 'module_access' },
-    { relation: 'reader', resourceId, resourceType: 'resource', subjectId: externalPrincipalId, subjectType: 'principal' },
+    {
+      relation: 'reader',
+      resourceId,
+      resourceType: 'resource',
+      subjectId: externalPrincipalId,
+      subjectType: 'principal',
+    },
   ];
 };
 
 const writeGrants = (granted: readonly string[], revoked: readonly string[]) =>
   Effect.gen(function* write() {
     const configuration = yield* loadSpiceDbConfig({
-      envPath: process.env.ONTOS_DEMO_ENV_FILE ?? new URL('../../.env', import.meta.url).pathname,
+      envPath: yield* Config.String('ONTOS_DEMO_ENV_FILE').pipe(
+        Config.withDefault(new URL('../../.env', import.meta.url).pathname),
+      ),
     });
     if (
       configuration.deploymentEnvironment !== 'development' ||
@@ -162,8 +182,80 @@ const writeGrants = (granted: readonly string[], revoked: readonly string[]) =>
     ).updates.map((update) =>
       v1.RelationshipUpdate.create({ ...update, operation: v1.RelationshipUpdate_Operation.DELETE }),
     );
-    yield* client.writeRelationships(v1.WriteRelationshipsRequest.create({ updates: [...touch.updates, ...revoke] }));
+    return yield* client.writeRelationships(
+      v1.WriteRelationshipsRequest.create({ updates: [...touch.updates, ...revoke] }),
+    );
   }).pipe(Effect.scoped);
+
+export const seedSiamparkCaseRecords = Effect.fn('Demo.seedSiamparkCaseRecords')(function* seedCaseRecords(
+  client: SeedClient,
+  target: SeedTarget,
+  owners: Readonly<Record<'external' | 'management', string>>,
+  checkpointDirectory: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const crmClients = (yield* client.call('crm', recordsPath, Empty, {}, CrmRecords)).state.clients.items;
+  const customers = yield* seedCustomerList(client);
+  let pipeline = yield* client.call(pipelineAudience, recordsPath, Empty, {}, Pipeline);
+  const titles = new Set(pipeline.items.map(({ title }) => title));
+  for (const entry of cases) {
+    if (titles.has(entry.title)) {
+      continue;
+    }
+    const matchingClients = crmClients.filter(({ name }) => name === entry.customer);
+    const [crmClient] = matchingClients;
+    if (matchingClients.length !== 1 || crmClient === undefined) {
+      return yield* new DemoSeedError({ reason: `Expected one Siampark CRM fixture for ${entry.customer}.` });
+    }
+    const customer = yield* existingSeedCustomer(customers, entry.customer);
+    let partyId = crmClient.partyRef?.partyId ?? customer?.partyRef.resourceId;
+    if (partyId === undefined) {
+      yield* fs.makeDirectory(checkpointDirectory, { recursive: true });
+      const created = yield* ensureSeedCustomer(
+        client,
+        target,
+        path.join(checkpointDirectory, `${demoId('siampark.case.customer', entry.customer)}.json`),
+        {
+          evidenceKey: demoId('siampark.case.customer', entry.customer),
+          name: entry.customer,
+          partyType: crmClient.kind === 'person' ? 'PERSON' : 'ORGANIZATION',
+        },
+      );
+      partyId = created.partyRef.resourceId;
+    }
+    const owner = owners[entry.owner];
+    const payload = yield* Schema.decodeUnknownEffect(ApplyPayload)({
+      command: {
+        _tag: 'CreateOpportunity',
+        expectedCloseDate: entry.close,
+        lines: [{ productName: entry.premises, quantity: 12, unitPriceMinor: entry.monthlyRentCzk * 100, vatRate: 21 }],
+        note: entry.note,
+        ownerEmployeeId: owner,
+        partyId,
+        stage: entry.stage,
+        title: entry.title,
+      },
+      expectedRevision: pipeline.revision,
+    });
+    const result = yield* client.call(
+      pipelineAudience,
+      '/sales-pipeline/actions/apply-command',
+      ApplyPayload,
+      payload,
+      Revision,
+      true,
+    );
+    pipeline = { items: pipeline.items, revision: result.revision };
+    yield* Console.log(`+ ${entry.title} (${DateTime.formatIsoDateUtc(yield* DateTime.now)})`);
+  }
+  pipeline = yield* client.call(pipelineAudience, recordsPath, Empty, {}, Pipeline);
+  for (const entry of cases) {
+    if (pipeline.items.filter(({ title }) => title === entry.title).length !== 1) {
+      return yield* new DemoSeedError({ reason: `Siampark case fixture is missing or duplicated: ${entry.title}.` });
+    }
+  }
+  return pipeline;
+});
 
 const main = Effect.gen(function* seedCases() {
   const shellUrl = yield* Config.String('ONTOS_DEMO_SEED_URL').pipe(Config.withDefault('http://localhost:3020'));
@@ -178,77 +270,41 @@ const main = Effect.gen(function* seedCases() {
     managementEmail,
     password,
   );
-  const employees = (yield* client.call('workforce', '/reads/records', Empty, {}, Employees)).items;
+  const employees = (yield* client.call('workforce', recordsPath, Empty, {}, Employees)).items;
   const employeeOf = (email: string) => employees.find((entry) => entry.active && entry.email === email)?.id;
   const owners = { external: employeeOf(externalEmail), management: employeeOf(managementEmail) };
   if (owners.external === undefined) {
     return yield* new DemoSeedError({ reason: 'Siampark has no active employee record for external@siampark.demo.' });
   }
-  const crmClients = (yield* client.call('crm', '/reads/records', Empty, {}, CrmRecords)).state.clients.items;
-  const customers = (yield* client.call(
-    'party-registry',
-    '/reads/customer-list',
-    ListRequest,
-    { includeArchived: false, limit: 500 },
-    Customers,
-  )).items;
-  const partyOf = (name: string) =>
-    crmClients.find((entry) => entry.name === name)?.partyRef?.partyId ??
-    customers.find((entry) => entry.displayName === name)?.partyId;
-
-  let pipeline = yield* client.call('sales-pipeline', '/reads/records', Empty, {}, Pipeline);
-  const titles = new Set(pipeline.items.map(({ title }) => title));
-  for (const entry of cases) {
-    if (titles.has(entry.title)) {
-      continue;
-    }
-    const partyId = partyOf(entry.customer);
-    if (partyId === undefined) {
-      yield* Console.log(`- ${entry.title}: zákazník ${entry.customer} není v Party Registry, přeskočeno`);
-      continue;
-    }
-    const owner = owners[entry.owner];
-    const payload = yield* Schema.decodeUnknownEffect(ApplyPayload)({
-      command: {
-        _tag: 'CreateOpportunity',
-        expectedCloseDate: entry.close,
-        lines: [{ productName: entry.premises, quantity: 12, unitPriceMinor: entry.monthlyRentCzk * 100, vatRate: 21 }],
-        note: entry.note,
-        ...(owner === undefined ? {} : { ownerEmployeeId: owner }),
-        partyId,
-        stage: entry.stage,
-        title: entry.title,
-      },
-      expectedRevision: pipeline.revision,
-    });
-    const result = yield* client.call(
-      'sales-pipeline',
-      '/sales-pipeline/actions/apply-command',
-      ApplyPayload,
-      payload,
-      Revision,
-      true,
-    );
-    pipeline = { ...pipeline, revision: result.revision };
-    yield* Console.log(`+ ${entry.title} (${DateTime.formatIsoDateUtc(yield* DateTime.now)})`);
+  if (owners.management === undefined) {
+    return yield* new DemoSeedError({ reason: 'Siampark has no active employee record for management@siampark.demo.' });
   }
-  pipeline = yield* client.call('sales-pipeline', '/reads/records', Empty, {}, Pipeline);
+  const checkpointDirectory = yield* Config.String('ONTOS_DEMO_CASE_CHECKPOINT_DIR').pipe(
+    Config.withDefault(new URL('../../.scratch/demo-siampark-cases/', import.meta.url).pathname),
+  );
+  const pipeline = yield* seedSiamparkCaseRecords(
+    client,
+    { legalEntityId: rentalDemoLegalEntityId, shellUrl, tenantId: demoTenantId },
+    { external: owners.external, management: owners.management },
+    checkpointDirectory,
+  );
   const entrusted = pipeline.items.filter(({ ownerEmployeeId }) => ownerEmployeeId === owners.external);
   const others = pipeline.items.filter(({ ownerEmployeeId }) => ownerEmployeeId !== owners.external);
   yield* writeGrants(
     entrusted.map(({ id }) => id),
     others.map(({ id }) => id),
   );
-  yield* Console.log(
+  return yield* Console.log(
     `Siampark obchodní případy: ${pipeline.items.length}; svěřeno ${externalEmail}: ${entrusted.map(({ title }) => title).join(', ')}.`,
   );
 });
 
-NodeRuntime.runMain(
-  main.pipe(
-    Effect.catchTag('DemoSeedError', (error: DemoSeedError) => Console.error(`Chyba: ${error.reason}`)),
-    Effect.provide(
-      Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer, ConfigProvider.layer(ConfigProvider.fromEnv())),
-    ),
+const executableLayer = Layer.effectDiscard(main).pipe(
+  Layer.provide(
+    Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer, ConfigProvider.layer(ConfigProvider.fromEnv())),
   ),
 );
+
+if (import.meta.main) {
+  NodeRuntime.runMain(Layer.build(executableLayer).pipe(Effect.scoped));
+}

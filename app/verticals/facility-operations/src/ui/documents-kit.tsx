@@ -1,7 +1,6 @@
 // @effect-diagnostics asyncFunction:off globalTimers:off
 // Documents lane (ops-documents): shared presentation helpers for documents, files and comments.
 // Other lanes may import these, but the components to embed are CommentThread and LinkedDocuments.
-import type { PrincipalRef } from '@app/core-runtime/permissions/principal-ref';
 import { formatDateTime } from '@app/admin-ui';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
@@ -10,53 +9,7 @@ import { DateTime as DateTimeModule } from 'effect';
 import type { DocumentRecord, SubjectRef } from '../../shared/domain/documents.ts';
 import { loadRecords } from './use-agenda.ts';
 
-/** Siampark demo personas (scripts/demo/permissions.mts siamparkRentalPersonas). */
-const knownPrincipals: Readonly<Record<string, { readonly key: string; readonly email: string }>> = {
-  '72000000-0000-4000-8000-000000000021': { email: 'management@siampark.demo', key: 'management' },
-  '72000000-0000-4000-8000-000000000022': { email: 'operations@siampark.demo', key: 'operations' },
-  '72000000-0000-4000-8000-000000000023': { email: 'finance@siampark.demo', key: 'finance' },
-  '72000000-0000-4000-8000-000000000024': { email: 'external@siampark.demo', key: 'external' },
-};
-
 const k = 'facility-operations.documents';
-
-/** Display name of a principal: persona role label, or a short id. */
-export const usePrincipalLabel = () => {
-  const { t } = useModernI18n();
-  return (principal: PrincipalRef | undefined) => {
-    if (principal === undefined) {
-      return t('facility-operations.common.notProvided');
-    }
-    const known = knownPrincipals[principal.principalId];
-    return known === undefined
-      ? t(`${k}.principals.unknown`, { id: principal.principalId.slice(-4) })
-      : t(`${k}.principals.${known.key}`);
-  };
-};
-
-export const principalEmail = (principal: PrincipalRef | undefined) =>
-  principal === undefined ? undefined : knownPrincipals[principal.principalId]?.email;
-
-const avatarTones = ['bg-primary-light', 'bg-info-light', 'bg-success-light', 'bg-warning-light', 'bg-danger-light'];
-
-/** Round initials avatar, tone derived from the principal id. */
-export const PrincipalAvatar = ({ label, principal }: { readonly label: string; readonly principal?: PrincipalRef }) => {
-  const seed = (principal?.principalId ?? label).split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
-  const initials = label
-    .split(/\s+/)
-    .filter((part) => part !== '')
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? '')
-    .join('');
-  return (
-    <span
-      aria-hidden="true"
-      className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full font-semibold text-fg-primary text-xs ${avatarTones[seed % avatarTones.length] ?? 'bg-primary-light'}`}
-    >
-      {initials === '' ? '?' : initials}
-    </span>
-  );
-};
 
 export const isoOf = (value: DateTime.Utc) => DateTimeModule.formatIso(value);
 
@@ -168,7 +121,11 @@ export const CategoryBadge = ({ category }: { readonly category: string }) => {
 };
 
 /** Compact chip for a linked record. */
-export const SubjectChip = ({ subject, onRemove, removeLabel }: {
+export const SubjectChip = ({
+  subject,
+  onRemove,
+  removeLabel,
+}: {
   readonly subject: SubjectRef;
   readonly onRemove?: () => void;
   readonly removeLabel?: string;
@@ -206,7 +163,9 @@ const decodeBase64 = (value: string) => {
 /** Loads a stored file through the governed records read (server checks documents read access). */
 export const fetchFileObjectUrl = async (
   fileId: string,
-): Promise<{ readonly ok: true; readonly url: string; readonly mime: string; readonly name: string } | { readonly ok: false }> => {
+): Promise<
+  { readonly ok: true; readonly url: string; readonly mime: string; readonly name: string } | { readonly ok: false }
+> => {
   const outcome = await loadRecords({ agendas: [], fileId });
   if (!outcome.ok || outcome.data.file === undefined) {
     return { ok: false };

@@ -155,6 +155,7 @@ import {
 import { ExternalIdentityNotInstalledLive } from './auth/external-identity-runtime.ts';
 import type { ExternalIdentityDeploymentLayer } from './auth/external-identity-runtime.ts';
 import type { GatewayIssuerError } from './auth/gateway-issuer.ts';
+import { GatewayTimings, gatewayTimingCollector, observeGatewayPhase } from './auth/gateway-timing.ts';
 import { demoAccountCapability } from './auth/demo-accounts.ts';
 import { listAgentEntities, manageAgentEntity } from './auth/agent-entities.ts';
 import { IdentityLifecycle, IdentityLifecycleLive } from './auth/identity-lifecycle.ts';
@@ -1923,11 +1924,22 @@ const identityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'identity
     );
 });
 
+const withGatewayTimings = Effect.fn('ShellGateway.withTimings')(function* withGatewayTimingsEffect<
+  Value,
+  Failure,
+  Requirements,
+>(effect: Effect.Effect<Value, Failure, Requirements>) {
+  const collector = yield* gatewayTimingCollector;
+  yield* collector.appendResponseHeader;
+  return yield* effect.pipe(Effect.provideService(GatewayTimings, Option.some(collector.timings)));
+});
+
 const requireGatewayRelease = Effect.fn('ShellGateway.requireRelease')(function* requireGatewayReleaseEffect(
   compositionRevision: string | undefined,
 ) {
   const authority = yield* ShellInstalledModuleCatalog;
   const catalog = yield* authority.load.pipe(
+    observeGatewayPhase('gateway-release'),
     Effect.catchTags({
       InstalledModuleCatalogInvalidError: () => failGatewayProblem(gatewayAuthenticationUnavailableProblem()),
       InstalledModuleCatalogUnavailableError: () => failGatewayProblem(gatewayAuthenticationUnavailableProblem()),
@@ -1963,12 +1975,14 @@ const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(function
   if (rawKey === undefined || rawKey.trim().length === 0) {
     return yield* failApiKeyGatewayProblem(gatewayAuthenticationRequiredProblem());
   }
-  const verified = yield* keys
-    .verify(rawKey)
-    .pipe(Effect.catch((error) => failApiKeyGatewayProblem(apiKeyProviderGatewayProblem(error))));
-  const identity = yield* resolver
-    .resolveBetterAuthApiKey(verified.providerKeyId)
-    .pipe(Effect.catch((error) => pipe(error, principalResolutionGatewayProblem, failApiKeyGatewayProblem)));
+  const verified = yield* keys.verify(rawKey).pipe(
+    observeGatewayPhase('key-verify'),
+    Effect.catch((error) => failApiKeyGatewayProblem(apiKeyProviderGatewayProblem(error))),
+  );
+  const identity = yield* resolver.resolveBetterAuthApiKey(verified.providerKeyId).pipe(
+    observeGatewayPhase('principal-resolve'),
+    Effect.catch((error) => pipe(error, principalResolutionGatewayProblem, failApiKeyGatewayProblem)),
+  );
   let legalEntityId: string | undefined;
   if (payload.legalEntityId !== undefined) {
     const selected = yield* validateAuthorizedLegalEntity({
@@ -2005,6 +2019,7 @@ const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(function
     compositionRevision,
     principal,
   }).pipe(
+    observeGatewayPhase('assertion-issue'),
     Effect.tapError((error) => logGatewayIssuerFailure('api_key', request, error)),
     Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)),
   );
@@ -2033,10 +2048,12 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
           compositionRevision: payload.compositionRevision,
           principal: sessionResult.principal,
         }).pipe(
+          observeGatewayPhase('assertion-issue'),
           Effect.tapError((error) => logGatewayIssuerFailure('session', request, error)),
           Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)),
         );
       }).pipe(
+        withGatewayTimings,
         recoverUnexpectedDefect(request, 'Unexpected Shell gateway assertion defect', () =>
           failGatewayProblem(gatewayInternalProblem()),
         ),
@@ -2047,6 +2064,7 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
         yield* noStore;
         return yield* issueApiKeyContext(payload, headers['x-api-key'], request);
       }).pipe(
+        withGatewayTimings,
         recoverUnexpectedDefect(request, 'Unexpected API-key gateway assertion defect', () =>
           failGatewayProblem(gatewayInternalProblem()),
         ),
@@ -2090,6 +2108,7 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
           },
         );
         const response = yield* dispatchModuleApiRequest(ownerRequest).pipe(
+          observeGatewayPhase('owner-dispatch'),
           Effect.catch((error) =>
             Effect.succeed(
               Response.json(
@@ -2106,6 +2125,7 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
           noStoreResponse,
         );
       }).pipe(
+        withGatewayTimings,
         recoverUnexpectedDefect(request, 'Unexpected API-key gateway read defect', () =>
           failGatewayProblem(gatewayInternalProblem()),
         ),
@@ -2133,11 +2153,13 @@ const documentGatewayGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'd
         payload.compositionRevision,
         payload.audiences,
       ).pipe(
+        observeGatewayPhase('assertion-issue'),
         Effect.tapError((error) => logGatewayIssuerFailure('session', request, error)),
         Effect.catch((error) => pipe(error, gatewayIssuerProblem, failGatewayProblem)),
       );
       return { assertions };
     }).pipe(
+      withGatewayTimings,
       recoverUnexpectedDefect(request, 'Unexpected Shell document gateway assertions defect', () =>
         failGatewayProblem(gatewayInternalProblem()),
       ),
@@ -2256,10 +2278,10 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
         return response;
       }).pipe(agentPlatformDefect(request)),
     )
-    .handle('agentQueue', ({ request }) =>
+    .handle('agentQueue', ({ payload, request }) =>
       Effect.gen(function* agentQueueHandler() {
         const caller = yield* agentPlatformSessionCaller(request);
-        const response = yield* loadAgentQueue(caller).pipe(Effect.catch(agentPlatformFailure));
+        const response = yield* loadAgentQueue(caller, payload).pipe(Effect.catch(agentPlatformFailure));
         yield* noStore;
         return response;
       }).pipe(agentPlatformDefect(request)),
