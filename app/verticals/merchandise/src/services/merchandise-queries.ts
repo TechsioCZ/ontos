@@ -357,15 +357,13 @@ export const productCategoryCounts = Effect.fn('MerchandiseQueries.productCatego
   },
 );
 
-/** Category id of a storefront slug, or undefined. */
+/** Scoped scalar subquery: resolve a slug in the consuming statement, not a separate round trip. */
 const categoryIdBySlug = (db: MerchandiseDb, scope: StoreScope, slug: string) =>
-  query(
-    db
-      .select({ id: categories.id })
-      .from(categories)
-      .where(and(whereScope(categories, scope), eq(categories.slug, slug)))
-      .limit(1),
-  ).pipe(Effect.map((rows) => rows[0]?.id));
+  db
+    .select({ id: categories.id })
+    .from(categories)
+    .where(and(whereScope(categories, scope), eq(categories.slug, slug)))
+    .limit(1);
 
 const labelFilter = (label: NonNullable<StorefrontCatalogQuery['label']>) =>
   label === 'action'
@@ -390,8 +388,7 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
   const catalog = input.query;
   const featuredIds = sql`((select h.homepage_featured_product_ids from ${catalogHeads} h
     where h.tenant_id = ${scope.tenantId}::uuid and h.legal_entity_id = ${scope.legalEntityId}::uuid))::text[]`;
-  const categoryId =
-    catalog.categorySlug === undefined ? undefined : yield* categoryIdBySlug(db, scope, catalog.categorySlug);
+  const categoryId = catalog.categorySlug === undefined ? undefined : categoryIdBySlug(db, scope, catalog.categorySlug);
   const words = wordsOf(catalog.q);
   const needle = normalizeSearchText(catalog.q ?? '');
   const filters: (SQL | undefined)[] = [
@@ -403,11 +400,9 @@ export const storefrontProducts = Effect.fn('MerchandiseQueries.storefrontProduc
       : undefined,
     catalog.productIds === undefined ? undefined : idsFilter(products.id, catalog.productIds),
     catalog.slug === undefined ? undefined : eq(products.slug, catalog.slug),
-    catalog.categorySlug === undefined
+    categoryId === undefined
       ? undefined
-      : categoryId === undefined
-        ? sql`false`
-        : or(eq(products.categoryId, categoryId), sql`${products.categoryPathIds} @> ${textArray([categoryId])}`),
+      : or(eq(products.categoryId, categoryId), sql`${products.categoryPathIds} @> array[${categoryId}]::text[]`),
     catalog.label === undefined ? undefined : labelFilter(catalog.label),
     ...containsAll(products.searchText, words),
     catalog.minMinor === undefined ? undefined : sql`coalesce(${products.grossPriceMinor}, 0) >= ${catalog.minMinor}`,
@@ -614,8 +609,7 @@ export const categoryTree = Effect.fn('MerchandiseQueries.categoryTree')(functio
   },
 ) {
   const activeId =
-    input.activeId ??
-    (input.activeSlug === undefined ? undefined : yield* categoryIdBySlug(db, scope, input.activeSlug));
+    input.activeId ?? (input.activeSlug === undefined ? undefined : categoryIdBySlug(db, scope, input.activeSlug));
   const active = activeId === undefined ? sql`false` : eq(categories.id, activeId);
   // Storefront tiles and the sidebar show images of roots and of the active category's children.
   const shown = input.storefront

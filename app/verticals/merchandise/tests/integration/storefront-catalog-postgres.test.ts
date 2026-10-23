@@ -3,6 +3,8 @@
 import { DateTime, Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
+
 import type { MerchandiseState, RecordsView, StorefrontCatalogQuery } from '../../shared/apis/records.ts';
 import {
   categoryTree,
@@ -53,6 +55,54 @@ it.live('filters by category slug including descendants through categoryPathIds'
       expect((yield* catalogPage(fixture, { categorySlug: 'neexistuje' })).total).toBe(0);
     }),
   ),
+);
+
+it.live('resolves a storefront category slug within the product statement without a lookup round trip', () =>
+  Effect.gen(function* categoryProductRoundTrips() {
+    const statements: { readonly parameters: readonly unknown[]; readonly text: string }[] = [];
+    const db = yield* makeTestDatabase((text, parameters) =>
+      Effect.sync(() => {
+        statements.push({ parameters, text });
+        return [];
+      }),
+    );
+    const scope = {
+      legalEntityId: '00000000-0000-4000-8000-000000000001',
+      tenantId: '00000000-0000-4000-8000-000000000002',
+    };
+    const failure = yield* storefrontProducts(db, scope, {
+      query: { categorySlug: 'missing-category', fields: 'card' },
+    }).pipe(Effect.flip);
+    expect(failure.reason).toBe('The storefront catalog is not initialized');
+    expect(statements).toHaveLength(1);
+    expect(statements[0]?.text).toContain('"demo_merchandise"."categories"');
+    expect(statements[0]?.text).toContain('"category_path_ids" @> array[');
+    expect(statements[0]?.parameters).toContain('missing-category');
+    expect(statements[0]?.parameters).toContain(scope.tenantId);
+    expect(statements[0]?.parameters).toContain(scope.legalEntityId);
+  }),
+);
+
+it.live('resolves the active category slug within the tree statement without a lookup round trip', () =>
+  Effect.gen(function* categoryTreeRoundTrips() {
+    const statements: { readonly parameters: readonly unknown[]; readonly text: string }[] = [];
+    const db = yield* makeTestDatabase((text, parameters) =>
+      Effect.sync(() => {
+        statements.push({ parameters, text });
+        return [];
+      }),
+    );
+    const scope = {
+      legalEntityId: '00000000-0000-4000-8000-000000000001',
+      tenantId: '00000000-0000-4000-8000-000000000002',
+    };
+    expect(yield* categoryTree(db, scope, { activeSlug: 'missing-category', storefront: true })).toEqual([]);
+    expect(statements).toHaveLength(1);
+    expect(statements[0]?.text).toContain('"demo_merchandise"."categories"');
+    expect(statements[0]?.parameters).toContain('missing-category');
+    expect(statements[0]?.parameters).toContain(scope.tenantId);
+    expect(statements[0]?.parameters).toContain(scope.legalEntityId);
+  }),
 );
 
 it.live('lists featured products in homepage order followed by recommended ones', () =>
