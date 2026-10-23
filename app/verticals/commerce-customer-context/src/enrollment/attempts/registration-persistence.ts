@@ -40,8 +40,13 @@ const readAccountPartyRoutine = defineScopedRoutine({
     { source: 'tenantId', type: 'uuid' },
     { source: 'legalEntityId', type: 'uuid' },
     { source: 'input', type: 'text' },
+    { source: 'input', type: 'uuid' },
+    { source: 'input', type: 'uuid' },
   ],
-  resultSchema: Schema.Struct({ party_id: EnrollmentResourceIdSchema.check(Schema.isUUID()) }),
+  resultSchema: Schema.Struct({
+    party_id: EnrollmentResourceIdSchema.check(Schema.isUUID()),
+    profile_id: EnrollmentResourceIdSchema.check(Schema.isUUID()),
+  }),
   routineKey: 'portal-enrollment.account-party.read',
   schema: 'commerce_customer_context',
 });
@@ -73,17 +78,19 @@ export const readRetailEnrollmentRegistration = (
   );
 
 /** Exact provider-subject mapping, never an email-based customer search. */
-export const readRetailEnrollmentAccountParty = (
+export const readRetailEnrollmentAccountAuthority = (
   transaction: EnrollmentAttemptScopedRoutineInvoker,
-  providerSubjectId: string,
+  subject: { readonly authBindingId: string; readonly principalId: string; readonly providerSubjectId: string },
 ) =>
-  transaction.invoke(readAccountPartyRoutine, [providerSubjectId]).pipe(
-    Effect.mapError((cause) =>
-      attemptUnavailable('The admitted retail customer mapping could not be read', undefined, cause),
-    ),
-    Effect.flatMap((rows) =>
-      rows.length > 1
-        ? Effect.fail(attemptUnavailable('The admitted retail customer mapping is ambiguous'))
-        : Effect.succeed(Option.fromNullishOr(rows[0]?.party_id)),
-    ),
-  );
+  transaction
+    .invoke(readAccountPartyRoutine, [subject.providerSubjectId, subject.principalId, subject.authBindingId])
+    .pipe(
+      Effect.mapError((cause) =>
+        attemptUnavailable('The admitted retail customer mapping could not be read', undefined, cause),
+      ),
+      Effect.flatMap((rows) =>
+        rows.length > 1
+          ? Effect.fail(attemptUnavailable('The admitted retail customer mapping is ambiguous'))
+          : Effect.succeed(Option.fromNullishOr(rows[0])),
+      ),
+    );

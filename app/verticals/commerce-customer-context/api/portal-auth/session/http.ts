@@ -7,9 +7,7 @@ import type { HttpServerRequest } from 'effect/unstable/http';
 import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'effect/unstable/http/Cookies';
 
 import { authenticateOperationPrincipal } from '../../auth/action-principal.ts';
-import { CommerceEnrollmentOwnerTransactionRunner } from '../../../src/enrollment/orchestration/owner-transition-production.ts';
 import { EnrollmentTenantIdSchema } from '../../../shared/enrollment-contracts.ts';
-import { readRetailEnrollmentAccountParty } from '../../../src/enrollment/attempts/registration-persistence.ts';
 import { commerceCustomerContextApi } from '../../../shared/api.ts';
 import { CommerceSessionReferenceSchema } from '../../../shared/portal-auth-contracts.ts';
 import {
@@ -56,6 +54,8 @@ import type {
 } from './contracts.ts';
 import { CommercePortalAuthSessionEvidenceRejected, CommercePortalAuthSessionInvalidRequest } from './errors.ts';
 import { CommercePortalAuthSessionLifecycle } from './lifecycle.ts';
+import { CommerceCustomerAuthority, CustomerAuthorityRejected } from './customer-authority.ts';
+import type { RetailPortalPermissionCode } from '../../../shared/domain/profile-contracts.ts';
 import type { CommercePortalAuthSessionEvidenceFailure, CommercePortalAuthSessionFailure } from './lifecycle.ts';
 
 const httpBridgeTimeout = Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.session.providerCallTimeoutMilliseconds);
@@ -639,7 +639,10 @@ const getSession = Effect.fn('CommercePortalAuthSessionHttp.getSession')(functio
 
 /** The live session proves the account; the redeemed gateway assertion supplies only tenant/LE scope. */
 export const admitCustomerAccount = Effect.fn('CommercePortalAuthSessionHttp.admitCustomerAccount')(
-  function* admitCustomerAccountEffect(request: HttpServerRequest.HttpServerRequest) {
+  function* admitCustomerAccountEffect(
+    request: HttpServerRequest.HttpServerRequest,
+    permission: RetailPortalPermissionCode = 'retail.profile.read',
+  ) {
     const current = yield* getSession(request);
     if (current.state === 'anonymous') {
       return current;
@@ -654,25 +657,31 @@ export const admitCustomerAccount = Effect.fn('CommercePortalAuthSessionHttp.adm
     const tenantId = yield* Schema.decodeEffect(EnrollmentTenantIdSchema)(principal.tenantId).pipe(
       Effect.catch(answerUnavailable()),
     );
-    const runner = yield* CommerceEnrollmentOwnerTransactionRunner;
-    const partyId = yield* runner
-      .run({ legalEntityId: principal.legalEntityId, tenantId: principal.tenantId }, (transaction) =>
-        readRetailEnrollmentAccountParty(transaction, current.session.providerSubjectId),
-      )
-      .pipe(Effect.catch(answerUnavailable()));
-    if (Option.isNone(partyId)) {
-      return yield* Effect.fail(unavailableProblem());
-    }
+    const authority = yield* CommerceCustomerAuthority;
+    const customerAuthority = yield* authority
+      .admit({
+        legalEntityId: principal.legalEntityId,
+        permission,
+        providerSubjectId: current.session.providerSubjectId,
+        sessionRef: current.session.sessionRef,
+        tenantId: principal.tenantId,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          Schema.is(CustomerAuthorityRejected)(cause) ? forbiddenProblem('account_disabled') : unavailableProblem(),
+        ),
+      );
     return {
       account: {
         ...current.account,
         id: current.session.providerSubjectId,
-        partyId: partyId.value,
+        partyId: customerAuthority.partyId,
         tenantId,
       },
-      principal,
+      customerAuthority,
       session: current.session,
       state: 'authenticated',
+      workloadPrincipal: principal,
     } as const;
   },
 );

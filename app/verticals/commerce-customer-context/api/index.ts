@@ -112,6 +112,10 @@ import { CommercePortalAuthSessionLifecycleLive } from './portal-auth/session/li
 import { CommercePortalAuthSessionProviderLive } from './portal-auth/session/provider.ts';
 import { CommercePortalAuthSessionStoreLive } from '../src/portal-auth/persistence/portal-auth-session-store.ts';
 import { CommercePortalAuthServiceLive, portalAuthSessionApiLive } from './portal-auth/session/http.ts';
+import {
+  commerceCustomerAuthorityLive,
+  commerceCustomerAuthorityUnavailableLive,
+} from './portal-auth/session/customer-authority.ts';
 import { commercePortalAuthPlatformCryptoLive } from './portal-auth/deployment.ts';
 import { FetchHttpClient } from 'effect/unstable/http';
 import {
@@ -585,6 +589,15 @@ const deploymentPortalAuthRuntimeLive = Layer.unwrap(
 const commerceCoreIdentityRealmLive = CommerceCoreIdentityClientLive.pipe(
   Layer.provideMerge(CommerceCoreIdentityClientConfigLive),
 );
+const deploymentCustomerAuthorityLive = Layer.unwrap(
+  coreIdentityTransportConfigured.pipe(
+    Effect.map((configured) =>
+      configured
+        ? commerceCustomerAuthorityLive.pipe(Layer.provide(commerceCoreIdentityRealmLive))
+        : commerceCustomerAuthorityUnavailableLive,
+    ),
+  ),
+);
 const commerceEnrollmentPreparationSubjectRealmLive = CommerceEnrollmentPreparationSubjectResolverLive.pipe(
   Layer.provide(Layer.mergeAll(commerceEnrollmentOwnerTransactionRunnerProductionLive, commerceCoreIdentityRealmLive)),
 );
@@ -990,6 +1003,14 @@ export const makeCommerceCustomerContextApiRuntime = (
     deploymentEnrollmentAccountLookupLive,
     // Invitation claims digest the one-time secret and dispatch an owner Action in the same transaction.
     commercePortalAuthPlatformCryptoLive,
+    deploymentCustomerAuthorityLive.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          contextAccess,
+          commerceEnrollmentOwnerTransactionRunnerProductionLive.pipe(GovernedReadLayer.provide(databaseConfiguration)),
+        ),
+      ),
+    ),
     contextAccess,
     compositionHttpClientLive,
     moduleEntrypointGatewayLive.pipe(Layer.provide(databaseConfiguration)),
