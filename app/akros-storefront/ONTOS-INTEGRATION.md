@@ -1,15 +1,15 @@
 # AKROS × OntOS (standalone)
 
-Kai's Next.js app stays independent: npm + package-lock, no pnpm workspace registration,
-no federation, no OntOS vertical and no redesign. The storefront always reads OntOS; there is no
-local prototype data source. The pure catalog model lives in `src/ontos/catalog-model.ts`; server
+Kai's Next.js app stays an independent channel inside the `app/` pnpm workspace: one shared
+lockfile and published UI-kit catalog, no federation, no OntOS vertical and no redesign.
+The storefront always reads OntOS; there is no local prototype data source. The pure catalog model lives in `src/ontos/catalog-model.ts`; server
 pages bind it to bounded owner reads, client navigation uses `CatalogProvider`. All integration code
 lives under `src/ontos` and Next route handlers.
 
 ## Local startup
 
 ```sh
-npm ci
+pnpm install --frozen-lockfile
 # Local OntOS demo; reads ../.env.demo.local on the SERVER only:
 node scripts/with-demo-env.mjs build
 node scripts/with-demo-env.mjs start # 127.0.0.1:3070
@@ -32,12 +32,12 @@ A commented template is in `.env.example`.
 ## Production deploy
 
 ```sh
-npm ci
+pnpm install --frozen-lockfile
 export ONTOS_AKROS_STOREFRONT_API_KEY=… \
   ONTOS_SHELL_URL=https://… ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL=https://…/active
-npm run build
-npm run check:browser-bundle       # fails if the key appears anywhere in .next/static
-npm start -- -p 3070 -H 0.0.0.0
+pnpm run build
+pnpm run check:browser-bundle       # fails if the key appears anywhere in .next/static
+pnpm start -p 3070 -H 0.0.0.0
 ```
 
 All variables are read by the Node server at runtime (`getConfig()`); none is inlined
@@ -48,7 +48,7 @@ Legal entity is pinned to `71000000-0000-4000-8000-000000000024` (AKROS demo), n
 
 The shared demo runs committed code in `ontos-runtime`:
 `app/scripts/demo/rebuild-one.sh akros-storefront`. This fast-forwards the runtime then runs only
-this app's npm install/build/start. PID: `app/.scratch/demo-pids/akros-storefront.pid`;
+the workspace's frozen pnpm install and this app's build/start. PID: `app/.scratch/demo-pids/akros-storefront.pid`;
 logs: `app/.scratch/demo-logs/{build-akros-storefront,akros-storefront}.log`.
 `up.sh` includes the helper; `down.sh` already stops every registered process group.
 

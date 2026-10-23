@@ -37,11 +37,11 @@ This task does not change filter algorithms, catalog data, ordering rules or lay
 
 - Before/after computed styles and geometry: seven routes at eleven widths (77 layouts),
   including four variant products, visual category tiles, a product category and search results.
-- `npm run test:catalog`: token consumption, minimum/package purchases, variant pagination,
+- `pnpm run test:catalog`: token consumption, minimum/package purchases, variant pagination,
   material empty/recovery states, keyboard slider changes and category/search pagination at
   1920, 1024 and 390px.
-- `npm run test:responsive`: homepage, four variant tables across 22 widths, cart and checkout.
-- `npm run test:theme`, `npm run test:account`, `npm run test:typography` and `npm run check`.
+- `pnpm run test:responsive`: homepage, four variant tables across 22 widths, cart and checkout.
+- `pnpm run test:theme`, `pnpm run test:account`, `pnpm run test:typography` and `pnpm run check`.
 
 All checks passed: 150 unit/component tests and the production build; 77 before/after layouts
 matched; the catalog interaction/token checks passed at all three widths. The responsive suite
@@ -65,11 +65,11 @@ regression checks passed.
 - Before/after computed styles match in 22 shared UI states at twelve viewport widths,
   including open search suggestions and open/current/hovered mobile links. Navigation/footer
   geometry matches; popup geometry is checked after its discrete scale transition settles.
-- `npm run test:shared-ui`: header/menu/search/footer token consumption, logo bounds,
+- `pnpm run test:shared-ui`: header/menu/search/footer token consumption, logo bounds,
   footer grid token isolation, Escape/focus restoration, selected category/product navigation,
   all-results links, mobile navigation close and internal footer links.
-- `npm run test:catalog`, `npm run test:responsive`, `npm run test:theme`,
-  `npm run test:account`, `npm run test:typography` and `npm run check`.
+- `pnpm run test:catalog`, `pnpm run test:responsive`, `pnpm run test:theme`,
+  `pnpm run test:account`, `pnpm run test:typography` and `pnpm run check`.
 
 All checks passed: the shared UI test at twelve widths, the catalog interaction checks,
 150 unit/component tests, the production build and the responsive/theme/account/typography
@@ -96,13 +96,13 @@ validation, persistence and order completion.
 - Before/after geometry and computed styles match across all four checkout routes at twelve
   widths from 320 to 1920px: 48 layouts and 10,110 rendered elements. Address captures include
   the expanded billing form; shipping/payment captures include checked and disabled options.
-- Extended `npm run test:theme` probes the actual RadioGroup stack/grid/text, Steps spacing
+- Extended `pnpm run test:theme` probes the actual RadioGroup stack/grid/text, Steps spacing
   and mobile title size, and compact NumericInput text tokens, including 639/640px edges.
 - Full click-through at 1920, 1024 and 390px: named payment availability after delivery changes,
   required-payment validation, billing edit, order confirmation and cart clearing.
 - Responsive, catalog, shared UI, account and actual-font browser suites passed. The production
   build passed on retry after the first Windows build worker exited during static generation.
-  The subsequent full `npm run check` passed formatting, lint, type checking, all 150 tests
+  The subsequent full `pnpm run check` passed formatting, lint, type checking, all 150 tests
   and the production build.
 
 Observed library limitation for task 6: after selecting store-card payment and changing from

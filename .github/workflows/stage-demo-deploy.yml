@@ -226,10 +226,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Setup mise
-        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
-        with:
-          working_directory: app
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
 
       - name: Build the storefront Worker
         working-directory: app/akros-storefront
@@ -239,8 +237,7 @@ jobs:
           STOREFRONT_CATALOG_KV_ID: ${{ env.STAGE_STOREFRONT_CATALOG_KV_ID }}
           STOREFRONT_IMAGE_HOSTS: ''
         run: |
-          mise exec -- npm ci --no-audit --no-fund
-          mise exec -- npm run cloudflare:build
+          mise exec -- pnpm run cloudflare:build
           tar --create --zstd --file "$RUNNER_TEMP/storefront.tar.zst" .open-next .wrangler.generated.json
           ls -lh "$RUNNER_TEMP/storefront.tar.zst"
 
@@ -458,8 +455,7 @@ jobs:
           STOREFRONT_IMAGE_HOSTS: ''
         run: |
           tar --extract --zstd --file "$RUNNER_TEMP/storefront/storefront.tar.zst"
-          mise exec -- npm ci --no-audit --no-fund
-          mise exec -- npm run cloudflare:deploy
+          mise exec -- pnpm run cloudflare:deploy
 
       # One price-free navigation read after the composition switch (skipped while younger than 12 min).
       # The 15-minute cron warms only this tree too; price/stock entries are read on demand and expire

@@ -7,8 +7,8 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "cloudflare:configure": "node scripts/cloudflare-config.mjs",
-    "cloudflare:build": "npm run cloudflare:configure && AKROS_CLOUDFLARE_BUILD=1 opennextjs-cloudflare build --config .wrangler.generated.json",
-    "cloudflare:deploy": "npm run cloudflare:configure && opennextjs-cloudflare deploy --config .wrangler.generated.json",
+    "cloudflare:build": "pnpm run cloudflare:configure && AKROS_CLOUDFLARE_BUILD=1 opennextjs-cloudflare build --config .wrangler.generated.json",
+    "cloudflare:deploy": "pnpm run cloudflare:configure && opennextjs-cloudflare deploy --config .wrangler.generated.json",
     "catalog:generate": "node scripts/generate-akros-catalog.mjs",
     "start": "next start",
     "check:browser-bundle": "node scripts/check-browser-bundle.mjs",
@@ -24,12 +24,12 @@
     "lint": "oxlint --react-plugin --jsx-a11y-plugin --nextjs-plugin --vitest-plugin src tests",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run build",
+    "check": "pnpm run format:check && pnpm run lint && pnpm run typecheck && pnpm run test && pnpm run build",
     "test:typography": "node tests/browser/global-typography.mjs",
     "test:theme": "node tests/browser/ui-kit-theme.mjs"
   },
   "dependencies": {
-    "@techsio/ui-kit": "0.56.1",
+    "@techsio/ui-kit": "catalog:",
     "next": "16.3.8",
     "react": "19.3.0",
     "react-dom": "19.3.0"
@@ -57,5 +57,5 @@
   "engines": {
     "node": ">=20.9.0"
   },
-  "packageManager": "npm@11.16.0"
+  "packageManager": "pnpm@12.4.2"
 }

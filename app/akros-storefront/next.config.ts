@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import type { NextConfig } from "next";
 
 // Extra https image hosts an OntOS admin may use (comma-separated). Must match the server env at build AND start;
@@ -9,6 +10,8 @@ const extraImageHosts = (process.env.STOREFRONT_IMAGE_HOSTS ?? "")
 
 const nextConfig: NextConfig = {
   agentRules: false,
+  // pnpm resolves dependencies through the workspace virtual store above this app.
+  outputFileTracingRoot: resolve(process.cwd(), ".."),
   images: {
     unoptimized: process.env.AKROS_CLOUDFLARE_BUILD === "1",
     remotePatterns: [

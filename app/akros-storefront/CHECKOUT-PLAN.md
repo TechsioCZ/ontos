@@ -47,7 +47,7 @@ Následující analytické sekce zachovávají původní srovnání před implem
 
 ### Ověření implementace
 
-- `npm run check`: formátování, lint bez nálezů, TypeScript, 76 testů a produkční
+- `pnpm run check`: formátování, lint bez nálezů, TypeScript, 76 testů a produkční
   build úspěšné. Všechny čtyři kroky jsou součástí buildu.
 - Na `localhost:3000` ověřeny všechny čtyři obrazovky proti Figma podkladům,
   desktop 1920/1440 px, tablet 1024 px a mobil 390 px.
@@ -262,7 +262,7 @@ Steps v tomto balíčku vyžaduje pozornost:
    Ověřit proti `7:1598`.
 6. **Celý průchod.** Komponentové testy přechodů a validace, jednotkové testy
    součtů/zaokrouhlení a migrace, ruční desktop/mobile průchod včetně návratů.
-   Nakonec `npm run check` a vizuální kontrola všech čtyř kroků na localhost:3000.
+   Nakonec `pnpm run check` a vizuální kontrola všech čtyř kroků na localhost:3000.
 
 Před každou etapou znovu otevřít konkrétní Figma uzel a relevantní část
 storefront/UI-kit doporučení. Rozpracované etapy zakončovat samostatnými

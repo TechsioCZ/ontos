@@ -7,7 +7,7 @@ server-side BFF; see [ONTOS-INTEGRATION.md](./ONTOS-INTEGRATION.md).
 ## Run locally
 
 ```bash
-npm install
+pnpm install
 node scripts/with-demo-env.mjs build
 node scripts/with-demo-env.mjs start   # 127.0.0.1:3070, needs the local OntOS demo
 ```
@@ -15,22 +15,22 @@ node scripts/with-demo-env.mjs start   # 127.0.0.1:3070, needs the local OntOS d
 The six-part UI-kit refactor, its progress and component adoption inventories are tracked in
 [UI-KIT-REFACTOR.md](./UI-KIT-REFACTOR.md).
 
-`npm run test:catalog` checks catalog/variant token consumption and purchase/filter/pagination
+`pnpm run test:catalog` checks catalog/variant token consumption and purchase/filter/pagination
 flows at 1920, 1024 and 390px. It covers minimum quantities, whole packages, empty filter results,
 keyboard slider changes and preservation of the search query when paging through results.
 
-`npm run test:shared-ui` checks header/menu/search/footer token consumption and layout at twelve
+`pnpm run test:shared-ui` checks header/menu/search/footer token consumption and layout at twelve
 widths from 320 to 1920px, search keyboard/all-results navigation, mobile menu close/focus and
 internal footer links. Utility navigation uses Button tokens, with a line-height utility for
 the Button API gap. Footer columns use the shared component's `layout="col"` and `--footer-cols`.
 
-With the storefront running, `npm run test:home` checks homepage overflow, product stock rows
+With the storefront running, `pnpm run test:home` checks homepage overflow, product stock rows
 and reachable carousel controls at 34 widths from 320 to 2560 px, including breakpoint edges.
 It also exercises every mobile indicator, both arrows and keyboard navigation. Set
 `AKROS_HOME_SCREENSHOTS` to save screenshots. Below 431 px, carousel indicators sit beneath
 the banner so their 44 px targets do not overlap the arrows.
 
-`npm run test:responsive` includes this homepage check, then checks variant-table text and controls
+`pnpm run test:responsive` includes this homepage check, then checks variant-table text and controls
 at 22 widths and cart/review rows at 23 widths from 320 to 1920 px. Variant checks also cover
 filter overflow, readable price endpoints and the price/submit group across four products.
 Cart fixtures include long
@@ -64,7 +64,7 @@ and exposes it through `--font-akros` to the UI-kit font tokens. Pages and porta
 surfaces inherit the same font. Aktiv Grotesk
 from the design is currently represented by Inter because its font asset is unavailable.
 
-With the storefront running, `npm run test:typography` verifies actual rendered Inter
+With the storefront running, `pnpm run test:typography` verifies actual rendered Inter
 through Chrome DevTools across eleven routes at desktop and mobile widths, including the
 country/phone dropdowns, cart dialog and mobile search. `AKROS_FONT_SCREENSHOTS` can
 select a directory for screenshots and the measured font report.
@@ -73,12 +73,12 @@ Footer social icons in `src/icons/akros/` are original SVG exports from Figma no
 The Iconify Tailwind plugin loads them as the local `akros` collection, used through the
 UI-kit `Icon` component. Keep their paths, view boxes and internal padding from the design.
 
-With the storefront running, `npm run test:theme` checks that carousel dots and controls,
+With the storefront running, `pnpm run test:theme` checks that carousel dots and controls,
 product card accents and CTA weights, header account/favorites controls, the cart count badge,
 the mini-cart trigger and portalled preview, checkout actions and cart quantity inputs respond
 to their UI-kit tokens. It also checks the quantity input's hover/focus
 surfaces. Run it alongside the responsive, account and typography browser suites when changing
-token mappings; these browser checks are separate from `npm run check`.
+token mappings; these browser checks are separate from `pnpm run check`.
 The theme check also probes product detail badge colors, favorite button colors/padding and
 purchase quantity padding, including isolation from the neighboring favorite button.
 It also checks checkout method columns/spacing, named-cart text/spacing, step spacing/mobile
@@ -104,7 +104,7 @@ token in `0.56.1`, so the count retains `leading-none`.
 are never persisted; changing credentials and ARES lookup require integrations that this
 prototype does not have. Navigation sections without an existing implementation are disabled.
 The original dashboard remains at `/muj-ucet/prehled`. With the dev server running,
-`npm run test:account` checks desktop geometry, nine viewport widths, persistence and validation.
+`pnpm run test:account` checks desktop geometry, nine viewport widths, persistence and validation.
 
 The profile reference is Figma **7:2085**, whose cart sidebar is hidden. At 1920 px,
 the page has one 1660 px column, 32 px panel padding, 16 px navigation-item padding,
@@ -120,7 +120,7 @@ second sidebar. Order history has working search, month and status filters; belo
 1280 px it uses cards instead of a wide table. Order detail follows the selected
 demo order and does not reuse the first order's products for other orders.
 Account claims stays inside the account; the public `/reklamace` page remains available.
-`npm run test:account` covers profile behavior and the navigation between account screens.
+`pnpm run test:account` covers profile behavior and the navigation between account screens.
 Button and input weights use the UI kit's component font-weight tokens; checkbox
 borders use `--border-width-checkbox`. Select indicators keep their existing slot
 utilities. Header, footer and checkout keep their existing layout.
@@ -140,7 +140,7 @@ utilities. Header, footer and checkout keep their existing layout.
   the cart. `/potvrzeni-objednavky` displays that snapshot, never a fictitious paid order.
 - The cart is verified and the order placed in OntOS (`/api/ontos/cart`, `/api/ontos/orders`);
   net prices and VAT come only from the OntOS quote.
-- `npm run check` runs formatting, linting, type checking, tests, and the production build.
+- `pnpm run check` runs formatting, linting, type checking, tests, and the production build.
 
 Original checkout implementation history: [CHECKOUT-PLAN.md](CHECKOUT-PLAN.md).
 Design reference: [AKROS redesign in Figma](https://www.figma.com/design/SAs905DGG2kT4lnrQ0PnyG?node-id=7-1261).

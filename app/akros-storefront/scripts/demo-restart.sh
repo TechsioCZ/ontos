@@ -1,18 +1,17 @@
 #!/usr/bin/env bash
-# Called by rebuild-one.sh AFTER committing. Builds only the standalone storefront.
+# Called by rebuild-one.sh AFTER committing. Builds only the workspace storefront.
 set -euo pipefail
 APP="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="$(dirname "$APP")"
-export TMPDIR="${TMPDIR:-/Volumes/TraceDecayKingston/techsio-demo/tmp}"
-export npm_config_cache="/Volumes/TraceDecayKingston/techsio-demo/npm-cache"
+export TMPDIR="${TMPDIR:-/Volumes/DevWork/agent-scratch/ontos-demo}"
 export NEXT_TELEMETRY_DISABLED=1
-mkdir -p "$ROOT/.scratch/demo-logs" "$ROOT/.scratch/demo-pids" "$ROOT/.scratch/demo-build"
+mkdir -p "$TMPDIR" "$ROOT/.scratch/demo-logs" "$ROOT/.scratch/demo-pids" "$ROOT/.scratch/demo-build"
 cd "$APP"
-# Own npm lock: this app is intentionally NOT a pnpm workspace package.
-lock="$(shasum package-lock.json | cut -d' ' -f1)"
+# One lockfile and install policy for the entire app workspace.
+lock="$(shasum "$ROOT/pnpm-lock.yaml" "$ROOT/pnpm-workspace.yaml" | shasum | cut -d' ' -f1)"
 stamp="$ROOT/.scratch/demo-build/akros-install"
 if [ ! -d node_modules ] || [ "$(cat "$stamp" 2>/dev/null || true)" != "$lock" ]; then
-  mise exec -- npm ci --no-audit --no-fund
+  (cd "$ROOT" && mise exec -- pnpm install --frozen-lockfile)
   printf '%s' "$lock" > "$stamp"
 fi
 mise exec -- node scripts/with-demo-env.mjs build > "$ROOT/.scratch/demo-logs/build-akros-storefront.log" 2>&1 || { tail -70 "$ROOT/.scratch/demo-logs/build-akros-storefront.log"; exit 1; }

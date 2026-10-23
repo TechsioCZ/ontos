@@ -25,6 +25,7 @@ catalogs:
     '@modern-js/ultramodern-create': 'npm:@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.28'
 
 packages:
+  - akros-storefront
   - apps/*
   - verticals/*
   - packages/*
@@ -109,7 +110,7 @@ peerDependencyRules:
   allowedVersions:
     react: '>=19.0.0'
 overrides:
-  '@techsio/ui-kit': "catalog:"
+  '@techsio/ui-kit': 'catalog:'
   '@tanstack/react-router': 1.170.39
   '@tanstack/router-core': 1.171.32
   '@effect/opentelemetry': 4.0.0-rc.117
