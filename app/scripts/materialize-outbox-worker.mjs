@@ -53,6 +53,16 @@ const CORE_WORKER_ENTRYPOINT = 'packages/core-runtime/src/outbox/worker-entrypoi
 
 const CORE_WORKER_SPECIFIERS = new Set(['@app/core-runtime', '@app/core-runtime/outbox/worker']);
 
+// npm runtime installs do not carry pnpm's message-only SDK export patch. Compile these codecs
+// and their pure protobuf runtime into the artifact; keep the public Node gRPC SDK external.
+const BUNDLED_AUTHZED_CODECS = new Set([
+  '@authzed/authzed-node/v1/core',
+  '@authzed/authzed-node/v1/permissions',
+  '@authzed/authzed-node/v1/schema',
+  '@protobuf-ts/runtime',
+  '@protobuf-ts/runtime-rpc',
+]);
+
 /**
  * Value names a TypeScript module re-exports from `@app/core-runtime` or its `outbox/worker` subpath (both
  * resolve to the focused worker entrypoint), read from the parsed module record so comments, strings, and
@@ -232,7 +242,7 @@ const makeProductionDependenciesPlugin = ({ packages, path, workspaceRoot }) => 
           path: path.join(workspaceRoot, CORE_WORKER_ENTRYPOINT),
         };
       }
-      if (name !== undefined && packages.has(name)) {
+      if (BUNDLED_AUTHZED_CODECS.has(args.path) || (name !== undefined && packages.has(name))) {
         return null;
       }
       return { external: true, path: args.path };
