@@ -1,6 +1,7 @@
 import { OperationContextUnavailable } from '@app/core-runtime';
 import type { OperationalScope } from '@app/core-runtime';
-import { Effect } from 'effect';
+import { Effect, Option } from 'effect';
+import { RetailEnrollmentBindingCapability } from './integrations/retail-enrollment-binding.ts';
 
 import { ProfileReactivationEligibilityEvaluatorFactory } from './integrations/profile-reactivation-eligibility.ts';
 import {
@@ -10,6 +11,7 @@ import {
 import { addressBookReconciliationOwnerVerifierForTransaction } from './persistence/address-persistence.ts';
 import { paymentTermsReconciliationOwnerEvidenceVerifierForTransaction } from './persistence/payment-term-persistence.ts';
 import type {
+  ProfilePersistenceDependencies,
   ProfilePersistenceServices,
   ProfilePersistenceScope,
   ProfileScopedRoutineInvoker,
@@ -62,6 +64,7 @@ export const profileServicesWithRetailPermissionsForVerifiedScope = (
     verifiedScope = { ...baseScope, authBindingId: scope.authBindingId };
   }
   return Effect.gen(function* profileServices() {
+    const enrollmentBinding = yield* Effect.serviceOption(RetailEnrollmentBindingCapability);
     const roleResolverFactory = yield* ProfileCounterpartyRoleEligibilityResolverFactory;
     const reactivationEvaluatorFactory = yield* ProfileReactivationEligibilityEvaluatorFactory;
     const guestResolverFactory = yield* PartyRegistryGuestResolverFactory;
@@ -101,15 +104,23 @@ export const profileServicesWithRetailPermissionsForVerifiedScope = (
         return profileOwnerVerifier.verify(request, context);
       },
     };
-    return (readRetailPermissions: RetailPermissionReader) =>
-      profilePersistenceServicesForTransaction(transaction, verifiedScope, {
+    return (readRetailPermissions: RetailPermissionReader) => {
+      const dependencies: ProfilePersistenceDependencies = {
         evaluateReactivation,
         readRetailPermissions,
         reconciliationOwnerVerifier,
         resolveCounterpartyRole,
         resolveGuestParty,
         resolveRetailParty,
-      });
+      };
+      if (Option.isSome(enrollmentBinding)) {
+        return profilePersistenceServicesForTransaction(transaction, verifiedScope, {
+          ...dependencies,
+          resolveRetailEnrollmentBinding: enrollmentBinding.value.take,
+        });
+      }
+      return profilePersistenceServicesForTransaction(transaction, verifiedScope, dependencies);
+    };
   });
 };
 

@@ -166,8 +166,8 @@ const harness = (queues: ReadonlyMap<unknown, readonly Rows[]> = new Map()) => {
           {
             partyId: partyA,
             archivedAt: null,
-            createdAt: new Date(instant),
-            updatedAt: new Date(instant),
+            createdAt: DateTime.toDateUtc(DateTime.makeUnsafe(instant)),
+            updatedAt: DateTime.toDateUtc(DateTime.makeUnsafe(instant)),
             revision: 1,
             ...values,
           },
@@ -1248,7 +1248,7 @@ const originalCreateDecision = {
   operation: 'CREATE',
   outcome: 'AMBIGUOUS',
   committedCreateOutcome: 'AMBIGUOUS',
-  decidedAt: new Date(instant),
+  decidedAt: DateTime.toDateUtc(DateTime.makeUnsafe(instant)),
   matchRuleVersion: 'party-exact-claims.v1',
   evidenceEvaluation: null,
   evidenceExplanation: [],
@@ -1397,8 +1397,8 @@ for (const created of [true, false]) {
         const result = yield* getActionHandler(acceptRetailEnrollmentEvidenceAction)(
           {
             evidence: retailEvidence,
-            originalInvocationId:
-              Schema.decodeUnknownSync(RetailEnrollmentEvidenceSchema)(retailEvidence).providerOwnerInvocationId,
+            originalInvocationId: (yield* Schema.decodeEffect(RetailEnrollmentEvidenceSchema)(retailEvidence))
+              .providerOwnerInvocationId,
           },
           {
             ...collector,
@@ -1487,10 +1487,10 @@ for (const scenario of [
       }
       const scope = { ...retailScope };
       if (scenario === 'wrong-caller') {
-        scope.principalId = Schema.decodeSync(PrincipalIdSchema)(partyA);
+        scope.principalId = yield* Schema.decodeEffect(PrincipalIdSchema)(partyA);
       }
       if (scenario === 'wrong-tenant') {
-        scope.tenantId = Schema.decodeSync(TenantIdSchema)(partyA);
+        scope.tenantId = yield* Schema.decodeEffect(TenantIdSchema)(partyA);
       }
       if (scenario === 'wrong-company') {
         scope.legalEntityId = partyA;
@@ -1527,10 +1527,10 @@ for (const scenario of [
               scenario === 'wrong-attestation-company'
                 ? { ...retailEvidence, sellingLegalEntityId: partyA }
                 : retailEvidence,
-            originalInvocationId: Schema.decodeUnknownSync(RetailEnrollmentEvidenceSchema)({
+            originalInvocationId: (yield* Schema.decodeEffect(RetailEnrollmentEvidenceSchema)({
               ...retailEvidence,
               providerOwnerInvocationId: scenario === 'missing-invocation' ? decisionId : invocation.actionInvocationId,
-            }).providerOwnerInvocationId,
+            })).providerOwnerInvocationId,
           },
           principalId,
         )

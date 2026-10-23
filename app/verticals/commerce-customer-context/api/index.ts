@@ -42,6 +42,12 @@ import {
   PartyRegistryRetailPartyResolverFactory,
   preparedRetailPartyResolution,
 } from '../src/integrations/party-registry-retail-party-resolver.ts';
+import {
+  RetailEnrollmentBindingAuthority,
+  RetailEnrollmentBindingCapability,
+  prepareRetailEnrollmentBinding,
+} from '../src/integrations/retail-enrollment-binding.ts';
+import { retailEnrollmentBindingAuthorityLive } from '../src/integrations/retail-enrollment-binding-live.ts';
 import { CommercePortalAuthDatabaseLive } from '../src/portal-auth/persistence/portal-auth-database.ts';
 import { CommercePortalAuthAuditLive } from '../src/portal-auth/audit/audit.ts';
 import { CommercePortalAuthAccountLookupLive } from '../src/portal-auth/persistence/portal-auth-account-lookup.ts';
@@ -481,6 +487,7 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
 > = Layer.effect(
   ActionRuntime,
   Effect.gen(function* commerceEnrollmentActionRuntime() {
+    const bindingAuthority = yield* RetailEnrollmentBindingAuthority;
     const existingRuntime = yield* ActionRuntime;
     const existingPreflight = yield* ActionAuthorizationPreflight;
     const preparation = yield* CommerceEnrollmentOwnerTransitionPreparation;
@@ -498,8 +505,11 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
           const retailParty = yield* preparedRetailPartyResolution.pipe(
             Effect.provideService(ActiveApplicationCompositionService, compositions),
           );
+          const binding = prepareRetailEnrollmentBinding(bindingAuthority);
+          yield* Effect.addFinalizer(() => Effect.sync(binding.clear));
           const preflight = composeActionAuthorizationPreflights([
             execution.preflight,
+            binding.preflight,
             retailParty.preflight,
             existingPreflight,
           ]);
@@ -511,6 +521,7 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
             .runAction(input)
             .pipe(
               Effect.provideService(CommerceEnrollmentPreparedOwnerCapability, execution.capability),
+              Effect.provideService(RetailEnrollmentBindingCapability, binding.capability),
               Effect.provideService(PartyRegistryRetailPartyResolverFactory, retailParty.factory),
             );
         }),
@@ -595,6 +606,23 @@ const deploymentCustomerAuthorityLive = Layer.unwrap(
       configured
         ? commerceCustomerAuthorityLive.pipe(Layer.provide(commerceCoreIdentityRealmLive))
         : commerceCustomerAuthorityUnavailableLive,
+    ),
+  ),
+);
+const deploymentRetailEnrollmentBindingAuthorityLive = Layer.unwrap(
+  Effect.all({ core: coreIdentityTransportConfigured, realm: portalAuthRealmConfigured }, { concurrency: 2 }).pipe(
+    Effect.map(({ core, realm }) =>
+      core && realm
+        ? retailEnrollmentBindingAuthorityLive.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                commerceCoreIdentityRealmLive,
+                commerceEnrollmentOwnerTransactionRunnerProductionLive,
+                commercePortalAuthAccountLookupRealmLive.pipe(Layer.provide(CommercePortalAuthConfigLive)),
+              ),
+            ),
+          )
+        : Layer.succeed(RetailEnrollmentBindingAuthority, null),
     ),
   ),
 );
@@ -746,6 +774,7 @@ const deploymentEnrollmentAccountLookupLive = Layer.unwrap(
   ),
 );
 const enrollmentAwareActionRuntimeLive = commerceEnrollmentActionRuntimeLive.pipe(
+  Layer.provide(deploymentRetailEnrollmentBindingAuthorityLive.pipe(Layer.provide(DatabaseConfigLive))),
   Layer.provide(Layer.mergeAll(actionRuntimeCoreLive, actionRuntimeServicesLive)),
 );
 /**

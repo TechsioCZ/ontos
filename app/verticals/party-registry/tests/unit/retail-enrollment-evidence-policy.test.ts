@@ -10,7 +10,7 @@ import { decideAtomicCreateWithoutStrongIdentifier } from '../../src/services/pa
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
-const evidence = Schema.decodeUnknownSync(RetailEnrollmentEvidenceSchema)({
+const evidence = Schema.decodeSync(RetailEnrollmentEvidenceSchema)({
   authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1',
   candidateEvidenceRef: '30000000-0000-4000-8000-000000000001',
   emailOwnership: 'VERIFIED',

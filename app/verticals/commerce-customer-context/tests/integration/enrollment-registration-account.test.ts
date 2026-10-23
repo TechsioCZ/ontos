@@ -60,7 +60,10 @@ it.live('persists immutable credential-free registration and admits only exact l
               }
             }
             const authorityMigration = readFileSync(
-              new URL('../../drizzle/20261023230000_current-customer-authority/migration.sql', import.meta.url),
+              new URL(
+                '../../drizzle/20261023233000_retail-enrollment-binding-authority/migration.sql',
+                import.meta.url,
+              ),
               'utf-8',
             );
             for (const statement of authorityMigration.split('--> statement-breakpoint')) {
@@ -83,7 +86,7 @@ it.live('persists immutable credential-free registration and admits only exact l
         values (${bindingId}::uuid, ${tenantId}::uuid, ${legalEntityId}::uuid, ${authBindingId}::uuid, ${principalId}::uuid, ${profileId}::uuid, 'registration-acceptance', ${randomUUID()}::uuid, ${principalId}::uuid)`);
             for (const operation of [
               { owner: 'party.registry', result: partyId, transition: 'party.candidate.submit' },
-              { owner: 'core.identity', result: authBindingId, transition: 'core.principal-binding.activate' },
+              { owner: 'commerce.portal-auth', result: subject, transition: 'provider.account.create' },
               {
                 owner: 'commerce.customer-context',
                 result: bindingId,

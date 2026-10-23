@@ -1725,7 +1725,7 @@ export const findPartyCreateContinuation = Effect.fn('PartyMatchingPersistenceSe
     if (Schema.is(PartyNotFoundSchema)(found)) {
       return;
     }
-    const decision = yield* Schema.decodeUnknownEffect(PartyMatchDecisionRecordSchema)(found.value).pipe(
+    const decision = yield* Schema.decodeEffect(PartyMatchDecisionRecordSchema)(found.value).pipe(
       Effect.mapError(unavailable),
     );
     const original = committedCreateResult(decision);
@@ -1757,7 +1757,7 @@ export const findPartyCreateContinuation = Effect.fn('PartyMatchingPersistenceSe
     if (Schema.is(PartyNotFoundSchema)(resolved)) {
       return yield* unavailable();
     }
-    const resolution = yield* Schema.decodeUnknownEffect(PartyMatchDecisionRecordSchema)(resolved.value).pipe(
+    const resolution = yield* Schema.decodeEffect(PartyMatchDecisionRecordSchema)(resolved.value).pipe(
       Effect.mapError(unavailable),
     );
     const isCreate = candidateCase.resolutionOutcome === 'CREATE_NEW';
