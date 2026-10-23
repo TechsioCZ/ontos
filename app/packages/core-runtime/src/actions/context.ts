@@ -10,7 +10,13 @@ import type {
   DomainEventReference,
   OutboxMessage,
 } from './events.ts';
-import { decodedStringBrand, nonEmptyString, TargetModuleKeySchema, TargetResourceIdSchema } from './string-schemas.ts';
+import {
+  decodedStringBrand,
+  nonEmptyString,
+  TargetModuleKeySchema,
+  TargetResourceIdSchema,
+  transportIdentifier,
+} from './string-schemas.ts';
 
 const committedActionDomainRejection: unique symbol = Symbol('@app/core-runtime/actions/committed-domain-rejection');
 
@@ -52,9 +58,9 @@ export const getCommittedActionDomainError = <DomainError extends { readonly _ta
 export { TrustedPrincipalContextSchema } from './principal-context.ts';
 export type { TrustedPrincipalContext } from './principal-context.ts';
 
-const CorrelationIdSchema = decodedStringBrand(nonEmptyString, 'CorrelationId');
+const CorrelationIdSchema = decodedStringBrand(transportIdentifier, 'CorrelationId');
 const IdempotencyKeySchema = decodedStringBrand(nonEmptyString, 'IdempotencyKey');
-const TraceIdSchema = decodedStringBrand(nonEmptyString, 'TraceId');
+const TraceIdSchema = decodedStringBrand(transportIdentifier, 'TraceId');
 
 export const ActionTransportMetadataSchema = Schema.Struct({
   correlationId: CorrelationIdSchema,

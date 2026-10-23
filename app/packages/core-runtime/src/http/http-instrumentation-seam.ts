@@ -7,6 +7,7 @@ import type { ActionRegistration } from '../actions/definition.ts';
 import { ActionAlreadyCommitted } from '../actions/errors.ts';
 import type { ActionCoreError } from '../actions/errors.ts';
 import type { DomainEventContractMap } from '../actions/events.ts';
+import { transportIdentifier } from '../actions/string-schemas.ts';
 import type { OperationalScopeRequest } from '../operations/context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
 import { ActionRuntime } from '../actions/runtime.ts';
@@ -19,24 +20,30 @@ export interface ActionHttpEndpointHeaders {
 const ActionIdempotencyKeySchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
   Schema.brand('ActionIdempotencyKey'),
 );
+const ActionCorrelationIdSchema = transportIdentifier.pipe(Schema.brand('ActionCorrelationId'));
+const ActionTraceIdSchema = transportIdentifier.pipe(Schema.brand('ActionTraceId'));
 
 /**
  * Reads the Action transport headers an HTTP handler owns. Endpoint contracts declare no header
  * codec: the composed API decodes closed, and a header codec would receive every browser header.
- * A supplied Idempotency-Key is decoded alone; absence reaches the runtime's own 428 precondition.
+ * All three caller-supplied transport identifiers are bounded here, because each one is persisted
+ * verbatim into the action invocation audit row: an unbounded value lets the caller choose the audit
+ * correlation and inflate the row up to the ingress header limit. A supplied Idempotency-Key is decoded
+ * alongside the trace identifier; absence of an Idempotency-Key still reaches the runtime's own 428
+ * precondition.
  */
-export const decodeActionEndpointHeaders = (
-  headers: Headers.Headers,
-): Effect.Effect<ActionHttpEndpointHeaders, Schema.SchemaError> => {
-  const idempotencyKey = headers['idempotency-key'];
-  const traceId = headers['x-trace-id'];
-  if (idempotencyKey === undefined) {
-    return Effect.succeed({ idempotencyKey, traceId });
-  }
-  return Schema.decodeEffect(ActionIdempotencyKeySchema)(idempotencyKey).pipe(
-    Effect.map((decodedKey) => ({ idempotencyKey: decodedKey, traceId })),
-  );
-};
+export const decodeActionEndpointHeaders = Effect.fn('HttpInstrumentationSeam.decodeActionEndpointHeaders')(
+  function* decodeActionEndpointHeadersEffect(
+    headers: Headers.Headers,
+  ): Effect.fn.Return<ActionHttpEndpointHeaders, Schema.SchemaError> {
+    const idempotencyKey = headers['idempotency-key'];
+    const traceId = headers['x-trace-id'];
+    const decodedIdempotencyKey =
+      idempotencyKey === undefined ? undefined : yield* Schema.decodeEffect(ActionIdempotencyKeySchema)(idempotencyKey);
+    const decodedTraceId = traceId === undefined ? undefined : yield* Schema.decodeEffect(ActionTraceIdSchema)(traceId);
+    return { idempotencyKey: decodedIdempotencyKey, traceId: decodedTraceId };
+  },
+);
 
 export interface ActionHttpRequestHeaders {
   readonly authorization: Redacted.Redacted<string | undefined>;
@@ -223,6 +230,12 @@ export const runGovernedActionHttp = <
     if (correlationIsInvalid) {
       return yield* Effect.fail(input.invalidCorrelationProblem());
     }
+    // The correlation identifier is written verbatim into the invocation row and log annotations, so an
+    // unbounded caller-chosen value must be refused here rather than persisted.
+    yield* Schema.decodeEffect(ActionCorrelationIdSchema)(correlationId).pipe(
+      // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Invalid-input diagnostics are deliberately sanitized at the transport boundary; remove-when: the rule supports security-boundary sanitizers.
+      Effect.mapError(() => input.invalidCorrelationProblem()),
+    );
 
     const principal = yield* input.principal.authenticate(input.requestHeaders.authorization);
     const encodedPayload = yield* Schema.encodeEffect(input.registration.descriptor.payloadSchema)(input.payload).pipe(
