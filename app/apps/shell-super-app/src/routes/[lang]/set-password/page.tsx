@@ -63,18 +63,20 @@ const SetPasswordPage = () => {
       <main className="flex min-h-dvh items-center justify-center bg-surface p-300 text-fg-primary">
         <section className="grid w-full max-w-md gap-200 rounded-lg border border-border-primary bg-base p-300">
           <h1 className="font-semibold text-xl">Nastavit heslo k přihlášení</h1>
-          {done ? (
+          {done && (
             <>
               <StatusText status="success">
                 Heslo je nastavené. Nyní se přihlaste svým e-mailem. Přístup do firmy a role určuje správce.
               </StatusText>
               <Link href={`/${language}/login`}>Přejít na přihlášení</Link>
             </>
-          ) : token === undefined ? (
+          )}
+          {!done && token === undefined && (
             <StatusText role="alert" status="error">
               Odkaz pozvánky není platný. Otevřete celý odkaz z e-mailu nebo požádejte správce o novou pozvánku.
             </StatusText>
-          ) : (
+          )}
+          {!done && token !== undefined && (
             <form action={submit} className="grid gap-200">
               <p>
                 Zvolte vlastní heslo. Tento jednorázový odkaz nikomu nepřeposílejte. Nastavení hesla nepřiděluje role

@@ -575,7 +575,8 @@
         "error": "Uložení se nepodařilo. Zkuste to znovu.",
         "signedOut": "Relace vypršela, přihlaste se znovu."
       },
-      "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku."
+      "resize": "Změnit šířku panelu. Táhněte nebo použijte šipky vlevo a vpravo. Dvojklik nebo Home obnoví výchozí šířku.",
+      "selectPlaceholder": "Vyberte…"
     },
     "invitation": {
       "title": "Nastavení hesla",

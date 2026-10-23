@@ -1,4 +1,4 @@
-/* oxlint-disable effect-native/no-threaded-correlation-parameter -- This ingress adapter passes the persisted Core command/read transport identity, not ambient tracing. */
+/* oxlint-disable effect-native/no-threaded-correlation-parameter -- This ingress adapter passes the persisted Core command/read transport identity, not ambient tracing; remove-when: Core accepts ingress transport identity as a service. */
 import {
   ActionRuntime,
   invitePersonAction,
@@ -24,7 +24,7 @@ interface PeopleCommandContext {
 }
 
 /** No direct SQL / graph writes here: the Core registrations own authorization and evidence. */
-export const listPeople = Effect.fn('PeopleAdministration.listPeople')(function* (
+export const listPeople = Effect.fn('PeopleAdministration.listPeople')(function* listPeople(
   principal: TrustedPrincipalContext,
   input: PeopleListRequest,
   correlationId: string,
@@ -39,18 +39,17 @@ export const listPeople = Effect.fn('PeopleAdministration.listPeople')(function*
   return yield* Schema.encodeEffect(PeopleDirectoryResultSchema)(result);
 });
 
-export const setPeopleCompanyMembership = Effect.fn('PeopleAdministration.setPeopleCompanyMembership')(function* (
-  context: PeopleCommandContext,
-  payload: SetPeopleCompanyMembershipRequest,
-) {
-  const runtime = yield* ActionRuntime;
-  const result = yield* runtime.runAction({ ...context, payload, registration: setCompanyMembershipAction });
-  const membership = yield* Schema.encodeEffect(setCompanyMembershipAction.descriptor.resultSchema)(result);
-  // SQL committed is not projection complete. A separate governed read must confirm the new state.
-  return { membership, projection: 'pending' as const };
-});
+export const setPeopleCompanyMembership = Effect.fn('PeopleAdministration.setPeopleCompanyMembership')(
+  function* setPeopleCompanyMembership(context: PeopleCommandContext, payload: SetPeopleCompanyMembershipRequest) {
+    const runtime = yield* ActionRuntime;
+    const result = yield* runtime.runAction({ ...context, payload, registration: setCompanyMembershipAction });
+    const membership = yield* Schema.encodeEffect(setCompanyMembershipAction.descriptor.resultSchema)(result);
+    // SQL committed is not projection complete. A separate governed read must confirm the new state.
+    return { membership, projection: 'pending' as const };
+  },
+);
 
-export const setPeopleScopedRole = Effect.fn('PeopleAdministration.setPeopleScopedRole')(function* (
+export const setPeopleScopedRole = Effect.fn('PeopleAdministration.setPeopleScopedRole')(function* setPeopleScopedRole(
   context: PeopleCommandContext,
   payload: SetPeopleRoleRequest,
 ) {

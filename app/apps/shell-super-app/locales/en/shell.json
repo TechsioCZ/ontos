@@ -575,7 +575,8 @@
         "error": "Saving failed. Try again.",
         "signedOut": "Your session expired, sign in again."
       },
-      "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width."
+      "resize": "Resize panel. Drag or use the left and right arrows. Double-click or Home restores the default width.",
+      "selectPlaceholder": "Select…"
     },
     "invitation": {
       "title": "Set your password",

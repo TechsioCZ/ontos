@@ -13,12 +13,13 @@ import { FormInput } from '@techsio/ui-kit/molecules/form-input';
 import { FormTextarea } from '@techsio/ui-kit/molecules/form-textarea';
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
-import { Effect } from 'effect';
+import { Effect, Option, Schema } from 'effect';
 import { useState } from 'react';
 import { runAgentCommand } from './agent-entities-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
 import { newRequestToken } from './people-client.ts';
 import {
+  ModuleChoiceSchema,
   configureRequest,
   createRequest,
   draftErrors,
@@ -53,6 +54,7 @@ export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
   const [busy, setBusy] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const errors = draftErrors(draft, modules);
+  const operatorIds = new Set(draft.operatorPrincipalIds);
   const nameError = errors.find((error) => error === 'nameRequired' || error === 'nameTooLong');
   const descriptionError = errors.includes('descriptionTooLong') ? 'descriptionTooLong' : undefined;
   const ownerError = errors.includes('ownerRequired');
@@ -73,20 +75,22 @@ export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
     const name = draft.displayName.trim();
     setBusy(true);
     setServerError(null);
-    void browserRuntime
-      .runPromise(newRequestToken.pipe(Effect.flatMap((token) => runAgentCommand(request, `agent-${token}`))))
-      .then((outcome) => {
-        setBusy(false);
-        if (outcome.status === 'ok') {
-          onSaved(t(agent === null ? `${key}.toast.created` : `${key}.toast.saved`, { name }));
-        } else {
-          setServerError(outcome.detail ?? t(`workforce.people.errors.${outcome.reason}`));
-        }
-      })
-      .catch(() => {
-        setBusy(false);
-        setServerError(t('workforce.people.errors.error'));
-      });
+    browserRuntime.runFork(
+      newRequestToken.pipe(
+        Effect.flatMap((token) => runAgentCommand(request, `agent-${token}`)),
+        Effect.andThen((outcome) =>
+          Effect.sync(() => {
+            setBusy(false);
+            if (outcome.status === 'ok') {
+              onSaved(t(agent === null ? `${key}.toast.created` : `${key}.toast.saved`, { name }));
+            } else {
+              setServerError(outcome.detail ?? t(`shell.agents.errors.${outcome.reason}`));
+            }
+          }),
+        ),
+        Effect.ensuring(Effect.sync(() => setBusy(false))),
+      ),
+    );
   };
 
   return (
@@ -165,7 +169,7 @@ export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
           labelProps={selectLabelProps}
           name="owner"
           onValueChange={(details) => setDraft({ ...draft, ownerPrincipalId: details.value[0] ?? null })}
-          placeholder={t('workforce.selectPlaceholder')}
+          placeholder={t('shell.agents.selectPlaceholder')}
           value={draft.ownerPrincipalId === null ? [] : [draft.ownerPrincipalId]}
         />
         {submitted && ownerError && (
@@ -190,7 +194,7 @@ export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
                   setDraft(withPreset(draft, preset, modules));
                 }
               }}
-              placeholder={t('workforce.selectPlaceholder')}
+              placeholder={t('shell.agents.selectPlaceholder')}
               size="sm"
               value={presetKey === null ? [] : [presetKey]}
             />
@@ -220,7 +224,10 @@ export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
                         withModuleChoice(
                           draft,
                           option.moduleId,
-                          (details.value[0] as ModuleChoice | undefined) ?? 'none',
+                          Option.getOrElse(
+                            Schema.decodeUnknownOption(ModuleChoiceSchema)(details.value[0]),
+                            () => 'none',
+                          ),
                         ),
                       )
                     }
@@ -240,9 +247,15 @@ export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
         <section className="flex flex-col gap-150">
           <h3 className="font-semibold text-sm">{t(`${key}.policyTitle`)}</h3>
           {policies.map((policy) => (
-            <label className="flex items-start gap-150" key={policy}>
+            <label
+              aria-label={t(`${key}.policy.${policy}.label`)}
+              className="flex items-start gap-150"
+              htmlFor={`agent-policy-${policy}`}
+              key={policy}
+            >
               <input
                 checked={draft.writePolicy === policy}
+                id={`agent-policy-${policy}`}
                 name="agent-write-policy"
                 onChange={() => setDraft({ ...draft, writePolicy: policy })}
                 type="radio"
@@ -261,7 +274,7 @@ export const AgentEditorPanel = (props: AgentEditorPanelProps) => {
             <p className="text-fg-secondary text-xs">{t(`${key}.operatorsHint`)}</p>
             {members.map((member) => (
               <FormCheckbox
-                checked={draft.operatorPrincipalIds.includes(member.principalId)}
+                checked={operatorIds.has(member.principalId)}
                 id={`agent-new-operator-${member.principalId}`}
                 key={member.principalId}
                 label={member.displayName}

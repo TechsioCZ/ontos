@@ -92,16 +92,18 @@ export const changeScopedRole = (scope: 'company' | 'tenant', request: SetPeople
 export const loadPeopleForPerson = (scope: 'company' | 'tenant', principalId: string) => {
   const page: (offset: number) => Effect.Effect<PeopleOutcome<PeopleList>, never, HttpClient.HttpClient> = Effect.fn(
     'People.findPersonPage',
-  )(function* (offset: number) {
+  )(function* findPersonPage(offset: number) {
     const outcome = yield* loadPeople(scope, { limit: 100, offset });
     if (
       outcome.status === 'failed' ||
       outcome.value.items.some((person) => person.principalRef.principalId === principalId) ||
       outcome.value.nextOffset === null
-    )
+    ) {
       return outcome;
-    if (outcome.value.nextOffset <= offset)
+    }
+    if (outcome.value.nextOffset <= offset) {
       return { message: 'Správa lidí vrátila neplatné stránkování.', status: 'failed' as const };
+    }
     return yield* page(outcome.value.nextOffset);
   });
   return Effect.suspend(() => page(0)).pipe(

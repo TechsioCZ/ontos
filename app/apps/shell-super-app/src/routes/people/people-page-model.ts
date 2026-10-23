@@ -8,7 +8,7 @@ export interface PeoplePageModel {
   readonly peoplePage: true;
   readonly shell: HomePageModel;
 }
-export const loadPeoplePageModel = Effect.fn('loadPeoplePageModel')(function* (request: Request) {
+export const loadPeoplePageModel = Effect.fn('loadPeoplePageModel')(function* loadPeoplePageModel(request: Request) {
   const shell = yield* loadHomePageModel(request).pipe(
     Effect.timeout('30 seconds'),
     Effect.orElseSucceed(() => ({ state: 'unavailable' }) as const),

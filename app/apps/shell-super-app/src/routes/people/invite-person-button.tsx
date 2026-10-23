@@ -67,7 +67,9 @@ const InvitePersonForm = ({
       closeLabel="Zavřít"
       customTrigger
       onOpenChange={(details) => {
-        if (!details.open && !busy) onClose();
+        if (!details.open && !busy) {
+          onClose();
+        }
       }}
       open
       title="Pozvat člověka"

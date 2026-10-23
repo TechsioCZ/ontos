@@ -79,8 +79,11 @@ const PeopleEditor = ({
         Effect.andThen((outcome) =>
           Effect.sync(() => {
             setBusy(false);
-            if (outcome.status === 'failed') setError(outcome.message);
-            else onCommitted(outcome.value);
+            if (outcome.status === 'failed') {
+              setError(outcome.message);
+            } else {
+              onCommitted(outcome.value);
+            }
           }),
         ),
       ),
@@ -200,6 +203,143 @@ const PeopleEditor = ({
   );
 };
 
+const PersonDetail = ({
+  onClose,
+  onEdit,
+  person,
+  scope,
+}: {
+  readonly onClose: () => void;
+  readonly onEdit: (editor: Editor) => void;
+  readonly person: Person;
+  readonly scope: 'company' | 'tenant';
+}) => (
+  <Dialog
+    actions={
+      <>
+        <Button
+          onClick={() => {
+            onEdit({ kind: 'role', person });
+            onClose();
+          }}
+          variant="primary"
+        >
+          Spravovat role
+        </Button>
+        {scope === 'company' ? (
+          <Button
+            onClick={() => {
+              onEdit({ kind: 'membership', person });
+              onClose();
+            }}
+            theme="outlined"
+            variant="secondary"
+          >
+            Upravit členství
+          </Button>
+        ) : null}
+      </>
+    }
+    closeLabel="Zavřít"
+    customTrigger
+    onOpenChange={(persons) => {
+      if (!persons.open) {
+        onClose();
+      }
+    }}
+    open
+    title={person.displayName}
+  >
+    <div className="grid gap-150">
+      <p>
+        {personKindLabel(person)} · {principalStatusLabels[person.principalStatus]}
+      </p>
+      <p>
+        {person.selectedCompanyMembership === null
+          ? 'Bez členství ve vybrané firmě'
+          : membershipLabels[person.selectedCompanyMembership.status]}
+      </p>
+      <p>Role v tomto rozsahu: {person.roleAssignments.map((role) => role.roleKey).join(', ') || 'Žádné'}</p>
+      {person.selectedCompanyMembership?.status === 'departed' ? (
+        <p>Odchod zachovává historii. Případné přeřazení práce ověřte přímo v agendě, která práci eviduje.</p>
+      ) : null}
+    </div>
+  </Dialog>
+);
+
+const PersonCard = ({
+  onDetail,
+  onEdit,
+  person,
+  scope,
+}: {
+  readonly onDetail: (person: Person) => void;
+  readonly onEdit: (editor: Editor) => void;
+  readonly person: Person;
+  readonly scope: 'company' | 'tenant';
+}) => (
+  <li className="grid gap-150 rounded-lg border border-border-primary bg-base p-250">
+    <div className="flex flex-wrap items-center justify-between gap-150">
+      <div className="grid gap-50">
+        <h2 className="font-semibold">
+          <button
+            className="cursor-pointer text-left underline-offset-4 hover:underline"
+            onClick={() => onDetail(person)}
+            type="button"
+          >
+            {person.displayName}
+          </button>
+        </h2>
+        <span className="text-fg-secondary text-sm">
+          {personKindLabel(person)} · {principalStatusLabels[person.principalStatus]}
+        </span>
+      </div>
+      <Badge variant={person.selectedCompanyMembership?.status === 'departed' ? 'warning' : 'outline'}>
+        {person.selectedCompanyMembership === null
+          ? 'Tenant'
+          : membershipLabels[person.selectedCompanyMembership.status]}
+      </Badge>
+    </div>
+    {person.selectedCompanyMembership?.status === 'departed' ? (
+      <p className="text-fg-secondary text-sm">Osoba odešla z firmy. Historie zůstává zachována.</p>
+    ) : null}
+    <div className="flex flex-wrap gap-100">
+      {person.roleAssignments.length === 0 ? (
+        <span className="text-fg-secondary text-sm">Žádné role v tomto rozsahu</span>
+      ) : (
+        person.roleAssignments.map((role) => (
+          <Badge key={role.roleKey} variant="outline">{`${role.roleKey} · ${scopeLabel(role.scope)}`}</Badge>
+        ))
+      )}
+    </div>
+    <div className="flex flex-wrap gap-100">
+      {scope === 'company' ? (
+        <Button onClick={() => onEdit({ kind: 'membership', person })} theme="outlined" variant="secondary">
+          Upravit členství
+        </Button>
+      ) : null}
+      <Button onClick={() => onEdit({ kind: 'role', person })} theme="outlined" variant="secondary">
+        Spravovat role
+      </Button>
+    </div>
+  </li>
+);
+
+const peopleReadError = (current: PeopleOutcome<PeopleList> | undefined, linkedPerson: string | undefined): string => {
+  const list = current?.status === 'ok' ? current.value : undefined;
+  let error = '';
+  if (current?.status === 'failed') {
+    error = current.message;
+  } else if (
+    linkedPerson !== undefined &&
+    list !== undefined &&
+    !list.items.some((person) => person.principalRef.principalId === linkedPerson)
+  ) {
+    error = 'Osoba z odkazu neexistuje nebo k ní v tomto rozsahu nemáte přístup.';
+  }
+  return error;
+};
+
 export const PeoplePanel = ({
   companyId,
   linkedPerson,
@@ -219,19 +359,13 @@ export const PeoplePanel = ({
   const current = loaded?.key === requestKey ? loaded.outcome : undefined;
   const loading = current === undefined;
   const list = current?.status === 'ok' ? current.value : undefined;
-  const error =
-    current?.status === 'failed'
-      ? current.message
-      : linkedPerson !== undefined &&
-          list !== undefined &&
-          !list.items.some((person) => person.principalRef.principalId === linkedPerson)
-        ? 'Osoba z odkazu neexistuje nebo k ní v tomto rozsahu nemáte přístup.'
-        : '';
-  const acceptRead = useEffectEvent((outcome: PeopleOutcome<PeopleList>) => {
-    setLoaded({ key: requestKey, outcome });
+  const error = peopleReadError(current, linkedPerson);
+  const acceptRead = useEffectEvent((key: string, outcome: PeopleOutcome<PeopleList>) => {
+    setLoaded({ key, outcome });
     if (outcome.status === 'ok') {
-      if (linkedPerson !== undefined)
+      if (linkedPerson !== undefined) {
         setDetail(outcome.value.items.find((person) => person.principalRef.principalId === linkedPerson));
+      }
       setPending((changes) => changes.filter((change) => !isChangeConfirmed(change, outcome.value)));
     }
   });
@@ -239,7 +373,7 @@ export const PeoplePanel = ({
     const request =
       linkedPerson === undefined ? loadPeople(scope, { limit: 50, offset }) : loadPeopleForPerson(scope, linkedPerson);
     const fiber = browserRuntime.runFork(
-      request.pipe(Effect.andThen((outcome) => Effect.sync(() => acceptRead(outcome)))),
+      request.pipe(Effect.andThen((outcome) => Effect.sync(() => acceptRead(requestKey, outcome)))),
     );
     return () => {
       browserRuntime.runFork(Fiber.interrupt(fiber));
@@ -311,55 +445,7 @@ export const PeoplePanel = ({
         </StatusText>
       )}
       {detail === undefined ? null : (
-        <Dialog
-          actions={
-            <>
-              <Button
-                onClick={() => {
-                  setEditor({ kind: 'role', person: detail });
-                  setDetail(undefined);
-                }}
-                variant="primary"
-              >
-                Spravovat role
-              </Button>
-              {scope === 'company' ? (
-                <Button
-                  onClick={() => {
-                    setEditor({ kind: 'membership', person: detail });
-                    setDetail(undefined);
-                  }}
-                  theme="outlined"
-                  variant="secondary"
-                >
-                  Upravit členství
-                </Button>
-              ) : null}
-            </>
-          }
-          closeLabel="Zavřít"
-          customTrigger
-          onOpenChange={(details) => {
-            if (!details.open) setDetail(undefined);
-          }}
-          open
-          title={detail.displayName}
-        >
-          <div className="grid gap-150">
-            <p>
-              {personKindLabel(detail)} · {principalStatusLabels[detail.principalStatus]}
-            </p>
-            <p>
-              {detail.selectedCompanyMembership === null
-                ? 'Bez členství ve vybrané firmě'
-                : membershipLabels[detail.selectedCompanyMembership.status]}
-            </p>
-            <p>Role v tomto rozsahu: {detail.roleAssignments.map((role) => role.roleKey).join(', ') || 'Žádné'}</p>
-            {detail.selectedCompanyMembership?.status === 'departed' ? (
-              <p>Odchod zachovává historii. Případné přeřazení práce ověřte přímo v agendě, která práci eviduje.</p>
-            ) : null}
-          </div>
-        </Dialog>
+        <PersonDetail onClose={() => setDetail(undefined)} onEdit={setEditor} person={detail} scope={scope} />
       )}
       {list === undefined ? null : (
         <>
@@ -368,61 +454,13 @@ export const PeoplePanel = ({
           ) : (
             <ul className="grid gap-150">
               {list.items.map((person) => (
-                <li
-                  className="grid gap-150 rounded-lg border border-border-primary bg-base p-250"
+                <PersonCard
                   key={person.principalRef.principalId}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-150">
-                    <div className="grid gap-50">
-                      <h2 className="font-semibold">
-                        <button
-                          className="cursor-pointer text-left underline-offset-4 hover:underline"
-                          onClick={() => setDetail(person)}
-                          type="button"
-                        >
-                          {person.displayName}
-                        </button>
-                      </h2>
-                      <span className="text-fg-secondary text-sm">
-                        {personKindLabel(person)} · {principalStatusLabels[person.principalStatus]}
-                      </span>
-                    </div>
-                    <Badge variant={person.selectedCompanyMembership?.status === 'departed' ? 'warning' : 'outline'}>
-                      {person.selectedCompanyMembership === null
-                        ? 'Tenant'
-                        : membershipLabels[person.selectedCompanyMembership.status]}
-                    </Badge>
-                  </div>
-                  {person.selectedCompanyMembership?.status === 'departed' ? (
-                    <p className="text-fg-secondary text-sm">Osoba odešla z firmy. Historie zůstává zachována.</p>
-                  ) : null}
-                  <div className="flex flex-wrap gap-100">
-                    {person.roleAssignments.length === 0 ? (
-                      <span className="text-fg-secondary text-sm">Žádné role v tomto rozsahu</span>
-                    ) : (
-                      person.roleAssignments.map((role) => (
-                        <Badge
-                          key={role.roleKey}
-                          variant="outline"
-                        >{`${role.roleKey} · ${scopeLabel(role.scope)}`}</Badge>
-                      ))
-                    )}
-                  </div>
-                  <div className="flex flex-wrap gap-100">
-                    {scope === 'company' ? (
-                      <Button
-                        onClick={() => setEditor({ kind: 'membership', person })}
-                        theme="outlined"
-                        variant="secondary"
-                      >
-                        Upravit členství
-                      </Button>
-                    ) : null}
-                    <Button onClick={() => setEditor({ kind: 'role', person })} theme="outlined" variant="secondary">
-                      Spravovat role
-                    </Button>
-                  </div>
-                </li>
+                  onDetail={setDetail}
+                  onEdit={setEditor}
+                  person={person}
+                  scope={scope}
+                />
               ))}
             </ul>
           )}

@@ -4,7 +4,7 @@ import {
   PersonInvitationIdentityProvider,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Match, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -63,7 +63,12 @@ it.effect('keeps tenant role scope absent from trusted context and never infers 
     const result = yield* setPeopleScopedRole({ principal: tenantPrincipal, transport }, payload).pipe(
       Effect.provideService(ActionRuntime, double.runtime),
     );
-    expect(result.role.scope).toEqual({ _tag: 'tenant' });
+    expect(
+      Match.value(result.role.scope).pipe(
+        Match.tag('tenant', () => true),
+        Match.orElse(() => false),
+      ),
+    ).toBe(true);
     expect(double.principals).toEqual([tenantPrincipal]);
     expect(double.payloads).toEqual([payload]);
   }),

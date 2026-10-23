@@ -9,18 +9,18 @@ import { PeoplePanel } from '../../src/routes/people/people-panel.tsx';
 const { commands } = rstest.hoisted(() => ({
   commands: {
     invite: rstest.fn(),
-    list: rstest.fn(),
     linked: rstest.fn(),
+    list: rstest.fn(),
     membership: rstest.fn(),
     role: rstest.fn(),
   },
 }));
 rstest.mock('../../src/routes/people/people-client.ts', () => ({
+  changeCompanyMembership: commands.membership,
+  changeScopedRole: commands.role,
   invitePerson: commands.invite,
   loadPeople: commands.list,
   loadPeopleForPerson: commands.linked,
-  changeCompanyMembership: commands.membership,
-  changeScopedRole: commands.role,
 }));
 
 const tenantId = '00000000-0000-4000-8000-000000000001';
@@ -54,6 +54,7 @@ beforeEach(() => {
   commands.linked.mockReturnValue(Effect.succeed({ status: 'ok', value: list }));
 });
 
+// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library uses Promise-based DOM interactions at the test boundary; remove-when: rule recognizes Rstest callbacks.
 it('invites a person by email and explicit affiliation, never by principal ID or agent kind', async () => {
   const user = userEvent.setup();
   const onCommitted = rstest.fn();
@@ -63,7 +64,13 @@ it('invites a person by email and explicit affiliation, never by principal ID or
       value: { delivery: 'pending', invitationId: '00000000-0000-4000-8000-000000000009', membership, principalRef },
     }),
   );
-  render(<InvitePersonButton onCommitted={onCommitted} />);
+  render(
+    <InvitePersonButton
+      onCommitted={(change) => {
+        onCommitted(change);
+      }}
+    />,
+  );
   await user.click(screen.getByRole('button', { name: 'Pozvat člověka' }));
   await screen.findByRole('dialog');
   expect(screen.queryByLabelText('ID principála')).toBeNull();
@@ -84,6 +91,7 @@ it('invites a person by email and explicit affiliation, never by principal ID or
   );
 });
 
+// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library uses Promise-based DOM interactions at the test boundary; remove-when: rule recognizes Rstest callbacks.
 it('opens the real person from a governed deep link in the same Shell page', async () => {
   render(<PeoplePanel companyId={companyId} linkedPerson={principalRef.principalId} />);
   await screen.findByRole('dialog', { name: 'Jana Nováková' });
@@ -91,6 +99,7 @@ it('opens the real person from a governed deep link in the same Shell page', asy
   expect(screen.getByRole('button', { name: 'Spravovat role' })).toBeDefined();
 });
 
+// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library uses Promise-based DOM interactions at the test boundary; remove-when: rule recognizes Rstest callbacks.
 it('keeps committed membership changes processing while the actual projection disagrees', async () => {
   const user = userEvent.setup();
   const departed = { ...membership, revision: 2, status: 'departed' } as const;

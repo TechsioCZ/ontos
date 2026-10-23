@@ -7,7 +7,7 @@ export const InvitationPasswordSchema = Schema.String.check(Schema.isMinLength(8
 
 /** Browser-only adapter to the same native Better Auth reset endpoint used by the mail invitation. */
 export const setInvitationPassword = Effect.fn('setInvitationPassword')(
-  function* setInvitationPassword(token: string, password: Redacted.Redacted<string>) {
+  function* setInvitationPassword(token: string, password: Redacted.Redacted) {
     const client = yield* HttpClient.HttpClient;
     const request = yield* HttpClientRequest.bodyJson(
       HttpClientRequest.post('/shell-super-app-api/invitation/set-password'),

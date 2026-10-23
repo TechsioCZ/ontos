@@ -5,7 +5,7 @@ import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
-import { Effect, Schema } from 'effect';
+import { Effect, Fiber, Option, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import { useEffect, useState } from 'react';
 import type { CrmCommand } from '../../../../../shared/actions/apply-command.ts';
@@ -13,18 +13,23 @@ import type { RecordsResponse } from '../../../../../shared/apis/records.ts';
 import type { CrmCommandOutcome } from '../../../../crm/records.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 
+const REQUEST_TIMEOUT = '30 seconds';
+
 const AccountSchema = Schema.Struct({
   displayName: Schema.String,
   kind: Schema.Literals(['human', 'agent']),
-  principalRef: Schema.Struct({ principalId: Schema.String, tenantId: Schema.String }),
+  principalRef: Schema.Struct({
+    principalId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('CrmPrincipalId')),
+    tenantId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('CrmTenantId')),
+  }),
   principalStatus: Schema.Literals(['active', 'disabled', 'archived']),
-  selectedCompanyMembership: Schema.NullOr(
+  selectedCompanyMembership: Schema.OptionFromNullOr(
     Schema.Struct({ status: Schema.Literals(['invited', 'active', 'disabled', 'departed']) }),
   ),
 });
 const AccountListSchema = Schema.Struct({
   items: Schema.Array(AccountSchema),
-  nextOffset: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  nextOffset: Schema.OptionFromNullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 type Account = typeof AccountSchema.Type;
 
@@ -33,33 +38,39 @@ type Accounts =
   | { readonly forbidden: boolean; readonly kind: 'unavailable' }
   | { readonly accounts: readonly Account[]; readonly kind: 'ready' };
 
-const loadAccounts = Effect.gen(function* loadAccounts() {
-  const client = yield* HttpClient.HttpClient;
-  const accounts: Account[] = [];
-  let offset = 0;
-  while (true) {
+const unavailable: Accounts = { forbidden: false, kind: 'unavailable' };
+const readAccountPage: (
+  offset: number,
+  accounts: readonly Account[],
+) => Effect.Effect<Accounts, never, HttpClient.HttpClient> = Effect.fn('Crm.loadPeoplePage')(
+  function* loadPeoplePage(offset: number, accounts: readonly Account[]) {
+    const client = yield* HttpClient.HttpClient;
     const request = yield* HttpClientRequest.bodyJson(
       HttpClientRequest.post('/shell-super-app-api/auth/identity/people/list').pipe(
         HttpClientRequest.setHeader('accept', 'application/json'),
       ),
       { limit: 100, offset },
     );
-    const response = yield* client.execute(request);
+    const response = yield* client.execute(request).pipe(Effect.timeout(REQUEST_TIMEOUT));
     if (response.status !== 200) {
       return { forbidden: response.status === 403, kind: 'unavailable' } satisfies Accounts;
     }
     const list = yield* Schema.decodeUnknownEffect(AccountListSchema)(yield* response.json);
-    accounts.push(...list.items);
-    if (list.nextOffset === null) {
-      break;
+    const collected = [...accounts, ...list.items];
+    if (Option.isNone(list.nextOffset)) {
+      return { accounts: collected, kind: 'ready' } satisfies Accounts;
     }
-    if (list.nextOffset <= offset) {
-      return { forbidden: false, kind: 'unavailable' } satisfies Accounts;
+    if (list.nextOffset.value <= offset) {
+      return unavailable;
     }
-    offset = list.nextOffset;
-  }
-  return { accounts, kind: 'ready' } satisfies Accounts;
-}).pipe(Effect.orElseSucceed((): Accounts => ({ forbidden: false, kind: 'unavailable' })));
+    return yield* readAccountPage(list.nextOffset.value, collected);
+  },
+  Effect.orElseSucceed(() => unavailable),
+);
+const loadAccounts = Effect.suspend(() => readAccountPage(0, [])).pipe(
+  Effect.timeout(REQUEST_TIMEOUT),
+  Effect.orElseSucceed(() => unavailable),
+);
 
 export const TeamPanel = ({
   busy,
@@ -70,28 +81,43 @@ export const TeamPanel = ({
   readonly busy: boolean;
   readonly onClose: () => void;
   readonly records: RecordsResponse;
+  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- React panel receives the existing parent event adapter; remove-when: CRM parent exposes Effect commands.
   readonly submit: (command: CrmCommand) => Promise<CrmCommandOutcome>;
 }) => {
   const toaster = useToast();
   const [accounts, setAccounts] = useState<Accounts>({ kind: 'loading' });
   useEffect(() => {
-    void browserRuntime.runPromise(loadAccounts).then(setAccounts);
+    const fiber = browserRuntime.runFork(
+      loadAccounts.pipe(Effect.andThen((value) => Effect.sync(() => setAccounts(value)))),
+    );
+    return () => {
+      browserRuntime.runFork(Fiber.interrupt(fiber));
+    };
   }, []);
-  const run = (command: CrmCommand, success: string) =>
-    void submit(command).then((outcome) =>
-      toaster.create(
-        outcome.ok
-          ? { title: success, type: 'success' }
-          : { description: outcome.message, title: 'Akce se nezdařila', type: 'error' },
+  const run = (command: CrmCommand, success: string) => {
+    browserRuntime.runFork(
+      // oxlint-disable-next-line typescript/promise-function-async -- Native parent React event adapter is already Promise-based; remove-when: parent exposes an Effect command.
+      Effect.promise(() => submit(command)).pipe(
+        Effect.timeout(REQUEST_TIMEOUT),
+        Effect.andThen((outcome) =>
+          Effect.sync(() => {
+            toaster.create(
+              outcome.ok
+                ? { title: success, type: 'success' }
+                : { description: outcome.message, title: 'Akce se nezdařila', type: 'error' },
+            );
+          }),
+        ),
       ),
     );
+  };
   const registered = new Set(records.state.salespeople.map((person) => person.principalId));
   const candidates =
     accounts.kind === 'ready'
       ? accounts.accounts.filter(
           (account) =>
             account.principalStatus === 'active' &&
-            account.selectedCompanyMembership?.status === 'active' &&
+            Option.exists(account.selectedCompanyMembership, (membership) => membership.status === 'active') &&
             !registered.has(account.principalRef.principalId),
         )
       : [];

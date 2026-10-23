@@ -51,11 +51,11 @@ const PeopleWorkspace = ({
           {notification}
         </StatusText>
       )}
-      {tab === 'people' ? (
-        <PeoplePanel companyId={companyId} linkedPerson={linkedPerson} />
-      ) : companyId === undefined ? (
+      {tab === 'people' && <PeoplePanel companyId={companyId} linkedPerson={linkedPerson} />}
+      {tab === 'agents' && companyId === undefined && (
         <StatusText status="warning">Pro správu agentů vyberte firmu.</StatusText>
-      ) : (
+      )}
+      {tab === 'agents' && companyId !== undefined && (
         <AgentEntitiesSection
           legalEntityId={companyId}
           onNotify={(title, description) => setNotification([title, description].filter(Boolean).join(' '))}

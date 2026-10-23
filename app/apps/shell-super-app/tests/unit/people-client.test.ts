@@ -22,7 +22,10 @@ beforeEach(() => {
   fetch.mockReset();
 });
 const requestPath = (input: RequestInfo | URL | undefined) => {
-  if (input === undefined) throw new Error('Missing people request');
+  if (input === undefined) {
+    throw new Error('Missing people request');
+  }
+  // oxlint-disable-next-line effect-native/no-instanceof -- Native Fetch boundary accepts Request, string and URL; remove-when: Fetch mock is restricted to URL.
   return new URL(input instanceof Request ? input.url : input).pathname;
 };
 const requestBody = (init: RequestInit | undefined) =>
@@ -118,7 +121,7 @@ it.effect('invites with email and explicit affiliation, never a principal ID, an
     fetch.mockResolvedValue(Response.json(result));
     const payload = { affiliation: 'employee', displayName: 'Jana', email: 'jana@example.test' } as const;
     expect(yield* invitePerson(payload)).toEqual({ status: 'ok', value: result });
-    const call = fetch.mock.calls[0];
+    const [call] = fetch.mock.calls;
     expect(requestPath(call?.[0])).toBe('/shell-super-app-api/auth/identity/people/invite');
     expect(yield* requestBody(call?.[1])).toEqual(payload);
     expect(new Headers(call?.[1]?.headers).has('idempotency-key')).toBe(true);

@@ -1,4 +1,4 @@
-/* oxlint-disable effect-native/no-nullable-schema-field -- These are JSON transport codecs matching Core encoding; Core owns Option-based domain absence. */
+/* oxlint-disable effect-native/no-nullable-schema-field -- These are JSON transport codecs matching Core encoding; Core owns Option-based domain absence; remove-when: transport contracts use Option wire codecs. */
 import { Schema } from 'effect';
 
 /** JSON transport only. Core remains the owner of membership and authorization rules. */

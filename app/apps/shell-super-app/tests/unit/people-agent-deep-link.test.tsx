@@ -6,19 +6,19 @@ import { AgentEntitiesSection } from '../../src/routes/people/agent-entities-sec
 
 const { fixture } = rstest.hoisted(() => ({
   fixture: {
-    target: '00000000-0000-4000-8000-000000000003',
     agent: {
-      principalId: '00000000-0000-4000-8000-000000000003',
-      displayName: 'Asistent provozu',
+      connections: [],
       description: null,
-      status: 'active',
-      writePolicy: 'approval',
-      seeded: false,
+      displayName: 'Asistent provozu',
       modules: [],
       operators: [],
-      connections: [],
       owner: null,
+      principalId: '00000000-0000-4000-8000-000000000003',
+      seeded: false,
+      status: 'active',
+      writePolicy: 'approval',
     },
+    target: '00000000-0000-4000-8000-000000000003',
   },
 }));
 rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
@@ -33,15 +33,15 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
 }));
 rstest.mock('../../src/routes/people/use-agent-page-data.ts', () => ({
   usePageData: () => ({
-    state: 'ready',
     refreshing: false,
+    state: 'ready',
     value: {
-      company: { legalEntityId: 'company', legalName: 'Firma' },
       agents: [fixture.agent],
+      audit: [],
+      company: { legalEntityId: 'company', legalName: 'Firma' },
       members: [],
       modules: [],
       presets: [],
-      audit: [],
     },
   }),
 }));
@@ -52,8 +52,10 @@ rstest.mock('../../src/routes/people/agent-editor-panel.tsx', () => ({
 }));
 afterEach(cleanup);
 
+// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library uses Promise-based DOM interactions at the test boundary; remove-when: rule recognizes Rstest callbacks.
 it('opens the linked real agent editor in-place, without a workforce route or redirect', async () => {
-  HTMLElement.prototype.scrollIntoView = rstest.fn();
-  render(<AgentEntitiesSection legalEntityId="company" onNotify={() => undefined} />);
-  expect((await screen.findByTestId('agent-editor')).textContent).toBe('Asistent provozu');
+  HTMLElement.prototype.scrollIntoView = rstest.fn<HTMLElement['scrollIntoView']>();
+  render(<AgentEntitiesSection legalEntityId="company" onNotify={() => {}} />);
+  const editor = await screen.findByTestId('agent-editor');
+  expect(editor.textContent).toBe('Asistent provozu');
 });

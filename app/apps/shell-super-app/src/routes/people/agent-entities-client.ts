@@ -48,7 +48,7 @@ const failureOf = (status: number): AgentFailure => {
 };
 
 /** POSTs one JSON body to a full shell path; a 200 answer is returned as raw JSON for the caller's schema. */
-const post = Effect.fn('AgentEntitiesClient.post')(function* (
+const post = Effect.fn('AgentEntitiesClient.post')(function* post(
   path: string,
   body: ManageAgentEntityRequest | AgentOperatorsRequest | ConnectionRevokeRequest | Readonly<Record<string, never>>,
   idempotencyKey?: string,
@@ -62,10 +62,10 @@ const post = Effect.fn('AgentEntitiesClient.post')(function* (
   if (response.status !== 200) {
     const problem = yield* response.json.pipe(
       Effect.map(Schema.decodeUnknownOption(ProblemDetailSchema)),
-      Effect.orElseSucceed(() => Option.none()),
+      Effect.orElseSucceed(() => Option.none<{ readonly detail: string }>()),
     );
     const detail = [403, 404, 409, 422].includes(response.status)
-      ? Option.getOrNull(Option.map(problem, (value) => value.detail))
+      ? Option.getOrNull(problem.pipe(Option.map((value) => value.detail)))
       : null;
     return { detail, reason: failureOf(response.status), status: 'failed' as const };
   }
