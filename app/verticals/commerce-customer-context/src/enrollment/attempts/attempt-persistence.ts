@@ -5,6 +5,7 @@ import type {
   ScopedRoutineInvocationError,
   ScopedRoutineParameter,
 } from '@app/core-runtime';
+import { writeRetailEnrollmentRegistration } from './registration-persistence.ts';
 import { sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
@@ -1250,6 +1251,15 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
           ]).pipe(
             Effect.flatMap((rows) => requireAttemptRow(rows, 'create_portal_enrollment_attempt')),
             Effect.flatMap(mapCreateRow),
+            Effect.tap((result) =>
+              input.retailRegistration === undefined
+                ? Effect.void
+                : writeRetailEnrollmentRegistration(
+                    transaction,
+                    result.attempt.portalEnrollmentAttemptId,
+                    input.retailRegistration,
+                  ),
+            ),
           ),
         ),
       ),

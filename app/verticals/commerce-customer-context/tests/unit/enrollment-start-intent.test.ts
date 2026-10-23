@@ -44,6 +44,7 @@ interface EnrollmentStartRequestBody {
   readonly invitationId?: string;
   readonly journey: string;
   readonly password?: Redacted.Redacted;
+  readonly phone?: string;
   readonly sellingLegalEntityId: string;
 }
 
@@ -108,11 +109,10 @@ it.effect('two people enrolling into one Tenant never derive the same Attempt id
 it.effect('the same person retrying converges on one Attempt identity', () =>
   Effect.gen(function* retryConverges() {
     const first = yield* intentFor(startPayload({ journey: 'RETAIL_SELF_ENROLLMENT' }));
-    // The same person, presenting the address differently and correcting the credential: the
-    // identity is the normalized address, and neither the password nor the display name is in it.
+    // Address casing and credentials are not business intent. The staged registration remains
+    // immutable, so an otherwise identical retry must retain both identity and digest.
     const retry = yield* intentFor(
       startPayload({
-        displayName: 'Corrected display name',
         email: 'First.Person@Example.TEST',
         journey: 'RETAIL_SELF_ENROLLMENT',
         password: Redacted.make('Q'.repeat(24)),
@@ -121,6 +121,27 @@ it.effect('the same person retrying converges on one Attempt identity', () =>
 
     expect(retry.intentKey).toBe(first.intentKey);
     expect(retry.intentDigest).toBe(first.intentDigest);
+  }),
+);
+
+it.effect('retail registration is credential-free and changed contact intent cannot replay the original digest', () =>
+  Effect.gen(function* registrationIntentIsImmutable() {
+    const first = yield* intentFor(startPayload({ journey: 'RETAIL_SELF_ENROLLMENT', phone: '+420777123456' }));
+    const renamed = yield* intentFor(
+      startPayload({ journey: 'RETAIL_SELF_ENROLLMENT', displayName: 'Changed name', phone: '+420777123456' }),
+    );
+    const rephoned = yield* intentFor(startPayload({ journey: 'RETAIL_SELF_ENROLLMENT', phone: '+420777654321' }));
+    expect(first.retailRegistration).toEqual({
+      displayName: 'Enrollment start intent',
+      email: 'first.person@example.test',
+      phone: '+420777123456',
+    });
+    expect(renamed.intentKey).toBe(first.intentKey);
+    expect(rephoned.intentKey).toBe(first.intentKey);
+    expect(renamed.intentDigest).not.toBe(first.intentDigest);
+    expect(rephoned.intentDigest).not.toBe(first.intentDigest);
+    expect(JSON.stringify(first)).not.toContain('P'.repeat(24));
+    expect(first.retailRegistration).not.toHaveProperty('password');
   }),
 );
 

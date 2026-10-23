@@ -254,6 +254,8 @@ export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.with
     leaseToken: uuid('lease_token'),
     portalEnrollmentAttemptId: uuid('portal_enrollment_attempt_id').defaultRandom().primaryKey(),
     providerSubjectId: text('provider_subject_id'),
+    /** Immutable, credential-free registration intent; final contacts belong to Party Registry. */
+    retailRegistration: jsonb('retail_registration').$type<DatabaseJsonObject>(),
     revision: integer('revision').default(1).notNull(),
     state: text('state').default('IN_PROGRESS').notNull(),
     subjectType: text('subject_type'),
@@ -275,6 +277,10 @@ export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.with
     check(
       'ccc_portal_enrollment_attempts_journey_ck',
       sql`${table.journey} in ('RETAIL_SELF_ENROLLMENT', 'COUNTERPARTY_INVITATION', 'EXISTING_ACCOUNT')`,
+    ),
+    check(
+      'ccc_retail_registration_object_ck',
+      sql`${table.retailRegistration} is null or (${table.journey} = 'RETAIL_SELF_ENROLLMENT' and jsonb_typeof(${table.retailRegistration}) = 'object' and length(${table.retailRegistration}::text) <= 2000 and ${table.retailRegistration} ? 'displayName' and ${table.retailRegistration} ? 'email' and ${table.retailRegistration} - ARRAY['displayName', 'email', 'phone'] = '{}'::jsonb)`,
     ),
     check(
       'ccc_portal_enrollment_attempts_intent_key_ck',

@@ -84,7 +84,6 @@ export const commercePortalActionKeys: readonly string[] = [
   'commerce.customer-context.bind-retail-portal-profile',
   'commerce.customer-context.claim-portal-enrollment-transition',
   'commerce.customer-context.record-portal-enrollment-outcome',
-  'commerce.customer-context.reconcile-portal-enrollment-outcome',
 ];
 
 interface DiscoveredAction {

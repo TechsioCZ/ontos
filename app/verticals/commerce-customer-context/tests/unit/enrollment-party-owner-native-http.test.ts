@@ -3,6 +3,7 @@ import { ConfigProvider, DateTime, Effect, Encoding, Result, Schema } from 'effe
 import { FetchHttpClient } from 'effect/unstable/http';
 import { expect, it } from 'effect-rstest';
 
+import { retailCustomerDirectoryOwnerEffect } from '../../src/enrollment/journeys/retail-self-enrollment-customer-owner.ts';
 import { retailPartyCandidateOwnerEffect } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import type { RetailPartyCandidateOwnerInput } from '../../src/enrollment/journeys/retail-self-enrollment-party-owner.ts';
 import { CommerceEnrollmentOwnerTransitionSchema } from '../../src/enrollment/orchestration/owner-transition-driver.ts';
@@ -248,7 +249,10 @@ it.effect('scheduled reconciliation reads the original invocation through native
     );
     expect(requests[1]?.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
     expect(requests[1]?.headers.get('x-correlation-id')).toBe(requestCorrelation);
-    expect(yield* Effect.promise(() => requests[1].json())).toEqual({ invocationId: ownerInvocationId });
+    expect(yield* Effect.promise(() => requests[1].json())).toEqual({
+      actionKey: 'party.registry.create-party',
+      idempotencyKey: ownerInvocationId,
+    });
   }),
 );
 
@@ -327,5 +331,176 @@ it.effect('committed native recovery acquires distinct one-use assertions for co
       expect(request?.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
       expect(request?.url.startsWith('https://shell.example.test/api/approved/party-registry/')).toBe(true);
     }
+  }),
+);
+
+const customerDirectoryInput = {
+  compositionRevision,
+  legalEntityId,
+  requestCorrelation,
+  tenantId,
+  partyRef: {
+    ...partyRef,
+    resourceId: '90000000-0000-4000-8000-000000000001',
+    moduleId: 'party.registry',
+    resourceType: 'party.registry.party',
+  } as const,
+  registration: { displayName: 'Skutečný Zákazník', email: 'customer@example.test', phone: '+420 777 123 456' },
+  validFrom: '2026-09-19T10:00:00.000Z',
+};
+
+const customerDirectoryTransport = (state: 'ABSENT' | 'OPEN' | 'COMMITTED', failCommand = false) => {
+  const requests: Request[] = [];
+  const commands: Record<string, unknown>[] = [];
+  let issued = 0;
+  const fakeFetch: typeof fetch = async (target, init) => {
+    const request = new Request(target, init);
+    requests.push(request);
+    if (request.url.endsWith('/auth/api-key/gateway-context'))
+      return Response.json(gatewayResponse(tenantId, ++issued));
+    if (request.url.endsWith('/action-commits/resolve'))
+      return state === 'ABSENT'
+        ? Response.json(
+            {
+              _tag: 'PartyCommandNotFoundProblem',
+              detail: 'Unknown scoped command',
+              status: 404,
+              title: 'Not found',
+              type: 'urn:test:not-found',
+            },
+            { status: 404 },
+          )
+        : Response.json({
+            _tag: 'PartyCommandCommitResolution',
+            invocationId: '99000000-0000-4000-8000-000000000001',
+            retryCommand: false,
+            state,
+          });
+    const payload = (await request.clone().json()) as Record<string, unknown>;
+    commands.push(payload);
+    if (failCommand) throw new Error('Acknowledgement lost');
+    if (request.url.endsWith('/counterparty-customer-onboard'))
+      return Response.json({
+        counterpartyCreated: true,
+        counterpartyRef: { ...customerDirectoryInput.partyRef, resourceType: 'party.registry.counterparty' },
+        legalEntityRef: {
+          moduleId: 'core.identity',
+          resourceId: legalEntityId,
+          resourceType: 'core.identity.legal-entity',
+          tenantId,
+        },
+        partyRef: customerDirectoryInput.partyRef,
+        rolePeriodCreated: true,
+        rolePeriodRef: { ...customerDirectoryInput.partyRef, resourceType: 'party.registry.counterparty-role-period' },
+        roleType: 'CUSTOMER',
+        validFrom: customerDirectoryInput.validFrom,
+        validTo: null,
+      });
+    const point = payload.contactPoint as { type: 'EMAIL' | 'PHONE'; value: string };
+    return Response.json({
+      contactPointRef: { ...customerDirectoryInput.partyRef, resourceType: 'party.registry.party-contact-point' },
+      current: true,
+      end: null,
+      partyRef: customerDirectoryInput.partyRef,
+      storedPartyRef: customerDirectoryInput.partyRef,
+      privacyClassification: payload.privacyClassification,
+      provenance: payload.provenance,
+      recordedAt: customerDirectoryInput.validFrom,
+      revision: 1,
+      state: 'ACTIVE',
+      validFrom: payload.validFrom,
+      validTo: null,
+      value: {
+        type: point.type,
+        displayValue: point.value,
+        lookupValue: point.type === 'EMAIL' ? point.value : '+420777123456',
+        preferred: true,
+        ...(point.type === 'PHONE' ? { countryCode: null, extension: null } : {}),
+      },
+      verification: payload.verification,
+    });
+  };
+  return { requests, commands, fakeFetch, issued: () => issued };
+};
+
+it.effect('enrolls a scoped CUSTOMER and real email/phone through three independently keyed governed commands', () =>
+  Effect.gen(function* customerDirectoryCommands() {
+    const transport = customerDirectoryTransport('ABSENT');
+    const result = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
+      .dispatch(transition)
+      .pipe(Effect.provideService(FetchHttpClient.Fetch, transport.fakeFetch), Effect.provide(configuration));
+    expect(result.status).toBe('SUCCEEDED');
+    expect(result.resultReference).toBe(customerDirectoryInput.partyRef.resourceId);
+    expect(transport.commands).toHaveLength(3);
+    expect(transport.commands[0]?.partyRef).toEqual(customerDirectoryInput.partyRef);
+    expect(transport.commands.slice(1).map((command) => command.contactPoint)).toEqual([
+      { preferred: true, type: 'EMAIL', value: 'customer@example.test' },
+      { preferred: true, type: 'PHONE', value: '+420 777 123 456' },
+    ]);
+    expect(
+      transport.commands.slice(1).every((command) => JSON.stringify(command.verification) === '{"state":"UNVERIFIED"}'),
+    ).toBe(true);
+    const commandRequests = transport.requests.filter((request) => request.url.includes('/actions/'));
+    expect(new Set(commandRequests.map((request) => request.headers.get('idempotency-key'))).size).toBe(3);
+    expect(transport.issued()).toBe(6);
+    const recoveryRequests = transport.requests.filter((request) => request.url.endsWith('/resolve'));
+    const identities = yield* Effect.promise(() => Promise.all(recoveryRequests.map((request) => request.json())));
+    expect(identities.map((identity) => identity.idempotencyKey)).toEqual(
+      commandRequests.map((request) => request.headers.get('idempotency-key')),
+    );
+    expect(identities.map((identity) => identity.actionKey)).toEqual([
+      'party.registry.counterparty-customer-onboard',
+      'party.registry.add-contact-point',
+      'party.registry.add-contact-point',
+    ]);
+    const ownerRequests = transport.requests.filter((request) => !request.url.endsWith('/gateway-context'));
+    expect(new Set(ownerRequests.map((request) => request.headers.get('authorization'))).size).toBe(6);
+    expect(
+      ownerRequests.every((request) => request.headers.get('x-ontos-composition-revision') === compositionRevision),
+    ).toBe(true);
+  }),
+);
+
+it.effect('reconciles committed customer commands without replaying any mutations', () =>
+  Effect.gen(function* committedCustomerDirectory() {
+    const transport = customerDirectoryTransport('COMMITTED');
+    const result = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
+      .reconcile({ ...transition, observedRevision: 2, ownerOperationRevision: 1 })
+      .pipe(Effect.provideService(FetchHttpClient.Fetch, transport.fakeFetch), Effect.provide(configuration));
+    expect(result.status).toBe('SUCCEEDED');
+    expect(transport.commands).toHaveLength(0);
+    expect(transport.issued()).toBe(3);
+  }),
+);
+
+it.effect('halts on an OPEN customer command without dispatching a duplicate', () =>
+  Effect.gen(function* openCustomerDirectory() {
+    const transport = customerDirectoryTransport('OPEN');
+    const failure = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
+      .dispatch(transition)
+      .pipe(
+        Effect.provideService(FetchHttpClient.Fetch, transport.fakeFetch),
+        Effect.provide(configuration),
+        Effect.flip,
+      );
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
+    expect(transport.commands).toHaveLength(0);
+    expect(transport.issued()).toBe(1);
+  }),
+);
+
+it.effect('never retries a customer command after its acknowledgement is lost', () =>
+  Effect.gen(function* unknownCustomerDirectory() {
+    const transport = customerDirectoryTransport('ABSENT', true);
+    const failure = yield* retailCustomerDirectoryOwnerEffect(customerDirectoryInput)
+      .dispatch(transition)
+      .pipe(
+        Effect.provideService(FetchHttpClient.Fetch, transport.fakeFetch),
+        Effect.provide(configuration),
+        Effect.flip,
+      );
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
+    expect(transport.commands).toHaveLength(1);
+    expect(transport.issued()).toBe(2);
   }),
 );

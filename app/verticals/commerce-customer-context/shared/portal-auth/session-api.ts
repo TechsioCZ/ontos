@@ -166,7 +166,26 @@ const commercePortalAuthSessionGroupDefinition = HttpApiGroup.make('portalAuthSe
       success: Schema.Union([
         Schema.Struct({ state: Schema.Literal('anonymous') }),
         Schema.Struct({
+          account: Schema.Struct({ email: Schema.String, name: Schema.String }),
           session: CommercePortalAuthSessionSnapshotSchema,
+          state: Schema.Literal('authenticated'),
+        }),
+      ]),
+    }),
+  )
+  .add(
+    HttpApiEndpoint.get('getCustomerAccount', '/api/portal-auth/customer-account', {
+      error: getSessionErrors,
+      success: Schema.Union([
+        Schema.Struct({ state: Schema.Literal('anonymous') }),
+        Schema.Struct({
+          account: Schema.Struct({
+            email: Schema.String,
+            id: CommercePortalAuthProviderSubjectIdSchema,
+            name: Schema.String,
+            partyId: Schema.String.check(Schema.isUUID()),
+            tenantId: Schema.String.check(Schema.isUUID()),
+          }),
           state: Schema.Literal('authenticated'),
         }),
       ]),

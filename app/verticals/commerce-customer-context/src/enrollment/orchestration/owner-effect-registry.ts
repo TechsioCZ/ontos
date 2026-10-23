@@ -24,6 +24,8 @@ import type {
   EnrollmentResourceIdSchema,
   ReconcileEnrollmentResolution,
 } from '../../../shared/enrollment-contracts.ts';
+import { readRetailEnrollmentRegistration } from '../attempts/registration-persistence.ts';
+import { retailCustomerDirectoryOwnerEffect } from '../journeys/retail-self-enrollment-customer-owner.ts';
 import { RetailCustomerProfileRefSchema } from '../../../shared/resources/retail-customer-profile.ts';
 import { readCounterpartyInvitationClaimability } from '../../persistence/access-persistence.ts';
 import type { CounterpartyInvitationClaimability } from '../../persistence/access-persistence.ts';
@@ -69,6 +71,7 @@ import {
   COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY,
   ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY,
   PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
+  RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY,
   PARTY_REGISTRY_OWNER_MODULE_KEY,
   retailSelfEnrollmentEvidenceReference,
   retailSelfEnrollmentRequestDigest,
@@ -221,6 +224,7 @@ const retailDigestFor = (
 const partyCandidateFor = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.partyCandidate')(
   function* partyCandidateForEffect(
     context: CommerceEnrollmentOwnerEffectContext,
+    displayName?: string,
   ): Effect.fn.Return<RetailPartyCandidateOwnerInput['candidate'], CommerceEnrollmentAttemptError> {
     const { attempt } = context;
     const { accountSubject } = attempt;
@@ -237,6 +241,7 @@ const partyCandidateFor = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party
     ]);
     const request = yield* Schema.decodeEffect(PartyMatchRequestSchema)({
       candidate: {
+        ...(displayName === undefined ? {} : { displayName }),
         evidenceRefs: [evidenceRef],
         officialIdentifiers: [],
         partyType: 'PERSON',
@@ -265,38 +270,79 @@ const partyCandidateFor = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party
   },
 );
 
-const partyEntry: RegistryEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party')(function* partyEntryEffect(
-  transition: JourneyTransitionSpec,
-  context: CommerceEnrollmentOwnerEffectContext,
-): Effect.fn.Return<Option.Option<CommerceEnrollmentRegisteredOwnerEffect>, CommerceEnrollmentAttemptError> {
-  // Two independent in-memory derivations from the same durable Attempt; neither reaches a shared
-  // downstream resource.
-  const { candidate, requestDigest } = yield* Effect.all(
-    {
-      candidate: partyCandidateFor(context),
-      requestDigest: retailDigestFor(
+const partyEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): RegistryEntry =>
+  Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party')(function* partyEntryEffect(
+    transition: JourneyTransitionSpec,
+    context: CommerceEnrollmentOwnerEffectContext,
+  ): Effect.fn.Return<Option.Option<CommerceEnrollmentRegisteredOwnerEffect>, CommerceEnrollmentAttemptError> {
+    // Two independent in-memory derivations from the same durable Attempt; neither reaches a shared
+    // downstream resource.
+    const registration = Option.isNone(run)
+      ? Option.none()
+      : yield* run.value(
+          { tenantId: context.attempt.tenantId, legalEntityId: context.subject.sellingLegalEntityRef.resourceId },
+          (transaction) => readRetailEnrollmentRegistration(transaction, context.attempt.portalEnrollmentAttemptId),
+        );
+    const { candidate, requestDigest } = yield* Effect.all(
+      {
+        candidate: partyCandidateFor(context, Option.isSome(registration) ? registration.value.displayName : undefined),
+        requestDigest: retailDigestFor(
+          {
+            partyCandidateDigest: context.subject.partyCandidateDigest,
+            sellingLegalEntityRef: context.subject.sellingLegalEntityRef,
+            step: 'PARTY_CANDIDATE',
+          },
+          transition,
+          context,
+        ),
+      },
+      { concurrency: 2 },
+    );
+    return registered(
+      retailPartyCandidateOwnerEffect({
+        candidate,
+        compositionRevision: context.attempt.compositionRevision,
+        legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
+        requestCorrelation: context.requestCorrelation,
+        tenantId: context.attempt.tenantId,
+      }),
+      requestDigest,
+    );
+  });
+
+const customerDirectoryEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): RegistryEntry =>
+  Effect.fn('CommerceEnrollmentOwnerEffectRegistry.customerDirectory')(
+    function* customerDirectoryEntryEffect(transition, context) {
+      if (Option.isNone(run) || Option.isNone(context.subject.partyRef)) return none;
+      const registration = yield* run.value(
+        { tenantId: context.attempt.tenantId, legalEntityId: context.subject.sellingLegalEntityRef.resourceId },
+        (transaction) => readRetailEnrollmentRegistration(transaction, context.attempt.portalEnrollmentAttemptId),
+      );
+      if (Option.isNone(registration)) return none;
+      const partyRef = context.subject.partyRef.value;
+      const requestDigest = yield* retailDigestFor(
         {
-          partyCandidateDigest: context.subject.partyCandidateDigest,
+          partyRef,
           sellingLegalEntityRef: context.subject.sellingLegalEntityRef,
-          step: 'PARTY_CANDIDATE',
+          step: 'RETAIL_CUSTOMER_DIRECTORY',
         },
         transition,
         context,
-      ),
+      );
+      return registered(
+        retailCustomerDirectoryOwnerEffect({
+          compositionRevision: context.attempt.compositionRevision,
+          legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
+          partyRef,
+          registration: registration.value,
+          requestCorrelation: context.requestCorrelation,
+          tenantId: context.attempt.tenantId,
+          validFrom: DateTime.formatIso(context.attempt.createdAt),
+        }),
+        requestDigest,
+      );
     },
-    { concurrency: 2 },
   );
-  return registered(
-    retailPartyCandidateOwnerEffect({
-      candidate,
-      compositionRevision: context.attempt.compositionRevision,
-      legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
-      requestCorrelation: context.requestCorrelation,
-      tenantId: context.attempt.tenantId,
-    }),
-    requestDigest,
-  );
-});
 
 /**
  * The governed Action runtime resolves whether one invocation committed, but it republishes no
@@ -923,7 +969,14 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
     };
     const portalAccount = portalAccountEntry(accountLookup, accountCreationReconciliation);
     const entries: ReadonlyMap<string, RegistryEntry> = new Map([
-      [registryKey(PARTY_REGISTRY_OWNER_MODULE_KEY, PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY), partyEntry],
+      [
+        registryKey(PARTY_REGISTRY_OWNER_MODULE_KEY, PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY),
+        partyEntry(ownerTransactionRun),
+      ],
+      [
+        registryKey(PARTY_REGISTRY_OWNER_MODULE_KEY, RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY),
+        customerDirectoryEntry(ownerTransactionRun),
+      ],
       [
         registryKey(COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY, ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY),
         ensureProfileEntry(ownerTransactionRun),

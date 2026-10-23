@@ -19,6 +19,7 @@ import {
   BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
   ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY,
   PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
+  RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY,
   retailSelfEnrollmentEvidenceReference,
   retailSelfEnrollmentRequestDigest,
 } from './retail-self-enrollment-contracts.ts';
@@ -55,13 +56,19 @@ const intentFor = (
       step: 'PARTY_CANDIDATE',
     };
   }
-  if (step.transitionKey === ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY) {
+  if (
+    step.transitionKey === ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY ||
+    step.transitionKey === RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY
+  ) {
     return Option.isNone(partyRef)
       ? null
       : {
           partyRef: partyRef.value,
           sellingLegalEntityRef: subject.sellingLegalEntityRef,
-          step: 'RETAIL_CUSTOMER_PROFILE',
+          step:
+            step.transitionKey === RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY
+              ? 'RETAIL_CUSTOMER_DIRECTORY'
+              : 'RETAIL_CUSTOMER_PROFILE',
         };
   }
   if (step.transitionKey === BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY) {

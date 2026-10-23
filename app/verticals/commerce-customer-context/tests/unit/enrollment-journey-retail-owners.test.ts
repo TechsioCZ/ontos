@@ -596,7 +596,7 @@ const stepFor = (transitionKey: string): JourneyTransitionSpec => {
 
 it.effect('prepares only the exact declared transition with the journey-derived digest', () =>
   Effect.gen(function* preparation() {
-    expect(retailSelfEnrollmentStepPlan()).toHaveLength(4);
+    expect(retailSelfEnrollmentStepPlan()).toHaveLength(5);
     const ensureStep = stepFor(ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY);
     const prepared = yield* retailSelfEnrollmentPrepareStep(
       preparationSubject,

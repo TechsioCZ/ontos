@@ -12,7 +12,7 @@ import {
 import type { JourneyDefinition, JourneyTransitionSpec } from './journey-contracts.ts';
 
 /**
- * Retail self-enrollment vocabulary: four owner transitions, each with its own durable claim,
+ * Retail self-enrollment vocabulary: five owner transitions, each with its own durable claim,
  * transition key and request digest. Nothing here performs an owner effect; it declares the plan
  * and derives the stable identities an equivalent retry must reproduce exactly.
  *
@@ -24,6 +24,8 @@ import type { JourneyDefinition, JourneyTransitionSpec } from './journey-contrac
 export const PARTY_REGISTRY_OWNER_MODULE_KEY = 'party.registry';
 /** One owner transition covers the whole candidate submission (match, then create on NO_MATCH). */
 export const PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY = 'party.candidate.submit';
+/** CUSTOMER commercial role plus declared contact points, each with an immutable command identity. */
+export const RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY = 'party.customer.enroll';
 /** Owner module that owns the Commerce Retail Customer Profile and its Retail Portal binding. */
 export const COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY = 'commerce.customer-context';
 /** Transition keys are the exact generated Action keys these transitions invoke. */
@@ -60,6 +62,11 @@ const RETAIL_SELF_ENROLLMENT_REQUIRED_TRANSITIONS: readonly JourneyTransitionSpe
     ownerModuleKey: PARTY_REGISTRY_OWNER_MODULE_KEY,
     required: true,
     transitionKey: PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
+  },
+  {
+    ownerModuleKey: PARTY_REGISTRY_OWNER_MODULE_KEY,
+    required: true,
+    transitionKey: RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY,
   },
   {
     ownerModuleKey: COMMERCE_CUSTOMER_CONTEXT_OWNER_MODULE_KEY,
@@ -107,7 +114,7 @@ const RetailSelfEnrollmentStepIntentSchema = Schema.Union([
   Schema.Struct({
     partyRef: PartyRefSchema,
     sellingLegalEntityRef: SellingLegalEntityRefSchema,
-    step: Schema.Literal('RETAIL_CUSTOMER_PROFILE'),
+    step: Schema.Literals(['RETAIL_CUSTOMER_PROFILE', 'RETAIL_CUSTOMER_DIRECTORY']),
   }),
   Schema.Struct({
     partyRef: PartyRefSchema,
@@ -159,15 +166,14 @@ const digestParts = (input: RetailSelfEnrollmentDigestInput): readonly string[] 
     intent.partyRef.resourceId,
     intent.partyRef.tenantId,
   ];
-  return intent.step === 'RETAIL_CUSTOMER_PROFILE'
-    ? withParty
-    : [
-        ...withParty,
-        intent.principalRef.moduleId,
-        intent.principalRef.resourceType,
-        intent.principalRef.resourceId,
-        intent.principalRef.tenantId,
-      ];
+  if (intent.step !== 'RETAIL_PORTAL_BINDING') return withParty;
+  return [
+    ...withParty,
+    intent.principalRef.moduleId,
+    intent.principalRef.resourceType,
+    intent.principalRef.resourceId,
+    intent.principalRef.tenantId,
+  ];
 };
 
 /**

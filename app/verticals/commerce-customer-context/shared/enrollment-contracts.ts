@@ -139,7 +139,28 @@ export const CommercePortalAccountSubjectSchema = Schema.Struct({
 });
 export type CommercePortalAccountSubject = typeof CommercePortalAccountSubjectSchema.Type;
 
+/** Immutable business contact intent, staged by the governed start Action until Party owns it. */
+export const RetailEnrollmentRegistrationSchema = Schema.Struct({
+  displayName: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(200)),
+  email: Schema.String.check(
+    Schema.isTrimmed(),
+    Schema.isMinLength(3),
+    Schema.isMaxLength(320),
+    Schema.isPattern(/^[^\s@]+@[^\s@]+\.[^\s@]+$/u),
+  ),
+  phone: Schema.optionalKey(
+    Schema.String.check(
+      Schema.isTrimmed(),
+      Schema.isMinLength(3),
+      Schema.isMaxLength(100),
+      Schema.isPattern(/^\+?[()0-9 .-]+$/u),
+    ),
+  ),
+});
+export type RetailEnrollmentRegistration = typeof RetailEnrollmentRegistrationSchema.Type;
+
 export const EnrollmentAttemptIntentSchema = Schema.Struct({
+  retailRegistration: Schema.optionalKey(RetailEnrollmentRegistrationSchema),
   intentDigest: EnrollmentDigestSchema,
   intentKey: EnrollmentKeySchema,
   invitationId: Schema.optionalKey(EnrollmentInvitationIdSchema),

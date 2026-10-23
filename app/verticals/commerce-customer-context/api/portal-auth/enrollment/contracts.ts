@@ -82,6 +82,14 @@ export const CommercePortalAuthEnrollmentStartInputSchema = Schema.Union([
     ...enrollmentAccountCreationFields,
     invitationId: Schema.optionalKey(Schema.Never),
     journey: Schema.Literal('RETAIL_SELF_ENROLLMENT'),
+    phone: Schema.optionalKey(
+      Schema.String.check(
+        Schema.isTrimmed(),
+        Schema.isMinLength(3),
+        Schema.isMaxLength(100),
+        Schema.isPattern(/^\+?[()0-9 .-]+$/u),
+      ),
+    ),
   }),
   Schema.Struct({
     ...enrollmentAccountCreationFields,

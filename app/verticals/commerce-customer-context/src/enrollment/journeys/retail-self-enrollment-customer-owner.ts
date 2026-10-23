@@ -1,0 +1,178 @@
+import {
+  AddContactPointPayloadSchema,
+  CounterpartyCustomerOnboardPayloadSchema,
+  PartyCommandNotFoundProblemSchema,
+} from '@app/party-registry/api';
+import {
+  addContactPointWithAuthorization,
+  counterpartyCustomerOnboardWithAuthorization,
+  resolvePartyCommandCommitWithAuthorization,
+} from '@app/party-registry/api/client';
+import type { PartyRef } from '@app/party-registry/resources/party';
+import { Effect, Option, Redacted, Schema } from 'effect';
+
+import { EnrollmentActionInvocationIdSchema } from '../../../shared/enrollment-contracts.ts';
+import type { RetailEnrollmentRegistration } from '../../../shared/enrollment-contracts.ts';
+import { decodeOwnerOutcome, decodeOwnerResolution, ownerUnavailable } from '../orchestration/owner-effect-codec.ts';
+import type { CommerceEnrollmentOwnerEffect } from '../orchestration/owner-transition-driver.ts';
+import { acquireRetailPartyGateway } from './retail-self-enrollment-party-owner.ts';
+import type { RetailPartyCandidateOwnerInput } from './retail-self-enrollment-party-owner.ts';
+import { retailSelfEnrollmentEvidenceReference } from './retail-self-enrollment-contracts.ts';
+
+export interface RetailCustomerDirectoryOwnerInput extends Omit<RetailPartyCandidateOwnerInput, 'candidate'> {
+  readonly partyRef: PartyRef;
+  readonly registration: RetailEnrollmentRegistration;
+  readonly validFrom: string;
+}
+
+const unavailable = (reason: string, cause?: unknown) =>
+  ownerUnavailable('retail_customer_directory_unavailable', reason, cause);
+const outcomeCode = 'retail_customer_directory_enrolled';
+
+/**
+ * Each business command has its own deterministic idempotency key. Before continuing after an unknown
+ * outcome we ask the Party owner's commit authority; a committed command is never sent again.
+ * The parent enrollment claim remains the authority for the whole composed owner transition.
+ */
+export const retailCustomerDirectoryOwnerEffect = (
+  originalInput: RetailCustomerDirectoryOwnerInput,
+): CommerceEnrollmentOwnerEffect => {
+  const input = Object.freeze({
+    ...originalInput,
+    partyRef: Object.freeze({ ...originalInput.partyRef }),
+    registration: Object.freeze({ ...originalInput.registration }),
+  });
+  const run = (ownerInvocationId: string) =>
+    Effect.gen(function* enrollCustomerDirectory() {
+      const evidenceReference = `commerce.portal-enrollment:${ownerInvocationId}`;
+      const onboard = yield* Schema.decodeEffect(CounterpartyCustomerOnboardPayloadSchema)({
+        counterpartyProvenance: {
+          evidenceReference,
+          method: 'APPROVED_COMMERCIAL_RELATIONSHIP',
+          reason: 'Customer requested a retail purchasing relationship through governed portal enrollment',
+          source: 'commerce.customer-context',
+        },
+        customerEvidence: {
+          evidenceReference,
+          method: 'APPROVED_PURCHASING_RELATIONSHIP',
+          reason: 'Retail portal self-enrollment accepted under the selling legal entity policy',
+          source: 'commerce.customer-context',
+        },
+        partyRef: input.partyRef,
+        validFrom: input.validFrom,
+      }).pipe(Effect.mapError((cause) => unavailable('The customer onboarding intent is invalid', cause)));
+      const contact = (type: 'EMAIL' | 'PHONE', value: string) =>
+        Schema.decodeEffect(AddContactPointPayloadSchema)({
+          contactPoint:
+            type === 'EMAIL'
+              ? { preferred: true, type, value }
+              : { preferred: true, type, value, ...(value.startsWith('+') ? {} : { countryCode: 'CZ' }) },
+          partyRef: input.partyRef,
+          privacyClassification: 'PERSONAL',
+          provenance: {
+            authoritative: false,
+            evidenceReference,
+            method: 'DECLARED_BY_PARTY',
+            source: 'PARTY_DECLARATION',
+          },
+          validFrom: input.validFrom,
+          // Account email verification is not evidence that the Party owner verified this contact point.
+          verification: { state: 'UNVERIFIED' },
+        }).pipe(Effect.mapError((cause) => unavailable('The declared customer contact is invalid', cause)));
+      const email = yield* contact('EMAIL', input.registration.email);
+      const phone =
+        input.registration.phone === undefined ? undefined : yield* contact('PHONE', input.registration.phone);
+
+      const command = (
+        step: string,
+        actionKey: 'party.registry.counterparty-customer-onboard' | 'party.registry.add-contact-point',
+        execute: (
+          authorization: string,
+          options: {
+            baseUrl: string | URL;
+            compositionRevision: string;
+            correlationId: string;
+            idempotencyKey: string;
+          },
+        ) => Effect.Effect<unknown, unknown>,
+      ) =>
+        Effect.gen(function* executeDeclaredCommand() {
+          const invocationId = yield* Schema.decodeEffect(EnrollmentActionInvocationIdSchema)(
+            retailSelfEnrollmentEvidenceReference(['retail-customer-directory', ownerInvocationId, step]),
+          ).pipe(Effect.mapError((cause) => unavailable('The customer command identity is invalid', cause)));
+          const recoveryGateway = yield* acquireRetailPartyGateway(input);
+          const resolution = yield* resolvePartyCommandCommitWithAuthorization(
+            { actionKey, idempotencyKey: invocationId },
+            Redacted.value(recoveryGateway.credential),
+            {
+              ...recoveryGateway.options,
+              correlationId: input.requestCorrelation,
+            },
+          ).pipe(
+            Effect.asSome,
+            Effect.catchIf(Schema.is(PartyCommandNotFoundProblemSchema), () => Effect.succeedNone),
+            Effect.mapError((cause) => unavailable('The customer command commit could not be resolved', cause)),
+          );
+          if (Option.isSome(resolution)) {
+            if (resolution.value.state === 'COMMITTED') return;
+            return yield* unavailable('The customer command has an unresolved invocation; no duplicate was dispatched');
+          }
+          const gateway = yield* acquireRetailPartyGateway(input);
+          yield* execute(Redacted.value(gateway.credential), {
+            ...gateway.options,
+            correlationId: input.requestCorrelation,
+            idempotencyKey: invocationId,
+          }).pipe(
+            Effect.mapError((cause) =>
+              unavailable('The governed customer command did not return a known outcome', cause),
+            ),
+          );
+        });
+      yield* command('customer-role', 'party.registry.counterparty-customer-onboard', (authorization, options) =>
+        counterpartyCustomerOnboardWithAuthorization(onboard, authorization, options),
+      );
+      yield* command('email', 'party.registry.add-contact-point', (authorization, options) =>
+        addContactPointWithAuthorization(email, authorization, options),
+      );
+      if (phone !== undefined) {
+        yield* command('phone', 'party.registry.add-contact-point', (authorization, options) =>
+          addContactPointWithAuthorization(phone, authorization, options),
+        );
+      }
+    });
+  return {
+    dispatch: (transition) =>
+      run(transition.ownerInvocationId).pipe(
+        Effect.andThen(() =>
+          decodeOwnerOutcome(
+            {
+              outcomeCode,
+              resultReference: input.partyRef.resourceId,
+              status: 'SUCCEEDED',
+            },
+            'retail_customer_directory_unavailable',
+            'The customer directory outcome is invalid',
+          ),
+        ),
+      ),
+    reconcile: (reconciliation) =>
+      run(reconciliation.ownerInvocationId).pipe(
+        Effect.andThen(() =>
+          decodeOwnerResolution(
+            {
+              actorPrincipalId: reconciliation.actorPrincipalId,
+              outcomeCode,
+              reconciliationRef: retailSelfEnrollmentEvidenceReference([
+                'retail-customer-directory-reconciled',
+                reconciliation.ownerInvocationId,
+              ]),
+              resultReference: input.partyRef.resourceId,
+              status: 'SUCCEEDED',
+            },
+            'retail_customer_directory_unavailable',
+            'The customer directory reconciliation is invalid',
+          ),
+        ),
+      ),
+  };
+};

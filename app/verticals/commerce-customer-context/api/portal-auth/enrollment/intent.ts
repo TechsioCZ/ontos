@@ -22,8 +22,8 @@ import type { CommercePortalAuthEnrollmentStartInput } from './contracts.ts';
  * The credential-free half of a start request.
  *
  * Everything below is derived from the business intent alone: the journey, the target selling
- * Legal Entity, the invitation and the Party the caller named. The password and the display name
- * are deliberately absent from every digest — an equivalent retry must converge on the exact same
+ * Legal Entity, the invitation, and declared registration contacts. The password
+ * is deliberately absent from every digest — an equivalent retry must converge on the exact same
  * Attempt and the exact same owner operation, and a digest that moved with the credential would
  * turn a password correction into a second account.
  */
@@ -75,6 +75,7 @@ export const commercePortalAuthEnrollmentIntent = (
           input.sellingLegalEntityId,
           invitationId ?? '',
           input.partyRef ?? '',
+          ...(input.journey === 'RETAIL_SELF_ENROLLMENT' ? [input.displayName, input.phone ?? ''] : []),
         ]),
       ),
       intentKey: Schema.decodeEffect(EnrollmentKeySchema)(
@@ -89,6 +90,15 @@ export const commercePortalAuthEnrollmentIntent = (
         intentDigest,
         intentKey,
         journey: input.journey,
+        ...(input.journey === 'RETAIL_SELF_ENROLLMENT'
+          ? {
+              retailRegistration: {
+                displayName: input.displayName,
+                email: normalizedEmail(input),
+                ...(input.phone === undefined ? {} : { phone: input.phone }),
+              },
+            }
+          : {}),
         targetLegalEntityId: input.sellingLegalEntityId,
       };
       const withInvitation = invitationId === undefined ? base : { ...base, invitationId };

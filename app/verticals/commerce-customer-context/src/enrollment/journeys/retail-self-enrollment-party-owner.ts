@@ -98,11 +98,10 @@ const partyGatewayConfiguration = Config.all({
   baseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
 });
 
-const makeRetailPartyCandidateOwnerExecutors = (
-  input: RetailPartyCandidateOwnerInput,
-): RetailPartyCandidateOwnerExecutors => {
-  const { compositionRevision, legalEntityId, requestCorrelation, tenantId } = input;
-  const acquire = Effect.fn('RetailPartyCandidateOwnerEffect.acquireGateway')(function* acquireGateway() {
+/** Fresh, scoped owner credential for each Party command or authoritative recovery read. */
+export const acquireRetailPartyGateway = (input: Omit<RetailPartyCandidateOwnerInput, 'candidate'>) =>
+  Effect.gen(function* acquireGateway() {
+    const { compositionRevision, legalEntityId, requestCorrelation, tenantId } = input;
     const configured = yield* partyGatewayConfiguration.pipe(
       Effect.mapError((cause) => unavailable('The Party Registry server gateway configuration is unavailable', cause)),
     );
@@ -147,6 +146,13 @@ const makeRetailPartyCandidateOwnerExecutors = (
       },
     };
   });
+
+const makeRetailPartyCandidateOwnerExecutors = (
+  input: RetailPartyCandidateOwnerInput,
+): RetailPartyCandidateOwnerExecutors => {
+  const { compositionRevision, legalEntityId, requestCorrelation, tenantId } = input;
+  const gatewayScope = Object.freeze({ compositionRevision, legalEntityId, requestCorrelation, tenantId });
+  const acquire = () => acquireRetailPartyGateway(gatewayScope);
   return Object.freeze<RetailPartyCandidateOwnerExecutors>({
     createParty: (payload, options) =>
       acquire().pipe(
@@ -337,7 +343,10 @@ export const retailPartyCandidateOwnerEffect = (
     // never seen is proof that this transition failed upstream of its own Create — in the read-only
     // match — so nothing is committed, nothing can be lost, and the submission is simply run again.
     const recovery = yield* executors
-      .recoverPartyCreate({ invocationId: reconciliation.ownerInvocationId }, { correlationId: requestCorrelation })
+      .recoverPartyCreate(
+        { actionKey: 'party.registry.create-party', idempotencyKey: reconciliation.ownerInvocationId },
+        { correlationId: requestCorrelation },
+      )
       .pipe(
         Effect.asSome,
         Effect.catchIf(isCommitResolutionNotFound, () => Effect.succeedNone),
