@@ -47,6 +47,7 @@ import type {
   ShellComposition,
   ShellCompositionRequest,
   ShellDocumentContext,
+  ShellDocumentContextRequest,
   ShellReloadRequiredProblem,
   ShellInternalProblem,
   IdentityProblem,
@@ -237,7 +238,7 @@ export const shellComposition = (
 
 /** Server rendering's one read of a document's session, legal entities, tenants, composition, capability and assertions. */
 export const documentContext = (
-  payload: ShellCompositionRequest,
+  payload: ShellDocumentContextRequest,
   options: ShellAuthenticationClientOptions = {},
 ): ShellAuthenticationClientEffect<ShellDocumentContext> =>
   invokeShellAuthenticationClient(options, (client) => client.documentContext.documentContext({ payload }));

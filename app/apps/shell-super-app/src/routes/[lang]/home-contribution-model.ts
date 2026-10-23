@@ -50,6 +50,8 @@ const resolveCandidate = (
 
 const HOME_PATH = /^\/(?:[a-z]{2}\/?)?$/u;
 
+export const isHomeRequest = (request: Request): boolean => HOME_PATH.test(new URL(request.url).pathname);
+
 /**
  * The Home components a document's Home may show, lowest order first: a candidate is offered only when every module
  * whose data it shows is in the persona's navigation, so roles without them never cause a denied (403) request.
@@ -60,7 +62,7 @@ export const homeContributionCandidates = (
   homeComponents: readonly ShellHomeComponent[],
   navigationModuleIds: ReadonlySet<string>,
 ): readonly ShellHomeComponent[] | undefined =>
-  HOME_PATH.test(new URL(request.url).pathname)
+  isHomeRequest(request)
     ? homeComponents.filter(({ requiresModules }) =>
         requiresModules.every((moduleId) => navigationModuleIds.has(moduleId)),
       )

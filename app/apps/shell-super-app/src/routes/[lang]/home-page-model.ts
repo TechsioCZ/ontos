@@ -24,14 +24,10 @@ import {
 import type { DocumentGatewayAssertion } from '../../../shared/document-gateway-api.ts';
 import { warmDocumentGatewayAssertions } from '../document-gateway-assertions.ts';
 import {
-  hasModuleAiApprovals,
   offersPeopleAdministration,
-  withAgentPlatformNavigation,
-  withConnectedAppsNavigation,
-  withoutModuleAiApprovals,
-  withPeopleAdministration,
-} from '../shell-platform-navigation.ts';
-import { homeContributionCandidates, resolveHomeContribution } from './home-contribution-model.ts';
+  presentedShellNavigationItems,
+} from '../../../shared/shell-platform-navigation.ts';
+import { homeContributionCandidates, isHomeRequest, resolveHomeContribution } from './home-contribution-model.ts';
 import type { HomeContribution } from './home-contribution-model.ts';
 import type { AvailableTenantsClientError, ShellAuthenticationClientOptions } from '../../api/auth-client.ts';
 import { browserRuntime } from '../../runtime/browser-effect-runtime.ts';
@@ -75,11 +71,6 @@ export interface AuthenticatedHomePageModel {
   readonly gatewayAssertions?: readonly DocumentGatewayAssertion[];
   /** Module deployments this document may call; the browser obtains their assertions in one batch. */
   readonly gatewayAudiences?: readonly string[];
-  /**
-   * Set instead of `homeContribution` by server rendering: the Home components the browser resolves after hydration,
-   * lowest order first.
-   */
-  readonly homeCandidates?: readonly ShellHomeComponent[];
   readonly homeContribution?: HomeContribution;
   readonly identity: SafeTenantIdentity;
   readonly legalEntities:
@@ -329,22 +320,13 @@ const emptyNavigation: ComposedNavigation = {
 const presentedNavigation = (
   composition: Extract<ShellComposition, { readonly state: 'available' }>,
   canManagePeople: boolean,
-): ComposedNavigation => {
-  const presentable = withPeopleAdministration(composition.navigation, canManagePeople);
-  return {
-    deniedAppIds: composition.deniedAppIds,
-    items: withConnectedAppsNavigation(
-      withAgentPlatformNavigation(
-        withoutModuleAiApprovals(presentable),
-        canManagePeople || hasModuleAiApprovals(presentable),
-      ),
-      canManagePeople,
-    ),
-    moduleIds: [...new Set(composition.navigation.map(({ moduleId }) => String(moduleId)))],
-    state: 'available',
-    unavailableDeployments: composition.unavailableDeployments,
-  };
-};
+): ComposedNavigation => ({
+  deniedAppIds: composition.deniedAppIds,
+  items: presentedShellNavigationItems(composition.navigation, canManagePeople),
+  moduleIds: [...new Set(composition.navigation.map(({ moduleId }) => String(moduleId)))],
+  state: 'available',
+  unavailableDeployments: composition.unavailableDeployments,
+});
 
 const navigationModuleIds = (navigation: ComposedNavigation) =>
   new Set(navigation.items.map(({ moduleId }) => String(moduleId)));
@@ -362,14 +344,14 @@ const unavailableLegalEntities = { items: [] as const, state: 'unavailable' as c
  * the composition's audiences together. Separate reads resolved that context five times, each in its own invocation
  * on the document's isolate (stage: 4-5 s sequential, then 2.6 s concurrent with ~1 s of their CPU queued on the
  * document's thread), and a separate assertion batch waited for the composition before resolving the session again.
- * The Home component is a browser-loaded remote, so the server never resolves it: the model carries its candidates
- * and the browser resolves them after hydration.
+ * Home target admission shares this invocation; remote code and primary data still load only in the browser.
  */
 const loadServerHomePageModel = Effect.fn('HomePageModel.loadServerHomePageModel')(
   function* loadServerHomePageModelEffect(request: Request, options: ShellAuthenticationClientOptions) {
     const requestedRevision = yield* requestedCompositionRevision(request);
+    const compositionRequest = requestedRevision === undefined ? {} : { compositionRevision: requestedRevision };
     const context = yield* documentContext(
-      requestedRevision === undefined ? {} : { compositionRevision: requestedRevision },
+      isHomeRequest(request) ? { ...compositionRequest, home: true } : compositionRequest,
       options,
     );
     const { session } = context;
@@ -403,11 +385,7 @@ const loadServerHomePageModel = Effect.fn('HomePageModel.loadServerHomePageModel
       return sessionEndedModel;
     }
     const navigation = presentedNavigation(composition, context.canManagePeople ?? false);
-    const homeCandidates = homeContributionCandidates(
-      request,
-      composition.homeComponents,
-      navigationModuleIds(navigation),
-    );
+
     const model: AuthenticatedHomePageModel = {
       compositionRevision: composition.compositionRevision,
       contextState: session.state,
@@ -424,7 +402,10 @@ const loadServerHomePageModel = Effect.fn('HomePageModel.loadServerHomePageModel
     };
     const withAssertions =
       context.gatewayAssertions === undefined ? model : { ...model, gatewayAssertions: context.gatewayAssertions };
-    return homeCandidates === undefined ? withAssertions : { ...withAssertions, homeCandidates };
+    return {
+      ...withAssertions,
+      ...homeFields(Option.fromUndefinedOr(context.home)),
+    };
   },
 );
 

@@ -512,45 +512,30 @@ it('hands only the admitted Home target and trusted context to the existing lazy
   });
 });
 
-it.effect('resolves a server-deferred Home component in the browser after hydration', () =>
-  Effect.gen(function* deferredHomeComponent() {
-    const model = authenticatedModel();
-    if (model.state !== 'authenticated') {
-      throw new Error('Expected authenticated fixture');
-    }
-    const target = Result.getOrThrow(
-      Schema.decodeResult(ResolvedModuleTargetSchema)({
-        appId: 'inventory-app',
-        componentKey: 'inventory.stock.home',
-        compositionRevision,
-        entrypointKey: 'inventory.stock.component.home',
-        federation: {
-          expose: './Home',
-          manifest: { sha256: '3'.repeat(64), url: 'https://inventory.example.test/mf-manifest.json' },
-          remoteName: 'verticalInventory',
-        },
-        moduleId: 'inventory.stock',
-        routeParameters: {},
-        writable: false,
-      }),
-    );
-    resolveModuleTargetMock.mockReturnValue(Effect.succeed(target));
-    const homeCandidates = [
-      {
-        entrypointKey: Schema.decodeUnknownSync(EntrypointKeySchema)('inventory.stock.component.home'),
-        moduleId: inventoryModuleId,
-        order: 100,
-        requiresModules: [inventoryModuleId],
-      },
-    ];
-    render(<HomeView initialModel={{ ...model, homeCandidates }} />);
-    yield* Effect.promise(() => waitFor(() => expect(resolvedTargetMock).toHaveBeenCalled()));
-    expect(resolveModuleTargetMock.mock.calls[0]?.[0]).toEqual({
+it('uses the document-admitted Home target in its first render without another resolution', () => {
+  const model = authenticatedModel();
+  if (model.state !== 'authenticated') {
+    throw new Error('Expected authenticated fixture');
+  }
+  const target = Result.getOrThrow(
+    Schema.decodeResult(ResolvedModuleTargetSchema)({
+      appId: 'inventory-app',
+      componentKey: 'inventory.stock.home',
       compositionRevision,
       entrypointKey: 'inventory.stock.component.home',
+      federation: {
+        expose: './Home',
+        manifest: { sha256: '3'.repeat(64), url: 'https://inventory.example.test/mf-manifest.json' },
+        remoteName: 'verticalInventory',
+      },
       moduleId: 'inventory.stock',
-    });
-    expect(resolvedTargetMock.mock.calls.at(-1)?.[0]).toMatchObject({ model: { state: 'resolved', target } });
-    expect(screen.queryByText('shell.moduleTarget.loading')).toBeNull();
-  }),
-);
+      routeParameters: {},
+      writable: false,
+    }),
+  );
+  render(<HomeView initialModel={{ ...model, homeContribution: { state: 'ready', target } }} />);
+  expect(resolvedTargetMock).toHaveBeenCalled();
+  expect(resolveModuleTargetMock).not.toHaveBeenCalled();
+  expect(resolvedTargetMock.mock.calls.at(-1)?.[0]).toMatchObject({ model: { state: 'resolved', target } });
+  expect(screen.queryByText('shell.moduleTarget.loading')).toBeNull();
+});

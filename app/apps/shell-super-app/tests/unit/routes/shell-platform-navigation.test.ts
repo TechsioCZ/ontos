@@ -10,7 +10,7 @@ import {
   withConnectedAppsNavigation,
   withoutModuleAiApprovals,
   withPeopleAdministration,
-} from '../../../src/routes/shell-platform-navigation.ts';
+} from '../../../shared/shell-platform-navigation.ts';
 
 const item = (
   page: string,

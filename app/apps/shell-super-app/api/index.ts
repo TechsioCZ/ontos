@@ -60,6 +60,7 @@ import { FetchHttpClient } from 'effect/unstable/http';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { dispatchModuleApiRequest, ModuleApiTransportLive } from '../src/module-api/transport.ts';
 import { EmailTransportLive } from './email/transport.ts';
+import { DocumentHomeCorrelationId, resolveDocumentHome } from './modules/shell-document-home.ts';
 
 import {
   ApiKeyIssueResponseSchema,
@@ -96,6 +97,7 @@ import type {
   ShellAuthenticationRequiredProblem,
   ShellCapabilityUnavailableProblem,
   ShellInternalProblem,
+  ShellDocumentContextRequest,
   ShellInvalidRequestProblem,
   ShellPolicyConflictProblem,
   ShellPolicyUnprocessableProblem,
@@ -1183,7 +1185,7 @@ const issueDocumentGatewayAssertions = Effect.fn('ShellGateway.issueDocumentAsse
  */
 const documentContextHandler = Effect.fn('shell.composition.documentContext')(function* documentContextHandlerEffect(
   request: RequestWithHeaders,
-  requestedRevision: string | undefined,
+  payload: ShellDocumentContextRequest,
 ) {
   yield* noStore;
   const authentication = yield* AuthenticationService;
@@ -1244,28 +1246,36 @@ const documentContextHandler = Effect.fn('shell.composition.documentContext')(fu
     ),
     { startImmediately: true },
   );
-  const composition = captureShellRelease(requestedRevision).pipe(
-    Effect.flatMap((catalog) =>
-      ShellGovernedReads.pipe(
-        Effect.flatMap((governedReads) =>
-          governedReads.composition({ correlationId: correlationFromRequest(request), principal: context.principal }),
-        ),
+  const composition = Effect.gen(function* loadDocumentComposition() {
+    const catalog = yield* captureShellRelease(payload.compositionRevision);
+    const governedReads = yield* ShellGovernedReads;
+    const response = yield* governedReads
+      .composition({
+        correlationId: correlationFromRequest(request),
+        principal: context.principal,
+      })
+      .pipe(
         Effect.provideService(CapturedShellCompositionCatalog, catalog),
         Effect.tapError((error) => logShellReadFailure('composition', request, error)),
-      ),
-    ),
-    Effect.flatMap((response) => decodeResponse(ShellCompositionSchema, response, shellInternalProblem)),
+      );
+    const documentComposition = yield* decodeResponse(ShellCompositionSchema, response, shellInternalProblem);
+    return { catalog, composition: documentComposition };
+  }).pipe(
     Effect.catch((error) =>
       Effect.succeed({
-        state: Predicate.isTagged(error, 'ShellReloadRequiredProblem')
-          ? ('reload_required' as const)
-          : ('unavailable' as const),
+        catalog: null,
+        composition: {
+          state: Predicate.isTagged(error, 'ShellReloadRequiredProblem')
+            ? ('reload_required' as const)
+            : ('unavailable' as const),
+        },
       }),
     ),
   );
-  const [documentComposition, documentTenants] = yield* Effect.all([composition, tenants], { concurrency: 2 });
+  const [captured, documentTenants] = yield* Effect.all([composition, tenants], { concurrency: 2 });
+  const documentComposition = captured.composition;
   const base = { composition: documentComposition, legalEntities, session, tenants: documentTenants };
-  if (documentComposition.state !== 'available') {
+  if (documentComposition.state !== 'available' || captured.catalog === null) {
     return base;
   }
   const assertions = yield* Effect.forkChild(
@@ -1284,16 +1294,28 @@ const documentContextHandler = Effect.fn('shell.composition.documentContext')(fu
   )
     ? yield* Fiber.join(capability)
     : false;
+  const home =
+    payload.home === true
+      ? yield* resolveDocumentHome({
+          canManagePeople,
+          composition: documentComposition,
+          principal: { ...context.principal, legalEntityId },
+        }).pipe(
+          Effect.provideService(CapturedShellCompositionCatalog, captured.catalog),
+          Effect.provideService(DocumentHomeCorrelationId, correlationFromRequest(request)),
+        )
+      : undefined;
+  const document = home === undefined ? { ...base, canManagePeople } : { ...base, canManagePeople, home };
   return Option.match(yield* Fiber.join(assertions), {
-    onNone: () => ({ ...base, canManagePeople }),
-    onSome: (gatewayAssertions) => ({ ...base, canManagePeople, gatewayAssertions }),
+    onNone: () => document,
+    onSome: (gatewayAssertions) => ({ ...document, gatewayAssertions }),
   });
 });
 
 // Session, legal-entity and composition checks of one document share their SpiceDB decisions.
 const documentContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'documentContext', (handlers) =>
   handlers.handle('documentContext', ({ payload, request }) =>
-    withRequestPermissionDecisions(documentContextHandler(request, payload.compositionRevision)).pipe(
+    withRequestPermissionDecisions(documentContextHandler(request, payload)).pipe(
       Effect.flatMap((response) => decodeResponse(ShellDocumentContextSchema, response, authenticationInternalProblem)),
       recoverUnexpectedDefect(request, 'Unexpected Shell document context defect', () =>
         Effect.fail(authenticationInternalProblem()),
