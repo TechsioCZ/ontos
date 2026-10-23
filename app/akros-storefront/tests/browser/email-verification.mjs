@@ -3,7 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 // Requires the genuine local realm, enrollment continuation, dispatcher and Mailpit.
 const base = new URL(process.env.AKROS_TEST_BASE_URL ?? "http://localhost:3070");
-const mailpit = new URL(process.env.AKROS_MAILPIT_URL ?? "http://localhost:8025");
+const mailpit = new URL(process.env.AKROS_MAILPIT_URL ?? "http://localhost:8026");
 for (const url of [base, mailpit]) {
   assert.ok(["localhost", "127.0.0.1"].includes(url.hostname), "Run against local services only");
 }
@@ -37,7 +37,14 @@ try {
   await page.locator("#register-phone").fill("+420777123456");
   await page.locator("#register-password").fill(password);
   await page.locator("#register-password-confirm").fill(password);
-  await page.getByRole("checkbox", { name: /Souhlasím s obchodními podmínkami/ }).check();
+  const terms = page.getByRole("checkbox", { name: /Souhlasím s obchodními podmínkami/ });
+  await terms.focus();
+  await terms.press("Space");
+  assert.equal(
+    await terms.isChecked(),
+    true,
+    "Terms must be checked through the real keyboard interaction",
+  );
   const registrationResponse = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === "/api/ontos/account" &&
