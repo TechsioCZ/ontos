@@ -35,6 +35,7 @@ export interface CatalogQuery {
 export type CatalogFields = "card" | "full";
 export type CatalogModel = ReturnType<typeof createCatalog>;
 interface CategoryPage {
+  /** The category and its direct children, with their content (merged into the root tree). */
   categories: CatalogCategory[];
   page: ProductPage;
 }
@@ -51,8 +52,8 @@ export const CATALOG_CACHE_MS = 10_000;
 /** The navigation tree changes rarely; at most one owner read per minute. */
 export const CATEGORY_CACHE_MS = 60_000;
 /** Older cached values still render at once (and refresh in the background) up to this age: longer than
- * the scheduled warm-up interval (15 min), so warmed pages never wait for OntOS. */
-export const CATALOG_STALE_MS = 20 * 60_000;
+ * the scheduled warm-up interval plus its skip age (15 + 12 min), so warmed pages never wait for OntOS. */
+export const CATALOG_STALE_MS = 30 * 60_000;
 /** An owner failure renders a cached value up to this age instead of the catalog error. */
 export const CATALOG_KEEP_MS = 24 * 60 * 60_000;
 /** Category listing page size (the category page and its warm-up read the same first page). */
@@ -73,7 +74,7 @@ const categoryTrees = catalogCache<CatalogCategory[]>("categories", {
   limit: 4,
 });
 /** One owner read per category: the tree with that category's content and its first listing page. */
-const categoryPages = catalogCache<CategoryPage>("category-pages", {
+const categoryPages = catalogCache<CategoryPage>("category-content", {
   freshMs: CATALOG_CACHE_MS,
   staleMs: CATALOG_STALE_MS,
   keepMs: CATALOG_KEEP_MS,
@@ -135,7 +136,22 @@ const firstCategoryPage = (categorySlug: string) => ({
 });
 const loadCategoryPage = (categorySlug: string) => async (): Promise<CategoryPage> => {
   const body = await readCatalog({ ...firstCategoryPage(categorySlug), includeCategories: true });
-  return { categories: projectCategories(body), page: projectProducts(body) };
+  const tree = projectCategories(body);
+  const category = tree.find((node) => node.slug === categorySlug);
+  // Only the nodes whose content this read adds (the category and its direct children): every category's
+  // entry would otherwise repeat the whole 2,000+ node tree that the root tree entry already holds.
+  return {
+    categories: category
+      ? tree.filter((node) => node.id === category.id || node.parentId === category.id)
+      : [],
+    page: projectProducts(body),
+  };
+};
+/** The root tree with one category's own content and its children's content. */
+const withCategoryContent = (tree: CatalogCategory[], content: CatalogCategory[]) => {
+  if (content.length === 0) return tree;
+  const byId = new Map(content.map((node) => [node.id, node]));
+  return tree.map((node) => byId.get(node.id) ?? node);
 };
 const cachedCategoryPage = cache((categorySlug: string): Promise<CategoryPage> =>
   categoryPages.get(categorySlug, loadCategoryPage(categorySlug)),
@@ -148,7 +164,10 @@ const cachedCategoryPage = cache((categorySlug: string): Promise<CategoryPage> =
  */
 export const getCategoryTree = cache(async (categorySlug?: string): Promise<CatalogCategory[]> =>
   categorySlug
-    ? (await cachedCategoryPage(categorySlug)).categories
+    ? await Promise.all([
+        categoryTrees.get("", loadRootTree),
+        cachedCategoryPage(categorySlug),
+      ]).then(([tree, { categories }]) => withCategoryContent(tree, categories))
     : await categoryTrees.get("", loadRootTree),
 );
 
