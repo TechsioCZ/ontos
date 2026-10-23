@@ -1,14 +1,18 @@
 import { defineScopedRoutine } from '@app/core-runtime';
 import { Effect, Option, Schema } from 'effect';
 
-import { RetailEnrollmentRegistrationSchema } from '../../../shared/enrollment-contracts.ts';
+import {
+  EnrollmentResourceIdSchema,
+  RetailEnrollmentRegistrationSchema,
+} from '../../../shared/enrollment-contracts.ts';
 import type { EnrollmentAttemptId, RetailEnrollmentRegistration } from '../../../shared/enrollment-contracts.ts';
 import type { EnrollmentAttemptScopedRoutineInvoker } from './attempt-persistence.ts';
 import { attemptUnavailable } from './errors.ts';
 
+const ownerModuleKey = 'commerce.customer-context';
 const writeRegistrationRoutine = defineScopedRoutine({
   name: 'write_retail_enrollment_registration',
-  ownerModuleKey: 'commerce.customer-context',
+  ownerModuleKey,
   parameters: [
     { source: 'tenantId', type: 'uuid' },
     { source: 'input', type: 'uuid' },
@@ -20,7 +24,7 @@ const writeRegistrationRoutine = defineScopedRoutine({
 });
 const readRegistrationRoutine = defineScopedRoutine({
   name: 'read_retail_enrollment_registration',
-  ownerModuleKey: 'commerce.customer-context',
+  ownerModuleKey,
   parameters: [
     { source: 'tenantId', type: 'uuid' },
     { source: 'input', type: 'uuid' },
@@ -31,13 +35,13 @@ const readRegistrationRoutine = defineScopedRoutine({
 });
 const readAccountPartyRoutine = defineScopedRoutine({
   name: 'read_retail_enrollment_account_party',
-  ownerModuleKey: 'commerce.customer-context',
+  ownerModuleKey,
   parameters: [
     { source: 'tenantId', type: 'uuid' },
     { source: 'legalEntityId', type: 'uuid' },
     { source: 'input', type: 'text' },
   ],
-  resultSchema: Schema.Struct({ party_id: Schema.String.check(Schema.isUUID()) }),
+  resultSchema: Schema.Struct({ party_id: EnrollmentResourceIdSchema.check(Schema.isUUID()) }),
   routineKey: 'portal-enrollment.account-party.read',
   schema: 'commerce_customer_context',
 });
@@ -47,7 +51,8 @@ export const writeRetailEnrollmentRegistration = (
   attemptId: EnrollmentAttemptId,
   registration: RetailEnrollmentRegistration,
 ) =>
-  transaction.invoke(writeRegistrationRoutine, [attemptId, JSON.stringify(registration)]).pipe(
+  Schema.encodeEffect(Schema.fromJsonString(RetailEnrollmentRegistrationSchema))(registration).pipe(
+    Effect.flatMap((encoded) => transaction.invoke(writeRegistrationRoutine, [attemptId, encoded])),
     Effect.mapError((cause) =>
       attemptUnavailable('The retail registration could not be durably recorded', attemptId, cause),
     ),

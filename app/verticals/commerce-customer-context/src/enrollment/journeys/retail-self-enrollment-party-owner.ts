@@ -99,8 +99,8 @@ const partyGatewayConfiguration = Config.all({
 });
 
 /** Fresh, scoped owner credential for each Party command or authoritative recovery read. */
-export const acquireRetailPartyGateway = (input: Omit<RetailPartyCandidateOwnerInput, 'candidate'>) =>
-  Effect.gen(function* acquireGateway() {
+export const acquireRetailPartyGateway = Effect.fn('RetailSelfEnrollmentPartyOwner.acquireRetailPartyGateway')(
+  function* acquireGateway(input: Omit<RetailPartyCandidateOwnerInput, 'candidate'>) {
     const { compositionRevision, legalEntityId, requestCorrelation, tenantId } = input;
     const configured = yield* partyGatewayConfiguration.pipe(
       Effect.mapError((cause) => unavailable('The Party Registry server gateway configuration is unavailable', cause)),
@@ -145,7 +145,8 @@ export const acquireRetailPartyGateway = (input: Omit<RetailPartyCandidateOwnerI
         compositionRevision,
       },
     };
-  });
+  },
+);
 
 const makeRetailPartyCandidateOwnerExecutors = (
   input: RetailPartyCandidateOwnerInput,

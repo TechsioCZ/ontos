@@ -52,9 +52,11 @@ it.live('persists immutable credential-free registration and admits only exact l
             ) {
               const migration = readFileSync(
                 new URL('../../drizzle/20261023123000_retail-enrollment-registration/migration.sql', import.meta.url),
-                'utf8',
+                'utf-8',
               );
-              for (const statement of migration.split('--> statement-breakpoint')) yield* execute(sql.raw(statement));
+              for (const statement of migration.split('--> statement-breakpoint')) {
+                yield* execute(sql.raw(statement));
+              }
             }
             yield* execute(
               sql`select set_config('ontos.tenant_id', ${tenantId}, true), set_config('ontos.legal_entity_id', ${legalEntityId}, true)`,
@@ -72,16 +74,17 @@ it.live('persists immutable credential-free registration and admits only exact l
         (retail_portal_profile_binding_id, tenant_id, legal_entity_id, auth_binding_id, principal_id, retail_customer_profile_id, enrollment_evidence_ref, action_invocation_id, actor_principal_id)
         values (${bindingId}::uuid, ${tenantId}::uuid, ${legalEntityId}::uuid, ${randomUUID()}::uuid, ${principalId}::uuid, ${profileId}::uuid, 'registration-acceptance', ${randomUUID()}::uuid, ${principalId}::uuid)`);
             for (const operation of [
-              { owner: 'party.registry', transition: 'party.candidate.submit', result: partyId },
+              { owner: 'party.registry', result: partyId, transition: 'party.candidate.submit' },
               {
                 owner: 'commerce.customer-context',
-                transition: 'commerce.customer-context.bind-retail-portal-profile',
                 result: bindingId,
+                transition: 'commerce.customer-context.bind-retail-portal-profile',
               },
-            ])
+            ]) {
               yield* execute(sql`insert into commerce_customer_context.portal_enrollment_owner_operations
         (tenant_id, portal_enrollment_attempt_id, owner_module_key, transition_key, owner_invocation_id, request_digest, actor_principal_id, status, completed_at, result_reference)
         values (${tenantId}::uuid, ${attemptId}::uuid, ${operation.owner}, ${operation.transition}, ${randomUUID()}::uuid, ${'b'.repeat(64)}, ${principalId}::uuid, 'SUCCEEDED', now(), ${operation.result})`);
+            }
             yield* execute(sql`set local role ontos_runtime`);
             const write = (body: string) =>
               execute(
@@ -93,21 +96,18 @@ it.live('persists immutable credential-free registration and admits only exact l
               sql`select * from commerce_customer_context.read_retail_enrollment_registration(${tenantId}::uuid, ${attemptId}::uuid)`,
             );
             expect(stored).toEqual([{ registration: JSON.parse(registration) }]);
-            const rejectedWrite = (body: string) =>
-              Effect.gen(function* rejectedRegistrationWrite() {
-                yield* execute(sql`savepoint registration_write`);
-                const result = yield* write(body).pipe(Effect.result);
-                yield* execute(sql`rollback to savepoint registration_write`);
-                expect(Result.isFailure(result)).toBe(true);
-              });
-            yield* rejectedWrite(JSON.stringify({ displayName: 'Changed Customer', email: 'real@example.test' }));
-            yield* rejectedWrite(
-              JSON.stringify({
-                displayName: 'Real Customer',
-                email: 'real@example.test',
-                password: 'never-persist-credentials',
-              }),
-            );
+            yield* execute(sql`savepoint changed_registration`);
+            const changedRegistration = yield* write(
+              JSON.stringify({ displayName: 'Changed Customer', email: 'real@example.test' }),
+            ).pipe(Effect.result);
+            yield* execute(sql`rollback to savepoint changed_registration`);
+            expect(Result.isFailure(changedRegistration)).toBe(true);
+            yield* execute(sql`savepoint credential_registration`);
+            const credentialRegistration = yield* write(
+              JSON.stringify({ displayName: 'Real Customer', email: 'real@example.test', password: randomUUID() }),
+            ).pipe(Effect.result);
+            yield* execute(sql`rollback to savepoint credential_registration`);
+            expect(Result.isFailure(credentialRegistration)).toBe(true);
             const account = (lookupTenant = tenantId, lookupLegalEntity = legalEntityId, lookupSubject = subject) =>
               execute(
                 sql`select * from commerce_customer_context.read_retail_enrollment_account_party(${lookupTenant}::uuid, ${lookupLegalEntity}::uuid, ${lookupSubject})`,
@@ -115,8 +115,8 @@ it.live('persists immutable credential-free registration and admits only exact l
             expect(yield* account()).toEqual([{ party_id: partyId }]);
             expect(yield* account(tenantId, legalEntityId, 'unknown-provider-subject')).toEqual([]);
             for (const wrong of [
-              { tenant: randomUUID(), entity: legalEntityId },
-              { tenant: tenantId, entity: randomUUID() },
+              { entity: legalEntityId, tenant: randomUUID() },
+              { entity: randomUUID(), tenant: tenantId },
             ]) {
               yield* execute(sql`savepoint account_scope`);
               const result = yield* account(wrong.tenant, wrong.entity).pipe(Effect.result);
@@ -129,7 +129,10 @@ it.live('persists immutable credential-free registration and admits only exact l
                 sql`select * from commerce_customer_context.read_retail_enrollment_registration(${tenantId}::uuid, ${attemptId}::uuid)`,
               ),
             ).toEqual([]);
-            yield* rejectedWrite(registration);
+            yield* execute(sql`savepoint foreign_registration`);
+            const foreignRegistration = yield* write(registration).pipe(Effect.result);
+            yield* execute(sql`rollback to savepoint foreign_registration`);
+            expect(Result.isFailure(foreignRegistration)).toBe(true);
             yield* execute(sql`select set_config('ontos.legal_entity_id', ${legalEntityId}, true)`);
             yield* execute(sql`reset role`);
             for (const state of ['PENDING_REVOKE', 'REVOKED', 'RECONCILIATION_REQUIRED']) {

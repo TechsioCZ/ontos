@@ -7,6 +7,7 @@ import {
   CommercePortalAuthSessionMfaMethodSchema,
   CommercePortalAuthSignInInputSchema,
 } from '../../api/portal-auth/session/contracts.ts';
+import { EnrollmentResourceIdSchema, EnrollmentTenantIdSchema } from '../enrollment-contracts.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID, CommerceSessionReferenceSchema } from '../portal-auth-contracts.ts';
 
 /**
@@ -183,8 +184,8 @@ const commercePortalAuthSessionGroupDefinition = HttpApiGroup.make('portalAuthSe
             email: Schema.String,
             id: CommercePortalAuthProviderSubjectIdSchema,
             name: Schema.String,
-            partyId: Schema.String.check(Schema.isUUID()),
-            tenantId: Schema.String.check(Schema.isUUID()),
+            partyId: EnrollmentResourceIdSchema.check(Schema.isUUID()),
+            tenantId: EnrollmentTenantIdSchema,
           }),
           state: Schema.Literal('authenticated'),
         }),

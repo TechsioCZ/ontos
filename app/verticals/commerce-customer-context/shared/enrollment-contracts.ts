@@ -160,11 +160,11 @@ export const RetailEnrollmentRegistrationSchema = Schema.Struct({
 export type RetailEnrollmentRegistration = typeof RetailEnrollmentRegistrationSchema.Type;
 
 export const EnrollmentAttemptIntentSchema = Schema.Struct({
-  retailRegistration: Schema.optionalKey(RetailEnrollmentRegistrationSchema),
   intentDigest: EnrollmentDigestSchema,
   intentKey: EnrollmentKeySchema,
   invitationId: Schema.optionalKey(EnrollmentInvitationIdSchema),
   journey: EnrollmentJourneySchema,
+  retailRegistration: Schema.optionalKey(RetailEnrollmentRegistrationSchema),
   targetLegalEntityId: Schema.optionalKey(EnrollmentLegalEntityIdSchema),
   targetResourceId: Schema.optionalKey(EnrollmentResourceIdSchema),
 });

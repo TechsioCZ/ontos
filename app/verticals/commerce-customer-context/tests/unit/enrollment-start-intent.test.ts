@@ -128,7 +128,7 @@ it.effect('retail registration is credential-free and changed contact intent can
   Effect.gen(function* registrationIntentIsImmutable() {
     const first = yield* intentFor(startPayload({ journey: 'RETAIL_SELF_ENROLLMENT', phone: '+420777123456' }));
     const renamed = yield* intentFor(
-      startPayload({ journey: 'RETAIL_SELF_ENROLLMENT', displayName: 'Changed name', phone: '+420777123456' }),
+      startPayload({ displayName: 'Changed name', journey: 'RETAIL_SELF_ENROLLMENT', phone: '+420777123456' }),
     );
     const rephoned = yield* intentFor(startPayload({ journey: 'RETAIL_SELF_ENROLLMENT', phone: '+420777654321' }));
     expect(first.retailRegistration).toEqual({

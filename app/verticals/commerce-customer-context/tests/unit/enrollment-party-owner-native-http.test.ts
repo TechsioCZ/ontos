@@ -1,3 +1,4 @@
+import { AddContactPointPayloadSchema, CounterpartyCustomerOnboardPayloadSchema } from '@app/party-registry/api';
 import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
 import { ConfigProvider, DateTime, Effect, Encoding, Result, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
@@ -337,90 +338,121 @@ it.effect('committed native recovery acquires distinct one-use assertions for co
 const customerDirectoryInput = {
   compositionRevision,
   legalEntityId,
-  requestCorrelation,
-  tenantId,
   partyRef: {
     ...partyRef,
-    resourceId: '90000000-0000-4000-8000-000000000001',
     moduleId: 'party.registry',
+    resourceId: '90000000-0000-4000-8000-000000000001',
     resourceType: 'party.registry.party',
   } as const,
   registration: { displayName: 'Skutečný Zákazník', email: 'customer@example.test', phone: '+420 777 123 456' },
+  requestCorrelation,
+  tenantId,
   validFrom: '2026-09-19T10:00:00.000Z',
 };
 
+const customerCommandPayloadSchema = Schema.Union([
+  Schema.toEncoded(AddContactPointPayloadSchema),
+  Schema.toEncoded(CounterpartyCustomerOnboardPayloadSchema),
+]);
+
 const customerDirectoryTransport = (state: 'ABSENT' | 'OPEN' | 'COMMITTED', failCommand = false) => {
   const requests: Request[] = [];
-  const commands: Record<string, unknown>[] = [];
+  const commands: (typeof customerCommandPayloadSchema.Type)[] = [];
   let issued = 0;
-  const fakeFetch: typeof fetch = async (target, init) => {
+  const fakeFetch: typeof fetch = (target, init) => {
     const request = new Request(target, init);
     requests.push(request);
-    if (request.url.endsWith('/auth/api-key/gateway-context'))
-      return Response.json(gatewayResponse(tenantId, ++issued));
-    if (request.url.endsWith('/action-commits/resolve'))
-      return state === 'ABSENT'
-        ? Response.json(
-            {
-              _tag: 'PartyCommandNotFoundProblem',
-              detail: 'Unknown scoped command',
-              status: 404,
-              title: 'Not found',
-              type: 'urn:test:not-found',
+    if (request.url.endsWith('/auth/api-key/gateway-context')) {
+      issued += 1;
+      return Promise.resolve(Response.json(gatewayResponse(tenantId, issued)));
+    }
+    if (request.url.endsWith('/action-commits/resolve')) {
+      return Promise.resolve(
+        state === 'ABSENT'
+          ? Response.json(
+              {
+                _tag: 'PartyCommandNotFoundProblem',
+                detail: 'Unknown scoped command',
+                status: 404,
+                title: 'Not found',
+                type: 'urn:test:not-found',
+              },
+              { status: 404 },
+            )
+          : Response.json({
+              _tag: 'PartyCommandCommitResolution',
+              invocationId: '99000000-0000-4000-8000-000000000001',
+              retryCommand: false,
+              state,
+            }),
+      );
+    }
+    return request
+      .clone()
+      .json()
+      .then(Schema.decodeUnknownSync(customerCommandPayloadSchema))
+      .then((payload) => {
+        commands.push(payload);
+        if (failCommand) {
+          throw new Error('Acknowledgement lost');
+        }
+        if (request.url.endsWith('/counterparty-customer-onboard')) {
+          return Response.json({
+            counterpartyCreated: true,
+            counterpartyRef: { ...customerDirectoryInput.partyRef, resourceType: 'party.registry.counterparty' },
+            legalEntityRef: {
+              moduleId: 'core.identity',
+              resourceId: legalEntityId,
+              resourceType: 'core.identity.legal-entity',
+              tenantId,
             },
-            { status: 404 },
-          )
-        : Response.json({
-            _tag: 'PartyCommandCommitResolution',
-            invocationId: '99000000-0000-4000-8000-000000000001',
-            retryCommand: false,
-            state,
+            partyRef: customerDirectoryInput.partyRef,
+            rolePeriodCreated: true,
+            rolePeriodRef: {
+              ...customerDirectoryInput.partyRef,
+              resourceType: 'party.registry.counterparty-role-period',
+            },
+            roleType: 'CUSTOMER',
+            validFrom: customerDirectoryInput.validFrom,
+            validTo: null,
           });
-    const payload = (await request.clone().json()) as Record<string, unknown>;
-    commands.push(payload);
-    if (failCommand) throw new Error('Acknowledgement lost');
-    if (request.url.endsWith('/counterparty-customer-onboard'))
-      return Response.json({
-        counterpartyCreated: true,
-        counterpartyRef: { ...customerDirectoryInput.partyRef, resourceType: 'party.registry.counterparty' },
-        legalEntityRef: {
-          moduleId: 'core.identity',
-          resourceId: legalEntityId,
-          resourceType: 'core.identity.legal-entity',
-          tenantId,
-        },
-        partyRef: customerDirectoryInput.partyRef,
-        rolePeriodCreated: true,
-        rolePeriodRef: { ...customerDirectoryInput.partyRef, resourceType: 'party.registry.counterparty-role-period' },
-        roleType: 'CUSTOMER',
-        validFrom: customerDirectoryInput.validFrom,
-        validTo: null,
+        }
+        if (!('contactPoint' in payload)) {
+          throw new Error('Expected contact command');
+        }
+        const point = payload.contactPoint;
+        if (point.type !== 'EMAIL' && point.type !== 'PHONE') {
+          throw new Error('Expected email or phone contact');
+        }
+        return Response.json({
+          contactPointRef: { ...customerDirectoryInput.partyRef, resourceType: 'party.registry.party-contact-point' },
+          current: true,
+          end: null,
+          partyRef: customerDirectoryInput.partyRef,
+          privacyClassification: payload.privacyClassification,
+          provenance: payload.provenance,
+          recordedAt: customerDirectoryInput.validFrom,
+          revision: 1,
+          state: 'ACTIVE',
+          storedPartyRef: customerDirectoryInput.partyRef,
+          validFrom: payload.validFrom,
+          validTo: null,
+          value:
+            point.type === 'PHONE'
+              ? {
+                  countryCode: null,
+                  displayValue: point.value,
+                  extension: null,
+                  lookupValue: '+420777123456',
+                  preferred: true,
+                  type: point.type,
+                }
+              : { displayValue: point.value, lookupValue: point.value, preferred: true, type: point.type },
+          verification: payload.verification,
+        });
       });
-    const point = payload.contactPoint as { type: 'EMAIL' | 'PHONE'; value: string };
-    return Response.json({
-      contactPointRef: { ...customerDirectoryInput.partyRef, resourceType: 'party.registry.party-contact-point' },
-      current: true,
-      end: null,
-      partyRef: customerDirectoryInput.partyRef,
-      storedPartyRef: customerDirectoryInput.partyRef,
-      privacyClassification: payload.privacyClassification,
-      provenance: payload.provenance,
-      recordedAt: customerDirectoryInput.validFrom,
-      revision: 1,
-      state: 'ACTIVE',
-      validFrom: payload.validFrom,
-      validTo: null,
-      value: {
-        type: point.type,
-        displayValue: point.value,
-        lookupValue: point.type === 'EMAIL' ? point.value : '+420777123456',
-        preferred: true,
-        ...(point.type === 'PHONE' ? { countryCode: null, extension: null } : {}),
-      },
-      verification: payload.verification,
-    });
   };
-  return { requests, commands, fakeFetch, issued: () => issued };
+  return { commands, fakeFetch, issued: () => issued, requests };
 };
 
 it.effect('enrolls a scoped CUSTOMER and real email/phone through three independently keyed governed commands', () =>
@@ -433,13 +465,14 @@ it.effect('enrolls a scoped CUSTOMER and real email/phone through three independ
     expect(result.resultReference).toBe(customerDirectoryInput.partyRef.resourceId);
     expect(transport.commands).toHaveLength(3);
     expect(transport.commands[0]?.partyRef).toEqual(customerDirectoryInput.partyRef);
-    expect(transport.commands.slice(1).map((command) => command.contactPoint)).toEqual([
+    const contacts = transport.commands
+      .slice(1)
+      .map((command) => Schema.decodeUnknownSync(Schema.toEncoded(AddContactPointPayloadSchema))(command));
+    expect(contacts.map((command) => command.contactPoint)).toEqual([
       { preferred: true, type: 'EMAIL', value: 'customer@example.test' },
       { preferred: true, type: 'PHONE', value: '+420 777 123 456' },
     ]);
-    expect(
-      transport.commands.slice(1).every((command) => JSON.stringify(command.verification) === '{"state":"UNVERIFIED"}'),
-    ).toBe(true);
+    expect(contacts.every((command) => JSON.stringify(command.verification) === '{"state":"UNVERIFIED"}')).toBe(true);
     const commandRequests = transport.requests.filter((request) => request.url.includes('/actions/'));
     expect(new Set(commandRequests.map((request) => request.headers.get('idempotency-key'))).size).toBe(3);
     expect(transport.issued()).toBe(6);

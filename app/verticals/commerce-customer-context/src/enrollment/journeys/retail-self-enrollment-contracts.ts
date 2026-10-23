@@ -166,7 +166,9 @@ const digestParts = (input: RetailSelfEnrollmentDigestInput): readonly string[] 
     intent.partyRef.resourceId,
     intent.partyRef.tenantId,
   ];
-  if (intent.step !== 'RETAIL_PORTAL_BINDING') return withParty;
+  if (intent.step !== 'RETAIL_PORTAL_BINDING') {
+    return withParty;
+  }
   return [
     ...withParty,
     intent.principalRef.moduleId,

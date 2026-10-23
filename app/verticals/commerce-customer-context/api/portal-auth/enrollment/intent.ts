@@ -90,18 +90,18 @@ export const commercePortalAuthEnrollmentIntent = (
         intentDigest,
         intentKey,
         journey: input.journey,
-        ...(input.journey === 'RETAIL_SELF_ENROLLMENT'
-          ? {
-              retailRegistration: {
-                displayName: input.displayName,
-                email: normalizedEmail(input),
-                ...(input.phone === undefined ? {} : { phone: input.phone }),
-              },
-            }
-          : {}),
         targetLegalEntityId: input.sellingLegalEntityId,
       };
-      const withInvitation = invitationId === undefined ? base : { ...base, invitationId };
+      const registration =
+        input.journey === 'RETAIL_SELF_ENROLLMENT'
+          ? { displayName: input.displayName, email: normalizedEmail(input) }
+          : undefined;
+      const retailRegistration =
+        registration !== undefined && input.journey === 'RETAIL_SELF_ENROLLMENT' && input.phone !== undefined
+          ? { ...registration, phone: input.phone }
+          : registration;
+      const withRegistration = retailRegistration === undefined ? base : { ...base, retailRegistration };
+      const withInvitation = invitationId === undefined ? withRegistration : { ...withRegistration, invitationId };
       return input.partyRef === undefined ? withInvitation : { ...withInvitation, targetResourceId: input.partyRef };
     }),
   );

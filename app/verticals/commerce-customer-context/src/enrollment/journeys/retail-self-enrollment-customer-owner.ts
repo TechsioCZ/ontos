@@ -29,11 +29,128 @@ const unavailable = (reason: string, cause?: unknown) =>
   ownerUnavailable('retail_customer_directory_unavailable', reason, cause);
 const outcomeCode = 'retail_customer_directory_enrolled';
 
-/**
- * Each business command has its own deterministic idempotency key. Before continuing after an unknown
- * outcome we ask the Party owner's commit authority; a committed command is never sent again.
- * The parent enrollment claim remains the authority for the whole composed owner transition.
- */
+type CustomerCommand =
+  | {
+      readonly actionKey: 'party.registry.counterparty-customer-onboard';
+      readonly payload: typeof CounterpartyCustomerOnboardPayloadSchema.Type;
+    }
+  | {
+      readonly actionKey: 'party.registry.add-contact-point';
+      readonly payload: typeof AddContactPointPayloadSchema.Type;
+    };
+
+/** Resolve each independently keyed command before dispatch; never retry an unknown acknowledgement. */
+const runCommand = Effect.fn('RetailCustomerDirectory.runCommand')(function* runCommand(
+  input: RetailCustomerDirectoryOwnerInput,
+  ownerInvocationId: string,
+  step: string,
+  command: CustomerCommand,
+) {
+  const idempotencyKey = yield* Schema.decodeEffect(EnrollmentActionInvocationIdSchema)(
+    retailSelfEnrollmentEvidenceReference(['retail-customer-directory', ownerInvocationId, step]),
+  ).pipe(Effect.mapError((cause) => unavailable('The customer command identity is invalid', cause)));
+  const recoveryGateway = yield* acquireRetailPartyGateway(input);
+  const resolution = yield* resolvePartyCommandCommitWithAuthorization(
+    { actionKey: command.actionKey, idempotencyKey },
+    Redacted.value(recoveryGateway.credential),
+    { ...recoveryGateway.options, correlationId: input.requestCorrelation },
+  ).pipe(
+    Effect.asSome,
+    Effect.catchIf(Schema.is(PartyCommandNotFoundProblemSchema), () => Effect.succeedNone),
+    Effect.mapError((cause) => unavailable('The customer command commit could not be resolved', cause)),
+  );
+  if (Option.isSome(resolution)) {
+    if (resolution.value.state !== 'COMMITTED') {
+      yield* unavailable('The customer command has an unresolved invocation; no duplicate was dispatched');
+    }
+  } else {
+    const gateway = yield* acquireRetailPartyGateway(input);
+    const options = { ...gateway.options, correlationId: input.requestCorrelation, idempotencyKey };
+    const failed = (cause: unknown) =>
+      unavailable('The governed customer command did not return a known outcome', cause);
+    const dispatched =
+      command.actionKey === 'party.registry.counterparty-customer-onboard'
+        ? counterpartyCustomerOnboardWithAuthorization(
+            command.payload,
+            Redacted.value(gateway.credential),
+            options,
+          ).pipe(Effect.asVoid, Effect.mapError(failed))
+        : addContactPointWithAuthorization(command.payload, Redacted.value(gateway.credential), options).pipe(
+            Effect.asVoid,
+            Effect.mapError(failed),
+          );
+    yield* dispatched;
+  }
+});
+
+const contactPayload = (
+  input: RetailCustomerDirectoryOwnerInput,
+  evidenceReference: string,
+  type: 'EMAIL' | 'PHONE',
+  value: string,
+) => {
+  let contactPoint: (typeof AddContactPointPayloadSchema.Type)['contactPoint'];
+  if (type === 'EMAIL') {
+    contactPoint = { preferred: true, type, value };
+  } else if (value.startsWith('+')) {
+    contactPoint = { preferred: true, type, value };
+  } else {
+    contactPoint = { countryCode: 'CZ', preferred: true, type, value };
+  }
+  return Schema.decodeEffect(AddContactPointPayloadSchema)({
+    contactPoint,
+    partyRef: input.partyRef,
+    privacyClassification: 'PERSONAL',
+    provenance: { authoritative: false, evidenceReference, method: 'DECLARED_BY_PARTY', source: 'PARTY_DECLARATION' },
+    validFrom: input.validFrom,
+    // Account email verification does not prove the Party owner verified the contact point.
+    verification: { state: 'UNVERIFIED' },
+  }).pipe(Effect.mapError((cause) => unavailable('The declared customer contact is invalid', cause)));
+};
+
+const enrollDirectory = Effect.fn('RetailCustomerDirectory.enroll')(function* enrollDirectory(
+  input: RetailCustomerDirectoryOwnerInput,
+  ownerInvocationId: string,
+) {
+  const evidenceReference = `commerce.portal-enrollment:${ownerInvocationId}`;
+  const onboard = yield* Schema.decodeEffect(CounterpartyCustomerOnboardPayloadSchema)({
+    counterpartyProvenance: {
+      evidenceReference,
+      method: 'APPROVED_COMMERCIAL_RELATIONSHIP',
+      reason: 'Customer requested a retail purchasing relationship through governed portal enrollment',
+      source: 'commerce.customer-context',
+    },
+    customerEvidence: {
+      evidenceReference,
+      method: 'APPROVED_PURCHASING_RELATIONSHIP',
+      reason: 'Retail portal self-enrollment accepted under the selling legal entity policy',
+      source: 'commerce.customer-context',
+    },
+    partyRef: input.partyRef,
+    validFrom: input.validFrom,
+  }).pipe(Effect.mapError((cause) => unavailable('The customer onboarding intent is invalid', cause)));
+  const email = yield* contactPayload(input, evidenceReference, 'EMAIL', input.registration.email);
+  const phone =
+    input.registration.phone === undefined
+      ? undefined
+      : yield* contactPayload(input, evidenceReference, 'PHONE', input.registration.phone);
+  yield* runCommand(input, ownerInvocationId, 'customer-role', {
+    actionKey: 'party.registry.counterparty-customer-onboard',
+    payload: onboard,
+  });
+  yield* runCommand(input, ownerInvocationId, 'email', {
+    actionKey: 'party.registry.add-contact-point',
+    payload: email,
+  });
+  if (phone !== undefined) {
+    yield* runCommand(input, ownerInvocationId, 'phone', {
+      actionKey: 'party.registry.add-contact-point',
+      payload: phone,
+    });
+  }
+});
+
+/** The original enrollment claim remains the authority for the whole composed owner transition. */
 export const retailCustomerDirectoryOwnerEffect = (
   originalInput: RetailCustomerDirectoryOwnerInput,
 ): CommerceEnrollmentOwnerEffect => {
@@ -42,121 +159,19 @@ export const retailCustomerDirectoryOwnerEffect = (
     partyRef: Object.freeze({ ...originalInput.partyRef }),
     registration: Object.freeze({ ...originalInput.registration }),
   });
-  const run = (ownerInvocationId: string) =>
-    Effect.gen(function* enrollCustomerDirectory() {
-      const evidenceReference = `commerce.portal-enrollment:${ownerInvocationId}`;
-      const onboard = yield* Schema.decodeEffect(CounterpartyCustomerOnboardPayloadSchema)({
-        counterpartyProvenance: {
-          evidenceReference,
-          method: 'APPROVED_COMMERCIAL_RELATIONSHIP',
-          reason: 'Customer requested a retail purchasing relationship through governed portal enrollment',
-          source: 'commerce.customer-context',
-        },
-        customerEvidence: {
-          evidenceReference,
-          method: 'APPROVED_PURCHASING_RELATIONSHIP',
-          reason: 'Retail portal self-enrollment accepted under the selling legal entity policy',
-          source: 'commerce.customer-context',
-        },
-        partyRef: input.partyRef,
-        validFrom: input.validFrom,
-      }).pipe(Effect.mapError((cause) => unavailable('The customer onboarding intent is invalid', cause)));
-      const contact = (type: 'EMAIL' | 'PHONE', value: string) =>
-        Schema.decodeEffect(AddContactPointPayloadSchema)({
-          contactPoint:
-            type === 'EMAIL'
-              ? { preferred: true, type, value }
-              : { preferred: true, type, value, ...(value.startsWith('+') ? {} : { countryCode: 'CZ' }) },
-          partyRef: input.partyRef,
-          privacyClassification: 'PERSONAL',
-          provenance: {
-            authoritative: false,
-            evidenceReference,
-            method: 'DECLARED_BY_PARTY',
-            source: 'PARTY_DECLARATION',
-          },
-          validFrom: input.validFrom,
-          // Account email verification is not evidence that the Party owner verified this contact point.
-          verification: { state: 'UNVERIFIED' },
-        }).pipe(Effect.mapError((cause) => unavailable('The declared customer contact is invalid', cause)));
-      const email = yield* contact('EMAIL', input.registration.email);
-      const phone =
-        input.registration.phone === undefined ? undefined : yield* contact('PHONE', input.registration.phone);
-
-      const command = (
-        step: string,
-        actionKey: 'party.registry.counterparty-customer-onboard' | 'party.registry.add-contact-point',
-        execute: (
-          authorization: string,
-          options: {
-            baseUrl: string | URL;
-            compositionRevision: string;
-            correlationId: string;
-            idempotencyKey: string;
-          },
-        ) => Effect.Effect<unknown, unknown>,
-      ) =>
-        Effect.gen(function* executeDeclaredCommand() {
-          const invocationId = yield* Schema.decodeEffect(EnrollmentActionInvocationIdSchema)(
-            retailSelfEnrollmentEvidenceReference(['retail-customer-directory', ownerInvocationId, step]),
-          ).pipe(Effect.mapError((cause) => unavailable('The customer command identity is invalid', cause)));
-          const recoveryGateway = yield* acquireRetailPartyGateway(input);
-          const resolution = yield* resolvePartyCommandCommitWithAuthorization(
-            { actionKey, idempotencyKey: invocationId },
-            Redacted.value(recoveryGateway.credential),
-            {
-              ...recoveryGateway.options,
-              correlationId: input.requestCorrelation,
-            },
-          ).pipe(
-            Effect.asSome,
-            Effect.catchIf(Schema.is(PartyCommandNotFoundProblemSchema), () => Effect.succeedNone),
-            Effect.mapError((cause) => unavailable('The customer command commit could not be resolved', cause)),
-          );
-          if (Option.isSome(resolution)) {
-            if (resolution.value.state === 'COMMITTED') return;
-            return yield* unavailable('The customer command has an unresolved invocation; no duplicate was dispatched');
-          }
-          const gateway = yield* acquireRetailPartyGateway(input);
-          yield* execute(Redacted.value(gateway.credential), {
-            ...gateway.options,
-            correlationId: input.requestCorrelation,
-            idempotencyKey: invocationId,
-          }).pipe(
-            Effect.mapError((cause) =>
-              unavailable('The governed customer command did not return a known outcome', cause),
-            ),
-          );
-        });
-      yield* command('customer-role', 'party.registry.counterparty-customer-onboard', (authorization, options) =>
-        counterpartyCustomerOnboardWithAuthorization(onboard, authorization, options),
-      );
-      yield* command('email', 'party.registry.add-contact-point', (authorization, options) =>
-        addContactPointWithAuthorization(email, authorization, options),
-      );
-      if (phone !== undefined) {
-        yield* command('phone', 'party.registry.add-contact-point', (authorization, options) =>
-          addContactPointWithAuthorization(phone, authorization, options),
-        );
-      }
-    });
   return {
     dispatch: (transition) =>
-      run(transition.ownerInvocationId).pipe(
+      enrollDirectory(input, transition.ownerInvocationId).pipe(
         Effect.andThen(() =>
           decodeOwnerOutcome(
-            {
-              outcomeCode,
-              resultReference: input.partyRef.resourceId,
-              status: 'SUCCEEDED',
-            },
+            { outcomeCode, resultReference: input.partyRef.resourceId, status: 'SUCCEEDED' },
             'retail_customer_directory_unavailable',
             'The customer directory outcome is invalid',
           ),
         ),
       ),
     reconcile: (reconciliation) =>
-      run(reconciliation.ownerInvocationId).pipe(
+      enrollDirectory(input, reconciliation.ownerInvocationId).pipe(
         Effect.andThen(() =>
           decodeOwnerResolution(
             {

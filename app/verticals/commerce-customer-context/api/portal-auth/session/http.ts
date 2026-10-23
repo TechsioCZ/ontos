@@ -8,6 +8,7 @@ import { empty as emptyCookies, expireCookieUnsafe, toSetCookieHeaders } from 'e
 
 import { authenticateOperationPrincipal } from '../../auth/action-principal.ts';
 import { CommerceEnrollmentOwnerTransactionRunner } from '../../../src/enrollment/orchestration/owner-transition-production.ts';
+import { EnrollmentTenantIdSchema } from '../../../shared/enrollment-contracts.ts';
 import { readRetailEnrollmentAccountParty } from '../../../src/enrollment/attempts/registration-persistence.ts';
 import { commerceCustomerContextApi } from '../../../shared/api.ts';
 import { CommerceSessionReferenceSchema } from '../../../shared/portal-auth-contracts.ts';
@@ -198,11 +199,11 @@ const answerEvidenceFailure = (
 };
 
 interface AuthSessionResponse {
+  readonly account: { readonly email: string; readonly name: string };
   readonly createdAt: Date;
   readonly expiresAt: Date;
   readonly providerSubjectId: string;
   readonly sessionId: string;
-  readonly account: { readonly email: string; readonly name: string };
 }
 
 const ProviderDateSchema = Schema.Union([Schema.Date, Schema.String, Schema.Finite]);
@@ -640,29 +641,38 @@ const getSession = Effect.fn('CommercePortalAuthSessionHttp.getSession')(functio
 export const admitCustomerAccount = Effect.fn('CommercePortalAuthSessionHttp.admitCustomerAccount')(
   function* admitCustomerAccountEffect(request: HttpServerRequest.HttpServerRequest) {
     const current = yield* getSession(request);
-    if (current.state === 'anonymous') return current;
+    if (current.state === 'anonymous') {
+      return current;
+    }
     const principal = yield* authenticateOperationPrincipal(Redacted.make(request.headers['authorization']), {
       authentication: () => authenticationProblem('authentication_failed'),
       unavailable: () => unavailableProblem(),
     });
-    if (principal.legalEntityId === undefined) return yield* Effect.fail(unavailableProblem());
+    if (principal.legalEntityId === undefined) {
+      return yield* Effect.fail(unavailableProblem());
+    }
+    const tenantId = yield* Schema.decodeEffect(EnrollmentTenantIdSchema)(principal.tenantId).pipe(
+      Effect.catch(answerUnavailable()),
+    );
     const runner = yield* CommerceEnrollmentOwnerTransactionRunner;
     const partyId = yield* runner
-      .run({ tenantId: principal.tenantId, legalEntityId: principal.legalEntityId }, (transaction) =>
+      .run({ legalEntityId: principal.legalEntityId, tenantId: principal.tenantId }, (transaction) =>
         readRetailEnrollmentAccountParty(transaction, current.session.providerSubjectId),
       )
-      .pipe(Effect.mapError(() => unavailableProblem()));
-    if (Option.isNone(partyId)) return yield* Effect.fail(unavailableProblem());
+      .pipe(Effect.catch(answerUnavailable()));
+    if (Option.isNone(partyId)) {
+      return yield* Effect.fail(unavailableProblem());
+    }
     return {
-      state: 'authenticated',
       account: {
         ...current.account,
         id: current.session.providerSubjectId,
         partyId: partyId.value,
-        tenantId: principal.tenantId,
+        tenantId,
       },
       principal,
       session: current.session,
+      state: 'authenticated',
     } as const;
   },
 );
@@ -670,7 +680,7 @@ export const admitCustomerAccount = Effect.fn('CommercePortalAuthSessionHttp.adm
 const getCustomerAccount = Effect.fn('CommercePortalAuthSessionHttp.getCustomerAccount')(
   function* getCustomerAccountEffect(request: HttpServerRequest.HttpServerRequest) {
     const current = yield* admitCustomerAccount(request);
-    return current.state === 'anonymous' ? current : ({ state: 'authenticated', account: current.account } as const);
+    return current.state === 'anonymous' ? current : ({ account: current.account, state: 'authenticated' } as const);
   },
 );
 

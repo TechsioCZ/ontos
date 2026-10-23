@@ -239,29 +239,28 @@ const partyCandidateFor = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party
       attempt.tenantId,
       attempt.portalEnrollmentAttemptId,
     ]);
-    const request = yield* Schema.decodeEffect(PartyMatchRequestSchema)({
-      candidate: {
-        ...(displayName === undefined ? {} : { displayName }),
-        evidenceRefs: [evidenceRef],
-        officialIdentifiers: [],
-        partyType: 'PERSON',
-        provenance: {
-          method: 'commerce.portal-enrollment.self-enrollment',
-          source: 'commerce.customer-context',
-        },
-        subjectEvidence: [
-          {
-            basis: 'DIRECT_INTERACTION',
-            evidenceRef,
-            kind: 'ACTOR_ATTESTATION',
-            observedSubject: 'PERSON',
-            statement: 'The enrolling person authenticated as this exact Commerce Portal Account subject',
-            subjectKey: accountSubject.providerSubjectId,
-          },
-        ],
-        validFrom: DateTime.formatIso(attempt.createdAt),
+    const candidate: (typeof PartyMatchRequestSchema.Encoded)['candidate'] = {
+      evidenceRefs: [evidenceRef],
+      officialIdentifiers: [],
+      partyType: 'PERSON',
+      provenance: {
+        method: 'commerce.portal-enrollment.self-enrollment',
+        source: 'commerce.customer-context',
       },
-    }).pipe(
+      subjectEvidence: [
+        {
+          basis: 'DIRECT_INTERACTION',
+          evidenceRef,
+          kind: 'ACTOR_ATTESTATION',
+          observedSubject: 'PERSON',
+          statement: 'The enrolling person authenticated as this exact Commerce Portal Account subject',
+          subjectKey: accountSubject.providerSubjectId,
+        },
+      ],
+      validFrom: DateTime.formatIso(attempt.createdAt),
+    };
+    const withDisplayName = displayName === undefined ? candidate : { ...candidate, displayName };
+    const request = yield* Schema.decodeEffect(PartyMatchRequestSchema)({ candidate: withDisplayName }).pipe(
       Effect.mapError(
         rejectFor(context, 'The Attempt does not describe a Party candidate the Party Registry vocabulary can carry'),
       ),
@@ -280,7 +279,7 @@ const partyEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): 
     const registration = Option.isNone(run)
       ? Option.none()
       : yield* run.value(
-          { tenantId: context.attempt.tenantId, legalEntityId: context.subject.sellingLegalEntityRef.resourceId },
+          { legalEntityId: context.subject.sellingLegalEntityRef.resourceId, tenantId: context.attempt.tenantId },
           (transaction) => readRetailEnrollmentRegistration(transaction, context.attempt.portalEnrollmentAttemptId),
         );
     const { candidate, requestDigest } = yield* Effect.all(
@@ -313,12 +312,16 @@ const partyEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): 
 const customerDirectoryEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): RegistryEntry =>
   Effect.fn('CommerceEnrollmentOwnerEffectRegistry.customerDirectory')(
     function* customerDirectoryEntryEffect(transition, context) {
-      if (Option.isNone(run) || Option.isNone(context.subject.partyRef)) return none;
+      if (Option.isNone(run) || Option.isNone(context.subject.partyRef)) {
+        return none;
+      }
       const registration = yield* run.value(
-        { tenantId: context.attempt.tenantId, legalEntityId: context.subject.sellingLegalEntityRef.resourceId },
+        { legalEntityId: context.subject.sellingLegalEntityRef.resourceId, tenantId: context.attempt.tenantId },
         (transaction) => readRetailEnrollmentRegistration(transaction, context.attempt.portalEnrollmentAttemptId),
       );
-      if (Option.isNone(registration)) return none;
+      if (Option.isNone(registration)) {
+        return none;
+      }
       const partyRef = context.subject.partyRef.value;
       const requestDigest = yield* retailDigestFor(
         {
