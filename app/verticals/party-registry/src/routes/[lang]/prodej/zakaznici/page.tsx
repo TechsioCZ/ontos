@@ -19,8 +19,9 @@ import type { CellContext, ColumnDef, DataTableTranslations } from '@techsio/ui-
 import { SelectTemplate } from '@techsio/ui-kit/templates/select';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { BulkTagDialog, TagCell, TagFilter } from '@app/tagging/components/tag-controls';
-import { Effect, Predicate } from 'effect';
-import { useEffect, useState } from 'react';
+import { pageDataPending } from '@app/shared-contracts/page-data';
+import { Predicate } from 'effect';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 
 import '../../../index.css';
 
@@ -34,9 +35,10 @@ import { CustomerBulkEditDialog } from './customer-bulk-edit-dialog.tsx';
 import { CustomerCreateDialog } from './customer-create-dialog.tsx';
 import { CustomerDetailDialog } from './customer-detail-dialog.tsx';
 import {
+  allCustomers,
   customerWritesRefused,
+  customersData,
   useCustomerDetailSelection,
-  loadCustomers,
   rememberCustomerWriteRefusal,
 } from './customers-data.ts';
 import type { CustomersSnapshot } from './customers-data.ts';
@@ -75,18 +77,26 @@ type Selection = Record<string, true>;
 /** Column visibility as the ui-kit DataTable types it: column id to shown. */
 type ColumnVisibility = Record<string, boolean>;
 
-/** Reads every customer, archived included, so the stat tiles describe the whole register. */
-const loadCustomersInto = (onLoaded: (state: LoadState) => void): void => {
-  void browserRuntime.runPromise(
-    loadCustomers.pipe(
-      Effect.match({
-        onFailure: (error): LoadState =>
-          Predicate.isTagged(error, 'CustomerListForbiddenProblem') ? { status: 'forbidden' } : { status: 'error' },
-        onSuccess: (data): LoadState => ({ data, status: 'ready' }),
-      }),
-      Effect.map(onLoaded),
-    ),
-  );
+type CustomersDataSnapshot = ReturnType<typeof customersData.snapshot>;
+
+/** A failed read that is being retried reads as loading again; a refresh of ready rows keeps them on screen. */
+const loadStateOf = (snapshot: CustomersDataSnapshot): LoadState => {
+  if (snapshot.state === 'pending' || (snapshot.state === 'failed' && snapshot.refreshing)) {
+    return { status: 'loading' };
+  }
+  if (snapshot.state === 'failed') {
+    return Predicate.isTagged(snapshot.error, 'CustomerListForbiddenProblem')
+      ? { status: 'forbidden' }
+      : { status: 'error' };
+  }
+  return { data: snapshot.value, status: 'ready' };
+};
+
+const serverSnapshot = (): CustomersDataSnapshot => pageDataPending;
+const readCustomers = () => customersData.snapshot(allCustomers);
+// Refresh keeps rows on screen; only a failed first load shows an error, so an error never reads as "no records".
+const reload = () => {
+  browserRuntime.runFork(customersData.refresh(allCustomers));
 };
 
 const nameCell = (info: CellContext<CustomerListItem>) => (
@@ -295,7 +305,8 @@ const CustomersEmpty = ({ filtered, onClearFilters, onCreate, onRetry, status }:
 
 const CustomersContent = () => {
   const { t } = useModernI18n();
-  const [state, setState] = useState<LoadState>({ status: 'loading' });
+  // Every customer, archived included, so the stat tiles describe the whole register. The Shell preloads it.
+  const state = loadStateOf(useSyncExternalStore(customersData.subscribe, readCustomers, serverSnapshot));
   const [search, setSearch] = useState('');
   const [selection, setSelection] = useState<Selection>({});
   const { closeDetail, detail, detailFailure, detailValue, openDetail, retryDetail } = useCustomerDetailSelection();
@@ -312,16 +323,7 @@ const CustomersContent = () => {
     setWritesRefused(true);
   };
 
-  useEffect(() => {
-    loadCustomersInto(setState);
-  }, []);
-
-  // Refresh keeps rows on screen; only a failed load replaces them, so an error never reads as "no records".
-  const reload = () => loadCustomersInto(setState);
-  const retry = () => {
-    setState({ status: 'loading' });
-    reload();
-  };
+  useEffect(() => customersData.ensure(allCustomers), []);
 
   const data = state.status === 'ready' ? state.data : undefined;
   const items = data?.items ?? [];
@@ -341,13 +343,7 @@ const CustomersContent = () => {
   const selectedItems = items.filter((item) => selection[item.counterpartyId] === true);
   const selectedSubjectIds = selectedItems.map((item) => subjectIdOf(item.partyId));
   const statusLabel = (item: CustomerListItem) => t(`${key}.status.${item.status}`);
-  const segmentCell = (info: CellContext<CustomerListItem>) => {
-    const segment = segments?.get(info.row.original.partyId);
-    if (segment !== undefined) {
-      return segment.name;
-    }
-    return segments === null ? '…' : '—';
-  };
+  const segmentCell = (info: CellContext<CustomerListItem>) => segments?.get(info.row.original.partyId)?.name ?? '—';
   // Segment lookup is best effort: a failed lookup drops the column and shows no error banner.
   const segmentColumns: ColumnDef<CustomerListItem>[] = enrichment.segmentsFailed
     ? []
@@ -456,7 +452,7 @@ const CustomersContent = () => {
       filtered={filtered}
       onClearFilters={clearFilters}
       onCreate={writesRefused ? undefined : openCreate}
-      onRetry={retry}
+      onRetry={reload}
       status={state.status}
     />
   );
@@ -583,4 +579,6 @@ export const CustomersPage = () => (
   </FederatedI18nBoundary>
 );
 
+/** The Shell awaits this before it reveals the page, so the first render already has rows, stats and segments. */
+export { preloadCustomers as preloadPage } from './customers-data.ts';
 export default CustomersPage;

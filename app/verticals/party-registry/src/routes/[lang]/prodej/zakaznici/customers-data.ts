@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { DateTime, Effect, Match, Option, Predicate, Random, Ref, Schema } from 'effect';
+import { DateTime, Effect, Exit, Match, Option, Predicate, Random, Ref, Schema } from 'effect';
+
+import { definePageData, modulePagePreload } from '@app/shared-contracts/page-data';
 
 import { executeAresLookup } from '../../../../api/ares-lookup-client.ts';
+import type { CustomerSegment } from '../../../../api/customer-segments-client.ts';
+import { customerSegmentsFor } from '../../../../api/customer-segments-client.ts';
 import type { CustomerListItem } from '../../../../api/customers-client.ts';
 import { createCustomer, listCustomers, archiveCustomer } from '../../../../api/customers-client.ts';
 import { AresLookupRequestSchema } from '../../../../../shared/apis/ares-lookup.ts';
@@ -39,6 +43,8 @@ import type { CreateDraft } from './customers-model.ts';
 export interface CustomersSnapshot {
   readonly items: readonly CustomerListItem[];
   readonly nowMillis: number;
+  /** Current segment per party id. None when the best-effort segment lookup failed, so the column is left out. */
+  readonly segments: Option.Option<ReadonlyMap<string, CustomerSegment>>;
 }
 
 const correlation = (operation: string) =>
@@ -47,14 +53,57 @@ const correlation = (operation: string) =>
     ([first, second]) => `party-registry:${operation}:${first}:${second}`,
   );
 
-/** Every current customer, archived included so the Archivovaní stat is real. */
+/**
+ * Set once the segment owner refuses (a non-transient failure) in this document. A role only changes with a
+ * sign-out, which reloads the document, so later reads skip the lookup instead of logging the same refusal again.
+ */
+const segmentsRefusal = browserRuntime.runSync(Ref.make(false));
+
+/** Segments are best effort: any failure, defects included, yields none instead of failing the customer list. */
+const segmentsOf = Effect.fn('CustomersData.segmentsOf')(function* segmentsOf(items: readonly CustomerListItem[]) {
+  if (yield* Ref.get(segmentsRefusal)) {
+    return Option.none<ReadonlyMap<string, CustomerSegment>>();
+  }
+  const exit = yield* Effect.exit(customerSegmentsFor(items));
+  if (Option.exists(Exit.findErrorOption(exit), (failure) => !failure.retryable)) {
+    yield* Ref.set(segmentsRefusal, true);
+  }
+  return Exit.getSuccess(exit);
+});
+
+/** Every current customer, archived included so the Archivovaní stat is real, with their segments. */
 export const loadCustomers = Effect.all(
   {
     items: listCustomers({ includeArchived: true, limit: 500 }),
     now: DateTime.now,
   },
   { concurrency: 1 },
-).pipe(Effect.map(({ items, now }): CustomersSnapshot => ({ items, nowMillis: DateTime.toEpochMillis(now) })));
+).pipe(
+  Effect.flatMap(({ items, now }) =>
+    Effect.map(segmentsOf(items), (segments): CustomersSnapshot => ({
+      items,
+      nowMillis: DateTime.toEpochMillis(now),
+      segments,
+    })),
+  ),
+);
+
+/** The page reads the whole register and filters it locally, so there is one dataset. */
+export const allCustomers = 'all';
+type CustomersQuery = typeof allCustomers;
+
+/**
+ * The customer list of the signed-in principal. The Shell fills it through `preloadPage` before it reveals the
+ * page, so rows, stats and segment labels render in the first commit.
+ */
+export const customersData = definePageData({
+  key: (query: CustomersQuery) => query,
+  load: (_query: CustomersQuery) => loadCustomers,
+  runtime: browserRuntime,
+});
+
+/** `preloadPage` of the customers page. */
+export const preloadCustomers = modulePagePreload(() => customersData.preload(allCustomers));
 
 export const lookupAres = Effect.fn('CustomersData.lookupAres')(function* lookupAresEffect(ico: string) {
   const payload = yield* Schema.decodeEffect(AresLookupRequestSchema)({ ico });

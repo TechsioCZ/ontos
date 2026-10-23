@@ -6,12 +6,9 @@ import type { Cause } from 'effect';
 import { Duration, Effect, Option, Result, Schema } from 'effect';
 import { useEffect, useState } from 'react';
 
-import type { CustomerSegment } from '../../../../api/customer-segments-client.ts';
-import { customerSegmentsFor } from '../../../../api/customer-segments-client.ts';
 import { browserRuntime } from '../../../../runtime/browser-effect-runtime.ts';
 import type { CustomersSnapshot } from './customers-data.ts';
 
-type SegmentsError = Effect.Error<ReturnType<typeof customerSegmentsFor>>;
 type TagFilterError = Effect.Error<ReturnType<typeof subjectsWithTag>> | Cause.TimeoutError;
 
 /** A tag lookup that has not answered by then counts as failed, so the table never stays a skeleton. */
@@ -28,18 +25,16 @@ const subjectsTaggedWith = (tagsBySubject: ReadonlyMap<SubjectId, readonly Tag[]
   );
 
 /**
- * Segment and tag data for the customers list. Both lookups are best effort: a failed segment lookup hides
- * the column, and a failed or stalled tag lookup clears the filter with a message instead of reading as
- * "no results". Any failure counts, defects and timeouts included, so neither lookup can stay pending.
- * A failed segment lookup is not repeated while the page stays open: the owner would refuse again, and each
- * refusal is a failed request in the browser console.
+ * Segment and tag data for the customers list. Segments arrive with the customer list (`loadCustomers`), so their
+ * labels render in the first commit; a failed segment lookup hides the column. The tag lookup is best effort: a
+ * failed or stalled tag lookup clears the filter with a message instead of reading as "no results". Any failure
+ * counts, defects and timeouts included, so it can never stay pending.
  * The tag filter reads the assignments already loaded for the tag column, so it answers at once; it asks the
  * tagging owner only while those assignments are loading or failed.
  */
 export const useCustomerEnrichment = (data: CustomersSnapshot | undefined) => {
-  const [segments, setSegments] = useState<ReadonlyMap<string, CustomerSegment> | null>(null);
-  const [segmentsFailure, setSegmentsFailure] = useState<Option.Option<Cause.Cause<SegmentsError>>>(Option.none);
-  const segmentsFailed = Option.isSome(segmentsFailure);
+  const segments = data === undefined ? null : Option.getOrNull(data.segments);
+  const segmentsFailed = data !== undefined && Option.isNone(data.segments);
   const [tagFilter, setTagFilter] = useState<TagId | null>(null);
   const [tagFailure, setTagFailure] = useState<Option.Option<Cause.Cause<TagFilterError>>>(Option.none);
   const [tagRevision, setTagRevision] = useState(0);
@@ -50,31 +45,6 @@ export const useCustomerEnrichment = (data: CustomersSnapshot | undefined) => {
     'customer',
     items.map((item) => subjectIdOf(item.partyId)),
   );
-
-  useEffect(() => {
-    let active = true;
-    if (data !== undefined && !segmentsFailed) {
-      void browserRuntime.runPromise(
-        customerSegmentsFor(data.items).pipe(
-          Effect.matchCause({
-            onFailure: (cause) => {
-              if (active) {
-                setSegmentsFailure(Option.some(cause));
-              }
-            },
-            onSuccess: (next) => {
-              if (active) {
-                setSegments(next);
-              }
-            },
-          }),
-        ),
-      );
-    }
-    return () => {
-      active = false;
-    };
-  }, [data, segmentsFailed]);
 
   const localTaggedIds =
     tagFilter !== null && tags.status === 'ready' ? subjectsTaggedWith(tags.tagsBySubject, tagFilter) : null;
