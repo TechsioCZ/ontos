@@ -278,7 +278,6 @@ export function AccountProfilePage() {
                   value={profile.country}
                   error={errors.country}
                   onChange={(value) => update("country", value)}
-                  indicator={<Icon icon="token-icon-akros-account-select-chevron" />}
                 />
                 {phone("phone2", "Telefon 2")}
               </div>

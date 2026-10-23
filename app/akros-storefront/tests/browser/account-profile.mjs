@@ -143,14 +143,20 @@ try {
       errors.push(
         `Original disclosure icon missing: ${icon ? JSON.stringify({ width: icon.getBoundingClientRect().width, font: getComputedStyle(icon).fontSize, mask: getComputedStyle(icon).maskImage }) : "no element"}`,
       );
-    for (const icon of root.querySelectorAll(".token-icon-akros-account-select-chevron")) {
+    for (const icon of root.querySelectorAll(
+      ".token-icon-akros-account-select-chevron, .akros-select .token-icon-select-indicator",
+    )) {
       if (
         getComputedStyle(icon).maskImage === "none" ||
         Math.abs(icon.getBoundingClientRect().width - 28) > 0.2
       )
         errors.push("Original Figma select arrow must render at 28px");
     }
-    if (root.querySelectorAll(".token-icon-akros-account-select-chevron").length !== 3)
+    if (
+      root.querySelectorAll(
+        ".token-icon-akros-account-select-chevron, .akros-select .token-icon-select-indicator",
+      ).length !== 3
+    )
       errors.push("Both phone pickers and country select must use the original Figma arrow");
     const phoneTrigger = root.querySelector('[data-account-phone-control] [data-part="trigger"]');
     const phoneStyle = getComputedStyle(phoneTrigger);

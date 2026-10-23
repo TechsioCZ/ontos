@@ -4,7 +4,6 @@ import { useState } from "react";
 import NextLink from "next/link";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
-import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { DataTable, type ColumnDef } from "@techsio/ui-kit/organisms/data-table";
 import { CheckoutSelect } from "@/features/checkout/checkout-select";
@@ -116,7 +115,6 @@ export function AccountOrders() {
           label="Období"
           value={month}
           onChange={setMonth}
-          indicator={<Icon icon="token-icon-akros-account-select-chevron" />}
           items={[
             { value: "all", label: "Všechna období" },
             { value: "10. 2026", label: "Říjen 2026" },
@@ -129,7 +127,6 @@ export function AccountOrders() {
           label="Stav objednávky"
           value={status}
           onChange={setStatus}
-          indicator={<Icon icon="token-icon-akros-account-select-chevron" />}
           items={[
             { value: "all", label: "Všechny stavy" },
             { value: "Odesláno", label: "Odesláno" },

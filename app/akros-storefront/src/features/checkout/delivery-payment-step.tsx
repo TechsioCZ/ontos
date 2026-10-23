@@ -53,7 +53,7 @@ export function DeliveryPaymentStep() {
     >
       <div
         data-akros-checkout-methods
-        className="grid gap-(--dimension-60) rounded-sm bg-(--color-base) p-(--akros-checkout-panel-padding)"
+        className="grid grid-cols-1 gap-(--dimension-60) rounded-sm bg-(--color-base) p-(--akros-checkout-panel-padding)"
       >
         <section aria-labelledby="delivery-title">
           <h1
@@ -95,12 +95,12 @@ export function DeliveryPaymentStep() {
                         className={`h-9 w-20 max-sm:h-6 max-sm:w-14 ${method.id === "osobni" ? "object-contain" : "object-cover"}`}
                       />
                     </span>
-                    <RadioGroup.ItemContent className="col-start-3">
+                    <RadioGroup.ItemContent className="col-start-3 max-[24rem]:col-span-2">
                       <RadioGroup.ItemText>{method.title}</RadioGroup.ItemText>
                       <RadioGroup.ItemDescription>{method.description}</RadioGroup.ItemDescription>
                     </RadioGroup.ItemContent>
                     <span
-                      className={`col-start-4 row-start-1 whitespace-nowrap text-sm ${price === 0 ? "text-(--color-fg-status-success) uppercase" : "font-extrabold text-(--akros-checkout-muted)"}`}
+                      className={`col-start-4 row-start-1 whitespace-nowrap text-sm max-[24rem]:col-span-2 max-[24rem]:col-start-3 max-[24rem]:row-start-2 ${price === 0 ? "text-(--color-fg-status-success) uppercase" : "font-extrabold text-(--akros-checkout-muted)"}`}
                     >
                       {price === 0 ? "Zdarma" : formatCheckoutPrice(price)}
                     </span>
@@ -169,7 +169,7 @@ export function DeliveryPaymentStep() {
                       />
                     )}
                   </span>
-                  <RadioGroup.ItemContent className="col-start-3">
+                  <RadioGroup.ItemContent className="col-start-3 max-[24rem]:col-span-2">
                     <RadioGroup.ItemText>{method.title}</RadioGroup.ItemText>
                     {method.pickupOnly && draft.deliveryId !== "osobni" && (
                       <RadioGroup.ItemDescription>
@@ -177,7 +177,7 @@ export function DeliveryPaymentStep() {
                       </RadioGroup.ItemDescription>
                     )}
                   </RadioGroup.ItemContent>
-                  <span className="col-start-4 row-start-1 text-sm text-(--color-fg-status-success) uppercase">
+                  <span className="col-start-4 row-start-1 text-sm text-(--color-fg-status-success) uppercase max-[24rem]:col-span-2 max-[24rem]:col-start-3 max-[24rem]:row-start-2">
                     Zdarma
                   </span>
                 </RadioGroup.Item>
