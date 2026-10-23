@@ -364,7 +364,6 @@ const writeNativeShellOutput = Effect.fn('test.writeNativeShellOutput')(function
         compatibility_date: '2026-09-24',
         main: BACKEND_PATH,
         name: 'app-shell-super-app',
-        placement: { host: 'backend.example.com:443' },
       }),
     ),
     file(
@@ -597,7 +596,6 @@ const deploymentLayer = (
                     assets: Schema.Struct({ directory: Schema.String }),
                     main: Schema.optional(Schema.String),
                     name: Schema.String,
-                    placement: Schema.optionalKey(Schema.Struct({ host: Schema.String })),
                     preview_urls: Schema.optional(Schema.Boolean),
                     services: Schema.optional(
                       Schema.Array(Schema.Struct({ binding: Schema.String, service: Schema.String })),
@@ -608,7 +606,6 @@ const deploymentLayer = (
               )(yield* fileSystem.readFileString(configPath));
               if (configPath.includes('.wrangler-immutable-shell-config-')) {
                 expect(config.main).toBeUndefined();
-                expect(config.placement).toBeUndefined();
                 expect(config.preview_urls).toBe(false);
                 expect(config.workers_dev).toBe(true);
                 expect(config.name).toBe((yield* planFor()).assetsScriptName);
@@ -617,7 +614,6 @@ const deploymentLayer = (
                 const expectedEntrypoint = nodePath.join(appDirectory, '.output', BACKEND_PATH);
                 const resolvedEntrypoint = nodePath.resolve(nodePath.dirname(configPath), config.main ?? '');
                 expect(config.main).toBe(expectedEntrypoint);
-                expect(config.placement).toEqual({ host: 'backend.example.com:443' });
                 expect(resolvedEntrypoint).toBe(expectedEntrypoint);
                 // The fixture's published composition approves no module release: only the Shell's self binding.
                 expect(config.services).toEqual([{ binding: 'ONTOS_SHELL_SELF', service: config.name }]);

@@ -373,17 +373,6 @@ export const createCloudflareWorkerConfig = (
   { publicUrlVariable }: { readonly publicUrlVariable: string },
 ) => {
   const dataPlane = createCloudflareDataPlaneBindings(envValue);
-  // A public, single-homed backend-location target; private VPC hosts cannot be probed by placement.
-  // https://developers.cloudflare.com/workers/configuration/placement/#specify-a-host-endpoint
-  const placementHost = getOptionOrUndefined(
-    getResultOrThrow(
-      decodeUnknownResult(OptionFromUndefinedOr(nonEmptyBuildStringSchema))(
-        envValue('ULTRAMODERN_CLOUDFLARE_PLACEMENT_HOST'),
-      ),
-    ),
-  );
-  const placement: { readonly host: string } | { readonly mode: 'off' } =
-    placementHost === undefined ? { mode: 'off' } : { host: placementHost };
   const customDomain = new URL(requiredCloudflareBuildValue(envValue, publicUrlVariable)).hostname;
   return {
     ...dataPlane,
@@ -392,7 +381,6 @@ export const createCloudflareWorkerConfig = (
       compatibility_flags: ['global_fetch_strictly_public'],
       limits: { cpu_ms: CLOUDFLARE_WORKER_CPU_MS },
       observability: resolveCloudflareWorkerObservability(envValue),
-      placement,
       preview_urls: false,
       routes: [{ custom_domain: true, pattern: customDomain }],
       workers_dev: false,

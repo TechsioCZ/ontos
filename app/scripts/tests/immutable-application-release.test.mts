@@ -1123,7 +1123,6 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
       compatibility_date: COMPATIBILITY_DATE,
       main: BACKEND_ENTRY_PATH,
       no_bundle: options.noBundle === true,
-      placement: { host: 'backend.example.com:443' },
       rules: [{ globs: ['**/*.mjs'], type: 'ESModule' }],
     }),
   );
@@ -1569,10 +1568,6 @@ it.effect('uploads a release under its own identity lock, never the environment-
       expect(timeline[0]).toBe(`pg_advisory_lock(hashtextextended($1, 0)) ${identityKey}`);
       expect(timeline.at(-1)).toBe(`pg_advisory_unlock(hashtextextended($1, 0)) ${identityKey}`);
       expect(timeline.filter((entry) => entry.startsWith('exec wrangler deploy')).length).toBe(3);
-      const [packaged, uploaded, assets] = deployment.capturedConfigs;
-      expect(packaged?.placement).toEqual({ host: 'backend.example.com:443' });
-      expect(uploaded?.placement).toEqual(packaged?.placement);
-      expect(assets?.placement).toBeUndefined();
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
