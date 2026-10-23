@@ -11,7 +11,7 @@ import {
   recordSupportImpersonationAction,
   SupportRecoveryPrincipalContextResolver,
 } from '@app/core-runtime';
-import { betterAuth } from 'better-auth';
+import { betterAuth } from 'better-auth/minimal';
 import { isAPIError } from 'better-auth/api';
 import { parseCookies, SECURE_COOKIE_PREFIX } from 'better-auth/cookies';
 import { constantTimeEqual, makeSignature } from 'better-auth/crypto';

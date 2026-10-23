@@ -17,7 +17,8 @@ import { fetchClientMetadataResource as fetchClientMetadataOnNode } from './cimd
 import { fetchClientMetadataResource as fetchClientMetadataOnWorkerd } from './cimd-transport.workerd.ts';
 import { mcp } from '@better-auth/mcp';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { APIError, betterAuth } from 'better-auth';
+import { APIError } from 'better-auth';
+import { betterAuth } from 'better-auth/minimal';
 import { isAPIError } from 'better-auth/api';
 import { getCookies } from 'better-auth/cookies';
 import { admin } from 'better-auth/plugins/admin';
@@ -729,10 +730,16 @@ const assembleAuthenticationService = (
     oauthHooks: options.oauthHooks,
   };
   const oauthIssuer = oauthIssuerFor(configuration.baseUrl);
-  const auth = requestBoundBetterAuth(
-    isolateBetterAuth(configuration, options.allowFixtureSignUp === true, bindings),
-    bindings,
-  );
+  // Session/OAuth provider construction is not part of API-key request admission.
+  // Retain the serving request's bindings, but initialize only when a session method runs.
+  let auth: ReturnType<typeof requestBoundBetterAuth> | undefined;
+  const getAuth = () => {
+    auth ??= requestBoundBetterAuth(
+      isolateBetterAuth(configuration, options.allowFixtureSignUp === true, bindings),
+      bindings,
+    );
+    return auth;
+  };
 
   const resolveIdentity = (
     user: {
@@ -864,7 +871,7 @@ const assembleAuthenticationService = (
       runAuthOperation(
         'session.read',
         requestHeaders,
-        auth.api.getSession({
+        getAuth().api.getSession({
           headers: requestHeaders,
           returnHeaders: true,
         }),
@@ -944,7 +951,7 @@ const assembleAuthenticationService = (
             Effect.suspend(() =>
               runSessionUpdate(
                 requestHeaders,
-                auth.api.updateSession({
+                getAuth().api.updateSession({
                   body: { activeTenantId: identity.tenantId },
                   headers: requestHeaders,
                   returnHeaders: true,
@@ -1003,7 +1010,7 @@ const assembleAuthenticationService = (
         const updated = yield* Effect.suspend(() =>
           runSessionUpdate(
             requestHeaders,
-            auth.api.updateSession({
+            getAuth().api.updateSession({
               body: { activeLegalEntityId: null },
               headers: requestHeaders,
               returnHeaders: true,
@@ -1051,7 +1058,7 @@ const assembleAuthenticationService = (
       const updated = yield* Effect.suspend(() =>
         runSessionUpdate(
           requestHeaders,
-          auth.api.updateSession({
+          getAuth().api.updateSession({
             body: { activeLegalEntityId: selection.selected.legalEntityId },
             headers: requestHeaders,
             returnHeaders: true,
@@ -1074,7 +1081,7 @@ const assembleAuthenticationService = (
           runAuthOperation(
             'fixture.sign-up',
             undefined,
-            auth.api.signUpEmail({
+            getAuth().api.signUpEmail({
               body: {
                 email,
                 name,
@@ -1128,14 +1135,14 @@ const assembleAuthenticationService = (
       guards: makeOAuthEndpointGuards({
         database: options.authDatabase,
         readSession: (requestHeaders) =>
-          Effect.tryPromise(() => auth.api.getSession({ headers: requestHeaders })).pipe(
+          Effect.tryPromise(() => getAuth().api.getSession({ headers: requestHeaders })).pipe(
             Effect.map((result) =>
               result === null ? undefined : { sessionId: result.session.id, userId: result.user.id },
             ),
             Effect.orElseSucceed(() => undefined),
           ),
       }),
-      handler: (request: Request) => auth.handler(request),
+      handler: (request: Request) => getAuth().handler(request),
       issuer: oauthIssuer,
     },
     resolveShellContext,
@@ -1160,7 +1167,7 @@ const assembleAuthenticationService = (
         runAuthOperation(
           'sign-in.credentials',
           requestHeaders,
-          auth.api.signInEmail({
+          getAuth().api.signInEmail({
             body: {
               email,
               password: revealAuthenticationSecret(authenticationSecret),
@@ -1186,7 +1193,7 @@ const assembleAuthenticationService = (
         runAuthOperation(
           'sign-out',
           requestHeaders,
-          auth.api.signOut({
+          getAuth().api.signOut({
             headers: requestHeaders,
             returnHeaders: true,
           }),
@@ -1220,7 +1227,7 @@ const assembleAuthenticationService = (
                 : Effect.suspend(() =>
                     runSessionUpdate(
                       requestHeaders,
-                      auth.api.updateSession({
+                      getAuth().api.updateSession({
                         body: { activeLegalEntityId: selected.legalEntityId },
                         headers: requestHeaders,
                         returnHeaders: true,
@@ -1251,7 +1258,7 @@ const assembleAuthenticationService = (
                 : Effect.suspend(() =>
                     runSessionUpdate(
                       requestHeaders,
-                      auth.api.updateSession({
+                      getAuth().api.updateSession({
                         body: {
                           activeLegalEntityId: null,
                           activeTenantId: tenantId,

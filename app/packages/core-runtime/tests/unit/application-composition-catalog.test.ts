@@ -298,7 +298,12 @@ it.effect('rejects module, deployment, build marker, and public contract identit
       { ...module, publicContract: { ...module.publicContract, id: 'another.module' } },
       { ...module, publicContract: { ...module.publicContract, version: '3' } },
     ]) {
-      yield* assertInvalid(composition([modified]), /observed deployment contract/u);
+      yield* assertInvalid(
+        composition([modified]),
+        modified.deployment.appId === module.deployment.appId
+          ? /observed deployment contract/u
+          : /contract app ID does not match/u,
+      );
     }
   }),
 );
@@ -485,7 +490,7 @@ it.effect('rejects a page referencing an undeclared component even when its arti
           federation: original.federation,
         },
       ]),
-      /component expose/u,
+      /invalid Shell contribution references/u,
     );
   }),
 );

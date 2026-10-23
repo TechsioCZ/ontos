@@ -11,13 +11,13 @@ import {
   validateApplicationCompositionCandidate,
 } from './application-composition.ts';
 import type { ApplicationComposition, ApplicationCompositionCandidateEvidence } from './application-composition.ts';
-import { buildInstalledModuleCatalog } from './catalog.ts';
+import { buildInstalledModuleCatalog, OntosModuleCatalogValidationError } from './catalog.ts';
 import type { InstalledModuleCatalog } from './catalog.ts';
-import { ONTOS_MODULE_CONTRACT_MAX_BYTES, OntosModuleDeploymentContractSchema } from './manifest.ts';
+import { ONTOS_MODULE_CONTRACT_MAX_BYTES } from './manifest.ts';
 import { shellPageRouteCatalogIssue } from './shell-contribution.ts';
 
 const utf8 = new TextEncoder();
-const contractJsonSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
+const contractJsonSchema = Schema.fromJsonString(Schema.Unknown);
 
 const invalid = (reason: string, cause?: unknown): ApplicationCompositionValidationError => {
   if (cause === undefined) {
@@ -51,7 +51,7 @@ const buildCatalog = Effect.fn('ApplicationComposition.buildCatalog')(function* 
     Effect.mapError((cause) => invalid('Application Composition does not match the supported schema', cause)),
   );
   let totalContractBytes = 0;
-  const decoded = yield* Effect.forEach(
+  const documents = yield* Effect.forEach(
     composition.modules,
     Effect.fnUntraced(function* decodeModule(module) {
       if (module.contractDocument.length > ONTOS_MODULE_CONTRACT_MAX_BYTES) {
@@ -79,6 +79,32 @@ const buildCatalog = Effect.fn('ApplicationComposition.buildCatalog')(function* 
           invalid(`module ${module.moduleId} contract document is invalid or unsupported`, cause),
         ),
       );
+      return { contract, digest, module };
+    }),
+    { concurrency: 1 },
+  );
+  // The installed catalog owns strict contract decoding. Derive composition evidence from
+  // its validated objects instead of decoding every complete contract a second time.
+  const catalog = yield* Effect.try({
+    catch: (cause) =>
+      invalid(
+        cause instanceof OntosModuleCatalogValidationError
+          ? `Application Composition contracts do not form one complete installed catalog: ${cause.reason}`
+          : 'Application Composition contracts do not form one complete installed catalog',
+        cause,
+      ),
+    try: () =>
+      buildInstalledModuleCatalog(
+        documents.map(({ contract, module }) => ({ contract, expectedAppId: module.deployment.appId })),
+      ),
+  });
+  const decoded = yield* Effect.forEach(
+    documents,
+    Effect.fnUntraced(function* observeModule({ digest, module }) {
+      const contract = catalog.getByDeploymentAppId(module.deployment.appId);
+      if (contract === undefined) {
+        return yield* invalid(`module ${module.moduleId} has no observed deployment contract`);
+      }
       const contributionKeys = Object.values(contract.manifest.publicSurface.shellContributions).flatMap(
         (contributions) => contributions.map(({ contributionKey }) => contributionKey),
       );
@@ -158,16 +184,6 @@ const buildCatalog = Effect.fn('ApplicationComposition.buildCatalog')(function* 
     runtime: composition.shell,
   };
   yield* validateApplicationCompositionCandidate(composition, evidence);
-  const catalog = yield* Effect.try({
-    catch: (cause) => invalid('Application Composition contracts do not form one complete installed catalog', cause),
-    try: () =>
-      buildInstalledModuleCatalog(
-        decoded.map(({ contract, module }) => ({
-          contract,
-          expectedAppId: module.deployment.appId,
-        })),
-      ),
-  });
   // Catalog accessors refer to these same decoded contracts. Freeze those contracts as well as
   // the catalog containers: an accepted revision must not change through a returned projection.
   for (const contract of catalog.contracts) {

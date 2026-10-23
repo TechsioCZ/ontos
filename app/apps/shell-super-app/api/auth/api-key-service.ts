@@ -1,5 +1,5 @@
 import { apiKey } from '@better-auth/api-key';
-import { betterAuth } from 'better-auth';
+import { betterAuth } from 'better-auth/minimal';
 import { isAPIError } from 'better-auth/api';
 import { and, asc, eq, lte, sql } from 'drizzle-orm';
 import { Brand, Clock, Context, DateTime, Duration, Effect, Encoding, Layer, Option, Redacted, Schema } from 'effect';
@@ -243,22 +243,29 @@ const apiKeyExternalTimeout = Effect.timeoutOrElse({
 export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeService() {
   const configuration = yield* AuthConfig;
   const { adapter: databaseAdapter, executor: database } = yield* AuthDatabase;
-  const auth = betterAuth({
-    baseURL: configuration.baseUrl,
-    database: databaseAdapter,
-    logger: { disabled: true },
-    plugins: [
-      apiKey({
-        enableMetadata: true,
-        enableSessionForAPIKeys: false,
-        // Shell keys carry no per-key quota or rate limit; verify() is a read-only lookup.
-        rateLimit: { enabled: false },
-        references: 'user',
-      }),
-    ],
-    secret: configuration.secret,
-    trustedOrigins: [...configuration.trustedOrigins],
-  });
+  // Verification and metadata use SQL directly; only issuance needs the provider.
+  const makeProvider = () =>
+    betterAuth({
+      baseURL: configuration.baseUrl,
+      database: databaseAdapter,
+      logger: { disabled: true },
+      plugins: [
+        apiKey({
+          enableMetadata: true,
+          enableSessionForAPIKeys: false,
+          // Shell keys carry no per-key quota or rate limit; verify() is a read-only lookup.
+          rateLimit: { enabled: false },
+          references: 'user',
+        }),
+      ],
+      secret: configuration.secret,
+      trustedOrigins: [...configuration.trustedOrigins],
+    });
+  let provider: ReturnType<typeof makeProvider> | undefined;
+  const getProvider = () => {
+    provider ??= makeProvider();
+    return provider;
+  };
   const metadata = (keyId: string) =>
     database
       .select({
@@ -294,27 +301,28 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
     issue: (requestHeaders, input) =>
       Effect.tryPromise({
         catch: mapProviderError,
-        try: auth.api.createApiKey.bind(auth.api, {
-          body: withOptionalProperty(
-            withOptionalProperty(
+        try: () =>
+          getProvider().api.createApiKey({
+            body: withOptionalProperty(
+              withOptionalProperty(
+                {
+                  expiresIn: input.expiresIn ?? null,
+                },
+                input.name !== undefined,
+                'name',
+                input.name,
+                {},
+              ),
+              input.prefix !== undefined,
+              'prefix',
+              input.prefix,
               {
-                expiresIn: input.expiresIn ?? null,
+                metadata: pendingBindingMarker(input),
+                remaining: null,
               },
-              input.name !== undefined,
-              'name',
-              input.name,
-              {},
             ),
-            input.prefix !== undefined,
-            'prefix',
-            input.prefix,
-            {
-              metadata: pendingBindingMarker(input),
-              remaining: null,
-            },
-          ),
-          headers: requestHeaders,
-        }),
+            headers: requestHeaders,
+          }),
       }).pipe(
         apiKeyExternalTimeout,
         Effect.map((created) => ({
