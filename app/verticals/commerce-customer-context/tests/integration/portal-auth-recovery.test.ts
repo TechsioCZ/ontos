@@ -385,7 +385,10 @@ it.live('verifies the generated email link through the typed owner route and the
         });
       expect(Result.isFailure(yield* Effect.result(signIn()))).toBe(true);
 
-      const response = yield* Effect.promise(() => app.handler(new Request(mailURL), transportContext));
+      // The storefront forwards the public mail link to the owner's internal typed API path;
+      // the BFF deployment prefix is not part of the isolated HttpApi runtime.
+      const ownerURL = `${ORIGIN}${COMMERCE_PORTAL_AUTH_INTERNAL_BASE_PATH}/verify-email${link.search}`;
+      const response = yield* Effect.promise(() => app.handler(new Request(ownerURL), transportContext));
       expect(response.status).toBe(200);
       expect(response.headers.has('set-cookie')).toBe(false);
       expect(yield* Effect.promise(response.json.bind(response))).toStrictEqual({
@@ -396,7 +399,7 @@ it.live('verifies the generated email link through the typed owner route and the
       expect(signedIn.user.emailVerified).toBe(true);
 
       for (const token of [link.searchParams.get('token') ?? '', 'never-issued-token']) {
-        const retry = new URL(mailURL);
+        const retry = new URL(ownerURL);
         retry.searchParams.set('token', token);
         const rejected = yield* Effect.promise(() => app.handler(new Request(retry), transportContext));
         expect(rejected.status).toBe(400);
@@ -454,7 +457,8 @@ it.live('proves PostgreSQL verification expiry consumes an expired row and rejec
       );
       const app = yield* makeRecoveryRuntime(fixture, store);
       const verificationURL = yield* Effect.fromNullishOr(fixture.verificationURLs.at(-1));
-      const expired = yield* Effect.promise(() => app.handler(new Request(verificationURL), transportContext));
+      const ownerURL = `${ORIGIN}${COMMERCE_PORTAL_AUTH_INTERNAL_BASE_PATH}/verify-email${new URL(verificationURL).search}`;
+      const expired = yield* Effect.promise(() => app.handler(new Request(ownerURL), transportContext));
       expect(expired.status).toBe(400);
       expect(yield* Effect.promise(expired.json.bind(expired))).toMatchObject({ code: 'INVALID_TOKEN' });
       const users = yield* fixture.database.executor

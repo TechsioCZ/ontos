@@ -29,7 +29,9 @@ export default async function EmailVerificationPage({
       <section className="akros-auth-page">
         <div className="akros-auth-card">
           <h1>{verified ? "E-mail byl ověřen" : "E-mail nebyl ověřen"}</h1>
-          <p role="status">{message}</p>
+          <p>
+            <output>{message}</output>
+          </p>
           <p>
             <StoreLink href="/prihlaseni">Přejít k přihlášení</StoreLink>
           </p>
