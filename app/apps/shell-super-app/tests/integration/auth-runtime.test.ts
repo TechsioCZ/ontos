@@ -17,7 +17,7 @@ import {
   makeTenantModuleStateService,
 } from '@app/core-runtime';
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { Effect, Layer, Predicate, Schema } from 'effect';
+import { Effect, Layer, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
 
@@ -45,7 +45,8 @@ import {
 import { renderActionPrincipalServer } from '../../../../scripts/scaffolding/microvertical-action-boundary/scaffold.mts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
-import { account, authRelations, session, user } from '../../api/auth/db/schema.ts';
+import { account, apikey, authRelations, session, user } from '../../api/auth/db/schema.ts';
+import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { parseGatewayIssuerConfig } from '../../api/auth/gateway-issuer-config.ts';
 import { makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
 import type { GatewayIssuerLayerOptions } from '../../api/auth/gateway-issuer.ts';
@@ -331,7 +332,8 @@ const installedPageCatalog = () =>
 it.live(
   'creates, resolves, persists, revokes, and signs out a Better Auth session',
   Effect.fnUntraced(function* runIntegration1() {
-    const configuration = yield* loadAuthConfig({ envPath: '/dev/null' });
+    // Production also requires secure cookies when its local/public origin is HTTP.
+    const configuration = { ...(yield* loadAuthConfig({ envPath: '/dev/null' })), secureCookies: true };
     const coreClient = yield* makeTestPgClient(configuration.connectionString);
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
     const authPersistence = yield* makeAuthDatabase(configuration);
@@ -551,6 +553,28 @@ it.live(
       cookie: cookieHeader(signedInCookies),
       origin: configuration.baseUrl,
     });
+    const apiKeys = yield* makeApiKeyService().pipe(
+      Effect.provideService(AuthConfig, configuration),
+      Effect.provideService(AuthDatabase, authPersistence),
+    );
+    const issuedKey = yield* apiKeys.issue(authenticatedHeaders, {
+      issuerPrincipalId: principalId,
+      lifecycleOperationId: globalThis.crypto.randomUUID(),
+      name: 'secure-session-issuance',
+      tenantId,
+    });
+    yield* Effect.addFinalizer(() =>
+      authDatabase.delete(apikey).where(eq(apikey.id, issuedKey.providerKeyId)).pipe(Effect.orDie),
+    );
+    expect(signedInCookies.some((cookie) => cookie.startsWith('__Secure-better-auth.session_token='))).toBe(true);
+    expect((yield* apiKeys.verify(Redacted.value(issuedKey.secret))).providerKeyId).toBe(issuedKey.providerKeyId);
+    yield* apiKeys.setEnabled(issuedKey.providerKeyId, false);
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(apiKeys.verify(Redacted.value(issuedKey.secret))),
+        'ApiKeyCredentialInvalidError',
+      ),
+    ).toBe(true);
     const approvedPageCatalog = yield* installedPageCatalog();
     const exactPageRequest = (entrypointKey = 'testing.pages.page.customers') =>
       new Request(`${configuration.baseUrl}/shell/module-target`, {

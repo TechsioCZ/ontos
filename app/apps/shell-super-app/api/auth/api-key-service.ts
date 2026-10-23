@@ -246,6 +246,7 @@ export const makeApiKeyService = Effect.fn('ApiKeyService.make')(function* makeS
   // Verification and metadata use SQL directly; only issuance needs the provider.
   const makeProvider = () =>
     betterAuth({
+      advanced: { useSecureCookies: configuration.secureCookies },
       baseURL: configuration.baseUrl,
       database: databaseAdapter,
       logger: { disabled: true },
