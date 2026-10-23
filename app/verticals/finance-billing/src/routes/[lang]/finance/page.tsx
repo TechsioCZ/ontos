@@ -14,6 +14,7 @@ import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { Dialog } from '@techsio/ui-kit/molecules/dialog';
 import { Tabs } from '@techsio/ui-kit/molecules/tabs';
+import { modulePagePreload } from '@app/shared-contracts/page-data';
 import { useState } from 'react';
 import { Option } from 'effect';
 import csResource from '../../../../locales/cs/finance-billing.json';
@@ -28,7 +29,13 @@ import { IncomingInvoiceDialog } from './incoming-invoice-dialog.tsx';
 import { PlanningPanel } from './planning-panel.tsx';
 import { PriceListPanel } from './price-list-panel.tsx';
 import { RecurringPanel } from './recurring-panel.tsx';
-import { customerInvoiceFilterKey, decodeCustomerInvoiceSearch, useFinanceRecords } from './use-finance-records.ts';
+import {
+  customerInvoiceFilterKey,
+  decodeCustomerInvoiceSearch,
+  preloadFinanceRecords,
+  useFinanceRecords,
+} from './use-finance-records.ts';
+import { preloadFinanceDirectory } from './use-finance-references.ts';
 
 const resources = {
   cs: { 'finance-billing': csResource },
@@ -155,11 +162,6 @@ const RecordsPageContent = () => {
                 {t(`${ns}.referencesError`)}
               </StatusText>
             )}
-            {vm.snapshot === undefined && feedback === 'loading' && (
-              <StatusText showIcon status="default">
-                Načítám finanční evidenci…
-              </StatusText>
-            )}
             <Tabs onValueChange={setTab} size="sm" value={tab} variant="line">
               <Tabs.List>
                 <Tabs.Trigger value="faktury">Faktury</Tabs.Trigger>
@@ -247,6 +249,16 @@ const RecordsPageContent = () => {
     </>
   );
 };
+
+/**
+ * The Shell runs this before it reveals the page, so the first paint already has the ledger (KPI cards, invoice
+ * rows), customer names, opportunity titles and whether "Nová faktura" is offered. The catalog for the create form
+ * and reminder e-mail receipts load lazily.
+ */
+export const preloadPage = modulePagePreload(
+  (props) => preloadFinanceRecords(props.search),
+  () => preloadFinanceDirectory,
+);
 
 export const RecordsPage = () => {
   const rawSearch = useRouterState({

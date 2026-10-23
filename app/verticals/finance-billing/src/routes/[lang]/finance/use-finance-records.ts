@@ -1,11 +1,14 @@
 import type { CustomerListItem } from '@app/party-registry/api/client';
 import { CounterpartyRefSchema } from '@app/party-registry/resources/counterparty';
 import { makeReferenceGatewayCredentials } from '@app/shared-contracts';
+import { definePageData, pageDataPending } from '@app/shared-contracts/page-data';
+import type { PageDataSnapshot } from '@app/shared-contracts/page-data';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useRouterState } from '@modern-js/plugin-tanstack/runtime';
+import { defaultParseSearch } from '@tanstack/react-router';
 import { useToast } from '@techsio/ui-kit/molecules/toast';
 import { Effect, Match, Option, Schema } from 'effect';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { FinanceCommand } from '../../../../shared/actions/apply-command.ts';
 import { FinancePartyIdSchema, RecordsRequestSchema } from '../../../../shared/apis/records.ts';
 import type { CalendarDateSchema, Invoice, InvoiceLine, RecordsResponse } from '../../../../shared/apis/records.ts';
@@ -68,19 +71,27 @@ const customerInvoiceRequest = (
   return Schema.decodeOption(RecordsRequestSchema)(partyId === undefined ? {} : { partyId });
 };
 
+type RecordsRequest = typeof RecordsRequestSchema.Type;
+
+const recordsRequestKey = (request: RecordsRequest): string =>
+  Schema.encodeOption(Schema.fromJsonString(RecordsRequestSchema))(request).pipe(Option.getOrElse(() => 'invalid'));
+
+/** The ledger request a decoded customer filter asks for; none when the filter is incomplete or malformed. */
+const recordsRequestOf = (rawSearch: typeof searchSchema.Encoded | null): Option.Option<RecordsRequest> =>
+  (rawSearch === null ? Option.none() : Schema.decodeOption(searchSchema)(rawSearch)).pipe(
+    Option.flatMap((search) => customerInvoiceRequest(search.partyId, search.counterpartyId, search.tenantId)),
+  );
+
 /** Filter changes remount the owning view, so a new customer never displays an old customer's snapshot. */
-export const customerInvoiceFilterKey = (rawSearch: typeof searchSchema.Encoded | null): string => {
-  const search = rawSearch === null ? Option.none() : Schema.decodeOption(searchSchema)(rawSearch);
-  if (Option.isNone(search)) {
-    return 'invalid';
-  }
-  const request = customerInvoiceRequest(search.value.partyId, search.value.counterpartyId, search.value.tenantId);
-  return Option.isSome(request)
-    ? Schema.encodeOption(Schema.fromJsonString(RecordsRequestSchema))(request.value).pipe(
-        Option.getOrElse(() => 'invalid'),
-      )
-    : 'invalid';
-};
+export const customerInvoiceFilterKey = (rawSearch: typeof searchSchema.Encoded | null): string =>
+  Option.match(recordsRequestOf(rawSearch), { onNone: () => 'invalid', onSome: recordsRequestKey });
+
+/**
+ * The ledger request of a raw query string (`?partyId=…`), the form the Shell hands to `preloadPage`. It is parsed
+ * by the router's own search parser, so the preloaded entry is the one the page reads from `location.search`.
+ */
+export const recordsRequestFromQuery = (query: string): Option.Option<RecordsRequest> =>
+  recordsRequestOf(decodeCustomerInvoiceSearch(defaultParseSearch(query)).pipe(Option.getOrElse(() => null)));
 
 const FeedbackSchema = Schema.Literals([
   'loading',
@@ -123,7 +134,28 @@ const submitFinanceCommand = Effect.fn('Finance.browserSubmit')(function* submit
   });
 });
 
-const fetchRecords = (request: typeof RecordsRequestSchema.Type) => executeRecords(request, 'finance-billing.records');
+const fetchRecords = (request: RecordsRequest) => executeRecords(request, 'finance-billing.records');
+
+/** The ledger snapshot (invoices and KPI indicators) per customer filter; the Shell preloads it before reveal. */
+const financeRecords = definePageData({
+  key: recordsRequestKey,
+  load: fetchRecords,
+  runtime: financeBrowserRuntime,
+});
+
+export const preloadFinanceRecords = (query: string): Effect.Effect<void> =>
+  Option.match(recordsRequestFromQuery(query), { onNone: () => Effect.void, onSome: financeRecords.preload });
+
+type RecordsSnapshot = PageDataSnapshot<RecordsResponse, Effect.Error<ReturnType<typeof fetchRecords>>>;
+const readyRecords = (snapshot: RecordsSnapshot): RecordsResponse | undefined =>
+  snapshot.state === 'ready' ? snapshot.value : undefined;
+const pendingRecords = (): RecordsSnapshot => pageDataPending;
+const loadFeedbackOf = (snapshot: RecordsSnapshot): Feedback => {
+  if (snapshot.state === 'pending') {
+    return 'loading';
+  }
+  return snapshot.state === 'failed' ? financeFailureFeedback(snapshot.error) : 'ready';
+};
 
 /** TanStack history numbers its entries in `history.state`; only the index is read here. */
 const TanstackHistoryStateSchema = Schema.Struct({ __TSR_index: Schema.Int });
@@ -204,7 +236,10 @@ const useActorLabel = () => {
   return label;
 };
 
-/** Invoice list and detail state. Loads once on mount; commands reload the list after they succeed. */
+/**
+ * Invoice list and detail state. The ledger comes from the page-data store (ready on first paint when the Shell
+ * prepared the page); commands refresh it after they succeed and keep the current rows visible meanwhile.
+ */
 export const useFinanceRecords = () => {
   const actorLabel = useActorLabel();
   const { t } = useModernI18n();
@@ -221,14 +256,18 @@ export const useFinanceRecords = () => {
   const { counterpartyId, partyId, tenantId } = fields;
   const requestedId = fields.resourceId;
   const request = searchInvalid ? Option.none() : customerInvoiceRequest(partyId, counterpartyId, tenantId);
-  const [snapshot, setSnapshotState] = useState<RecordsResponse>();
+  const recordsSnapshot = useSyncExternalStore(
+    financeRecords.subscribe,
+    () => (Option.isSome(request) ? financeRecords.snapshot(request.value) : pageDataPending),
+    pendingRecords,
+  );
+  const snapshot = readyRecords(recordsSnapshot);
   /** Latest snapshot, so commands issued one after another use the revision the previous one produced. */
-  const latestSnapshot = useRef<RecordsResponse | undefined>(undefined);
-  const setSnapshot = (value: RecordsResponse) => {
-    latestSnapshot.current = value;
-    setSnapshotState(value);
-  };
-  const [feedback, setFeedback] = useState<Feedback>('loading');
+  const latestSnapshot = () =>
+    Option.isSome(request) ? readyRecords(financeRecords.snapshot(request.value)) : undefined;
+  /** Outcome of the user's own reload or command; 'ready' defers to the ledger's load state. */
+  const [actionFeedback, setActionFeedback] = useState<Feedback>('ready');
+  const feedback = actionFeedback === 'ready' ? loadFeedbackOf(recordsSnapshot) : actionFeedback;
   const [voidTarget, setVoidTarget] = useState<Invoice>();
   /** Confirming numbers the invoice and locks it, so every entry point asks first. */
   const [confirmTarget, setConfirmTarget] = useState<Invoice>();
@@ -240,13 +279,8 @@ export const useFinanceRecords = () => {
   const references = useFinanceReferences();
   const objects = useRentalObjects();
 
-  const load = (): Effect.Effect<void, UiFailure> =>
-    Option.isSome(request)
-      ? fetchRecords(request.value).pipe(
-          Effect.tap((value) => Effect.sync(() => setSnapshot(value))),
-          Effect.asVoid,
-        )
-      : Effect.void;
+  /** Never fails: a failed reload keeps the rows on screen. */
+  const load = (): Effect.Effect<void> => (Option.isSome(request) ? financeRecords.refresh(request.value) : Effect.void);
 
   /**
    * Creates a draft from the form. The counterparty ref is the party registry's own ref for the customer, and the
@@ -270,11 +304,9 @@ export const useFinanceRecords = () => {
       ...input.anchors,
     };
     return submitFinanceCommand(snapshot, command).pipe(
-      Effect.tap(() => load().pipe(Effect.ignore)),
+      Effect.tap(load),
       // A 409 means the snapshot revision is stale (another write landed first); reload it so the next try can succeed.
-      Effect.tapError((cause) =>
-        financeFailureFeedback(cause) === 'conflict' ? load().pipe(Effect.ignore) : Effect.void,
-      ),
+      Effect.tapError((cause) => (financeFailureFeedback(cause) === 'conflict' ? load() : Effect.void)),
       Effect.match({
         onFailure: (error): DraftInvoiceOutcome => ({ feedback: financeFailureFeedback(error), ok: false }),
         onSuccess: (result): DraftInvoiceOutcome =>
@@ -283,61 +315,34 @@ export const useFinanceRecords = () => {
     );
   };
 
+  // A cold mount (the page was not prepared) starts the load; a prepared page finds it ready and keeps it.
   useEffect(() => {
-    let active = true;
     const current = searchInvalid ? Option.none() : customerInvoiceRequest(partyId, counterpartyId, tenantId);
     if (Option.isSome(current)) {
-      void financeBrowserRuntime.runPromise(
-        fetchRecords(current.value).pipe(
-          Effect.match({
-            onFailure: (error) => {
-              if (active) {
-                setFeedback(financeFailureFeedback(error));
-              }
-            },
-            onSuccess: (value) => {
-              if (active) {
-                setSnapshot(value);
-                setFeedback('ready');
-              }
-            },
-          }),
-        ),
-      );
+      financeRecords.ensure(current.value);
     }
-    return () => {
-      active = false;
-    };
   }, [counterpartyId, partyId, searchInvalid, tenantId]);
 
+  /** Retry after a failed load; the outcome shows through the ledger's own state. */
   const reload = () => {
-    setFeedback('loading');
-    void financeBrowserRuntime.runPromise(
-      load().pipe(
-        Effect.match({
-          onFailure: (error) => setFeedback(financeFailureFeedback(error)),
-          onSuccess: () => setFeedback('ready'),
-        }),
-      ),
-    );
+    setActionFeedback('loading');
+    void financeBrowserRuntime.runPromise(load().pipe(Effect.andThen(Effect.sync(() => setActionFeedback('ready')))));
   };
 
   const runCommand = (command: FinanceCommand, successTitle: string) => {
     if (snapshot === undefined || !canWrite) {
       return;
     }
-    setFeedback('saving');
+    setActionFeedback('saving');
     void financeBrowserRuntime.runPromise(
       submitFinanceCommand(snapshot, command).pipe(
-        Effect.flatMap((result) => load().pipe(Effect.map(() => result))),
+        Effect.tap(load),
         // A 409 means the snapshot revision is stale (another user changed the ledger); reload it so a retry works.
-        Effect.tapError((cause) =>
-          financeFailureFeedback(cause) === 'conflict' ? load().pipe(Effect.ignore) : Effect.void,
-        ),
+        Effect.tapError((cause) => (financeFailureFeedback(cause) === 'conflict' ? load() : Effect.void)),
         Effect.match({
           onFailure: (error) => {
             const failure = financeFailureFeedback(error);
-            setFeedback(failure);
+            setActionFeedback(failure);
             // The detail panel covers the page's status line, so a rejected confirm or void also raises a toast.
             // A known domain refusal (e.g. approving a draft that was not prepared) is explained in Czech.
             const reason = failureReason(error);
@@ -349,7 +354,7 @@ export const useFinanceRecords = () => {
             });
           },
           onSuccess: (result) => {
-            setFeedback('ready');
+            setActionFeedback('ready');
             toaster.create({
               description: result.invoice?.number ?? result.invoice?.documentNumber,
               title: successTitle,
@@ -363,24 +368,22 @@ export const useFinanceRecords = () => {
 
   /** Runs any command, reloads the ledger on success and reports the outcome (toasts on success when titled). */
   const execute = (command: FinanceCommand, successTitle?: string): Promise<CommandOutcome> => {
-    const current = latestSnapshot.current ?? snapshot;
+    const current = latestSnapshot() ?? snapshot;
     if (current === undefined || !canWrite) {
       return Promise.resolve({ feedback: 'unavailable', ok: false, reason: undefined });
     }
-    setFeedback('saving');
+    setActionFeedback('saving');
     return financeBrowserRuntime.runPromise(
       submitFinanceCommand(current, command).pipe(
-        Effect.flatMap((result) => load().pipe(Effect.map(() => result))),
-        Effect.tapError((cause) =>
-          financeFailureFeedback(cause) === 'conflict' ? load().pipe(Effect.ignore) : Effect.void,
-        ),
+        Effect.tap(load),
+        Effect.tapError((cause) => (financeFailureFeedback(cause) === 'conflict' ? load() : Effect.void)),
         Effect.match({
           onFailure: (error): CommandOutcome => {
-            setFeedback('ready');
+            setActionFeedback('ready');
             return { feedback: financeFailureFeedback(error), ok: false, reason: failureReason(error) };
           },
           onSuccess: (result): CommandOutcome => {
-            setFeedback('ready');
+            setActionFeedback('ready');
             if (successTitle !== undefined) {
               toaster.create({ title: successTitle, type: 'success' });
             }

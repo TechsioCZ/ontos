@@ -466,6 +466,7 @@ it.layer(paymentTestDependencies)('Finance Action lifecycle', (suite) => {
             bindActionTestServices(applyCommandAction, {
               // @effect-diagnostics-next-line syncToSucceed:off
               loadDocument: () => Effect.sync((): undefined => undefined),
+              // @effect-diagnostics-next-line effectSucceedWithVoid:off -- the port answers `StateRow | undefined`, which `Effect.void` does not satisfy.
               loadStateRow: () => Effect.succeed(undefined),
               writeDocument: () => Effect.void,
               load: () => Effect.succeed({ revision, state: storedState }),
