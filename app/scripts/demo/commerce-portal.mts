@@ -39,6 +39,7 @@ import {
 import { Command, Flag } from 'effect/unstable/cli';
 import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
+import { toIdentityNamespaceAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { principals } from '../../packages/core-runtime/src/db/schema.ts';
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { apikey } from '../../apps/shell-super-app/api/auth/db/schema.ts';
@@ -74,6 +75,9 @@ const commercePortalRole: DemoRole = {
 
 /** The Actions the enrollment owners run on behalf of a customer. */
 export const commercePortalActionKeys: readonly string[] = [
+  'core.identity.reserve-principal-binding',
+  'core.identity.activate-principal-binding',
+  'core.identity.change-principal-binding-status',
   'party.registry.create-party',
   'party.registry.counterparty-customer-onboard',
   'party.registry.add-contact-point',
@@ -102,7 +106,23 @@ const relationshipKey = (relationship: AiRelationship) =>
 
 export const commercePortalRelationships = (actions: readonly DiscoveredAction[]): readonly AiRelationship[] => {
   const { legalEntityId, principalId } = commercePortalPrincipal;
+  const namespace = toIdentityNamespaceAccessObjectId(demoTenantId, COMMERCE_PORTAL_NAMESPACE);
+  if (namespace === undefined) throw new Error('The Commerce portal namespace access object is invalid');
   const relationships: AiRelationship[] = [
+    {
+      relation: 'tenant',
+      resourceId: namespace,
+      resourceType: 'identity_namespace',
+      subjectId: demoTenantId,
+      subjectType: 'tenant',
+    },
+    {
+      relation: 'provisioner',
+      resourceId: namespace,
+      resourceType: 'identity_namespace',
+      subjectId: principalId,
+      subjectType: 'principal',
+    },
     ...principalRelationships(principalId, commercePortalRole, actions, legalEntityId),
   ];
   for (const { actionKey, provisioning } of actions.filter((action) =>

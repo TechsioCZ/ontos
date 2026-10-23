@@ -24,6 +24,12 @@ import {
   storefrontPrincipal,
 } from '../demo/permissions.mts';
 import { ensureDemoCompanies } from '../demo/reset-permissions.mts';
+import {
+  commercePortalActionKeys,
+  commercePortalPrincipal,
+  commercePortalRelationships,
+} from '../demo/commerce-portal.mts';
+import { toIdentityNamespaceAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
 
 const companySuffix = '/demo-companies';
 const shellOrigin = 'http://localhost:3020';
@@ -194,4 +200,33 @@ it('gives the Siampark accounts their 0021 roles and limits the external agent t
   expect(opsPermission(external.principalId, 'facility.operations.read_all')).toBe(false);
   expect(opsPermission(external.principalId, 'facility.operations.write_operational')).toBe(false);
   expect(opsPermission(external.principalId, 'facility.operations.write_all')).toBe(false);
+});
+
+it('provisions only the Commerce portal namespace and its three Core binding Actions without identity administration', () => {
+  const coreActions = [
+    'core.identity.activate-principal-binding',
+    'core.identity.change-principal-binding-status',
+    'core.identity.reserve-principal-binding',
+  ];
+  const rows = commercePortalRelationships(coreActions.map((actionKey) => ({ actionKey, provisioning: 'explicit' })));
+  const namespace = toIdentityNamespaceAccessObjectId(demoTenantId, 'ontos.commerce.portal.better-auth.v1');
+  expect(rows.filter((row) => row.resourceType === 'identity_namespace')).toEqual([
+    {
+      resourceType: 'identity_namespace',
+      resourceId: namespace,
+      relation: 'tenant',
+      subjectType: 'tenant',
+      subjectId: demoTenantId,
+    },
+    {
+      resourceType: 'identity_namespace',
+      resourceId: namespace,
+      relation: 'provisioner',
+      subjectType: 'principal',
+      subjectId: commercePortalPrincipal.principalId,
+    },
+  ]);
+  for (const actionKey of coreActions) expect(commercePortalActionKeys).toContain(actionKey);
+  expect(rows.filter((row) => row.resourceType === 'action' && row.relation === 'executor')).toHaveLength(3);
+  expect(rows.some((row) => row.relation === 'identity_admin')).toBe(false);
 });
