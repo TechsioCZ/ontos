@@ -123,7 +123,13 @@ export function createCatalog(catalogData: CatalogData, categoryData: CategoryDa
     );
 
   const getChildCategories = (parentId: string): CatalogCategory[] =>
-    getCategories().filter((category) => category.parentId === parentId);
+    // Sort only the siblings, not all 2,000+ categories at every level of the active trail.
+    categoryData.categories
+      .filter((category) => category.parentId === parentId)
+      .sort(
+        (left, right) =>
+          left.position - right.position || left.name.localeCompare(right.name, "cs"),
+      );
 
   const getSidebarCategories = (activeSlug?: string): CatalogCategory[] => {
     const categories: CatalogCategory[] = [];

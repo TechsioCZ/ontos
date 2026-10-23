@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { after } from "next/server";
 
 /**
  * Stale-while-revalidate cache for public catalog reads (never for carts, quotes or orders).
@@ -188,12 +189,13 @@ export const catalogCache = <T>(name: string, options: CatalogCacheOptions) => {
     await read(key, load, context);
   };
 
-  /** One background refresh per key and isolate at a time; the read outlives the page that started it. */
+  /** Start only after the response: owner reads and gateway mints cannot contend with the render.
+   * Next's after() keeps the callback alive via the Worker's waitUntil; shared-cache writes use ctx too. */
   const refreshInBackground = (key: string, load: () => Promise<T>, context: Runtime) => {
     const started = refreshing.get(key);
     if (started !== undefined && Date.now() - started < REFRESH_GUARD_MS) return;
     refreshing.set(key, Date.now());
-    context.waitUntil(
+    after(() =>
       refresh(key, load, context)
         .catch(() => undefined)
         .finally(() => refreshing.delete(key)),

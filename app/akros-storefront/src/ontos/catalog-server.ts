@@ -49,8 +49,10 @@ export interface CatalogPage {
 
 /** A catalog value is served without a background refresh for this long after it was read. */
 export const CATALOG_CACHE_MS = 10_000;
-/** The navigation tree changes rarely; at most one owner read per minute. */
-export const CATEGORY_CACHE_MS = 60_000;
+/** Navigation and recommendation cards follow the 15-minute cron. Product detail still uses 10 s;
+ * cart/quote/order reads always bypass this public cache. */
+export const CATEGORY_CACHE_MS = 15 * 60_000;
+export const HOME_CACHE_MS = 15 * 60_000;
 /** Older cached values still render at once (and refresh in the background) up to this age: longer than
  * the scheduled warm-up interval plus its skip age (15 + 12 min), so warmed pages never wait for OntOS. */
 export const CATALOG_STALE_MS = 30 * 60_000;
@@ -66,6 +68,13 @@ const productPages = catalogCache<ProductPage>("products", {
   staleMs: CATALOG_STALE_MS,
   keepMs: CATALOG_KEEP_MS,
   limit: 100,
+});
+// Same shared product namespace/key as before; only the home selection has a longer freshness window.
+const homePages = catalogCache<ProductPage>("products", {
+  freshMs: HOME_CACHE_MS,
+  staleMs: CATALOG_STALE_MS,
+  keepMs: CATALOG_KEEP_MS,
+  limit: 1,
 });
 const categoryTrees = catalogCache<CatalogCategory[]>("categories", {
   freshMs: CATEGORY_CACHE_MS,
@@ -98,11 +107,12 @@ const WARM_CONCURRENCY = 4;
 const productKey = (query: CatalogQuery, fields: CatalogFields) =>
   JSON.stringify({ ...compact(query), fields, includeCategories: false });
 
+const homeKey = productKey(homeQuery, "card");
 const loadProducts = (key: string) => async () =>
   projectProducts(await readCatalog(JSON.parse(key) as Record<string, unknown>));
 // One owner read per render for equal queries, keyed by the serialized owner query.
 const cachedProducts = cache((key: string): Promise<ProductPage> =>
-  productPages.get(key, loadProducts(key)),
+  (key === homeKey ? homePages : productPages).get(key, loadProducts(key)),
 );
 
 /** One bounded product read without the category tree. `fresh` reads OntOS now (carts, quotes, orders). */
@@ -299,10 +309,9 @@ export async function warmCatalog(minAgeMs: number): Promise<Record<WarmResult, 
   const count = (result: WarmResult) => {
     counts[result] += 1;
   };
-  const homeKey = productKey(homeQuery, "card");
   await Promise.all([
     categoryTrees.warm("", loadRootTree, minAgeMs).then(count),
-    productPages.warm(homeKey, loadProducts(homeKey), minAgeMs).then(count),
+    homePages.warm(homeKey, loadProducts(homeKey), minAgeMs).then(count),
   ]);
   const categories = await getCategoryTree();
   const slugs = createCatalog({ products: [], homepageFeaturedProductIds: [] }, { categories })

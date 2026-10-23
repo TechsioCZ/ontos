@@ -11,7 +11,7 @@ export const formatCatalogParametersForSearch = (parameters: CatalogParameter[])
   parameters.map(({ label, value, unit }) => `${label} ${value} ${unit}`).join(" ");
 
 export const matchesProductVariantSearch = (
-  variant: CatalogProductVariant,
+  variant: Pick<CatalogProductVariant, "sku" | "label" | "parameters">,
   normalizedQuery: string,
 ) =>
   normalizeCatalogSearchTerm(

@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { after } from "next/server";
 import { catalogCache } from "@/ontos/catalog-cache";
 
 vi.mock("server-only", () => ({}));
+vi.mock("next/server", () => ({ after: vi.fn<typeof after>() }));
 vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext: vi.fn() }));
 
 const options = { freshMs: 10_000, staleMs: 60_000, keepMs: 600_000, limit: 10 };
@@ -17,6 +19,9 @@ const deferred = <T>() => {
 };
 
 beforeEach(() => {
+  vi.mocked(after).mockImplementation((task) => {
+    if (typeof task === "function") void task();
+  });
   // No Cloudflare request context (plain Next.js): the isolate map only.
   vi.mocked(getCloudflareContext).mockImplementation(() => {
     throw new Error("no context");
@@ -52,6 +57,24 @@ describe("catalog stale-while-revalidate cache", () => {
     const next = vi.fn(async () => "v3");
     expect(await cache.get("k", next)).toBe("v2");
     expect(next).not.toHaveBeenCalled();
+  });
+  it("does not start a stale refresh or its mint until after the response", async () => {
+    vi.useFakeTimers();
+    const jobs: Array<() => unknown> = [];
+    vi.mocked(after).mockImplementation((task) => {
+      if (typeof task === "function") jobs.push(task);
+    });
+    const cache = catalogCache<string>("after-response", options);
+    await cache.get("k", async () => "v1");
+    vi.advanceTimersByTime(11_000);
+    const load = vi.fn<() => Promise<string>>(async () => "v2");
+    expect(await cache.get("k", load)).toBe("v1");
+    expect(await cache.get("k", load)).toBe("v1");
+    expect(load).not.toHaveBeenCalled();
+    expect(jobs).toHaveLength(1);
+    await jobs[0]();
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(await cache.get("k", load)).toBe("v2");
   });
   it("waits for the owner when the value is older than staleMs", async () => {
     vi.useFakeTimers();

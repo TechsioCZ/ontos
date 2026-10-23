@@ -16,6 +16,7 @@ import {
   normalizeCatalogSearchTerm,
 } from "@/lib/product-variant-search";
 import { getCatalog, getCatalogPage } from "@/ontos/catalog-server";
+import { purchaseProductOf, purchaseVariantOf } from "@/ontos/catalog-projection";
 
 interface ProductPageProps {
   params: Promise<{ slug: string }>;
@@ -50,6 +51,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
   const category = getCategoryById(product.categoryId);
   const categoryTrail = category ? getCategoryTrail(category) : [];
   const detail = product.detail;
+  const purchaseProduct = purchaseProductOf(product);
   const singleVariant = detail.variants.length === 1 ? detail.variants[0] : undefined;
   const hasMultipleVariants = detail.variants.length > 1;
   const purchaseItem = singleVariant ?? product;
@@ -312,7 +314,10 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
                   )}
 
                   <div className="akros-product-detail__purchase-row">
-                    <ProductPurchaseForm product={product} variant={singleVariant} />
+                    <ProductPurchaseForm
+                      product={purchaseProduct}
+                      variant={singleVariant ? purchaseVariantOf(singleVariant) : undefined}
+                    />
                     <ProductFavoriteButton productId={product.id} productName={product.name} />
                   </div>
                 </div>
@@ -346,8 +351,8 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
           <section id="product-variants" aria-label="Varianty produktu">
             <ProductPurchaseForm
               initialVariantSearch={initialVariantSearch}
-              product={product}
-              variants={detail.variants}
+              product={purchaseProduct}
+              variants={detail.variants.map(purchaseVariantOf)}
             />
           </section>
         )}

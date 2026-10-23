@@ -583,6 +583,50 @@ body {
   gap: 24px;
 }
 
+/* Shared row layout: do not repeat these utilities in every server-rendered row. */
+.akros-variant-data-table__row {
+  @apply @max-akros-variant-table/akros-variants:grid;
+  @apply @max-akros-variant-table/akros-variants:h-auto!;
+  @apply @max-akros-variant-table/akros-variants:min-w-0;
+  @apply @max-akros-variant-table/akros-variants:grid-cols-[minmax(0,1fr)_auto];
+  @apply @max-akros-variant-table/akros-variants:gap-(--dimension-8);
+  @apply @max-akros-variant-table/akros-variants:items-center;
+  @apply @max-akros-variant-table/akros-variants:border-(length:--border-sm)!;
+  @apply @max-akros-variant-table/akros-variants:border-(--akros-variant-table-border-color)!;
+  @apply @max-akros-variant-table/akros-variants:rounded-(--akros-variant-table-row-radius)!;
+  @apply @max-akros-variant-table/akros-variants:p-(--dimension-12);
+  @apply @max-akros-variant-table/akros-variants:bg-base!;
+  @apply @max-akros-variant-table/akros-variants:[&>td]:block;
+  @apply @max-akros-variant-table/akros-variants:[&>td]:w-auto!;
+  @apply @max-akros-variant-table/akros-variants:[&>td]:min-w-0;
+  @apply @max-akros-variant-table/akros-variants:[&>td]:border-0!;
+  @apply @max-akros-variant-table/akros-variants:[&>td]:rounded-none!;
+  @apply @max-akros-variant-table/akros-variants:[&>td]:p-(--dimension-0)!;
+  @apply @max-akros-variant-table/akros-variants:[&>td]:bg-(--color-bg-transparent)!;
+  @apply @max-akros-variant-table/akros-variants:[&>td:is(:nth-child(1),:nth-child(2),:nth-child(6))]:col-span-full;
+  @apply @max-akros-variant-table/akros-variants:[&>td:nth-child(3)]:hidden;
+  @apply @max-akros-variant-table/akros-variants:[&>td:nth-child(4)]:col-start-2;
+  @apply @max-akros-variant-table/akros-variants:[&>td:nth-child(4)]:row-start-3;
+  @apply @max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:col-start-1;
+  @apply @max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:row-start-3;
+  @apply @max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:border-t-(length:--border-sm)!;
+  @apply @max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:border-(--akros-variant-table-cell-separator-color)!;
+  @apply @max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:pt-(--dimension-12)!;
+  @apply @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:grid-cols-(--akros-variant-table-list-columns)!;
+  @apply @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(1)]:col-span-1!;
+  @apply @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(1)]:col-start-1!;
+  @apply @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(1)]:row-start-1;
+  @apply @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(2)]:hidden;
+  @apply @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(4)]:hidden;
+  @apply @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:col-start-2!;
+  @apply @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:row-start-1!;
+  @apply @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:col-span-1!;
+  @apply @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:col-start-3!;
+  @apply @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:row-start-1;
+  @apply @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:border-t-0!;
+  @apply @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:pt-(--dimension-0)!;
+}
+
 .akros-variant-data-table {
   width: 100%;
   min-width: 0;

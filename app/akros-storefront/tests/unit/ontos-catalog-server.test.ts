@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readRecords } from "@/ontos/gateway";
 
 const { renderCache } = await vi.hoisted(async () => {
@@ -24,6 +24,9 @@ vi.mock("react", () => ({
     },
 }));
 vi.mock("server-only", () => ({}));
+vi.mock("next/server", () => ({
+  after: (task: () => unknown) => void task(),
+}));
 vi.mock("@/ontos/gateway", () => ({ readRecords: vi.fn() }));
 
 type Server = typeof import("@/ontos/catalog-server");
@@ -95,7 +98,25 @@ beforeEach(async () => {
   });
 });
 
+afterEach(() => vi.useRealTimers());
+
 describe("OntOS catalog server reads", () => {
+  it("keeps cron-warmed navigation and home fresh for 15 minutes without extending detail prices", async () => {
+    vi.useFakeTimers();
+    await server.getCatalog();
+    await server.readProducts({ slug: "p1", pageSize: 1 }, "full");
+    vi.mocked(readRecords).mockClear();
+    vi.advanceTimersByTime(14 * 60_000);
+    await server.getShellSnapshot();
+    await server.getCatalog();
+    expect(readRecords).not.toHaveBeenCalled();
+    await server.readProducts({ slug: "p1", pageSize: 1 }, "full");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(vi.mocked(readRecords).mock.calls.map(catalogOf)).toEqual([
+      { slug: "p1", pageSize: 1, fields: "full", includeCategories: false },
+    ]);
+    expect(server.CATALOG_CACHE_MS).toBe(10_000);
+  });
   it("reads products as bounded cards without the category tree and without unset keys", async () => {
     await server.readProducts(
       { categorySlug: "srouby", page: 2, pageSize: 24, q: "", minMinor: undefined },
@@ -130,7 +151,7 @@ describe("OntOS catalog server reads", () => {
       { pageSize: 1, fields: "card", includeCategories: true },
     ]);
     expect(calls.filter((call) => call.includeCategories === false)).toHaveLength(2);
-    expect(server.CATEGORY_CACHE_MS).toBe(60_000);
+    expect(server.CATEGORY_CACHE_MS).toBe(15 * 60_000);
   });
   it("joins layout and page tree reads with omitted, undefined and empty arguments", async () => {
     await renderCache.run(new Map(), () =>

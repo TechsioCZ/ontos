@@ -104,6 +104,30 @@ export interface CatalogProduct {
   detail: CatalogProductDetail;
 }
 
+/** The purchase form needs prices, constraints and cart identity, not descriptions or listing metadata. */
+export type CatalogPurchaseProduct = Pick<
+  CatalogProduct,
+  | "vatRate"
+  | "id"
+  | "slug"
+  | "name"
+  | "sku"
+  | "imageSrc"
+  | "imageAlt"
+  | "unit"
+  | "minimumQuantity"
+  | "packageQuantity"
+  | "quantityStep"
+  | "stockCount"
+  | "priceMinor"
+  | "availabilityUnknown"
+  | "priceUnavailableReason"
+> & { detail: Pick<CatalogProductDetail, "priceTiers"> };
+export type CatalogPurchaseVariant = Omit<
+  CatalogProductVariant,
+  "sourceId" | "vatRate" | "originalPriceMinor" | "isAction" | "isRecommended" | "isSale" | "isNew"
+>;
+
 export interface CatalogPromotionItem {
   product: CatalogProduct;
   kind: "action" | "sale";

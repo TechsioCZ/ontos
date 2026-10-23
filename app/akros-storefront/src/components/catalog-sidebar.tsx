@@ -1,5 +1,6 @@
 "use client";
 
+import type { ComponentProps } from "react";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { VerticalNavigation } from "@techsio/ui-kit/molecules/vertical-navigation";
 import StoreLink from "@/components/store-link";
@@ -18,6 +19,16 @@ interface CategoryNavigationItemProps {
 }
 
 const akrosProductionUrl = "https://www.akroscz.cz/";
+
+/** Keep the kit's navigation behavior, but ship its repeated link utilities once in CSS, not per link. */
+function CatalogLink({ className, ...props }: ComponentProps<typeof StoreLink>) {
+  return (
+    <StoreLink
+      {...props}
+      className={`akros-catalog-link${className?.includes("justify-between") ? " akros-catalog-link--branch" : ""}`}
+    />
+  );
+}
 
 function SpecialCategoriesNavigation({
   navigationId,
@@ -68,7 +79,7 @@ function CategoryNavigationItem({
         <VerticalNavigation.Item>
           <VerticalNavigation.Row data-akros-depth={visualDepth}>
             <VerticalNavigation.Link
-              as={StoreLink}
+              as={CatalogLink}
               className="justify-between"
               current={isCurrent}
               href={href}
@@ -88,7 +99,7 @@ function CategoryNavigationItem({
     return (
       <VerticalNavigation.Item>
         <VerticalNavigation.Link
-          as={StoreLink}
+          as={CatalogLink}
           current={isCurrent}
           data-akros-depth={visualDepth}
           href={href}
@@ -106,7 +117,7 @@ function CategoryNavigationItem({
       id={`${navigationId}-${category.id}`}
     >
       <VerticalNavigation.Row data-akros-depth={visualDepth}>
-        <VerticalNavigation.Link as={StoreLink} current={isCurrent} href={href}>
+        <VerticalNavigation.Link as={CatalogLink} current={isCurrent} href={href}>
           {category.name}
         </VerticalNavigation.Link>
         <VerticalNavigation.BranchTrigger aria-label={category.name}>

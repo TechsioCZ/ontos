@@ -16,22 +16,19 @@ import {
   normalizeCatalogSearchTerm,
 } from "@/lib/product-variant-search";
 import { getMaximumOrderQuantity } from "@/mock-storefront/cart";
-import type { CatalogProduct, CatalogProductVariant } from "@/mock-storefront/types";
+import type { CatalogPurchaseProduct, CatalogPurchaseVariant } from "@/mock-storefront/types";
 
 interface ProductPurchaseFormProps {
-  product: CatalogProduct;
-  variant?: CatalogProductVariant;
-  variants?: CatalogProductVariant[];
+  product: CatalogPurchaseProduct;
+  variant?: CatalogPurchaseVariant;
+  variants?: CatalogPurchaseVariant[];
   initialVariantSearch?: string;
 }
-
-const variantListRowClassName =
-  "@min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:grid-cols-(--akros-variant-table-list-columns)! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(1)]:col-span-1! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(1)]:col-start-1! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(1)]:row-start-1 @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(2)]:hidden @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(4)]:hidden @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:col-start-2! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:row-start-1! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:col-span-1! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:col-start-3! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:row-start-1 @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:border-t-0! @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:pt-(--dimension-0)!";
 
 const variantsPerPage = 5;
 const variantListOnlyClassName =
   "hidden @min-akros-variant-list/akros-variants:@max-akros-variant-table/akros-variants:block";
-const noVariants: CatalogProductVariant[] = [];
+const noVariants: CatalogPurchaseVariant[] = [];
 const variantCollator = new Intl.Collator("cs-CZ", {
   numeric: true,
   sensitivity: "base",
@@ -186,7 +183,7 @@ const normalizeMaterial = (material: string) => {
   return normalized.toLocaleUpperCase("cs-CZ");
 };
 
-const getVariantMaterial = (product: CatalogProduct, variant: CatalogProductVariant) => {
+const getVariantMaterial = (product: CatalogPurchaseProduct, variant: CatalogPurchaseVariant) => {
   const materialParameter = variant.parameters.find((parameter) =>
     parameter.label.toLocaleLowerCase("cs-CZ").includes("material"),
   );
@@ -199,21 +196,21 @@ const getVariantMaterial = (product: CatalogProduct, variant: CatalogProductVari
   return productMaterial ? normalizeMaterial(productMaterial) : null;
 };
 
-const formatVariantLabel = (variant: CatalogProductVariant) => {
+const formatVariantLabel = (variant: CatalogPurchaseVariant) => {
   const dimension = variant.label.match(/\bM\s*(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)/i);
   if (!dimension) return variant.label;
 
   return `M ${dimension[1]} × ${dimension[2]}`;
 };
 
-const variantAvailabilityLabel = (variant: CatalogProductVariant) =>
+const variantAvailabilityLabel = (variant: CatalogPurchaseVariant) =>
   variant.availabilityUnknown
     ? "Nelze ověřit"
     : variant.stockCount >= variant.minimumQuantity
       ? "Skladem"
       : "Není skladem";
 
-const getVariantCartItem = (product: CatalogProduct, variant: CatalogProductVariant) => ({
+const getVariantCartItem = (product: CatalogPurchaseProduct, variant: CatalogPurchaseVariant) => ({
   vatRate: product.vatRate,
   productId: product.id,
   variantId: variant.id,
@@ -234,9 +231,9 @@ const getVariantCartItem = (product: CatalogProduct, variant: CatalogProductVari
 
 interface VariantOrderControlProps {
   mode: "minimum" | "package";
-  onAdd: (variant: CatalogProductVariant, quantity: number) => void;
-  product: CatalogProduct;
-  variant: CatalogProductVariant;
+  onAdd: (variant: CatalogPurchaseVariant, quantity: number) => void;
+  product: CatalogPurchaseProduct;
+  variant: CatalogPurchaseVariant;
 }
 
 function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderControlProps) {
@@ -425,7 +422,7 @@ export function ProductPurchaseForm({
     page * variantsPerPage,
   );
   const addVariant = useCallback(
-    (variant: CatalogProductVariant, selectedQuantity: number) => {
+    (variant: CatalogPurchaseVariant, selectedQuantity: number) => {
       dispatch({
         type: "add",
         item: getVariantCartItem(product, variant),
@@ -434,7 +431,7 @@ export function ProductPurchaseForm({
     },
     [dispatch, product],
   );
-  const variantColumns = useMemo<ColumnDef<CatalogProductVariant, unknown>[]>(
+  const variantColumns = useMemo<ColumnDef<CatalogPurchaseVariant, unknown>[]>(
     () => [
       {
         id: "name",
@@ -795,7 +792,7 @@ export function ProductPurchaseForm({
                 "akros-variant-data-table__table @max-akros-variant-table/akros-variants:block @max-akros-variant-table/akros-variants:[&_thead]:sr-only @max-akros-variant-table/akros-variants:[&_tbody]:grid @max-akros-variant-table/akros-variants:[&_tbody]:min-w-0 @max-akros-variant-table/akros-variants:[&_tbody]:gap-(--dimension-12)",
             },
             row: {
-              className: `akros-variant-data-table__row @max-akros-variant-table/akros-variants:grid @max-akros-variant-table/akros-variants:h-auto! @max-akros-variant-table/akros-variants:min-w-0 @max-akros-variant-table/akros-variants:grid-cols-[minmax(0,1fr)_auto] @max-akros-variant-table/akros-variants:gap-(--dimension-8) @max-akros-variant-table/akros-variants:items-center @max-akros-variant-table/akros-variants:border-(length:--border-sm)! @max-akros-variant-table/akros-variants:border-(--akros-variant-table-border-color)! @max-akros-variant-table/akros-variants:rounded-(--akros-variant-table-row-radius)! @max-akros-variant-table/akros-variants:p-(--dimension-12) @max-akros-variant-table/akros-variants:bg-base! @max-akros-variant-table/akros-variants:[&>td]:block @max-akros-variant-table/akros-variants:[&>td]:w-auto! @max-akros-variant-table/akros-variants:[&>td]:min-w-0 @max-akros-variant-table/akros-variants:[&>td]:border-0! @max-akros-variant-table/akros-variants:[&>td]:rounded-none! @max-akros-variant-table/akros-variants:[&>td]:p-(--dimension-0)! @max-akros-variant-table/akros-variants:[&>td]:bg-(--color-bg-transparent)! @max-akros-variant-table/akros-variants:[&>td:is(:nth-child(1),:nth-child(2),:nth-child(6))]:col-span-full @max-akros-variant-table/akros-variants:[&>td:nth-child(3)]:hidden @max-akros-variant-table/akros-variants:[&>td:nth-child(4)]:col-start-2 @max-akros-variant-table/akros-variants:[&>td:nth-child(4)]:row-start-3 @max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:col-start-1 @max-akros-variant-table/akros-variants:[&>td:nth-child(5)]:row-start-3 @max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:border-t-(length:--border-sm)! @max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:border-(--akros-variant-table-cell-separator-color)! @max-akros-variant-table/akros-variants:[&>td:nth-child(6)]:pt-(--dimension-12)! ${variantListRowClassName}`,
+              className: "akros-variant-data-table__row",
             },
           }}
           tableLayout="fixed"

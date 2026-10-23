@@ -8,7 +8,40 @@ import type {
   CatalogPriceTier,
   CatalogProduct,
   CatalogProductVariant,
+  CatalogPurchaseProduct,
+  CatalogPurchaseVariant,
 } from "@/mock-storefront/types";
+
+/** A bounded client payload: do not serialize product.detail.variants through the product prop too. */
+export const purchaseProductOf = (product: CatalogProduct): CatalogPurchaseProduct => ({
+  vatRate: product.vatRate,
+  id: product.id,
+  slug: product.slug,
+  name: product.name,
+  sku: product.sku,
+  imageSrc: product.imageSrc,
+  imageAlt: product.imageAlt,
+  unit: product.unit,
+  minimumQuantity: product.minimumQuantity,
+  packageQuantity: product.packageQuantity,
+  quantityStep: product.quantityStep,
+  stockCount: product.stockCount,
+  priceMinor: product.priceMinor,
+  availabilityUnknown: product.availabilityUnknown,
+  priceUnavailableReason: product.priceUnavailableReason,
+  detail: { priceTiers: product.detail.priceTiers },
+});
+
+export const purchaseVariantOf = ({
+  sourceId: _sourceId,
+  vatRate: _vatRate,
+  originalPriceMinor: _originalPriceMinor,
+  isAction: _isAction,
+  isRecommended: _isRecommended,
+  isSale: _isSale,
+  isNew: _isNew,
+  ...purchase
+}: CatalogProductVariant): CatalogPurchaseVariant => purchase;
 
 type Raw = Record<string, unknown>;
 const rows = (v: unknown): Raw[] =>

@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { imagePlaceholder, projectCategories, projectProducts } from "@/ontos/catalog-projection";
+import {
+  imagePlaceholder,
+  projectCategories,
+  projectProducts,
+  purchaseProductOf,
+  purchaseVariantOf,
+} from "@/ontos/catalog-projection";
 import raw from "@/mock-storefront/generated/catalog.generated.json";
 import { createCatalog } from "@/ontos/catalog-model";
 import { createCheckoutDraft, getCheckoutTotals } from "@/mock-storefront/checkout";
@@ -46,6 +52,30 @@ const live = () => ({
   ],
 });
 describe("OntOS source-of-truth boundary", () => {
+  it("sends only purchase fields to the form without losing authoritative price or stock constraints", () => {
+    const product = projectProducts({ products: [live()] }).products[0];
+    const purchase = purchaseProductOf(product);
+    expect(purchase.detail).toEqual({ priceTiers: product.detail.priceTiers });
+    expect(purchase).not.toHaveProperty("description");
+    expect(purchase).not.toHaveProperty("variantSummary");
+    const variant = product.detail.variants[0];
+    const compact = purchaseVariantOf(variant);
+    expect(compact).toMatchObject({
+      id: variant.id,
+      priceMinor: variant.priceMinor,
+      stockCount: variant.stockCount,
+      minimumQuantity: variant.minimumQuantity,
+      quantityStep: variant.quantityStep,
+      priceTiers: variant.priceTiers,
+      parameters: variant.parameters,
+    });
+    expect(compact).not.toHaveProperty("sourceId");
+    expect(compact).not.toHaveProperty("isRecommended");
+    expect(purchase).toMatchObject({
+      priceMinor: product.priceMinor,
+      stockCount: product.stockCount,
+    });
+  });
   it("offers only owner products and variants, never the rest of the prototype", () => {
     const s = project({ revision: 7, products: [live()] });
     const model = createCatalog(s.catalog, s.categories);
