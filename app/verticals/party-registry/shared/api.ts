@@ -37,6 +37,8 @@ import { organizationEngagementMutationApi, personEngagementMutationApi } from '
 
 export * from './command-api.ts';
 export * from './engagement-profile-api.ts';
+export { normalizePhone } from './domain/contact-point.ts';
+export type { NormalizedPhone } from './domain/contact-point.ts';
 
 export * from './apis/ares-lookup.ts';
 export * from './apis/counterparties-search.ts';

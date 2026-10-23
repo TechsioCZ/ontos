@@ -1,7 +1,12 @@
-import { PartyContactPointsResponseSchema, PartyDetailResponseSchema } from '@app/party-registry/api';
-import { Array as EffectArray, Effect, Result, Schema } from 'effect';
+import { normalizePhone, PartyContactPointsResponseSchema, PartyDetailResponseSchema } from '@app/party-registry/api';
+import { Array as EffectArray, Effect, Option, Result, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
-import { projectCustomerOwnProfile, selectProfileContact } from '../../api/portal-auth/profile/party-profile.ts';
+import {
+  projectCustomerOwnProfile,
+  selectProfileContact,
+  updateCustomerPartyProfile,
+} from '../../api/portal-auth/profile/party-profile.ts';
 import { CustomerOwnProfileSchema, UpdateCustomerOwnProfileSchema } from '../../shared/portal-auth/profile-api.ts';
 import {
   customerProfileReadOwnEntrypoint,
@@ -142,6 +147,39 @@ it.effect(
       });
       expect(projectCustomerOwnProfile(party, changed).version).not.toBe(profile.version);
     }),
+);
+
+it('uses the public Party normalization for Czech national and international phones', () => {
+  expect(normalizePhone('777 123 456', 'CZ').lookupValue).toBe('+420777123456');
+  expect(normalizePhone('+49 151 23456789').lookupValue).toBe('+4915123456789');
+});
+
+it.effect('rejects a changed name plus an invalid phone before acquiring any native write credential', () =>
+  Effect.gen(function* rejectInvalidPhoneBeforeCommands() {
+    const party = yield* detail;
+    const contacts = yield* Schema.decodeUnknownEffect(PartyContactPointsResponseSchema)({ items: [] });
+    const profile = projectCustomerOwnProfile(party, contacts);
+    for (const phone of ['123456', 'not-a-phone', '---', '+000123456']) {
+      // Run the real updater without a gateway service/configuration or command doubles. A name
+      // command attempted first would fail as 503; invalid phone intent must instead fail as 400.
+      const problem = yield* Effect.flip(
+        updateCustomerPartyProfile(
+          {
+            compositionRevision: 'c'.repeat(64),
+            legalEntityId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            partyId: party.party.partyRef.resourceId,
+            requestCorrelation: 'invalid-profile-phone',
+            tenantId,
+          },
+          { ...profile, displayName: 'Must not be committed', phone },
+          { contacts, detail: party, partyRef: party.party.partyRef, profile },
+        ),
+      );
+      expect(problem.status).toBe(400);
+      expect(problem.code).toBe('invalid_request');
+      expect(Option.getOrUndefined(party.party.displayName)).toBe('Customer Name');
+    }
+  }).pipe(Effect.provide(TestClock.layer())),
 );
 
 it('declares distinct read/write context permissions, never storefront Party access', () => {
