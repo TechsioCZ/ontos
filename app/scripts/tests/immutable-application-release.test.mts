@@ -17,6 +17,7 @@ import {
   FileSystem,
   Layer,
   Match,
+  Option,
   Order,
   Redacted,
   Schedule,
@@ -24,7 +25,8 @@ import {
 } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
-import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
+import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/unstable/http';
+import type { HttpClientRequest } from 'effect/unstable/http';
 
 import {
   ImmutableApplicationReleaseError,
@@ -1054,6 +1056,57 @@ it.effect('refuses an existing assets identity before commands, secret writes, o
 
 const SECRETS_FILE_ARGUMENT = '--secrets-file';
 
+/** How the network loses one asset GET in a fixture. */
+const ASSET_TRANSPORT = {
+  bodyReset: 'body-reset',
+  connectionReset: 'connection-reset',
+  providerUnavailable: 'status-503',
+} as const;
+const AssetTransportFailureSchema = Schema.Literals([
+  ASSET_TRANSPORT.bodyReset,
+  ASSET_TRANSPORT.connectionReset,
+  ASSET_TRANSPORT.providerUnavailable,
+]);
+type AssetTransportFailure = typeof AssetTransportFailureSchema.Type;
+const CONNECTION_RESET = 'read ECONNRESET';
+
+/** The headers a ready immutable asset is served with. */
+const IMMUTABLE_ASSET_HEADERS = {
+  'access-control-allow-origin': '*',
+  'cache-control': 'public, max-age=31536000, immutable',
+  'x-content-type-options': 'nosniff',
+} as const;
+
+const resetAssetBody = (controller: ReadableStreamDefaultController<Uint8Array>) => {
+  controller.error(new Error(CONNECTION_RESET));
+};
+
+/** One asset GET the network loses: a reset before the response, a reset body, or a provider 5xx. */
+const assetTransportFailure = (request: HttpClientRequest.HttpClientRequest, kind: AssetTransportFailure) =>
+  Match.value(kind).pipe(
+    Match.when(ASSET_TRANSPORT.connectionReset, () =>
+      Effect.fail(
+        new HttpClientError.HttpClientError({
+          reason: new HttpClientError.TransportError({ cause: new Error(CONNECTION_RESET), request }),
+        }),
+      ),
+    ),
+    Match.when(ASSET_TRANSPORT.bodyReset, () =>
+      Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(new ReadableStream<Uint8Array>({ start: resetAssetBody }), {
+            headers: IMMUTABLE_ASSET_HEADERS,
+            status: 200,
+          }),
+        ),
+      ),
+    ),
+    Match.orElse(() =>
+      Effect.succeed(HttpClientResponse.fromWeb(request, new Response('upstream reset', { status: 503 }))),
+    ),
+  );
+
 const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* prepareDeploymentEffect(
   options: {
     readonly accountSubdomain?: string;
@@ -1076,6 +1129,8 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly assetStatus?: number;
     readonly assetsUploadCommand?: string;
     readonly assetsUploadError?: { readonly providerCode: number; readonly providerPath?: string };
+    /** Network failures of the contract asset's first GETs, before any answer: a reset, a body reset or a 5xx. */
+    readonly assetTransportFailures?: { readonly kind: AssetTransportFailure; readonly times: number };
     readonly backendDeploymentVersions?: readonly { readonly percentage: number; readonly version_id: string }[];
     readonly backendSubdomainEnabled?: boolean;
     readonly backendSubdomainStatus?: number;
@@ -1322,8 +1377,8 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
         }),
       ),
     );
-  const client = HttpClient.make((request, destination) =>
-    Effect.gen(function* retainedProviderResponse() {
+  const retainedProviderResponse = (request: HttpClientRequest.HttpClientRequest, destination: URL) =>
+    Effect.gen(function* retainedProviderResponseEffect() {
       requests.push(destination.href);
       if (request.method !== 'GET') {
         providerWrites.push({ method: request.method, url: destination.href });
@@ -1399,12 +1454,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
             },
           });
         }
-        const headers = new Headers({
-          'access-control-allow-origin': '*',
-          'cache-control': 'public, max-age=31536000, immutable',
-          'x-content-type-options': 'nosniff',
-          ...options.assetHeaders,
-        });
+        const headers = new Headers({ ...IMMUTABLE_ASSET_HEADERS, ...options.assetHeaders });
         const unreadyHeaders = Match.value(options.assetHeaderReadiness).pipe(
           Match.when(
             Match.defined,
@@ -1441,7 +1491,28 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
         }
       }
       return HttpClientResponse.fromWeb(request, response);
-    }),
+    });
+  let injectedTransportFailures = 0;
+  /** The contract asset GETs the network loses first, before the fixture answers any of them. */
+  const injectTransportFailure = (request: HttpClientRequest.HttpClientRequest, destination: URL) => {
+    const injected = options.assetTransportFailures;
+    if (
+      injected === undefined ||
+      decodeURIComponent(destination.pathname) !== `/${CONTRACT_PATH}` ||
+      injectedTransportFailures >= injected.times
+    ) {
+      return Option.none();
+    }
+    injectedTransportFailures += 1;
+    requests.push(destination.href);
+    return Option.some(
+      Deferred.succeed(assetReadStarted, true).pipe(Effect.andThen(assetTransportFailure(request, injected.kind))),
+    );
+  };
+  const client = HttpClient.make((request, destination) =>
+    Option.getOrElse(injectTransportFailure(request, destination), () =>
+      retainedProviderResponse(request, destination),
+    ),
   );
   const shellLayer = Layer.succeed(OpsShell, {
     run: (command: OpsCommand) =>
@@ -2006,6 +2077,43 @@ it.effect('retries a transient 404 at the exact retained module URL and accepts 
       expect(fixture.requests.filter((url) => url === `${fixture.plan.assetsOrigin}${CONTRACT_PATH}`)).toHaveLength(2);
       expect(fixture.notFoundBodies).toHaveLength(1);
       expect(fixture.notFoundBodies.every((response) => response.bodyUsed)).toBe(true);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('retries a reset, a reset body and a provider 5xx of one asset GET, then accepts its exact bytes', () =>
+  Effect.scoped(
+    Effect.gen(function* transientAssetTransport() {
+      for (const kind of AssetTransportFailureSchema.literals) {
+        const fixture = yield* prepareDeployment({ assetTransportFailures: { kind, times: 2 } });
+        const fiber = yield* fixture.deploy.pipe(Effect.forkChild);
+        yield* Deferred.await(fixture.assetReadStarted);
+        yield* TestClock.adjust('3 seconds');
+        const receipt = yield* Fiber.join(fiber);
+        expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
+        expect(fixture.requests.filter((url) => url === `${fixture.plan.assetsOrigin}${CONTRACT_PATH}`)).toHaveLength(
+          3,
+        );
+      }
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('fails a persistently reset asset GET after its bounded transport attempts', () =>
+  Effect.scoped(
+    Effect.gen(function* persistentAssetTransport() {
+      const fixture = yield* prepareDeployment({
+        assetTransportFailures: { kind: ASSET_TRANSPORT.connectionReset, times: 99 },
+      });
+      const fiber = yield* fixture.deploy.pipe(Effect.flip, Effect.forkChild);
+      yield* Deferred.await(fixture.assetReadStarted);
+      yield* TestClock.adjust('3 seconds');
+      const failure = yield* Fiber.join(fiber);
+      expect(failure.message).toBe(ASSET_READBACK_FAILURE);
+      const cause = yield* Schema.decodeUnknownEffect(ImmutableApplicationReleaseError)(failure.cause);
+      expect(cause.message).toBe('the immutable public asset could not be read on any bounded transport attempt');
+      expect(cause.cause).toEqual({ path: CONTRACT_PATH, transport: 'TransportError' });
+      expect(fixture.requests.filter((url) => url === `${fixture.plan.assetsOrigin}${CONTRACT_PATH}`)).toHaveLength(3);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

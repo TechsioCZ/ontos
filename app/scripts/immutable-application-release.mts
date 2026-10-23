@@ -20,8 +20,10 @@ import {
   Effect,
   FileSystem,
   Layer,
+  Match,
   Option,
   Order,
+  Predicate,
   Redacted,
   Runtime,
   Schedule,
@@ -75,6 +77,20 @@ const ImmutableAssetNotReady = Data.TaggedError('ImmutableAssetNotReady')<{
   readonly message: string;
 }>;
 type ImmutableAssetNotReadyError = InstanceType<typeof ImmutableAssetNotReady>;
+
+/**
+ * One asset GET lost to the network rather than answered: a connection reset (before or during the body), a
+ * response that never started within its bound, or a provider 5xx. Answered content — a non-5xx status, headers or
+ * bytes — never is, and a body that stalls after its headers stays bounded by the overall readback deadline.
+ */
+const ImmutableAssetTransientRead = Data.TaggedError('ImmutableAssetTransientRead')<{
+  readonly path: string;
+  readonly transport: string;
+}>;
+/** Bound on one asset GET reaching its response headers. */
+const ASSET_RESPONSE_TIMEOUT = Duration.seconds(10);
+/** GETs of one asset per readback attempt, when the transport rather than the content fails. */
+const ASSET_READ_ATTEMPTS = 3;
 
 const SHELL_APP_ID = 'shell-super-app';
 const NATIVE_ENVELOPE_MISMATCH = 'the native Cloudflare release envelope does not bind the final artifact bytes';
@@ -906,7 +922,19 @@ export const verifyRetainedPublicAsset = Effect.fn('ImmutableApplicationRelease.
     let lastNotReady: ImmutableAssetNotReadyError | null = null;
     const attempt = Effect.scoped(
       Effect.gen(function* readRetainedPublicAssetAttempt() {
-        const response = yield* client.get(url);
+        const response = yield* client.get(url).pipe(
+          Effect.timeoutOrElse({
+            duration: ASSET_RESPONSE_TIMEOUT,
+            orElse: () => Effect.fail(new ImmutableAssetTransientRead({ path: file.path, transport: 'timeout' })),
+          }),
+        );
+        if (response.status >= 500) {
+          yield* response.stream.pipe(Stream.runDrain, Effect.ignore);
+          return yield* new ImmutableAssetTransientRead({
+            path: file.path,
+            transport: `HTTP ${String(response.status)}`,
+          });
+        }
         if (response.status === 404) {
           yield* response.stream.pipe(Stream.runDrain);
           return false;
@@ -976,6 +1004,27 @@ export const verifyRetainedPublicAsset = Effect.fn('ImmutableApplicationRelease.
         return true;
       }),
     ).pipe(
+      Effect.catchTag('HttpClientError', (failure) =>
+        Match.value(failure.reason).pipe(
+          Match.tag('TransportError', 'DecodeError', ({ _tag }) =>
+            Effect.fail(new ImmutableAssetTransientRead({ path: file.path, transport: _tag })),
+          ),
+          Match.orElse(() => Effect.fail(failure)),
+        ),
+      ),
+      Effect.retry({
+        schedule: Schedule.exponential('1 second'),
+        times: ASSET_READ_ATTEMPTS - 1,
+        while: Predicate.isTagged('ImmutableAssetTransientRead'),
+      }),
+      Effect.catchTag('ImmutableAssetTransientRead', ({ path: assetPath, transport }) =>
+        Effect.fail(
+          fail('the immutable public asset could not be read on any bounded transport attempt', {
+            path: assetPath,
+            transport,
+          }),
+        ),
+      ),
       Effect.catchTag('ImmutableAssetNotReady', (cause) => {
         lastNotReady = cause;
         return Effect.succeed(false);
