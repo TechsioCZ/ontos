@@ -1,4 +1,4 @@
-import { parseLegacyKey } from '@app/shared-contracts/agent-proposals';
+import { parseLegacyKey } from '../../../shared/proposal-key.ts';
 import { expect, test } from 'effect-rstest';
 
 import {

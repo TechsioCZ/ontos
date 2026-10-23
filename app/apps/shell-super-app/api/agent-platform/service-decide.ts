@@ -23,7 +23,7 @@ import { Effect } from 'effect';
 import { approverCheck, parseCoreKey, revertResultMessage } from './approval-logic.ts';
 import { AgentPlatformForbidden, AgentPlatformInvalid, callerModuleAccess } from './caller.ts';
 import type { AgentPlatformCaller } from './caller.ts';
-import { parseLegacyKey } from '@app/shared-contracts/agent-proposals';
+import { parseLegacyKey } from '../../shared/proposal-key.ts';
 import { decideLegacy, revertLegacy } from './legacy-queue.ts';
 import type { AgentProposalRow } from './mappers.ts';
 import { loadComposedModules } from './composed-modules.ts';

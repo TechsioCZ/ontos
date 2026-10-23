@@ -7,7 +7,7 @@ import type {
   AgentRisk,
 } from '@app/shared-contracts/agent-proposals';
 
-import { parseLegacyKey } from '@app/shared-contracts/agent-proposals';
+import { parseLegacyKey } from '../../shared/proposal-key.ts';
 
 import type { McpModule } from '../mcp/catalog.ts';
 
