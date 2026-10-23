@@ -4,41 +4,14 @@ import { demoCheckoutNotice, demoPayment } from "@/ontos/demo-checkout";
 import { useSyncExternalStore } from "react";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
-import { DataTable, type ColumnDef } from "@techsio/ui-kit/organisms/data-table";
+import { Table } from "@techsio/ui-kit/organisms/table";
 import { orderStorageKey, parseLocalOrder } from "@/mock-storefront/local-order";
 import { getDeliveryAddress, getDeliveryLocation } from "@/mock-storefront/checkout";
-import { type CartLine, formatQuantity, getLineTotal } from "@/mock-storefront/cart";
+import { formatQuantity, getLineTotal } from "@/mock-storefront/cart";
 import { formatPrice } from "@/lib/format";
 import { AddressText } from "./address-fields";
 import { LiveOrderStatus } from "./live-order-status";
 import { OrderEmailStatus } from "./order-email-status";
-
-const columns: ColumnDef<CartLine, unknown>[] = [
-  {
-    id: "name",
-    header: "Položka",
-    cell: ({ row }) => (
-      <div className="whitespace-normal">
-        {row.original.name}
-        <p className="text-xs text-(--color-fg-secondary)">{row.original.variantLabel}</p>
-      </div>
-    ),
-  },
-  {
-    id: "quantity",
-    header: "Množství",
-    meta: { align: "end" },
-    cell: ({ row }) => `${formatQuantity(row.original.quantity)} ${row.original.unit}`,
-  },
-  {
-    id: "price",
-    header: "Cena",
-    meta: { align: "end" },
-    cell: ({ row }) => (
-      <strong className="whitespace-nowrap">{formatPrice(getLineTotal(row.original))}</strong>
-    ),
-  },
-];
 
 function subscribeToOrder(onChange: () => void) {
   const onStorage = (event: StorageEvent) => {
@@ -104,14 +77,37 @@ export function OrderConfirmation() {
       </header>
       <OrderEmailStatus email={order.draft.email} orderNumber={order.id} />
       <div className="hidden sm:block">
-        <DataTable
-          data={order.cart.lines}
-          columns={columns}
-          size="sm"
-          variant="line"
-          enableSorting={false}
-          enablePagination={false}
-        />
+        <Table size="sm" variant="line" aria-label="Objednané položky">
+          <Table.Header>
+            <Table.Row>
+              <Table.ColumnHeader scope="col">Položka</Table.ColumnHeader>
+              <Table.ColumnHeader scope="col" align="end">
+                Množství
+              </Table.ColumnHeader>
+              <Table.ColumnHeader scope="col" align="end">
+                Cena
+              </Table.ColumnHeader>
+            </Table.Row>
+          </Table.Header>
+          <Table.Body>
+            {order.cart.lines.map((line) => (
+              <Table.Row key={`${line.productId}:${line.variantId ?? "base"}`}>
+                <Table.Cell>
+                  <div className="whitespace-normal">
+                    {line.name}
+                    <p className="text-xs text-(--color-fg-secondary)">{line.variantLabel}</p>
+                  </div>
+                </Table.Cell>
+                <Table.Cell align="end">
+                  {formatQuantity(line.quantity)} {line.unit}
+                </Table.Cell>
+                <Table.Cell align="end">
+                  <strong className="whitespace-nowrap">{formatPrice(getLineTotal(line))}</strong>
+                </Table.Cell>
+              </Table.Row>
+            ))}
+          </Table.Body>
+        </Table>
       </div>
       <ul className="grid gap-4 sm:hidden" aria-label="Objednané položky">
         {order.cart.lines.map((line) => (

@@ -1,11 +1,11 @@
 "use client";
 
 import StoreLink from "@/components/store-link";
-import { type CSSProperties, useId, useMemo, useState } from "react";
+import { type CSSProperties, useId, useState } from "react";
 import { ActionIcon } from "@techsio/ui-kit/atoms/action-icon";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
-import { DataTable, type ColumnDef } from "@techsio/ui-kit/organisms/data-table";
+import { Table } from "@techsio/ui-kit/organisms/table";
 import { useCart } from "@/features/cart/cart-provider";
 import {
   type CartLine,
@@ -133,79 +133,6 @@ function CartQuantity({ line }: { line: CartLine }) {
 export function CartItemsTable({ showHeader = false }: { showHeader?: boolean }) {
   const { cart, dispatch } = useCart();
   const quote = useCartQuote();
-  const columns = useMemo<ColumnDef<CartLine, unknown>[]>(
-    () => [
-      {
-        id: "product",
-        header: "Položka",
-        cell: ({ row: { original: line } }) => (
-          <div className="flex min-w-0 flex-wrap items-baseline gap-x-(--akros-cart-detail-gap) gap-y-1 whitespace-normal">
-            <Link
-              as={StoreLink}
-              href={`/produkt/${line.slug}`}
-              className="min-w-0 wrap-anywhere text-inherit no-underline"
-            >
-              {formatCartProductName(line.name)}
-            </Link>
-            {line.variantLabel && (
-              <span className="wrap-anywhere text-(length:--akros-cart-secondary-size) text-(--color-fg-secondary)">
-                {line.variantLabel}
-              </span>
-            )}
-            {quote?.status === "ready" &&
-              quote.lineIssues(line.productId, line.variantId).map((issue) => (
-                <span
-                  key={issue.message}
-                  className="basis-full wrap-anywhere text-(length:--akros-cart-secondary-size) text-(--color-danger)"
-                >
-                  {issue.message}
-                </span>
-              ))}
-          </div>
-        ),
-      },
-      {
-        id: "stock",
-        header: "Dostupnost",
-        meta: { width: "var(--akros-cart-stock-width)", align: "start" },
-        cell: ({ row: { original: line } }) => <LineAvailability line={line} quote={quote} />,
-      },
-      {
-        id: "quantity",
-        header: "Množství",
-        meta: { width: "var(--akros-cart-quantity-width)", align: "center" },
-        cell: ({ row }) => <CartQuantity line={row.original} />,
-      },
-      {
-        id: "price",
-        header: "Cena",
-        meta: { width: "var(--akros-cart-price-width)", align: "end" },
-        cell: ({ row: { original: line } }) => (
-          <div className="grid min-w-0 justify-items-end gap-1 text-right @max-akros-cart-wide/akros-cart:justify-items-start @max-akros-cart-wide/akros-cart:text-left">
-            <strong className="whitespace-normal font-(weight:--akros-cart-price-weight)">
-              {formatCheckoutPrice(getLineTotal(line))}
-            </strong>
-          </div>
-        ),
-      },
-      {
-        id: "remove",
-        header: () => <span className="sr-only">Odebrat</span>,
-        meta: { width: "var(--akros-cart-remove-width)", align: "end" },
-        cell: ({ row: { original: line } }) => (
-          <ActionIcon
-            aria-label={`Odebrat ${line.name}`}
-            icon="token-icon-akros-checkout-remove"
-            size="md"
-            onClick={() =>
-              dispatch({ type: "remove", productId: line.productId, variantId: line.variantId })
-            }
-          />
-        ),
-      },
-    ],
-    [dispatch, quote],
-  );
 
   return (
     <div
@@ -224,31 +151,105 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
       }
       className="@container/akros-cart min-w-0 font-medium"
     >
-      <DataTable
-        data={cart.lines}
-        columns={columns}
-        getRowId={(line) => `${line.productId}:${line.variantId ?? "base"}`}
-        hideHeader={!showHeader}
+      <Table
+        aria-label="Položky objednávky"
         size="sm"
         variant="line"
-        tableLayout="auto"
-        enableSorting={false}
-        enablePagination={false}
-        slotProps={{
-          root: {
-            "aria-label": "Položky objednávky",
-            className:
-              "@max-akros-cart-wide/akros-cart:block @max-akros-cart-wide/akros-cart:[&_thead]:sr-only @max-akros-cart-wide/akros-cart:[&_tbody]:grid @max-akros-cart-wide/akros-cart:[&_td]:block @max-akros-cart-wide/akros-cart:[&_td]:w-auto! @max-akros-cart-wide/akros-cart:[&_td]:min-w-0 @max-akros-cart-wide/akros-cart:[&_td]:p-0! @max-akros-cart-wide/akros-cart:[&_td:first-child]:col-span-2 @max-akros-cart-wide/akros-cart:[&_td:last-child]:justify-self-end @max-akros-cart-narrow/akros-cart:[&_td:nth-child(2)]:col-span-2 @max-akros-cart-narrow/akros-cart:[&_td:nth-child(3)]:col-span-2 @max-akros-cart-narrow/akros-cart:[&_td:nth-child(3)]:justify-self-start",
-          },
-          header: {
-            className: "[&_th]:text-(length:--akros-cart-secondary-size)",
-          },
-          row: {
-            className:
-              "@max-akros-cart-wide/akros-cart:grid @max-akros-cart-wide/akros-cart:grid-cols-[minmax(0,1fr)_auto] @max-akros-cart-wide/akros-cart:items-center @max-akros-cart-wide/akros-cart:gap-(--akros-cart-row-gap) @max-akros-cart-wide/akros-cart:py-(--dimension-16)",
-          },
-        }}
-      />
+        className="table-auto @max-akros-cart-wide/akros-cart:block @max-akros-cart-wide/akros-cart:[&_thead]:sr-only @max-akros-cart-wide/akros-cart:[&_tbody]:grid @max-akros-cart-wide/akros-cart:[&_td]:block @max-akros-cart-wide/akros-cart:[&_td]:w-auto! @max-akros-cart-wide/akros-cart:[&_td]:min-w-0 @max-akros-cart-wide/akros-cart:[&_td]:p-0! @max-akros-cart-wide/akros-cart:[&_td:first-child]:col-span-2 @max-akros-cart-wide/akros-cart:[&_td:last-child]:justify-self-end @max-akros-cart-narrow/akros-cart:[&_td:nth-child(2)]:col-span-2 @max-akros-cart-narrow/akros-cart:[&_td:nth-child(3)]:col-span-2 @max-akros-cart-narrow/akros-cart:[&_td:nth-child(3)]:justify-self-start"
+      >
+        <Table.Header
+          className={`${showHeader ? "" : "sr-only "}[&_th]:text-(length:--akros-cart-secondary-size)`}
+        >
+          <Table.Row>
+            <Table.ColumnHeader scope="col">Položka</Table.ColumnHeader>
+            <Table.ColumnHeader scope="col" style={{ width: "var(--akros-cart-stock-width)" }}>
+              Dostupnost
+            </Table.ColumnHeader>
+            <Table.ColumnHeader
+              scope="col"
+              align="center"
+              style={{ width: "var(--akros-cart-quantity-width)" }}
+            >
+              Množství
+            </Table.ColumnHeader>
+            <Table.ColumnHeader
+              scope="col"
+              align="end"
+              style={{ width: "var(--akros-cart-price-width)" }}
+            >
+              Cena
+            </Table.ColumnHeader>
+            <Table.ColumnHeader
+              scope="col"
+              align="end"
+              style={{ width: "var(--akros-cart-remove-width)" }}
+            >
+              <span className="sr-only">Odebrat</span>
+            </Table.ColumnHeader>
+          </Table.Row>
+        </Table.Header>
+        <Table.Body>
+          {cart.lines.map((line) => (
+            <Table.Row
+              key={`${line.productId}:${line.variantId ?? "base"}`}
+              className="@max-akros-cart-wide/akros-cart:grid @max-akros-cart-wide/akros-cart:grid-cols-[minmax(0,1fr)_auto] @max-akros-cart-wide/akros-cart:items-center @max-akros-cart-wide/akros-cart:gap-(--akros-cart-row-gap) @max-akros-cart-wide/akros-cart:py-(--dimension-16)"
+            >
+              <Table.Cell>
+                <div className="flex min-w-0 flex-wrap items-baseline gap-x-(--akros-cart-detail-gap) gap-y-1 whitespace-normal">
+                  <Link
+                    as={StoreLink}
+                    href={`/produkt/${line.slug}`}
+                    className="min-w-0 wrap-anywhere text-inherit no-underline"
+                  >
+                    {formatCartProductName(line.name)}
+                  </Link>
+                  {line.variantLabel && (
+                    <span className="wrap-anywhere text-(length:--akros-cart-secondary-size) text-(--color-fg-secondary)">
+                      {line.variantLabel}
+                    </span>
+                  )}
+                  {quote?.status === "ready" &&
+                    quote.lineIssues(line.productId, line.variantId).map((issue) => (
+                      <span
+                        key={issue.message}
+                        className="basis-full wrap-anywhere text-(length:--akros-cart-secondary-size) text-(--color-danger)"
+                      >
+                        {issue.message}
+                      </span>
+                    ))}
+                </div>
+              </Table.Cell>
+              <Table.Cell style={{ width: "var(--akros-cart-stock-width)" }}>
+                <LineAvailability line={line} quote={quote} />
+              </Table.Cell>
+              <Table.Cell align="center" style={{ width: "var(--akros-cart-quantity-width)" }}>
+                <CartQuantity line={line} />
+              </Table.Cell>
+              <Table.Cell align="end" style={{ width: "var(--akros-cart-price-width)" }}>
+                <div className="grid min-w-0 justify-items-end gap-1 text-right @max-akros-cart-wide/akros-cart:justify-items-start @max-akros-cart-wide/akros-cart:text-left">
+                  <strong className="whitespace-normal font-(weight:--akros-cart-price-weight)">
+                    {formatCheckoutPrice(getLineTotal(line))}
+                  </strong>
+                </div>
+              </Table.Cell>
+              <Table.Cell align="end" style={{ width: "var(--akros-cart-remove-width)" }}>
+                <ActionIcon
+                  aria-label={`Odebrat ${line.name}`}
+                  icon="token-icon-akros-checkout-remove"
+                  size="md"
+                  onClick={() =>
+                    dispatch({
+                      type: "remove",
+                      productId: line.productId,
+                      variantId: line.variantId,
+                    })
+                  }
+                />
+              </Table.Cell>
+            </Table.Row>
+          ))}
+        </Table.Body>
+      </Table>
     </div>
   );
 }
