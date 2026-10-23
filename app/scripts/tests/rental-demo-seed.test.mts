@@ -328,6 +328,11 @@ const CaseCommand = Schema.Struct({
 });
 const decodeSeedBody = <A, E>(schema: Schema.Codec<A, E>, body: string): A =>
   Schema.decodeUnknownSync(Schema.fromJsonString(schema))(body);
+const expectReferenceAudiences = (encoded: string | undefined, audiences: readonly string[]) =>
+  Effect.sync(() => {
+    const credentials = decodeSeedBody(Schema.Array(Schema.Struct({ audience: Schema.String })), encoded ?? '[]');
+    expect(credentials.map(({ audience }) => audience)).toEqual(audiences);
+  });
 const caseFixture = (options: { readonly failOnboardingOnce?: boolean; readonly missingClient?: boolean } = {}) => {
   const customers: {
     readonly counterpartyRef: typeof CaseCounterpartyRef.Type;
@@ -571,7 +576,20 @@ it.effect(
               state,
               payload.command,
               target,
-              { invoice: () => Effect.void },
+              {
+                anchors: () =>
+                  expectReferenceAudiences(request.headers['x-ontos-reference-credentials'], [
+                    propertyAudience,
+                    propertyAudience,
+                  ]),
+                invoice: () =>
+                  expectReferenceAudiences(request.headers['x-ontos-reference-credentials'], [
+                    'party-registry',
+                    propertyAudience,
+                    propertyAudience,
+                    'property-leasing',
+                  ]),
+              },
               {
                 attemptId: `seed-attempt-${revision}`,
                 now,

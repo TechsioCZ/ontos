@@ -784,6 +784,14 @@ export const ensureInvoice = (
         financeCommand,
         { _tag: 'ConfirmInvoice', invoiceRef: existing.ref },
         snapshot.revision,
+        [
+          partyAudience,
+          ...(existing.propertyRef === undefined ? [] : [propertyAudience]),
+          ...(existing.unitRef === undefined ? [] : [propertyAudience]),
+          ...(existing.occupancyRef === undefined ? [] : [occupancyAudience]),
+          ...(existing.contractRef === undefined ? [] : [agreementsAudience]),
+          ...(existing.taskRef === undefined ? [] : [workAudience]),
+        ],
       );
       snapshot = yield* client.read(financeAudience, financeRead);
       existing = yield* required(
