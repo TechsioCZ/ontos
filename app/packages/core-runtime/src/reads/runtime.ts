@@ -2,6 +2,7 @@ import { SqlError, isSqlError } from 'effect/sql/SqlError';
 /* oxlint-disable sonarjs/no-duplicate-string, eslint/no-use-before-define, anti-slop/no-unknown-parameters, effect-native/no-throw-in-effect-callback, effect-native/no-native-error-construction -- Opaque owner resolver defects are captured immediately by Effect.try and sanitized to a typed Core failure; expires: 2027-03-31. */
 // @effect-diagnostics asyncFunction:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { Cause, Context, Effect, Exit, Layer, Match, Option, Predicate, Schema } from 'effect';
+import { transportIdentifier } from '../actions/string-schemas.ts';
 import { computeCanonicalValueHash } from '../actions/repository.ts';
 import {
   decodeTrustedPrincipalContext,
@@ -86,13 +87,15 @@ const withOptionalProperty = <
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
-const CorrelationIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(Schema.brand('ReadCorrelationId'));
+// Bounded here as well as at the HTTP adapters: Shell routes call ReadRuntime directly with the raw
+// request header, so the transport schema is the only layer every caller passes through.
+const CorrelationIdSchema = transportIdentifier.pipe(Schema.brand('ReadCorrelationId'));
 const TargetModuleKeySchema = Schema.String.check(Schema.isMinLength(1)).pipe(Schema.brand('ReadTargetModuleKey'));
 const TargetResourceIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(Schema.brand('ReadTargetResourceId'));
 const TargetResourceTypeSchema = Schema.String.check(Schema.isMinLength(1)).pipe(
   Schema.brand('ReadTargetResourceType'),
 );
-const TraceIdSchema = Schema.String.check(Schema.isMinLength(1)).pipe(Schema.brand('ReadTraceId'));
+const TraceIdSchema = transportIdentifier.pipe(Schema.brand('ReadTraceId'));
 
 const ReadTransportSchema = Schema.Struct({
   correlationId: CorrelationIdSchema,

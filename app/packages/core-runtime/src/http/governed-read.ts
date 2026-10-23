@@ -5,6 +5,7 @@ import type { HttpServerRequest } from 'effect/http';
 
 import type { OperationalScopeRequest } from '../operations/context.ts';
 import type { TrustedPrincipalContext } from '../actions/context.ts';
+import { transportIdentifier } from '../actions/string-schemas.ts';
 import type { ReadRegistration } from '../reads/definition.ts';
 import type { ReadCoreError } from '../reads/errors.ts';
 import { isReadCoreError } from '../reads/errors.ts';
@@ -68,6 +69,8 @@ const governedReadDomainProblemFields = new Set([
   'type',
 ]);
 const domainProblemSchemaAccepts = Schema.is(GovernedReadDomainProblemSchema);
+
+const ReadCorrelationIdSchema = transportIdentifier.pipe(Schema.brand('ReadCorrelationId'));
 const isGovernedReadDomainProblem = (value: unknown): boolean =>
   domainProblemSchemaAccepts(value) && Object.keys(value).every((key) => governedReadDomainProblemFields.has(key));
 
@@ -476,6 +479,12 @@ export function makeGovernedReadHttpHandler<
       if (correlationId === undefined || correlationId.trim().length === 0) {
         return yield* Effect.fail(options.problems.invalid());
       }
+      // The correlation identifier is persisted into read evidence and log annotations, so an unbounded
+      // caller-chosen value must be refused here rather than stored.
+      yield* Schema.decodeEffect(ReadCorrelationIdSchema)(correlationId).pipe(
+        // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Invalid-input diagnostics are deliberately sanitized at the transport boundary; remove-when: the rule supports security-boundary sanitizers.
+        Effect.mapError(() => options.problems.invalid()),
+      );
       const principal = yield* options.authenticatePrincipal(Redacted.make(request.headers['authorization']), {
         authentication: options.problems.authentication,
         unavailable: options.problems.unavailable,
