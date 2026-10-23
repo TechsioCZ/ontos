@@ -592,11 +592,11 @@ const prepareHomeContribution = (model: HomePageModel, request: Request) =>
       ).pipe(Effect.asVoid)
     : Effect.void;
 
-export const loader = async ({ request }: HomeLoaderArguments): Promise<HomePageModel> => {
-  const model = await browserRuntime.runPromise(
-    loadHomePageModel(request).pipe(Effect.tap((loaded) => prepareHomeContribution(loaded, request))),
-    { signal: request.signal },
-  );
-  // Without a live session the dashboard has nothing to show: go to sign-in (with the reason when it died).
-  return model.state === 'anonymous' ? redirectToSignIn(request, model.reason) : model;
-};
+export const loader = ({ request }: HomeLoaderArguments): Promise<HomePageModel> =>
+  browserRuntime
+    .runPromise(loadHomePageModel(request).pipe(Effect.tap((model) => prepareHomeContribution(model, request))), {
+      signal: request.signal,
+    })
+    // The router must receive its redirect directly, not an Effect defect wrapping it.
+    // oxlint-disable-next-line promise/prefer-await-to-then -- TanStack's Promise loader boundary requires the original thrown redirect; remove-when: native loader adapters preserve redirects without Promise callbacks.
+    .then((model) => (model.state === 'anonymous' ? redirectToSignIn(request, model.reason) : model));
