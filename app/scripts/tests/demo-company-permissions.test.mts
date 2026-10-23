@@ -3,6 +3,7 @@ import {
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
 } from '@app/core-runtime';
+import { toSpiceDbActionObjectId } from '@app/core-runtime/actions/runtime-wiring';
 import { commercialDemoCompany, demoCompanyTenantId, rentalDemoCompany } from '@app/core-runtime/demo-company-profiles';
 import { expect, it } from 'effect-rstest';
 import { Effect, Predicate } from 'effect';
@@ -29,8 +30,14 @@ import {
   commercePortalPrincipal,
   commercePortalRelationships,
   commercePortalVerificationWorkloadGrants,
+  privacyConsentAuthorityRelationships,
+  privacyConsentPrincipal,
 } from '../demo/commerce-portal.mts';
 import { toIdentityNamespaceAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
+
+const merchandiseModule = 'demo.merchandise';
+const portfolioModule = 'property.portfolio';
+const billingModule = 'finance.billing';
 
 const companySuffix = '/demo-companies';
 const shellOrigin = 'http://localhost:3020';
@@ -54,15 +61,15 @@ const hasModule = (principalId: string, legalEntityId: string, moduleId: string)
   );
 
 it('separates commercial stock access from rental property access while sharing agreements', () => {
-  expect(hasModule(administrator.principalId, demoLegalEntityId, 'demo.merchandise')).toBe(true);
-  expect(hasModule(administrator.principalId, demoLegalEntityId, 'property.portfolio')).toBe(false);
-  expect(hasModule(administrator.principalId, rentalDemoLegalEntityId, 'demo.merchandise')).toBe(false);
-  expect(hasModule(administrator.principalId, rentalDemoLegalEntityId, 'property.portfolio')).toBe(true);
+  expect(hasModule(administrator.principalId, demoLegalEntityId, merchandiseModule)).toBe(true);
+  expect(hasModule(administrator.principalId, demoLegalEntityId, portfolioModule)).toBe(false);
+  expect(hasModule(administrator.principalId, rentalDemoLegalEntityId, merchandiseModule)).toBe(false);
+  expect(hasModule(administrator.principalId, rentalDemoLegalEntityId, portfolioModule)).toBe(true);
   for (const legalEntityId of [demoLegalEntityId, rentalDemoLegalEntityId]) {
     expect(hasModule(administrator.principalId, legalEntityId, 'legal.agreements')).toBe(true);
   }
   expect(hasModule(salesRep.principalId, rentalDemoLegalEntityId, 'demo.workforce')).toBe(true);
-  expect(hasModule(accountant.principalId, rentalDemoLegalEntityId, 'finance.billing')).toBe(true);
+  expect(hasModule(accountant.principalId, rentalDemoLegalEntityId, billingModule)).toBe(true);
 });
 
 it('keeps the warehouse account out of the rental company and limits identity administration', () => {
@@ -114,7 +121,7 @@ it('keeps CRM and e-shop personas inside their own company with role-specific CR
   ]);
   expect(hasModule(crmPersonaPrincipalIds.repA, crmDemoLegalEntityId, 'demo.crm')).toBe(true);
   expect(hasModule(crmPersonaPrincipalIds.repA, crmDemoLegalEntityId, 'party.registry')).toBe(false);
-  expect(hasModule(storefrontPrincipal.principalId, eshopDemoLegalEntityId, 'demo.merchandise')).toBe(true);
+  expect(hasModule(storefrontPrincipal.principalId, eshopDemoLegalEntityId, merchandiseModule)).toBe(true);
   expect(hasModule(storefrontPrincipal.principalId, eshopDemoLegalEntityId, 'party.registry')).toBe(false);
   expect(hasModule(administrator.principalId, crmDemoLegalEntityId, 'demo.crm')).toBe(false);
   expect(hasCrmPermission(crmPersonaPrincipalIds.manager, 'demo.crm.read_all')).toBe(true);
@@ -200,11 +207,11 @@ it('gives the Siampark accounts their 0021 roles and limits the external agent t
           }),
     );
   const [management, , finance, external] = siamparkRentalPersonas;
-  expect(hasModule(management.principalId, rentalDemoLegalEntityId, 'property.portfolio')).toBe(true);
+  expect(hasModule(management.principalId, rentalDemoLegalEntityId, portfolioModule)).toBe(true);
   expect(opsPermission(management.principalId, 'facility.operations.write_all')).toBe(true);
-  expect(hasModule(finance.principalId, rentalDemoLegalEntityId, 'finance.billing')).toBe(true);
+  expect(hasModule(finance.principalId, rentalDemoLegalEntityId, billingModule)).toBe(true);
   expect(hasModule(external.principalId, rentalDemoLegalEntityId, 'facility.operations')).toBe(true);
-  expect(hasModule(external.principalId, rentalDemoLegalEntityId, 'finance.billing')).toBe(false);
+  expect(hasModule(external.principalId, rentalDemoLegalEntityId, billingModule)).toBe(false);
   expect(opsPermission(external.principalId, 'facility.operations.read_operational')).toBe(true);
   expect(opsPermission(external.principalId, 'facility.operations.read_all')).toBe(false);
   expect(opsPermission(external.principalId, 'facility.operations.write_operational')).toBe(false);
@@ -240,6 +247,64 @@ it('provisions only the Commerce portal namespace and its three Core binding Act
   }
   expect(rows.filter((row) => row.resourceType === 'action' && row.relation === 'executor')).toHaveLength(3);
   expect(rows.some((row) => row.relation === 'identity_admin')).toBe(false);
+});
+
+it('grants the Privacy authority reader exactly two Commerce facts without customer, Party or consent writes', () => {
+  const actions = [
+    ...commercePortalActionKeys,
+    'privacy.core.create-processing-purpose',
+    'privacy.core.record-consent-decision',
+    'commerce.customer-context.apply-command',
+  ].map((actionKey) => ({ actionKey, provisioning: 'explicit' as const }));
+  const rows = privacyConsentAuthorityRelationships(actions);
+  expect(rows.filter((row) => row.relation === 'executor')).toHaveLength(0);
+  expect(rows.some((row) => row.relation === 'identity_admin')).toBe(false);
+  expect(rows.filter((row) => row.resourceType === 'context_permission' && row.relation === 'grantee')).toEqual(
+    ['customer.consent.resolve_authority', 'customer.notice.resolve_authority'].map((permission) => ({
+      relation: 'grantee',
+      resourceId: toContextPermissionAccessObjectId(demoTenantId, privacyConsentPrincipal.legalEntityId, {
+        moduleId: 'commerce.customer-context',
+        permission,
+      }),
+      resourceType: 'context_permission',
+      subjectId: privacyConsentPrincipal.principalId,
+      subjectType: 'principal',
+    })),
+  );
+  expect(
+    rows
+      .filter((row) => row.resourceType === 'module_access' && row.relation === 'accessor')
+      .map((row) => row.resourceId),
+  ).toEqual(
+    ['core.shell', 'commerce.customer-context'].map((moduleId) =>
+      toModuleAccessObjectId(demoTenantId, privacyConsentPrincipal.legalEntityId, moduleId),
+    ),
+  );
+  expect(privacyConsentPrincipal.principalId).not.toBe(commercePortalPrincipal.principalId);
+});
+
+it('grants Commerce only native customer consent setup/provision/self-service Actions, never purpose or direct decision writes', () => {
+  const allowed = [
+    'privacy.core.create-privacy-subject',
+    'privacy.core.create-notice-version',
+    'privacy.core.record-notice-provision',
+    'privacy.core.consent-self-service',
+  ];
+  for (const actionKey of allowed) {
+    expect(commercePortalActionKeys).toContain(actionKey);
+  }
+  expect(commercePortalActionKeys).not.toContain('privacy.core.create-processing-purpose');
+  expect(commercePortalActionKeys).not.toContain('privacy.core.record-consent-decision');
+  expect(
+    demoPermissionRelationships(allowed.map((actionKey) => ({ actionKey, provisioning: 'explicit' })))
+      .filter(
+        (row) =>
+          row.subjectId === storefrontPrincipal.principalId &&
+          row.resourceType === 'action' &&
+          row.relation === 'executor',
+      )
+      .some((row) => allowed.some((actionKey) => row.resourceId === toSpiceDbActionObjectId(actionKey))),
+  ).toBe(false);
 });
 
 it('grants only the exact portal workload on the owner verification audience', () => {

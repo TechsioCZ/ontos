@@ -60,17 +60,24 @@ export const commercePortalPrincipal = {
   principalId: demoId('core.principal', COMMERCE_PORTAL),
 } as const;
 
+export const privacyConsentPrincipal = {
+  apiKeyName: 'privacy-consent-authority',
+  displayName: 'Privacy · Commerce consent authority reader',
+  legalEntityId: akrosDemoLegalEntityId,
+  principalId: demoId('core.principal', 'privacy-consent-authority'),
+} as const;
+
 const COMMERCE_PORTAL_NAMESPACE = 'ontos.commerce.portal.better-auth.v1';
 const STAFF_NAMESPACE = 'ontos.staff.better-auth.v1';
 const SHELL_AUDIENCE = 'shell-super-app';
-const GATEWAY_CONTEXT_AUDIENCES = ['commerce-customer-context', 'party-registry'] as const;
+const GATEWAY_CONTEXT_AUDIENCES = ['commerce-customer-context', 'party-registry', 'privacy'] as const;
 const BINDING_OPERATIONS = ['activate', 'read', 'reserve', 'resolve', 'status'] as const;
 
 /** Module access only; the Actions below are granted one by one. */
 const commercePortalRole: DemoRole = {
   identityAdmin: false,
   label: 'Commerce portal (service)',
-  modules: { 'commerce.customer-context': 'read', 'party.registry': 'read' },
+  modules: { 'commerce.customer-context': 'read', 'party.registry': 'read', 'privacy.core': 'read' },
 };
 
 /** The Actions the enrollment owners run on behalf of a customer. */
@@ -78,6 +85,10 @@ export const commercePortalActionKeys: readonly string[] = [
   'core.identity.reserve-principal-binding',
   'core.identity.activate-principal-binding',
   'core.identity.change-principal-binding-status',
+  'privacy.core.create-privacy-subject',
+  'privacy.core.create-notice-version',
+  'privacy.core.record-notice-provision',
+  'privacy.core.consent-self-service',
   'party.registry.create-party',
   'party.registry.counterparty-customer-onboard',
   'party.registry.add-contact-point',
@@ -147,6 +158,23 @@ export const commercePortalRelationships = (actions: readonly DiscoveredAction[]
   }
   return [...new Map(relationships.map((relationship) => [relationshipKey(relationship), relationship])).values()];
 };
+
+/** Privacy can resolve only the two Commerce authority facts, not read customer groups or execute Actions. */
+export const privacyConsentAuthorityRelationships = (actions: readonly DiscoveredAction[]): readonly AiRelationship[] =>
+  principalRelationships(
+    privacyConsentPrincipal.principalId,
+    {
+      contextPermissions: {
+        'commerce.customer-context': ['customer.consent.resolve_authority', 'customer.notice.resolve_authority'],
+      },
+      identityAdmin: false,
+      label: 'Privacy consent authority reader',
+      modules: { 'commerce.customer-context': 'read' },
+      restrictedModules: ['commerce.customer-context'],
+    },
+    actions,
+    privacyConsentPrincipal.legalEntityId,
+  );
 
 /** The Shell's external identity provider deployment data for the portal namespace. */
 export const commercePortalExternalIdentityDeployment = () => {
@@ -243,7 +271,11 @@ const writeEnv = Effect.fn('CommercePortal.writeEnv')(function* writeEnv(
 });
 
 /** Reuses a key that still mints a gateway assertion, otherwise issues one through the Shell. */
-const ensureKey = Effect.fn('CommercePortal.key')(function* ensureKey(previous: Redacted.Redacted | undefined) {
+const ensureKey = Effect.fn('CommercePortal.key')(function* ensureKey(
+  previous: Redacted.Redacted | undefined,
+  identity: { readonly apiKeyName: string; readonly legalEntityId: string; readonly principalId: string },
+  audience: 'party-registry' | 'commerce-customer-context',
+) {
   const client = yield* HttpClient.HttpClient;
   const { compositionUrl, shellUrl } = yield* shellConfig;
   const revision = yield* client.get(compositionUrl).pipe(
@@ -256,9 +288,9 @@ const ensureKey = Effect.fn('CommercePortal.key')(function* ensureKey(previous: 
     const works = yield* post(
       `${shellUrl}/shell-super-app-api/auth/api-key/gateway-context`,
       {
-        audience: 'party-registry',
+        audience,
         compositionRevision: revision,
-        legalEntityId: commercePortalPrincipal.legalEntityId,
+        legalEntityId: identity.legalEntityId,
       },
       { 'content-type': 'application/json', 'x-api-key': Redacted.value(previous) },
     ).pipe(
@@ -284,7 +316,7 @@ const ensureKey = Effect.fn('CommercePortal.key')(function* ensureKey(previous: 
   const cookie = Cookies.toCookieHeader(Cookies.setAllUnsafe(signIn.cookies, aliases));
   const issued = yield* post(
     `${shellUrl}/shell-super-app-api/auth/identity/api-keys/managed`,
-    { name: commercePortalPrincipal.apiKeyName, principalId: commercePortalPrincipal.principalId },
+    { name: identity.apiKeyName, principalId: identity.principalId },
     {
       'content-type': 'application/json',
       cookie,
@@ -302,13 +334,11 @@ const ensureKey = Effect.fn('CommercePortal.key')(function* ensureKey(previous: 
 });
 
 /** Gateway assertions are single-use; lift Better Auth's per-key request limit (as for the other service keys). */
-const liftKeyRateLimit = Effect.gen(function* liftKeyRateLimit() {
-  const { executor } = yield* AuthDatabase;
-  yield* executor
-    .update(apikey)
-    .set({ rateLimitEnabled: false, requestCount: 0 })
-    .where(eq(apikey.name, commercePortalPrincipal.apiKeyName));
-});
+const liftKeyRateLimit = (apiKeyName: string) =>
+  Effect.gen(function* updateServiceKeyRateLimit() {
+    const { executor } = yield* AuthDatabase;
+    yield* executor.update(apikey).set({ rateLimitEnabled: false, requestCount: 0 }).where(eq(apikey.name, apiKeyName));
+  });
 
 const workspaceRoot = new URL('../..', import.meta.url);
 
@@ -348,13 +378,41 @@ const main = (envFileOption: string | undefined) =>
     const existing = (yield* fs.exists(envFile))
       ? readEnv(yield* fs.readFileString(envFile))
       : new Map<string, string>();
-    yield* liftKeyRateLimit;
+    yield* liftKeyRateLimit(commercePortalPrincipal.apiKeyName);
     const previous = existing.get(KEY_VARIABLE);
     const key = Redacted.value(
-      yield* ensureKey(previous === undefined || previous === '' ? undefined : Redacted.make(previous)),
+      yield* ensureKey(
+        previous === undefined || previous === '' ? undefined : Redacted.make(previous),
+        commercePortalPrincipal,
+        'party-registry',
+      ),
     );
-    yield* liftKeyRateLimit;
+    yield* liftKeyRateLimit(commercePortalPrincipal.apiKeyName);
     const { shellUrl } = yield* shellConfig;
+    yield* executor
+      .insert(principals)
+      .values({
+        displayName: privacyConsentPrincipal.displayName,
+        kind: 'service',
+        principalId: privacyConsentPrincipal.principalId,
+        status: 'active',
+        tenantId: demoTenantId,
+      })
+      .onConflictDoUpdate({
+        set: { displayName: privacyConsentPrincipal.displayName, status: 'active' },
+        target: principals.principalId,
+      });
+    const privacyRelationships = privacyConsentAuthorityRelationships(actions);
+    yield* writeAiRelationships(root, environment, privacyRelationships);
+    const previousPrivacyKey = existing.get('ONTOS_PRIVACY_GATEWAY_API_KEY');
+    const privacyKey = Redacted.value(
+      yield* ensureKey(
+        previousPrivacyKey === undefined || previousPrivacyKey === '' ? undefined : Redacted.make(previousPrivacyKey),
+        privacyConsentPrincipal,
+        'commerce-customer-context',
+      ),
+    );
+    yield* liftKeyRateLimit(privacyConsentPrincipal.apiKeyName);
     const deployment = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Json))(
       commercePortalExternalIdentityDeployment(),
     );
@@ -369,6 +427,8 @@ const main = (envFileOption: string | undefined) =>
         ['ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY', key],
         ['ONTOS_COMMERCE_EXTERNAL_IDENTITY_DEPLOYMENT', deployment],
         ['COMMERCE_PORTAL_AUTH_VERIFICATION_WORKLOAD_GRANTS', verificationGrants],
+        ['ONTOS_PRIVACY_GATEWAY_API_KEY', privacyKey],
+        ['COMMERCE_MARKETING_ACTOR_PRINCIPAL_ID', commercePortalPrincipal.principalId],
       ]),
     );
     yield* Console.log(`commerce-portal: Core identity transport and Shell provider data -> ${envFile}`);
