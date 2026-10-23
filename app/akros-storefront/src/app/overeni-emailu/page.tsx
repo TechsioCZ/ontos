@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import StoreLink from "@/components/store-link";
+import { VerificationResendForm } from "@/components/verification-resend-form";
 import { StorefrontWideShell } from "@/components/storefront-shell";
 
 export const metadata: Metadata = {
@@ -23,7 +24,7 @@ export default async function EmailVerificationPage({
         ? "Příliš mnoho pokusů o ověření. Zkuste prosím znovu otevřít odkaz z e-mailu později."
         : stav === "podpora"
           ? "E-mail se nepodařilo ověřit. Pro dokončení ověření prosím kontaktujte naši podporu."
-          : "Odkaz pro ověření e-mailu je neplatný, již použitý nebo jeho platnost vypršela. Pro pomoc s ověřením prosím kontaktujte naši podporu.";
+          : "Odkaz pro ověření e-mailu je neplatný, již použitý nebo jeho platnost vypršela. Můžete požádat o nový ověřovací e-mail.";
   return (
     <StorefrontWideShell>
       <section className="akros-auth-page">
@@ -35,6 +36,7 @@ export default async function EmailVerificationPage({
           <p>
             <StoreLink href="/prihlaseni">Přejít k přihlášení</StoreLink>
           </p>
+          {!verified && <VerificationResendForm />}
           {!verified && (
             <p>
               <StoreLink href="/kontakty">Kontaktovat podporu</StoreLink>

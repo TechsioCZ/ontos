@@ -196,7 +196,7 @@ describe("owner-backed customer account transport", () => {
   it("logs out through the real owner and forwards only its expired realm cookie", async () => {
     vi.mocked(ownerRequest).mockResolvedValue(
       Response.json(
-        { outcome: "SIGNED_OUT" },
+        { outcome: "SESSION_REVOKED" },
         { headers: { "set-cookie": "commerce-portal.session_token=; Max-Age=0; HttpOnly" } },
       ),
     );
@@ -206,5 +206,65 @@ describe("owner-backed customer account transport", () => {
     expect(response.headers.getSetCookie()).toEqual([
       "commerce-portal.session_token=; Max-Age=0; HttpOnly",
     ]);
+  });
+});
+
+describe("verification resend transport", () => {
+  it.each(["unknown@example.test", "verified@example.test", "waiting@example.test"])(
+    "returns the same acknowledgement for %s without forwarding identities or any realm cookies",
+    async (email) => {
+      vi.mocked(ownerRequest).mockResolvedValue(
+        Response.json(
+          { outcome: "EMAIL_VERIFICATION_STARTED", providerSubjectId: "private" },
+          { headers: { "set-cookie": "commerce-portal.session_token=must-not-cross; HttpOnly" } },
+        ),
+      );
+      const response = await submit({
+        operation: "resend-verification",
+        email: email.toUpperCase(),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ outcome: "EMAIL_VERIFICATION_STARTED" });
+      expect(response.headers.getSetCookie()).toEqual([]);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      const [owner, path, init] = vi.mocked(ownerRequest).mock.calls[0]!;
+      expect(owner).toBe("commerce-customer-context");
+      expect(path).toBe("/api/portal-auth/send-verification-email");
+      expect(JSON.parse(String(init.body))).toEqual({ email });
+      expect(new Headers(init.headers).get("cookie")).toBe("");
+    },
+  );
+  it.each([
+    { email: "invalid" },
+    { email: "valid@example.test", providerSubjectId: "attacker" },
+    { email: "valid@example.test", partyId: "attacker" },
+    { email: "valid@example.test", password: "must-not-forward" },
+  ])("rejects malformed or identity-bearing resend requests before the owner", async (input) => {
+    expect((await submit({ operation: "resend-verification", ...input })).status).toBe(400);
+    expect(ownerRequest).not.toHaveBeenCalled();
+  });
+  it.each([null, "https://attacker.example.test"])(
+    "rejects an untrusted resend origin %s",
+    async (value) => {
+      expect(
+        (await submit({ operation: "resend-verification", email: "valid@example.test" }, value))
+          .status,
+      ).toBe(403);
+      expect(ownerRequest).not.toHaveBeenCalled();
+    },
+  );
+  it("preserves owner throttling without exposing provider details or cookies", async () => {
+    vi.mocked(ownerRequest).mockResolvedValue(
+      Response.json({ code: "rate_limited", providerSubjectId: "private" }, { status: 429 }),
+    );
+    const response = await submit({
+      operation: "resend-verification",
+      email: "valid@example.test",
+    });
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({
+      message: "Příliš mnoho pokusů. Zkuste to prosím později.",
+    });
+    expect(response.headers.getSetCookie()).toEqual([]);
   });
 });

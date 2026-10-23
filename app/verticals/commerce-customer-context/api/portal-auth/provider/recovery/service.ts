@@ -362,17 +362,9 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
         const request = yield* Schema.decodeEffect(CommercePortalAuthEmailVerificationRequestSchema, {
           onExcessProperty: 'error',
         })(input).pipe(Effect.mapError(invalidRequest));
-        const reserved = yield* store.reserveEmailVerificationSubject({
-          email: normalizeCommercePortalAuthEmail(request.email),
-          providerSubjectId: request.providerSubjectId,
-        });
-        if (!reserved) {
-          return yield* rejected(
-            SEND_VERIFICATION_EMAIL_OPERATION,
-            'INVALID_SUBJECT',
-            'The Commerce portal authentication subject does not own this identifier',
-          );
-        }
+        // No browser subject or session cookie reaches Better Auth. Its anonymous native operation
+        // gives the same result for unknown/verified addresses; the delivery callback alone registers
+        // the real provider subject with a digest-backed token before sending any actual mail.
         const response = yield* provider
           .sendVerificationEmail({ body: { email: normalizeCommercePortalAuthEmail(request.email) } })
           .pipe(Effect.mapError((failure) => mapProviderFailure(failure, REQUEST_REJECTION_CODES)));

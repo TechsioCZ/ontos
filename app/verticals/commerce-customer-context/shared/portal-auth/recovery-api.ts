@@ -3,6 +3,7 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-e
 import { HttpApiMiddleware } from 'effect/unstable/httpapi';
 
 import {
+  CommercePortalAuthEmailVerificationRequestSchema,
   CommercePortalAuthPasswordResetRequestSchema,
   CommercePortalAuthPasswordResetSchema,
   CommercePortalAuthRecoveryReconciliationConflictClassSchema,
@@ -11,6 +12,12 @@ import {
 const recoveryToken = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048));
 const callbackURL = Schema.String.check(Schema.isMaxLength(2048));
 const providerRejectionCode = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(64));
+
+export const CommercePortalAuthRecoveryAuthenticationProblemSchema = makeProblemDetailsSchema(
+  'CommercePortalAuthRecoveryAuthenticationProblem',
+  401,
+  { code: Schema.Literal('authentication_required') },
+);
 
 export const CommercePortalAuthRecoveryInvalidProblemSchema = makeProblemDetailsSchema(
   'CommercePortalAuthRecoveryInvalidProblem',
@@ -122,10 +129,17 @@ const verificationRouteProblems = [
  *
  * The same checker reads declared routes syntactically, so each path is written as a literal
  * rather than composed from `COMMERCE_PORTAL_AUTH_INTERNAL_BASE_PATH`; each literal below is that
- * base path followed by one declared recovery route. Declaring exactly these four routes is what
+ * base path followed by one declared recovery route. Declaring exactly these five routes is what
  * keeps sign-up and unrelated Better Auth endpoints unreachable.
  */
 const commercePortalAuthRecoveryGroupDefinition = HttpApiGroup.make('portalAuthRecovery')
+  .add(
+    HttpApiEndpoint.post('requestEmailVerification', '/api/portal-auth/send-verification-email', {
+      error: [...providerRouteProblems, CommercePortalAuthRecoveryAuthenticationProblemSchema],
+      payload: Schema.toEncoded(CommercePortalAuthEmailVerificationRequestSchema),
+      success: Schema.Struct({ outcome: Schema.Literal('EMAIL_VERIFICATION_STARTED') }),
+    }),
+  )
   .add(
     HttpApiEndpoint.post('requestPasswordReset', '/api/portal-auth/request-password-reset', {
       error: providerRouteProblems,

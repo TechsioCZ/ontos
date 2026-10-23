@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
+import { VerificationResendForm } from "@/components/verification-resend-form";
 
 async function submitAccount(
   form: HTMLFormElement,
@@ -52,33 +53,36 @@ export function LoginForm() {
   }
 
   return (
-    <form action="/api/ontos/account" className="akros-auth-form" method="post" onSubmit={login}>
-      <FormInput
-        autoComplete="username"
-        id="login-email"
-        name="email"
-        label="Přihlašovací e-mail"
-        required
-        size="sm"
-        type="email"
-      />
-      <FormInput
-        autoComplete="current-password"
-        id="login-password"
-        name="password"
-        label="Heslo"
-        required
-        size="sm"
-        type="password"
-      />
-      <div className="akros-auth-form__row">
-        <FormCheckbox name="rememberMe" label="Zapamatovat si mě" size="sm" />
-      </div>
-      <Button block disabled={pending} size="md" type="submit" variant="primary">
-        {pending ? "Přihlašuji…" : "Přihlásit se"}
-      </Button>
-      {error && <p role="alert">{error}</p>}
-    </form>
+    <>
+      <form action="/api/ontos/account" className="akros-auth-form" method="post" onSubmit={login}>
+        <FormInput
+          autoComplete="username"
+          id="login-email"
+          name="email"
+          label="Přihlašovací e-mail"
+          required
+          size="sm"
+          type="email"
+        />
+        <FormInput
+          autoComplete="current-password"
+          id="login-password"
+          name="password"
+          label="Heslo"
+          required
+          size="sm"
+          type="password"
+        />
+        <div className="akros-auth-form__row">
+          <FormCheckbox name="rememberMe" label="Zapamatovat si mě" size="sm" />
+        </div>
+        <Button block disabled={pending} size="md" type="submit" variant="primary">
+          {pending ? "Přihlašuji…" : "Přihlásit se"}
+        </Button>
+        {error && <p role="alert">{error}</p>}
+      </form>
+      <VerificationResendForm />
+    </>
   );
 }
 

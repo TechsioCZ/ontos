@@ -54,6 +54,16 @@ export async function POST(request: Request) {
         password: data.password,
         rememberMe: data.rememberMe === true,
       };
+    } else if (data.operation === "resend-verification") {
+      if (
+        Object.keys(data).some((key) => key !== "operation" && key !== "email") ||
+        typeof data.email !== "string" ||
+        data.email.trim().length > 320 ||
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email.trim())
+      )
+        throw new RequestError(400, "Zadejte platnou e-mailovou adresu.");
+      path = "/send-verification-email";
+      body = { email: data.email.trim().toLowerCase() };
     } else if (data.operation === "logout") {
       path = "/sign-out";
       body = {};
@@ -61,7 +71,7 @@ export async function POST(request: Request) {
     const response = await portalRequest(
       path,
       origin,
-      request.headers.get("cookie"),
+      data.operation === "resend-verification" ? null : request.headers.get("cookie"),
       body,
       idempotencyKey,
     );
@@ -74,6 +84,11 @@ export async function POST(request: Request) {
           headers: noStore,
         },
       );
+    if (data.operation === "resend-verification") {
+      if (result.outcome !== "EMAIL_VERIFICATION_STARTED")
+        throw new Error("Verification resend was not acknowledged");
+      return Response.json({ outcome: "EMAIL_VERIFICATION_STARTED" }, { headers: noStore });
+    }
     // Never return provider subjects, session references or credentials to browser JavaScript.
     const headers = new Headers(noStore);
     for (const cookie of response.headers.getSetCookie()) {

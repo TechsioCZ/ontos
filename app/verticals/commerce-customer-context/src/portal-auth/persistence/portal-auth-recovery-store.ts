@@ -26,7 +26,6 @@ import type { CommercePortalAuthDatabaseExecutor } from './portal-auth-database-
 import { rateLimit, recoveryReconciliation, recoveryResetLedger, user, verification } from './portal-auth-tables.ts';
 
 const EMAIL_VERIFICATION_IDENTIFIER_PREFIX = 'commerce-email-verification:';
-const EMAIL_VERIFICATION_RESERVATION_IDENTIFIER_PREFIX = 'commerce-email-verification-pending:';
 const RESET_LEDGER_STATE_PENDING = 'pending';
 const RESET_LEDGER_STATE_EXPIRED = 'expired';
 const RESET_LEDGER_STATE_CONSUMED = 'consumed';
@@ -125,9 +124,6 @@ const decodeVerificationLedgerRecord = (value: string): Option.Option<Verificati
 
 const emailVerificationIdentifier = (digest: string): string => `${EMAIL_VERIFICATION_IDENTIFIER_PREFIX}${digest}`;
 
-const emailVerificationReservationIdentifier = (digest: string): string =>
-  `${EMAIL_VERIFICATION_RESERVATION_IDENTIFIER_PREFIX}${digest}`;
-
 const digestText = (crypto: Crypto.Crypto, value: string) =>
   crypto.digest('SHA-256', new TextEncoder().encode(value)).pipe(Effect.map(bytesToHex));
 
@@ -207,37 +203,10 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
           Effect.mapError((cause) => unavailable('verification-token-id', cause)),
         );
         const identifier = emailVerificationIdentifier(digest);
-        const reservationDigest = yield* digestText(crypto, normalizeCommercePortalAuthEmail(input.email)).pipe(
-          Effect.mapError((cause) => unavailable('verification-reservation-hash', cause)),
-        );
-        const reservationIdentifier = emailVerificationReservationIdentifier(reservationDigest);
         return yield* database
           .transaction(
             Effect.fn('CommercePortalAuthRecoveryStore.registerEmailVerificationToken.transaction')(
               function* registerTransaction(transaction) {
-                const reservations = yield* transaction
-                  .select({ expiresAt: verification.expiresAt, providerSubjectId: verification.value })
-                  .from(verification)
-                  .where(eq(verification.identifier, reservationIdentifier))
-                  .limit(1)
-                  .for('update');
-                const [reservation] = reservations;
-                if (reservation !== undefined) {
-                  const reservationExpiry = epochMillis(reservation.expiresAt);
-                  const nowMillis = epochMillis(now);
-                  if (
-                    !Number.isFinite(reservationExpiry) ||
-                    !Number.isFinite(nowMillis) ||
-                    reservationExpiry <= nowMillis ||
-                    reservation.providerSubjectId !== input.providerSubjectId
-                  ) {
-                    if (reservationExpiry <= nowMillis || !Number.isFinite(reservationExpiry)) {
-                      yield* transaction.delete(verification).where(eq(verification.identifier, reservationIdentifier));
-                    }
-                    return false;
-                  }
-                  yield* transaction.delete(verification).where(eq(verification.identifier, reservationIdentifier));
-                }
                 // Better Auth invokes this callback inside its sign-up transaction. The exact committed
                 // subject/email binding is therefore validated by consume's atomic user update.
                 const existingTokens = yield* transaction
@@ -269,60 +238,6 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
           .pipe(Effect.mapError((cause) => unavailable('verification-token-register', cause)));
       },
     );
-
-    const reserveEmailVerificationSubject = Effect.fn(
-      'CommercePortalAuthRecoveryStore.reserveEmailVerificationSubject',
-    )(function* reserveEmailVerificationSubjectEffect(input: {
-      readonly email: string;
-      readonly providerSubjectId: string;
-    }): Effect.fn.Return<boolean, CommercePortalAuthRecoveryUnavailable> {
-      const now = yield* DateTime.nowAsDate;
-      const emailDigest = yield* digestText(crypto, normalizeCommercePortalAuthEmail(input.email)).pipe(
-        Effect.mapError((cause) => unavailable('verification-reservation-hash', cause)),
-      );
-      const identifier = emailVerificationReservationIdentifier(emailDigest);
-      const reservationId = yield* crypto.randomUUIDv4.pipe(
-        Effect.mapError((cause) => unavailable('verification-reservation-id', cause)),
-      );
-      const expiresAt = DateTime.toDate(
-        DateTime.add(DateTime.makeUnsafe(now), {
-          seconds: COMMERCE_PORTAL_AUTH_POLICY.emailVerification.expiresInSeconds,
-        }),
-      );
-      return yield* database
-        .transaction(
-          Effect.fn('CommercePortalAuthRecoveryStore.reserveEmailVerificationSubject.transaction')(
-            function* reserveTransaction(transaction) {
-              yield* transaction.delete(verification).where(eq(verification.identifier, identifier));
-              const subjects = yield* transaction
-                .select({ id: user.id })
-                .from(user)
-                .where(
-                  and(
-                    eq(user.id, input.providerSubjectId),
-                    eq(user.email, normalizeCommercePortalAuthEmail(input.email)),
-                    eq(user.emailVerified, false),
-                  ),
-                )
-                .limit(1)
-                .for('update');
-              if (subjects.length === 0) {
-                return false;
-              }
-              yield* transaction.insert(verification).values({
-                createdAt: now,
-                expiresAt,
-                id: reservationId,
-                identifier,
-                updatedAt: now,
-                value: input.providerSubjectId,
-              });
-              return true;
-            },
-          ),
-        )
-        .pipe(Effect.mapError((cause) => unavailable('verification-reservation', cause)));
-    });
 
     /**
      * Consuming the token and writing the verification's completion audit row are one transaction:
@@ -981,7 +896,6 @@ export const makeCommercePortalAuthRecoveryStore = Effect.fn('CommercePortalAuth
       registerEmailVerificationToken,
       registerPasswordResetToken,
       releasePasswordResetLedger,
-      reserveEmailVerificationSubject,
     };
   },
 );

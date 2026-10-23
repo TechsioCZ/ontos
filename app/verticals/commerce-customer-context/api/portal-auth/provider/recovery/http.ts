@@ -2,6 +2,7 @@ import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Duration, Effect, Redacted, Schema } from 'effect';
 import type { HttpServerRequest } from 'effect/unstable/http';
 
+import { authenticateOperationPrincipal } from '../../../auth/action-principal.ts';
 import { hashSubjectKey, noStoreHeaders, requireTrustedOrigin, resolveClientKey } from '../../http-transport.ts';
 import { commerceCustomerContextApi } from '../../../../shared/api.ts';
 import type {
@@ -12,11 +13,13 @@ import { COMMERCE_PORTAL_AUTH_POLICY } from '../config.ts';
 import { CommercePortalAuthConfig } from '../config-service.ts';
 import type { CommercePortalAuthConfigValue } from '../config.ts';
 import type {
+  CommercePortalAuthEmailVerificationRequestBoundary,
   CommercePortalAuthPasswordResetBoundary,
   CommercePortalAuthPasswordResetRequestBoundary,
 } from './contracts.ts';
 import { CommercePortalAuthRecoveryInvalidRequest } from './invalid-request.ts';
 import {
+  commercePortalAuthRecoveryAuthenticationProblem,
   commercePortalAuthRecoveryInvalidCallbackProblem,
   commercePortalAuthRecoveryInvalidProblem,
   commercePortalAuthRecoveryRateLimitedProblem,
@@ -181,6 +184,49 @@ const requestPasswordReset = Effect.fn('CommercePortalAuthRecoveryHttp.requestPa
   },
 );
 
+/**
+ * Public address-only resend is anonymous with respect to the customer realm, but its transport
+ * caller is authenticated by the gateway. Independent durable counters cap one address across
+ * callers and one verified caller across addresses; spoofable forwarded headers are never authority.
+ */
+const requestEmailVerification = Effect.fn('CommercePortalAuthRecoveryHttp.requestEmailVerification')(
+  function* requestEmailVerificationEffect(
+    payload: CommercePortalAuthEmailVerificationRequestBoundary,
+    request: HttpServerRequest.HttpServerRequest,
+  ) {
+    yield* noStoreHeaders;
+    yield* requireTrustedOrigin(request.headers, untrustedOrigin);
+    const principal = yield* authenticateOperationPrincipal(Redacted.make(request.headers['authorization']), {
+      authentication: () => commercePortalAuthRecoveryAuthenticationProblem,
+      unavailable: () => commercePortalAuthRecoveryUnavailableProblem,
+    });
+    const configuration = yield* CommercePortalAuthConfig;
+    const budget = yield* CommercePortalAuthRecoveryRateLimitService;
+    const caller = hashSubjectKey(`${principal.tenantId}|${principal.principalId}`, configuration.secret);
+    const address = hashSubjectKey(payload.email.trim().toLowerCase(), configuration.secret);
+    yield* Effect.forEach(
+      [
+        [`verification-resend|caller|${caller}`, COMMERCE_PORTAL_AUTH_POLICY.rateLimit.verificationCaller],
+        [`verification-resend|address|${address}`, COMMERCE_PORTAL_AUTH_POLICY.rateLimit.recovery],
+      ] as const,
+      ([key, rule]) =>
+        budget.consume(key, rule).pipe(
+          Effect.catchTag('CommercePortalAuthRecoveryProviderFailure', (failure) =>
+            Effect.annotateLogs(Effect.logError('Commerce verification resend budget unavailable', failure), {
+              operation: failure.operation,
+            }).pipe(Effect.andThen(Effect.fail(commercePortalAuthRecoveryUnavailableProblem))),
+          ),
+          Effect.flatMap((allowed) =>
+            allowed ? Effect.void : Effect.fail(commercePortalAuthRecoveryRateLimitedProblem),
+          ),
+        ),
+      { concurrency: 1, discard: true },
+    );
+    const recovery = yield* CommercePortalAuthRecoveryService;
+    return yield* recovery.requestEmailVerification(payload).pipe(Effect.mapError(recoveryProblem));
+  },
+);
+
 /** The submitted token is the budget subject: only its holder can spend the budget it names. */
 const resetPassword = Effect.fn('CommercePortalAuthRecoveryHttp.resetPassword')(function* resetPasswordEffect(
   payload: CommercePortalAuthPasswordResetBoundary,
@@ -242,6 +288,7 @@ export const portalAuthRecoveryApiLive = HttpApiBuilder.group(
   'portalAuthRecovery',
   (handlers) =>
     handlers
+      .handle('requestEmailVerification', ({ payload, request }) => requestEmailVerification(payload, request))
       .handle('requestPasswordReset', ({ payload, request }) => requestPasswordReset(payload, request))
       .handle('resetPassword', ({ payload, request }) => resetPassword(payload, request))
       .handle('resetPasswordCallback', ({ query }) => resetPasswordCallback(query.callbackURL))

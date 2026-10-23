@@ -138,10 +138,6 @@ export interface CommercePortalAuthRecoveryStore {
   readonly releasePasswordResetLedger: (input: {
     readonly token: Redacted.Redacted;
   }) => Effect.Effect<void, CommercePortalAuthRecoveryUnavailable>;
-  readonly reserveEmailVerificationSubject: (input: {
-    readonly email: string;
-    readonly providerSubjectId: string;
-  }) => Effect.Effect<boolean, CommercePortalAuthRecoveryUnavailable>;
 }
 
 export class CommercePortalAuthRecoveryStoreService extends Context.Service<

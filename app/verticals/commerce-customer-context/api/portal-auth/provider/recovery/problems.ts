@@ -1,6 +1,7 @@
 import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 
 import {
+  CommercePortalAuthRecoveryAuthenticationProblemSchema,
   CommercePortalAuthRecoveryForbiddenProblemSchema,
   CommercePortalAuthRecoveryInvalidProblemSchema,
   CommercePortalAuthRecoveryRateLimitedProblemSchema,
@@ -10,12 +11,22 @@ import {
 } from '../../../../shared/portal-auth/recovery-api.ts';
 
 const problemStatus = {
+  authentication: 401,
   forbidden: 403,
   invalid: 400,
   rateLimited: 429,
   rejected: 400,
   unavailable: 503,
 } as const;
+
+export const commercePortalAuthRecoveryAuthenticationProblem =
+  CommercePortalAuthRecoveryAuthenticationProblemSchema.make({
+    code: 'authentication_required',
+    detail: 'A verified gateway caller is required.',
+    status: problemStatus.authentication,
+    title: 'Recovery caller required',
+    type: 'https://ontos.dev/problems/commerce-portal-auth-recovery-authentication-required',
+  });
 
 export const commercePortalAuthRecoveryInvalidProblem = CommercePortalAuthRecoveryInvalidProblemSchema.make({
   code: 'invalid_request',

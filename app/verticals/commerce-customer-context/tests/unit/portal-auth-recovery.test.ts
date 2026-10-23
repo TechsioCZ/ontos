@@ -1,8 +1,17 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
+
+import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
+import { ActiveApplicationCompositionService } from '@app/core-runtime';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import { makeGatewayPrincipalVerifierLayer } from '@app/gateway-principal-verifier/server';
+import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
+import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
-import { Context, DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { Clock, ConfigProvider, Context, DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
 
 import { COMMERCE_PORTAL_AUTH_INTERNAL_BASE_PATH } from '../../shared/deployment-paths.ts';
 import type {
@@ -76,7 +85,6 @@ const makeMemoryRecoveryStore = (
   let currentEmail = initialEmail;
   let currentSubject = initialSubject;
   let currentVerified = false;
-  let reservationSubject: string | null = null;
   let token: Redacted.Redacted | null = null;
   let tokenExpiresAt: Date | null = null;
   let tokenSubject: string | null = null;
@@ -148,11 +156,7 @@ const makeMemoryRecoveryStore = (
         if (input.email.toLowerCase() !== currentEmail.toLowerCase() || input.providerSubjectId !== currentSubject) {
           return false;
         }
-        if (reservationSubject !== null && reservationSubject !== input.providerSubjectId) {
-          return false;
-        }
         const { expiresAt, providerSubjectId, token: registeredToken } = input;
-        reservationSubject = null;
         token = registeredToken;
         tokenExpiresAt = expiresAt;
         tokenSubject = providerSubjectId;
@@ -161,18 +165,6 @@ const makeMemoryRecoveryStore = (
       }),
     registerPasswordResetToken: () => Effect.succeed(true),
     releasePasswordResetLedger: () => Effect.void,
-    reserveEmailVerificationSubject: (input) =>
-      Effect.sync(() => {
-        if (
-          currentVerified ||
-          input.email.toLowerCase() !== currentEmail.toLowerCase() ||
-          input.providerSubjectId !== currentSubject
-        ) {
-          return false;
-        }
-        reservationSubject = input.providerSubjectId;
-        return true;
-      }),
   };
 
   return { budgetKeys: () => [...spentBudgets.keys()], replaceEmail, replaceSubject, store };
@@ -261,18 +253,68 @@ const makeRecoveryTransport = (
 ) =>
   Effect.gen(function* makeRecoveryTransportEffect() {
     const configuration = yield* recoveryConfiguration;
+    const clock = yield* Clock.Clock;
+    const now = DateTime.toEpochMillis(yield* DateTime.now);
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture(
+      [ultramodernApiMarker.appId],
+      ultramodernApiMarker.buildMarker,
+    );
+    const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
+    const publicJwk = {
+      ...(yield* Effect.promise(() => exportJWK(publicKey))),
+      alg: 'EdDSA',
+      kid: 'resend-test',
+      use: 'sig',
+    };
+    const gateway = Layer.mergeAll(
+      makeGatewayPrincipalVerifierLayer(
+        ConfigProvider.fromUnknown({
+          ONTOS_GATEWAY_ISSUER: ORIGIN,
+          ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+        }),
+      ),
+      Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
+      Layer.succeed(GatewayAssertionRedemptionService, { consume: () => Effect.void }),
+    );
+    const issueGatewayAssertion = (principalId = '10000000-0000-4000-8000-000000000010') =>
+      Effect.promise(() =>
+        new SignJWT({
+          compositionRevision: snapshot.composition.revision,
+          principal: {
+            authBindingId: '10000000-0000-4000-8000-000000000011',
+            authContextRef: 'gateway-api-key:resend-test',
+            authenticationNamespaceId: 'ontos.staff.gateway-api-key.v1',
+            authMethod: 'api_key',
+            principalId,
+            tenantId: '10000000-0000-4000-8000-000000000002',
+          },
+          targetBuildMarker: ultramodernApiMarker.buildMarker,
+          ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
+        })
+          .setProtectedHeader({ alg: 'EdDSA', kid: 'resend-test', typ: 'JWT' })
+          .setIssuer(ORIGIN)
+          .setAudience('commerce-customer-context')
+          .setSubject(principalId)
+          .setIssuedAt(Math.floor(now / 1000))
+          .setExpirationTime(Math.floor(now / 1000) + 300)
+          .setJti(randomUUID())
+          .sign(privateKey),
+      );
     const apiLayer = HttpApiBuilder.layer(recoveryTransportApi).pipe(
       Layer.provide(portalAuthRecoveryApiLive),
+      Layer.provide(gateway),
+      Layer.provide(Layer.succeed(Clock.Clock, clock)),
       Layer.provide(Layer.succeed(CommercePortalAuthRecoveryService, recovery)),
       Layer.provide(Layer.succeed(CommercePortalAuthRecoveryRateLimitService, rateLimit)),
       Layer.provide(Layer.succeed(CommercePortalAuthConfig, configuration)),
       Layer.provide(HttpServer.layerServices),
     );
-    return yield* Effect.acquireRelease(
+    const handler = yield* Effect.acquireRelease(
       Effect.sync(() => HttpRouter.toWebHandler(apiLayer, { disableLogger: true })),
-      (handler) => Effect.promise(handler.dispose.bind(handler)).pipe(Effect.orDie),
+      (runtime) => Effect.promise(runtime.dispose.bind(runtime)).pipe(Effect.orDie),
     );
-  });
+    return { ...handler, issueGatewayAssertion };
+  }).pipe(Effect.provide(TestClock.layer()));
 
 const recoveryRoute = (route: string): string => `${ORIGIN}${COMMERCE_PORTAL_AUTH_INTERNAL_BASE_PATH}${route}`;
 
@@ -286,7 +328,7 @@ const recoveryRoute = (route: string): string => `${ORIGIN}${COMMERCE_PORTAL_AUT
 const recoveryBudgetKey = (subject: string, route: string): string =>
   `${UNRESOLVED_PORTAL_AUTH_CLIENT_KEY}|${createHmac('sha256', SECRET).update(subject).digest('base64url')}|${route}`;
 
-it.effect('rejects verification resend for a different subject before provider delivery', () => {
+it.effect('rejects caller-supplied provider identity before verification delivery', () => {
   let providerCalls = 0;
   const provider: CommercePortalAuthRecoveryProvider = {
     ...successfulProvider(),
@@ -296,20 +338,13 @@ it.effect('rejects verification resend for a different subject before provider d
         return { status: true };
       }),
   };
-  const fixture = makeMemoryRecoveryStore();
-  fixture.replaceSubject(REPLACEMENT_SUBJECT);
-  return runWithRecovery(provider, fixture.store, (service) =>
-    service.requestEmailVerification({ email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT }).pipe(
+  const input = { email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT };
+  return runWithRecovery(provider, makeMemoryRecoveryStore().store, (service) =>
+    service.requestEmailVerification(input).pipe(
       Effect.result,
       Effect.tap((result) =>
         Effect.sync(() => {
           expect(Result.isFailure(result)).toBe(true);
-          if (Result.isFailure(result)) {
-            expect(result.failure).toBeInstanceOf(CommercePortalAuthRecoveryRejected);
-            if (Schema.is(CommercePortalAuthRecoveryRejected)(result.failure)) {
-              expect(result.failure.code).toBe('INVALID_SUBJECT');
-            }
-          }
           expect(providerCalls).toBe(0);
         }),
       ),
@@ -317,7 +352,7 @@ it.effect('rejects verification resend for a different subject before provider d
   );
 });
 
-it.effect('consumes a verification token once after binding it to the reserved subject', () => {
+it.effect('consumes a verification token once after binding it to the provider callback subject', () => {
   let providerCalls = 0;
   const provider: CommercePortalAuthRecoveryProvider = {
     ...successfulProvider(),
@@ -330,10 +365,7 @@ it.effect('consumes a verification token once after binding it to the reserved s
   const fixture = makeMemoryRecoveryStore();
   return runWithRecovery(provider, fixture.store, (service) =>
     Effect.gen(function* verificationLifecycle() {
-      const requested = yield* service.requestEmailVerification({
-        email: EMAIL,
-        providerSubjectId: ORIGINAL_SUBJECT,
-      });
+      const requested = yield* service.requestEmailVerification({ email: EMAIL });
       expect(requested.outcome).toBe('EMAIL_VERIFICATION_STARTED');
       expect(providerCalls).toBe(1);
 
@@ -1603,3 +1635,163 @@ it.effect('refuses email verification when the completion transaction fails, lea
     expect(consumeCalls).toBe(1);
   });
 });
+
+it.effect('resends only by normalized email with no subject, session or account lookup', () => {
+  const inputs: Parameters<CommercePortalAuthRecoveryProvider['sendVerificationEmail']>[0][] = [];
+  const fixture = makeMemoryRecoveryStore();
+  const store: CommercePortalAuthRecoveryStore = {
+    ...fixture.store,
+    findAccountSubjectForEmail: () => Effect.die('Resend must not disclose a local account lookup'),
+  };
+  const provider: CommercePortalAuthRecoveryProvider = {
+    ...successfulProvider(),
+    sendVerificationEmail: (input) =>
+      Effect.sync(() => {
+        inputs.push(input);
+        return { status: true };
+      }),
+  };
+  return runWithRecovery(provider, store, (service) =>
+    Effect.gen(function* anonymousResend() {
+      for (const email of [EMAIL.toUpperCase(), 'unknown@example.test', 'verified@example.test']) {
+        expect(yield* service.requestEmailVerification({ email })).toStrictEqual({
+          outcome: 'EMAIL_VERIFICATION_STARTED',
+        });
+      }
+      expect(inputs).toStrictEqual([
+        { body: { email: EMAIL } },
+        { body: { email: 'unknown@example.test' } },
+        { body: { email: 'verified@example.test' } },
+      ]);
+    }),
+  );
+});
+
+it.effect('enforces independent durable address and verified caller resend budgets without enumeration', () =>
+  Effect.gen(function* verificationResendBudgets() {
+    let deliveries = 0;
+    const fixture = makeMemoryRecoveryStore();
+    const recovery = yield* runWithRecovery(
+      {
+        ...successfulProvider(),
+        sendVerificationEmail: () =>
+          Effect.sync(() => {
+            deliveries += 1;
+            return { status: true };
+          }),
+      },
+      fixture.store,
+      Effect.succeed,
+    );
+    const app = yield* makeRecoveryTransport(recovery, makeCommercePortalAuthRecoveryRateLimit(fixture.store));
+    const resend = (email: string, principalId?: string) =>
+      Effect.gen(function* resendRequest() {
+        const token = yield* app.issueGatewayAssertion(principalId);
+        return yield* Effect.promise(() =>
+          app.handler(
+            new Request(recoveryRoute('/send-verification-email'), {
+              body: JSON.stringify({ email }),
+              headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', origin: ORIGIN },
+              method: 'POST',
+            }),
+            transportContext,
+          ),
+        );
+      });
+    for (let attempt = 0; attempt < COMMERCE_PORTAL_AUTH_POLICY.rateLimit.recovery.max; attempt += 1) {
+      const response = yield* resend(EMAIL);
+      expect(response.status).toBe(200);
+      expect(response.headers.get('cache-control')).toBe('no-store');
+      expect(response.headers.has('set-cookie')).toBe(false);
+      expect(yield* Effect.promise(response.json.bind(response))).toStrictEqual({
+        outcome: 'EMAIL_VERIFICATION_STARTED',
+      });
+    }
+    expect((yield* resend(EMAIL.toUpperCase())).status).toBe(429);
+    expect((yield* resend(EMAIL, '10000000-0000-4000-8000-000000000020')).status).toBe(429);
+    // A different address still works, while the same verified caller cannot fan out indefinitely.
+    const callerBudget = COMMERCE_PORTAL_AUTH_POLICY.rateLimit.verificationCaller.max;
+    for (let attempt = COMMERCE_PORTAL_AUTH_POLICY.rateLimit.recovery.max + 1; attempt < callerBudget; attempt += 1) {
+      expect((yield* resend(`unknown-${attempt}@example.test`)).status).toBe(200);
+    }
+    expect((yield* resend('one-more-unknown@example.test')).status).toBe(429);
+    expect(deliveries).toBe(callerBudget - 1);
+    expect(fixture.budgetKeys().some((key) => key.includes(EMAIL))).toBe(false);
+  }),
+);
+
+it.effect(
+  'rejects foreign origins, missing gateway identity and injected subjects before resend budgets or delivery',
+  () =>
+    Effect.gen(function* verificationResendGuards() {
+      let deliveries = 0;
+      const fixture = makeMemoryRecoveryStore();
+      const recovery = yield* runWithRecovery(
+        {
+          ...successfulProvider(),
+          sendVerificationEmail: () =>
+            Effect.sync(() => {
+              deliveries += 1;
+              return { status: true };
+            }),
+        },
+        fixture.store,
+        Effect.succeed,
+      );
+      const app = yield* makeRecoveryTransport(recovery, makeCommercePortalAuthRecoveryRateLimit(fixture.store));
+      for (const [origin, body, status] of [
+        ['https://attacker.example.test', { email: EMAIL }, 403],
+        [ORIGIN, { email: EMAIL }, 401],
+        [ORIGIN, { email: EMAIL, providerSubjectId: ORIGINAL_SUBJECT }, 400],
+      ] as const) {
+        const response = yield* Effect.promise(() =>
+          app.handler(
+            new Request(recoveryRoute('/send-verification-email'), {
+              body: JSON.stringify(body),
+              headers: { 'content-type': 'application/json', origin },
+              method: 'POST',
+            }),
+            transportContext,
+          ),
+        );
+        expect(response.status).toBe(status);
+        expect(response.headers.has('set-cookie')).toBe(false);
+      }
+      expect(fixture.budgetKeys()).toStrictEqual([]);
+      expect(deliveries).toBe(0);
+    }),
+);
+
+it.effect('fails resend closed when the durable budget cannot answer', () =>
+  Effect.gen(function* unavailableResendBudget() {
+    let deliveries = 0;
+    const recovery = yield* runWithRecovery(
+      {
+        ...successfulProvider(),
+        sendVerificationEmail: () =>
+          Effect.sync(() => {
+            deliveries += 1;
+            return { status: true };
+          }),
+      },
+      makeMemoryRecoveryStore().store,
+      Effect.succeed,
+    );
+    const app = yield* makeRecoveryTransport(recovery, {
+      consume: () => Effect.fail(new CommercePortalAuthRecoveryProviderFailure({ operation: 'recovery-rate-limit' })),
+    });
+    const token = yield* app.issueGatewayAssertion();
+    const response = yield* Effect.promise(() =>
+      app.handler(
+        new Request(recoveryRoute('/send-verification-email'), {
+          body: JSON.stringify({ email: EMAIL }),
+          headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', origin: ORIGIN },
+          method: 'POST',
+        }),
+        transportContext,
+      ),
+    );
+    expect(response.status).toBe(503);
+    expect(deliveries).toBe(0);
+  }),
+);
