@@ -8,6 +8,7 @@ rstest.mock('@app/admin-ui', () => ({ foldSearchText: (value: string) => value.t
 
 import { opsSearchRows } from '../../shared/domain/ops-overview.ts';
 import {
+  agendaPeople,
   buildKpis,
   buildSearchIndex,
   currentAgendaState,
@@ -151,4 +152,22 @@ it('greets the session person, never an account role or a fixture persona', () =
   expect(personalGreetingName('Externí obchodník')).toBeUndefined();
   expect(personalGreetingName(undefined)).toBeUndefined();
   expect(personalGreetingName('')).toBeUndefined();
+});
+
+it('agenda assignee names come only from the session and visible same-tenant event labels', () => {
+  const context = { displayName: 'Jana Nováková', legalEntityId: 'company', principalId: 'self', tenantId: 'tenant' };
+  const state = {
+    events: [
+      { assignee: { principalId: 'self', tenantId: 'tenant' }, assigneeLabel: 'Old name' },
+      { assignee: { principalId: 'partner', tenantId: 'tenant' }, assigneeLabel: '  Petr Novák  ' },
+      { assignee: { principalId: 'other', tenantId: 'another-tenant' }, assigneeLabel: 'Hidden name' },
+      { assignee: { principalId: 'unnamed', tenantId: 'tenant' } },
+    ],
+  } as unknown as import('../../shared/domain/agenda.ts').AgendaState;
+  expect(agendaPeople(state, context)).toEqual([
+    { displayName: 'Jana Nováková', principalId: 'self', tenantId: 'tenant' },
+    { displayName: 'Petr Novák', principalId: 'partner', tenantId: 'tenant' },
+  ]);
+  expect(agendaPeople(state, undefined)).toEqual([]);
+  expect(agendaPeople(undefined, { ...context, displayName: undefined })).toEqual([]);
 });

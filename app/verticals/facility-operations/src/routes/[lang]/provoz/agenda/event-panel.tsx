@@ -17,7 +17,7 @@ import type { PropertyRef } from '../../../../../shared/domain/common.ts';
 import { CommentThread } from '../../../../ui/comment-thread.tsx';
 import { urgencyOf } from '../../../../ui/ops-agenda/deadlines.ts';
 import type { Deadline } from '../../../../../shared/domain/ops-overview.ts';
-import { DEMO_TENANT_ID, personaOf, personas } from '../../../../ui/ops-agenda/personas.ts';
+import { useAgendaPeople } from '../../../../ui/ops-agenda/agenda-people.tsx';
 import { Pill, categoryTone, fmt, langOf, urgencyTone } from '../../../../ui/ops-agenda/ui-bits.tsx';
 import { usePropertyOptions } from '../../../../ui/property-options.ts';
 import type { CommandOutcome } from '../../../../ui/use-agenda.ts';
@@ -35,7 +35,14 @@ interface Draft {
   readonly note: string;
 }
 
-const emptyDraft = (date: string): Draft => ({ assignee: NONE, date, kind: 'MEETING', location: NONE, note: '', title: '' });
+const emptyDraft = (date: string): Draft => ({
+  assignee: NONE,
+  date,
+  kind: 'MEETING',
+  location: NONE,
+  note: '',
+  title: '',
+});
 
 const draftOf = (event: CalendarEvent): Draft => ({
   assignee: event.assignee?.principalId ?? NONE,
@@ -49,6 +56,7 @@ const draftOf = (event: CalendarEvent): Draft => ({
 const EventForm = ({ draft, setDraft }: { readonly draft: Draft; readonly setDraft: (draft: Draft) => void }) => {
   const { t } = useModernI18n();
   const properties = usePropertyOptions();
+  const people = useAgendaPeople();
   return (
     <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-3">
       <FormInput
@@ -70,10 +78,16 @@ const EventForm = ({ draft, setDraft }: { readonly draft: Draft; readonly setDra
           value={draft.date}
         />
         <Select
-          items={kinds.map((value) => ({ displayValue: t(`${k}.kind.${value}`), label: t(`${k}.kind.${value}`), value }))}
+          items={kinds.map((value) => ({
+            displayValue: t(`${k}.kind.${value}`),
+            label: t(`${k}.kind.${value}`),
+            value,
+          }))}
           label={t(`${k}.fields.kind`)}
           name="kind"
-          onValueChange={({ value }) => setDraft({ ...draft, kind: (value[0] as CalendarEventKind | undefined) ?? 'MEETING' })}
+          onValueChange={({ value }) =>
+            setDraft({ ...draft, kind: (value[0] as CalendarEventKind | undefined) ?? 'MEETING' })
+          }
           size="md"
           value={[draft.kind]}
         />
@@ -81,15 +95,22 @@ const EventForm = ({ draft, setDraft }: { readonly draft: Draft; readonly setDra
       <Select
         items={[
           { displayValue: t(`${k}.fields.nobody`), label: t(`${k}.fields.nobody`), value: NONE },
-          ...personas
-            .filter((persona) => persona.role !== 'external')
-            .map((persona) => ({
-              displayValue: `${t(`${k}.personas.${persona.role}`)} (${persona.email})`,
-              label: `${t(`${k}.personas.${persona.role}`)} (${persona.email})`,
-              value: persona.principalId,
-            })),
+          ...people.map((person) => ({
+            displayValue: person.displayName,
+            label: person.displayName,
+            value: person.principalId,
+          })),
+          ...(draft.assignee !== NONE && !people.some((person) => person.principalId === draft.assignee)
+            ? [
+                {
+                  displayValue: t(`${k}.fields.currentAssignee`),
+                  label: t(`${k}.fields.currentAssignee`),
+                  value: draft.assignee,
+                },
+              ]
+            : []),
         ]}
-        label={t(`${k}.fields.assignee`)}
+        label={t(`${k}.fields.knownAssignee`)}
         name="assignee"
         onValueChange={({ value }) => setDraft({ ...draft, assignee: value[0] ?? NONE })}
         size="md"
@@ -98,8 +119,16 @@ const EventForm = ({ draft, setDraft }: { readonly draft: Draft; readonly setDra
       {properties.status === 'ready' && (
         <Select
           items={[
-            { displayValue: t('facility-operations.property.none'), label: t('facility-operations.property.none'), value: NONE },
-            ...properties.options.map((option) => ({ displayValue: option.ref.label, label: option.ref.label, value: option.value })),
+            {
+              displayValue: t('facility-operations.property.none'),
+              label: t('facility-operations.property.none'),
+              value: NONE,
+            },
+            ...properties.options.map((option) => ({
+              displayValue: option.ref.label,
+              label: option.ref.label,
+              value: option.value,
+            })),
           ]}
           label={t('facility-operations.common.location')}
           name="location"
@@ -123,10 +152,10 @@ const EventForm = ({ draft, setDraft }: { readonly draft: Draft; readonly setDra
 const useLocationRef = () => {
   const properties = usePropertyOptions();
   return (value: string): PropertyRef | undefined =>
-    value === NONE || properties.status !== 'ready' ? undefined : properties.options.find((option) => option.value === value)?.ref;
+    value === NONE || properties.status !== 'ready'
+      ? undefined
+      : properties.options.find((option) => option.value === value)?.ref;
 };
-
-const principal = (principalId: string) => ({ principalId, tenantId: DEMO_TENANT_ID });
 
 export const CreateEventPanel = ({
   initialDate,
@@ -144,6 +173,8 @@ export const CreateEventPanel = ({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const locationRef = useLocationRef();
+  const people = useAgendaPeople();
+  const personOf = (id: string | undefined) => people.find((person) => person.principalId === id);
   useEffect(() => {
     if (open) {
       setDraft(emptyDraft(initialDate));
@@ -157,13 +188,18 @@ export const CreateEventPanel = ({
     }
     setBusy(true);
     const related = locationRef(draft.location);
-    const assignee = personaOf(draft.assignee === NONE ? undefined : draft.assignee);
+    const assignee = personOf(draft.assignee === NONE ? undefined : draft.assignee);
     const outcome = await onRun({
       _tag: 'AgendaEventCreate',
       date: draft.date,
       kind: draft.kind,
       title: draft.title.trim(),
-      ...(assignee === undefined ? {} : { assignee: principal(assignee.principalId), assigneeLabel: assignee.email }),
+      ...(assignee === undefined
+        ? {}
+        : {
+            assignee: { principalId: assignee.principalId, tenantId: assignee.tenantId },
+            assigneeLabel: assignee.displayName,
+          }),
       ...(related === undefined ? {} : { related }),
       ...(draft.note.trim() === '' ? {} : { note: draft.note.trim() }),
     } as OpsCommand);
@@ -181,7 +217,12 @@ export const CreateEventPanel = ({
           <Button onClick={onClose} theme="outlined" variant="secondary">
             {t('facility-operations.common.cancel')}
           </Button>
-          <Button isLoading={busy} loadingText={t('facility-operations.common.saving')} onClick={() => void submit()} variant="primary">
+          <Button
+            isLoading={busy}
+            loadingText={t('facility-operations.common.saving')}
+            onClick={() => void submit()}
+            variant="primary"
+          >
             {t(`${k}.create.submit`)}
           </Button>
         </>
@@ -227,12 +268,15 @@ export const DeadlinePanel = ({
 }) => {
   const { language, t } = useModernI18n();
   const lang = langOf(language);
-  const event = deadline?.eventId === undefined ? undefined : state?.events.find((entry) => entry.id === deadline.eventId);
+  const event =
+    deadline?.eventId === undefined ? undefined : state?.events.find((entry) => entry.id === deadline.eventId);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Draft | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const locationRef = useLocationRef();
+  const people = useAgendaPeople();
+  const personOf = (id: string | undefined) => people.find((person) => person.principalId === id);
   useEffect(() => {
     setEditing(false);
     setError(undefined);
@@ -262,7 +306,7 @@ export const DeadlinePanel = ({
       setError(t('facility-operations.common.required'));
       return;
     }
-    const assignee = personaOf(draft.assignee === NONE ? undefined : draft.assignee);
+    const assignee = personOf(draft.assignee === NONE ? undefined : draft.assignee);
     const related = locationRef(draft.location);
     void run({
       _tag: 'AgendaEventUpdate',
@@ -271,14 +315,21 @@ export const DeadlinePanel = ({
       kind: draft.kind,
       note: draft.note.trim(),
       title: draft.title.trim(),
-      ...(assignee === undefined ? { assignee: null } : { assignee: principal(assignee.principalId), assigneeLabel: assignee.email }),
+      ...(draft.assignee === NONE
+        ? { assignee: null }
+        : assignee === undefined
+          ? {}
+          : {
+              assignee: { principalId: assignee.principalId, tenantId: assignee.tenantId },
+              assigneeLabel: assignee.displayName,
+            }),
       ...(draft.location === NONE ? { related: null } : related === undefined ? {} : { related }),
     } as OpsCommand);
   };
 
   const status = event?.status ?? 'PLANNED';
   const urgency = deadline === undefined ? 'later' : urgencyOf(deadline, today);
-  const owner = personaOf(deadline?.ownerPrincipalId);
+  const owner = personOf(deadline?.ownerPrincipalId);
 
   return (
     <SidePanel
@@ -289,7 +340,12 @@ export const DeadlinePanel = ({
               <Button onClick={() => setEditing(false)} theme="outlined" variant="secondary">
                 {t('facility-operations.common.cancel')}
               </Button>
-              <Button isLoading={busy} loadingText={t('facility-operations.common.saving')} onClick={save} variant="primary">
+              <Button
+                isLoading={busy}
+                loadingText={t('facility-operations.common.saving')}
+                onClick={save}
+                variant="primary"
+              >
                 {t('facility-operations.common.save')}
               </Button>
             </>
@@ -297,16 +353,37 @@ export const DeadlinePanel = ({
             <div className="ops-event-actions" style={{ display: 'flex', flexWrap: 'wrap', gap: 8, width: '100%' }}>
               <style>{`.ops-event-actions > button { flex: 1 1 165px; height: auto; min-height: 44px; white-space: normal; padding-block: 10px; }`}</style>
               {status === 'PLANNED' && (
-                <Button isLoading={busy} onClick={() => void run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'CANCELLED' } as OpsCommand, true)} theme="borderless" variant="danger">
+                <Button
+                  isLoading={busy}
+                  onClick={() =>
+                    void run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'CANCELLED' } as OpsCommand, true)
+                  }
+                  theme="borderless"
+                  variant="danger"
+                >
                   {t(`${k}.event.cancel`)}
                 </Button>
               )}
               {status !== 'PLANNED' ? (
-                <Button isLoading={busy} onClick={() => void run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'PLANNED' } as OpsCommand)} theme="outlined" variant="secondary">
+                <Button
+                  isLoading={busy}
+                  onClick={() =>
+                    void run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'PLANNED' } as OpsCommand)
+                  }
+                  theme="outlined"
+                  variant="secondary"
+                >
                   {t(`${k}.event.reopen`)}
                 </Button>
               ) : (
-                <Button isLoading={busy} onClick={() => void run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'DONE' } as OpsCommand)} theme="outlined" variant="secondary">
+                <Button
+                  isLoading={busy}
+                  onClick={() =>
+                    void run({ _tag: 'AgendaEventUpdate', eventId: event.id, status: 'DONE' } as OpsCommand)
+                  }
+                  theme="outlined"
+                  variant="secondary"
+                >
                   {t(`${k}.event.done`)}
                 </Button>
               )}
@@ -333,12 +410,17 @@ export const DeadlinePanel = ({
       title={deadline?.title ?? ''}
     >
       {deadline !== undefined && (
-        <div className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-4 facilityoperations:py-2" data-testid="deadline-panel">
+        <div
+          className="facilityoperations:flex facilityoperations:flex-col facilityoperations:gap-4 facilityoperations:py-2"
+          data-testid="deadline-panel"
+        >
           <div className="facilityoperations:flex facilityoperations:flex-wrap facilityoperations:gap-2">
             <Pill tone={categoryTone[deadline.category]}>{t(`${k}.category.${deadline.category}`)}</Pill>
             <Pill tone={urgencyTone[urgency]}>{t(`${k}.urgency.${urgency}`)}</Pill>
             {event !== undefined && <Pill tone="neutral">{t(`${k}.eventStatus.${status}`)}</Pill>}
-            {deadline.source === 'agreements' && deadline.detail === 'DRAFT' && <Pill tone="neutral">{t(`${k}.event.draftContract`)}</Pill>}
+            {deadline.source === 'agreements' && deadline.detail === 'DRAFT' && (
+              <Pill tone="neutral">{t(`${k}.event.draftContract`)}</Pill>
+            )}
           </div>
           {error !== undefined && (
             <StatusText showIcon status="error">
@@ -352,33 +434,62 @@ export const DeadlinePanel = ({
               items={[
                 { label: t(`${k}.columns.date`), value: fmt.long(lang, deadline.date) },
                 { label: t(`${k}.columns.source`), value: t(`${k}.sources.${deadline.source}`) },
-                ...(deadline.location === undefined ? [] : [{ label: t(`${k}.columns.location`), value: deadline.location }]),
-                ...(event?.kind === undefined ? [] : [{ label: t(`${k}.fields.kind`), value: t(`${k}.kind.${event.kind}`) }]),
-                ...(owner === undefined ? [] : [{ label: t(`${k}.fields.owner`), value: owner.email }]),
-                ...(deadline.amountMinor === undefined ? [] : [{ label: t(`${k}.columns.amount`), value: `${(deadline.amountMinor / 100).toLocaleString('cs-CZ')} Kč` }]),
-                ...(event?.note === undefined || event.note === '' ? [] : [{ label: t('facility-operations.common.note'), value: event.note }]),
+                ...(deadline.location === undefined
+                  ? []
+                  : [{ label: t(`${k}.columns.location`), value: deadline.location }]),
+                ...(event?.kind === undefined
+                  ? []
+                  : [{ label: t(`${k}.fields.kind`), value: t(`${k}.kind.${event.kind}`) }]),
+                ...(owner === undefined ? [] : [{ label: t(`${k}.fields.owner`), value: owner.displayName }]),
+                ...(deadline.amountMinor === undefined
+                  ? []
+                  : [
+                      {
+                        label: t(`${k}.columns.amount`),
+                        value: `${(deadline.amountMinor / 100).toLocaleString('cs-CZ')} Kč`,
+                      },
+                    ]),
+                ...(event?.note === undefined || event.note === ''
+                  ? []
+                  : [{ label: t('facility-operations.common.note'), value: event.note }]),
                 ...(event === undefined
                   ? []
                   : [
                       {
                         label: t('facility-operations.common.createdBy'),
-                        value: `${personaOf(event.createdBy.principalId)?.email ?? event.createdBy.principalId} · ${fmt.stamp(lang, DateTime.formatIso(event.createdAt))}`,
+                        value: [
+                          personOf(event.createdBy.principalId)?.displayName,
+                          fmt.stamp(lang, DateTime.formatIso(event.createdAt)),
+                        ]
+                          .filter((part) => part !== undefined)
+                          .join(' · '),
                       },
                       {
                         label: t('facility-operations.common.updatedAt'),
-                        value: `${personaOf(event.updatedBy.principalId)?.email ?? event.updatedBy.principalId} · ${fmt.stamp(lang, DateTime.formatIso(event.updatedAt))}`,
+                        value: [
+                          personOf(event.updatedBy.principalId)?.displayName,
+                          fmt.stamp(lang, DateTime.formatIso(event.updatedAt)),
+                        ]
+                          .filter((part) => part !== undefined)
+                          .join(' · '),
                       },
                     ]),
               ]}
             />
           )}
           {deadline.eventId === undefined && (
-            <p className="facilityoperations:m-0 facilityoperations:rounded-lg facilityoperations:p-3 facilityoperations:text-sm" style={{ background: 'var(--color-surface-subtle, #f8fafc)' }}>
+            <p
+              className="facilityoperations:m-0 facilityoperations:rounded-lg facilityoperations:p-3 facilityoperations:text-sm"
+              style={{ background: 'var(--color-surface-subtle, #f8fafc)' }}
+            >
               {t(`${k}.event.derivedNote`, { source: t(`${k}.sources.${deadline.source}`) })}
             </p>
           )}
           {event !== undefined && !editing && (
-            <CommentThread subject={{ id: event.id, kind: 'event', label: event.title }} title={t(`${k}.event.comments`)} />
+            <CommentThread
+              subject={{ id: event.id, kind: 'event', label: event.title }}
+              title={t(`${k}.event.comments`)}
+            />
           )}
         </div>
       )}

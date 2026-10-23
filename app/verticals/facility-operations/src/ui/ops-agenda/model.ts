@@ -1,6 +1,7 @@
 // Derived views over the loaded sources: calendar deadlines, overview KPIs (each with its exact drill-down rows),
 // and the permission-filtered search index. Pure; owned by the ops-agenda lane.
 import { foldSearchText, formatMoney } from '@app/admin-ui';
+import type { ModulePageContext } from '@app/shared-contracts/page-data';
 import type { AgendaState } from '../../../shared/domain/agenda.ts';
 import {
   addDays,
@@ -727,4 +728,30 @@ export const personalGreetingName = (displayName: string | undefined): string | 
     return undefined;
   }
   return name;
+};
+
+/** Names and references already visible to this actor, never a role/fixture directory or an authorization grant. */
+export const agendaPeople = (state: AgendaState | undefined, context: ModulePageContext | undefined) => {
+  const people = new Map<
+    string,
+    { readonly displayName: string; readonly principalId: string; readonly tenantId: string }
+  >();
+  if (context === undefined) return [];
+  for (const event of state?.events ?? []) {
+    if (
+      event.assignee?.tenantId === context.tenantId &&
+      event.assigneeLabel !== undefined &&
+      event.assigneeLabel.trim() !== ''
+    ) {
+      people.set(event.assignee.principalId, { ...event.assignee, displayName: event.assigneeLabel.trim() });
+    }
+  }
+  if (context.displayName !== undefined && context.displayName.trim() !== '') {
+    people.set(context.principalId, {
+      displayName: context.displayName.trim(),
+      principalId: context.principalId,
+      tenantId: context.tenantId,
+    });
+  }
+  return [...people.values()];
 };

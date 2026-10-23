@@ -14,7 +14,9 @@
     "kind": "Kind",
     "assignee": "Assigned to",
     "nobody": "Nobody",
-    "owner": "Responsible"
+    "owner": "Responsible",
+    "knownAssignee": "Assign to me or an event participant",
+    "currentAssignee": "Current assignment"
   },
   "kind": {
     "DEADLINE": "Deadline",
@@ -45,12 +47,6 @@
     "openSource": "Open in {{source}}",
     "derivedNote": "This date is read from its source ({{source}}). Change it in the original record – the calendar shows the new date on the next load, without a second entry.",
     "draftContract": "Draft contract"
-  },
-  "personas": {
-    "management": "Management",
-    "operations": "Operations",
-    "finance": "Accountant",
-    "external": "External sales"
   },
   "sources": {
     "property": "Properties",
