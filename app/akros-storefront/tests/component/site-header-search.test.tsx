@@ -195,7 +195,13 @@ describe("SiteHeader search", () => {
     const submit = screen.getByRole("button", { name: "Hledat" });
     expect(submit.textContent).toBe("");
 
-    await user.type(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }), "  M8 A4  ");
+    const input = screen.getByRole("combobox", { name: "Vyhledat v katalogu" });
+    await user.click(input);
+    await user.paste("  M8 A4  ");
+    await waitFor(() => expect(input.getAttribute("value")).toBe("  M8 A4  "));
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain("nenašli žádné produkty"),
+    );
     await user.click(submit);
 
     expect(push).toHaveBeenCalledOnce();

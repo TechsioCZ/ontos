@@ -18,6 +18,7 @@
     "test:component": "vitest run tests/component",
     "test:home": "node tests/browser/homepage-layout.mjs",
     "test:catalog": "node tests/browser/catalog.mjs",
+    "test:carousel": "node tests/browser/home-carousel.mjs",
     "test:shared-ui": "node tests/browser/shared-ui.mjs",
     "test:account": "node tests/browser/account-profile.mjs && node tests/browser/account-area.mjs",
     "test:responsive": "node tests/browser/homepage-layout.mjs && node tests/browser/variant-table-layout.mjs && node tests/browser/cart-items-layout.mjs && node tests/browser/checkout-section.mjs && node tests/browser/checkout-typography-services.mjs",
