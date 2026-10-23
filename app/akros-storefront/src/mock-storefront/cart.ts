@@ -1,4 +1,6 @@
 export interface CartItemSnapshot {
+  /** Verified kilograms per one base sales unit; never raw feed net_weight. */
+  unitWeightKg?: number;
   productId: string;
   variantId?: string;
   slug: string;

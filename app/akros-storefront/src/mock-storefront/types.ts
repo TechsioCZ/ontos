@@ -20,7 +20,7 @@ export interface CatalogProductVariant {
   sku: string;
   label: string;
   description?: string;
-  /** Raw feed value; weight unit and relation to the sale unit are not yet verified. */
+  /** Source kg; sale-unit interpretation belongs to getProductUnitWeightKg. */
   sourceNetWeight?: number;
   minimumQuantity: number;
   packageQuantity?: number;

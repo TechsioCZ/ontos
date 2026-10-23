@@ -4,6 +4,7 @@ import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { useCart } from "./cart-provider";
 import { CartItemsTable } from "@/features/checkout/cart-items-table";
 import { CartServices } from "@/features/checkout/cart-services";
+import { CartWeight } from "./cart-weight";
 
 export function CartContent() {
   const { cart, ready } = useCart();
@@ -35,6 +36,7 @@ export function CartContent() {
         Obsah košíku
       </h1>
       <CartItemsTable />
+      <CartWeight />
       <CartServices />
     </section>
   );

@@ -16,6 +16,7 @@ import {
 import { getProductStockStatus, type ProductStockStatus } from "@/lib/product-stock";
 import rawCatalogData from "./generated/catalog.generated.json";
 import rawCategoryData from "./generated/categories.generated.json";
+import type { CartItemSnapshot } from "./cart";
 
 const catalogData = rawCatalogData as CatalogData;
 const categoryData = rawCategoryData as CategoryData;
@@ -291,6 +292,24 @@ export const getProductVariantById = (productId: string, variantId?: string) =>
   variantId
     ? getProductById(productId)?.detail?.variants.find((variant) => variant.id === variantId)
     : undefined;
+
+/** Source kilograms per one sales unit, using the agreed Akros feed interpretation. */
+export function getProductUnitWeightKg(
+  item: Pick<CartItemSnapshot, "productId" | "variantId" | "sku" | "unit">,
+): number | undefined {
+  const product = getProductById(item.productId);
+  if (!product) return undefined;
+  const variant = getProductVariantById(item.productId, item.variantId);
+  if (item.variantId && !variant) return undefined;
+  if (!variant && product.detail.variants.length > 0) return undefined;
+  const source = variant ?? product;
+  const unit = source.unit.trim().toLowerCase();
+  if (source.sku !== item.sku || unit !== item.unit.trim().toLowerCase()) return undefined;
+  const weight = variant ? variant.sourceNetWeight : product.netWeight;
+  if (weight === undefined || !Number.isFinite(weight) || weight <= 0) return undefined;
+  if (unit === "ks" || unit === "m") return weight;
+  return undefined;
+}
 
 export const getProductUnitPrice = (productId: string, variantId?: string): number | undefined => {
   const product = getProductById(productId);

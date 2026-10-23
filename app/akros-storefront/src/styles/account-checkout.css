@@ -182,3 +182,23 @@
   overflow-wrap: anywhere;
   -webkit-line-clamp: unset;
 }
+.akros-cart-weight {
+  margin-block: var(--dimension-24);
+}
+
+.akros-cart-weight dl > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--dimension-12);
+}
+
+.akros-cart-weight dd {
+  font-weight: var(--font-weight-bold);
+}
+
+.akros-cart-weight > p {
+  margin-block-start: var(--dimension-8);
+  font-size: var(--text-sm);
+  color: var(--color-fg-secondary);
+}
