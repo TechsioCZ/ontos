@@ -47,6 +47,8 @@
         }
       },
       "legalEntity": {
+        "tenantContext": "Organization (no company)",
+        "tenantContextActive": "You are working in organization scope. Select a company to use company modules.",
         "accessBlocked": "No legal entity is available for this account.",
         "accessibleLabel": "Current legal entity",
         "failed": "Legal-entity switching failed. Try again.",

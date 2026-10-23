@@ -23,7 +23,12 @@ import { companyDirectoryLive } from '../oauth-connections-admin/company-directo
 import { commandRecordReference, resolveActivityLinks } from './activity-links.ts';
 
 import { approverCheck, hiddenByReview } from './approval-logic.ts';
-import { AgentPlatformForbidden, AgentPlatformInvalid, callerModuleAccess } from './caller.ts';
+import {
+  AgentPlatformForbidden,
+  AgentPlatformInvalid,
+  assertAgentProposalsAuthorized,
+  callerModuleAccess,
+} from './caller.ts';
 import { loadComposedModules } from './composed-modules.ts';
 import type { ComposedModules } from './composed-modules.ts';
 import type { AgentPlatformCaller } from './caller.ts';
@@ -96,10 +101,13 @@ export const submitAgentProposals = Effect.fn('AgentPlatform.submitAgentProposal
   request: AgentProposalSubmitRequest,
 ) {
   const { legalEntityId, principalId, tenantId } = agent.principal;
+  yield* assertAgentProposalsAuthorized(agent, request.proposals);
   if (request.runId !== undefined) {
-    const existing = yield* findRunProposals(tenantId, principalId, request.runId);
+    const existing = yield* findRunProposals(tenantId, legalEntityId, principalId, request.runId);
     const first = existing[0];
     if (first !== undefined) {
+      // A run ID does not authorize the stored Actions if the request has changed or rights were revoked.
+      yield* assertAgentProposalsAuthorized(agent, existing);
       return {
         batchId: first.batchId,
         proposalIds: existing.map((row) => row.proposalId),

@@ -2,10 +2,10 @@
  * Agent entities of the selected company (Lidé a role › Agentní entity). The company administrator lists, creates,
  * configures, deactivates / reactivates and deletes agents. Every change runs the Core Action
  * `core.identity.manage-demo-account` (create-agent / configure-agent / change-status / delete (archives the principal), sensitive
- * audit); then the agent's SpiceDB grants are rebuilt from the company's role templates (same relationships human
- * roles use, `agentGrantRelationships`) and its operators are written with principal#tenant. Deactivation and
- * deletion revoke the agent's active OAuth connections at once and withdraw its waiting proposals. Changes of one
- * company's agents run one at a time (transaction-scoped advisory lock), so two parallel creates cannot both pass the
+ * audit); then its company-scoped role policy is rebuilt from the selected module access and write policy,
+ * and its operators are written with principal#tenant. Deactivation and deletion revoke the agent's active OAuth
+ * connections at once and withdraw its waiting proposals. Changes of one company's agents run one at a time
+ * (a private session advisory lock, without an open SQL transaction), so two parallel creates cannot both pass the
  * unique-name check. No tokens or API keys: agents connect only through the OAuth consent ('Za agenta'). Errors are
  * Connections* errors with Czech reasons.
  */
@@ -15,6 +15,7 @@ import {
   agentModuleAccessOf,
   manageDemoAccountAction,
   openDemoAccountGrants,
+  withPostgresSessionAdvisoryLock,
 } from '@app/core-runtime';
 import type { DemoAccountGrants, ManageDemoAccountPayload } from '@app/core-runtime';
 import type {
@@ -24,8 +25,7 @@ import type {
   ManageAgentEntityResponse,
 } from '@app/shared-contracts/agent-access';
 import { AgentModuleGrantSchema } from '@app/shared-contracts/agent-access';
-import { sql } from 'drizzle-orm';
-import { Effect, Schema } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 
 import { composedModulesOf } from '../agent-platform/composed-modules.ts';
 import { withdrawPendingOfAgent } from '../agent-platform/proposal-store.ts';
@@ -49,7 +49,7 @@ import {
   derivedUuid,
   requireAdministrator,
 } from './demo-accounts.ts';
-import { AuthDatabase } from './db/client.ts';
+import { AuthConfig } from './config.ts';
 import type {
   DemoAccountCaller,
   DemoAccountConflict,
@@ -120,6 +120,13 @@ const companyCatalog = (
     const installed = yield* (yield* ShellInstalledModuleCatalog).load.pipe(Effect.mapError(unavailable));
     const labelOf = composedModulesOf(mcpModulesOf(installed.composition)).labelOf;
     return {
+      actions: installed.contracts.flatMap(({ manifest }) =>
+        manifest.publicSurface.actions.map((action) => ({
+          actionKey: action.actionKey,
+          legalEntityScope: action.legalEntityScope,
+          owningModuleKey: action.owningModuleId,
+        })),
+      ),
       labelOf,
       legalEntityWriteRelations: legalEntityWriteRelationsOf(installed.composition),
       options: agentModuleOptions(agentModuleAccessOf(union, legalEntityId), labelOf),
@@ -169,20 +176,18 @@ export const listAgentEntities = <R>(caller: DemoAccountCaller, deps: Connection
       [companyCatalog(legalEntityId, roles, grants), company],
       { concurrency: 2 },
     );
-    const entries = agents.map(
-      (agent, index): AgentEntity => ({
-        connections: active.filter((connection) => connection.acting.principalId === agent.principalId),
-        description: agent.description,
-        displayName: agent.displayName,
-        modules: agent.modules,
-        operators: people.filter((person) => operators[index]?.includes(person.principalId) === true),
-        owner: people.find((person) => person.principalId === agent.ownerPrincipalId) ?? null,
-        principalId: agent.principalId,
-        seeded: agent.seeded,
-        status: agent.status,
-        writePolicy: agent.writePolicy,
-      }),
-    );
+    const entries = agents.map((agent, index): AgentEntity => ({
+      connections: active.filter((connection) => connection.acting.principalId === agent.principalId),
+      description: agent.description,
+      displayName: agent.displayName,
+      modules: agent.modules,
+      operators: people.filter((person) => operators[index]?.includes(person.principalId) === true),
+      owner: people.find((person) => person.principalId === agent.ownerPrincipalId) ?? null,
+      principalId: agent.principalId,
+      seeded: agent.seeded,
+      status: agent.status,
+      writePolicy: agent.writePolicy,
+    }));
     const overview: AgentEntityOverview = {
       agents: entries,
       audit,
@@ -194,18 +199,15 @@ export const listAgentEntities = <R>(caller: DemoAccountCaller, deps: Connection
     return overview;
   }).pipe(Effect.scoped);
 
-/** Runs `effect` while holding the company's agent-change lock (released when the surrounding transaction ends). */
+/** Serialize company agent changes without keeping a SQL transaction open across external effects. */
 const withCompanyAgentLock = <A, E, R>(tenantId: string, legalEntityId: string, effect: Effect.Effect<A, E, R>) =>
   Effect.gen(function* withCompanyAgentLock() {
-    const { executor } = yield* AuthDatabase;
-    const lockKey = `agent-entities:${tenantId}:${legalEntityId}`;
-    return yield* executor
-      .transaction((transaction) =>
-        transaction
-          .execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`)
-          .pipe(Effect.mapError(unavailable), Effect.andThen(effect)),
-      )
-      .pipe(Effect.catchTag('SqlError', (error) => Effect.fail(unavailable(error))));
+    const configuration = yield* AuthConfig;
+    return yield* withPostgresSessionAdvisoryLock(
+      Redacted.make(configuration.connectionString),
+      `agent-entities:${tenantId}:${legalEntityId}`,
+      effect,
+    ).pipe(Effect.catchTag('SessionAdvisoryLockUnavailable', (error) => Effect.fail(unavailable(error))));
   });
 
 const changeAgent = <R>(
@@ -286,13 +288,18 @@ const changeAgent = <R>(
       const written = yield* grants
         .replaceAgentGrants({
           desired: agentGrantRelationships({
+            actions: catalog.actions,
             legalEntityId,
             legalEntityWriteRelations: catalog.legalEntityWriteRelations,
             modules: request.modules,
+            principalId: result.principalId,
             template: catalog.union,
+            tenantId,
             writePolicy: request.writePolicy,
           }),
+          legalEntityId,
           principalId: result.principalId,
+          tenantId,
         })
         .pipe(Effect.mapError(unavailable));
       yield* deps.directory.replaceOperators({
@@ -351,13 +358,18 @@ const changeAgent = <R>(
       const written = yield* grants
         .replaceAgentGrants({
           desired: agentGrantRelationships({
+            actions: catalog.actions,
             legalEntityId,
             legalEntityWriteRelations: catalog.legalEntityWriteRelations,
             modules: request.modules,
+            principalId: agent.principalId,
             template: catalog.union,
+            tenantId,
             writePolicy: request.writePolicy,
           }),
+          legalEntityId,
           principalId: agent.principalId,
+          tenantId,
         })
         .pipe(Effect.mapError(unavailable));
       const configured: ManageAgentEntityResponse = {
@@ -420,7 +432,7 @@ const changeAgent = <R>(
     const revokedConnections = yield* revokeActive(agent.principalId, reason);
     yield* withdrawProposals(agent.principalId, `Agent byl smazán: ${reason}`);
     const removed = yield* grants
-      .replaceAgentGrants({ desired: [], principalId: agent.principalId })
+      .replaceAgentGrants({ desired: [], legalEntityId, principalId: agent.principalId, tenantId })
       .pipe(Effect.mapError(unavailable));
     yield* deps.directory.replaceOperators({
       actorPrincipalId,

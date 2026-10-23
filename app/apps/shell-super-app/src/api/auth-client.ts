@@ -28,6 +28,7 @@ import type {
   SwitchLegalEntityResponse,
   SwitchTenantPayload,
   SwitchTenantResponse,
+  SwitchToTenantContextResponse,
   TenantAccessForbiddenProblem,
   TenantAuthenticationRequiredProblem,
   TenantCapabilityUnavailableProblem,
@@ -222,6 +223,11 @@ export const availableLegalEntities = (
   options: ShellAuthenticationClientOptions = {},
 ): AvailableLegalEntitiesClientEffect =>
   invokeShellAuthenticationClient(options, (client) => client.legalEntities.availableLegalEntities({}));
+
+export const switchToTenantContext = (
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<SwitchToTenantContextResponse, SwitchTenantClientError> =>
+  invokeShellAuthenticationClient(options, (client) => client.legalEntities.switchToTenantContext({}));
 
 export const switchLegalEntity = (
   payload: SwitchLegalEntityPayload,

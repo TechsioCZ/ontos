@@ -40,7 +40,12 @@ export const ShellContentLayout = ({
       onLogout={controls.handleLogout}
       onSearch={controls.handleSearch}
       onTenantChange={controls.handleTenantChange}
+      onTenantContextChange={controls.handleTenantContextChange}
       tenantChoices={shell.tenants.items}
+      tenantContextActive={shell.contextState === 'tenant_authenticated'}
+      tenantContextAvailable={
+        shell.legalEntities.state === 'available' && shell.legalEntities.tenantContextAvailable === true
+      }
       tenantState={shell.tenants.state}
       tenantSwitchFailed={controls.tenantSwitchFailed}
       tenantSwitchPending={controls.tenantSwitchPending}

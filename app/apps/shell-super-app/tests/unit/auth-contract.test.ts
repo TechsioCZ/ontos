@@ -88,7 +88,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     'startSupportImpersonation',
     'stopSupportImpersonation',
   ]);
-  expect(legalEntityEndpoints).toEqual(['availableLegalEntities', 'switchLegalEntity']);
+  expect(legalEntityEndpoints).toEqual(['availableLegalEntities', 'switchLegalEntity', 'switchToTenantContext']);
   expect(tenantEndpoints).toEqual(['availableTenants', 'switchTenant']);
   expect(resourceEndpoints).toEqual(['attachMedia', 'resourceDetail', 'search']);
   expect(externalIdentityEndpoints).toEqual([
@@ -147,9 +147,9 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     replaceAgentOperators: '/auth/identity/agent-entities/operators',
     reservePrincipalBinding: '/auth/identity/external/bindings/reserve',
     resolveExternalSubject: '/auth/identity/external/resolve',
-    revokeConnection: '/auth/oauth-connections/revoke',
     resolveModuleTarget: '/shell/module-target',
     resourceDetail: '/shell/resource',
+    revokeConnection: '/auth/oauth-connections/revoke',
     rotateManagedApiKey: '/auth/identity/api-keys/managed/rotate',
     rotateSelfApiKey: '/auth/identity/api-keys/self/rotate',
     search: '/shell/search',
@@ -163,12 +163,14 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     submitAgentProposals: '/agent-platform/proposals',
     switchLegalEntity: '/auth/legal-entity/switch',
     switchTenant: '/auth/tenant/switch',
+    switchToTenantContext: '/auth/context/tenant',
     updateConnectionAccess: '/auth/oauth-connections/update',
   });
   expect(shellAuthenticationApiContract).toEqual({
     apiPrefix: '/shell-super-app-api',
     signInPath: '/shell-super-app-api/auth/sign-in',
     switchTenantPath: '/shell-super-app-api/auth/tenant/switch',
+    switchToTenantContextPath: '/shell-super-app-api/auth/context/tenant',
   });
   expect([...authenticationEndpoints, ...gatewayEndpoints].join(':')).not.toMatch(/testing|actionKey/u);
 });
@@ -234,7 +236,12 @@ it.effect('decodes a missing identity idempotency header so handlers can return 
 
 it.effect('publishes exact legal-entity endpoints with an ID-only switch payload', () =>
   Effect.gen(function* testProgram2() {
-    const { availableLegalEntities, switchLegalEntity } = ShellAuthenticationApi.groups.legalEntities.endpoints;
+    const { availableLegalEntities, switchLegalEntity, switchToTenantContext } =
+      ShellAuthenticationApi.groups.legalEntities.endpoints;
+    expect({ method: switchToTenantContext.method, path: switchToTenantContext.path }).toEqual({
+      method: 'POST',
+      path: '/auth/context/tenant',
+    });
     expect({
       method: availableLegalEntities.method,
       path: availableLegalEntities.path,
@@ -262,11 +269,13 @@ it.effect('publishes exact legal-entity endpoints with an ID-only switch payload
         legalEntities: [{ legalEntityId, legalName: 'Alpha', token: 'must-not-pass' }],
         selectedLegalEntityId: legalEntityId,
         state: 'authenticated',
+        tenantContextAvailable: false,
       }),
     ).toEqual({
       legalEntities: [{ legalEntityId, legalName: 'Alpha' }],
       selectedLegalEntityId: legalEntityId,
       state: 'authenticated',
+      tenantContextAvailable: false,
     });
   }),
 );

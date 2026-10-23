@@ -224,6 +224,7 @@ export const insertProposals = Effect.fn('AgentStore.insertProposals')(function*
 
 export const findRunProposals = Effect.fn('AgentStore.findRunProposals')(function* findRunProposals(
   tenantId: string,
+  legalEntityId: string,
   agentPrincipalId: string,
   runId: string,
 ) {
@@ -234,6 +235,7 @@ export const findRunProposals = Effect.fn('AgentStore.findRunProposals')(functio
     .where(
       and(
         eq(coreAgentProposals.tenantId, tenantId),
+        eq(coreAgentProposals.legalEntityId, legalEntityId),
         eq(coreAgentProposals.agentPrincipalId, agentPrincipalId),
         eq(coreAgentProposals.runId, runId),
       ),

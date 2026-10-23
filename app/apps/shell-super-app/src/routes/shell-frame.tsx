@@ -76,7 +76,10 @@ export interface AuthenticatedDashboardLayoutProps {
   readonly onLogout: () => void;
   readonly onSearch: (query: string) => void;
   readonly onTenantChange: (tenantId: string) => void;
+  readonly onTenantContextChange?: (() => void) | undefined;
   readonly tenantChoices: readonly DashboardTenantItem[];
+  readonly tenantContextActive?: boolean | undefined;
+  readonly tenantContextAvailable?: boolean | undefined;
   readonly tenantState: 'available' | 'unavailable';
   readonly tenantSwitchFailed: boolean;
   readonly tenantSwitchPending: boolean;
@@ -237,7 +240,7 @@ export const buildShellNavigation = (
     entrypointMatch: false,
     href: null,
     icon: 'icon-[mdi--cloud-off-outline]',
-      key: `deployment:${deployment.appId}`,
+    key: `deployment:${deployment.appId}`,
     label: deployment.appId,
     moduleMatch: false,
     notice: t(`shell.modules.discovery.${deployment.status === 'unavailable' ? deployment.reason : deployment.status}`),
@@ -276,7 +279,7 @@ export const buildShellNavigation = (
       enabled: true,
       href: '/',
       icon: 'icon-[mdi--home-outline]',
-          key: 'home',
+      key: 'home',
       label: t('shell.dashboard.navigation.home'),
       notice: null,
       state: 'active',
@@ -372,6 +375,9 @@ type DashboardContextSelectorsProps = Pick<
   | 'onLegalEntityChange'
   | 'onTenantChange'
   | 'tenantChoices'
+  | 'tenantContextActive'
+  | 'tenantContextAvailable'
+  | 'onTenantContextChange'
   | 'tenantState'
   | 'tenantSwitchFailed'
   | 'tenantSwitchPending'
@@ -393,6 +399,10 @@ const DashboardContextSelectors = (props: DashboardContextSelectorsProps) => {
     label: legalName,
     value: legalEntityId,
   }));
+  if (props.tenantContextAvailable === true) {
+    const tenantContextLabel = t('shell.dashboard.legalEntity.tenantContext');
+    legalEntityItems.unshift({ displayValue: tenantContextLabel, label: tenantContextLabel, value: 'tenant' });
+  }
   const legalEntityUnavailable = props.legalEntityState === 'unavailable';
 
   return (
@@ -419,12 +429,18 @@ const DashboardContextSelectors = (props: DashboardContextSelectorsProps) => {
         })}
       />
       <DashboardSelector
-        currentValue={props.currentLegalEntityId}
+        currentValue={props.tenantContextActive === true ? 'tenant' : props.currentLegalEntityId}
         disabled={legalEntityUnavailable || props.legalEntitySwitchPending}
         items={legalEntityItems}
         label={t('shell.dashboard.legalEntity.accessibleLabel')}
         name="legalEntity"
-        onChange={props.onLegalEntityChange}
+        onChange={(value) => {
+          if (value === 'tenant') {
+            props.onTenantContextChange?.();
+          } else {
+            props.onLegalEntityChange(value);
+          }
+        }}
         placeholder={t('shell.dashboard.legalEntity.placeholder')}
         status={selectorStatus(props.legalEntitySwitchFailed, legalEntityUnavailable)}
         statusId="legal-entity-switch-status"
@@ -843,7 +859,10 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
                 legalEntitySwitchPending={props.legalEntitySwitchPending}
                 onLegalEntityChange={props.onLegalEntityChange}
                 onTenantChange={props.onTenantChange}
+                onTenantContextChange={props.onTenantContextChange}
                 tenantChoices={props.tenantChoices}
+                tenantContextActive={props.tenantContextActive}
+                tenantContextAvailable={props.tenantContextAvailable}
                 tenantState={props.tenantState}
                 tenantSwitchFailed={props.tenantSwitchFailed}
                 tenantSwitchPending={props.tenantSwitchPending}
@@ -865,10 +884,7 @@ export const AuthenticatedDashboardLayout = (props: AuthenticatedDashboardLayout
                 <progress aria-label={t('shell.dashboard.navigation.pending')} className="sr-only" />
               </div>
             )}
-            <div
-              aria-busy={pendingHref !== undefined}
-              className="isolate flex min-w-0 flex-1 flex-col gap-250 p-250"
-            >
+            <div aria-busy={pendingHref !== undefined} className="isolate flex min-w-0 flex-1 flex-col gap-250 p-250">
               {props.title === undefined ? null : <h1 className="font-semibold text-xl">{props.title}</h1>}
               {props.children}
             </div>

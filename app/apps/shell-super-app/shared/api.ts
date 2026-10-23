@@ -48,6 +48,7 @@ export type SwitchTenantResponse = typeof SwitchTenantResponseSchema.Type;
 export type AvailableLegalEntitiesResponse = typeof AvailableLegalEntitiesResponseSchema.Type;
 export type SwitchLegalEntityPayload = typeof SwitchLegalEntityPayloadSchema.Type;
 export type SwitchLegalEntityResponse = typeof SwitchLegalEntityResponseSchema.Type;
+export type SwitchToTenantContextResponse = typeof SwitchToTenantContextResponseSchema.Type;
 export type ShellNavigationItem = typeof ShellNavigationItemSchema.Type;
 export type ShellUnavailableDeployment = typeof ShellUnavailableDeploymentSchema.Type;
 export type ShellComposition = typeof ShellCompositionSchema.Type;
@@ -378,6 +379,12 @@ export const AuthenticatedSessionSchema = Schema.Struct({
   state: Schema.Literal('authenticated'),
 });
 
+export const TenantAuthenticatedSessionSchema = Schema.Struct({
+  availableLegalEntities: Schema.Array(LegalEntityChoiceSchema),
+  identity: SafeTenantIdentitySchema,
+  state: Schema.Literal('tenant_authenticated'),
+});
+
 export const SelectionRequiredSessionSchema = Schema.Struct({
   availableLegalEntities: Schema.Array(LegalEntityChoiceSchema),
   identity: SafeTenantIdentitySchema,
@@ -392,6 +399,7 @@ export const AccessBlockedSessionSchema = Schema.Struct({
 export const CurrentSessionSchema = Schema.Union([
   AnonymousSessionSchema,
   AuthenticatedSessionSchema,
+  TenantAuthenticatedSessionSchema,
   SelectionRequiredSessionSchema,
   AccessBlockedSessionSchema,
 ]);
@@ -429,11 +437,16 @@ export const SwitchTenantResponseSchema = Schema.Struct({
 export const AvailableLegalEntitiesResponseSchema = Schema.Struct({
   legalEntities: Schema.Array(LegalEntityChoiceSchema),
   selectedLegalEntityId: Schema.optionalKey(LegalEntityIdSchema),
-  state: Schema.Literals(['access_blocked', 'authenticated', 'selection_required']),
+  state: Schema.Literals(['access_blocked', 'authenticated', 'selection_required', 'tenant_authenticated']),
+  tenantContextAvailable: Schema.Boolean,
 });
 
 export const SwitchLegalEntityPayloadSchema = Schema.Struct({
   legalEntityId: LegalEntityIdSchema,
+});
+
+export const SwitchToTenantContextResponseSchema = Schema.Struct({
+  selectedContext: Schema.Literal('tenant'),
 });
 
 export const SwitchLegalEntityResponseSchema = Schema.Struct({
@@ -987,6 +1000,17 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
         }),
       )
       .add(
+        HttpApiEndpoint.post('switchToTenantContext', '/auth/context/tenant', {
+          error: [
+            TenantAuthenticationRequiredProblemSchema,
+            TenantAccessForbiddenProblemSchema,
+            TenantCapabilityUnavailableProblemSchema,
+            TenantInternalProblemSchema,
+          ],
+          success: SwitchToTenantContextResponseSchema,
+        }),
+      )
+      .add(
         HttpApiEndpoint.post('switchLegalEntity', '/auth/legal-entity/switch', {
           error: [
             TenantAuthenticationRequiredProblemSchema,
@@ -1204,4 +1228,7 @@ export const shellAuthenticationApiContract = {
   apiPrefix: '/shell-super-app-api',
   signInPath: authenticationEndpointPath(ShellAuthenticationApi.groups.authentication.endpoints.signIn),
   switchTenantPath: authenticationEndpointPath(ShellAuthenticationApi.groups.tenants.endpoints.switchTenant),
+  switchToTenantContextPath: authenticationEndpointPath(
+    ShellAuthenticationApi.groups.legalEntities.endpoints.switchToTenantContext,
+  ),
 } as const;

@@ -31,6 +31,7 @@ import {
 } from '@app/core-runtime';
 import {
   ActionPermissionLive,
+  ActionAuthorityLive,
   ActionRepositoryLive,
   ModuleEntrypointGatewayLive,
   ModuleStateGateLive,
@@ -57,6 +58,7 @@ import {
   Tracer,
 } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
+import { Reactivity } from 'effect/unstable/reactivity';
 import { ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { dispatchModuleApiRequest, ModuleApiTransportLive } from '../src/module-api/transport.ts';
 import { EmailTransportLive } from './email/transport.ts';
@@ -85,6 +87,7 @@ import {
   SupportImpersonationResponseSchema,
   SwitchLegalEntityResponseSchema,
   SwitchTenantResponseSchema,
+  SwitchToTenantContextResponseSchema,
 } from '../shared/api.ts';
 import type {
   AuthenticationInternalProblem,
@@ -159,14 +162,13 @@ import {
 } from './auth/impersonation-service.ts';
 import type { SupportImpersonationError } from './auth/impersonation-service.ts';
 import type { LegalEntitySelectionForbiddenError } from './auth/legal-entity-selection.ts';
-import { validateAuthorizedLegalEntity } from './auth/legal-entity-selection.ts';
+import { canSelectTenantContext, validateAuthorizedLegalEntity } from './auth/legal-entity-selection.ts';
 import { AuthPersistenceLive } from './auth/runtime-infrastructure.ts';
 import { AuthenticationService, AuthenticationServiceLive } from './auth/service.ts';
 import { forwardOAuthRequest } from './auth/oauth-server/forward.ts';
 import { oauthNotFoundResponse } from './auth/oauth-server/policy.ts';
 import type { ShellContextResult } from './auth/service.ts';
 import type { AgentPlatformCaller, AgentPlatformForbidden, AgentPlatformInvalid } from './agent-platform/caller.ts';
-import { assertKeyAgentMayPropose } from './agent-platform/caller.ts';
 import type { AgentStoreUnavailable } from './agent-platform/proposal-store.ts';
 import { decideAgentItems, revertAgentBatch } from './agent-platform/service-decide.ts';
 import {
@@ -548,6 +550,14 @@ const currentAnonymousResponse = () => ({ state: 'anonymous' as const });
 const currentAuthenticatedResponse = (session: Extract<ShellContextResult, { readonly state: 'authenticated' }>) => ({
   identity: session.identity,
   state: 'authenticated' as const,
+});
+
+const currentTenantAuthenticatedResponse = (
+  session: Extract<ShellContextResult, { readonly state: 'tenant_authenticated' }>,
+) => ({
+  availableLegalEntities: session.availableLegalEntities,
+  identity: session.identity,
+  state: 'tenant_authenticated' as const,
 });
 
 const currentSelectionRequiredResponse = (
@@ -962,6 +972,7 @@ const authenticationGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'au
             anonymous: currentAnonymousResponse,
             authenticated: currentAuthenticatedResponse,
             selection_required: currentSelectionRequiredResponse,
+            tenant_authenticated: currentTenantAuthenticatedResponse,
           }),
           Match.exhaustive,
         );
@@ -1004,6 +1015,11 @@ const legalEntityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'legal
         const response = withOptionalProperty(
           {
             legalEntities: result.availableLegalEntities,
+            tenantContextAvailable: yield* canSelectTenantContext(result.principal).pipe(
+              Effect.catchTag('LegalEntitySelectionUnavailableError', () =>
+                failContextProblem(tenantCapabilityUnavailableProblem()),
+              ),
+            ),
           },
           selectedLegalEntityId !== undefined,
           'selectedLegalEntityId',
@@ -1018,6 +1034,21 @@ const legalEntityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'legal
           failContextProblem(tenantInternalProblem()),
         ),
       ),
+    )
+    .handle(
+      'switchToTenantContext',
+      Effect.fn('ShellContext.switchToTenantContext')(function* switchToTenantContextHandler({ request }) {
+        const authentication = yield* AuthenticationService;
+        const result = yield* authentication
+          .switchToTenantContext(requestHeaders(request.headers))
+          .pipe(Effect.catch((error) => pipe(error, tenantProblem, failContextProblem)));
+        yield* forwardSetCookieHeaders(result.setCookieHeaders);
+        return yield* decodeResponse(
+          SwitchToTenantContextResponseSchema,
+          { selectedContext: 'tenant' },
+          tenantInternalProblem,
+        );
+      }),
     )
     .handle('switchLegalEntity', ({ payload, request }) =>
       Effect.gen(function* switchLegalEntityHandler() {
@@ -1197,6 +1228,7 @@ const documentContextHandler = Effect.fn('shell.composition.documentContext')(fu
         anonymous: currentAnonymousResponse,
         authenticated: currentAuthenticatedResponse,
         selection_required: currentSelectionRequiredResponse,
+        tenant_authenticated: currentTenantAuthenticatedResponse,
       }),
       Match.exhaustive,
     ),
@@ -1206,7 +1238,10 @@ const documentContextHandler = Effect.fn('shell.composition.documentContext')(fu
     return { session };
   }
   const legalEntities = withOptionalProperty(
-    { legalEntities: context.availableLegalEntities },
+    {
+      legalEntities: context.availableLegalEntities,
+      tenantContextAvailable: yield* canSelectTenantContext(context.principal).pipe(Effect.orElseSucceed(() => false)),
+    },
     context.state === 'authenticated',
     'selectedLegalEntityId',
     context.state === 'authenticated' ? context.identity.legalEntityId : undefined,
@@ -2023,7 +2058,7 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
           .resolveShellContext(requestHeaders(request.headers))
           .pipe(Effect.catch((error) => pipe(error, gatewayAuthenticationProblem, failGatewayProblem)));
         yield* forwardSetCookieHeaders(sessionResult.setCookieHeaders);
-        if (sessionResult.state !== 'authenticated') {
+        if (sessionResult.state !== 'authenticated' && sessionResult.state !== 'tenant_authenticated') {
           return yield* failGatewayProblem(gatewayAuthenticationRequiredProblem());
         }
         if (payload.legalEntityId !== undefined && payload.legalEntityId !== sessionResult.principal.legalEntityId) {
@@ -2072,7 +2107,9 @@ const gatewayContextGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'ga
         }
         // Dispatch in-process, through the very same composition/release admission and owner transport.
         // Never forward the API key, cookies or arbitrary caller headers to the owner.
-        const body = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(payload.query).pipe(Effect.orDie);
+        const body = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(payload.query).pipe(
+          Effect.orDie,
+        );
         const encodedContext = yield* Schema.encodeEffect(Schema.fromJsonString(GatewayContextResponseSchema))(
           context,
         ).pipe(Effect.orDie);
@@ -2125,7 +2162,7 @@ const documentGatewayGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'd
         .resolveShellContext(requestHeaders(request.headers))
         .pipe(Effect.catch((error) => pipe(error, gatewayAuthenticationProblem, failGatewayProblem)));
       yield* forwardSetCookieHeaders(sessionResult.setCookieHeaders);
-      if (sessionResult.state !== 'authenticated') {
+      if (sessionResult.state !== 'authenticated' && sessionResult.state !== 'tenant_authenticated') {
         return yield* failGatewayProblem(gatewayAuthenticationRequiredProblem());
       }
       const assertions = yield* issueDocumentGatewayAssertions(
@@ -2240,10 +2277,7 @@ const agentPlatformGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'age
         const agent = yield* agentPlatformKeyCaller(headers['x-api-key'], payload.legalEntityId);
         // An API-key agent is always shown under its own principal name; only MCP connections name the acting party.
         const { agentLabel: _agentLabel, ...submission } = payload;
-        const response = yield* assertKeyAgentMayPropose(agent).pipe(
-          Effect.andThen(submitAgentProposals(agent, submission)),
-          Effect.catch(agentPlatformFailure),
-        );
+        const response = yield* submitAgentProposals(agent, submission).pipe(Effect.catch(agentPlatformFailure));
         yield* noStore;
         return response;
       }).pipe(agentPlatformDefect(request)),
@@ -2760,6 +2794,8 @@ export const makeShellAuthenticationApiRuntime = (
     Layer.provideMerge(handlerDependenciesLive),
     Layer.provideMerge(activeApplicationCompositionLive),
     Layer.provideMerge(compositionSourceLive),
+    Layer.provideMerge(ActionAuthorityLive),
+    Layer.provideMerge(Reactivity.layer),
     Layer.orDie,
   );
 

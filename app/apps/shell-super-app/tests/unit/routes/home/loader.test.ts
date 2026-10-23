@@ -98,6 +98,7 @@ beforeEach(() => {
       legalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
       selectedLegalEntityId: 'legal-1',
       state: 'authenticated',
+      tenantContextAvailable: false,
     }),
   );
   shellCompositionMock.mockReturnValue(
@@ -132,6 +133,7 @@ it.effect('resolves trusted context before returning one serializable compositio
       legalEntities: {
         items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
         state: 'available',
+        tenantContextAvailable: false,
       },
       navigation: {
         deniedAppIds: [],
@@ -195,12 +197,13 @@ it.effect('does not invent a selected legal entity while a tenant session requir
       legalEntities: {
         items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
         state: 'available',
+        tenantContextAvailable: false,
       },
       state: 'authenticated',
     });
     expect(model).not.toHaveProperty('selectedLegalEntityId');
     expect(shellCompositionMock).not.toHaveBeenCalled();
-    expect(availableLegalEntitiesMock).not.toHaveBeenCalled();
+    expect(availableLegalEntitiesMock).toHaveBeenCalledTimes(1);
   }),
 );
 
@@ -496,6 +499,7 @@ const documentContextOf = <Overrides extends object>(overrides: Overrides) => ({
     legalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
     selectedLegalEntityId: 'legal-1',
     state: 'authenticated',
+    tenantContextAvailable: false,
   },
   session: { identity, state: 'authenticated' as const },
   tenants: { state: 'available', tenants: [{ name: 'Alpha tenant', tenantId: 'tenant-1' }] },
@@ -518,7 +522,11 @@ it.effect('server rendering reads the whole document context in one request', ()
       gatewayAudiences: [],
       homeCandidates: [],
       identity,
-      legalEntities: { items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }], state: 'available' },
+      legalEntities: {
+        items: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+        state: 'available',
+        tenantContextAvailable: false,
+      },
       navigation: {
         deniedAppIds: [],
         items: navigation,
@@ -579,7 +587,11 @@ it.effect('server rendering keeps a context without a selected legal entity free
     documentContextMock.mockReturnValueOnce(
       Effect.succeed({
         composition: { navigation: [], state: 'selection_required' },
-        legalEntities: { legalEntities: [], state: 'selection_required' },
+        legalEntities: {
+          legalEntities: [{ legalEntityId: 'legal-2', legalName: 'Beta company' }],
+          state: 'selection_required',
+          tenantContextAvailable: true,
+        },
         session: {
           availableLegalEntities: [{ legalEntityId: 'legal-2', legalName: 'Beta company' }],
           identity: {
@@ -705,5 +717,59 @@ it.effect('server rendering without signed assertions leaves them to the browser
     expect(model).toMatchObject({ gatewayAudiences: ['future-generated'], state: 'authenticated' });
     expect(model).not.toHaveProperty('gatewayAssertions');
     expect(issueDocumentGatewayContextsMock).not.toHaveBeenCalled();
+  }),
+);
+
+it.effect('reconstructs explicit tenant scope on browser reload without company navigation', () =>
+  Effect.gen(function* browserTenantScope() {
+    const { legalEntityId, legalName, ...tenantIdentity } = identity;
+    void legalEntityId;
+    void legalName;
+    currentSessionMock.mockReturnValueOnce(
+      Effect.succeed({
+        availableLegalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+        identity: tenantIdentity,
+        state: 'tenant_authenticated',
+      }),
+    );
+    availableLegalEntitiesMock.mockReturnValueOnce(
+      Effect.succeed({
+        legalEntities: [{ legalEntityId: 'legal-1', legalName: 'Alpha company' }],
+        state: 'tenant_authenticated',
+        tenantContextAvailable: true,
+      }),
+    );
+    const model = yield* loadModel({ request: request() });
+    expect(model).toMatchObject({
+      contextState: 'tenant_authenticated',
+      legalEntities: { tenantContextAvailable: true },
+      navigation: { items: [] },
+    });
+    expect(model).not.toHaveProperty('selectedLegalEntityId');
+    expect(shellCompositionMock).not.toHaveBeenCalled();
+  }),
+);
+
+it.effect('reconstructs explicit tenant scope from the server document context', () =>
+  Effect.gen(function* serverTenantScope() {
+    const { legalEntityId, legalName, ...tenantIdentity } = identity;
+    void legalEntityId;
+    void legalName;
+    documentContextMock.mockReturnValueOnce(
+      Effect.succeed(
+        documentContextOf({
+          legalEntities: { legalEntities: [], state: 'tenant_authenticated', tenantContextAvailable: true },
+          session: { availableLegalEntities: [], identity: tenantIdentity, state: 'tenant_authenticated' },
+        }),
+      ),
+    );
+    const model = yield* serverModel();
+    expect(model).toMatchObject({
+      contextState: 'tenant_authenticated',
+      legalEntities: { tenantContextAvailable: true },
+      navigation: { items: [] },
+    });
+    expect(model).not.toHaveProperty('selectedLegalEntityId');
+    expect(model).not.toHaveProperty('compositionRevision');
   }),
 );

@@ -15,6 +15,7 @@ const authenticationDefaults: AuthenticationServiceContract = {
   signOut: () => unconfiguredEffect('signOut'),
   switchLegalEntity: () => unconfiguredEffect('switchLegalEntity'),
   switchTenant: () => unconfiguredEffect('switchTenant'),
+  switchToTenantContext: () => unconfiguredEffect('switchToTenantContext'),
 };
 
 const providerDefaults: SupportAuthProvider['api'] = {

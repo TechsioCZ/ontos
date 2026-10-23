@@ -1,5 +1,16 @@
 import { defineRelations, sql } from 'drizzle-orm';
-import { boolean, index, integer, jsonb, pgSchema, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  check,
+  index,
+  integer,
+  jsonb,
+  pgSchema,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+} from 'drizzle-orm/pg-core';
 
 export const AUTH_SCHEMA_NAME = 'auth';
 export const AUTH_TABLE_INVENTORY = [
@@ -50,6 +61,9 @@ export const session = authSchema.table(
       .references(() => user.id, { onDelete: 'cascade' }),
     activeTenantId: uuid('active_tenant_id'),
     activeLegalEntityId: uuid('active_legal_entity_id'),
+    activeContextKind: text('active_context_kind', { enum: ['company', 'tenant'] })
+      .default('company')
+      .notNull(),
     impersonatedBy: text('impersonated_by'),
     impersonationReason: text('impersonation_reason'),
     impersonationActionId: text('impersonation_action_id'),
@@ -58,7 +72,14 @@ export const session = authSchema.table(
     impersonationOriginalSessionId: text('impersonation_original_session_id'),
     impersonationTargetPrincipalId: uuid('impersonation_target_principal_id'),
   },
-  (table) => [index('auth_session_user_id_idx').on(table.userId)],
+  (table) => [
+    index('auth_session_user_id_idx').on(table.userId),
+    check('auth_session_context_kind_check', sql`${table.activeContextKind} in ('company', 'tenant')`),
+    check(
+      'auth_session_tenant_context_check',
+      sql`${table.activeContextKind} <> 'tenant' or (${table.activeTenantId} is not null and ${table.activeLegalEntityId} is null)`,
+    ),
+  ],
 );
 
 export const supportImpersonationRecovery = authSchema.table(

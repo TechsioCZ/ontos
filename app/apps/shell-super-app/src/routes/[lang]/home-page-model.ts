@@ -67,7 +67,7 @@ export interface AuthenticatedHomePageModel {
   /** The company's own Home text (Core tenant data); read only for the Shell's welcome page. */
   readonly companyWelcome?: string;
   readonly compositionRevision?: string;
-  readonly contextState: 'access_blocked' | 'authenticated' | 'selection_required';
+  readonly contextState: 'access_blocked' | 'authenticated' | 'selection_required' | 'tenant_authenticated';
   /**
    * Server rendering only, when the batch answered in time: the document's gateway assertions, one per module audience,
    * so the browser's first module reads need no assertion round trip. Kept in memory (document-gateway-assertions.ts).
@@ -86,6 +86,7 @@ export interface AuthenticatedHomePageModel {
     | {
         readonly items: readonly LegalEntityChoice[];
         readonly state: 'available';
+        readonly tenantContextAvailable?: boolean;
       }
     | { readonly items: readonly []; readonly state: 'unavailable' };
   readonly navigation:
@@ -350,7 +351,10 @@ const navigationModuleIds = (navigation: ComposedNavigation) =>
   new Set(navigation.items.map(({ moduleId }) => String(moduleId)));
 
 const legalEntitiesWithoutSelection = (session: Exclude<CurrentSession, { readonly state: 'anonymous' }>) => ({
-  items: session.state === 'selection_required' ? session.availableLegalEntities : ([] as const),
+  items:
+    session.state === 'selection_required' || session.state === 'tenant_authenticated'
+      ? session.availableLegalEntities
+      : ([] as const),
   state: 'available' as const,
 });
 
@@ -381,16 +385,25 @@ const loadServerHomePageModel = Effect.fn('HomePageModel.loadServerHomePageModel
         ? { items: context.tenants.tenants, state: 'available' as const }
         : unavailableTenants(session.identity.tenantId);
     if (session.state !== 'authenticated') {
-      return context.tenants?.state === 'authentication_required'
-        ? sessionEndedModel
-        : {
-            contextState: session.state,
-            identity: session.identity,
-            legalEntities: legalEntitiesWithoutSelection(session),
-            navigation: emptyNavigation,
-            state: 'authenticated' as const,
-            tenants,
-          };
+      if (context.tenants?.state === 'authentication_required') {
+        return sessionEndedModel;
+      }
+      const model: AuthenticatedHomePageModel = {
+        contextState: session.state,
+        identity: session.identity,
+        legalEntities:
+          context.legalEntities === undefined
+            ? legalEntitiesWithoutSelection(session)
+            : {
+                items: context.legalEntities.legalEntities,
+                state: 'available',
+                tenantContextAvailable: context.legalEntities.tenantContextAvailable,
+              },
+        navigation: emptyNavigation,
+        state: 'authenticated',
+        tenants,
+      };
+      return model;
     }
     const composition = context.composition ?? { state: 'unavailable' as const };
     if (composition.state === 'reload_required') {
@@ -416,7 +429,11 @@ const loadServerHomePageModel = Effect.fn('HomePageModel.loadServerHomePageModel
       legalEntities:
         context.legalEntities === undefined
           ? unavailableLegalEntities
-          : { items: context.legalEntities.legalEntities, state: 'available' },
+          : {
+              items: context.legalEntities.legalEntities,
+              state: 'available',
+              tenantContextAvailable: context.legalEntities.tenantContextAvailable,
+            },
       navigation,
       selectedLegalEntityId: session.identity.legalEntityId,
       state: 'authenticated',
@@ -440,19 +457,33 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
       return anonymousModel;
     }
     if (session.state !== 'authenticated') {
-      return yield* tenantsFor(session.identity, options).pipe(
-        Effect.map(({ tenants }) => ({ items: tenants, state: 'available' as const })),
-        Effect.matchEffect({
-          onFailure: (error) => Effect.succeed(tenantRead(error, session.identity.tenantId)),
-          onSuccess: Effect.succeed,
-        }),
-        Effect.map((tenants): HomePageModel =>
+      return yield* Effect.all(
+        {
+          legalEntities: legalEntitiesFor(session.identity, options).pipe(
+            Effect.map((response) => ({
+              items: response.legalEntities,
+              state: 'available' as const,
+              tenantContextAvailable: response.tenantContextAvailable,
+            })),
+            Effect.orElseSucceed(() => legalEntitiesWithoutSelection(session)),
+          ),
+          tenants: tenantsFor(session.identity, options).pipe(
+            Effect.map(({ tenants }) => ({ items: tenants, state: 'available' as const })),
+            Effect.matchEffect({
+              onFailure: (error) => Effect.succeed(tenantRead(error, session.identity.tenantId)),
+              onSuccess: Effect.succeed,
+            }),
+          ),
+        },
+        { concurrency: 2 },
+      ).pipe(
+        Effect.map(({ legalEntities, tenants }): HomePageModel =>
           tenants.state === 'stale'
             ? sessionEndedModel
             : {
                 contextState: session.state,
                 identity: session.identity,
-                legalEntities: legalEntitiesWithoutSelection(session),
+                legalEntities,
                 navigation: emptyNavigation,
                 state: 'authenticated',
                 tenants,
@@ -488,7 +519,11 @@ const loadBrowserHomePageModel = Effect.fn('HomePageModel.loadBrowserHomePageMod
                 Effect.asSome,
               ),
         legalEntities: legalEntitiesFor(session.identity, options).pipe(
-          Effect.map((response) => ({ items: response.legalEntities, state: 'available' as const })),
+          Effect.map((response) => ({
+            items: response.legalEntities,
+            state: 'available' as const,
+            tenantContextAvailable: response.tenantContextAvailable,
+          })),
           Effect.orElseSucceed(() => unavailableLegalEntities),
         ),
         tenants: tenantsFor(session.identity, options).pipe(

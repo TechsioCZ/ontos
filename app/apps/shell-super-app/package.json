@@ -14,7 +14,8 @@
   },
   "exports": {
     "./api": "./shared/api.ts",
-    "./api/client": "./src/api/auth-client.ts"
+    "./api/client": "./src/api/auth-client.ts",
+    "./outbox-worker-host": "./src/entry.core-system-worker.ts"
   },
   "scripts": {
     "dev": "modern dev",

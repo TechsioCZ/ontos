@@ -1,7 +1,6 @@
 import { expect, test } from 'effect-rstest';
 
 import {
-  agentLiveRights,
   effectiveAuthority,
   isModulesRequestWithin,
   minWritePolicy,
@@ -17,7 +16,13 @@ test('minWritePolicy picks the more restrictive policy', () => {
 });
 
 test("requested 'all' offers every live module with write only where live write holds", () => {
-  const authority = effectiveAuthority({ labelOf, live, policyCap: 'direct', requested: 'all', requestedPolicy: 'direct' });
+  const authority = effectiveAuthority({
+    labelOf,
+    live,
+    policyCap: 'direct',
+    requested: 'all',
+    requestedPolicy: 'direct',
+  });
   expect(authority.modules.length).toBe(2);
   expect(authority.modules.find((m) => m.moduleId === 'work.tasks')?.write).toBe(true);
   expect(authority.modules.find((m) => m.moduleId === 'demo.crm')?.write).toBe(false);
@@ -38,22 +43,25 @@ test('explicit module list keeps only modules the principal holds live', () => {
 });
 
 test('writePolicy is the minimum of requested policy and cap', () => {
-  const authority = effectiveAuthority({ labelOf, live, policyCap: 'approval', requested: 'all', requestedPolicy: 'direct' });
+  const authority = effectiveAuthority({
+    labelOf,
+    live,
+    policyCap: 'approval',
+    requested: 'all',
+    requestedPolicy: 'direct',
+  });
   expect(authority.writePolicy).toBe('approval');
 });
 
 test('read_only policy turns every write off', () => {
-  const authority = effectiveAuthority({ labelOf, live, policyCap: 'read_only', requested: 'all', requestedPolicy: 'direct' });
+  const authority = effectiveAuthority({
+    labelOf,
+    live,
+    policyCap: 'read_only',
+    requested: 'all',
+    requestedPolicy: 'direct',
+  });
   expect(authority.modules.every((m) => m.write === false)).toBe(true);
-});
-
-test('agentLiveRights intersects SpiceDB access with the agent profile', () => {
-  const rights = agentLiveRights({ read: new Set(['work.tasks']), write: new Set(['work.tasks']) }, [
-    { access: 'write', moduleId: 'work.tasks' },
-    { access: 'read', moduleId: 'demo.crm' },
-  ]);
-  expect([...rights.read]).toEqual(['work.tasks']);
-  expect([...rights.write]).toEqual(['work.tasks']);
 });
 
 test('isModulesRequestWithin rejects write beyond offered write and accepts all', () => {

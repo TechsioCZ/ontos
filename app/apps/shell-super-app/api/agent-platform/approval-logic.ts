@@ -1,9 +1,7 @@
 /**
- * Pure helpers of the platform approval layer: which modules a person may open or change (from SpiceDB
- * relationships), what a module's review means for showing and deciding a proposal, key parsing and Czech texts.
+ * Pure helpers of the platform approval layer: what a module's review means for showing and deciding a proposal,
+ * key parsing and Czech texts.
  */
-import { agentModuleAccessOf } from '@app/core-runtime';
-import type { DemoAccountRelationship } from '@app/core-runtime';
 import type { AgentRevertResponse } from '@app/shared-contracts/agent-proposals';
 import type { AgentReviewItem } from '@app/shared-contracts/agent-review';
 
@@ -12,24 +10,6 @@ import type { ModuleReview } from './module-review.ts';
 type Rec = Readonly<Record<string, unknown>>;
 
 const isRecord = (value: unknown): value is Rec => typeof value === 'object' && value !== null && !Array.isArray(value);
-
-export interface ModuleAccessSets {
-  /** Module keys the person can open in the company. */
-  readonly access: ReadonlySet<string>;
-  /** Module keys the person may change, i.e. approve or revert agent proposals for. */
-  readonly write: ReadonlySet<string>;
-}
-
-export const moduleAccessSets = (
-  relationships: readonly DemoAccountRelationship[],
-  legalEntityId: string,
-): ModuleAccessSets => {
-  const modules = agentModuleAccessOf(relationships, legalEntityId);
-  return {
-    access: new Set(modules.map(({ moduleId }) => moduleId)),
-    write: new Set(modules.filter(({ access }) => access === 'write').map(({ moduleId }) => moduleId)),
-  };
-};
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 

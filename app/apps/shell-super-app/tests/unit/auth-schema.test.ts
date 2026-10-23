@@ -98,7 +98,14 @@ test('keys accounts on the Better Auth provider identity and keeps only a nullab
 });
 
 test('stores one nullable typed active tenant and legal entity on the private session row', () => {
-  const { activeLegalEntityId, activeTenantId } = getColumns(session);
+  const { activeContextKind, activeLegalEntityId, activeTenantId } = getColumns(session);
+  expect(activeContextKind.name).toBe('active_context_kind');
+  expect(activeContextKind.notNull).toBe(true);
+  expect(activeContextKind.default).toBe('company');
+  expect(getTableConfig(session).checks.map(({ name }) => name)).toEqual([
+    'auth_session_context_kind_check',
+    'auth_session_tenant_context_check',
+  ]);
   expect(activeTenantId.name).toBe('active_tenant_id');
   expect(activeTenantId.columnType).toBe('PgUUID');
   expect(activeTenantId.getSQLType()).toBe('uuid');

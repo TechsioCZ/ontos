@@ -132,7 +132,12 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
         onLogout={controls.handleLogout}
         onSearch={controls.handleSearch}
         onTenantChange={controls.handleTenantChange}
+        onTenantContextChange={controls.handleTenantContextChange}
         tenantChoices={model.tenants.items}
+        tenantContextActive={model.contextState === 'tenant_authenticated'}
+        tenantContextAvailable={
+          model.legalEntities.state === 'available' && model.legalEntities.tenantContextAvailable === true
+        }
         tenantState={model.tenants.state}
         tenantSwitchFailed={controls.tenantSwitchFailed}
         tenantSwitchPending={controls.tenantSwitchPending}
@@ -146,7 +151,13 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
             Match.when({ state: 'ready' }, (contribution) => (
               <ResolvedTarget
                 key={`${model.identity.principalId}:${model.identity.tenantId}:${model.selectedLegalEntityId}`}
-                model={{ routeParams: homeRouteParams, search: '', shell: model, state: 'resolved', target: contribution.target }}
+                model={{
+                  routeParams: homeRouteParams,
+                  search: '',
+                  shell: model,
+                  state: 'resolved',
+                  target: contribution.target,
+                }}
               />
             )),
             // Roles without a module Home component get the shell welcome page: company, where to start, their areas.
@@ -166,6 +177,11 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
             )),
             Match.orElse(() => null),
           )}
+          {model.contextState === 'tenant_authenticated' ? (
+            <StatusText aria-live="polite" showIcon status="warning">
+              {t('shell.dashboard.legalEntity.tenantContextActive')}
+            </StatusText>
+          ) : null}
           {model.contextState === 'selection_required' ? (
             <StatusText aria-live="polite" showIcon status="warning">
               {t('shell.dashboard.legalEntity.selectionRequired')}
