@@ -359,6 +359,57 @@
       "seoDescription": "Your signed-in account and connected apps (ChatGPT, Claude).",
       "identity": "Signed-in account",
       "loading": "Loading…"
+    },
+    "connectedAppsGuide": {
+      "title": "How to connect",
+      "intro": "Use this server URL and OAuth. Sign in only on the OntOS page, where you select the company, allowed modules and write policy. Never paste passwords, keys or tokens into the AI chat.",
+      "aiHelp": "Need help? Copy the prompt for your AI assistant and paste it into a chat. The AI guides you; it cannot add the connector for you. Choose read-only access in OntOS for the first check.",
+      "copyUrl": "Copy URL",
+      "copyCommand": "Copy configuration / command",
+      "copyPrompt": "Copy AI setup prompt",
+      "copied": "Copied",
+      "copyUrlFailed": "Could not copy. Select the URL and copy it manually.",
+      "copyCommandFailed": "Could not copy. Select the configuration or command and copy it manually.",
+      "copyPromptFailed": "Could not copy. Expand “Show prompt” and copy the text manually.",
+      "showPrompt": "Show prompt",
+      "officialDocs": "Official instructions",
+      "networkNote": "ChatGPT and remote Claude connectors (including Desktop) need a public HTTPS URL reachable from their cloud. They cannot connect to localhost. For the local demo, use Claude Code or VS Code on the same computer.",
+      "promptIntro": "Help me connect OntOS as a custom MCP server in {{- client}}. Exact URL: {{- mcpUrl}}. Use OAuth only. You cannot add the connector for me: guide me click by click and wait for confirmation after each step. First check my plan and feature access. If an option is missing, ask what I see; do not invent UI paths. Use these steps:",
+      "promptSafety": "Never ask for passwords, API keys or tokens, or put them in chat or configuration. I will sign in myself only on the OntOS page through OAuth, selecting a company and read-only access for the first check. After connection, actually call available read-only OntOS tools and report the connected company and available modules from their results. Do not change, create or delete anything. If the tools are unavailable, say so and help enable them; do not claim the connection is verified without a successful tool call.",
+      "clients": {
+        "chatgpt": {
+          "requirements": "Full custom MCP including writes: Business, Enterprise and Edu, subject to admin permissions. Pro has limited read/fetch access. If the desktop app does not show the option, open ChatGPT on the web and check your plan and permissions. Labels below follow the official English documentation.",
+          "step1": "Open Plugins in ChatGPT, click +, then Add custom MCP server. This flow does not require enabling Developer Mode.",
+          "step2": "Enter the name OntOS, the server URL above and OAuth authentication. Review and acknowledge the security warning, then select Create as a plugin.",
+          "step3": "Sign in on the redirected OntOS page, select your company, modules and read-only access for the first check. Approve consent and return to ChatGPT.",
+          "step4": "In a new chat, select the connected OntOS plugin (for example via @OntOS) and ask it to verify the connected company and modules by actually calling read-only tools."
+        },
+        "claude": {
+          "requirements": "Remote custom connectors are available on Free, Pro, Max, Team and Enterprise; Free allows one custom connector. On Team/Enterprise an owner or authorized admin must first add the connector in Organization settings › Connectors. This also applies to Claude Desktop, not its local configuration file.",
+          "step1": "On claude.ai or Claude Desktop, open Customize › Connectors › + Add › Add custom connector. Team members instead select the admin-provided connector and click Connect.",
+          "step2": "When adding, enter the name OntOS and the URL above › Continue. Review detected authentication › Continue. For OAuth choose Sign in now and keep the recommended Claude identity; do not enter your own keys. Finish with Add.",
+          "step3": "Complete sign-in and OAuth consent on the OntOS page: select your company, modules and read-only access for the first check.",
+          "step4": "In a new chat, open + › Connectors and enable OntOS. Ask it to verify the company and modules with read-only tools; approve only matching calls."
+        },
+        "claude-code": {
+          "requirements": "Requires installed, signed-in Claude Code and network access to the server. Use HTTP with OAuth, not a manually copied token.",
+          "step1": "Run the command below in your terminal to add the ontos HTTP server.",
+          "step2": "In Claude Code, enter /mcp, select ontos and follow the browser sign-in prompt. In OntOS, select your company, modules and read-only access for the first check, then approve OAuth consent.",
+          "step3": "Back in Claude Code, check /mcp and ask it to actually read the connected company and available modules with OntOS tools."
+        },
+        "vscode": {
+          "requirements": "Requires current VS Code with AI features enabled, a local folder open and a supported agent mode. Organization policies may block MCP; check access to Copilot / your chosen agent.",
+          "step1": "Open the Command Palette (⌘⇧P / Ctrl+Shift+P) › MCP: Add Server › HTTP (HTTP or Server-Sent Events). Enter the URL above and ID ontos; choose the configuration destination (Global › Copilot Global for personal Copilot use, if available).",
+          "step2": "Review server trust and complete browser OAuth sign-in. In OntOS select your company, modules and read-only access for the first check; approve consent.",
+          "step3": "Enable ontos tools in agent chat and ask it to read the company and modules. Expand the tool result: an AI answer without a tool call does not verify the connection."
+        },
+        "cursor": {
+          "requirements": "Requires current Cursor with MCP support and access to Agent. Enterprise admins can restrict allowed servers. The remote HTTP server uses OAuth; no API keys are needed.",
+          "step1": "Open ~/.cursor/mcp.json for personal configuration (or .cursor/mcp.json in your project). Add the ontos entry below to mcpServers, preserving existing entries.",
+          "step2": "In Customize, review and enable the ontos server. Complete the offered browser OAuth sign-in and select your company, modules and read-only access for the first check in OntOS.",
+          "step3": "In a new Agent chat, ask it to verify the connected company and modules by calling read-only ontos tools. Inspect the actual tool result."
+        }
+      }
     }
   }
 }

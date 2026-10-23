@@ -1,7 +1,10 @@
-/* eslint-disable no-negated-condition, unicorn/no-negated-condition -- Closed route states read most clearly as error-versus-ready branches. expires: 2026-12-31. */
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
+import { pageDataPending } from '@app/shared-contracts/page-data';
+import { useSyncExternalStore } from 'react';
 
+import { ConnectedAppsGuide } from '../../profile/connected-apps-guide.tsx';
+import { DEFAULT_CONNECTIONS_FILTER, companyConnectionsData } from './connections-admin-data.ts';
 import { SignInRedirect } from '../../../sign-in-redirect.tsx';
 import { ShellContentLayout } from '../../../shell-content-layout.tsx';
 import { useShellControls } from '../../../use-shell-controls.ts';
@@ -10,6 +13,12 @@ import { ConnectionsAdminPanel } from './connections-admin-panel.tsx';
 
 export const ConnectionsAdminView = ({ model }: { readonly model: ConnectionsAdminPageModel }) => {
   const { t } = useModernI18n();
+  // Reuse the already-prepared admin list; no second request just to obtain the public MCP URL.
+  const connections = useSyncExternalStore(
+    companyConnectionsData.subscribe,
+    () => companyConnectionsData.snapshot(DEFAULT_CONNECTIONS_FILTER),
+    () => pageDataPending,
+  );
   const controls = useShellControls(model.shell.state === 'authenticated' ? model.shell : undefined);
   if (model.shell.state === 'reload_required' || controls.reloadRequired) {
     return (
@@ -39,7 +48,10 @@ export const ConnectionsAdminView = ({ model }: { readonly model: ConnectionsAdm
       shell={model.shell}
       title="Připojené aplikace"
     >
-      <ConnectionsAdminPanel />
+      <div className="grid min-w-0 gap-300">
+        <ConnectionsAdminPanel />
+        {connections.state === 'ready' ? <ConnectedAppsGuide mcpUrl={connections.value.mcpUrl} /> : null}
+      </div>
     </ShellContentLayout>
   );
 };

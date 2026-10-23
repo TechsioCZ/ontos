@@ -359,6 +359,57 @@
       "seoDescription": "Profil přihlášeného účtu a připojené aplikace (ChatGPT, Claude).",
       "identity": "Přihlášený účet",
       "loading": "Načítám…"
+    },
+    "connectedAppsGuide": {
+      "title": "Jak připojit",
+      "intro": "Použijte tuto adresu serveru a OAuth. Přihlášení proběhne pouze na stránce OntOS, kde vyberete firmu, povolené moduly a režim zápisu. Do AI nevkládejte hesla, klíče ani tokeny.",
+      "aiHelp": "Chcete pomoc? Zkopírujte pokyn pro svého AI asistenta a vložte ho do chatu. AI vás provede nastavením; konektor za vás sama nepřidá. Pro první ověření zvolte v OntOS pouze čtení.",
+      "copyUrl": "Kopírovat adresu",
+      "copyCommand": "Kopírovat konfiguraci / příkaz",
+      "copyPrompt": "Zkopírovat pokyn pro AI",
+      "copied": "Zkopírováno",
+      "copyUrlFailed": "Kopírování se nepodařilo, označte adresu ručně.",
+      "copyCommandFailed": "Kopírování se nepodařilo, označte konfiguraci nebo příkaz ručně.",
+      "copyPromptFailed": "Kopírování se nepodařilo. Rozbalte „Zobrazit pokyn“ a zkopírujte text ručně.",
+      "showPrompt": "Zobrazit pokyn",
+      "officialDocs": "Oficiální návod",
+      "networkNote": "ChatGPT i vzdálené konektory Claude (včetně Desktop) potřebují veřejnou adresu HTTPS dosažitelnou z jejich cloudu. K localhost se nepřipojí. Pro lokální demo použijte Claude Code nebo VS Code na stejném počítači.",
+      "promptIntro": "Pomoz mi v {{- client}} připojit OntOS jako vlastní MCP server. Přesná URL: {{- mcpUrl}}. Použij výhradně OAuth. Konektor nemůžeš přidat za mě: veď mě česky po jednotlivých kliknutích a po každém kroku počkej na potvrzení. Nejprve ověř můj tarif a dostupnost funkce; když položku nevidím, zeptej se, co vidím, a nevymýšlej cestu v UI. Vycházej z tohoto postupu:",
+      "promptSafety": "Hesla, API klíče ani tokeny ode mě nikdy nechtěj a nevkládej je do chatu či konfigurace. Přihlásím se sám/sama pouze na stránce OntOS přes OAuth; vyberu firmu a pro první test pouze čtení. Po připojení skutečně zavolej dostupné nástroje OntOS pouze pro čtení a vypiš připojenou firmu a dostupné moduly podle jejich výsledků. Nic neměň, nevytvářej ani nemaž. Nemáš-li nástroje k dispozici, řekni to a pomoz je zapnout; netvrď, že je spojení ověřené bez úspěšného volání.",
+      "clients": {
+        "chatgpt": {
+          "requirements": "Plné vlastní MCP včetně zápisu: Business, Enterprise a Edu, podle oprávnění správce. Pro má omezené čtení / načítání dat. Pokud volba v desktopové aplikaci chybí, otevřete ChatGPT na webu a ověřte tarif a oprávnění. Názvy níže odpovídají oficiálnímu anglickému návodu (Plugins = Pluginy).",
+          "step1": "Otevřete Pluginy (Plugins) v ChatGPT, klikněte na + a zvolte Add custom MCP server (Přidat vlastní MCP server). Developer Mode se v tomto postupu nezapíná.",
+          "step2": "Zadejte název OntOS, výše uvedenou URL serveru a ověřování OAuth. Přečtěte bezpečnostní upozornění, potvrďte jej a zvolte Create as a plugin.",
+          "step3": "V přesměrovaném přihlášení OntOS se přihlaste, vyberte firmu, moduly a pro první ověření pouze čtení. Potvrďte souhlas a vraťte se do ChatGPT.",
+          "step4": "V novém chatu vyberte připojený plugin OntOS (například přes @OntOS) a požádejte o ověření připojené firmy a modulů skutečným voláním nástrojů pouze pro čtení."
+        },
+        "claude": {
+          "requirements": "Vzdálené vlastní konektory podporují Free, Pro, Max, Team i Enterprise; Free má jeden vlastní konektor. V Team/Enterprise musí konektor nejprve přidat vlastník nebo oprávněný správce v Organization settings › Connectors. Platí i pro Claude Desktop; nejde o lokální konfigurační soubor.",
+          "step1": "Na claude.ai nebo v Claude Desktop otevřete Customize › Connectors › + Add › Add custom connector. Člen týmu místo přidání vybere konektor připravený správcem a klikne na Connect.",
+          "step2": "Při přidávání zadejte název OntOS a výše uvedenou URL › Continue. Zkontrolujte rozpoznané ověřování › Continue. Pro OAuth zvolte Sign in now a ponechte doporučenou identitu Claude; nevkládejte vlastní klíče. Dokončete tlačítkem Add.",
+          "step3": "Dokončete přihlášení a OAuth souhlas na stránce OntOS: vyberte firmu, moduly a pro první ověření pouze čtení.",
+          "step4": "V novém chatu otevřete + › Connectors a zapněte OntOS. Požádejte o ověření firmy a modulů nástroji pouze pro čtení; schvalujte jen odpovídající volání."
+        },
+        "claude-code": {
+          "requirements": "Potřebujete nainstalovaný a přihlášený Claude Code a síťový přístup k serveru. Použijte HTTP transport s OAuth, nikoli ručně kopírovaný token.",
+          "step1": "V terminálu spusťte níže uvedený příkaz pro přidání HTTP serveru ontos.",
+          "step2": "V Claude Code zadejte /mcp, vyberte ontos a postupujte podle výzvy k přihlášení v prohlížeči. V OntOS vyberte firmu, moduly a pro první ověření pouze čtení; potvrďte OAuth souhlas.",
+          "step3": "Po návratu do Claude Code ověřte připojení v /mcp a požádejte o skutečné přečtení připojené firmy a dostupných modulů nástroji OntOS."
+        },
+        "vscode": {
+          "requirements": "Potřebujete aktuální VS Code se zapnutými AI funkcemi, otevřenou lokální složku a podporovaný agentní režim. Firemní pravidla mohou MCP zakazovat; ověřte přístup ke Copilotu / zvolenému agentovi.",
+          "step1": "Otevřete paletu příkazů (⌘⇧P / Ctrl+Shift+P) › MCP: Add Server › HTTP (HTTP or Server-Sent Events). Vložte výše uvedenou URL a ID ontos; vyberte umístění konfigurace (pro osobní Global › Copilot Global, pokud je dostupné).",
+          "step2": "Zkontrolujte důvěryhodnost serveru a potvrďte přihlášení OAuth v prohlížeči. V OntOS vyberte firmu, moduly a pro první ověření pouze čtení; potvrďte souhlas.",
+          "step3": "V agentním chatu povolte nástroje ontos a požádejte o přečtení firmy a modulů. Rozbalte výsledek volání nástroje: samotná odpověď AI bez volání spojení neověřuje."
+        },
+        "cursor": {
+          "requirements": "Potřebujete aktuální Cursor s podporou MCP a přístupem k Agentovi. Správce Enterprise může povolené servery omezit. Vzdálený HTTP server používá OAuth; žádné API klíče se nevkládají.",
+          "step1": "Otevřete ~/.cursor/mcp.json pro osobní konfiguraci (nebo .cursor/mcp.json v projektu). Přidejte níže uvedený záznam ontos do mcpServers; zachovejte ostatní existující záznamy.",
+          "step2": "V Customize zkontrolujte a zapněte server ontos. Dokončete nabídnuté OAuth přihlášení v prohlížeči a v OntOS vyberte firmu, moduly a pro první ověření pouze čtení.",
+          "step3": "V novém chatu Agent požádejte o ověření připojené firmy a modulů voláním nástrojů ontos pouze pro čtení. Zkontrolujte skutečný výsledek volání."
+        }
+      }
     }
   }
 }

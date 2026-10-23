@@ -231,6 +231,7 @@ it.effect('filters the company list and counts the active tiles', () =>
     const { deps } = makeDeps(fixture());
     const response = yield* listForAdmin(caller({ isCompanyAdmin: true }), deps, { filter: { status: 'active' } });
     expect(response.company).toEqual(companyA);
+    expect(response.mcpUrl).toBe(deps.mcpUrl);
     expect(response.connections.map((connection) => connection.grantId)).toEqual(['g1', 'g3']);
     expect(response.stats).toEqual({ active: 2, agentsConnected: 2, directWrite: 1 });
     expect(response.filterOptions.people.map((person) => person.principalId)).toEqual(['person-1', 'person-2']);

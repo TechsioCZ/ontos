@@ -160,6 +160,8 @@ export const ConnectionAdminListResponseSchema = Schema.Struct({
     clients: Schema.Array(Schema.Struct({ clientId: Schema.String, name: Schema.String })),
     people: Schema.Array(PrincipalRefSchema),
   }),
+  /** Public environment MCP resource URL for the connection guide; never a credential. */
+  mcpUrl: Schema.String,
   /** Tiles over the company's ACTIVE connections, independent of the filter. */
   stats: Schema.Struct({ active: Schema.Finite, agentsConnected: Schema.Finite, directWrite: Schema.Finite }),
 });

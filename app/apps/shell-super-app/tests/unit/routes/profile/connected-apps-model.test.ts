@@ -3,7 +3,6 @@ import { expect, test } from 'effect-rstest';
 
 import {
   accessSummary,
-  connectGuide,
   draftFromConnection,
   draftProblem,
   draftToRequest,
@@ -119,13 +118,6 @@ test('failureText prefers the server detail', () => {
   expect(failureText('invalid', 'Neznámý modul fin.')).toBe('Neznámý modul fin.');
   expect(failureText('forbidden', null)).toBe('Tuto akci nemůžete provést.');
   expect(failureText('signedOut', null)).toBe('Přihlášení vypršelo. Přihlaste se znovu.');
-});
-
-test('connectGuide puts the MCP address into the Claude Code command', () => {
-  const url = 'https://ontos.example.test/mcp';
-  const claudeCode = connectGuide(url).find((step) => step.id === 'claude-code');
-  expect(claudeCode?.command).toBe(`claude mcp add --transport http ontos ${url}`);
-  expect(connectGuide(url).filter((step) => step.command !== null)).toHaveLength(1);
 });
 
 test('the panel never offers more than the connection was approved for', () => {

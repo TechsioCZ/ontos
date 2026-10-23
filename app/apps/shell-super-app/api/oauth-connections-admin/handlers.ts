@@ -55,6 +55,7 @@ export const listForAdmin = <R>(
       company: { legalEntityId: caller.legalEntityId, legalName: caller.legalName },
       connections: all.filter((connection) => matchesAdminFilter(connection, request.filter)),
       filterOptions: adminFilterOptions(all),
+      mcpUrl: deps.mcpUrl,
       stats: adminStats(all),
     };
   });
