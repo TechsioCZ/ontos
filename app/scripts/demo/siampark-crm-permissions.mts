@@ -8,7 +8,14 @@
  * the only new relationships are the demo.crm module, context permissions and the demo.crm.apply-command grant.
  */
 import { NodeServices } from '@effect/platform-node';
-import { Console, Effect } from 'effect';
+import { Config, ConfigProvider, Console, Effect, Layer } from 'effect';
+import { FetchHttpClient } from 'effect/unstable/http';
+import {
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
+} from '../../packages/core-runtime/src/modules/active-application-composition.ts';
+import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
+import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
 import { bootstrapRelationshipRequest } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
@@ -17,9 +24,23 @@ import { principalRelationships, siamparkRentalPersonas } from './permissions.mt
 
 const emails = new Set(['management@siampark.demo', 'external@siampark.demo']);
 
-const program = Effect.gen(function* () {
+const environmentLive = ConfigProvider.layer(
+  Effect.gen(function* loadOperatorConfiguration() {
+    const path = yield* Config.String('ONTOS_DEMO_ENV_FILE').pipe(
+      Config.withDefault(new URL('../../.env', import.meta.url).pathname),
+    );
+    return ConfigProvider.orElse(ConfigProvider.fromEnv(), yield* ConfigProvider.fromDotEnv({ path }));
+  }),
+);
+const compositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(ActiveApplicationCompositionSourceLive),
+  Layer.provide(FetchHttpClient.layer),
+);
+const program = Effect.gen(function* repairPublishedRolePermissions() {
   const configuration = yield* loadSpiceDbConfig({
-    envPath: process.env.ONTOS_DEMO_ENV_FILE ?? new URL('../../.env', import.meta.url).pathname,
+    envPath: yield* Config.String('ONTOS_DEMO_ENV_FILE').pipe(
+      Config.withDefault(new URL('../../.env', import.meta.url).pathname),
+    ),
   });
   if (
     configuration.deploymentEnvironment !== 'development' ||
@@ -27,21 +48,32 @@ const program = Effect.gen(function* () {
   ) {
     return yield* Effect.fail(new Error('This demo grant helper requires local development SpiceDB'));
   }
-  const all = siamparkRentalPersonas
-    .filter((persona) => emails.has(persona.email))
-    .flatMap((persona) =>
-      principalRelationships(
-        persona.principalId,
-        persona.role,
-        [{ actionKey: 'demo.crm.apply-command', provisioning: 'explicit' }],
-        rentalDemoLegalEntityId,
+  const source = yield* ActiveApplicationCompositionService;
+  const actions = (yield* discoverCurrentActions(yield* source.load)).filter(
+    (action) => action.actionKey === 'demo.crm.apply-command',
+  );
+  if (actions.length !== 1) {
+    return yield* Effect.fail(new Error('Required published Action is missing'));
+  }
+  const all = yield* Effect.try(() =>
+    siamparkRentalPersonas
+      .filter((persona) => emails.has(persona.email))
+      .flatMap((persona) =>
+        principalRelationships(persona.principalId, persona.role, actions, rentalDemoLegalEntityId),
       ),
-    );
+  );
   // SpiceDB rejects a write that names the same relationship twice (both personas share the company relations).
   const relationships = [
     ...new Map(
       all.map((entry) => [
-        [entry.resourceType, entry.resourceId, entry.relation, entry.subjectType, entry.subjectId].join('|'),
+        [
+          entry.resourceType,
+          entry.resourceId,
+          entry.relation,
+          entry.subjectType,
+          entry.subjectId,
+          entry.subjectRelation ?? '',
+        ].join('|'),
         entry,
       ]),
     ).values(),
@@ -52,6 +84,12 @@ const program = Effect.gen(function* () {
   );
   yield* client.writeRelationships(bootstrapRelationshipRequest(relationships));
   yield* Console.log(`Siampark CRM grants applied (${relationships.length} relationships).`);
-}).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+  return yield* Effect.void;
+}).pipe(
+  Effect.scoped,
+  Effect.provide(compositionLive),
+  Effect.provide(environmentLive),
+  Effect.provide(NodeServices.layer),
+);
 
 await Effect.runPromise(program);
