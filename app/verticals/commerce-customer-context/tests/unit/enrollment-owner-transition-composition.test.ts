@@ -1,4 +1,4 @@
-import { DateTime, Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CommercePortalAuthAccountLookupService } from '../../api/portal-auth/provider/account-lookup-service.ts';
@@ -7,14 +7,17 @@ import { CommercePortalAuthAccountCreationReconciliationService } from '../../ap
 import { CommercePortalAuthAccountCreationUnavailable } from '../../api/portal-auth/provider/account-creation-unavailable.ts';
 import {
   CommercePortalAccountSubjectSchema,
+  EnrollmentOwnerOperationSnapshotSchema,
   EnrollmentActionInvocationIdSchema,
   EnrollmentAttemptIdSchema,
   EnrollmentKeySchema,
+  EnrollmentLegalEntityIdSchema,
   EnrollmentModuleKeySchema,
   EnrollmentPrincipalIdSchema,
   EnrollmentTenantIdSchema,
   EnrollmentTransitionKeySchema,
 } from '../../shared/enrollment-contracts.ts';
+import { RetailEnrollmentEvidenceSchema } from '@app/party-registry/api';
 import type { EnrollmentAttemptSnapshot } from '../../shared/enrollment-contracts.ts';
 import {
   CommerceEnrollmentAttemptNotFound,
@@ -33,6 +36,8 @@ import {
   RECORD_PORTAL_ENROLLMENT_OUTCOME_ACTION_KEY,
 } from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
 import type { CommerceEnrollmentPreparedOwnerBinding } from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
+
+import { verifiedRetailEnrollmentEvidence } from '../../src/enrollment/orchestration/owner-effect-registry.ts';
 
 const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)('10000000-0000-4000-8000-0000000000a1');
 const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)('20000000-0000-4000-8000-0000000000a1');
@@ -67,6 +72,7 @@ const accountLookupNeverRead: CommercePortalAuthAccountLookup = {
   existsByProviderSubject: () =>
     Effect.fail(new CommercePortalAuthAccountCreationUnavailable({ reason: 'not part of this preparation' })),
   subjectForOwnerInvocation: () => Effect.succeedNone,
+  verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
 };
 
 const portFor = (attemptFailure: CommerceEnrollmentAttemptError) =>
@@ -185,6 +191,7 @@ it.effect('resolves a recorded subject through the exact provider directory look
             reason: 'the recorded subject must be preferred over the correlation',
           }),
         ),
+      verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
     };
     const observation = yield* providerObservationFor(observedAttempt({ accountSubject }), lookup, ownerInvocationId);
     expect(lookedUp).toBe('provider-user-a1');
@@ -213,6 +220,7 @@ it.effect('recovers a lost creation answer through the provider-side owner-invoc
           correlatedInvocation = invocation;
           return Option.some('provider-user-lost-answer');
         }),
+      verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
     };
     const observation = yield* providerObservationFor(observedAttempt(), lookup, ownerInvocationId);
     expect(correlatedInvocation).toBe(String(ownerInvocationId));
@@ -235,8 +243,114 @@ it.effect('reports a correlated subject the provider no longer holds as absent',
       ...accountLookupNeverRead,
       existsByProviderSubject: () => Effect.succeed(false),
       subjectForOwnerInvocation: () => Effect.succeedSome('provider-user-vanished'),
+      verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
     };
     const observation = yield* providerObservationFor(observedAttempt(), lookup, ownerInvocationId);
     expect(observation).toStrictEqual({ evidenceRef: String(attemptId), outcome: 'NOT_FOUND' });
   }),
 );
+
+const sellingLegalEntityId = '70000000-0000-4000-8000-0000000000a1';
+const verifiedAttempt = () =>
+  observedAttempt({
+    accountSubject: Schema.decodeSync(CommercePortalAccountSubjectSchema)({
+      authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1',
+      providerSubjectId: 'provider-user-a1',
+      subjectType: 'user',
+    }),
+    targetLegalEntityId: Schema.decodeSync(EnrollmentLegalEntityIdSchema)(sellingLegalEntityId),
+  });
+const providerOperation = Schema.decodeUnknownSync(EnrollmentOwnerOperationSnapshotSchema)({
+  ...claimBinding,
+  createdAt: '2026-09-16T10:00:00.000Z',
+  portalEnrollmentOwnerOperationId: '80000000-0000-4000-8000-0000000000a1',
+  requestDigest: 'd'.repeat(64),
+  required: true,
+  revision: 2,
+  status: 'SUCCEEDED',
+  updatedAt: '2026-09-16T10:01:00.000Z',
+});
+const evidenceCandidate = {
+  evidenceRefs: ['90000000-0000-4000-8000-0000000000a1'],
+  officialIdentifiers: [],
+  partyType: 'PERSON' as const,
+  provenance: { method: 'commerce.portal-enrollment.self-enrollment', source: 'commerce.customer-context' },
+  validFrom: DateTime.makeUnsafe('2026-09-16T10:00:00.000Z'),
+};
+it.effect(
+  'retail attestation rechecks current provider ownership against the exact durable creation operation and subject',
+  () =>
+    Effect.gen(function* currentProof() {
+      let verified = true;
+      const lookups: { ownerInvocationId: string; providerSubjectId: string }[] = [];
+      const lookup: CommercePortalAuthAccountLookup = {
+        ...accountLookupNeverRead,
+        verifiedEmailForOwnerInvocation: (input) =>
+          Effect.sync(() => {
+            lookups.push(input);
+            return verified;
+          }),
+      };
+      const input = { attempt: verifiedAttempt(), operations: [providerOperation], sellingLegalEntityId };
+      const operation = verifiedRetailEnrollmentEvidence(input, evidenceCandidate, lookup);
+      const proof = yield* operation;
+      expect(Schema.is(RetailEnrollmentEvidenceSchema)(proof)).toBe(true);
+      expect(proof.providerSubjectId).toBe('provider-user-a1');
+      expect(proof.providerOwnerInvocationId).toBe(ownerInvocationId);
+      expect(lookups).toEqual([{ ownerInvocationId, providerSubjectId: 'provider-user-a1' }]);
+      verified = false;
+      expect(yield* operation.pipe(Effect.isFailure)).toBe(true);
+      expect(lookups).toHaveLength(2);
+    }),
+);
+for (const scenario of [
+  'unverified',
+  'wrong-journey',
+  'wrong-company',
+  'wrong-operation-attempt',
+  'wrong-operation-tenant',
+  'unfinished-operation',
+  'missing-subject',
+] as const) {
+  it.effect(`retail attestation refuses ${scenario} without accepting browser verification flags`, () =>
+    Effect.gen(function* denyUnproven() {
+      let attempt = verifiedAttempt();
+      const operation = { ...providerOperation };
+      if (scenario === 'wrong-journey') {
+        attempt = { ...attempt, journey: 'COUNTERPARTY_INVITATION' };
+      }
+      if (scenario === 'wrong-company') {
+        attempt = Struct.omit(attempt, ['targetLegalEntityId']);
+      }
+      if (scenario === 'missing-subject') {
+        attempt = Struct.omit(attempt, ['accountSubject']);
+      }
+      if (scenario === 'wrong-operation-attempt') {
+        operation.portalEnrollmentAttemptId = Schema.decodeSync(EnrollmentAttemptIdSchema)(sellingLegalEntityId);
+      }
+      if (scenario === 'wrong-operation-tenant') {
+        operation.tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)(sellingLegalEntityId);
+      }
+      if (scenario === 'unfinished-operation') {
+        operation.status = 'IN_PROGRESS';
+      }
+      let checks = 0;
+      const lookup: CommercePortalAuthAccountLookup = {
+        ...accountLookupNeverRead,
+        verifiedEmailForOwnerInvocation: () =>
+          Effect.sync(() => {
+            checks += 1;
+            return scenario !== 'unverified';
+          }),
+      };
+      expect(
+        yield* verifiedRetailEnrollmentEvidence(
+          { attempt, operations: [operation], sellingLegalEntityId },
+          evidenceCandidate,
+          lookup,
+        ).pipe(Effect.isFailure),
+      ).toBe(true);
+      expect(checks).toBe(scenario === 'unverified' ? 1 : 0);
+    }),
+  );
+}

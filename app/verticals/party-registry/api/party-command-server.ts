@@ -1,10 +1,11 @@
-import { ActionRuntime } from '@app/core-runtime';
+import { ActionRuntime, ReadRuntime } from '@app/core-runtime';
 import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import type { ActionRegistration, DomainEventContractMap } from '@app/core-runtime';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Redacted, Schema } from 'effect';
 import type { HttpServerRequest } from 'effect/unstable/http';
 
+import { partyCommandResultRead } from '../src/api/party-command-result.read.ts';
 import { partyRegistryApi } from '../shared/api.ts';
 import type { ResolvePartyCommandCommitPayload, ResolvePartyCommandCommitResult } from '../shared/command-api.ts';
 import { ActionInvocationIdSchema } from '../shared/domain/correction-contracts.ts';
@@ -123,6 +124,9 @@ const runWirePayloadPartyCommand = Effect.fn('PartyCommandServer.runWirePayloadP
 
 export const partyRegistryCommandsLive = HttpApiBuilder.group(partyRegistryApi, 'partyCommands', (handlers) =>
   handlers
+    .handle('acceptRetailEnrollmentEvidence', ({ payload, request }) =>
+      runPartyCommand(partyCommandRegistrations.acceptRetailEnrollmentEvidence, payload, request),
+    )
     .handle('addContactPoint', ({ payload, request }) =>
       runWirePayloadPartyCommand(partyCommandRegistrations.addContactPoint, payload, request),
     )
@@ -218,12 +222,26 @@ const resolvePartyCommandCommit = Effect.fn('PartyCommandServer.resolvePartyComm
         retryCommand: false,
         state: 'OPEN',
       })),
-      Effect.catchTag('ActionAlreadyCommitted', (committed) =>
-        Effect.succeed<ResolvePartyCommandCommitResult>({
-          _tag: 'PartyCommandCommitResolution',
-          invocationId: ActionInvocationIdSchema.make(committed.invocationId),
-          retryCommand: false,
-          state: 'COMMITTED',
+      Effect.catchTag(
+        'ActionAlreadyCommitted',
+        Effect.fn('PartyCommandRecovery.ownedResult')(function* ownedResult(committed) {
+          const readRuntime = yield* ReadRuntime;
+          const { createResult } = yield* readRuntime
+            .runRead({
+              registration: partyCommandResultRead,
+              decodedInput: { invocationId: ActionInvocationIdSchema.make(committed.invocationId) },
+              inputFormat: 'decoded',
+              principal,
+              transport: { correlationId },
+            })
+            .pipe(Effect.mapError((cause) => Object.assign(partyCommandProblem.unavailable(), { cause })));
+          const result = {
+            _tag: 'PartyCommandCommitResolution' as const,
+            invocationId: ActionInvocationIdSchema.make(committed.invocationId),
+            retryCommand: false as const,
+            state: 'COMMITTED' as const,
+          };
+          return createResult === undefined ? result : { ...result, createResult };
         }),
       ),
       Effect.catchTags({

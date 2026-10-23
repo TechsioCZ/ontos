@@ -392,6 +392,7 @@ it.effect('projects a Better Auth create response double without returning its t
     existsByEmail: () => Effect.succeed(false),
     existsByProviderSubject: () => Effect.succeed(true),
     subjectForOwnerInvocation: () => Effect.succeedNone,
+    verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
   }).pipe(
     Effect.flatMap((gateway) =>
       gateway.create({
@@ -445,6 +446,7 @@ it.effect('awaits the verification send after sign-up commits before returning t
       existsByEmail: () => Effect.succeed(false),
       existsByProviderSubject: () => Effect.succeed(true),
       subjectForOwnerInvocation: () => Effect.succeedNone,
+      verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
     },
     {
       email: 'buyer@example.test',
@@ -484,6 +486,7 @@ it.effect('reports unavailable, not created, when the verification send fails af
         existsByEmail: () => Effect.succeed(false),
         existsByProviderSubject: () => Effect.succeed(true),
         subjectForOwnerInvocation: () => Effect.succeedNone,
+        verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
       },
       {
         email: 'buyer@example.test',
@@ -518,6 +521,7 @@ it.effect('does not treat Better Auth generic duplicate responses as created acc
         existsByEmail: () => Effect.succeed(false),
         existsByProviderSubject: () => Effect.succeed(false),
         subjectForOwnerInvocation: () => Effect.succeedNone,
+        verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
       },
       {
         email: 'existing@example.test',
@@ -560,6 +564,7 @@ it.effect('maps a definitive Better Auth validation failure to rejected', () => 
         existsByEmail: () => Effect.succeed(false),
         existsByProviderSubject: () => Effect.succeed(false),
         subjectForOwnerInvocation: () => Effect.succeedNone,
+        verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
       },
       {
         email: 'buyer@example.test',
@@ -595,6 +600,7 @@ it.effect('fails closed when the Better Auth error code is absent or unbounded',
           existsByEmail: () => Effect.succeed(false),
           existsByProviderSubject: () => Effect.succeed(false),
           subjectForOwnerInvocation: () => Effect.succeedNone,
+          verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
         },
         {
           email: 'buyer@example.test',
@@ -636,6 +642,7 @@ it.effect('rejects an existing email before invoking Better Auth', () => {
         existsByEmail: () => Effect.succeed(true),
         existsByProviderSubject: () => Effect.succeed(true),
         subjectForOwnerInvocation: () => Effect.succeedNone,
+        verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
       },
       {
         email: 'existing@example.test',
@@ -679,6 +686,7 @@ it.effect('replays a correlated owner invocation to its committed subject instea
       existsByProviderSubject: () => Effect.succeed(true),
       subjectForOwnerInvocation: ({ ownerInvocationId: invocation }) =>
         invocation === ownerInvocationId ? Effect.succeedSome(providerSubjectId) : Effect.succeedNone,
+      verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
     },
     {
       email: 'buyer@example.test',
@@ -712,6 +720,7 @@ it.effect('maps a malformed Better Auth success response to unavailable', () => 
         existsByEmail: () => Effect.succeed(false),
         existsByProviderSubject: () => Effect.succeed(true),
         subjectForOwnerInvocation: () => Effect.succeedNone,
+        verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
       },
       {
         email: 'buyer@example.test',
@@ -749,6 +758,7 @@ it.effect('maps an indeterminate Better Auth provider failure to unavailable wit
         existsByEmail: () => Effect.succeed(false),
         existsByProviderSubject: () => Effect.succeed(false),
         subjectForOwnerInvocation: () => Effect.succeedNone,
+        verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
       },
       {
         email: 'buyer@example.test',
@@ -792,6 +802,7 @@ it.effect('maps a wrapped Better Auth storage failure to unavailable after one p
         existsByEmail: () => Effect.succeed(false),
         existsByProviderSubject: () => Effect.succeed(false),
         subjectForOwnerInvocation: () => Effect.succeedNone,
+        verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
       },
       {
         email: 'buyer@example.test',
@@ -828,6 +839,7 @@ it.effect('rejects raw password and missing owner invocation before any gateway 
     existsByEmail: () => Effect.succeed(false),
     existsByProviderSubject: () => Effect.succeed(true),
     subjectForOwnerInvocation: () => Effect.succeedNone,
+    verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
   };
   const rawPasswordInput = {
     email: 'buyer@example.test',
@@ -1123,6 +1135,7 @@ it.effect('normalizes the address once before the duplicate guard, the provider 
         return true;
       }),
     subjectForOwnerInvocation: () => Effect.succeedNone,
+    verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
   }).pipe(
     Effect.flatMap((gateway) =>
       gateway.create({

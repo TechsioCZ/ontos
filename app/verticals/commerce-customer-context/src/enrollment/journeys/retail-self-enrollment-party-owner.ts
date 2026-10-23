@@ -1,10 +1,11 @@
-import { PartyCommandNotFoundProblemSchema } from '@app/party-registry/api';
+import { PartyCommandAlreadyCommittedProblemSchema, PartyCommandNotFoundProblemSchema } from '@app/party-registry/api';
 import {
+  acceptRetailEnrollmentEvidenceWithAuthorization,
   createPartyWithAuthorization,
-  executePartyMatchWithAuthorization,
   recoverPartyCreateWithAuthorization,
+  resolvePartyCommandCommitWithAuthorization,
 } from '@app/party-registry/api/client';
-import type { createParty, executePartyMatch, recoverPartyCreate } from '@app/party-registry/api/client';
+import type { acceptRetailEnrollmentEvidence, createParty, recoverPartyCreate } from '@app/party-registry/api/client';
 import { SupportedGatewayContextClaimsSchema } from '@app/shared-contracts';
 import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import { Config, Effect, Encoding, Match, Option, Redacted, Schema } from 'effect';
@@ -32,40 +33,39 @@ import {
   retailSelfEnrollmentEvidenceReference,
 } from './retail-self-enrollment-contracts.ts';
 
-/**
- * Party Registry candidate submission as one Retail self-enrollment owner transition. A Party is
- * created only on `NO_MATCH`; an `AMBIGUOUS` outcome is a typed non-terminal halt, so the adapter
- * never picks a Party, widens a match, or infers ownership from an email or a Guest order.
- *
- * Reconciliation reads what the immutable original invocation committed; a still-open commit is
- * rejected for a later retry rather than resubmitting a Create. A submission that never reached the
- * Create at all — the match is the first call and it can be unavailable on its own — leaves the
- * Party Registry with no invocation of that identity, and that absence is what lets reconciliation
- * run the read-only match again instead of waiting forever for a Create that was never dispatched.
- */
-
-type PartyMatchInvocation = Parameters<typeof executePartyMatch>;
-type PartyCandidate = PartyMatchInvocation[0]['candidate'];
-type PartyMatchResponse = Effect.Success<ReturnType<typeof executePartyMatch>>;
-type PartyMatchError = Effect.Error<ReturnType<typeof executePartyMatch>>;
+/** Party owns every canonical decision. New enrollments and recovery use the same verified
+ * evidence acceptance Action; linked candidates stay in their original governed review case. */
+type PartyCandidate = Parameters<typeof createParty>[0]['candidate'];
 type PartyCreateResponse = Effect.Success<ReturnType<typeof createParty>>;
 type PartyCreateError = Effect.Error<ReturnType<typeof createParty>>;
+type RetailEvidence = Parameters<typeof acceptRetailEnrollmentEvidence>[0]['evidence'];
 type PartyRecoveryResponse = Effect.Success<ReturnType<typeof recoverPartyCreate>>;
 type PartyRecoveryError = Effect.Error<ReturnType<typeof recoverPartyCreate>>;
 
 export interface RetailPartyCandidateOwnerExecutors {
+  readonly acceptEvidence: (
+    payload: Parameters<typeof acceptRetailEnrollmentEvidence>[0],
+    options: Parameters<typeof acceptRetailEnrollmentEvidence>[1],
+  ) => Effect.Effect<
+    PartyCreateResponse,
+    Effect.Error<ReturnType<typeof acceptRetailEnrollmentEvidence>> | CommerceEnrollmentOwnerEffectError
+  >;
+
   readonly createParty: (
     payload: Parameters<typeof createParty>[0],
     options: Parameters<typeof createParty>[1],
   ) => Effect.Effect<PartyCreateResponse, PartyCreateError | CommerceEnrollmentOwnerEffectError>;
-  readonly matchParty: (
-    payload: PartyMatchInvocation[0],
-    requestCorrelation: string,
-  ) => Effect.Effect<PartyMatchResponse, PartyMatchError | CommerceEnrollmentOwnerEffectError>;
+
   readonly recoverPartyCreate: (
     payload: Parameters<typeof recoverPartyCreate>[0],
     options: Parameters<typeof recoverPartyCreate>[1],
   ) => Effect.Effect<PartyRecoveryResponse, PartyRecoveryError | CommerceEnrollmentOwnerEffectError>;
+  readonly resolveOriginalInvocation: (
+    ownerInvocationId: string,
+  ) => Effect.Effect<
+    Parameters<typeof acceptRetailEnrollmentEvidence>[0]['originalInvocationId'],
+    CommerceEnrollmentOwnerEffectError
+  >;
 }
 
 export interface RetailPartyCandidateOwnerInput {
@@ -155,6 +155,16 @@ const makeRetailPartyCandidateOwnerExecutors = (
   const gatewayScope = Object.freeze({ compositionRevision, legalEntityId, requestCorrelation, tenantId });
   const acquire = () => acquireRetailPartyGateway(gatewayScope);
   return Object.freeze<RetailPartyCandidateOwnerExecutors>({
+    acceptEvidence: (payload, options) =>
+      acquire().pipe(
+        Effect.flatMap(({ credential, options: transport }) =>
+          acceptRetailEnrollmentEvidenceWithAuthorization(payload, Redacted.value(credential), {
+            ...options,
+            ...transport,
+            correlationId: requestCorrelation,
+          }),
+        ),
+      ),
     createParty: (payload, options) =>
       acquire().pipe(
         Effect.flatMap(({ credential, options: transport }) =>
@@ -165,25 +175,35 @@ const makeRetailPartyCandidateOwnerExecutors = (
           }),
         ),
       ),
-    matchParty: (payload) =>
-      acquire().pipe(
-        Effect.flatMap(({ credential, options }) =>
-          executePartyMatchWithAuthorization(payload, Redacted.value(credential), requestCorrelation, options),
-        ),
-      ),
     recoverPartyCreate: (payload, options) =>
       recoverPartyCreateWithAuthorization(payload, acquire, {
         ...options,
         compositionRevision,
         correlationId: requestCorrelation,
       }),
+    resolveOriginalInvocation: (ownerInvocationId) =>
+      acquire().pipe(
+        Effect.flatMap(({ credential, options }) =>
+          resolvePartyCommandCommitWithAuthorization(
+            { actionKey: 'party.registry.create-party', idempotencyKey: ownerInvocationId },
+            Redacted.value(credential),
+            { ...options, correlationId: requestCorrelation },
+          ),
+        ),
+        Effect.mapError((cause) => unavailable('The original Party Create invocation is unavailable', cause)),
+        Effect.flatMap((result) =>
+          result.state === 'COMMITTED'
+            ? Effect.succeed(result.invocationId)
+            : Effect.fail(unavailable('The original Party Create has not committed')),
+        ),
+      ),
   });
 };
 
 /** The journey's reading of one Party Registry result, before it becomes an Attempt outcome. */
 type PartyVerdict =
   | { readonly kind: 'RESOLVED'; readonly outcomeCode: string; readonly partyResourceId: string }
-  | { readonly kind: 'AMBIGUOUS'; readonly reason: string };
+  | { readonly caseResourceId: string; readonly kind: 'AMBIGUOUS'; readonly reason: string };
 
 const decodeOutcome = (
   candidate: OwnerOutcomeDraft,
@@ -213,16 +233,9 @@ const outcomeOf = (
         failureReason: verdict.reason.slice(0, 500),
         nextState: 'RECONCILIATION_REQUIRED',
         outcomeCode: PARTY_CANDIDATE_AMBIGUOUS_OUTCOME_CODE,
+        resultReference: verdict.caseResourceId,
         status: 'FAILED',
       });
-
-const soleSameTenantParty = (
-  candidateParties: PartyMatchResponse['candidateParties'],
-  tenantId: string,
-): string | undefined => {
-  const scoped = candidateParties.filter((partyRef) => partyRef.tenantId === tenantId);
-  return scoped.length === 1 ? scoped[0]?.resourceId : undefined;
-};
 
 const requireSameTenantCreateResult = (
   result: PartyCreateResponse,
@@ -235,7 +248,11 @@ const requireSameTenantCreateResult = (
 
 const createVerdict = (created: PartyCreateResponse): PartyVerdict =>
   created.outcome === 'AMBIGUOUS'
-    ? { kind: 'AMBIGUOUS', reason: 'The Party create decision is ambiguous and must be reconciled' }
+    ? {
+        caseResourceId: created.caseRef.resourceId,
+        kind: 'AMBIGUOUS',
+        reason: 'The Party create decision is ambiguous and must be reconciled',
+      }
     : {
         kind: 'RESOLVED',
         outcomeCode:
@@ -247,22 +264,11 @@ const createVerdict = (created: PartyCreateResponse): PartyVerdict =>
 const evidenceFor = (ownerInvocationId: string, decisionResourceId: string): string =>
   retailSelfEnrollmentEvidenceReference(['party.registry', ownerInvocationId, decisionResourceId]);
 
-/** One Party Registry submission: the read-only match, and the Create only `NO_MATCH` allows. */
+/** A canonical Create or its governed continuation, never a preview identity match. */
 interface PartySubmission {
-  /**
-   * What this submission was decided by, and therefore what its reconciliation evidence names. A
-   * committed Create names the Party Registry's own decision; a read-only match names what the
-   * match resolved, because the preview match commits no decision to name.
-   */
   readonly decisionResourceId: string;
   readonly verdict: PartyVerdict;
 }
-
-/** A submission the read-only match alone decided: its own verdict is the reference it names. */
-const submissionOf = (verdict: PartyVerdict): PartySubmission => ({
-  decisionResourceId: verdict.kind === 'RESOLVED' ? verdict.partyResourceId : PARTY_CANDIDATE_AMBIGUOUS_OUTCOME_CODE,
-  verdict,
-});
 
 const isCommitResolutionNotFound = Schema.is(PartyCommandNotFoundProblemSchema);
 
@@ -271,39 +277,44 @@ const isCommitResolutionNotFound = Schema.is(PartyCommandNotFoundProblemSchema);
  * `executors` defaults to the published client and is replaced by doubles in unit tests.
  */
 export const retailPartyCandidateOwnerEffect = (
-  input: RetailPartyCandidateOwnerInput,
+  input: RetailPartyCandidateOwnerInput & {
+    readonly verifiedEvidence: Effect.Effect<RetailEvidence, CommerceEnrollmentOwnerEffectError>;
+  },
   executors: RetailPartyCandidateOwnerExecutors = makeRetailPartyCandidateOwnerExecutors(input),
 ): CommerceEnrollmentOwnerEffect => {
-  const { candidate, requestCorrelation, tenantId } = input;
+  const { candidate, requestCorrelation, tenantId, verifiedEvidence } = input;
+  const acceptIfEligible = Effect.fn('RetailPartyCandidateOwnerEffect.acceptIfEligible')(function* accept(
+    original: PartyCreateResponse,
+    ownerInvocationId: string,
+  ): Effect.fn.Return<PartyCreateResponse, CommerceEnrollmentOwnerEffectError> {
+    if (original.outcome !== 'AMBIGUOUS') {
+      return original;
+    }
+    const evidence = yield* verifiedEvidence;
+    return yield* executors
+      .acceptEvidence(
+        { evidence, originalInvocationId: yield* executors.resolveOriginalInvocation(ownerInvocationId) },
+        { correlationId: requestCorrelation, idempotencyKey: `${ownerInvocationId}:retail-evidence` },
+      )
+      .pipe(
+        // A prior acceptance may have kept this case open for genuine review. Recovery of the
+        // original invocation already consumed any governed resolution; do not mint another key.
+        Effect.catchIf(Schema.is(PartyCommandAlreadyCommittedProblemSchema), () => Effect.succeed(original)),
+        Effect.mapError((cause) => unavailable('Party retail evidence acceptance is unavailable', cause)),
+      );
+  });
   const submit = Effect.fn('RetailPartyCandidateOwnerEffect.submit')(function* submitCandidate(
     ownerInvocationId: string,
   ): Effect.fn.Return<PartySubmission, CommerceEnrollmentOwnerEffectError> {
-    const match = yield* executors
-      .matchParty({ candidate }, requestCorrelation)
-      .pipe(Effect.mapError((cause) => unavailable('The Party Registry match operation is unavailable', cause)));
-
-    if (match.outcome === 'AMBIGUOUS') {
-      return submissionOf({
-        kind: 'AMBIGUOUS',
-        reason: 'The Party candidate matched more than one Party and must be reconciled',
-      });
-    }
-    if (match.outcome === 'MATCHED') {
-      const partyResourceId = soleSameTenantParty(match.candidateParties, tenantId);
-      return submissionOf(
-        partyResourceId === undefined
-          ? { kind: 'AMBIGUOUS', reason: 'The Party Registry match did not name exactly one Party in this Tenant' }
-          : { kind: 'RESOLVED', outcomeCode: PARTY_CANDIDATE_MATCHED_OUTCOME_CODE, partyResourceId },
-      );
-    }
-
-    // NO_MATCH is the only outcome that may create a Party, and it does so under the immutable
-    // owner invocation as its idempotency key, so an equivalent retry cannot create a second one.
+    // Canonical Create always decides first and retains a durable case when review is needed.
+    // The same Party-owned acceptance path handles new enrollments and restart recovery.
     const created = yield* executors
       .createParty({ candidate }, { correlationId: requestCorrelation, idempotencyKey: ownerInvocationId })
       .pipe(Effect.mapError((cause) => unavailable('The Party Registry create operation is unavailable', cause)));
     yield* requireSameTenantCreateResult(created, tenantId);
-    return { decisionResourceId: created.decisionRef.resourceId, verdict: createVerdict(created) };
+    const accepted = yield* acceptIfEligible(created, ownerInvocationId);
+    yield* requireSameTenantCreateResult(accepted, tenantId);
+    return { decisionResourceId: accepted.decisionRef.resourceId, verdict: createVerdict(accepted) };
   });
 
   const dispatch = Effect.fn('RetailPartyCandidateOwnerEffect.dispatch')(function* dispatchCandidate(
@@ -333,6 +344,7 @@ export const retailPartyCandidateOwnerEffect = (
           nextState: 'RECONCILIATION_REQUIRED',
           outcomeCode: PARTY_CANDIDATE_AMBIGUOUS_OUTCOME_CODE,
           reconciliationRef,
+          resultReference: submission.verdict.caseResourceId,
           status: 'FAILED',
         });
   };
@@ -340,9 +352,7 @@ export const retailPartyCandidateOwnerEffect = (
   const reconcile = Effect.fn('RetailPartyCandidateOwnerEffect.reconcile')(function* reconcileCandidate(
     reconciliation: CommerceEnrollmentOwnerReconciliationInput,
   ): Effect.fn.Return<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> {
-    // The Party Registry knows every invocation it was ever asked to commit. An identity it has
-    // never seen is proof that this transition failed upstream of its own Create — in the read-only
-    // match — so nothing is committed, nothing can be lost, and the submission is simply run again.
+    // Only the native missing-invocation result permits submission with the original immutable key.
     const recovery = yield* executors
       .recoverPartyCreate(
         { actionKey: 'party.registry.create-party', idempotencyKey: reconciliation.ownerInvocationId },
@@ -368,9 +378,11 @@ export const retailPartyCandidateOwnerEffect = (
       );
     }
     yield* requireSameTenantCreateResult(recovered, tenantId);
+    const accepted = yield* acceptIfEligible(recovered, reconciliation.ownerInvocationId);
+    yield* requireSameTenantCreateResult(accepted, tenantId);
     return yield* resolutionFor(reconciliation, {
-      decisionResourceId: recovered.decisionRef.resourceId,
-      verdict: createVerdict(recovered),
+      decisionResourceId: accepted.decisionRef.resourceId,
+      verdict: createVerdict(accepted),
     });
   });
 

@@ -220,6 +220,7 @@ const registryLive = (bindingStatus: 'active' | 'pending') =>
           existsByEmail: unreachable('existsByEmail'),
           existsByProviderSubject: unreachable('existsByProviderSubject'),
           subjectForOwnerInvocation: unreachable('subjectForOwnerInvocation'),
+          verifiedEmailForOwnerInvocation: () => Effect.succeed(false),
         }),
         Layer.succeed(CommercePortalAuthAccountCreationReconciliationService, {
           reissueVerificationEmail: unreachable('reissueVerificationEmail'),

@@ -3,6 +3,11 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 import { HttpApiMiddleware } from 'effect/unstable/httpapi';
 
+import {
+  AcceptRetailEnrollmentEvidencePayloadSchema,
+  AcceptRetailEnrollmentEvidenceResultSchema,
+} from './actions/accept-retail-enrollment-evidence.ts';
+import { PartyCreateOutcomeSchema } from './domain/identity-contracts.ts';
 import { AddContactPointPayloadSchema, AddContactPointResultSchema } from './actions/add-contact-point.ts';
 import {
   AddPartyOfficialIdentifierPayloadSchema,
@@ -72,6 +77,15 @@ import {
 import { PartyRefSchema } from './resources/party.ts';
 import { PartyRelationshipRefSchema } from './resources/party-relationship.ts';
 
+export {
+  AcceptRetailEnrollmentEvidencePayloadSchema,
+  AcceptRetailEnrollmentEvidenceResultSchema,
+  RetailEnrollmentEvidenceSchema,
+} from './actions/accept-retail-enrollment-evidence.ts';
+export type {
+  AcceptRetailEnrollmentEvidencePayload,
+  RetailEnrollmentEvidence,
+} from './actions/accept-retail-enrollment-evidence.ts';
 export { AddContactPointPayloadSchema, AddContactPointResultSchema } from './actions/add-contact-point.ts';
 export type AddContactPointPayload = typeof AddContactPointPayloadSchema.Type;
 export {
@@ -275,6 +289,7 @@ export const ResolvePartyCommandCommitPayloadSchema = Schema.Union([
     invocationId: Schema.optionalKey(Schema.Never),
     actionKey: Schema.Literals([
       'party.registry.create-party',
+      'party.registry.accept-retail-enrollment-evidence',
       'party.registry.counterparty-customer-onboard',
       'party.registry.add-contact-point',
     ]),
@@ -287,6 +302,7 @@ export const ResolvePartyCommandCommitResultSchema = Schema.TaggedStruct('PartyC
   invocationId: ActionInvocationIdSchema,
   retryCommand: Schema.Literal(false),
   state: Schema.Literals(['OPEN', 'COMMITTED']),
+  createResult: Schema.optionalKey(PartyCreateOutcomeSchema),
 });
 export type ResolvePartyCommandCommitResult = typeof ResolvePartyCommandCommitResultSchema.Type;
 
@@ -334,6 +350,17 @@ const commandErrors = [
 /** One closed, statically named HTTP operation per registered Action; no dynamic dispatch envelope. */
 export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi').add(
   HttpApiGroup.make('partyCommands')
+    .add(
+      HttpApiEndpoint.post(
+        'acceptRetailEnrollmentEvidence',
+        '/party-registry/actions/accept-retail-enrollment-evidence',
+        {
+          error: commandErrors,
+          payload: AcceptRetailEnrollmentEvidencePayloadSchema,
+          success: AcceptRetailEnrollmentEvidenceResultSchema,
+        },
+      ),
+    )
     .add(
       HttpApiEndpoint.post('addContactPoint', '/party-registry/actions/add-contact-point', {
         error: commandErrors,

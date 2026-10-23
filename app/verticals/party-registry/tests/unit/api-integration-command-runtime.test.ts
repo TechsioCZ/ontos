@@ -67,7 +67,7 @@ import {
   PartyPersistenceUnavailable,
   PartySchema,
 } from '../../shared/domain/identity-contracts.ts';
-import { RuleKeySchema } from '../../shared/domain/matching-contracts.ts';
+import { committedCreateResult, RuleKeySchema } from '../../shared/domain/matching-contracts.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import type { PartyMatchDecisionRecordSchema } from '../../shared/domain/matching-contracts.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
@@ -180,6 +180,7 @@ const actionPrincipalVerifierTestLayer = Layer.mergeAll(
 ).pipe(Layer.provide(ActiveApplicationCompositionSourceLive), Layer.provide(FetchHttpClient.layer));
 
 const actionSlugs = [
+  'accept-retail-enrollment-evidence',
   'add-contact-point',
   'add-party-official-identifier',
   'archive-party',
@@ -208,6 +209,7 @@ const actionSlugs = [
 ] as const;
 
 const endpointNames = [
+  'acceptRetailEnrollmentEvidence',
   'addContactPoint',
   'addPartyOfficialIdentifier',
   'archiveParty',
@@ -453,7 +455,7 @@ const expectCommitResolution = Effect.fn('Test.expectCommitResolution')(function
   expect(resolution.status).toBe(200);
   const resolutionBody = yield* Effect.promise(() => resolution.json());
   expect(Schema.is(ResolvePartyCommandCommitResultSchema)(resolutionBody)).toBe(true);
-  expect(Struct.omit(resolutionBody, ['_tag'])).toEqual({
+  expect(Struct.omit(resolutionBody, ['_tag', 'createResult'])).toEqual({
     invocationId,
     retryCommand: false,
     state,
@@ -1711,7 +1713,13 @@ it.live(
               });
             }
             const query = yield* Schema.decodeUnknownEffect(Schema.toType(PartyMatchDecisionRequestSchema))(
-              input.decodedInput,
+              input.registration.descriptor.readKey === 'party.registry.api.owned-command-result'
+                ? {
+                    actionInvocationId: (yield* Schema.decodeUnknownEffect(
+                      Schema.Struct({ invocationId: Schema.String }),
+                    )(input.decodedInput)).invocationId,
+                  }
+                : input.decodedInput,
             ).pipe(
               Effect.mapError(
                 () =>
@@ -1729,7 +1737,11 @@ it.live(
                 reason: 'No persisted decision',
               });
             }
-            return yield* Schema.decodeEffect(input.registration.descriptor.resultSchema)(decision).pipe(
+            return yield* Schema.decodeEffect(input.registration.descriptor.resultSchema)(
+              input.registration.descriptor.readKey === 'party.registry.api.owned-command-result'
+                ? { createResult: committedCreateResult(decision) }
+                : decision,
+            ).pipe(
               Effect.mapError(
                 () =>
                   new ReadResultValidationError({

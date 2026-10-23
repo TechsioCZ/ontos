@@ -18,7 +18,17 @@ import {
   makePartyRef,
 } from '../../shared/domain/identity-contracts.ts';
 import type { DuplicateCaseResolutionResult } from '../../shared/domain/matching-contracts.ts';
-import { ClaimOwnedByDifferentParty, DuplicateCandidateConflict } from '../../shared/domain/matching-contracts.ts';
+import {
+  ClaimOwnedByDifferentParty,
+  DuplicateCandidateConflict,
+  PartyMatchDecisionRecordSchema,
+  committedCreateResult,
+} from '../../shared/domain/matching-contracts.ts';
+import type { RetailEnrollmentEvidence } from '../../shared/actions/accept-retail-enrollment-evidence.ts';
+import {
+  acceptsRetailEnrollmentEvidence,
+  RETAIL_ENROLLMENT_EVIDENCE_POLICY,
+} from '../policies/retail-enrollment-evidence.policy.ts';
 import type { PartyAliasResolutionError, PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 // eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure ResourceRef value constructor, not an Effect service constructor.
 import { makeDuplicateCandidateCaseRef } from '../../shared/resources/duplicate-candidate-case.ts';
@@ -554,6 +564,7 @@ const persistDecision = (
     readonly candidateFingerprint: string;
     readonly candidate: PartyCandidate;
     readonly claims?: readonly ResolvedClaim[];
+    readonly retailEvidence?: RetailEnrollmentEvidence | undefined;
     readonly outcome: 'CREATED' | 'MATCHED' | 'NO_MATCH' | 'AMBIGUOUS';
     readonly operation: 'CREATE' | 'MATCH' | 'REVIEW_MATCH' | 'REVIEW_CREATE';
     readonly partyId?: string;
@@ -566,7 +577,21 @@ const persistDecision = (
     candidateFingerprint: input.candidateFingerprint,
     committedCreateOutcome: null,
     evidenceEvaluation: evaluatePartySubjectEvidence(input.candidate),
-    evidenceExplanation: explainCandidateEvidence(input.tenantId, input.candidate, input.outcome, input.claims),
+    evidenceExplanation:
+      input.retailEvidence === undefined
+        ? explainCandidateEvidence(input.tenantId, input.candidate, input.outcome, input.claims)
+        : [
+            {
+              evidenceRefs: [
+                input.retailEvidence.candidateEvidenceRef,
+                input.retailEvidence.enrollmentAttemptId,
+                input.retailEvidence.providerOwnerInvocationId,
+              ],
+              reason: `Verified email ownership attested for exact provider subject ${input.retailEvidence.providerSubjectId}; zero canonical and linked candidates`,
+              ruleKey: RETAIL_ENROLLMENT_EVIDENCE_POLICY,
+              verification: 'VERIFIED',
+            },
+          ],
     matchRuleVersion: MATCH_RULE_VERSION,
     operation: input.operation,
     outcome: input.outcome,
@@ -609,6 +634,10 @@ type CreateOrMatchPartyOperation = (
     readonly actionInvocationId: string;
     readonly candidate: PartyCandidate;
     readonly createWithoutStrongIdentifierReviewed?: boolean;
+    readonly retailEvidenceAcceptance?: {
+      readonly evidence: RetailEnrollmentEvidence;
+      readonly legalEntityId: string;
+    };
     readonly operation?: 'CREATE' | 'REVIEW_CREATE';
     readonly principalId: string;
     readonly tenantId: string;
@@ -903,7 +932,18 @@ export const createOrMatchParty: CreateOrMatchPartyOperation = Effect.fn(
     }
     if (eligibility.decision === 'REVIEW_REQUIRED') {
       const weakPartyIds = yield* findWeakCandidatePartyIds(transaction, input.tenantId, input.candidate, now);
-      return yield* recordAmbiguousCreate(transaction, input, weakPartyIds);
+      const acceptance = input.retailEvidenceAcceptance;
+      if (
+        acceptance === undefined ||
+        !acceptsRetailEnrollmentEvidence(
+          input.candidate,
+          acceptance.evidence,
+          { tenantId: input.tenantId, legalEntityId: acceptance.legalEntityId },
+          weakPartyIds,
+        )
+      ) {
+        return yield* recordAmbiguousCreate(transaction, input, weakPartyIds);
+      }
     }
   }
   const resolvedClaims = yield* lockAndResolveClaims(transaction, input.tenantId, strong);
@@ -927,7 +967,8 @@ export const createOrMatchParty: CreateOrMatchPartyOperation = Effect.fn(
   }
   const party = yield* insertPartyRecord(transaction, input.tenantId, input.candidate, {
     actionInvocationId: input.actionInvocationId,
-    policyVersion: MATCH_RULE_VERSION,
+    policyVersion:
+      input.retailEvidenceAcceptance === undefined ? MATCH_RULE_VERSION : RETAIL_ENROLLMENT_EVIDENCE_POLICY,
     principalId: input.principalId,
   });
   yield* Effect.forEach(
@@ -951,6 +992,7 @@ export const createOrMatchParty: CreateOrMatchPartyOperation = Effect.fn(
     candidateFingerprint: fingerprint,
     claims: resolvedClaims,
     operation,
+    retailEvidence: input.retailEvidenceAcceptance?.evidence,
     outcome: 'CREATED',
     partyId: party.partyRef.resourceId,
     partyIds: [],
@@ -1675,3 +1717,184 @@ export const findDuplicateCandidateCase = Effect.fn('PartyMatchingPersistenceSer
   },
   Effect.mapError(unavailable),
 );
+
+/** Called only after native Core invocation ownership and commit have been established. */
+export const findPartyCreateContinuation = Effect.fn('PartyMatchingPersistenceService.findPartyCreateContinuation')(
+  function* findContinuation(transaction: Pick<PartyTransaction, 'select'>, tenantId: string, invocationId: string) {
+    const found = yield* findMatchDecision(transaction, tenantId, { actionInvocationId: invocationId });
+    if (Schema.is(PartyNotFoundSchema)(found)) {
+      return;
+    }
+    const decision = yield* Schema.decodeUnknownEffect(PartyMatchDecisionRecordSchema)(found.value).pipe(
+      Effect.mapError(unavailable),
+    );
+    const original = committedCreateResult(decision);
+    if (original === null || original.outcome !== 'AMBIGUOUS') {
+      return original ?? undefined;
+    }
+    const [candidateCase] = yield* transaction
+      .select()
+      .from(duplicateCandidateCases)
+      .where(
+        and(
+          eq(duplicateCandidateCases.tenantId, tenantId),
+          eq(duplicateCandidateCases.candidateCaseId, original.caseRef.resourceId),
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError(unavailable));
+    if (
+      candidateCase?.lifecycleState !== 'RESOLVED' ||
+      candidateCase.selectedPartyId === null ||
+      candidateCase.resolutionActionInvocationId === null ||
+      (candidateCase.resolutionOutcome !== 'CREATE_NEW' && candidateCase.resolutionOutcome !== 'MATCH_EXISTING')
+    ) {
+      return original;
+    }
+    const resolved = yield* findMatchDecision(transaction, tenantId, {
+      actionInvocationId: candidateCase.resolutionActionInvocationId,
+    });
+    if (Schema.is(PartyNotFoundSchema)(resolved)) {
+      return yield* unavailable();
+    }
+    const resolution = yield* Schema.decodeUnknownEffect(PartyMatchDecisionRecordSchema)(resolved.value).pipe(
+      Effect.mapError(unavailable),
+    );
+    const isCreate = candidateCase.resolutionOutcome === 'CREATE_NEW';
+    if (
+      resolution.partyRef?.resourceId !== candidateCase.selectedPartyId ||
+      (isCreate
+        ? (resolution.operation !== 'CREATE' && resolution.operation !== 'REVIEW_CREATE') ||
+          resolution.outcome !== 'CREATED'
+        : resolution.operation !== 'REVIEW_MATCH' || resolution.outcome !== 'MATCHED')
+    ) {
+      return yield* unavailable();
+    }
+    return {
+      decisionRef: resolution.decisionRef,
+      outcome: isCreate ? ('CREATED' as const) : ('MATCHED_EXISTING' as const),
+      partyRef: resolution.partyRef,
+    };
+  },
+);
+
+export const acceptRetailEnrollmentEvidence = Effect.fn(
+  'PartyMatchingPersistenceService.acceptRetailEnrollmentEvidence',
+)(function* acceptEvidence(
+  transaction: Pick<PartyTransaction, 'select' | 'insert' | 'update'>,
+  input: {
+    readonly originalInvocationId: string;
+    readonly actionInvocationId: string;
+    readonly evidence: RetailEnrollmentEvidence;
+    readonly legalEntityId: string;
+    readonly principalId: string;
+    readonly tenantId: string;
+  },
+) {
+  yield* lockTenantIdentityWrites(transaction, input.tenantId);
+  const result = yield* findPartyCreateContinuation(transaction, input.tenantId, input.originalInvocationId);
+  if (result === undefined) {
+    return yield* new PartyEvidenceInsufficient({
+      code: 'party_evidence_insufficient',
+      reason: 'The original invocation has no committed Create result',
+    });
+  }
+  if (result.outcome !== 'AMBIGUOUS') {
+    return { created: false, result };
+  }
+  const [candidateCase] = yield* transaction
+    .select()
+    .from(duplicateCandidateCases)
+    .where(
+      and(
+        eq(duplicateCandidateCases.tenantId, input.tenantId),
+        eq(duplicateCandidateCases.candidateCaseId, result.caseRef.resourceId),
+      ),
+    )
+    .limit(1)
+    .for('update')
+    .pipe(Effect.mapError(unavailable));
+  if (candidateCase === undefined) {
+    return yield* unavailable();
+  }
+  if (candidateCase.lifecycleState !== 'OPEN') {
+    return { created: false, result };
+  }
+  const linked = yield* transaction
+    .select({ partyId: duplicateCandidateCaseParties.partyId })
+    .from(duplicateCandidateCaseParties)
+    .where(
+      and(
+        eq(duplicateCandidateCaseParties.tenantId, input.tenantId),
+        eq(duplicateCandidateCaseParties.candidateCaseId, candidateCase.candidateCaseId),
+      ),
+    )
+    .pipe(Effect.mapError(unavailable));
+  const candidate = restoreCandidate(candidateCase.candidateSnapshot);
+  if (
+    !acceptsRetailEnrollmentEvidence(
+      candidate,
+      input.evidence,
+      input,
+      linked.map(({ partyId }) => partyId),
+    )
+  ) {
+    return { created: false, result };
+  }
+  const currentPartyIds = yield* findWeakCandidatePartyIds(
+    transaction,
+    input.tenantId,
+    candidate,
+    yield* DateTime.nowAsDate,
+  );
+  if (currentPartyIds.length > 0) {
+    yield* transaction
+      .insert(duplicateCandidateCaseParties)
+      .values(
+        currentPartyIds.map((partyId, index) => ({
+          candidateCaseId: candidateCase.candidateCaseId,
+          evidenceExplanation: {
+            outcome: 'AMBIGUOUS' as const,
+            reason: `Current canonical evidence requires review of Party ${partyId}`,
+            ruleKey: MATCH_RULE_VERSION,
+          },
+          partyId,
+          rank: index + 1,
+          tenantId: input.tenantId,
+        })),
+      )
+      .pipe(Effect.mapError(unavailable));
+    return { created: false, result };
+  }
+  const accepted = yield* createOrMatchParty(transaction, {
+    actionInvocationId: input.actionInvocationId,
+    candidate,
+    principalId: input.principalId,
+    tenantId: input.tenantId,
+    retailEvidenceAcceptance: { evidence: input.evidence, legalEntityId: input.legalEntityId },
+  });
+  if (accepted.outcome !== 'CREATED') {
+    return { created: false, result: accepted };
+  }
+  const now = yield* DateTime.nowAsDate;
+  yield* transaction
+    .update(duplicateCandidateCases)
+    .set({
+      lifecycleState: 'RESOLVED',
+      resolutionActionInvocationId: input.actionInvocationId,
+      resolutionOutcome: 'CREATE_NEW',
+      resolutionReason: RETAIL_ENROLLMENT_EVIDENCE_POLICY,
+      resolvedAt: now,
+      revision: candidateCase.revision + 1,
+      selectedPartyId: accepted.partyRef.resourceId,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(duplicateCandidateCases.tenantId, input.tenantId),
+        eq(duplicateCandidateCases.candidateCaseId, candidateCase.candidateCaseId),
+      ),
+    )
+    .pipe(Effect.mapError(unavailable));
+  return { created: true, result: accepted };
+});

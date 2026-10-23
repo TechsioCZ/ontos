@@ -258,6 +258,7 @@ it('provisions only the Commerce portal namespace and its three Core binding Act
 it('grants the Commerce enrollment business permissions without broadening its Party Actions or company scope', () => {
   expect(commercePortalActionKeys.filter((actionKey) => actionKey.startsWith('party.registry.'))).toEqual([
     'party.registry.create-party',
+    'party.registry.accept-retail-enrollment-evidence',
     'party.registry.counterparty-customer-onboard',
     'party.registry.add-contact-point',
     'party.registry.update-party',

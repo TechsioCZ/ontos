@@ -40,6 +40,7 @@ import { partyRelationshipResourceDescriptor } from './shared/resources/party-re
 import { partyResourceDescriptor } from './shared/resources/party.ts';
 import { personEngagementProfileResourceDescriptor } from './shared/resources/person-engagement-profile.ts';
 // <generated-module-manifest-imports>
+import { acceptRetailEnrollmentEvidenceAction } from './src/actions/accept-retail-enrollment-evidence.action.ts';
 import { addContactPointAction } from './src/actions/add-contact-point.action.ts';
 import { addPartyOfficialIdentifierAction } from './src/actions/add-party-official-identifier.action.ts';
 import { archiveOrganizationEngagementAction } from './src/actions/archive-organization-engagement.action.ts';
@@ -107,6 +108,7 @@ export const partyRegistryManifest = defineOntosModuleManifest({
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
+      acceptRetailEnrollmentEvidenceAction,
       addContactPointAction,
       addPartyOfficialIdentifierAction,
       archiveOrganizationEngagementAction,

@@ -269,7 +269,72 @@ const partyCandidateFor = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party
   },
 );
 
-const partyEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): RegistryEntry =>
+export const verifiedRetailEnrollmentEvidence = Effect.fn(
+  'CommerceEnrollmentOwnerEffectRegistry.verifiedRetailEnrollmentEvidence',
+)(function* verifiedEvidence(
+  input: {
+    readonly attempt: EnrollmentAttemptSnapshot;
+    readonly operations: readonly EnrollmentOwnerOperationSnapshot[];
+    readonly sellingLegalEntityId: string;
+  },
+  candidate: (typeof PartyMatchRequestSchema.Type)['candidate'],
+  accountLookup: CommercePortalAuthAccountLookup,
+) {
+  const { attempt, operations, sellingLegalEntityId } = input;
+  const providerOperation = operations.find(
+    (operation) =>
+      operation.ownerModuleKey === PORTAL_AUTH_OWNER_MODULE_KEY &&
+      operation.transitionKey === PORTAL_ACCOUNT_CREATION_TRANSITION_KEY &&
+      operation.status === 'SUCCEEDED' &&
+      operation.tenantId === attempt.tenantId &&
+      operation.portalEnrollmentAttemptId === attempt.portalEnrollmentAttemptId,
+  );
+  const { accountSubject } = attempt;
+  const [candidateEvidenceRef] = candidate.evidenceRefs;
+  if (
+    attempt.journey !== 'RETAIL_SELF_ENROLLMENT' ||
+    attempt.targetLegalEntityId !== sellingLegalEntityId ||
+    providerOperation === undefined ||
+    accountSubject === undefined ||
+    candidateEvidenceRef === undefined ||
+    accountSubject.authenticationNamespaceId !== 'ontos.commerce.portal.better-auth.v1' ||
+    !(yield* accountLookup
+      .verifiedEmailForOwnerInvocation({
+        ownerInvocationId: providerOperation.ownerInvocationId,
+        providerSubjectId: accountSubject.providerSubjectId,
+      })
+      .pipe(
+        Effect.mapError((cause) =>
+          ownerUnavailable(
+            'provider_verification_unavailable',
+            'Current provider email verification is unavailable',
+            cause,
+          ),
+        ),
+      ))
+  ) {
+    return yield* ownerUnavailable(
+      'provider_email_verification_required',
+      'This exact Enrollment Attempt requires verified provider email ownership',
+    );
+  }
+  return {
+    authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1' as const,
+    candidateEvidenceRef,
+    emailOwnership: 'VERIFIED' as const,
+    enrollmentAttemptId: attempt.portalEnrollmentAttemptId,
+    journey: 'RETAIL_SELF_ENROLLMENT' as const,
+    providerOwnerInvocationId: providerOperation.ownerInvocationId,
+    providerSubjectId: accountSubject.providerSubjectId,
+    sellingLegalEntityId,
+    tenantId: attempt.tenantId,
+  };
+});
+
+const partyEntry = (
+  run: Option.Option<CommerceEnrollmentOwnerTransactionRun>,
+  accountLookup: CommercePortalAuthAccountLookup,
+): RegistryEntry =>
   Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party')(function* partyEntryEffect(
     transition: JourneyTransitionSpec,
     context: CommerceEnrollmentOwnerEffectContext,
@@ -304,6 +369,15 @@ const partyEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionRun>): 
         legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
         requestCorrelation: context.requestCorrelation,
         tenantId: context.attempt.tenantId,
+        verifiedEvidence: verifiedRetailEnrollmentEvidence(
+          {
+            attempt: context.attempt,
+            operations: context.operations,
+            sellingLegalEntityId: context.subject.sellingLegalEntityRef.resourceId,
+          },
+          candidate,
+          accountLookup,
+        ),
       }),
       requestDigest,
     );
@@ -993,7 +1067,7 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
     const entries: ReadonlyMap<string, RegistryEntry> = new Map([
       [
         registryKey(PARTY_REGISTRY_OWNER_MODULE_KEY, PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY),
-        partyEntry(ownerTransactionRun),
+        partyEntry(ownerTransactionRun, accountLookup),
       ],
       [
         registryKey(PARTY_REGISTRY_OWNER_MODULE_KEY, RETAIL_CUSTOMER_DIRECTORY_TRANSITION_KEY),

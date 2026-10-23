@@ -94,6 +94,7 @@ export const commercePortalActionKeys: readonly string[] = [
   'privacy.core.record-notice-provision',
   'privacy.core.consent-self-service',
   'party.registry.create-party',
+  'party.registry.accept-retail-enrollment-evidence',
   'party.registry.counterparty-customer-onboard',
   'party.registry.add-contact-point',
   // Customer self-service: the owner bridge edits the customer's own Party and contact points.
