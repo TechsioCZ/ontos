@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { v1 } from '@authzed/authzed-node';
 import { Array as EffectArray, Effect, Option, Result, Schema } from 'effect';
 
@@ -74,13 +76,14 @@ export interface ActionAuthorizationProvisioningClient {
   readonly checkPermission: (
     request: v1.CheckPermissionRequest,
   ) => Effect.Effect<Option.Option<v1.CheckPermissionResponse>, Error>;
+  readonly diffSchema: (request: v1.DiffSchemaRequest) => Effect.Effect<v1.DiffSchemaResponse, Error>;
   readonly readRelationships: (
     request: v1.ReadRelationshipsRequest,
   ) => Effect.Effect<readonly v1.ReadRelationshipsResponse[], Error>;
+  readonly readSchema: (request: v1.ReadSchemaRequest) => Effect.Effect<v1.ReadSchemaResponse, Error>;
   readonly writeRelationships: (
     request: v1.WriteRelationshipsRequest,
   ) => Effect.Effect<v1.WriteRelationshipsResponse, Error>;
-  readonly writeSchema: (request: v1.WriteSchemaRequest) => Effect.Effect<v1.WriteSchemaResponse, Error>;
 }
 
 export class ActionAuthorizationProvisioningError extends Schema.TaggedError<ActionAuthorizationProvisioningError>()(
@@ -311,16 +314,6 @@ const obsoleteActionRelationship = (relationship: v1.Relationship): boolean =>
     relationship.relation === 'executor' ||
     relationship.relation === 'restriction' ||
     relationship.relation === 'executor_role');
-
-/** Operator-only cutover cleanup. Runtime reconciliation never acts on unscoped identities. */
-export const buildObsoleteGlobalActionAuthorizationDeletions = (
-  existing: readonly v1.Relationship[],
-): readonly v1.RelationshipUpdate[] =>
-  existing.flatMap((relationship) =>
-    obsoleteActionRelationship(relationship)
-      ? [v1.RelationshipUpdate.create({ operation: v1.RelationshipUpdate_Operation.DELETE, relationship })]
-      : [],
-  );
 
 /** Deletes obsolete Actions and obsolete executor-role grants, including company module uninstalls. */
 export const buildActionAuthorizationReconciliation = ({
@@ -636,47 +629,174 @@ const verifyProvisioningContext = Effect.fn('ActionAuthorizationProvisioning.ver
   );
 });
 
-export const provisionActionAuthorization = Effect.fn('ActionAuthorizationProvisioning.provisionActionAuthorization')(
-  function* provisionActionAuthorizationEffect(
-    client: ActionAuthorizationProvisioningClient,
-    input: ActionAuthorizationProvisioningInput,
-  ): Effect.fn.Return<ActionAuthorizationProvisioningResult, ActionAuthorizationProvisioningError> {
-    const { grantRelationships, relationships, scopedActions } = yield* Effect.try({
-      catch: (error) => (Schema.is(ActionAuthorizationProvisioningError)(error) ? error : serviceFailure(error)),
-      try: () => validateActionAuthorizationProvisioningInput(input),
-    });
-    // Validate existing trusted membership before modifying schema or Action relationships.
-    yield* Effect.forEach(input.contexts, (context) => verifyProvisioningContext({ client, context, input }), {
-      concurrency: 1,
-      discard: true,
-    });
-    const existing = yield* readAuthorizationRelationships(client, 'action');
-    const globalDeletions = buildObsoleteGlobalActionAuthorizationDeletions(existing);
-    const updates = buildActionAuthorizationReconciliation({
+/** Canonical, length-independent tuple codec; each nested collection has an explicit field tag. */
+const encodePlanInput = (input: ActionAuthorizationProvisioningInput): string =>
+  tupleKey([
+    tupleKey([
+      'actions',
+      ...input.actions
+        .map((action) =>
+          tupleKey([action.actionKey, action.legalEntityScope, action.owningModuleKey, action.provisioning]),
+        )
+        .toSorted(),
+    ]),
+    tupleKey([
+      'assertions',
+      ...input.actionAssertions
+        .map((set) =>
+          tupleKey([
+            set.actionKey,
+            scopeKey(set),
+            ...set.assertions.map((assertion) => tupleKey([assertion.principalId, assertion.expected])).toSorted(),
+          ]),
+        )
+        .toSorted(),
+    ]),
+    tupleKey(['contexts', ...input.contexts.map(contextKey).toSorted()]),
+    tupleKey([
+      'deniedPrincipal',
+      input.deniedPrincipalId === undefined ? 'absent' : 'present',
+      input.deniedPrincipalId ?? '',
+    ]),
+    tupleKey([
+      'installations',
+      ...input.installedModuleScopes
+        .map((scope) => tupleKey([scopeKey(scope), ...scope.moduleKeys.toSorted()]))
+        .toSorted(),
+    ]),
+    tupleKey([
+      'managedRoles',
+      ...input.managedRoles.map((role) => tupleKey([scopeKey(role), role.roleKey])).toSorted(),
+    ]),
+    tupleKey([
+      'roleGrants',
+      ...input.roleGrants.map((grant) => tupleKey([scopeKey(grant), grant.actionKey, grant.roleKey])).toSorted(),
+    ]),
+  ]);
+
+export interface ActionAuthorizationProvisioningPlan extends ActionAuthorizationProvisioningResult {
+  /** Binds the exact input, deployed schema and complete observed Action/grant inventory. */
+  readonly fingerprint: string;
+  readonly updates: readonly v1.RelationshipUpdate[];
+}
+
+/** Pure diff. Legacy evidence is never deleted by ordinary scoped provisioning. */
+export const buildActionAuthorizationProvisioningPlan = (
+  input: ActionAuthorizationProvisioningInput,
+  observed: {
+    readonly actions: readonly v1.Relationship[];
+    readonly grants: readonly v1.Relationship[];
+    readonly schema: string;
+    readonly schemaDiffs: readonly v1.ReflectionSchemaDiff[];
+  },
+): ActionAuthorizationProvisioningPlan => {
+  const { grantRelationships, relationships, scopedActions } = validateActionAuthorizationProvisioningInput(input);
+  if (observed.schemaDiffs.length !== 0 || observed.actions.some(obsoleteActionRelationship)) {
+    return invalid(
+      'Legacy authorization requires the separately reviewed people cutover; scoped provisioning never removes its evidence or changes schema',
+    );
+  }
+  const existing = [...observed.actions, ...observed.grants];
+  if (existing.some((item) => item.optionalCaveat !== undefined || item.optionalExpiresAt !== undefined)) {
+    return invalid('Conditional or expiring authorization evidence requires explicit migration review');
+  }
+  const current = new Set(existing.map(relationshipKey));
+  const updates = [
+    ...buildActionAuthorizationReconciliation({
       desired: relationships,
-      existing: existing.filter((relationship) => !obsoleteActionRelationship(relationship)),
+      existing: observed.actions,
       installedModuleScopes: input.installedModuleScopes,
-    });
-    const deletions = [
-      ...globalDeletions,
-      ...updates.filter(({ operation }) => operation === v1.RelationshipUpdate_Operation.DELETE),
-    ];
-    // Old executor/restriction relations must be empty before the schema can remove them.
-    yield* writeActionAuthorizationUpdates(client, deletions);
-    yield* callClient(client.writeSchema(v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })));
-    // First cutover cannot read action_grant until its definition exists in the new schema.
-    const existingGrants = yield* readAuthorizationRelationships(client, 'action_grant');
-    const grantUpdates = buildActionAuthorizationRoleGrantReconciliation({
-      existing: existingGrants,
+    }),
+    ...buildActionAuthorizationRoleGrantReconciliation({
+      existing: observed.grants,
       installedModuleScopes: input.installedModuleScopes,
       managedRoles: input.managedRoles,
       roleGrants: input.roleGrants,
-    });
-    yield* writeActionAuthorizationUpdates(client, grantUpdates);
-    yield* writeActionAuthorizationUpdates(
-      client,
-      updates.filter(({ operation }) => operation === v1.RelationshipUpdate_Operation.TOUCH),
+    }),
+  ].filter(
+    (update) =>
+      update.operation !== v1.RelationshipUpdate_Operation.TOUCH ||
+      (update.relationship !== undefined && !current.has(relationshipKey(update.relationship))),
+  );
+  const fingerprint = createHash('sha256')
+    .update(
+      tupleKey([
+        encodePlanInput(input),
+        tupleKey(existing.map((item) => v1.Relationship.toJsonString(item)).toSorted()),
+        observed.schema.trim(),
+      ]),
+    )
+    .digest('hex');
+  return {
+    actionCount: scopedActions.length,
+    fingerprint,
+    grantCount: grantRelationships.length,
+    tenantCount: new Set(input.installedModuleScopes.map(({ tenantId }) => tenantId)).size,
+    updates,
+  };
+};
+
+const readProvisioningPlan = Effect.fn('ActionAuthorizationProvisioning.readPlan')(function* readPlan(
+  client: ActionAuthorizationProvisioningClient,
+  input: ActionAuthorizationProvisioningInput,
+) {
+  yield* Effect.try({
+    catch: (error) => (Schema.is(ActionAuthorizationProvisioningError)(error) ? error : serviceFailure(error)),
+    try: () => validateActionAuthorizationProvisioningInput(input),
+  });
+  // The native diff compares parsed authorization expressions, not readSchema's reformatted text.
+  const [schema, comparison] = yield* Effect.all(
+    [
+      callClient(client.readSchema(v1.ReadSchemaRequest.create({}))),
+      callClient(
+        client.diffSchema(
+          v1.DiffSchemaRequest.create({
+            comparisonSchema: ONTOS_SPICEDB_SCHEMA,
+            consistency: fullyConsistent,
+          }),
+        ),
+      ),
+    ],
+    { concurrency: 2 },
+  );
+  if (comparison.diffs.length !== 0) {
+    return yield* failure(
+      'action_authorization_input_invalid',
+      'Deploy the reviewed people cutover first; scoped provisioning does not mutate schema',
     );
+  }
+  const [actions, grants] = yield* Effect.all(
+    [readAuthorizationRelationships(client, 'action'), readAuthorizationRelationships(client, 'action_grant')],
+    { concurrency: 2 },
+  );
+  const plan = yield* Effect.try({
+    catch: (error) => (Schema.is(ActionAuthorizationProvisioningError)(error) ? error : serviceFailure(error)),
+    try: () =>
+      buildActionAuthorizationProvisioningPlan(input, {
+        actions,
+        grants,
+        schema: schema.schemaText,
+        schemaDiffs: comparison.diffs,
+      }),
+  });
+  yield* Effect.forEach(input.contexts, (context) => verifyProvisioningContext({ client, context, input }), {
+    concurrency: 1,
+    discard: true,
+  });
+  return plan;
+});
+
+export const planActionAuthorizationProvisioning = readProvisioningPlan;
+
+export const verifyActionAuthorizationProvisioning = Effect.fn('ActionAuthorizationProvisioning.verify')(
+  function* verify(client: ActionAuthorizationProvisioningClient, input: ActionAuthorizationProvisioningInput) {
+    const plan = yield* readProvisioningPlan(client, input);
+    if (plan.updates.length !== 0) {
+      return yield* failure(
+        'action_authorization_verification_failed',
+        'The scoped authorization graph still differs from the reviewed policy',
+      );
+    }
     yield* Effect.forEach(
       input.actionAssertions,
       (set) =>
@@ -696,10 +816,23 @@ export const provisionActionAuthorization = Effect.fn('ActionAuthorizationProvis
         ),
       { concurrency: 1, discard: true },
     );
-    return {
-      actionCount: scopedActions.length,
-      grantCount: grantRelationships.length,
-      tenantCount: new Set(input.installedModuleScopes.map(({ tenantId }) => tenantId)).size,
-    };
+    return plan;
   },
 );
+
+/** Apply requires the exact dry-run fingerprint and rechecks all preflight before the first write. */
+export const provisionActionAuthorization = Effect.fn('ActionAuthorizationProvisioning.apply')(function* apply(
+  client: ActionAuthorizationProvisioningClient,
+  input: ActionAuthorizationProvisioningInput,
+  expectedFingerprint: string,
+) {
+  const plan = yield* readProvisioningPlan(client, input);
+  if (!/^[a-f0-9]{64}$/u.test(expectedFingerprint) || plan.fingerprint !== expectedFingerprint) {
+    return yield* failure(
+      'action_authorization_input_invalid',
+      'Authorization evidence changed since the reviewed dry-run; obtain a new diff before applying',
+    );
+  }
+  yield* writeActionAuthorizationUpdates(client, plan.updates);
+  return yield* verifyActionAuthorizationProvisioning(client, input);
+});

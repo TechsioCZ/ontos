@@ -34,7 +34,17 @@ import {
   principals,
   tenants,
 } from '../../src/db/schema.ts';
-import { buildActionAuthorizationRelationships } from '../../src/install/action-authorization-provisioning.ts';
+import {
+  buildActionAuthorizationRelationships,
+  buildActionAuthorizationRoleGrantRelationships,
+  planActionAuthorizationProvisioning,
+  provisionActionAuthorization,
+  verifyActionAuthorizationProvisioning,
+} from '../../src/install/action-authorization-provisioning.ts';
+import type {
+  ActionAuthorizationProvisioningClient,
+  ActionAuthorizationProvisioningInput,
+} from '../../src/install/action-authorization-provisioning.ts';
 import { ActiveApplicationCompositionService } from '../../src/modules/active-application-composition.ts';
 import { setCompanyMembershipAction } from '../../src/modules/actions/set-company-membership.action.ts';
 import { setScopedRoleMembershipAction } from '../../src/modules/actions/set-scoped-role-membership.action.ts';
@@ -745,6 +755,115 @@ it.live(
         (yield* readPeople(superadmin)).items.find((item) => item.principalRef.principalId === companyAdmin)
           ?.roleAssignments,
       ).toEqual([]);
+      // Exercise the real operator against this owned TLS graph, never a fake client.
+      const operatorClient: ActionAuthorizationProvisioningClient = {
+        checkPermission: (request) =>
+          Effect.tryPromise(() => client.promises.checkPermission(request)).pipe(Effect.map(Option.some)),
+        diffSchema: (request) => Effect.tryPromise(() => client.promises.diffSchema(request)),
+        readRelationships: (request) => Effect.tryPromise(() => client.promises.readRelationships(request)),
+        readSchema: (request) => Effect.tryPromise(() => client.promises.readSchema(request)),
+        writeRelationships: (request) => Effect.tryPromise(() => client.promises.writeRelationships(request)),
+      };
+      const operatorAction = { actionKey: 'core.identity.owned-operator-proof', legalEntityId: companyId, tenantId };
+      const operatorRole = { legalEntityId: companyId, roleKey: 'owned-operator-proof', tenantId };
+      const deniedPrincipalId = randomUUID();
+      const operatorInput: ActionAuthorizationProvisioningInput = {
+        actionAssertions: [
+          {
+            ...operatorAction,
+            assertions: [
+              { expected: 'allowed', principalId: ordinaryMember },
+              { expected: 'denied', principalId: auditor },
+              { expected: 'denied', principalId: deniedPrincipalId },
+            ],
+          },
+        ],
+        actions: [
+          {
+            actionKey: operatorAction.actionKey,
+            legalEntityScope: 'required',
+            owningModuleKey: 'core.identity',
+            provisioning: 'explicit',
+          },
+        ],
+        contexts: [{ legalEntityId: companyId, principalId: ordinaryMember, tenantId }],
+        deniedPrincipalId,
+        installedModuleScopes: [{ legalEntityId: companyId, moduleKeys: ['core.identity'], tenantId }],
+        managedRoles: [operatorRole],
+        roleGrants: [{ ...operatorAction, roleKey: operatorRole.roleKey }],
+      };
+      yield* Effect.promise(() =>
+        client.promises.writeRelationships(
+          v1.WriteRelationshipsRequest.create({
+            updates: [
+              {
+                operation: v1.RelationshipUpdate_Operation.TOUCH,
+                relationship: relationship(
+                  'scoped_role',
+                  toScopedRoleObjectId(operatorRole),
+                  'member',
+                  'principal',
+                  ordinaryMember,
+                ),
+              },
+            ],
+          }),
+        ),
+      );
+      const before = yield* planActionAuthorizationProvisioning(operatorClient, operatorInput);
+      expect(before.updates.length).toBeGreaterThan(0);
+      expect(
+        Result.isFailure(yield* Effect.result(verifyActionAuthorizationProvisioning(operatorClient, operatorInput))),
+      ).toBe(true);
+      expect(
+        Result.isFailure(
+          yield* Effect.result(provisionActionAuthorization(operatorClient, operatorInput, '0'.repeat(64))),
+        ),
+      ).toBe(true);
+      expect((yield* planActionAuthorizationProvisioning(operatorClient, operatorInput)).fingerprint).toBe(
+        before.fingerprint,
+      );
+      // Runtime-created agent policy is outside operator ownership, but changes the reviewed evidence.
+      const preservedAgentGrants = buildActionAuthorizationRoleGrantRelationships(
+        [{ ...operatorAction, roleKey: `agent:${agent}` }],
+        operatorInput.installedModuleScopes,
+      );
+      yield* Effect.promise(() =>
+        client.promises.writeRelationships(
+          v1.WriteRelationshipsRequest.create({
+            updates: preservedAgentGrants.map((item) => ({
+              operation: v1.RelationshipUpdate_Operation.TOUCH,
+              relationship: item,
+            })),
+          }),
+        ),
+      );
+      expect(
+        Result.isFailure(
+          yield* Effect.result(provisionActionAuthorization(operatorClient, operatorInput, before.fingerprint)),
+        ),
+      ).toBe(true);
+      const reviewed = yield* planActionAuthorizationProvisioning(operatorClient, operatorInput);
+      expect(reviewed.fingerprint).not.toBe(before.fingerprint);
+      const applied = yield* provisionActionAuthorization(operatorClient, operatorInput, reviewed.fingerprint);
+      expect(applied.updates).toEqual([]);
+      expect((yield* verifyActionAuthorizationProvisioning(operatorClient, operatorInput)).fingerprint).toBe(
+        applied.fingerprint,
+      );
+      expect((yield* provisionActionAuthorization(operatorClient, operatorInput, applied.fingerprint)).updates).toEqual(
+        [],
+      );
+      const preserved = yield* Effect.promise(() =>
+        client.promises.readRelationships(
+          v1.ReadRelationshipsRequest.create({
+            consistency: fullyConsistent,
+            relationshipFilter: { resourceType: 'action_grant' },
+          }),
+        ),
+      );
+      expect(preserved.map(({ relationship: item }) => item)).toEqual(
+        expect.arrayContaining([...preservedAgentGrants]),
+      );
       // The caller drops the entire owned DB on success or failure; release the
       // singleton here only so another bounded proof can use this same fresh DB.
       return yield* admin.executor
