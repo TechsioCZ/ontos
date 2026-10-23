@@ -51,6 +51,15 @@ it('preserves content metadata a module legitimately needs', () => {
   expect(relayed.headers.get('etag')).toBe('W/"1"');
 });
 
+it('preserves an owner 401 authentication challenge', () => {
+  const relayed = relayModuleResponse(
+    new Response('', { headers: { 'www-authenticate': 'Bearer' }, status: 401 }),
+    SELF,
+  );
+  expect(relayed.status).toBe(401);
+  expect(relayed.headers.get('www-authenticate')).toBe('Bearer');
+});
+
 it('drops unlisted headers by default rather than forwarding them', () => {
   const relayed = relayedResponseHeaders(
     new Headers({ 'access-control-allow-origin': '*', 'content-type': 'text/plain', 'x-internal-debug': '1' }),
