@@ -172,8 +172,8 @@ export const migrateRetailSelfServiceGrant = Effect.fn(
     resourceType: 'business_permission',
   });
   const rows = yield* Effect.tryPromise(
-    async () =>
-      await client.readRelationships(
+    () =>
+      client.readRelationships(
         v1.ReadRelationshipsRequest.create({
           consistency: { requirement: { fullyConsistent: true, oneofKind: 'fullyConsistent' } },
           relationshipFilter: filter,
@@ -205,8 +205,8 @@ export const migrateRetailSelfServiceGrant = Effect.fn(
     return { existing: 1, migrated: 0 };
   }
   yield* Effect.tryPromise(
-    async () =>
-      await client.writeRelationships(
+    () =>
+      client.writeRelationships(
         v1.WriteRelationshipsRequest.create({
           optionalPreconditions: [v1.Precondition.create({ filter, operation: v1.Precondition_Operation.MUST_MATCH })],
           updates: [
