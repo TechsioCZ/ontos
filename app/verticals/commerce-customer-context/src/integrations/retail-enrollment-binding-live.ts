@@ -78,6 +78,7 @@ const attemptMatchesRequest = (
     attempt.portalEnrollmentAttemptId !== identity.portalEnrollmentAttemptId ||
     attempt.tenantId !== identity.tenantId ||
     attempt.journey !== 'RETAIL_SELF_ENROLLMENT' ||
+    attempt.state === 'FAILED' ||
     attempt.state === 'TERMINATED' ||
     attempt.state === 'COMPLETE' ||
     attempt.targetLegalEntityId !== legalEntityId ||

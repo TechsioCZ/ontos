@@ -17,6 +17,7 @@ import type {
   EnrollmentOwnerOperationSnapshot,
   ReadEnrollmentAttemptInput,
 } from '../../../shared/enrollment-contracts.ts';
+import { failRejectedEnrollmentAttempt } from '../attempts/attempt-persistence.ts';
 import type {
   ClaimEnrollmentSweepInput,
   DueEnrollmentAttempt,
@@ -273,6 +274,10 @@ const readJournal = (
 
 interface ContinuationSeams {
   readonly compositionRevision: string;
+  readonly fail: (
+    input: ReadEnrollmentAttemptInput,
+    transition: JourneyTransitionSpec,
+  ) => Effect.Effect<boolean, CommerceEnrollmentAttemptError>;
   readonly lease: Effect.Effect<void, CommerceEnrollmentAttemptError>;
   readonly registry: CommerceEnrollmentOwnerEffectRegistry['Service'];
   readonly resolveSubject: CommerceEnrollmentPreparationSubjectResolve;
@@ -425,6 +430,20 @@ const advancePass = Effect.fn('CommerceEnrollmentContinuation.pass')(function* a
   }
   const definition = yield* enrollmentJourneyDefinitionForAttempt(attempt);
   const operations = yield* readJournal(store, attempt, journeyTransitions(definition));
+  const rejected = journeyTransitions(definition).find(
+    (transition) =>
+      transition.required &&
+      operations.some(
+        (operation) =>
+          operation.ownerModuleKey === transition.ownerModuleKey &&
+          operation.transitionKey === transition.transitionKey &&
+          operation.status === 'FAILED' &&
+          operation.failureCode === 'owner_rejected',
+      ),
+  );
+  if (rejected !== undefined) {
+    return halted('OWNER_REJECTED', rejected);
+  }
   const proven = new Set(
     operations.flatMap((operation) => (operation.status === 'SUCCEEDED' ? [journeyTransitionIdentity(operation)] : [])),
   );
@@ -463,7 +482,7 @@ const settledResult = (attemptState: EnrollmentAttemptState): CommerceEnrollment
     ? { outcome: 'COMPLETE' }
     : {
         halt: {
-          reason: attemptState === 'TERMINATED' ? 'ATTEMPT_TERMINAL' : 'VERIFICATION_REQUIRED',
+          reason: isEnrollmentAttemptTerminal(attemptState) ? 'ATTEMPT_TERMINAL' : 'VERIFICATION_REQUIRED',
           transition: Option.none(),
         },
         outcome: 'HALTED',
@@ -481,6 +500,15 @@ const advanceLoop = (
   advancePass(seams, input).pipe(
     Effect.flatMap((pass) => {
       if (pass.kind === 'HALTED') {
+        if (pass.halt.reason === 'OWNER_REJECTED' && Option.isSome(pass.halt.transition)) {
+          const transition = pass.halt.transition.value;
+          return seams.lease.pipe(
+            Effect.andThen(() => seams.fail(input, transition)),
+            Effect.map((failed) =>
+              failed ? settledResult('FAILED') : ({ halt: pass.halt, outcome: 'HALTED' } as const),
+            ),
+          );
+        }
         return Effect.succeed<CommerceEnrollmentContinuationResult>({ halt: pass.halt, outcome: 'HALTED' });
       }
       if (pass.kind === 'SETTLED') {
@@ -507,6 +535,7 @@ const continuationSweepPassForSnapshot = (
   );
   const seams: ContinuationSeams = {
     compositionRevision,
+    fail: ports.fail,
     lease,
     registry: ports.registry,
     resolveSubject: ports.resolveSubject,
@@ -604,6 +633,10 @@ export const CommerceEnrollmentContinuationLive = (
       const due = commerceEnrollmentDueAttemptStoreForRun(runner.runWorker);
       const passPorts: Parameters<typeof continuationSweepPassForSnapshot>[1] = {
         due,
+        fail: (input, transition) =>
+          runner.run({ tenantId: input.tenantId }, (transaction) =>
+            failRejectedEnrollmentAttempt(transaction, input.portalEnrollmentAttemptId, transition),
+          ),
         permits,
         registry,
         resolveSubject: resolver.resolve,

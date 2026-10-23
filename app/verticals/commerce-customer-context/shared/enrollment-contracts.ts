@@ -103,6 +103,7 @@ export const EnrollmentAttemptStateSchema = Schema.Literals([
   'COMPLETE',
   'RECONCILIATION_REQUIRED',
   'TERMINATED',
+  'FAILED',
 ]);
 export type EnrollmentAttemptState = typeof EnrollmentAttemptStateSchema.Type;
 
@@ -380,4 +381,4 @@ export const EnrollmentProofSchema = Schema.Struct({
 });
 
 export const isEnrollmentAttemptTerminal = (state: EnrollmentAttemptState): boolean =>
-  state === 'COMPLETE' || state === 'TERMINATED';
+  state === 'COMPLETE' || state === 'TERMINATED' || state === 'FAILED';

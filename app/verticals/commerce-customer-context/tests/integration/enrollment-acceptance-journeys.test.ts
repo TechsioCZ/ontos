@@ -445,7 +445,7 @@ it.live('a Party created before a failing profile ensure keeps its committed par
 
       expect(result.outcome).toBe('HALTED');
       if (result.outcome === 'HALTED') {
-        expect(result.halt.reason).toBe('OWNER_REJECTED');
+        expect(result.halt.reason).toBe('ATTEMPT_TERMINAL');
       }
       const operations = yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId);
       const party = operations.find((row) => row.transition_key === PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY);
@@ -524,13 +524,13 @@ it.live('authority revoked mid-flight is a typed halt, never a completed journey
 
       expect(result.outcome).toBe('HALTED');
       if (result.outcome === 'HALTED') {
-        expect(result.halt.reason).toBe('OWNER_REJECTED');
+        expect(result.halt.reason).toBe('ATTEMPT_TERMINAL');
       }
       const operations = yield* readEnrollmentAcceptanceOperations(fixture, portalEnrollmentAttemptId);
       const binding = operations.find((row) => row.transition_key === BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY);
       expect(binding?.outcome_code).toBe('principal_binding_revoked');
       const attempt = yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId);
-      expect(attempt.state).not.toBe('COMPLETE');
+      expect(attempt.state).toBe('FAILED');
     }),
   ),
 );
