@@ -7,7 +7,12 @@ import { Schema } from 'effect';
 export const DEMO_TENANT_ID = '70000000-0000-4000-8000-000000000020';
 export const AKROS_LEGAL_ENTITY_ID = '71000000-0000-4000-8000-000000000024';
 
-export type EmailDeliverySource = 'akros-order' | 'facility-agenda' | 'rent-reminder' | 'storefront-inquiry';
+export type EmailDeliverySource =
+  | 'akros-order'
+  | 'facility-agenda'
+  | 'rent-reminder'
+  | 'storefront-inquiry'
+  | 'person-invitation';
 export type EmailDeliveryEvent =
   | 'ORDER_CREATED'
   | 'CONFIRMED'
@@ -16,7 +21,8 @@ export type EmailDeliveryEvent =
   | 'CANCELLED'
   | 'PAYMENT_REMINDER'
   | 'AGENDA_NOTIFICATION'
-  | 'INQUIRY_RECEIVED';
+  | 'INQUIRY_RECEIVED'
+  | 'PERSON_INVITED';
 /**
  * SENDING: claimed, SMTP submission in progress. SENT: SMTP server accepted DATA (250).
  * RETRY: SMTP server unreachable BEFORE any data was sent; safe to retry. FAILED: rejected permanently.
@@ -29,6 +35,7 @@ export const emailDeliverySources: readonly EmailDeliverySource[] = [
   'facility-agenda',
   'rent-reminder',
   'storefront-inquiry',
+  'person-invitation',
 ];
 
 /**
@@ -95,6 +102,7 @@ export const emailEventLabels: Readonly<Record<EmailDeliveryEvent, string>> = {
   SHIPPED: 'Předáno dopravci',
   AGENDA_NOTIFICATION: 'Upozornění z agendy',
   INQUIRY_RECEIVED: 'Nový dotaz z e-shopu',
+  PERSON_INVITED: 'Pozvánka do OntOS',
 };
 
 export const emailStatusLabels: Readonly<Record<EmailDeliveryStatus, string>> = {

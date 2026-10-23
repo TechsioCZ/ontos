@@ -1,5 +1,4 @@
-// @effect-diagnostics *:off
-import { describe, expect, test } from '@rstest/core';
+import { describe, expect, test } from 'effect-rstest';
 import { scheduleScopes } from '../../src/dispatcher/dispatch.ts';
 import { isUndeliverableRecipient, undeliverableDomainsFor } from '../../src/dispatcher/recipients.ts';
 import { parseDeliveryId } from '../../src/dispatcher/sources.ts';
@@ -14,6 +13,11 @@ const inB = (deliveryId: string): PendingDelivery => ({ deliveryId, legalEntityI
 
 describe('delivery ids', () => {
   test('name the source subject the scoped reader fetches', () => {
+    expect(parseDeliveryId('person-invitation:invite-1')).toEqual({
+      source: 'person-invitation',
+      subjectId: 'invite-1',
+    });
+    expect(parseDeliveryId('person-invitation:')).toBeNull();
     expect(parseDeliveryId('storefront-inquiry:task-1')).toEqual({ source: 'storefront-inquiry', subjectId: 'task-1' });
     expect(parseDeliveryId('rent-reminder:r-1')).toEqual({ source: 'rent-reminder', subjectId: 'r-1' });
     expect(parseDeliveryId('akros-order:o:1:SHIPPED')).toEqual({ source: 'akros-order', subjectId: 'o:1' });
@@ -21,8 +25,9 @@ describe('delivery ids', () => {
       source: 'facility-agenda',
       subjectId: 'p-1',
     });
-    for (const id of ['', 'rent-reminder:', 'akros-order:o', 'facility-agenda:p', 'other:x'])
+    for (const id of ['', 'rent-reminder:', 'akros-order:o', 'facility-agenda:p', 'other:x']) {
       expect(parseDeliveryId(id)).toBeNull();
+    }
   });
 });
 
@@ -41,27 +46,39 @@ describe('scope schedule', () => {
       { legalEntityId: entityA, tenantId: tenantA },
       { legalEntityId: entityB, tenantId: tenantB },
     ]);
-    expect([...work[0]!.keys]).toEqual(['rent-reminder:a1', 'akros-order:o1:ORDER_CREATED', 'akros-order:o1:SHIPPED']);
-    expect(work[0]!.subjects).toEqual({
+    const [first, second] = work;
+    if (first === undefined || second === undefined) {
+      expect.unreachable('Missing scheduled scopes');
+    }
+    expect([...first.keys]).toEqual(['rent-reminder:a1', 'akros-order:o1:ORDER_CREATED', 'akros-order:o1:SHIPPED']);
+    expect(first.subjects).toEqual({
       'akros-order': ['o1'],
       'facility-agenda': [],
+      'person-invitation': [],
       'rent-reminder': ['a1'],
       'storefront-inquiry': [],
     });
-    expect([...work[1]!.keys]).toEqual(['rent-reminder:b1']);
-    expect(work[1]!.subjects['akros-order']).toEqual([]);
+    expect([...second.keys]).toEqual(['rent-reminder:b1']);
+    expect(second.subjects['akros-order']).toEqual([]);
   });
 
   test('takes sources round-robin up to the batch size', () => {
     const orders = Array.from({ length: 5 }, (_, i) => inA(`akros-order:o${i}:ORDER_CREATED`));
     const work = scheduleScopes(
-      [...orders, inB('rent-reminder:b1'), inB('facility-agenda:p1:2026-10-22T07:00:00Z')],
+      [
+        ...orders,
+        inB('rent-reminder:b1'),
+        inB('facility-agenda:p1:2026-10-22T07:00:00Z'),
+        inB('person-invitation:invite-1'),
+      ],
       4,
     );
     const keys = work.flatMap((w) => [...w.keys]);
     expect(keys).toHaveLength(4);
     expect(keys).toContain('rent-reminder:b1');
     expect(keys).toContain('facility-agenda:p1:2026-10-22T07:00:00Z');
+    expect(keys).toContain('person-invitation:invite-1');
+    expect(work.find((entry) => entry.scope.tenantId === tenantB)?.subjects['person-invitation']).toEqual(['invite-1']);
   });
 });
 
@@ -69,8 +86,9 @@ describe('undeliverable recipients', () => {
   test('seeded fake addresses are skipped in every runtime', () => {
     for (const transport of ['smtp', 'cloudflare'] as const) {
       const domains = undeliverableDomainsFor(transport, {});
-      for (const address of ['ucetni@demo.ontos', 'management@siampark.demo', 'demo@test.com', 'x@akros.demo'])
+      for (const address of ['ucetni@demo.ontos', 'management@siampark.demo', 'demo@test.com', 'x@akros.demo']) {
         expect(isUndeliverableRecipient(address, domains)).toBe(true);
+      }
       expect(isUndeliverableRecipient('jana.novakova@firma.cz', domains)).toBe(false);
     }
   });

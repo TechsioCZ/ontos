@@ -15,6 +15,7 @@ import { isUndeliverableRecipient, undeliverableDomainsFor } from './recipients.
 import { inDeliveryScope } from './scope.ts';
 import type { DeliveryScope } from './scope.ts';
 import { agendaSenderFor, senderFor } from './senders.ts';
+import { planPersonInvitationEmail, readPersonInvitations } from './person-invitation.ts';
 import type { PendingDelivery } from './sources.ts';
 import {
   parseDeliveryId,
@@ -88,7 +89,13 @@ export const scheduleScopes = (pending: readonly PendingDelivery[], limit: numbe
       const work = scopes.get(id) ?? {
         keys: new Set<string>(),
         scope: { legalEntityId: item.legalEntityId, tenantId: item.tenantId },
-        subjects: { 'akros-order': [], 'facility-agenda': [], 'rent-reminder': [], 'storefront-inquiry': [] },
+        subjects: {
+          'akros-order': [],
+          'facility-agenda': [],
+          'person-invitation': [],
+          'rent-reminder': [],
+          'storefront-inquiry': [],
+        },
       };
       scopes.set(id, work);
       if (work.keys.has(item.deliveryId)) continue;
@@ -109,6 +116,7 @@ const planScope = (
 ) =>
   Effect.gen(function* () {
     const { scope } = work;
+    const appUrl = environment['ONTOS_PUBLIC_URL'] ?? 'http://localhost:3020';
     const planned: OutgoingEmail[] = [];
     const orders = yield* readAkrosOrders(scope, work.subjects['akros-order']);
     for (const order of orders) {
@@ -129,7 +137,7 @@ const planScope = (
     for (const person of yield* readAgendaRecipients(scope, work.subjects['facility-agenda'])) {
       const from = agendaSenderFor(person, environment, transport.kind);
       for (const email of planAgendaEmails(person, {
-        appUrl: environment['ONTOS_PUBLIC_URL'] ?? 'http://localhost:3020',
+        appUrl,
         enabledSince,
       }))
         planned.push({ ...email, from });
@@ -137,7 +145,7 @@ const planScope = (
     for (const task of yield* readStorefrontInquiryTasks(scope, work.subjects['storefront-inquiry'])) {
       const email = planStorefrontInquiryEmail(task, {
         ...scope,
-        appUrl: environment['ONTOS_PUBLIC_URL'] ?? 'http://localhost:3020',
+        appUrl,
         enabledSince,
         recipient: environment.AKROS_INQUIRY_EMAIL_TO ?? '',
       });
@@ -145,6 +153,11 @@ const planScope = (
         planned.push({ ...email, from: senderFor(scope, 'AKROS', environment, transport.kind) });
       }
     }
+    const invitations = yield* readPersonInvitations(scope, work.subjects['person-invitation']);
+    planned.push(...invitations.map((invitation) => ({
+      ...planPersonInvitationEmail(invitation, appUrl),
+      from: agendaSenderFor(invitation, environment, transport.kind),
+    })));
     return planned.filter((email) => work.keys.has(email.dedupeKey));
   });
 

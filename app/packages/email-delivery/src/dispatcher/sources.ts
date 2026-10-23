@@ -44,6 +44,7 @@ export const parseDeliveryId = (deliveryId: string): ParsedDeliveryId | null => 
   if (separator < 0 || rest === '') return null;
   switch (source) {
     case 'storefront-inquiry':
+    case 'person-invitation':
     case 'rent-reminder':
       return { source, subjectId: rest };
     case 'akros-order': {

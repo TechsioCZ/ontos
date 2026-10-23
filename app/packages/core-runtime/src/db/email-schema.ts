@@ -32,7 +32,10 @@ export const emailDeliveries = emailSchema
       sentAt: timestamp('sent_at', { withTimezone: true }),
     },
     (table) => [
-      check('deliveries_source_check', sql`${table.source} in ('akros-order', 'facility-agenda', 'rent-reminder', 'storefront-inquiry')`),
+      check(
+        'deliveries_source_check',
+        sql`${table.source} in ('akros-order', 'facility-agenda', 'rent-reminder', 'storefront-inquiry', 'person-invitation')`,
+      ),
       check(
         'deliveries_status_check',
         sql`${table.status} in ('SENDING', 'SENT', 'RETRY', 'FAILED', 'UNKNOWN', 'SKIPPED')`,
