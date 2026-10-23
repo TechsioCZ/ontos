@@ -114,10 +114,10 @@ const withCloudflareDeployment = <T extends object>(base: T) => {
     deploy: {
       worker: {
         // The data plane (Hyperdrive, SpiceDB VPC, composition KV) and cost guards every OntOS Worker carries.
-      ...createCloudflareWorkerConfig(getBuildConfigEnvironment, {
-        publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_FINANCE_BILLING',
-      }),
-      compatibilityDate: '2026-06-02',
+        ...createCloudflareWorkerConfig(getBuildConfigEnvironment, {
+          publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_FINANCE_BILLING',
+        }),
+        compatibilityDate: '2026-06-02',
         name: cloudflareWorkerName,
         security: {
           contentSecurityPolicy: {
@@ -205,7 +205,7 @@ export default defineConfig(
       },
       output: {
         assetPrefix,
-        disableTsChecker: process.env.DEMO_DISABLE_TS_CHECKER === '1',
+        disableTsChecker: getBuildConfigEnvironment('DEMO_DISABLE_TS_CHECKER') === '1',
         distPath: {
           html: './',
           root: buildOutputRoot,
