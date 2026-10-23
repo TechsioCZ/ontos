@@ -14,7 +14,7 @@ import { ShellCryptoLive } from '../../../api/auth/gateway-issuer.ts';
 import { serveMcp, serveMcpMetadata } from '../../../api/mcp/http.ts';
 import type { McpEndpointConfig } from '../../../api/mcp/http.ts';
 import { buildConnectionTools } from '../../../api/mcp/tools.ts';
-import type { McpBackend, ModuleAnswer } from '../../../api/mcp/types.ts';
+import type { McpBackend, ModuleAnswer, ToolSpec } from '../../../api/mcp/types.ts';
 import { rootRouteTarget } from '../../../shared/mcp-resource.ts';
 import { FIXTURE_APP_ID, FIXTURE_MODULE_ID, connectionDescription, fixtureCatalog } from './fixture-vertical.ts';
 
@@ -301,6 +301,145 @@ describe('a vertical present only in the test composition', () => {
     expect(calls.some((call) => call.path.includes('/actions/'))).toBe(false);
     await client.close();
   });
+});
+
+describe('direct write preflight', () => {
+  const toolHandler = (backend: McpBackend, name = 'ontos_execute') => {
+    const tool = buildConnectionTools({
+      backend,
+      catalog: fixtureCatalog(),
+      crypto: shellCrypto,
+      description: connectionDescription(),
+      prmUrl: CONFIG.prmUrl,
+      publicOrigin: CONFIG.publicOrigin,
+    }).find((entry) => entry.name === name);
+    return (args: Parameters<ToolSpec['handler']>[0]) =>
+      tool === undefined ? Effect.die(new Error(`Missing fixture tool ${name}`)) : tool.handler(args);
+  };
+
+  effectIt.effect('uses one governed snapshot for live rights and the initial revision', () =>
+    Effect.gen(function* singlePreflightSnapshot() {
+      const calls: Recorded[] = [];
+      const base = fakeBackend(calls);
+      let reads = 0;
+      const backend: McpBackend = {
+        ...base,
+        callModule: (appId, path, body, options) =>
+          Effect.suspend(() => {
+            if (path === '/reads/records') {
+              reads += 1;
+              if (reads > 1) {
+                return Effect.succeed({ body: { code: 'read_handler_unavailable' }, status: 503 });
+              }
+            }
+            return base.callModule(appId, path, body, options);
+          }),
+      };
+      const result = yield* toolHandler(backend)({
+        id: `${FIXTURE_MODULE_ID}/command/AddNote`,
+        input: { text: 'jedna revize' },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({ status: 'executed' });
+      expect(reads).toBe(1);
+      expect(calls.find((call) => call.path.includes('/actions/'))?.body).toEqual({
+        command: { _tag: 'AddNote', text: 'jedna revize' },
+        expectedRevision: 7,
+      });
+    }),
+  );
+
+  effectIt.effect('does not execute with an unavailable live-rights read, even with a supplied revision', () =>
+    Effect.gen(function* unavailablePreflight() {
+      const calls: Recorded[] = [];
+      const base = fakeBackend(calls);
+      const backend: McpBackend = {
+        ...base,
+        callModule: (appId, path, body, options) =>
+          path === '/reads/records'
+            ? Effect.succeed({ body: { code: 'read_handler_unavailable' }, status: 503 })
+            : base.callModule(appId, path, body, options),
+      };
+      const result = yield* toolHandler(
+        backend,
+        'fixture_notes__add_note',
+      )({
+        expectedRevision: 7,
+        text: 'neprovést',
+      });
+      expect(result.isError).toBe(true);
+      expect(calls.some((call) => call.path.includes('/actions/'))).toBe(false);
+    }),
+  );
+
+  effectIt.effect('refreshes the snapshot only after a revision conflict, with a new stable command key', () =>
+    Effect.gen(function* revisionConflictSnapshot() {
+      const calls: Recorded[] = [];
+      let reads = 0;
+      let writes = 0;
+      const backend: McpBackend = {
+        ...fakeBackend([]),
+        callModule: (appId, path, body, options) =>
+          Effect.sync(() => {
+            calls.push({ appId, body, options, path });
+            if (path === '/reads/records') {
+              reads += 1;
+              return { body: { canWrite: true, revision: reads === 1 ? 7 : 8 }, status: 200 };
+            }
+            writes += 1;
+            return writes === 1
+              ? { body: { code: 'fixture_revision_conflict' }, status: 409 }
+              : { body: { ok: true }, status: 200 };
+          }),
+      };
+      const result = yield* toolHandler(
+        backend,
+        'fixture_notes__add_note',
+      )({
+        idempotencyKey: 'preflight-conflict',
+        text: 'souběh',
+      });
+      expect(result.isError).not.toBe(true);
+      expect(reads).toBe(2);
+      const commands = calls.filter((call) => call.path.includes('/actions/'));
+      expect(commands.map((call) => call.body)).toEqual([
+        { command: { _tag: 'AddNote', text: 'souběh' }, expectedRevision: 7 },
+        { command: { _tag: 'AddNote', text: 'souběh' }, expectedRevision: 8 },
+      ]);
+      expect(commands.map((call) => call.options.idempotencyKey)).toEqual([
+        'preflight-conflict',
+        'preflight-conflict-retry',
+      ]);
+    }),
+  );
+
+  effectIt.effect('does not reuse a previous request’s live authorization snapshot', () =>
+    Effect.gen(function* requestScopedSnapshot() {
+      const calls: Recorded[] = [];
+      const base = fakeBackend(calls);
+      let canWrite = true;
+      let reads = 0;
+      const backend: McpBackend = {
+        ...base,
+        callModule: (appId, path, body, options) =>
+          path === '/reads/records'
+            ? Effect.sync(() => {
+                reads += 1;
+                return { body: { canWrite, revision: 7 }, status: 200 };
+              })
+            : base.callModule(appId, path, body, options),
+      };
+      const run = toolHandler(backend);
+      const args = { id: `${FIXTURE_MODULE_ID}/command/AddNote`, input: { text: 'nová práva' } };
+      const first = yield* run(args);
+      expect(first.isError).not.toBe(true);
+      canWrite = false;
+      const second = yield* run(args);
+      expect(second.isError).toBe(true);
+      expect(reads).toBe(2);
+      expect(calls.filter((call) => call.path.includes('/actions/'))).toHaveLength(1);
+    }),
+  );
 });
 
 describe('effective rights: grant, live rights and write policy', () => {

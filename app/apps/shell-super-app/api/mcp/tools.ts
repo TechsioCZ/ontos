@@ -329,6 +329,7 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
     tool: McpCatalogTool,
     input: Readonly<Record<string, unknown>>,
     key: string,
+    snapshot: unknown,
   ): Effect.Effect<unknown, ModuleProblem | ModuleUnavailable> => {
     const module = moduleOf(tool.moduleId);
     const options = { referenceAudiences: tool.referenceAudiences };
@@ -336,41 +337,43 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
       return call(tool, tool.invoke.path, input, { ...options, idempotencyKey: key });
     }
     const command = commandOf(tool, input);
-    const currentRevision = revisionAnswer(module, tool).pipe(
-      Effect.flatMap((answer) => {
-        const revision = revisionFrom(module, answer, tool.invoke.commandTag);
-        return revision === undefined
-          ? Effect.fail(new ModuleUnavailable({ message: MSG_NO_REVISION(labelOf(tool.moduleId)) }))
-          : Effect.succeed(revision);
-      }),
-    );
+    const revisionOf = (answer: unknown) => {
+      const revision = revisionFrom(module, answer, tool.invoke.commandTag);
+      return revision === undefined
+        ? Effect.fail(new ModuleUnavailable({ message: MSG_NO_REVISION(labelOf(tool.moduleId)) }))
+        : Effect.succeed(revision);
+    };
     const given = input['expectedRevision'];
     const send = (revision: number, idempotencyKey: string) =>
       call(tool, tool.invoke.path, { command, expectedRevision: revision }, { ...options, idempotencyKey });
-    return (typeof given === 'number' ? Effect.succeed(given) : currentRevision).pipe(
+    return (typeof given === 'number' ? Effect.succeed(given) : revisionOf(snapshot)).pipe(
       Effect.flatMap((revision) => send(revision, key)),
       Effect.catchIf(
         (error) =>
           error._tag === 'ModuleProblem' && error.status === 409 && (error.code ?? '').endsWith('revision_conflict'),
-        // The rejected attempt keeps its key; the retry is a new request body, so it needs its own stable key.
-        () => currentRevision.pipe(Effect.flatMap((revision) => send(revision, `${key}-retry`))),
+        // Only a conflict needs a fresh snapshot. Its changed command body needs its own stable key.
+        () =>
+          revisionAnswer(module, tool).pipe(
+            Effect.flatMap(revisionOf),
+            Effect.flatMap((revision) => send(revision, `${key}-retry`)),
+          ),
       ),
     );
   };
 
-  /** Live flags of the revision read: `canWrite` and the tool's own `liveRight`. Unknown counts as allowed. */
+  /** Live flags of a successful revision read: modules need not advertise additional write flags. */
+  const snapshotAllowsWrite = (tool: McpCatalogTool, flags: unknown): boolean =>
+    !isPlainObject(flags) ||
+    (flags['canWrite'] !== false && (tool.liveRight === undefined || flags[tool.liveRight] !== false));
+
   const liveWriteAllowed = (tool: McpCatalogTool): Effect.Effect<boolean> => {
     const module = moduleOf(tool.moduleId);
     if (module?.revision === undefined) {
       return Effect.succeed(true);
     }
     return revisionAnswer(module, tool).pipe(
-      Effect.map(
-        (flags) =>
-          !isPlainObject(flags) ||
-          (flags['canWrite'] !== false && (tool.liveRight === undefined || flags[tool.liveRight] !== false)),
-      ),
-      Effect.orElseSucceed(() => true),
+      Effect.map((flags) => snapshotAllowsWrite(tool, flags)),
+      Effect.orElseSucceed(() => false),
     );
   };
 
@@ -455,7 +458,10 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
       }
       const key = idempotencyKey ?? (yield* newId);
       if (d.writePolicy === 'direct') {
-        if (!(yield* liveWriteAllowed(tool))) {
+        const module = moduleOf(tool.moduleId);
+        // Reuse this successful read only within this command; the owner Action still authorizes the write.
+        const snapshot = module === undefined ? undefined : yield* revisionAnswer(module, tool);
+        if (!snapshotAllowsWrite(tool, snapshot)) {
           return errorResult(MSG_NO_LIVE_RIGHT(labelOf(tool.moduleId)));
         }
         const hash = yield* requestHash(context.crypto, tool.id, payload);
@@ -468,7 +474,7 @@ export const buildConnectionTools = (context: McpToolContext): readonly ToolSpec
             return errorResult(MSG_IDEMPOTENCY_CONFLICT, { 'ontos/code': 'idempotency_key_reused' });
           }
         }
-        const result = yield* executeDirect(tool, payload, key);
+        const result = yield* executeDirect(tool, payload, key, snapshot);
         const link = moduleLink(tool.moduleId);
         const value: Record<string, unknown> = {
           messageCs: MSG_EXECUTED,

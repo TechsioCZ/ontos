@@ -386,7 +386,10 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
         const taskRef = asRecord(asRecord(asRecord(createdValue.result).task).ref);
         const taskId = asString(taskRef.resourceId);
         if (created.isError || createdValue.status !== 'executed' || taskId === undefined) {
-          return { pass: false, detail: `vytvoření: status ${String(createdValue.status)}, isError=${created.isError}` };
+          return {
+            pass: false,
+            detail: `vytvoření: status ${String(createdValue.status)}, isError=${created.isError}`,
+          };
         }
         const cancelled = await callJson(client, 'ontos_execute', {
           id: 'work.tasks/command/ChangeTaskState',
@@ -400,9 +403,10 @@ async function runVariant(def: VariantDef, summary: VariantSummary): Promise<voi
           input: { archived: true, taskRef },
           idempotencyKey: `${runId}-v2-hide`,
         });
+        const hiddenStatus = asRecord(hidden.value).status;
         return {
-          pass: !cancelled.isError && cancelledStatus === 'executed' && !hidden.isError,
-          detail: `úkol ${taskId} vytvořen, zrušen a skryt (status ${String(cancelledStatus)}, skrytí ${hidden.isError ? 'selhalo' : 'OK'})`,
+          pass: !cancelled.isError && cancelledStatus === 'executed' && !hidden.isError && hiddenStatus === 'executed',
+          detail: `úkol ${taskId}: zrušení ${String(cancelledStatus)}${cancelled.isError ? ` (${cancelled.text})` : ''}; skrytí ${String(hiddenStatus)}${hidden.isError ? ` (${hidden.text})` : ''}`,
         };
       });
     }
