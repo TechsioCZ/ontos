@@ -395,3 +395,63 @@ it('reports empty audit IDs without producing an unencodable issue and rejects u
     }
   }
 });
+
+const governedScope = {
+  legalEntityId: '71000000-0000-4000-8000-000000000020',
+  principalId: '72000000-0000-4000-8000-000000000020',
+  tenantId: '70000000-0000-4000-8000-000000000020',
+};
+const governedAuditRow = {
+  ...auditRow('governed-profile', 200),
+  evidenceJson: {
+    actionKey: 'core.identity.configure-agent',
+    description: null,
+    displayName: 'Reviewed agent',
+    legalEntityId: governedScope.legalEntityId,
+    modules: [{ access: 'write', moduleId }],
+    operation: 'configure-agent',
+    ownerPrincipalId: null,
+    previousProfile: null,
+    revision: 1,
+    targetPrincipalId: governedScope.principalId,
+    writePolicy: 'approval',
+  },
+  legalEntityId: governedScope.legalEntityId,
+  tenantId: governedScope.tenantId,
+};
+
+it('folds the governed audited agent Action without substituting historical or seeded authority', () => {
+  const agents = [{ principalId: governedScope.principalId, tenantId: governedScope.tenantId }];
+  const previous = auditRow('historical-profile', 100);
+  const profiles = Result.getOrThrow(
+    foldAgentActionMigrationProfiles(agents, [
+      {
+        ...previous,
+        evidenceJson: { ...previous.evidenceJson, targetPrincipalId: governedScope.principalId },
+        legalEntityId: governedScope.legalEntityId,
+        tenantId: governedScope.tenantId,
+      },
+      governedAuditRow,
+    ]),
+  );
+  expect(profiles).toEqual([
+    {
+      ...governedScope,
+      auditEventId: governedAuditRow.auditEventId,
+      modules: [{ access: 'write', moduleId }],
+      writePolicy: 'approval',
+    },
+  ]);
+});
+
+it('rejects malformed or company-disagreeing governed profile evidence rather than using old authority', () => {
+  const agents = [{ principalId: governedScope.principalId, tenantId: governedScope.tenantId }];
+  for (const evidenceJson of [
+    { ...governedAuditRow.evidenceJson, modules: 'not an array' },
+    { ...governedAuditRow.evidenceJson, revision: 0 },
+    { ...governedAuditRow.evidenceJson, legalEntityId: governedScope.principalId },
+  ]) {
+    const result = foldAgentActionMigrationProfiles(agents, [{ ...governedAuditRow, evidenceJson }]);
+    expect(Result.isFailure(result) ? result.failure.map(({ code }) => code) : []).toContain('invalid_audit_evidence');
+  }
+});

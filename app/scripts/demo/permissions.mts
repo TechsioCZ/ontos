@@ -179,6 +179,21 @@ export const demoRoles = {
 } as const satisfies Readonly<Record<string, DemoRole>>;
 export type DemoRoleKey = keyof typeof demoRoles;
 
+/** Explicit local developer authority, isolated from every sales-demo tenant. */
+export const localDevelopmentAdministratorFixture = {
+  affiliation: 'employee',
+  legalEntityId: '71000000-0000-4000-8000-000000000010',
+  principalId: '72000000-0000-4000-8000-000000000010',
+  role: { label: 'Local User', modules: {}, tenantRole: tenantSuperadminRole },
+  tenantId: '70000000-0000-4000-8000-000000000010',
+} as const satisfies {
+  readonly affiliation: 'employee';
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly role: DemoRole;
+  readonly tenantId: string;
+};
+
 const human = (key: string, displayName: string, role: DemoRoleKey) => ({
   authBindingId: demoId('core.auth-binding', key),
   authUserId: `demo-${key}`,

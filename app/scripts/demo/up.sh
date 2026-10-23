@@ -274,7 +274,9 @@ step navigation-exclusions "${WITH_ENV[@]}" node scripts/demo/navigation-exclusi
 # What each demo company says about itself on Home (core.legal_entities.welcome).
 step company-welcome "${WITH_ENV[@]}" node scripts/demo/company-welcome.mts
 # AI setup is a separate fail-closed native audited operation, never a best-effort reset side effect.
-step ai-profiles pnpm_ demo:ai-profiles
+step ai-profiles env ONTOS_AGENT_SETUP_EMAIL=obchod@demo.ontos \
+  "ONTOS_AGENT_SETUP_PASSWORD=${ONTOS_DEMO_PASSWORD:-password1234}" \
+  "${WITH_ENV[@]}" node scripts/demo/ai-profiles.mts --mode apply
 # Agentní entity: one presentable agent per company through the shell's admin endpoint (idempotent by name).
 step seed-agent-entities env "ONTOS_DEMO_SEED_URL=http://localhost:$SHELL_PORT" node scripts/demo/seed-agent-entities.mts
 # SpiceDB is in-memory: re-add the company administrators as operators of the seeded agents (MCP „Za agenta“).

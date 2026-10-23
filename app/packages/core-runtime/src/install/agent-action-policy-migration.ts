@@ -7,6 +7,7 @@ import { agentScopedRoleObjectId } from '../permissions/scoped-role.ts';
 import { toSpiceDbActionGrantObjectId } from '../permissions/service.ts';
 import type { ActionAuthorizationProvisioningAction } from './action-authorization-provisioning.ts';
 import { AgentGrantAccessSchema, AgentGrantWritePolicySchema } from './agent-entity-grants.ts';
+import { ConfigureAgentAuditEvidenceSchema } from '../modules/actions/configure-agent.action.ts';
 
 const NonEmpty = Schema.String.check(Schema.isNonEmpty());
 const LegalEntityIdSchema = NonEmpty.pipe(Schema.brand('LegalEntityId'));
@@ -94,6 +95,16 @@ const AuditProfilePayloadSchema = Schema.Struct({
   writePolicy: AgentGrantWritePolicySchema,
 });
 const decodeAuditProfile = Schema.decodeUnknownResult(AuditProfilePayloadSchema);
+/** Only authority fields are needed; inventory need not collect display names, descriptions or owner metadata. */
+const decodeGovernedAuditProfile = Schema.decodeUnknownResult(
+  Schema.Struct({
+    legalEntityId: ConfigureAgentAuditEvidenceSchema.fields.legalEntityId,
+    modules: ConfigureAgentAuditEvidenceSchema.fields.modules,
+    revision: ConfigureAgentAuditEvidenceSchema.fields.revision,
+    targetPrincipalId: ConfigureAgentAuditEvidenceSchema.fields.targetPrincipalId,
+    writePolicy: ConfigureAgentAuditEvidenceSchema.fields.writePolicy,
+  }),
+);
 const sameAuthority = (left: AgentActionMigrationProfile, right: AgentActionMigrationProfile): boolean =>
   left.writePolicy === right.writePolicy &&
   left.modules.length === right.modules.length &&
@@ -102,7 +113,7 @@ const sameAuthority = (left: AgentActionMigrationProfile, right: AgentActionMigr
   );
 
 const AuditSelectionSchema = Schema.Struct({
-  actionKey: Schema.Literal('core.identity.manage-demo-account'),
+  actionKey: Schema.Literals(['core.identity.manage-demo-account', 'core.identity.configure-agent']),
   operation: Schema.Literals(['create-agent', 'configure-agent']),
   targetPrincipalId: PrincipalIdSchema,
 });
@@ -137,13 +148,32 @@ export const foldAgentActionMigrationProfiles = (
         ? { principalId, tenantId: row.tenantId }
         : { legalEntityId: row.legalEntityId, principalId, tenantId: row.tenantId };
     const auditScope = row.auditEventId.length === 0 ? scope : { ...scope, auditEventId: row.auditEventId };
-    const decoded = decodeAuditProfile(row.evidenceJson);
+    const decoded: Result.Result<
+      {
+        readonly legalEntityId: string | undefined;
+        readonly modules: AgentActionMigrationProfile['modules'];
+        readonly writePolicy: AgentActionMigrationProfile['writePolicy'];
+      },
+      Schema.SchemaError
+    > =
+      selection.value.actionKey === 'core.identity.configure-agent'
+        ? Result.map(decodeGovernedAuditProfile(row.evidenceJson), (value) => ({
+            legalEntityId: value.legalEntityId,
+            modules: value.modules,
+            writePolicy: value.writePolicy,
+          }))
+        : Result.map(decodeAuditProfile(row.evidenceJson), (value) => ({
+            legalEntityId: row.legalEntityId,
+            modules: value.modulesJson,
+            writePolicy: value.writePolicy,
+          }));
     if (
       row.legalEntityId === undefined ||
       row.legalEntityId.length === 0 ||
       row.auditEventId.length === 0 ||
       !Number.isSafeInteger(row.occurredAtEpochMicroseconds) ||
-      Result.isFailure(decoded)
+      Result.isFailure(decoded) ||
+      decoded.success.legalEntityId !== row.legalEntityId
     ) {
       issues.push({ ...auditScope, code: 'invalid_audit_evidence' });
       return;
@@ -152,7 +182,7 @@ export const foldAgentActionMigrationProfiles = (
       ...scope,
       auditEventId: row.auditEventId,
       legalEntityId: row.legalEntityId,
-      modules: decoded.success.modulesJson,
+      modules: decoded.success.modules,
       writePolicy: decoded.success.writePolicy,
     };
     if (new Set(profile.modules.map(({ moduleId }) => moduleId)).size !== profile.modules.length) {
