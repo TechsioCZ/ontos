@@ -29,7 +29,9 @@ import {
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   OntosModuleDeploymentContractSchema,
   OntosShellRuntimeContractSchema,
+  validateActiveApplicationCompositionSnapshot,
 } from '../../packages/core-runtime/src/index.ts';
+import type { ActiveApplicationCompositionSnapshot } from '../../packages/core-runtime/src/index.ts';
 import { CoreDatabase } from '../../packages/core-runtime/src/db/client.ts';
 import { parseDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
 import { isLoopbackHostname } from '../../packages/core-runtime/src/modules/application-composition-backend.ts';
@@ -37,6 +39,7 @@ import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
   ARTIFACT_FETCH_TIMEOUT,
   assertNoConflictingPublication,
+  decodeActiveApplicationCompositionSnapshot,
   deriveActiveApplicationCompositionSnapshot,
   encodeActiveApplicationCompositionSnapshot,
 } from '../active-application-composition.mts';
@@ -113,6 +116,90 @@ export const decodeDevelopmentArtifactText = (artifact: ObservedArtifact) =>
   Effect.try({
     catch: () => fail('Native deployment artifact is not valid UTF-8'),
     try: () => new TextDecoder('utf-8', { fatal: true }).decode(artifact.bytes),
+  });
+
+const PointerJournalSchema = Schema.fromJsonString(Schema.Array(Schema.String).check(Schema.isMaxLength(2)));
+
+/** The provider's durable pointer, not a fallback in owner runtimes. Only the DB-approved value is readable. */
+export const makeDevelopmentCompositionPointer = Effect.fn('SiamparkComposition.makePointer')(function* makePointer(
+  statePath: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const database = yield* CoreDatabase;
+  const stored = (yield* fs.exists(statePath))
+    ? yield* Schema.decodeEffect(PointerJournalSchema)(yield* fs.readFileString(statePath))
+    : [];
+  const journal = yield* Ref.make<readonly string[]>(stored);
+  const load = Effect.gen(function* loadApprovedPointer() {
+    const [authority] = yield* database.executor.execute<{
+      readonly phase: string;
+      readonly revision: string;
+      readonly validUntilMillis: number;
+    }>(
+      sql`select phase, revision, (extract(epoch from valid_until) * 1000)::double precision as "validUntilMillis" from core.application_composition_authority where authority_key = 'active'`,
+      'objects',
+    );
+    if (authority === undefined || (authority.phase !== 'active' && authority.phase !== 'draining')) {
+      return Option.none<string>();
+    }
+    for (const encoded of yield* Ref.get(journal)) {
+      const approved = yield* decodeActiveApplicationCompositionSnapshot(encoded).pipe(
+        Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+        Effect.option,
+      );
+      if (
+        Option.isSome(approved) &&
+        approved.value.composition.revision === authority.revision &&
+        DateTime.toEpochMillis(approved.value.validUntil) === authority.validUntilMillis
+      ) {
+        return Option.some(encoded);
+      }
+    }
+    return Option.none<string>();
+  });
+  const publish = (snapshot: ActiveApplicationCompositionSnapshot) =>
+    Effect.gen(function* persistPointerBeforeAuthorityCommit() {
+      const current = yield* load;
+      const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
+      // Retain the committed value beside the candidate: a crash on either side of the DB commit
+      // must leave exactly matching bytes available, including during same-revision lease renewal.
+      const entries = Option.isSome(current) && current.value !== encoded ? [encoded, current.value] : [encoded];
+      const text = yield* Schema.encodeEffect(PointerJournalSchema)(entries);
+      const temporary = `${statePath}.${process.pid}.tmp`;
+      yield* fs.makeDirectory(path.dirname(statePath), { recursive: true });
+      yield* Effect.scoped(
+        Effect.gen(function* flushJournal() {
+          const file = yield* fs.open(temporary, { flag: 'w', mode: 0o600 });
+          yield* file.writeAll(new TextEncoder().encode(text));
+          yield* file.sync;
+        }),
+      ).pipe(
+        Effect.andThen(fs.rename(temporary, statePath)),
+        Effect.andThen(Ref.set(journal, entries)),
+        Effect.ensuring(fs.remove(temporary, { force: true }).pipe(Effect.orDie)),
+      );
+    });
+  return { load, publish };
+});
+
+export const developmentCompositionApplication = <Failure, Requirements>(
+  load: Effect.Effect<Option.Option<string>, Failure, Requirements>,
+) =>
+  Effect.gen(function* respondWithApprovedSnapshot() {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    if (request.method !== 'GET') {
+      return HttpServerResponse.empty({ status: 405 });
+    }
+    if (request.url !== '/active') {
+      return HttpServerResponse.empty({ status: 404 });
+    }
+    const current = yield* load;
+    return Option.isSome(current)
+      ? HttpServerResponse.text(current.value, {
+          contentType: 'application/json',
+          headers: { 'cache-control': 'no-store' },
+        })
+      : HttpServerResponse.empty({ status: 503 });
   });
 
 const workspaceRoot = path.resolve(import.meta.dirname, '../..');
@@ -232,24 +319,10 @@ export const serveDevelopmentComposition = Effect.fn('SiamparkComposition.serve'
       validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
     });
   });
-  const pointer = yield* Ref.make(Option.none<string>());
-  const application = Effect.gen(function* respondWithApprovedSnapshot() {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    if (request.method !== 'GET') {
-      return HttpServerResponse.empty({ status: 405 });
-    }
-    if (request.url !== '/active') {
-      return HttpServerResponse.empty({ status: 404 });
-    }
-    const current = yield* Ref.get(pointer);
-    return Option.isSome(current)
-      ? HttpServerResponse.text(current.value, {
-          contentType: 'application/json',
-          headers: { 'cache-control': 'no-store' },
-        })
-      : HttpServerResponse.empty({ status: 503 });
-  });
-  yield* HttpServer.serveEffect(application);
+  const pointer = yield* makeDevelopmentCompositionPointer(
+    path.join(workspaceRoot, '.scratch/development-composition-pointer.json'),
+  );
+  yield* HttpServer.serveEffect(developmentCompositionApplication(pointer.load));
   const database = yield* CoreDatabase;
   const verifyInitialCutover = (revision: string) =>
     Effect.gen(function* proveIsolatedNativeDevelopmentCutover() {
@@ -269,14 +342,13 @@ export const serveDevelopmentComposition = Effect.fn('SiamparkComposition.serve'
     });
   const publish = Effect.gen(function* publishObservedNativeComposition() {
     const snapshot = yield* observeSnapshot;
-    const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
-    const current = yield* Ref.get(pointer);
+    const current = yield* pointer.load;
     yield* assertNoConflictingPublication(current, snapshot);
     yield* publishApplicationCompositionAuthoritySnapshot(
       snapshot,
-      Ref.set(pointer, Option.some(encoded)),
+      pointer.publish(snapshot),
       verifyInitialCutover(snapshot.composition.revision),
-    ).pipe(Effect.tapError(() => Ref.set(pointer, current)));
+    );
     yield* Console.log(
       `Development composition ${snapshot.composition.revision} (${snapshot.composition.modules.length} owners) at ${origin}/active; valid until ${DateTime.formatIso(snapshot.validUntil)}`,
     );
