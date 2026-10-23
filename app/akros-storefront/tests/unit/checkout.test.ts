@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { CartState } from "@/mock-storefront/cart";
+import type { CartState } from "@/features/cart/cart-state";
 import {
   createCheckoutDraft,
   getCheckoutTotals,
@@ -8,7 +8,7 @@ import {
   selectDelivery,
   validateAddresses,
   validateMethods,
-} from "@/mock-storefront/checkout";
+} from "@/features/checkout/checkout-state";
 
 const cart: CartState = {
   version: 3,
@@ -30,89 +30,72 @@ const cart: CartState = {
   ],
 };
 
-describe("four-step checkout", () => {
-  it("starts with no shipping and an editable valid demo contact", () => {
+const methods = [{ id: "PPL", title: "Doprava z owneru", priceMinor: 12900 }];
+const validDraft = () => ({
+  ...createCheckoutDraft(),
+  deliveryId: "PPL",
+  email: "customer@example.test",
+  billing: {
+    firstName: "Test",
+    lastName: "Customer",
+    street: "Test 1",
+    city: "Brno",
+    postalCode: "60200",
+    country: "CZ",
+    phone: "+420777123456",
+  },
+});
+describe("checkout state with owner-supplied methods", () => {
+  it("starts empty rather than inventing customer data", () => {
     const draft = createCheckoutDraft();
-    expect(draft.deliveryId).toBe("");
-    expect(validateAddresses(draft)).toEqual({});
-    expect(getCheckoutTotals(cart, draft)).toMatchObject({
+    expect(draft.email).toBe("");
+    expect(draft.billing.firstName).toBe("");
+    expect(draft.billing.street).toBe("");
+    expect(validateAddresses(draft)).toHaveProperty("billing.street");
+    expect(getCheckoutTotals(cart, draft, methods)).toMatchObject({
       subtotal: 61,
-      total: 61,
+      shipping: null,
       net: null,
       vat: null,
-      shipping: null,
     });
   });
-
-  it("requires a supported delivery and a matching pickup point", () => {
-    expect(validateMethods({ ...createCheckoutDraft(), deliveryId: "dpd" })).toHaveProperty(
+  it("accepts only methods actually returned by OntOS", () => {
+    expect(validateMethods(validDraft(), [])).toHaveProperty("deliveryId");
+    expect(validateMethods(validDraft(), methods)).toEqual({});
+    expect(validateMethods({ ...validDraft(), deliveryId: "zasilkovna" }, methods)).toHaveProperty(
       "deliveryId",
     );
-    const draft = { ...createCheckoutDraft(), deliveryId: "zasilkovna" };
-    expect(validateMethods(draft)).toHaveProperty("pickupPointId");
-    expect(validateMethods({ ...draft, pickupPointId: "balikovna-praha" })).toHaveProperty(
-      "pickupPointId",
-    );
-    expect(validateMethods({ ...draft, pickupPointId: "zasilkovna-praha" })).toEqual({});
-    expect(validateMethods({ ...draft, deliveryId: "osobni" })).toEqual({});
+    expect(selectDelivery(validDraft(), "CESKA_POSTA").deliveryId).toBe("CESKA_POSTA");
   });
-
-  it("invalidates the pickup point when changing delivery", () => {
-    const draft = {
-      ...createCheckoutDraft(),
-      deliveryId: "zasilkovna",
-      pickupPointId: "zasilkovna-praha",
-    };
-    expect(selectDelivery(draft, "zasilkovna")).toMatchObject({
-      pickupPointId: "zasilkovna-praha",
-    });
-    expect(selectDelivery(draft, "osobni")).toMatchObject({
-      deliveryId: "osobni",
-      pickupPointId: "",
-    });
+  it("does not skip missing delivery or addresses", () => {
+    const draft = validDraft();
+    expect(getReachableStep(3, cart, draft, methods)).toBe(3);
+    expect(getReachableStep(3, cart, draft, [])).toBe(1);
+    expect(getReachableStep(3, cart, { ...draft, email: "invalid" }, methods)).toBe(2);
+    expect(getReachableStep(3, { version: 3, lines: [] }, draft, methods)).toBe(0);
   });
-
-  it("guards direct URLs and skipped steps but permits going back", () => {
-    const draft = createCheckoutDraft();
-    expect(getReachableStep(3, cart, draft)).toBe(1);
-    const methods = { ...draft, deliveryId: "osobni" };
-    expect(getReachableStep(3, cart, methods)).toBe(3);
-    expect(getReachableStep(3, cart, { ...methods, email: "invalid" })).toBe(2);
-    expect(getReachableStep(0, cart, methods)).toBe(0);
-    expect(getReachableStep(3, { version: 3, lines: [] }, methods)).toBe(0);
-  });
-
-  it("validates another address only while it is enabled without losing the draft", () => {
-    const draft = { ...createCheckoutDraft(), differentDeliveryAddress: true };
-    expect(validateAddresses(draft)).toHaveProperty("delivery.firstName");
-    expect(validateAddresses({ ...draft, differentDeliveryAddress: false })).toEqual({});
-  });
-
-  it("adds the selected demo shipping to the gross total and leaves tax to the OntOS quote", () => {
-    const draft = { ...createCheckoutDraft(), deliveryId: "zasilkovna" };
-    expect(getCheckoutTotals(cart, draft)).toEqual({
+  it("uses the owner shipping price but never fabricates tax", () => {
+    expect(getCheckoutTotals(cart, validDraft(), methods)).toEqual({
       subtotal: 61,
-      shipping: 7900,
+      shipping: 12900,
       payment: 0,
-      total: 7961,
+      total: 12961,
       net: null,
       vat: null,
     });
-    expect(getCheckoutTotals(cart, { ...draft, deliveryId: "osobni" })).toMatchObject({
-      shipping: 0,
-      total: 61,
-    });
   });
-
-  it("round trips incomplete drafts and safely rejects corrupted storage", () => {
-    const draft = { ...createCheckoutDraft(), email: "unfinished" };
-    expect(parseCheckoutDraft(JSON.stringify({ version: 1, draft }))).toEqual(draft);
-    expect(parseCheckoutDraft("broken")).toEqual(createCheckoutDraft());
-    expect(parseCheckoutDraft(JSON.stringify({ version: 99, draft }))).toEqual(
-      createCheckoutDraft(),
+  it("validates another address only while enabled", () => {
+    expect(validateAddresses(validDraft())).toEqual({});
+    expect(validateAddresses({ ...validDraft(), differentDeliveryAddress: true })).toHaveProperty(
+      "delivery.street",
     );
+  });
+  it("round trips incomplete drafts and rejects malformed storage", () => {
+    const draft = createCheckoutDraft();
+    expect(parseCheckoutDraft(JSON.stringify({ version: 1, draft }))).toEqual(draft);
+    expect(parseCheckoutDraft("broken")).toEqual(draft);
     expect(
       parseCheckoutDraft(JSON.stringify({ version: 1, draft: { ...draft, billing: null } })),
-    ).toEqual(createCheckoutDraft());
+    ).toEqual(draft);
   });
 });

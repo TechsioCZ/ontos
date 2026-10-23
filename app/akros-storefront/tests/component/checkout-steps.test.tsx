@@ -1,88 +1,63 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { CartProvider } from "@/features/cart/cart-provider";
 import { CheckoutProvider } from "@/features/checkout/checkout-provider";
+import { CartQuoteProvider } from "@/ontos/cart-revalidation";
 import { DeliveryPaymentStep } from "@/features/checkout/delivery-payment-step";
 import { AddressStep } from "@/features/checkout/address-step";
-import { createCheckoutDraft } from "@/mock-storefront/checkout";
 import type { ReactNode } from "react";
-
-const router = vi.hoisted(() => ({
-  push: vi.fn<(href: string) => void>(),
-  replace: vi.fn<(href: string) => void>(),
-}));
+const router = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 beforeEach(() => {
-  window.localStorage.clear();
-  window.sessionStorage.clear();
+  localStorage.clear();
+  sessionStorage.clear();
   vi.clearAllMocks();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) =>
+      url.endsWith("/checkout")
+        ? Response.json({
+            shippingMethods: [{ id: "PPL", title: "Owner shipping", priceMinor: 12900 }],
+          })
+        : Response.json({ account: null }),
+    ),
+  );
 });
 function renderStep(child: ReactNode) {
   return render(
-    <CartProvider>
-      <CheckoutProvider>{child}</CheckoutProvider>
+    <CartProvider storage={null}>
+      <CheckoutProvider>
+        <CartQuoteProvider>{child}</CartQuoteProvider>
+      </CheckoutProvider>
     </CartProvider>,
   );
 }
-
-describe("checkout step interactions", () => {
-  it("requires a supported delivery and its pickup point before continuing", async () => {
-    const user = userEvent.setup();
-    renderStep(<DeliveryPaymentStep />);
-    await user.click(screen.getByRole("button", { name: "Dodací údaje" }));
-    expect(screen.getByText("Vyberte způsob dopravy.")).not.toBeNull();
-    expect(router.push).not.toHaveBeenCalled();
-    await waitFor(() =>
-      expect(document.activeElement).toBe(screen.getByRole("radio", { name: "Zásilkovna" })),
-    );
-    expect(screen.getAllByRole("radio").map((radio) => radio.getAttribute("value"))).toEqual([
-      "zasilkovna",
-      "osobni",
-    ]);
-    expect(screen.getByText("Nic neplatíte (DEMO)")).not.toBeNull();
-    await user.click(screen.getByRole("radio", { name: "Zásilkovna" }));
-    await user.click(screen.getByRole("button", { name: "Dodací údaje" }));
-    expect(screen.getByText("Vyberte výdejní místo.")).not.toBeNull();
-    expect(router.push).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("radio", { name: /Osobní odběr/ }));
-    await user.click(screen.getByRole("button", { name: "Dodací údaje" }));
-    expect(router.push).toHaveBeenCalledWith("/kosik/dodaci-udaje");
-  });
-
-  it("keeps another address draft when toggled off and on, and blocks incomplete addresses", async () => {
-    const user = userEvent.setup();
-    renderStep(<AddressStep />);
-    const checkbox = screen.getByRole("checkbox", { name: /jinou adresu/ });
-    await user.click(checkbox);
-    await user.type(screen.getByLabelText("Jméno", { exact: false }), "Petra");
-    await user.click(checkbox);
-    await user.click(checkbox);
-    expect(screen.getByLabelText("Jméno", { exact: false }).getAttribute("value")).toBe("Petra");
-    await user.click(screen.getByRole("button", { name: "Souhrn objednávky" }));
-    expect(router.push).not.toHaveBeenCalled();
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText(/Příjmení/)));
-    await user.click(checkbox);
-    await user.click(screen.getByRole("button", { name: "Souhrn objednávky" }));
-    expect(router.push).toHaveBeenCalledWith("/kosik/shrnuti");
-  });
-
-  it("edits the prefilled billing contact instead of discarding entered values", async () => {
-    const user = userEvent.setup();
-    window.sessionStorage.setItem(
-      "akros-demo-checkout-v1",
-      JSON.stringify({ version: 1, draft: createCheckoutDraft() }),
-    );
-    renderStep(<AddressStep />);
-    await user.click(screen.getByRole("button", { name: "Změnit fakturační údaje" }));
-    const email = screen.getByLabelText(/E-mail/);
-    await user.clear(email);
-    await user.type(email, "edited@example.cz");
-    await user.click(screen.getByRole("button", { name: "Uložit údaje" }));
-    expect(screen.getByText("edited@example.cz")).not.toBeNull();
-    expect(
-      JSON.parse(window.sessionStorage.getItem("akros-demo-checkout-v1") ?? "null").draft.email,
-    ).toBe("edited@example.cz");
-  });
+it("offers only owner shipping tariffs and never fictitious pickup locations or payment methods", async () => {
+  const user = userEvent.setup();
+  renderStep(<DeliveryPaymentStep />);
+  const radio = await screen.findByRole("radio", { name: /Owner shipping/ });
+  expect(screen.getAllByRole("radio")).toHaveLength(1);
+  expect(screen.queryByRole("combobox")).toBeNull();
+  expect(screen.getByText("Online platba není dostupná")).toBeTruthy();
+  await user.click(radio);
+  await user.click(screen.getByRole("button", { name: "Dodací údaje" }));
+  expect(router.push).toHaveBeenCalledWith("/kosik/dodaci-udaje");
+});
+it("shows initially empty editable addresses and blocks incomplete delivery data", async () => {
+  const user = userEvent.setup();
+  renderStep(<AddressStep />);
+  const email = screen.getByLabelText(/E-mail/);
+  expect((email as HTMLInputElement).value).toBe("");
+  await user.click(screen.getByRole("button", { name: "Souhrn objednávky" }));
+  expect(router.push).not.toHaveBeenCalled();
+  expect(screen.getByText("Zadejte platný e-mail.")).toBeTruthy();
+  await user.type(email, "entered@example.test");
+  expect(JSON.parse(sessionStorage.getItem("akros-checkout-v2")!).draft.email).toBe(
+    "entered@example.test",
+  );
 });

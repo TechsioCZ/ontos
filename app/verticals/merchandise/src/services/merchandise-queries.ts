@@ -791,6 +791,43 @@ export const storefrontOrderStatus = Effect.fn('MerchandiseQueries.storefrontOrd
   },
 );
 
+/** Account reads are scoped in SQL before decoding: never materialize another customer's order. */
+export const storefrontCustomerOrders = Effect.fn('MerchandiseQueries.storefrontCustomerOrders')(
+  function* storefrontCustomerOrders(
+    db: MerchandiseDb,
+    scope: StoreScope,
+    lookup: { readonly customerAccountId: string; readonly orderId?: string; readonly offset?: number },
+  ) {
+    const predicate = and(
+      whereScope(orders, scope),
+      eq(orders.channel, 'STOREFRONT'),
+      eq(orders.removed, false),
+      sql`${orders.document}->>'customerAccountId' = ${lookup.customerAccountId}`,
+      ...(lookup.orderId === undefined ? [] : [eq(orders.id, lookup.orderId)]),
+    );
+    const rows = yield* query(
+      db
+        .select({ document: orders.document })
+        .from(orders)
+        .where(predicate)
+        .orderBy(desc(orders.createdAt), desc(orders.id))
+        .limit(50)
+        .offset(lookup.offset ?? 0),
+    );
+    const counts = yield* query(
+      db
+        .select({ total: sql<number>`count(*)::int` })
+        .from(orders)
+        .where(predicate),
+    );
+    const result = yield* Effect.try({
+      catch: (cause) => new MerchandiseStoreFailure({ cause, reason: 'Stored rows do not decode' }),
+      try: () => rows.map((row) => decodeOrderDocument(row.document)),
+    });
+    return { orders: result, total: counts[0]?.total ?? 0 };
+  },
+);
+
 /** One product's ledger: the newest 500 movements, oldest first. */
 export const productMovements = Effect.fn('MerchandiseQueries.productMovements')(function* productMovements(
   db: MerchandiseDb,

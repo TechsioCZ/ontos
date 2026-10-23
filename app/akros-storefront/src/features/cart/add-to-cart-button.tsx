@@ -4,7 +4,7 @@ import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 
 import { useCart } from "./cart-provider";
 import { cs } from "@/i18n/cs";
-import type { CartItemSnapshot } from "@/mock-storefront/cart";
+import type { CartItemSnapshot } from "@/features/cart/cart-state";
 
 export function AddToCartButton({
   item,
@@ -15,13 +15,14 @@ export function AddToCartButton({
   label?: string;
   quantity?: number;
 }) {
-  const { dispatch } = useCart();
+  const { addItem, adding } = useCart();
 
   return (
     <ProductCard.Button
       aria-label={`${label}: ${item.variantLabel ?? item.name}`}
       buttonVariant="cart"
-      onClick={() => dispatch({ type: "add", item, quantity })}
+      aria-disabled={adding}
+      onClick={() => void addItem(item, quantity)}
     >
       {label}
     </ProductCard.Button>

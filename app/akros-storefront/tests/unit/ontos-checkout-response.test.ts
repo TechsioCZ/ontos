@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CheckoutStockError,
+  CheckoutPriceError,
   checkoutSaveError,
   readCheckoutQuote,
   readOrderResponse,
@@ -8,6 +9,7 @@ import {
 
 const valid = {
   outcome: "PLACED",
+  orderId: "e12a77c6-c624-46bf-88fe-13d8c386e099",
   orderNumber: "OBJ-2026-0020",
   totalMinor: 12100,
   totalVatMinor: 2100,
@@ -43,8 +45,18 @@ describe("connected checkout response boundary", () => {
       "Kartáč (dvouřadý): k dispozici je jen 7 ks. Upravte množství v košíku a objednávku odešlete znovu.",
     );
   });
+  it.each(["PRICE_CHANGED", "SHIPPING_PRICE_CHANGED"])(
+    "requires fresh price acceptance for %s without exposing upstream text",
+    async (code) => {
+      const error = await readOrderResponse(
+        Response.json({ issues: [{ code, message: "Raw upstream text" }] }, { status: 409 }),
+      ).catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(CheckoutPriceError);
+      expect((error as Error).message).toContain("Cena zboží nebo dopravy se změnila");
+      expect((error as Error).message).not.toContain("Raw upstream text");
+    },
+  );
   it.each([
-    { issues: [{ code: "PRICE_CHANGED", message: "Raw upstream text" }] },
     { issues: [{ code: "INSUFFICIENT_STOCK", message: "x".repeat(301) }] },
     { message: "k dispozici je jen 7 ks." },
   ])("keeps other 409 bodies behind the generic retry guidance %j", async (body) => {
@@ -58,7 +70,7 @@ describe("connected checkout response boundary", () => {
         Response.json({ ...valid, orderId: "e12a77c6-c624-46bf-88fe-13d8c386e099" }),
       ),
     ).toEqual({
-      orderId: "e12a77c6-c624-46bf-88fe-13d8c386e099",
+      orderId: valid.orderId,
       orderNumber: valid.orderNumber,
       totalMinor: 12100,
       totalVatMinor: 2100,
@@ -71,6 +83,7 @@ describe("connected checkout response boundary", () => {
   });
   it.each(["PLACED", "REPLAYED"])("accepts verified %s", async (outcome) => {
     expect(await readOrderResponse(Response.json({ ...valid, outcome }))).toEqual({
+      orderId: valid.orderId,
       orderNumber: valid.orderNumber,
       totalMinor: 12100,
       totalVatMinor: 2100,

@@ -14,6 +14,7 @@ import {
   ProductRecordSchema,
   ProductSchema,
   StockMovementSchema,
+  ShippingMethodSchema,
 } from '../domain/merchandise-model.ts';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
@@ -110,6 +111,15 @@ export type ProductCategoryCount = typeof ProductCategoryCountSchema.Type;
  * Indicators always cover the whole company and ignore filters.
  */
 export const RecordsViewSchema = Schema.Struct({
+  /** Trusted storefront server supplies the verified portal subject, never a browser-supplied identity. */
+  storefrontCustomerOrders: Schema.optionalKey(
+    Schema.Struct({
+      customerAccountId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)),
+      orderId: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
+      offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+    }),
+  ),
+  storefrontCheckout: Schema.optionalKey(Schema.Boolean),
   /** Storefront catalog page; response adds total/page/pageSize/categories/homepageFeaturedProductIds. */
   storefrontCatalog: Schema.optionalKey(StorefrontCatalogQuerySchema),
   /** Storefront order status; response `orderStatus` (null when not found) and `products: []`. */
@@ -205,6 +215,19 @@ export type RecordsRequestEncoded = typeof RecordsRequestSchema.Encoded;
  * - orderCount: all orders; openOrderValueMinor: totalMinor of NEW, CONFIRMED and SHIPPED orders
  */
 export const RecordsResponseSchema = Schema.Struct({
+  checkout: Schema.optionalKey(
+    Schema.Struct({
+      shippingMethods: Schema.Array(
+        Schema.Struct({
+          id: ShippingMethodSchema,
+          title: Schema.String,
+          priceMinor: MinorAmountSchema,
+        }),
+      ),
+      paymentAvailable: Schema.Boolean,
+      carrierTrackingAvailable: Schema.Boolean,
+    }),
+  ),
   /** AI proposals for this company's orders; present for staff principals with read_all. */
   aiChanges: Schema.optionalKey(MerchandiseAiSliceSchema),
   categories: Schema.optionalKey(Schema.Array(CategoryNodeSchema)),

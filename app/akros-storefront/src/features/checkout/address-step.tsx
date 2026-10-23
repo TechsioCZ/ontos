@@ -8,14 +8,14 @@ import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { useCheckout } from "./checkout-provider";
 import { AddressFields } from "./address-fields";
-import { validateAddresses } from "@/mock-storefront/checkout";
+import { validateAddresses } from "@/features/checkout/checkout-state";
 import { useCartQuote } from "@/ontos/cart-revalidation";
 
 export function AddressStep() {
   const { draft, updateDraft } = useCheckout();
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(true);
   const [attempted, setAttempted] = useState(false);
   const quote = useCartQuote();
   const blocked = quote ? !quote.canContinue : false;
@@ -65,8 +65,8 @@ export function AddressStep() {
             Dodací údaje
           </h1>
           <p className="mb-4 rounded-sm border border-(--color-border-primary) p-4 text-sm">
-            DEMO – používejte výhradně fiktivní jméno, e-mail a adresu. Skutečné osobní údaje sem
-            nepatří.
+            Vyplňte skutečné dodací údaje. Kontakt objednávky bude spojen s přihlášeným zákaznickým
+            účtem.
           </p>
           {editing ? (
             <div className="grid gap-4 sm:grid-cols-2">

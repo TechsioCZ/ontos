@@ -1,6 +1,4 @@
 "use client";
-import { demoCheckoutNotice, demoPayment } from "@/ontos/demo-checkout";
-import Image from "next/image";
 import StoreLink from "@/components/store-link";
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -8,20 +6,18 @@ import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { RadioGroup } from "@techsio/ui-kit/molecules/radio-group";
 import { useCheckout } from "./checkout-provider";
-import { CheckoutSelect } from "./checkout-select";
-import { getDelivery, selectDelivery, validateMethods } from "@/mock-storefront/checkout";
-import { checkoutDeliveryMethods, checkoutPickupPoints } from "@/mock-storefront/fixtures/checkout";
+import { selectDelivery, validateMethods } from "@/features/checkout/checkout-state";
 import { formatCheckoutPrice } from "./checkout-format";
 import { useCartQuote } from "@/ontos/cart-revalidation";
 
 export function DeliveryPaymentStep() {
-  const { draft, updateDraft } = useCheckout();
+  const { draft, methods, methodsError, updateDraft } = useCheckout();
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [attempted, setAttempted] = useState(false);
-  const errors = attempted ? validateMethods(draft) : {};
+  const errors = attempted ? validateMethods(draft, methods) : {};
   const quote = useCartQuote();
-  const blocked = quote ? !quote.canContinue : false;
+  const blocked = !methods.length || (quote ? !quote.canContinue : true);
   return (
     <form
       ref={formRef}
@@ -30,7 +26,7 @@ export function DeliveryPaymentStep() {
         event.preventDefault();
         if (blocked) return;
         setAttempted(true);
-        const invalid = validateMethods(draft);
+        const invalid = validateMethods(draft, methods);
         if (Object.keys(invalid).length) {
           const selector = invalid.deliveryId ? 'input[name="delivery"]' : '[role="combobox"]';
           requestAnimationFrame(() =>
@@ -65,7 +61,7 @@ export function DeliveryPaymentStep() {
           >
             <RadioGroup.Label className="sr-only">Způsob dopravy</RadioGroup.Label>
             <RadioGroup.ItemGroup>
-              {checkoutDeliveryMethods.map((method) => {
+              {methods.map((method) => {
                 const price = method.priceMinor;
                 return (
                   <RadioGroup.Item
@@ -75,18 +71,11 @@ export function DeliveryPaymentStep() {
                   >
                     <RadioGroup.ItemHiddenInput />
                     <RadioGroup.ItemControl />
-                    <span className="col-start-2 row-start-1">
-                      <Image
-                        alt=""
-                        src={method.logo}
-                        width={140}
-                        height={63}
-                        className={`h-9 w-20 max-sm:h-6 max-sm:w-14 ${method.id === "osobni" ? "object-contain" : "object-cover"}`}
-                      />
-                    </span>
                     <RadioGroup.ItemContent className="col-start-3">
                       <RadioGroup.ItemText>{method.title}</RadioGroup.ItemText>
-                      <RadioGroup.ItemDescription>{method.description}</RadioGroup.ItemDescription>
+                      <RadioGroup.ItemDescription>
+                        Cena podle aktuálního ceníku OntOS
+                      </RadioGroup.ItemDescription>
                     </RadioGroup.ItemContent>
                     <span
                       className={`col-start-4 row-start-1 whitespace-nowrap text-sm ${price === 0 ? "text-(--color-fg-status-success) uppercase" : "font-extrabold text-(--akros-checkout-muted)"}`}
@@ -101,22 +90,13 @@ export function DeliveryPaymentStep() {
               <RadioGroup.StatusText status="error">{errors.deliveryId}</RadioGroup.StatusText>
             )}
           </RadioGroup>
-          {getDelivery(draft)?.pickup && (
-            <div className="mt-4">
-              <CheckoutSelect
-                id="checkout-pickup"
-                label="Výdejní místo (ukázková data)"
-                value={draft.pickupPointId}
-                onChange={(pickupPointId) =>
-                  updateDraft((current) => ({ ...current, pickupPointId }))
-                }
-                error={errors.pickupPointId}
-                items={checkoutPickupPoints
-                  .filter((point) => point.deliveryId === draft.deliveryId)
-                  .map((point) => ({ value: point.id, label: point.label }))}
-              />
-            </div>
+          {!methods.length && (
+            <p role="status">{methodsError || "Načítám aktuální dopravu z OntOS…"}</p>
           )}
+          <p className="mt-4 text-sm">
+            Rezervace dopravce, výdejní místa a termín doručení nejsou v OntOS dostupné. Volba
+            dopravy se uloží do objednávky; automatickou expedici nezajišťuje.
+          </p>
         </section>
         <section aria-labelledby="payment-title">
           <h2
@@ -126,13 +106,13 @@ export function DeliveryPaymentStep() {
             Platba
           </h2>
           <div className="rounded-sm border border-(--color-border-primary) p-4">
-            <p className="font-bold">{demoPayment.title}</p>
+            <p className="font-bold">Online platba není dostupná</p>
             <p className="mt-2 text-sm text-(--color-fg-secondary)">
-              Neaktivní ukázková metoda. Platba se neprovádí.
+              OntOS zde nemá platební metodu ani evidenci úhrady. Odesláním vznikne objednávka,
+              nikoli úhrada.
             </p>
           </div>
         </section>
-        <p className="text-xs text-(--color-fg-secondary)">{demoCheckoutNotice}</p>
       </div>
       <div className="mt-6 flex flex-wrap justify-between gap-4">
         <LinkButton

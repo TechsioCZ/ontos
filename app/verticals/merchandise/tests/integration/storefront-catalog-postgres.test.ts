@@ -12,6 +12,7 @@ import {
   productMovements,
   staffProducts,
   storefrontOrderStatus,
+  storefrontCustomerOrders,
   storefrontProducts,
 } from '../../src/services/merchandise-queries.ts';
 import { resetToAkrosBaseline } from '../../src/services/akros-demo-reset.ts';
@@ -537,4 +538,69 @@ it.live('in-app AKROS reset writes the bundled baseline part by part and advance
       expect((yield* staffProducts(db, scope, { productIds: ['p1'], summary: true }, false)).total).toBe(0);
     }),
   ),
+);
+
+it.live(
+  'customer orders filter by verified subject in SQL, isolate detail and paginate without exposing guests or removed orders',
+  () => {
+    const original = catalogInput.orders[0]!;
+    const state = decodeState({
+      ...catalogInput,
+      orders: [
+        ...Array.from({ length: 51 }, (_, index) => ({
+          ...original,
+          id: `customer-order-${index}`,
+          number: `OBJ-TEST-${index}`,
+          customerAccountId: 'customer-one',
+          clientRequestId: `customer-submission-${index}`,
+        })),
+        {
+          ...original,
+          id: 'other-customer',
+          number: 'OTHER-CUSTOMER',
+          clientRequestId: 'other-submission',
+          customerAccountId: 'customer-two',
+        },
+        { ...original, id: 'guest-order', number: 'GUEST-ORDER', clientRequestId: 'guest-submission' },
+        {
+          ...original,
+          id: 'staff-order',
+          number: 'STAFF-ORDER',
+          clientRequestId: 'staff-submission',
+          channel: 'STAFF',
+          customerAccountId: 'customer-one',
+        },
+        { ...catalogInput.orders[1]!, id: 'removed-order', customerAccountId: 'customer-one' },
+      ],
+    });
+    return withMerchandise(state, ({ db, scope }) =>
+      Effect.gen(function* () {
+        const first = yield* storefrontCustomerOrders(db, scope, { customerAccountId: 'customer-one' });
+        expect(first.total).toBe(51);
+        expect(first.orders).toHaveLength(50);
+        expect(first.orders.every((order) => order.customerAccountId === 'customer-one')).toBe(true);
+        const second = yield* storefrontCustomerOrders(db, scope, { customerAccountId: 'customer-one', offset: 50 });
+        expect(second.orders).toHaveLength(1);
+        expect(first.orders.some((order) => order.id === second.orders[0]!.id)).toBe(false);
+        expect(
+          (yield* storefrontCustomerOrders(db, scope, {
+            customerAccountId: 'customer-one',
+            orderId: 'customer-order-0',
+          })).orders[0]?.lines,
+        ).toEqual(original.lines);
+        for (const orderId of ['other-customer', 'guest-order', 'staff-order', 'removed-order']) {
+          expect(
+            (yield* storefrontCustomerOrders(db, scope, { customerAccountId: 'customer-one', orderId })).orders,
+          ).toEqual([]);
+        }
+        expect(
+          (yield* storefrontCustomerOrders(
+            db,
+            { ...scope, tenantId: 'ffffffff-ffff-4fff-8fff-ffffffffffff' },
+            { customerAccountId: 'customer-one' },
+          )).orders,
+        ).toEqual([]);
+      }),
+    );
+  },
 );

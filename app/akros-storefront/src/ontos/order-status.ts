@@ -1,22 +1,8 @@
 import "server-only";
 import { readRecords } from "./gateway";
 
-export type OntosOrderStatus =
-  | "NEW"
-  | "CONFIRMED"
-  | "PACKING"
-  | "SHIPPED"
-  | "DELIVERED"
-  | "CANCELLED";
-/** Same Czech labels as the staff order workflow (merchandise orderStatusLabels). */
-export const orderStatusLabels: Readonly<Record<OntosOrderStatus, string>> = {
-  NEW: "Nová",
-  CONFIRMED: "Zpracovává se",
-  PACKING: "Připravená k předání",
-  SHIPPED: "Předáno dopravci (simulace)",
-  DELIVERED: "Dokončená",
-  CANCELLED: "Stornovaná",
-};
+import { orderStatusLabels, type OntosOrderStatus } from "./order-model";
+export { orderStatusLabels, type OntosOrderStatus } from "./order-model";
 export interface OrderStatusRequest {
   orderId: string;
   clientRequestId: string;

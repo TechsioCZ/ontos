@@ -12,7 +12,7 @@ import {
   getLineTotal,
   getMaximumOrderQuantity,
   normalizeOrderQuantity,
-} from "@/mock-storefront/cart";
+} from "@/features/cart/cart-state";
 import { formatCheckoutPrice } from "./checkout-format";
 import { formatCartProductName } from "./cart-product-name";
 import { useCartQuote, type CartQuoteState } from "@/ontos/cart-revalidation";

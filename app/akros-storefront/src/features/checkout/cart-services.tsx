@@ -1,10 +1,8 @@
-"use client";
-
 export function CartServices() {
   return (
     <p className="py-4 text-sm">
-      DEMO – doprava a platba jsou simulované. Osobní odběr zdarma, Zásilkovna 79 Kč. Prodloužené
-      vrácení není v tomto režimu nabízeno.
+      Aktuální způsoby a ceny dopravy se načítají z OntOS v dalším kroku. Online platba není
+      dostupná.
     </p>
   );
 }

@@ -5,7 +5,7 @@ import { CartProvider, useCart } from "@/features/cart/cart-provider";
 import { CartQuoteProvider, CartRevalidation } from "@/ontos/cart-revalidation";
 import { CartNavigation } from "@/features/cart/cart-content";
 import { CartItemsTable } from "@/features/checkout/cart-items-table";
-import type { CartState } from "@/mock-storefront/cart";
+import type { CartState } from "@/features/cart/cart-state";
 const cart: CartState = {
   version: 3,
   lines: [
@@ -100,7 +100,7 @@ it("shows an explicit error with 'Zkusit znovu' and keeps the continue action di
   );
   await user.click(screen.getByRole("button", { name: "Načíst" }));
   await screen.findByText(/Ceny a dostupnost se teď nepodařilo ověřit/);
-  expect(screen.getByText("Demonstrační košík – nejde o skutečný nákup")).toBeTruthy();
+  expect(screen.getByText("Aktuální ceny a dostupnost z OntOS")).toBeTruthy();
   expect(
     (screen.getByRole("button", { name: "Vybrat dopravu a platbu" }) as HTMLButtonElement).disabled,
   ).toBe(true);

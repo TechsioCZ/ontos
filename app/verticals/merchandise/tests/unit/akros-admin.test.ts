@@ -60,6 +60,7 @@ const seeded = Effect.gen(function* seed() {
   });
   const placed = yield* apply(stock.state, {
     _tag: 'PlaceStorefrontOrder',
+    partyId: 'test-customer-party',
     clientRequestId: 'akros-admin-proof-1',
     contact: { name: 'Jan Ukázkový', email: 'jan@example.invalid' },
     deliveryAddress: { city: 'Brno', postalCode: '60200', street: 'Ukázková 1' },
@@ -87,7 +88,7 @@ it.effect('cleans a terminal DEMO order with retained audit and submission repla
     const state = yield* seeded;
     const terminal: MerchandiseState = {
       ...state,
-      orders: state.orders.map((order) => ({ ...order, status: 'DELIVERED' as const })),
+      orders: state.orders.map((order) => ({ ...order, demo: true, status: 'DELIVERED' as const })),
     };
     const changed = yield* apply(terminal, {
       _tag: 'RemoveDemoOrder',

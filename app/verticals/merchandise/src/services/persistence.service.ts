@@ -27,6 +27,8 @@ import {
   isRealVariant,
   sameSku,
   shippingMethodFor,
+  shippingMethods,
+  type ShippingMethod,
 } from '../../shared/domain/merchandise-model.ts';
 import type {
   Availability,
@@ -60,6 +62,7 @@ import {
   searchCategoryTrails,
   staffProducts,
   storefrontOrderStatus,
+  storefrontCustomerOrders,
   storefrontProducts,
 } from './merchandise-queries.ts';
 import { loadHead, loadWorkingSet, persistChange } from './merchandise-store.ts';
@@ -134,7 +137,7 @@ export const orderStatusLabels: Readonly<Record<OrderStatus, string>> = {
   DELIVERED: 'Dokončená',
   NEW: 'Nová',
   PACKING: 'Připravená k předání',
-  SHIPPED: 'Předáno dopravci (simulace)',
+  SHIPPED: 'Předáno dopravci',
 };
 
 const conflict = (reason: string) =>
@@ -568,7 +571,7 @@ const placeOrder = Effect.fn('Merchandise.placeOrder')(function* placeOrder(
   };
 });
 
-/** DELIVERED („Dokončená“) is reachable only from SHIPPED („Předáno dopravci (simulace)“). */
+/** DELIVERED („Dokončená“) is reachable only from SHIPPED („Předáno dopravci“). */
 export const orderTransitions = {
   CANCELLED: [],
   CONFIRMED: ['PACKING', 'SHIPPED', 'CANCELLED'],
@@ -658,11 +661,6 @@ const changeOrderStatus = Effect.fn('Merchandise.changeOrderStatus')(function* c
   const restored = yield* returnOrderStock(state, existing, input, `Storno objednávky ${existing.number}`);
   return { entityIds: [entity], state: { ...state, movements: [...state.movements, ...restored], orders } };
 });
-
-const storefrontPartyId = (state: MerchandiseState) => {
-  void state;
-  return mintId(PartyIdSchema, 'storefront-guest');
-};
 
 const availabilityMessage: Readonly<Record<Availability, string>> = {
   IN_STOCK: 'Skladem',
@@ -775,6 +773,8 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
 ) {
   const replay = state.orders.find((entry) => entry.clientRequestId === value.clientRequestId);
   if (replay !== undefined) {
+    if (replay.customerAccountId !== value.customerAccountId)
+      return yield* conflict('Submission belongs to another customer');
     const entity = yield* entityIdOf(replay.id);
     return { entityIds: [entity], state, storefrontOrder: storefrontResultOf(replay, 'REPLAYED') };
   }
@@ -908,6 +908,8 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     };
     return { entityIds: [], state, storefrontOrder };
   }
+  if (value.contact === undefined || value.deliveryAddress === undefined || value.partyId === undefined)
+    return yield* conflict('Order contact, delivery address and customer party are required');
   const id = yield* mintId(OrderIdSchema, input.resourceId);
   if (state.orders.some((entry) => entry.id === id)) {
     return yield* conflict('Order id already exists');
@@ -915,14 +917,14 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
   const number = nextOrderNumberOf(state);
   const order: Order = {
     channel: 'STOREFRONT',
+    ...(value.customerAccountId === undefined ? {} : { customerAccountId: value.customerAccountId }),
     clientRequestId: value.clientRequestId,
     contact: value.contact,
     createdAt: input.now,
     deliveryAddress: value.deliveryAddress,
-    demo: true,
     history: [
       {
-        actorLabel: 'Zákazník – e-shop (DEMO)',
+        actorLabel: 'Zákazník – e-shop',
         after: orderStatusLabels.NEW,
         at: input.now,
         kind: 'CREATED',
@@ -932,7 +934,7 @@ const placeStorefrontOrder = Effect.fn('Merchandise.placeStorefrontOrder')(funct
     lines,
     ...(value.note === undefined || value.note === '' ? {} : { note: value.note }),
     number,
-    partyId: yield* storefrontPartyId(state),
+    partyId: value.partyId,
     pricesIncludeVat: true,
     shipping,
     status: 'NEW',
@@ -1393,7 +1395,10 @@ export interface MerchandiseRecordsGrants {
 
 const storefrontCatalogView = (request: RecordsRequest) =>
   request.view?.storefront === true &&
-  (request.view.storefrontCatalog !== undefined || request.view.storefrontOrderStatus !== undefined);
+  (request.view.storefrontCatalog !== undefined ||
+    request.view.storefrontOrderStatus !== undefined ||
+    request.view.storefrontCustomerOrders !== undefined ||
+    request.view.storefrontCheckout === true);
 
 /**
  * Resolves a records read's rights before its transaction opens: one bulk check of both catalog permissions
@@ -1629,12 +1634,12 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
       }
       return yield* applyOnce(command, expectedRevision, resourceId);
     });
-    const storefrontRecords = Effect.fn('Merchandise.storefrontRecords')(function* storefrontRecords(view: RecordsView) {
+    const storefrontRecords = Effect.fn('Merchandise.storefrontRecords')(function* storefrontRecords(
+      view: RecordsView,
+    ) {
       const catalogQuery = view.storefrontCatalog;
       const page =
-        catalogQuery === undefined
-          ? undefined
-          : yield* storefrontProducts(transaction, store, { query: catalogQuery });
+        catalogQuery === undefined ? undefined : yield* storefrontProducts(transaction, store, { query: catalogQuery });
       // Product pages carry their head in the same statement; an order-status-only read still needs its revision.
       const head = page?.head ?? (yield* loadHead(transaction, store));
       if (head === undefined) return yield* unavailable();
@@ -1647,6 +1652,10 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
         view.storefrontOrderStatus === undefined
           ? undefined
           : yield* storefrontOrderStatus(transaction, store, view.storefrontOrderStatus);
+      const customerOrders =
+        view.storefrontCustomerOrders === undefined
+          ? undefined
+          : yield* storefrontCustomerOrders(transaction, store, view.storefrontCustomerOrders);
       const pageProducts = page?.products ?? [];
       const response: RecordsResponse = {
         actorPrincipalRef: { principalId: scope.principalId, tenantId: scope.tenantId },
@@ -1663,7 +1672,22 @@ export const persistenceService = Effect.fn('Merchandise.persistenceService')(
           stockValueMinor: 0,
         },
         movements: [],
-        orders: [],
+        orders: customerOrders?.orders ?? [],
+        ...(customerOrders === undefined ? {} : { totalOrders: customerOrders.total }),
+        ...(view.storefrontCheckout !== true
+          ? {}
+          : {
+              checkout: {
+                // No pickup-point registry exists. Do not offer a pickup method without real locations.
+                shippingMethods: (['PPL', 'CESKA_POSTA'] as const).map((id: ShippingMethod) => ({
+                  id,
+                  title: shippingMethods[id].label,
+                  priceMinor: shippingMethods[id].grossPriceMinor,
+                })),
+                paymentAvailable: false,
+                carrierTrackingAvailable: false,
+              },
+            }),
         products: [...pageProducts],
         revision,
         ...(page === undefined

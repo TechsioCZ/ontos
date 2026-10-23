@@ -15,7 +15,7 @@ export const orderCustomerName = (order: Order, customers: CustomerDirectory): s
 
 export const isStorefrontOrder = (order: Order): boolean => order.channel === 'STOREFRONT';
 
-/** Lines, prices, shipping and address can change until the simulated carrier hand-over. */
+/** Lines, prices, shipping and address can change until the staff-recorded carrier hand-over. */
 export const isOrderEditable = (order: Pick<Order, 'status'>): boolean =>
   order.status === 'NEW' || order.status === 'CONFIRMED' || order.status === 'PACKING';
 
@@ -24,7 +24,7 @@ export const workflowSteps: readonly { readonly label: string; readonly status: 
   { label: 'Nová', status: 'NEW' },
   { label: 'Zpracovává se', status: 'CONFIRMED' },
   { label: 'Připravená k předání', status: 'PACKING' },
-  { label: 'Předáno dopravci (simulace)', status: 'SHIPPED' },
+  { label: 'Předáno dopravci', status: 'SHIPPED' },
   { label: 'Dokončená', status: 'DELIVERED' },
 ];
 

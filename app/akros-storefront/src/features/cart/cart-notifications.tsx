@@ -5,14 +5,14 @@ import { useEffect, useId } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Toaster, toaster } from "@techsio/ui-kit/molecules/toast";
-import { formatQuantity, getMaximumOrderQuantity } from "@/mock-storefront/cart";
+import { formatQuantity, getMaximumOrderQuantity } from "@/features/cart/cart-state";
 import { useCart } from "./cart-provider";
 
 export function CartNotifications() {
   const owner = useId();
   const feedbackId = `akros-cart-feedback-${owner}`;
   const removalId = `akros-cart-removal-${owner}`;
-  const { feedback, removedItem, undoRemove, dismissRemove } = useCart();
+  const { purchaseError, feedback, removedItem, undoRemove, dismissRemove } = useCart();
 
   useEffect(() => {
     let active = true;
@@ -111,5 +111,17 @@ export function CartNotifications() {
     [feedbackId, removalId],
   );
 
-  return <Toaster />;
+  return (
+    <>
+      <Toaster />
+      {purchaseError && (
+        <p
+          role="alert"
+          className="fixed bottom-4 right-4 z-50 max-w-md rounded border border-(--color-danger) bg-(--color-base) p-4 shadow-lg"
+        >
+          {purchaseError}
+        </p>
+      )}
+    </>
+  );
 }

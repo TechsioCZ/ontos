@@ -3,15 +3,15 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CheckoutProvider, useCheckout } from "@/features/checkout/checkout-provider";
 import { CartProvider, useCart } from "@/features/cart/cart-provider";
-import { createCheckoutDraft } from "@/mock-storefront/checkout";
+import { createCheckoutDraft } from "@/features/checkout/checkout-state";
 import { checkoutSaveError } from "@/ontos/checkout-response";
 
 function Probe() {
-  const { ready, storageError, draft, completeOrder } = useCheckout();
+  const { ready, accountEmail, methods, storageError, draft, completeOrder } = useCheckout();
   const { cart } = useCart();
   return (
     <>
-      <output aria-label="Ready">{String(ready)}</output>
+      <output aria-label="Ready">{String(ready && !!accountEmail && !!methods.length)}</output>
       <output aria-label="Cart">{cart.lines.length}</output>
       <output aria-label="Error">{storageError}</output>
       <output aria-label="Delivery">{draft.deliveryId}</output>
@@ -49,10 +49,23 @@ beforeEach(() => {
     }),
   );
   sessionStorage.setItem(
-    "akros-demo-checkout-v1",
+    "akros-checkout-v2",
     JSON.stringify({
       version: 1,
-      draft: { ...createCheckoutDraft(), deliveryId: "osobni" },
+      draft: {
+        ...createCheckoutDraft(),
+        deliveryId: "PPL",
+        email: "verified@example.test",
+        billing: {
+          firstName: "Test",
+          lastName: "Customer",
+          street: "Test 1",
+          city: "Brno",
+          postalCode: "60200",
+          country: "CZ",
+          phone: "+420777123456",
+        },
+      },
     }),
   );
 });
@@ -66,6 +79,12 @@ describe("OntOS submission recovery", () => {
       vi.stubGlobal(
         "fetch",
         vi.fn(async (url: string, options: RequestInit) => {
+          if (url.endsWith("/checkout"))
+            return Response.json({
+              shippingMethods: [{ id: "PPL", title: "PPL", priceMinor: 12900 }],
+            });
+          if (url.endsWith("/account"))
+            return Response.json({ account: { email: "verified@example.test", name: "Customer" } });
           if (url.endsWith("/cart"))
             return Response.json({ canCheckout: true, priceChanged: false, issues: [] });
           requests.push(String(options.body));
@@ -78,6 +97,7 @@ describe("OntOS submission recovery", () => {
           }
           return Response.json({
             outcome: "REPLAYED",
+            orderId: "order-persisted-1",
             orderNumber: "OBJ-2026-0099",
             totalMinor: 121,
             totalVatMinor: 21,
@@ -92,7 +112,7 @@ describe("OntOS submission recovery", () => {
         </CartProvider>,
       );
       await waitFor(() => expect(screen.getByLabelText("Ready").textContent).toBe("true"));
-      expect(screen.getByLabelText("Delivery").textContent).toBe("osobni");
+      expect(screen.getByLabelText("Delivery").textContent).toBe("PPL");
       await user.click(screen.getByText("Submit"));
       await waitFor(() =>
         expect(screen.getByLabelText("Error").textContent).toBe(checkoutSaveError),
@@ -103,11 +123,7 @@ describe("OntOS submission recovery", () => {
       await waitFor(() => expect(screen.getByLabelText("Cart").textContent).toBe("0"));
       expect(requests).toHaveLength(2);
       expect(requests[0]).toBe(requests[1]);
-      expect(JSON.parse(sessionStorage.getItem("akros-demo-order-v1")!)).toMatchObject({
-        id: "OBJ-2026-0099",
-        clientRequestId: expect.stringMatching(/^akros-/),
-        totals: { total: 121, vat: 21, net: 100 },
-      });
+      expect(sessionStorage.getItem("akros-demo-order-v1")).toBeNull();
     },
   );
 });

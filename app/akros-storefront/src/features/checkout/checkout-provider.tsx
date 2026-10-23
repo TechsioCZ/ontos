@@ -1,34 +1,48 @@
 "use client";
 import {
   CheckoutStockError,
+  CheckoutPriceError,
   checkoutSaveError,
   readCheckoutQuote,
   readOrderResponse,
 } from "@/ontos/checkout-response";
 
-import { createContext, type ReactNode, useContext, useEffect, useReducer, useRef } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { useCart } from "@/features/cart/cart-provider";
 import {
   type CheckoutDraft,
+  type DeliveryMethod,
   createCheckoutDraft,
-  getCheckoutTotals,
-  getDelivery,
   getReachableStep,
   parseCheckoutDraft,
-} from "@/mock-storefront/checkout";
-import { type LocalOrder, orderStorageKey } from "@/mock-storefront/local-order";
+} from "@/features/checkout/checkout-state";
+export interface PlacedOrder {
+  id: string;
+  orderId: string;
+}
 
-const legacyDraftStorageKey = "akros-demo-checkout-v1";
+const draftKey = "akros-checkout-v2";
 type DraftUpdate = (draft: CheckoutDraft) => CheckoutDraft;
 type CheckoutStorage = Pick<Storage, "getItem" | "setItem">;
 
 interface CheckoutContextValue {
   draft: CheckoutDraft;
+  methods: DeliveryMethod[];
+  methodsError: string;
+  accountEmail: string | null;
   ready: boolean;
   storageError: string;
   submitted: boolean;
   updateDraft: (update: DraftUpdate) => void;
-  completeOrder: () => Promise<LocalOrder | null>;
+  completeOrder: () => Promise<PlacedOrder | null>;
 }
 
 const CheckoutContext = createContext<CheckoutContextValue | null>(null);
@@ -70,8 +84,7 @@ function CheckoutCartProvider({
   storage?: CheckoutStorage;
 }) {
   const { cart, dispatch, ready: cartReady, activeCartId } = useCart();
-  const draftStorageKey =
-    activeCartId === "default" ? legacyDraftStorageKey : `${legacyDraftStorageKey}:${activeCartId}`;
+  const draftStorageKey = activeCartId === "default" ? draftKey : `${draftKey}:${activeCartId}`;
   const [{ draft, hydrated, storageError, submitError, submitted }, checkoutDispatch] = useReducer(
     checkoutReducer,
     undefined,
@@ -83,8 +96,75 @@ function CheckoutCartProvider({
       submitted: false,
     }),
   );
+  const [options, setOptions] = useState<{ methods: DeliveryMethod[]; loadedAt: number }>({
+    methods: [],
+    loadedAt: 0,
+  });
+  const [methodsError, setMethodsError] = useState("");
+  const [now, setNow] = useState(Date.now);
+  const [accountEmail, setAccountEmail] = useState<string | null>(null);
+  const methods = now - options.loadedAt < 9_750 ? options.methods : [];
+  useEffect(() => {
+    const controller = new AbortController();
+    let busy = false;
+    const load = async () => {
+      if (busy || document.visibilityState === "hidden") return;
+      busy = true;
+      const started = Date.now();
+      try {
+        const response = await fetch("/api/ontos/checkout", {
+          cache: "no-store",
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8_000)]),
+        });
+        const body = await response.json();
+        if (!response.ok || !Array.isArray(body.shippingMethods))
+          throw new Error("Možnosti dopravy nyní nelze ověřit v OntOS.");
+        if (!controller.signal.aborted) {
+          setOptions({ methods: body.shippingMethods, loadedAt: started });
+          setMethodsError("");
+        }
+      } catch {
+        if (!controller.signal.aborted)
+          setMethodsError("Možnosti dopravy nyní nelze ověřit v OntOS.");
+      } finally {
+        busy = false;
+      }
+    };
+    void load();
+    const refresh = window.setInterval(load, 7_000);
+    const clock = window.setInterval(() => setNow(Date.now()), 250);
+    const visible = () => {
+      setNow(Date.now());
+      void load();
+    };
+    window.addEventListener("focus", visible);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      controller.abort();
+      window.clearInterval(refresh);
+      window.clearInterval(clock);
+      window.removeEventListener("focus", visible);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch("/api/ontos/account", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const { account } = await response.json();
+        if (controller.signal.aborted || !account?.email) return;
+        setAccountEmail(account.email);
+        checkoutDispatch({
+          type: "update",
+          update: (current) => ({ ...current, email: account.email }),
+        });
+      })
+      .catch(() => {});
+    return () => controller.abort();
+  }, []);
   const storageRef = useRef<CheckoutStorage | null>(null);
-  const completed = useRef<LocalOrder | null>(null);
+  const completed = useRef<PlacedOrder | null>(null);
 
   useEffect(() => {
     try {
@@ -116,14 +196,19 @@ function CheckoutCartProvider({
     }
   }, [draft, hydrated, draftStorageKey]);
 
-  async function completeOrder(): Promise<LocalOrder | null> {
+  async function completeOrder(): Promise<PlacedOrder | null> {
     if (completed.current) return completed.current;
     checkoutDispatch({ type: "submit-error", error: "" });
-    if (!hydrated || !cartReady || getReachableStep(3, cart, draft) !== 3) return null;
-    const delivery = getDelivery(draft);
-    if (!delivery) return null;
+    if (!hydrated || !cartReady || getReachableStep(3, cart, draft, methods) !== 3) return null;
+    if (!accountEmail) {
+      checkoutDispatch({
+        type: "submit-error",
+        error: "Před objednáním se přihlaste ke svému účtu.",
+      });
+      return null;
+    }
 
-    let order: LocalOrder;
+    let order: PlacedOrder;
     try {
       if (!storageRef.current) throw new Error("Povolte úložiště pro tento web.");
       // Store the exact request BEFORE sending. Retries, double-submit and refresh reuse it verbatim.
@@ -160,44 +245,18 @@ function CheckoutCartProvider({
         body: JSON.stringify({ cart, draft, clientRequestId: pending.clientRequestId }),
       });
       const result = await readOrderResponse(response);
-      order = {
-        version: 1,
-        id: result.orderNumber,
-        ...(result.orderId ? { orderId: result.orderId } : {}),
-        clientRequestId: pending.clientRequestId,
-        createdAt: new Date().toISOString(),
-        cart: structuredClone(cart),
-        draft: structuredClone(draft),
-        deliveryTitle: delivery.title,
-        paymentStatus: "not-processed",
-        totals: {
-          ...getCheckoutTotals(cart, draft),
-          total: result.totalMinor,
-          vat: result.totalVatMinor,
-          net: result.totalMinor - result.totalVatMinor,
-        },
-      };
+      order = { id: result.orderNumber, orderId: result.orderId };
     } catch (error) {
       checkoutDispatch({
         type: "submit-error",
         error:
           error instanceof CheckoutStockError ||
+          error instanceof CheckoutPriceError ||
           (error instanceof Error &&
             (error.message.startsWith("Cena se změnila") ||
               error.message.startsWith("Košík nyní nelze ověřit")))
             ? error.message
             : checkoutSaveError,
-      });
-      return null;
-    }
-    try {
-      if (!storageRef.current) throw new Error("Session storage unavailable");
-      storageRef.current.setItem(orderStorageKey, JSON.stringify(order));
-    } catch {
-      checkoutDispatch({
-        type: "storage-result",
-        error:
-          "Objednávku se nepodařilo uložit. Košík zůstává zachovaný; povolte úložiště a zkuste to znovu.",
       });
       return null;
     }
@@ -211,6 +270,9 @@ function CheckoutCartProvider({
     <CheckoutContext.Provider
       value={{
         draft,
+        methods,
+        methodsError,
+        accountEmail,
         ready: hydrated && cartReady,
         submitted,
         storageError: submitError || storageError,

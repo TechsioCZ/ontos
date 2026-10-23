@@ -1,13 +1,13 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toaster } from "@techsio/ui-kit/molecules/toast";
 import { AddToCartButton } from "@/features/cart/add-to-cart-button";
 import { CartProvider, useCart } from "@/features/cart/cart-provider";
 import { CartNotifications } from "@/features/cart/cart-notifications";
 import { CartItemsTable } from "@/features/checkout/cart-items-table";
-import type { CartItemSnapshot } from "@/mock-storefront/cart";
+import type { CartItemSnapshot } from "@/features/cart/cart-state";
 
 const item: CartItemSnapshot = {
   productId: "rod",
@@ -82,7 +82,7 @@ describe("cart action notifications", () => {
     expect(screen.getAllByText("Přidáno do košíku")).toHaveLength(1);
   });
 
-  it("reports only the quantity that fits and reports the stock limit instead of false success", async () => {
+  it("rejects an owner stock refusal instead of silently reducing quantity or announcing success", async () => {
     window.localStorage.setItem(
       "akros-demo-cart-v3",
       JSON.stringify({ version: 3, lines: [{ ...item, quantity: 3 }] }),
@@ -90,15 +90,13 @@ describe("cart action notifications", () => {
     const user = userEvent.setup();
     renderCart(1);
     await screen.findByDisplayValue("3");
-    const add = screen.getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" });
-    await user.click(add);
-    expect(await screen.findByText(/Přidáno 0,5 m/)).not.toBeNull();
-    expect(screen.getByText(/část požadovaného množství/)).not.toBeNull();
-    expect(lines()[0].quantity).toBe(3.5);
-    await user.click(add);
-    expect(await screen.findByText("Nelze přidat další množství")).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Přidat do košíku: Tyč 6 mm / A2" }));
+    expect(await screen.findByRole("alert")).toHaveProperty(
+      "textContent",
+      "OntOS: požadované množství není skladem.",
+    );
+    expect(lines()[0].quantity).toBe(3);
     expect(screen.queryByText("Přidáno do košíku")).toBeNull();
-    expect(lines()[0].quantity).toBe(3.5);
   });
 
   it("does not announce restored storage as a new addition", async () => {
@@ -239,3 +237,23 @@ describe("cart action notifications", () => {
     expect(screen.getByText(/část požadovaného množství/)).not.toBeNull();
   });
 });
+
+// Transport boundary: the component must await an owner verdict before changing cart state.
+beforeEach(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init: RequestInit) => {
+      const { cart } = JSON.parse(String(init.body));
+      const blocked = cart.lines.some(
+        (line: { quantity: number; stockCount: number }) => line.quantity > line.stockCount,
+      );
+      return Response.json({
+        cart,
+        priceChanged: false,
+        issues: blocked ? ["OntOS: požadované množství není skladem."] : [],
+        canCheckout: !blocked,
+      });
+    }),
+  );
+});
+afterEach(() => vi.unstubAllGlobals());

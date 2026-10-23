@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CartProvider, useCart } from "@/features/cart/cart-provider";
 import { CheckoutProvider, useCheckout } from "@/features/checkout/checkout-provider";
-import { cartCollectionStorageKey } from "@/mock-storefront/cart-collection";
+import { cartCollectionStorageKey } from "@/features/cart/cart-collection";
 
 const item = {
   productId: "fixture",

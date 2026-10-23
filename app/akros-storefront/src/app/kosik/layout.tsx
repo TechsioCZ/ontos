@@ -15,10 +15,8 @@ export default async function CartLayout({ children }: { children: ReactNode }) 
       <main>
         <CheckoutProvider>
           <CartQuoteProvider>
-            <CheckoutLayout recommendations={recommendations}>
-              <CartRevalidation />
-              {children}
-            </CheckoutLayout>
+            <CartRevalidation />
+            <CheckoutLayout recommendations={recommendations}>{children}</CheckoutLayout>
           </CartQuoteProvider>
         </CheckoutProvider>
       </main>

@@ -1,11 +1,10 @@
-import { demoPayment } from "@/ontos/demo-checkout";
-import { type CartState, getCartSubtotal } from "./cart";
-import { mockCustomer } from "./fixtures/account";
-import {
-  checkoutDeliveryMethods,
-  checkoutPickupPoints,
-  demoStoreAddress,
-} from "./fixtures/checkout";
+import { type CartState, getCartSubtotal } from "@/features/cart/cart-state";
+
+export interface DeliveryMethod {
+  id: string;
+  title: string;
+  priceMinor: number;
+}
 
 export const checkoutSteps = [
   { title: "Nákupní košík", href: "/kosik" },
@@ -26,7 +25,6 @@ export interface CheckoutAddress {
 
 export interface CheckoutDraft {
   deliveryId: string;
-  pickupPointId: string;
   email: string;
   company: string;
   companyId: string;
@@ -39,20 +37,18 @@ export interface CheckoutDraft {
 export type CheckoutErrors = Record<string, string>;
 export const createCheckoutDraft = (): CheckoutDraft => ({
   deliveryId: "",
-  pickupPointId: "",
-  email: mockCustomer.email,
-  company: mockCustomer.company,
-  // Clearly fictitious demo contact (reserved .invalid domain, no IČ): nothing that looks like a real customer.
+  email: "",
+  company: "",
   companyId: "",
   vatId: "",
   billing: {
-    firstName: "Jan",
-    lastName: "Novák",
-    street: "Ukázková 1",
-    city: "Praha 1",
-    postalCode: "110 00",
+    firstName: "",
+    lastName: "",
+    street: "",
+    city: "",
+    postalCode: "",
     country: "CZ",
-    phone: "+420600000000",
+    phone: "",
   },
   delivery: {
     firstName: "",
@@ -66,42 +62,27 @@ export const createCheckoutDraft = (): CheckoutDraft => ({
   differentDeliveryAddress: false,
 });
 
-export const getDelivery = (draft: CheckoutDraft) =>
-  checkoutDeliveryMethods.find((method) => method.id === draft.deliveryId);
+export const getDelivery = (draft: CheckoutDraft, methods: readonly DeliveryMethod[]) =>
+  methods.find((method) => method.id === draft.deliveryId);
 export const getDeliveryAddress = (draft: CheckoutDraft) =>
   draft.differentDeliveryAddress ? draft.delivery : draft.billing;
 
 export function getDeliveryLocation(draft: CheckoutDraft): string {
-  if (draft.deliveryId === "osobni") return demoStoreAddress;
-  if (getDelivery(draft)?.pickup)
-    return (
-      checkoutPickupPoints.find((point) => point.id === draft.pickupPointId)?.label ??
-      "Výdejní místo není vybráno"
-    );
   const address = getDeliveryAddress(draft);
   return `${address.street}, ${address.postalCode} ${address.city}`;
 }
 
 export function selectDelivery(draft: CheckoutDraft, deliveryId: string): CheckoutDraft {
-  return {
-    ...draft,
-    deliveryId,
-    pickupPointId: draft.deliveryId === deliveryId ? draft.pickupPointId : "",
-  };
+  return { ...draft, deliveryId };
 }
 
-export function validateMethods(draft: CheckoutDraft): CheckoutErrors {
-  const errors: CheckoutErrors = {};
-  const delivery = getDelivery(draft);
-  if (!delivery) errors.deliveryId = "Vyberte způsob dopravy.";
-  if (
-    delivery?.pickup &&
-    !checkoutPickupPoints.some(
-      (point) => point.id === draft.pickupPointId && point.deliveryId === delivery.id,
-    )
-  )
-    errors.pickupPointId = "Vyberte výdejní místo.";
-  return errors;
+export function validateMethods(
+  draft: CheckoutDraft,
+  methods: readonly DeliveryMethod[],
+): CheckoutErrors {
+  return getDelivery(draft, methods)
+    ? {}
+    : { deliveryId: "Vyberte způsob dopravy z nabídky OntOS." };
 }
 
 export function validateAddresses(draft: CheckoutDraft): CheckoutErrors {
@@ -115,7 +96,7 @@ export function validateAddresses(draft: CheckoutDraft): CheckoutErrors {
     if (!/^\d{3}\s?\d{2}$/.test(address.postalCode.trim()))
       errors[`${prefix}.postalCode`] = "Zadejte PSČ ve tvaru 123 45.";
     if (address.country !== "CZ")
-      errors[`${prefix}.country`] = "Prototyp podporuje doručení pouze v České republice.";
+      errors[`${prefix}.country`] = "Doručení je podporováno pouze v České republice.";
     if (!/^(?:\+420)?\d{9}$/.test(address.phone.replace(/[\s()-]/g, "")))
       errors[`${prefix}.phone`] = "Zadejte platné české telefonní číslo.";
   };
@@ -126,9 +107,14 @@ export function validateAddresses(draft: CheckoutDraft): CheckoutErrors {
   return errors;
 }
 
-export function getReachableStep(target: number, cart: CartState, draft: CheckoutDraft): number {
+export function getReachableStep(
+  target: number,
+  cart: CartState,
+  draft: CheckoutDraft,
+  methods: readonly DeliveryMethod[],
+): number {
   if (cart.lines.length === 0) return 0;
-  if (target > 1 && Object.keys(validateMethods(draft)).length) return 1;
+  if (target > 1 && Object.keys(validateMethods(draft, methods)).length) return 1;
   if (target > 2 && Object.keys(validateAddresses(draft)).length) return 2;
   return Math.max(0, Math.min(target, 3));
 }
@@ -143,10 +129,14 @@ export interface CheckoutTotals {
   vat: number | null;
 }
 
-export function getCheckoutTotals(cart: CartState, draft: CheckoutDraft): CheckoutTotals {
+export function getCheckoutTotals(
+  cart: CartState,
+  draft: CheckoutDraft,
+  methods: readonly DeliveryMethod[],
+): CheckoutTotals {
   const subtotal = getCartSubtotal(cart);
-  const shipping = getDelivery(draft)?.priceMinor ?? null;
-  const payment = demoPayment.priceMinor;
+  const shipping = getDelivery(draft, methods)?.priceMinor ?? null;
+  const payment = 0;
   return {
     subtotal,
     shipping,
@@ -168,14 +158,7 @@ const addressKeys = [
   "country",
   "phone",
 ] as const;
-const draftKeys = [
-  "deliveryId",
-  "pickupPointId",
-  "email",
-  "company",
-  "companyId",
-  "vatId",
-] as const;
+const draftKeys = ["deliveryId", "email", "company", "companyId", "vatId"] as const;
 
 export function isCheckoutDraft(value: unknown): value is CheckoutDraft {
   if (!isRecord(value)) return false;

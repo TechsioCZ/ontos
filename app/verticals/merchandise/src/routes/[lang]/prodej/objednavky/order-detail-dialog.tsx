@@ -61,7 +61,7 @@ const pendingDetailKeys = {
 
 const DEMO_NOTICE = 'E-shop je prezentační demo. Žádné zboží nebude doručeno a nic se neplatí.';
 
-/** Horizontal workflow: Nová → Zpracovává se → Připravená k předání → Předáno dopravci (simulace) → Dokončená. */
+/** Horizontal workflow: Nová → Zpracovává se → Připravená k předání → Předáno dopravci → Dokončená. */
 const WorkflowSteps = ({ status }: { readonly status: OrderStatus }) => {
   const current = workflowIndex(status);
   if (status === 'CANCELLED') {

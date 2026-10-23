@@ -10,7 +10,7 @@ const customerStatusLabels: Readonly<Record<OrderStatus, string>> = {
   DELIVERED: 'Dokončená',
   NEW: 'Nová',
   PACKING: 'Připravená k předání',
-  SHIPPED: 'Předáno dopravci (simulace)',
+  SHIPPED: 'Předáno dopravci',
 };
 /** Search folding: no diacritics, Czech lower case ('šroub' and 'sroub' match). */
 export const normalizeSearchText = (value: string) =>

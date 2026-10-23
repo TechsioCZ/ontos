@@ -6,9 +6,9 @@ import {
   purchaseProductOf,
   purchaseVariantOf,
 } from "@/ontos/catalog-projection";
-import raw from "@/mock-storefront/generated/catalog.generated.json";
+import raw from "@/catalog-import/generated/catalog.generated.json";
 import { createCatalog } from "@/ontos/catalog-model";
-import { createCheckoutDraft, getCheckoutTotals } from "@/mock-storefront/checkout";
+import { createCheckoutDraft, getCheckoutTotals } from "@/features/checkout/checkout-state";
 /** One owner response projected the way catalog-server merges products and navigation. */
 const project = (body: Record<string, unknown>) => {
   const page = projectProducts(body);
@@ -378,7 +378,11 @@ describe("OntOS source-of-truth boundary", () => {
       ],
     };
     // The browser never computes tax: net/VAT come from the server quote.
-    expect(getCheckoutTotals(cart, draft)).toMatchObject({ net: null, vat: null, total: 19400 });
+    expect(getCheckoutTotals(cart, draft, [])).toMatchObject({
+      net: null,
+      vat: null,
+      total: 19400,
+    });
   });
   it("never mutates Kai's prototype snapshot", () => {
     const before = JSON.stringify(template);

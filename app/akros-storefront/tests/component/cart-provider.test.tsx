@@ -1,12 +1,12 @@
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AddToCartButton } from "@/features/cart/add-to-cart-button";
 import { CartProvider, useCart } from "@/features/cart/cart-provider";
 import { cs } from "@/i18n/cs";
-import type { CartItemSnapshot } from "@/mock-storefront/cart";
+import type { CartItemSnapshot } from "@/features/cart/cart-state";
 
 const item: CartItemSnapshot = {
   productId: "product-screw",
@@ -121,3 +121,23 @@ describe("CartProvider", () => {
     });
   });
 });
+
+// Transport boundary: the component must await an owner verdict before changing cart state.
+beforeEach(() => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_url: string, init: RequestInit) => {
+      const { cart } = JSON.parse(String(init.body));
+      const blocked = cart.lines.some(
+        (line: { quantity: number; stockCount: number }) => line.quantity > line.stockCount,
+      );
+      return Response.json({
+        cart,
+        priceChanged: false,
+        issues: blocked ? ["OntOS: požadované množství není skladem."] : [],
+        canCheckout: !blocked,
+      });
+    }),
+  );
+});
+afterEach(() => vi.unstubAllGlobals());

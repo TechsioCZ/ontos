@@ -9,29 +9,35 @@ import {
   useEffect,
   useMemo,
   useReducer,
+  useRef,
+  useState,
 } from "react";
 
 import {
   type CartAction,
   type CartState,
   type CartLine,
+  type CartItemSnapshot,
   cartReducer,
   createEmptyCart,
   getCartItemCount,
-} from "@/mock-storefront/cart";
+} from "@/features/cart/cart-state";
 
-import { parseStoredCart } from "@/mock-storefront/cart-storage";
+import { parseStoredCart } from "@/features/cart/cart-storage";
 import {
   type CartCollection,
   createCartCollection,
   parseCartCollection,
   snapshotCartCollection,
   cartCollectionStorageKey,
-} from "@/mock-storefront/cart-collection";
+} from "@/features/cart/cart-collection";
 
 const storageKey = "akros-demo-cart-v3";
 
 interface CartContextValue {
+  addItem: (item: CartItemSnapshot, quantity: number) => Promise<boolean>;
+  adding: boolean;
+  purchaseError: string;
   carts: CartCollection["carts"];
   activeCartId: string;
   selectCart: (id: string) => void;
@@ -77,6 +83,7 @@ interface CartProviderState extends CartCollection {
 
 type CartProviderAction =
   | CartAction
+  | { type: "verified-add"; cart: CartState; item: CartItemSnapshot; quantity: number }
   | { type: "hydrate"; collection: CartCollection }
   | { type: "select-cart"; id: string }
   | { type: "add-cart"; id: string; name: string }
@@ -88,6 +95,29 @@ const providerReducer = (
   state: CartProviderState,
   action: CartProviderAction,
 ): CartProviderState => {
+  if (action.type === "verified-add") {
+    const line = action.cart.lines.find(
+      (entry) =>
+        entry.productId === action.item.productId && entry.variantId === action.item.variantId,
+    );
+    const previous = state.cart.lines.find(
+      (entry) =>
+        entry.productId === action.item.productId && entry.variantId === action.item.variantId,
+    );
+    if (!line) return state;
+    return {
+      ...state,
+      cart: action.cart,
+      sequence: state.sequence + 1,
+      feedback: {
+        id: state.sequence + 1,
+        kind: "added",
+        line,
+        quantity: getAddedQuantity(line, previous),
+        limited: false,
+      },
+    };
+  }
   if (action.type === "hydrate")
     return {
       ...state,
@@ -232,6 +262,73 @@ export function CartProvider({
     sequence: 0,
   });
   const { cart, ready, feedback, removedItem, activeCartId } = state;
+  const [adding, setAdding] = useState(false);
+  const [purchaseError, setPurchaseError] = useState("");
+  const stateRef = useRef(state);
+  stateRef.current = state;
+  const addBusy = useRef(false);
+  const addItem = useCallback(
+    async (item: CartItemSnapshot, quantity: number): Promise<boolean> => {
+      if (addBusy.current) return false;
+      addBusy.current = true;
+      setAdding(true);
+      setPurchaseError("");
+      const current = stateRef.current;
+      try {
+        if (!current.ready || !Number.isFinite(quantity) || quantity <= 0)
+          throw new Error("Košík není připravený.");
+        const previous = current.cart.lines.find(
+          (line) => line.productId === item.productId && line.variantId === item.variantId,
+        );
+        const proposed = {
+          version: 3,
+          lines: [
+            ...current.cart.lines.filter((line) => line !== previous),
+            { ...item, quantity: (previous?.quantity ?? 0) + quantity },
+          ],
+        };
+        const response = await fetch("/api/ontos/cart", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ cart: proposed }),
+          cache: "no-store",
+          signal: AbortSignal.timeout(8_000),
+        });
+        const quote = await response.json();
+        if (!response.ok)
+          throw new Error("Cenu a sklad nyní nelze ověřit v OntOS. Zboží nebylo přidáno.");
+        if (quote.priceChanged)
+          throw new Error(
+            "Cena se změnila. Obnovte stránku nebo ověřte stávající košík a přidejte zboží za aktuální cenu.",
+          );
+        if (!quote.canCheckout || !Array.isArray(quote.cart?.lines))
+          throw new Error(
+            Array.isArray(quote.issues) && quote.issues.length
+              ? quote.issues.join(" ")
+              : "OntOS nepotvrdil dostupnost zboží. Zboží nebylo přidáno.",
+          );
+        if (
+          stateRef.current.cart !== current.cart ||
+          stateRef.current.activeCartId !== current.activeCartId
+        )
+          throw new Error("Košík se během ověření změnil. Přidejte položku znovu.");
+        providerDispatch({ type: "verified-add", cart: quote.cart, item, quantity });
+        return true;
+      } catch (error) {
+        setPurchaseError(
+          error instanceof Error && error.name !== "TypeError"
+            ? error.message
+            : "Cenu a sklad nyní nelze ověřit v OntOS. Zboží nebylo přidáno.",
+        );
+        return false;
+      } finally {
+        addBusy.current = false;
+        setAdding(false);
+      }
+    },
+    [],
+  );
+
   const carts = useMemo(() => snapshotCartCollection(state, cart).carts, [state, cart]);
   const selectCart = useCallback((id: string) => providerDispatch({ type: "select-cart", id }), []);
   const addCart = useCallback(
@@ -278,6 +375,9 @@ export function CartProvider({
       cart,
       carts,
       activeCartId,
+      addItem,
+      adding,
+      purchaseError,
       selectCart,
       addCart,
       removeCart,
@@ -291,6 +391,9 @@ export function CartProvider({
     }),
     [
       cart,
+      addItem,
+      adding,
+      purchaseError,
       carts,
       activeCartId,
       selectCart,

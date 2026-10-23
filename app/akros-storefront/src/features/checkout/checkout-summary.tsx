@@ -1,14 +1,14 @@
 "use client";
 import { useCart } from "@/features/cart/cart-provider";
 import { useCheckout } from "./checkout-provider";
-import { getCheckoutTotals } from "@/mock-storefront/checkout";
+import { getCheckoutTotals } from "@/features/checkout/checkout-state";
 import { formatCheckoutPrice } from "./checkout-format";
 import { useServerTotals } from "./server-totals";
 
 export function CheckoutSummary() {
   const { cart } = useCart();
-  const { draft } = useCheckout();
-  const server = useServerTotals(getCheckoutTotals(cart, draft));
+  const { draft, methods } = useCheckout();
+  const server = useServerTotals(getCheckoutTotals(cart, draft, methods));
   const totals = server.totals;
   return (
     <aside

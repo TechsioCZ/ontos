@@ -3,7 +3,7 @@ import Image from "next/image";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
 import { PhoneInput } from "@techsio/ui-kit/molecules/phone-input";
 import { CheckoutSelect } from "./checkout-select";
-import type { CheckoutAddress, CheckoutErrors } from "@/mock-storefront/checkout";
+import type { CheckoutAddress, CheckoutErrors } from "@/features/checkout/checkout-state";
 
 const countries = [{ value: "CZ", label: "Česká republika" }];
 const phoneCountries = [

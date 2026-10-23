@@ -54,6 +54,7 @@ const place = (quantity: number, expectedUnitPriceMinor: number) =>
     state,
     Schema.decodeUnknownSync(MerchandiseCommandSchema)({
       _tag: 'PlaceStorefrontOrder',
+      partyId: 'test-customer-party',
       clientRequestId: 'akros-unit-order',
       contact: { name: 'Jan Novák', email: 'jan@example.invalid' },
       deliveryAddress: { street: 'Ukázková 1', city: 'Brno', postalCode: '60200' },
@@ -136,8 +137,7 @@ it.effect('first seeded variant edit snapshots its existing price through both s
         Schema.decodeUnknownSync(MerchandiseCommandSchema)(command),
         { actor, now: DateTime.makeUnsafe(at), resourceId: 'first-price' },
       );
-      const history = recordOf(changed.state.products[0]!, changed.state.movements).variantRecords?.[0]
-        ?.priceHistory;
+      const history = recordOf(changed.state.products[0]!, changed.state.movements).variantRecords?.[0]?.priceHistory;
       expect(history).toHaveLength(1);
       expect(history?.[0]?.previousPriceMinor).toBe(8);
       expect(history?.[0]?.priceMinor).toBe(9);
@@ -166,7 +166,7 @@ it.effect('AKROS pickup retains company identity when editing shipping and persi
         { actor, now: DateTime.makeUnsafe(at), resourceId: 'shipping-edit' },
       );
       const order = edited.state.orders[0]!;
-      const company = akros ? 'AKROS' : 'Kavárna Doma';
+      const company = akros ? 'AKROS' : 'Osobní odběr';
       expect(order.shipping?.label).toContain(company);
       expect(order.history?.at(-1)?.after).toContain(company);
       if (akros) expect(order.history?.at(-1)?.after).not.toContain('Kavárna');

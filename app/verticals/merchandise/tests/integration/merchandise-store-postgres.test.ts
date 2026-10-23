@@ -30,7 +30,14 @@ import {
 } from '../../src/services/merchandise-store.ts';
 import { evolveMerchandiseState, workingSetRequestOf } from '../../src/services/persistence.service.ts';
 import type { MerchandiseFixture } from './support/merchandise-database.ts';
-import { at, catalogInput, catalogState, decodeState, encodeState, withMerchandise } from './support/merchandise-database.ts';
+import {
+  at,
+  catalogInput,
+  catalogState,
+  decodeState,
+  encodeState,
+  withMerchandise,
+} from './support/merchandise-database.ts';
 
 const decodeCommand = Schema.decodeUnknownSync(MerchandiseCommandSchema);
 const encodeOrder = Schema.encodeSync(OrderSchema);
@@ -158,7 +165,9 @@ it.live('readSnapshot returns exactly what replaceSnapshot wrote', () => {
       expect(snapshot?.revision).toBe(0);
       expect(encodeState(snapshot!.state)).toEqual(encodeState(state));
       const rows = yield* rowsOf(fixture);
-      expect(rows.variants.map((row) => [row.productId, row.position, row.variantId, row.stockOnHand, row.unit])).toEqual([
+      expect(
+        rows.variants.map((row) => [row.productId, row.position, row.variantId, row.stockOnHand, row.unit]),
+      ).toEqual([
         ['p1', 0, 'v1', 5, 'bal'],
         ['p1', 1, null, 0, 'ks'],
         ['p1', 2, 'v2', 0, 'ks'],
@@ -211,6 +220,7 @@ it.live('PlaceStorefrontOrder writes one order, its ORDER movements and stock co
       const orderId = `order-${randomUUID()}`;
       const command = {
         _tag: 'PlaceStorefrontOrder',
+        partyId: 'test-customer-party',
         clientRequestId: `client-${randomUUID()}`,
         contact: { email: 'jana@example.cz', name: 'Jana Nováková' },
         deliveryAddress: { city: 'Brno', postalCode: '60200', street: 'Hlavní 1' },
@@ -241,7 +251,9 @@ it.live('PlaceStorefrontOrder writes one order, its ORDER movements and stock co
       // Ledger: the old receipt untouched, one ORDER movement per line.
       expect(after.movements.slice(0, 1)).toEqual(before.movements);
       expect(
-        after.movements.slice(1).map((row) => [row.id, row.productId, row.variantId, row.delta, row.reason, row.reference]),
+        after.movements
+          .slice(1)
+          .map((row) => [row.id, row.productId, row.variantId, row.delta, row.reason, row.reference]),
       ).toEqual([[`${orderId}:0`, 'p1', 'v1', -2, 'ORDER', 'OBJ-2026-0003']]);
 
       // Stock columns of the ordered product and variant follow the ledger; its document stays as it was.
@@ -313,7 +325,13 @@ it.live('ChangePrice rewrites only the repriced product with its tiers, keeping 
       expect(
         after.tiers
           .filter((row) => row.productId === 'p2')
-          .map((row) => [row.variantPosition, row.position, row.minimumQuantity, row.priceMinor, row.priceExcludingVatMinor]),
+          .map((row) => [
+            row.variantPosition,
+            row.position,
+            row.minimumQuantity,
+            row.priceMinor,
+            row.priceExcludingVatMinor,
+          ]),
       ).toEqual([
         [-1, 0, 1, 121, 100],
         [-1, 1, 10, 109, 90],
@@ -339,7 +357,9 @@ it.live('ChangePrice rewrites only the repriced product with its tiers, keeping 
       expect(p1.stockOnHand).toBe(5);
       expect(p1.stockValueMinor).toBe(1000);
       expect(p1.ordinal).toBe(productRow(before, 'p1')!.ordinal);
-      expect(variantAfter.products.filter((row) => row.id !== 'p1')).toEqual(after.products.filter((row) => row.id !== 'p1'));
+      expect(variantAfter.products.filter((row) => row.id !== 'p1')).toEqual(
+        after.products.filter((row) => row.id !== 'p1'),
+      );
       expect(yield* headRevision(fixture)).toBe(fixture.revision + 2);
     }),
   ),

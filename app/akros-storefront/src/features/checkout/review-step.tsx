@@ -1,5 +1,4 @@
 "use client";
-import { demoCheckoutNotice, demoPayment } from "@/ontos/demo-checkout";
 import { useRef, useState } from "react";
 import StoreLink from "@/components/store-link";
 import { useRouter } from "next/navigation";
@@ -15,18 +14,18 @@ import {
   getDelivery,
   getDeliveryAddress,
   getDeliveryLocation,
-} from "@/mock-storefront/checkout";
+} from "@/features/checkout/checkout-state";
 import { formatPrice } from "@/lib/format";
 import { useCartQuote } from "@/ontos/cart-revalidation";
 import { useServerTotals } from "./server-totals";
 
 export function ReviewStep() {
   const { cart } = useCart();
-  const { draft, completeOrder, submitted, storageError } = useCheckout();
+  const { draft, methods, accountEmail, completeOrder, submitted, storageError } = useCheckout();
   const router = useRouter();
   const [sending, setSending] = useState(false);
   const sendingRef = useRef(false);
-  const server = useServerTotals(getCheckoutTotals(cart, draft));
+  const server = useServerTotals(getCheckoutTotals(cart, draft, methods));
   const totals = server.totals;
   const quote = useCartQuote();
   const blocked = quote ? !quote.canContinue : false;
@@ -40,7 +39,9 @@ export function ReviewStep() {
         sendingRef.current = true;
         setSending(true);
         try {
-          if (await completeOrder()) router.push("/potvrzeni-objednavky");
+          const order = await completeOrder();
+          if (order)
+            router.push(`/potvrzeni-objednavky?order=${encodeURIComponent(order.orderId)}`);
         } finally {
           sendingRef.current = false;
           setSending(false);
@@ -58,7 +59,7 @@ export function ReviewStep() {
         <dl className="divide-y divide-(--color-border-primary) border-b border-(--color-border-primary) text-sm">
           <div className="flex justify-between gap-4 py-4">
             <dt className="grid gap-2">
-              <span>Způsob dopravy – {getDelivery(draft)?.title}</span>
+              <span>Způsob dopravy – {getDelivery(draft, methods)?.title}</span>
               <span>{getDeliveryLocation(draft)}</span>
               <Link as={StoreLink} href="/kosik/doprava-platba" className="w-fit">
                 Změnit dopravu
@@ -69,8 +70,8 @@ export function ReviewStep() {
             </dd>
           </div>
           <div className="flex justify-between gap-4 py-4">
-            <dt>Způsob platby – {demoPayment.title}</dt>
-            <dd>{totals.payment === 0 ? "Zdarma" : formatPrice(totals.payment)}</dd>
+            <dt>Platba</dt>
+            <dd>Online platba není dostupná</dd>
           </div>
           <div className="flex justify-between gap-4 py-4">
             <dt>Cena bez DPH</dt>
@@ -141,8 +142,13 @@ export function ReviewStep() {
             role="note"
             className="rounded-sm border border-(--color-border-primary) bg-(--color-base) p-4 text-sm font-bold"
           >
-            {demoCheckoutNotice}
+            Objednávka bude uložena do OntOS. Platba se zde neprovádí.
           </p>
+          {!accountEmail && (
+            <StoreLink className="underline" href="/prihlaseni">
+              Před objednáním se přihlaste
+            </StoreLink>
+          )}
           <Button
             type="submit"
             data-akros-checkout-action
@@ -150,10 +156,10 @@ export function ReviewStep() {
             variant="primary"
             size="sm"
             uppercase
-            disabled={sending || submitted || !cart.lines.length || blocked}
+            disabled={sending || submitted || !cart.lines.length || blocked || !accountEmail}
             aria-describedby={blocked ? "review-blocked" : undefined}
           >
-            {sending ? "Odesílám do OntOS…" : "Potvrdit DEMO objednávku"}
+            {sending ? "Odesílám do OntOS…" : "Odeslat objednávku"}
           </Button>
           {blocked && (
             <p id="review-blocked" className="text-center text-xs text-(--color-fg-secondary)">
@@ -161,8 +167,7 @@ export function ReviewStep() {
             </p>
           )}
           <p className="text-center text-xs text-(--color-fg-secondary)">
-            DEMO – objednávka se uloží v OntOS, nebude doručena a nic neplatíte. Potvrzení a změny
-            stavu vám přijdou e-mailem.
+            Stav objednávky můžete sledovat ve svém účtu.
           </p>
         </div>
       </div>

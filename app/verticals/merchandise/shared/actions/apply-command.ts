@@ -204,15 +204,17 @@ export const MerchandiseCommandSchema = Schema.Union([
     status: OrderStatusSchema,
   }),
   /**
-   * Guest DEMO order from the storefront. Idempotent by `clientRequestId`: a repeated id returns the stored order
+   * Order from the storefront. Idempotent by `clientRequestId`: a repeated id returns the stored order
    * (outcome REPLAYED) and saves nothing. Prices and availability are re-validated on the server; any mismatch
    * returns outcome REJECTED with readable issues and the current prices, and saves nothing. A PLACED order writes one
    * negative ORDER stock movement per line (reference = order number) in the same save; cancelling returns it.
    */
   Schema.TaggedStruct('PlaceStorefrontOrder', {
+    partyId: Schema.optionalKey(PartyIdSchema),
+    customerAccountId: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300))),
     clientRequestId: Schema.Trim.check(Schema.isMinLength(8), Schema.isMaxLength(120)),
-    contact: OrderContactSchema,
-    deliveryAddress: OrderAddressSchema,
+    contact: Schema.optionalKey(OrderContactSchema),
+    deliveryAddress: Schema.optionalKey(OrderAddressSchema),
     dryRun: Schema.optionalKey(Schema.Boolean),
     expectedShippingPriceMinor: Schema.optionalKey(MinorAmountSchema),
     lines: Schema.Array(StorefrontOrderLineRequestSchema).check(Schema.isMinLength(1), Schema.isMaxLength(50)),

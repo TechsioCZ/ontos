@@ -92,7 +92,7 @@ describe("server cart quote", () => {
     vi.mocked(readCartProducts).mockResolvedValue(
       project({ revision: 3, products: [product({})] }),
     );
-    const quote = await quoteCart(cart(500, 109), "osobni");
+    const quote = await quoteCart(cart(500, 109), "PPL");
     expect(quote.priceChanged).toBe(false);
     expect(quote.cart.lines[0]).toMatchObject({ priceMinor: 109, priceExcludingVatMinor: 90 });
     expect(quote.canCheckout).toBe(true);
@@ -105,7 +105,7 @@ describe("server cart quote", () => {
     const [, , payload] = vi.mocked(callAction).mock.calls[0]!;
     expect(payload).toMatchObject({
       expectedRevision: 3,
-      command: { _tag: "PlaceStorefrontOrder", dryRun: true, shippingMethod: "OSOBNI_ODBER" },
+      command: { _tag: "PlaceStorefrontOrder", dryRun: true, shippingMethod: "PPL" },
     });
   });
 

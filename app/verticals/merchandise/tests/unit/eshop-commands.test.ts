@@ -65,6 +65,7 @@ const guestOrder = (
   overrides: Partial<Extract<CommandInput, { _tag: 'PlaceStorefrontOrder' }>> = {},
 ): CommandInput => ({
   _tag: 'PlaceStorefrontOrder',
+  partyId: 'test-customer-party',
   clientRequestId: 'client-request-0001',
   contact: { email: 'tereza@example.cz', name: 'Tereza Ukázková' },
   deliveryAddress: { city: 'Brno', postalCode: '602 00', street: 'Ukázková 12' },
@@ -97,7 +98,7 @@ it.effect('PlaceStorefrontOrder saves once and replays the same order for the sa
     expect(first.storefrontOrder?.orderNumber).toBe('OBJ-2026-0001');
     expect(first.storefrontOrder?.totalMinor).toBe(2 * 28_900 + 7_900);
     const [order] = first.state.orders;
-    expect(order?.demo).toBe(true);
+    expect(order?.demo).toBeUndefined();
     expect(order?.status).toBe('NEW');
     expect(first.state.movements).toHaveLength(state.movements.length + (order?.lines.length ?? 0));
     const again = yield* apply(first.state, guestOrder(), 'inv-2');

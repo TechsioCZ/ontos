@@ -1,6 +1,6 @@
 "use client";
 import { useCartQuote } from "@/ontos/cart-revalidation";
-import type { CheckoutTotals } from "@/mock-storefront/checkout";
+import type { CheckoutTotals } from "@/features/checkout/checkout-state";
 
 /**
  * Net, VAT and the grand total are the owner's dry-run totals from the cart quote; the browser only adds up
@@ -23,7 +23,7 @@ export function useServerTotals(local: CheckoutTotals): { totals: CheckoutTotals
   if (local.shipping !== null && server.shippingMinor === null)
     return {
       totals: pending,
-      note: "Zvolený způsob dopravy DEMO nepodporuje; vyberte osobní odběr nebo Zásilkovnu.",
+      note: "Zvolený způsob dopravy OntOS nepotvrdil; vyberte dopravu z aktuální nabídky.",
     };
   return {
     totals: {

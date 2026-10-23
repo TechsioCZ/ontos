@@ -15,8 +15,8 @@ import {
   matchesProductVariantSearch,
   normalizeCatalogSearchTerm,
 } from "@/lib/product-variant-search";
-import { getMaximumOrderQuantity } from "@/mock-storefront/cart";
-import type { CatalogPurchaseProduct, CatalogPurchaseVariant } from "@/mock-storefront/types";
+import { getMaximumOrderQuantity } from "@/features/cart/cart-state";
+import type { CatalogPurchaseProduct, CatalogPurchaseVariant } from "@/ontos/catalog-types";
 
 interface ProductPurchaseFormProps {
   product: CatalogPurchaseProduct;
@@ -322,7 +322,7 @@ export function ProductPurchaseForm({
   variants,
   initialVariantSearch,
 }: ProductPurchaseFormProps) {
-  const { dispatch } = useCart();
+  const { addItem, adding } = useCart();
   const sourceVariants = variants ?? noVariants;
   const variantDimensions = useMemo(
     () => new Map(sourceVariants.map((item) => [item.id, parseVariantDimensions(item.label)])),
@@ -423,13 +423,9 @@ export function ProductPurchaseForm({
   );
   const addVariant = useCallback(
     (variant: CatalogPurchaseVariant, selectedQuantity: number) => {
-      dispatch({
-        type: "add",
-        item: getVariantCartItem(product, variant),
-        quantity: selectedQuantity,
-      });
+      void addItem(getVariantCartItem(product, variant), selectedQuantity);
     },
-    [dispatch, product],
+    [addItem, product],
   );
 
   if (!variants?.length) {
@@ -491,6 +487,7 @@ export function ProductPurchaseForm({
         <Button
           block
           disabled={
+            adding ||
             maximumQuantity <= 0 ||
             purchaseItem.priceMinor <= 0 ||
             !!purchaseItem.priceUnavailableReason ||
@@ -505,11 +502,7 @@ export function ProductPurchaseForm({
           }
           icon="token-icon-cart"
           onClick={() => {
-            dispatch({
-              type: "add",
-              item: productCartItem,
-              quantity,
-            });
+            void addItem(productCartItem, quantity);
           }}
           size="md"
           uppercase

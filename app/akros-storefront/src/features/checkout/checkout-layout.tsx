@@ -6,8 +6,9 @@ import { ProductGrid, type ProductGridItem } from "@/components/product-grid";
 import { useCart } from "@/features/cart/cart-provider";
 import { CartNavigation } from "@/features/cart/cart-content";
 import { CartSelector } from "@/features/cart/cart-selector";
-import { checkoutSteps, getReachableStep } from "@/mock-storefront/checkout";
+import { checkoutSteps, getReachableStep } from "@/features/checkout/checkout-state";
 import { useCheckout } from "./checkout-provider";
+import { useCartQuote } from "@/ontos/cart-revalidation";
 import { CheckoutSummary } from "./checkout-summary";
 
 export function CheckoutLayout({
@@ -17,20 +18,22 @@ export function CheckoutLayout({
   children: ReactNode;
   recommendations: ProductGridItem[];
 }) {
+  const quote = useCartQuote();
+  const pricesVisible = !quote?.enabled || (quote.status === "ready" && !quote.quote?.priceChanged);
   const pathname = usePathname();
   const router = useRouter();
   const { cart } = useCart();
-  const { draft, ready, storageError, submitted } = useCheckout();
+  const { draft, methods, ready, storageError, submitted } = useCheckout();
   const step = Math.max(
     0,
     checkoutSteps.findIndex((item) => item.href === pathname),
   );
-  const reachable = getReachableStep(step, cart, draft);
+  const reachable = getReachableStep(step, cart, draft, methods);
   const steps = useSteps({
     count: 4,
     step,
     onStepChange: ({ step: next }) => {
-      router.push(checkoutSteps[getReachableStep(next, cart, draft)].href);
+      router.push(checkoutSteps[getReachableStep(next, cart, draft, methods)].href);
     },
   });
   useEffect(() => {
@@ -54,7 +57,7 @@ export function CheckoutLayout({
               {checkoutSteps.map((item, index) => (
                 <Steps.Item key={item.href} index={index} className="block min-w-0">
                   <Steps.Trigger
-                    disabled={!ready || getReachableStep(index, cart, draft) !== index}
+                    disabled={!ready || getReachableStep(index, cart, draft, methods) !== index}
                     className="relative z-1 w-full flex-col justify-center text-center"
                   >
                     <Steps.Indicator>
@@ -77,7 +80,14 @@ export function CheckoutLayout({
               <output className="block py-12 text-center">Načítám košík…</output>
             ) : (
               <Steps.Content index={step} className="order-1 min-w-0">
-                {children}
+                {pricesVisible ? (
+                  children
+                ) : (
+                  <p role="status">
+                    Ceny a dostupnost nejsou aktuálně ověřené. Po úspěšném ověření se obsah košíku
+                    znovu zobrazí.
+                  </p>
+                )}
               </Steps.Content>
             )}
             {ready && cart.lines.length > 0 && step === 0 && <CartNavigation />}
@@ -99,7 +109,7 @@ export function CheckoutLayout({
           {ready && (
             <div className="order-2 grid min-w-0 gap-(--dimension-16) 2xl:order-none">
               <CartSelector />
-              {cart.lines.length > 0 && step < 3 && <CheckoutSummary />}
+              {pricesVisible && cart.lines.length > 0 && step < 3 && <CheckoutSummary />}
             </div>
           )}
         </div>

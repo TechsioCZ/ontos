@@ -8,10 +8,10 @@ import {
   getLineTotal,
   formatQuantity,
   type CartState,
-} from "@/mock-storefront/cart";
+} from "@/features/cart/cart-state";
 import { formatPrice } from "@/lib/format";
 
-export const demoCartLabel = "Demonstrační košík – nejde o skutečný nákup";
+export const cartLabel = "Aktuální ceny a dostupnost z OntOS";
 
 export interface QuoteLineIssue {
   productId: string;
@@ -55,45 +55,82 @@ const quoteFailure = "Ověření košíku v OntOS se nepodařilo. Košík zůst�
 /** One shared OntOS cart verification for every checkout step: the cart, steps and summary read it. */
 export function CartQuoteProvider({ children }: { children: ReactNode }) {
   const { cart, ready, dispatch } = useCart();
-  const [quote, setQuote] = useState<Quote | null>(null);
+  const [verified, setVerified] = useState<{
+    quote: Quote;
+    startedAt: number;
+    fingerprint: string;
+  } | null>(null);
   const [error, setError] = useState("");
   const [attempt, setAttempt] = useState(0);
+  const [now, setNow] = useState(Date.now);
   const enabled = ready && cart.lines.length > 0;
   const deliveryId = useCheckoutDeliveryId();
+  const fingerprint = JSON.stringify({ cart, deliveryId });
   useEffect(() => {
     if (!enabled) return;
     const controller = new AbortController();
-    setQuote(null);
-    setError("");
-    const timer = setTimeout(() => {
-      fetch("/api/ontos/cart", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ cart, deliveryId }),
-        signal: controller.signal,
-      })
-        .then(async (r) => {
-          const body = await r.json().catch(() => ({}));
-          if (!r.ok || typeof body?.canCheckout !== "boolean")
-            throw new Error(typeof body?.message === "string" ? body.message : quoteFailure);
-          if (controller.signal.aborted) return;
-          setQuote(body);
-          if (body.canCheckout && JSON.stringify(body.cart) !== JSON.stringify(cart))
-            dispatch({ type: "revalidate", cart: body.cart });
-        })
-        .catch((e) => {
-          if (!controller.signal.aborted)
-            setError(
-              e instanceof Error && e.message && e.name !== "TypeError" ? e.message : quoteFailure,
-            );
+    let busy = false;
+    const load = async () => {
+      if (busy || document.visibilityState === "hidden") return;
+      busy = true;
+      const startedAt = Date.now();
+      try {
+        const response = await fetch("/api/ontos/cart", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ cart, deliveryId }),
+          signal: AbortSignal.any([controller.signal, AbortSignal.timeout(8_000)]),
+          cache: "no-store",
         });
-    }, 250);
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
+        const body = await response.json();
+        if (
+          !response.ok ||
+          typeof body?.canCheckout !== "boolean" ||
+          !body.cart ||
+          !Array.isArray(body.issues)
+        )
+          throw new Error(quoteFailure);
+        if (controller.signal.aborted) return;
+        setVerified({
+          quote: body,
+          startedAt,
+          fingerprint: body.canCheckout
+            ? JSON.stringify({ cart: body.cart, deliveryId })
+            : fingerprint,
+        });
+        setError("");
+        if (body.canCheckout && JSON.stringify(body.cart) !== JSON.stringify(cart))
+          dispatch({ type: "revalidate", cart: body.cart });
+      } catch {
+        if (!controller.signal.aborted) setError(quoteFailure);
+      } finally {
+        busy = false;
+      }
     };
-  }, [cart, enabled, deliveryId, attempt, dispatch]);
-  const status: CartQuoteState["status"] = error ? "error" : quote ? "ready" : "checking";
+    const timer = window.setTimeout(load, 100);
+    // Refresh ahead of expiry without clearing the still-fresh quote (no blinking prices).
+    const refresh = window.setInterval(load, 7_000);
+    const clock = window.setInterval(() => setNow(Date.now()), 250);
+    const visible = () => {
+      setNow(Date.now());
+      void load();
+    };
+    window.addEventListener("focus", visible);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+      window.clearInterval(refresh);
+      window.clearInterval(clock);
+      window.removeEventListener("focus", visible);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [cart, enabled, deliveryId, fingerprint, attempt, dispatch]);
+  const quote =
+    verified?.fingerprint === fingerprint && now - verified.startedAt < 9_750
+      ? verified.quote
+      : null;
+  const status: CartQuoteState["status"] = quote ? "ready" : error ? "error" : "checking";
   const canContinue = !enabled || (status === "ready" && quote!.canCheckout);
   const value: CartQuoteState = {
     enabled,
@@ -138,8 +175,8 @@ export function CartRevalidation() {
       aria-label="Ověření košíku v OntOS"
       data-akros-cart-quote={status}
     >
-      <p className="font-bold" data-akros-demo-cart-label>
-        {demoCartLabel}
+      <p className="font-bold" data-akros-cart-label>
+        {cartLabel}
       </p>
       {status === "error" ? (
         <div role="alert" className="grid gap-3 border-l-4 border-(--color-danger) pl-3">

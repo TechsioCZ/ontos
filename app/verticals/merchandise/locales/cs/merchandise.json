@@ -162,7 +162,7 @@
           "confirmed": "Objednávka se zpracovává",
           "created": "Objednávka vytvořena",
           "delivered": "Objednávka dokončena",
-          "shipped": "Předáno dopravci (simulace)",
+          "shipped": "Předáno dopravci",
           "statusFailed": "Stav se nepodařilo změnit.",
           "packing": "Objednávka je připravená k předání"
         },

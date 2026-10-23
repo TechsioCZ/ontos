@@ -11,8 +11,7 @@ import { Popover } from "@techsio/ui-kit/molecules/popover";
 import { useCart } from "./cart-provider";
 
 import { cs } from "@/i18n/cs";
-import { formatPrice } from "@/lib/format";
-import { formatQuantity, getCartSubtotal, getLineTotal } from "@/mock-storefront/cart";
+import { formatQuantity } from "@/features/cart/cart-state";
 
 const getItemCountLabel = (count: number) => {
   const lastDigit = count % 10;
@@ -34,10 +33,9 @@ export function MiniCart() {
   const contentRef = useRef<HTMLDivElement>(null);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { cart, itemCount, ready } = useCart();
-  const subtotal = getCartSubtotal(cart);
   const itemCountLabel = getItemCountLabel(itemCount);
   const triggerLabel = ready
-    ? `${cs.header.cart}, ${itemCountLabel}, ${formatPrice(subtotal)}`
+    ? `${cs.header.cart}, ${itemCountLabel}`
     : `${cs.header.cart}, ${cs.cart.loading}`;
 
   function cancelClose() {
@@ -125,7 +123,7 @@ export function MiniCart() {
           variant="primary"
         >
           <strong className="shrink-0 whitespace-nowrap text-md leading-tight font-medium uppercase max-lg:hidden">
-            {formatPrice(subtotal)}
+            {cs.header.cart}
           </strong>
           <span className="relative inline-flex shrink-0 items-center justify-center">
             <Icon icon="token-icon-cart-button" size="2xl" />
@@ -190,7 +188,7 @@ export function MiniCart() {
                       )}
                     </span>
                     <strong className="whitespace-nowrap max-md:col-start-2">
-                      {formatPrice(getLineTotal(line))}
+                      Aktuální cenu ověří košík
                     </strong>
                   </span>
                 ))}

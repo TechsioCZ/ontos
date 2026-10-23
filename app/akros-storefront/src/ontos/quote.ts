@@ -2,7 +2,7 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import { RequestError } from "./http";
 import { purchaseConstraints } from "./purchase-constraints";
-import type { CartState, CartLine } from "@/mock-storefront/cart";
+import type { CartState, CartLine } from "@/features/cart/cart-state";
 import { createCatalog } from "./catalog-model";
 import { readCartProducts } from "./catalog-server";
 import { callAction } from "./gateway";
@@ -68,11 +68,7 @@ export interface CartQuote {
 }
 
 const ownerShippingMethod = (deliveryId: unknown) =>
-  deliveryId === "osobni"
-    ? ("OSOBNI_ODBER" as const)
-    : deliveryId === "zasilkovna"
-      ? ("ZASILKOVNA" as const)
-      : undefined;
+  deliveryId === "PPL" || deliveryId === "CESKA_POSTA" ? deliveryId : undefined;
 
 const ownerCodes = new Set<QuoteLineIssue["code"]>([
   "NOT_AVAILABLE",
@@ -114,13 +110,6 @@ async function ownerDryRun(cart: CartState, revision: number, deliveryId: unknow
     _tag: "PlaceStorefrontOrder",
     dryRun: true,
     clientRequestId: `akros-quote-${digest}`,
-    contact: { name: "Ověření košíku (DEMO)", email: "overeni-kosiku@example.invalid" },
-    deliveryAddress: {
-      street: "Ověření košíku",
-      city: "Praha",
-      postalCode: "110 00",
-      country: "CZ",
-    },
     shippingMethod: method ?? "OSOBNI_ODBER",
     lines,
   };

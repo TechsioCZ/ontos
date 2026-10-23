@@ -1,4 +1,4 @@
-// Merchandise domain model (demo stand-in for catalog, pricing and inventory).
+// Merchandise catalog, pricing, inventory and order domain model.
 // Money is integer CZK minor units. Order lines snapshot name, sku, price and VAT at creation and never
 // re-read the current product afterwards (brief requirement 7d).
 import { PrincipalRefSchema } from '@app/core-runtime/permissions/principal-ref';
@@ -26,10 +26,7 @@ export const VatRateSchema = Schema.Literals([0, 10, 12, 21]);
 export type VatRate = typeof VatRateSchema.Type;
 export const StockMovementReasonSchema = Schema.Literals(['RECEIPT', 'ISSUE', 'ADJUSTMENT', 'ORDER']);
 export type StockMovementReason = typeof StockMovementReasonSchema.Type;
-/**
- * Order workflow. PACKING („Připravená k předání“), CONFIRMED („Zpracovává se“) was added for the e-shop demo; SHIPPED is the
- * simulated hand-over to a carrier („Předáno dopravci (simulace)“), DELIVERED is „Dokončená“.
- */
+/** Order workflow states recorded by staff. No carrier tracking or delivery ETA is implied. */
 export const OrderStatusSchema = Schema.Literals(['NEW', 'CONFIRMED', 'PACKING', 'SHIPPED', 'DELIVERED', 'CANCELLED']);
 export type OrderStatus = typeof OrderStatusSchema.Type;
 
@@ -300,20 +297,20 @@ export type OrderLine = typeof OrderLineSchema.Type;
 export const ShippingMethodSchema = Schema.Literals(['ZASILKOVNA', 'PPL', 'CESKA_POSTA', 'OSOBNI_ODBER']);
 export type ShippingMethod = typeof ShippingMethodSchema.Type;
 
-/** Simulated carriers. Prices are gross (incl. 21 % VAT). Nothing is ever sent to a real carrier. */
+/** Owner shipping tariffs, gross (incl. 21 % VAT). Carrier booking is not implemented. */
 export const shippingMethods: Readonly<
   Record<ShippingMethod, { readonly grossPriceMinor: number; readonly label: string }>
 > = {
-  CESKA_POSTA: { grossPriceMinor: 11_900, label: 'Česká pošta – Balík Do ruky (simulace)' },
-  OSOBNI_ODBER: { grossPriceMinor: 0, label: 'Osobní odběr – Kavárna Doma, Brno (simulace)' },
-  PPL: { grossPriceMinor: 12_900, label: 'PPL – doručení na adresu (simulace)' },
-  ZASILKOVNA: { grossPriceMinor: 7_900, label: 'Zásilkovna – výdejní místo (simulace)' },
+  CESKA_POSTA: { grossPriceMinor: 11_900, label: 'Česká pošta – doručení na adresu' },
+  OSOBNI_ODBER: { grossPriceMinor: 0, label: 'Osobní odběr' },
+  PPL: { grossPriceMinor: 12_900, label: 'PPL – doručení na adresu' },
+  ZASILKOVNA: { grossPriceMinor: 7_900, label: 'Zásilkovna – výdejní místo' },
 };
 
 /** Keep pickup identity consistent across storefront placement, staff editing and audit snapshots. */
 export const shippingMethodFor = (method: ShippingMethod, akros = false) =>
   method === 'OSOBNI_ODBER' && akros
-    ? { ...shippingMethods[method], label: 'Osobní odběr – AKROS (simulace)' }
+    ? { ...shippingMethods[method], label: 'Osobní odběr – AKROS' }
     : shippingMethods[method];
 
 export const OrderShippingSchema = Schema.Struct({
@@ -371,6 +368,8 @@ export const OrderChannelSchema = Schema.Literals(['STAFF', 'STOREFRONT']);
 export type OrderChannel = typeof OrderChannelSchema.Type;
 
 export const OrderSchema = Schema.Struct({
+  /** Verified commerce-portal subject, supplied only by the trusted storefront server. */
+  customerAccountId: Schema.optionalKey(TextSchema(300)),
   channel: Schema.optionalKey(OrderChannelSchema),
   /** Caller-supplied storefront submission id; one id maps to exactly one order. */
   clientRequestId: Schema.optionalKey(Schema.String),

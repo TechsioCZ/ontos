@@ -58,7 +58,9 @@ const run = (current: MerchandiseState, command: unknown, resourceId: string) =>
   });
 const order = (quantity: number, clientRequestId: string) => ({
   _tag: 'PlaceStorefrontOrder',
+  partyId: 'test-customer-party',
   clientRequestId,
+  customerAccountId: 'portal-customer-one',
   contact: { name: 'Jan Novák', email: 'jan@example.invalid' },
   deliveryAddress: { street: 'Ukázková 1', city: 'Brno', postalCode: '60200' },
   shippingMethod: 'OSOBNI_ODBER',
@@ -67,10 +69,18 @@ const order = (quantity: number, clientRequestId: string) => ({
 const stockOf = (current: MerchandiseState) =>
   recordOf(current.products[0]!, current.movements).variantRecords?.[0]?.stockOnHand;
 
+// Demo cleanup tests explicitly construct demo records; actual placements are never marked simulated.
+const asDemo = (current: MerchandiseState): MerchandiseState => ({
+  ...current,
+  orders: current.orders.map((entry) => ({ ...entry, demo: true })),
+});
+
 it.effect('placed storefront order decrements variant stock with one ORDER movement', () =>
   Effect.gen(function* () {
     const placed = yield* run(state, order(100, 'akros-stock-order-1'), 'order-1');
     expect(placed.storefrontOrder?.outcome).toBe('PLACED');
+    expect(placed.state.orders[0]?.customerAccountId).toBe('portal-customer-one');
+    expect(placed.state.orders[0]?.demo).toBeUndefined();
     expect(stockOf(placed.state)).toBe(400);
     const movement = placed.state.movements.at(-1);
     const number = placed.storefrontOrder?.orderNumber;
@@ -118,7 +128,7 @@ it.effect('removing an open DEMO order returns the stock', () =>
   Effect.gen(function* () {
     const placed = yield* run(state, order(100, 'akros-stock-order-1'), 'order-1');
     const removed = yield* run(
-      placed.state,
+      asDemo(placed.state),
       { _tag: 'RemoveDemoOrder', id: placed.storefrontOrder!.orderId!, reason: 'Ukázka skončila' },
       'remove-1',
     );
@@ -136,7 +146,7 @@ it.effect('removing an already cancelled order does not return stock twice', () 
       'cancel-1',
     );
     const removed = yield* run(
-      cancelled.state,
+      asDemo(cancelled.state),
       { _tag: 'RemoveDemoOrder', id: orderId, reason: 'Ukázka skončila' },
       'remove-1',
     );
@@ -150,7 +160,7 @@ for (const status of ['SHIPPED', 'DELIVERED'] as const) {
       Effect.gen(function* () {
         const placed = yield* run(state, order(100, `terminal-${status}-${action}`), 'terminal-order');
         const id = placed.storefrontOrder!.orderId!;
-        let current = placed.state;
+        let current = asDemo(placed.state);
         for (const next of ['CONFIRMED', 'SHIPPED', ...(status === 'DELIVERED' ? ['DELIVERED'] : [])]) {
           current = (yield* run(current, { _tag: 'ChangeOrderStatus', id, status: next }, `step-${next}`)).state;
         }
@@ -218,6 +228,7 @@ it.effect('legacy removed order repair is explicit and ledger-idempotent', () =>
       orders: [
         {
           ...original,
+          demo: true,
           status: 'DELIVERED' as const,
           demoCleanup: { at: DateTime.makeUnsafe(at), actor, reason: 'Dřívější odstranění' },
         },
@@ -242,5 +253,39 @@ it.effect('legacy removed order repair is explicit and ledger-idempotent', () =>
       'legacy-repair-2',
     );
     expect(repeated.state).toBe(repaired.state);
+  }),
+);
+
+it.effect('a different customer cannot replay another account submission', () =>
+  Effect.gen(function* () {
+    const placed = yield* run(state, order(100, 'account-replay'), 'account-order');
+    const rejected = yield* run(
+      placed.state,
+      { ...order(100, 'account-replay'), customerAccountId: 'other-customer' },
+      'other-order',
+    ).pipe(Effect.flip);
+    expect(rejected._tag).toBe('MerchandiseLifecycleConflict');
+  }),
+);
+it.effect('a real customer order cannot be deleted by demo cleanup', () =>
+  Effect.gen(function* () {
+    const placed = yield* run(state, order(100, 'real-order'), 'real-order');
+    const rejected = yield* run(
+      placed.state,
+      { _tag: 'RemoveDemoOrder', id: placed.storefrontOrder!.orderId!, reason: 'Not a demo record' },
+      'cleanup',
+    ).pipe(Effect.flip);
+    expect(rejected._tag).toBe('MerchandiseLifecycleConflict');
+  }),
+);
+it.effect('dry-run validates actual cart without fake contact or address and saves nothing', () =>
+  Effect.gen(function* () {
+    const request = order(100, 'quote-without-contact');
+    const { contact: _contact, deliveryAddress: _address, ...cartRequest } = request;
+    const result = yield* run(state, { ...cartRequest, dryRun: true }, 'quote');
+    expect(result.storefrontOrder?.outcome).toBe('VALID');
+    expect(result.state).toBe(state);
+    const rejected = yield* run(state, cartRequest, 'invalid-order').pipe(Effect.flip);
+    expect(rejected._tag).toBe('MerchandiseLifecycleConflict');
   }),
 );

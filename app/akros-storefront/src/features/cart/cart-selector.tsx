@@ -7,7 +7,7 @@ import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { RadioGroup } from "@techsio/ui-kit/molecules/radio-group";
 import { Dialog } from "@techsio/ui-kit/molecules/dialog";
 import { FormInput } from "@techsio/ui-kit/molecules/form-input";
-import { type NamedCart } from "@/mock-storefront/cart-collection";
+import { type NamedCart } from "@/features/cart/cart-collection";
 import { useCart } from "./cart-provider";
 
 export function CartSelector() {
