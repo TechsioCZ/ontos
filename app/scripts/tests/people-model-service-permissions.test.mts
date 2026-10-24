@@ -1,3 +1,4 @@
+import { permissionUniverseUnion, PermissionUniverseError } from '../people-model-permission-universe.mts';
 import { v1 } from '@authzed/authzed-node';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -210,5 +211,26 @@ it.effect('checks every case in bounded native batches on both revisions', () =>
     );
     expect(lengths).toEqual([200, 200, 1, 200, 200, 1]);
     expect(result).toMatchObject({ checks: 802, gains: [], losses: [], newAllowed: 401, oldAllowed: 401 });
+  }),
+);
+
+it.effect('unions before/after objects without losing frozen baseline positions or removed resources', () =>
+  Effect.gen(function* universe() {
+    const before = [
+      ['principal', 'human', 'operate'],
+      ['resource', 'removed', 'read'],
+    ] as const;
+    const after = [
+      ['principal', 'human', 'operate'],
+      ['principal', 'service', 'operate'],
+    ] as const;
+    const union = yield* permissionUniverseUnion(before, after);
+    expect(union).toEqual({
+      added: [['principal', 'service', 'operate']],
+      entries: [...before, ['principal', 'service', 'operate']],
+      removed: [['resource', 'removed', 'read']],
+    });
+    const duplicate = yield* permissionUniverseUnion(before, [...after, after[0]]).pipe(Effect.flip);
+    expect(Schema.is(PermissionUniverseError)(duplicate)).toBe(true);
   }),
 );
