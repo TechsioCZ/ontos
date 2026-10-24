@@ -58,3 +58,7 @@ it('resolves every message path used by the people and agents views, including i
   }
   expect(checked).toBeGreaterThan(100);
 });
+
+it('names the current organization without technical tenant jargon in Czech', () => {
+  expect(cs.shell.dashboard.tenant.accessibleLabel).toBe('Organizace');
+});

@@ -558,3 +558,22 @@ it('restores only seven reviewed human executors in two separately scoped named 
     'Reviewed Action missing: property.leasing.apply-command',
   );
 });
+
+it('uses only explicitly linked organizational names for demo logins and preserves unlinked names', () => {
+  expect(demoHumanAccounts.map(({ displayName, email }) => [email, displayName])).toEqual([
+    ['obchod@demo.ontos', 'Jana Nováková'],
+    ['obchodnik@demo.ontos', 'Petr Svoboda'],
+    ['ucetni@demo.ontos', 'Eva Veselá'],
+    ['sklad@demo.ontos', 'Pavel Němec'],
+  ]);
+  expect(companyHumanAccounts.map(({ displayName, email }) => [email, displayName])).toEqual([
+    ['spravce@hanak.demo', 'Karel Hanák'],
+    ['vedouci@hanak.demo', 'Lucie Dvořáková'],
+    ['obchodnik.a@hanak.demo', 'Jan Novák'],
+    ['obchodnik.b@hanak.demo', 'Petra Svobodová'],
+    ['eshop@kavarna.demo', 'Tereza Malá'],
+    ['eshop@akros.demo', 'Správce e-shopu AKROS'],
+    ['expedice@akros.demo', 'Expedice AKROS'],
+    ['expedice@kavarna.demo', 'Ondřej Kříž'],
+  ]);
+});

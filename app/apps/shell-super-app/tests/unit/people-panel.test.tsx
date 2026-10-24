@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Effect } from 'effect';
 import { afterEach, beforeEach, expect, it, rstest } from 'effect-rstest';
@@ -138,7 +138,7 @@ it('keeps committed membership changes processing while the actual projection di
     }),
   );
   await user.click(screen.getByRole('button', { name: 'Potvrdit změnu' }));
-  await screen.findByText(/Zpracovává se 1 změn/u);
+  await screen.findByText(/Zpracovává se 1 změna\./u);
   expect(screen.getByText(/Osoba odešla z firmy/u)).toBeDefined();
 });
 
@@ -189,4 +189,51 @@ it('renders role chips with Czech names rather than internal keys', async () => 
   await screen.findByText('Obchodník');
   expect(screen.queryByText(/crm-sales/u)).toBeNull();
   expect(screen.queryByText(/00000000/u)).toBeNull();
+});
+
+it.effect('uses Czech cardinal forms as pending changes accumulate', () =>
+  Effect.gen(function* pendingCounts() {
+    const user = userEvent.setup();
+    commands.role.mockReturnValue(
+      Effect.succeed({
+        status: 'ok',
+        value: {
+          operation: 'assign',
+          principalRef,
+          projection: 'pending',
+          role: { roleKey: 'crm-sales', scope: list.scope, tenantId },
+        },
+      }),
+    );
+    render(<PeoplePanel companyId={companyId} />);
+    yield* Effect.forEach(
+      ['1 změna.', '2 změny.', '3 změny.', '4 změny.', '5 změn.'],
+      (expected) =>
+        Effect.promise(async () => {
+          await user.click(await screen.findByRole('button', { name: 'Spravovat role' }));
+          await user.selectOptions(screen.getByRole('combobox', { name: 'Role' }), 'crm-sales');
+          await user.type(screen.getByLabelText(/Důvod změny/u), 'Převzetí agendy');
+          await user.click(screen.getByRole('button', { name: 'Potvrdit změnu' }));
+          await screen.findByText((text) => text.startsWith(`Zpracovává se ${expected}`));
+        }),
+      { concurrency: 1, discard: true },
+    );
+  }),
+);
+
+// oxlint-disable-next-line effect-native/no-promise-shaped-port -- Testing Library DOM interactions are Promise-based; remove-when: rule recognizes Rstest callbacks.
+it('stacks full-width person-detail actions on narrow screens without fixed-height buttons', async () => {
+  const user = userEvent.setup();
+  render(<PeoplePanel companyId={companyId} />);
+  await user.click(await screen.findByRole('button', { name: person.displayName }));
+  const dialog = screen.getByRole('dialog');
+  const roles = within(dialog).getByRole('button', { name: 'Spravovat role' });
+  const membershipAction = within(dialog).getByRole('button', { name: 'Upravit členství' });
+  expect(roles.parentElement).toBe(membershipAction.parentElement);
+  expect(roles.parentElement?.className).toContain('grid w-full');
+  for (const button of [roles, membershipAction]) {
+    expect(button.className).toContain('w-full');
+    expect(button.className).toContain('whitespace-normal');
+    expect(button.className).not.toMatch(/(?:^|\s)h-/u);
+  }
 });

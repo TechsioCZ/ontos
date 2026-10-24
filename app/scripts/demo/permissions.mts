@@ -208,10 +208,10 @@ const human = (key: string, displayName: string, role: DemoRoleKey) => ({
 
 /** Human demo accounts; password `password1234`. Principal IDs are stable for workforce `principalRef`s. */
 export const demoHumanAccounts = [
-  human('obchod', commercialAdministratorLabel, 'headOfSales'),
-  human('obchodnik', 'Obchodník', 'salesRep'),
-  human('ucetni', 'Účetní', 'accountant'),
-  human('sklad', 'Skladník', 'warehouse'),
+  human('obchod', 'Jana Nováková', 'headOfSales'),
+  human('obchodnik', 'Petr Svoboda', 'salesRep'),
+  human('ucetni', 'Eva Veselá', 'accountant'),
+  human('sklad', 'Pavel Němec', 'warehouse'),
 ] as const;
 
 /** Service principal used by the agent MCP server through a managed API key. */
@@ -695,7 +695,7 @@ const persona = (key: string, email: string, displayName: string, legalEntityId:
 export const privacyMarketingOperator = persona(
   'akros-eshop',
   'eshop@akros.demo',
-  eshopAdministratorLabel,
+  'Správce e-shopu AKROS',
   akrosDemoLegalEntityId,
   'akrosAdmin',
 );
@@ -708,7 +708,7 @@ export const companyHumanAccounts = [
   persona('hanak-obchodnik-b', 'obchodnik.b@hanak.demo', 'Petra Svobodová', crmDemoLegalEntityId, 'crmRep'),
   persona('kavarna-eshop', 'eshop@kavarna.demo', 'Tereza Malá', eshopDemoLegalEntityId, 'eshopAdmin'),
   privacyMarketingOperator,
-  persona('akros-expedice', 'expedice@akros.demo', 'Expedice', akrosDemoLegalEntityId, 'fulfilment'),
+  persona('akros-expedice', 'expedice@akros.demo', 'Expedice AKROS', akrosDemoLegalEntityId, 'fulfilment'),
   persona('kavarna-expedice', 'expedice@kavarna.demo', 'Ondřej Kříž', eshopDemoLegalEntityId, 'fulfilment'),
 ] as const;
 

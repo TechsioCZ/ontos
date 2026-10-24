@@ -1,3 +1,4 @@
+import { czechPlural } from '@app/shared-contracts';
 import { Badge } from '@techsio/ui-kit/atoms/badge';
 import { Button } from '@techsio/ui-kit/atoms/button';
 import { StatusText } from '@techsio/ui-kit/atoms/status-text';
@@ -280,29 +281,33 @@ const PersonDetail = ({
 }) => (
   <Dialog
     actions={
-      <>
+      <div className="grid w-full gap-100 sm:flex sm:w-auto sm:justify-end">
         <Button
+          className="w-full rounded-button-md p-button-md text-button-md whitespace-normal sm:w-auto"
           onClick={() => {
             onEdit({ kind: 'role', person });
             onClose();
           }}
+          size="current"
           variant="primary"
         >
           Spravovat role
         </Button>
         {scope === 'company' ? (
           <Button
+            className="w-full rounded-button-md p-button-md text-button-md whitespace-normal sm:w-auto"
             onClick={() => {
               onEdit({ kind: 'membership', person });
               onClose();
             }}
+            size="current"
             theme="outlined"
             variant="secondary"
           >
             Upravit členství
           </Button>
         ) : null}
-      </>
+      </div>
     }
     closeLabel="Zavřít"
     customTrigger
@@ -518,8 +523,9 @@ export const PeoplePanel = ({
       ) : null}
       {pending.length === 0 ? null : (
         <StatusText aria-live="polite" status="warning">
-          Zpracovává se {pending.length} změn. Potvrzení zápisu není potvrzením promítnutí přístupu. Obnovte seznam;
-          čekáme na ověření skutečného přístupu.
+          Zpracovává se {pending.length}{' '}
+          {czechPlural(pending.length, { few: 'změny', many: 'změny', one: 'změna', other: 'změn' })}. Potvrzení zápisu
+          není potvrzením promítnutí přístupu. Obnovte seznam; čekáme na ověření skutečného přístupu.
         </StatusText>
       )}
       {loading ? (
