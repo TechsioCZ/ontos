@@ -1,3 +1,4 @@
+import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../../shared/portal-auth-contracts.ts';
 import type { ReadHandlerUnavailable } from '@app/core-runtime';
 import { ReadPrincipalBindingPayloadSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import { PartyMatchRequestSchema } from '@app/party-registry/api';
@@ -153,6 +154,10 @@ export interface CommerceEnrollmentOwnerEffectRegistryService {
     transition: JourneyTransitionSpec,
     context: CommerceEnrollmentOwnerEffectResolutionContext,
   ) => Effect.Effect<Option.Option<CommerceEnrollmentRegisteredOwnerEffect>, CommerceEnrollmentAttemptError>;
+  /** Check provider-owned verification before resolving subjects or claiming downstream work. */
+  readonly verificationRequired: (
+    context: Pick<CommerceEnrollmentOwnerEffectResolutionContext, 'attempt' | 'operations'>,
+  ) => Effect.Effect<boolean, CommerceEnrollmentAttemptError>;
 }
 
 export class CommerceEnrollmentOwnerEffectRegistry extends Context.Service<
@@ -289,6 +294,48 @@ const partyCandidateFor = Effect.fn('CommerceEnrollmentOwnerEffectRegistry.party
   },
 );
 
+/** A provider account is not evidence of verified ownership. This read precedes every Retail
+ * downstream claim, and uses only the subject and invocation the durable journal already proved. */
+export const retailEnrollmentVerificationRequired = Effect.fn(
+  'CommerceEnrollmentOwnerEffectRegistry.verificationRequired',
+)(function* verificationRequired(
+  { attempt, operations }: Pick<CommerceEnrollmentOwnerEffectResolutionContext, 'attempt' | 'operations'>,
+  accountLookup: CommercePortalAuthAccountLookup,
+): Effect.fn.Return<boolean, CommerceEnrollmentAttemptError> {
+  if (attempt.journey !== 'RETAIL_SELF_ENROLLMENT') {
+    return false;
+  }
+  const provider = operations.find(
+    (operation) =>
+      operation.ownerModuleKey === PORTAL_AUTH_OWNER_MODULE_KEY &&
+      operation.transitionKey === PORTAL_ACCOUNT_CREATION_TRANSITION_KEY &&
+      operation.status === 'SUCCEEDED' &&
+      operation.tenantId === attempt.tenantId &&
+      operation.portalEnrollmentAttemptId === attempt.portalEnrollmentAttemptId,
+  );
+  const { accountSubject } = attempt;
+  if (provider === undefined || accountSubject?.authenticationNamespaceId !== COMMERCE_AUTHENTICATION_NAMESPACE_ID) {
+    return yield* attemptUnavailable(
+      'Retail email verification requires the exact successful provider creation',
+      attempt.portalEnrollmentAttemptId,
+    );
+  }
+  return !(yield* accountLookup
+    .verifiedEmailForOwnerInvocation({
+      ownerInvocationId: provider.ownerInvocationId,
+      providerSubjectId: accountSubject.providerSubjectId,
+    })
+    .pipe(
+      Effect.mapError((cause) =>
+        attemptUnavailable(
+          'Current provider email verification is unavailable',
+          attempt.portalEnrollmentAttemptId,
+          cause,
+        ),
+      ),
+    ));
+});
+
 export const verifiedRetailEnrollmentEvidence = Effect.fn(
   'CommerceEnrollmentOwnerEffectRegistry.verifiedRetailEnrollmentEvidence',
 )(function* verifiedEvidence(
@@ -320,7 +367,7 @@ export const verifiedRetailEnrollmentEvidence = Effect.fn(
     providerOwnerInvocationId === undefined ||
     accountSubject === undefined ||
     candidateEvidenceRef === undefined ||
-    accountSubject.authenticationNamespaceId !== 'ontos.commerce.portal.better-auth.v1' ||
+    accountSubject.authenticationNamespaceId !== COMMERCE_AUTHENTICATION_NAMESPACE_ID ||
     !(yield* accountLookup
       .verifiedEmailForOwnerInvocation({
         ownerInvocationId: providerOwnerInvocationId,
@@ -1191,6 +1238,7 @@ export const CommerceEnrollmentOwnerEffectRegistryLive = Layer.effect(
         const entry = entries.get(key);
         return entry === undefined ? Effect.succeed(none) : entry(transition, { ...context, subject });
       },
+      verificationRequired: (context) => retailEnrollmentVerificationRequired(context, accountLookup),
     };
   }),
 );

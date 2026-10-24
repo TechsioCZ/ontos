@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { sql } from 'drizzle-orm';
+import { retailEnrollmentVerificationRequired } from '../../src/enrollment/orchestration/owner-effect-registry.ts';
+import type { CommercePortalAuthAccountLookup } from '../../api/portal-auth/provider/account-lookup-service.ts';
 
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -157,6 +161,7 @@ const seedPortalAccountTransition = Effect.fnUntraced(function* seedPortalAccoun
   identities: ScenarioIdentities,
   portalEnrollmentAttemptId: string,
   expectedRevision: number,
+  initialState: 'IN_PROGRESS' | 'VERIFICATION_REQUIRED' = 'IN_PROGRESS',
 ) {
   const ownerInvocationId = randomUUID();
   const claimed = yield* fixture.ownerStore.claimTransition(
@@ -183,6 +188,7 @@ const seedPortalAccountTransition = Effect.fnUntraced(function* seedPortalAccoun
       actorPrincipalId: identities.actorPrincipalId,
       expectedRevision: claimed.attempt.revision,
       leaseToken: claimed.operation.lease.leaseToken,
+      nextState: initialState,
       outcomeCode: PORTAL_ACCOUNT_CREATED_OUTCOME_CODE,
       ownerInvocationId,
       ownerModuleKey: 'commerce.portal-auth',
@@ -223,6 +229,96 @@ const subjectWithParty = (identities: ScenarioIdentities): RetailSelfEnrollmentP
   ...identities.subject,
   partyRef: Option.some(retailPartyRefFor(identities.tenantId, PARTY_RESOURCE_ID)),
 });
+
+it.live('parks signup without a Party claim, then immediately completes on one verified resume', () =>
+  Effect.scoped(
+    Effect.gen(function* verifiedResumeWithoutWaitingForALease() {
+      const identities = makeScenarioIdentities();
+      const compositionRevision = yield* enrollmentApplicationCompositionRevision;
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId: identities.tenantId }, compositionRevision);
+      const migration = readFileSync(
+        new URL('../../drizzle/20261024153000_enrollment-verification-boundary/migration.sql', import.meta.url),
+        'utf-8',
+      );
+      yield* fixture.admin.transaction((transaction) =>
+        Effect.forEach(
+          migration.split('--> statement-breakpoint'),
+          (statement) =>
+            transaction.execute(
+              sql.raw(statement.replaceAll('CREATE FUNCTION ', 'CREATE OR REPLACE FUNCTION ')),
+              'objects',
+            ),
+          { concurrency: 1, discard: true },
+        ),
+      );
+      const started = yield* startEnrollmentAcceptanceAttempt(fixture, {
+        ...identities.startInput,
+        compositionRevision,
+      });
+      const identity = { portalEnrollmentAttemptId: started.portalEnrollmentAttemptId, tenantId: identities.tenantId };
+      yield* seedPortalAccountTransition(
+        fixture,
+        identities,
+        started.portalEnrollmentAttemptId,
+        started.revision,
+        'VERIFICATION_REQUIRED',
+      );
+      let verified = false;
+      const lookups: { ownerInvocationId: string; providerSubjectId: string }[] = [];
+      const lookup: CommercePortalAuthAccountLookup = {
+        existsByEmail: () => Effect.die('Verification must not use email continuity'),
+        existsByProviderSubject: () => Effect.die('Verification must name the provider invocation'),
+        subjectForOwnerInvocation: () => Effect.die('The durable Attempt already knows its subject'),
+        verifiedEmailForOwnerInvocation: (input) =>
+          Effect.sync(() => {
+            lookups.push(input);
+            return verified;
+          }),
+      };
+      const harness = yield* makeEnrollmentContinuationHarness(fixture.run, fixture.runWorker, {
+        actorPrincipalId: identities.actorPrincipalId,
+        answers: happyAnswers,
+        subject: subjectWithParty(identities),
+        verificationRequired: (context) => retailEnrollmentVerificationRequired(context, lookup),
+      });
+      const before = yield* fixture.ownerStore.read(identity);
+      expect(before.state).toBe('VERIFICATION_REQUIRED');
+      expect(before.lease).toBeUndefined();
+      const parked = yield* harness.continuation.advance(identity);
+      expect(parked.outcome).toBe('HALTED');
+      if (parked.outcome === 'HALTED') {
+        expect(parked.halt.reason).toBe('VERIFICATION_REQUIRED');
+      }
+      expect(harness.owner.log.dispatched).toEqual([]);
+      expect(
+        (yield* readEnrollmentAcceptanceOperations(fixture, identity.portalEnrollmentAttemptId)).map(
+          (operation) => operation.transition_key,
+        ),
+      ).toEqual([PORTAL_ACCOUNT_CREATION_TRANSITION_KEY]);
+      expect((yield* fixture.ownerStore.read(identity)).revision).toBe(before.revision);
+      // No sleep, clock advance or second resume: current verification wakes the Attempt before
+      // Core/Party preparation, then the same request drives the finite native journey to completion.
+      verified = true;
+      expect((yield* harness.continuation.advance(identity)).outcome).toBe('COMPLETE');
+      const complete = yield* fixture.ownerStore.read(identity);
+      expect(complete.state).toBe('COMPLETE');
+      expect(complete.lease).toBeUndefined();
+      expect(harness.owner.log.dispatched).toEqual([
+        PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY,
+        ENSURE_RETAIL_CUSTOMER_PROFILE_TRANSITION_KEY,
+        BIND_RETAIL_PORTAL_PROFILE_TRANSITION_KEY,
+      ]);
+      expect(new Set(lookups.map((input) => input.ownerInvocationId)).size).toBe(1);
+      expect(new Set(lookups.map((input) => input.providerSubjectId))).toEqual(
+        new Set([accountSubject.providerSubjectId]),
+      );
+      expect((yield* harness.continuation.advance(identity)).outcome).toBe('COMPLETE');
+      expect(
+        harness.owner.log.dispatched.filter((key) => key === PARTY_CANDIDATE_SUBMISSION_TRANSITION_KEY),
+      ).toHaveLength(1);
+    }),
+  ),
+);
 
 it.live('advances a started Attempt to derived COMPLETE through every declared transition', () =>
   Effect.scoped(

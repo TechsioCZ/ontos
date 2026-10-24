@@ -17,7 +17,11 @@ import type {
   EnrollmentOwnerOperationSnapshot,
   ReadEnrollmentAttemptInput,
 } from '../../../shared/enrollment-contracts.ts';
-import { admitEnrollmentAttempt, failRejectedEnrollmentAttempt } from '../attempts/attempt-persistence.ts';
+import {
+  admitEnrollmentAttempt,
+  failRejectedEnrollmentAttempt,
+  setEnrollmentVerificationState,
+} from '../attempts/attempt-persistence.ts';
 import type {
   ClaimEnrollmentSweepInput,
   DueEnrollmentAttempt,
@@ -285,6 +289,10 @@ interface ContinuationSeams {
   readonly lease: Effect.Effect<void, CommerceEnrollmentAttemptError>;
   readonly registry: CommerceEnrollmentOwnerEffectRegistry['Service'];
   readonly resolveSubject: CommerceEnrollmentPreparationSubjectResolve;
+  readonly setVerificationState: (
+    attempt: EnrollmentAttemptSnapshot,
+    required: boolean,
+  ) => Effect.Effect<void, CommerceEnrollmentAttemptError>;
   readonly store: (attempt: ReadEnrollmentAttemptInput) => CommerceEnrollmentOwnerAttemptStore;
 }
 
@@ -459,14 +467,27 @@ const advancePass = Effect.fn('CommerceEnrollmentContinuation.pass')(function* a
   if (next === undefined) {
     return { attemptState: attempt.state, kind: 'SETTLED' };
   }
+  yield* seams.lease;
+  const isProviderCreation =
+    next.ownerModuleKey === PORTAL_AUTH_OWNER_MODULE_KEY &&
+    next.transitionKey === PORTAL_ACCOUNT_CREATION_TRANSITION_KEY;
+  if (!isProviderCreation && attempt.journey === 'RETAIL_SELF_ENROLLMENT') {
+    const required = yield* seams.registry.verificationRequired({ attempt, operations });
+    if ((attempt.state === 'IN_PROGRESS' && required) || (attempt.state === 'VERIFICATION_REQUIRED' && !required)) {
+      yield* seams.setVerificationState(attempt, required);
+      attempt = yield* store.read(input);
+    }
+    if (required) {
+      // No downstream subject resolution, owner claim, lease or command while the person verifies.
+      return halted('VERIFICATION_REQUIRED', next);
+    }
+  }
   const ownerContext = {
     attempt,
     operations,
     requestCorrelation: `${CONTINUATION_WORKER_PREFIX}:${attempt.portalEnrollmentAttemptId}`,
   } as const;
-  yield* seams.lease;
-  const owner = yield* next.ownerModuleKey === PORTAL_AUTH_OWNER_MODULE_KEY &&
-  next.transitionKey === PORTAL_ACCOUNT_CREATION_TRANSITION_KEY
+  const owner = yield* isProviderCreation
     ? seams.registry.resolve(next, ownerContext)
     : seams
         .resolveSubject({
@@ -548,6 +569,7 @@ const continuationSweepPassForSnapshot = (
     lease,
     registry: ports.registry,
     resolveSubject: ports.resolveSubject,
+    setVerificationState: ports.setVerificationState,
     store: ports.store,
   };
   return Object.freeze({
@@ -646,6 +668,10 @@ export const CommerceEnrollmentContinuationLive = (
         permits,
         registry,
         resolveSubject: resolver.resolve,
+        setVerificationState: (attempt, required) =>
+          runner.run({ tenantId: attempt.tenantId }, (transaction) =>
+            setEnrollmentVerificationState(transaction, attempt, required),
+          ),
         store: (attempt) => commerceEnrollmentOwnerAttemptStoreForRun({ tenantId: attempt.tenantId }, runner.run),
       };
       const openSweepPass = admit.pipe(Effect.map((snapshot) => continuationSweepPassForSnapshot(snapshot, passPorts)));

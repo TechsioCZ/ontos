@@ -42,7 +42,7 @@ const sweepInput = (compositionRevision: string) => ({
   revision: 1,
 });
 
-const attemptRow = (compositionRevision: string, state: 'COMPLETE' | 'IN_PROGRESS') => ({
+const attemptRow = (compositionRevision: string, state: 'COMPLETE' | 'IN_PROGRESS' | 'VERIFICATION_REQUIRED') => ({
   attempt_outcome: 'FOUND',
   authentication_namespace_id: null,
   completed_at: null,
@@ -93,7 +93,7 @@ const harness = Effect.fnUntraced(function* makeReleaseAdmissionHarness(
   initial: Option.Option<ActiveApplicationCompositionSnapshot>,
   compiled: Readonly<{ appId: string; buildMarker: string }>,
   persistedRevision: string,
-  persistedState: 'COMPLETE' | 'IN_PROGRESS' = 'IN_PROGRESS',
+  persistedState: 'COMPLETE' | 'IN_PROGRESS' | 'VERIFICATION_REQUIRED' = 'IN_PROGRESS',
   afterClaim?: Effect.Effect<void>,
   readmissionRevision?: string,
 ) {
@@ -140,6 +140,28 @@ const harness = Effect.fnUntraced(function* makeReleaseAdmissionHarness(
         calls.durableClaims.push(claim);
         yield* afterClaim;
         return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))([claim]);
+      }
+      if (
+        persistedState === 'VERIFICATION_REQUIRED' &&
+        routine.name === 'read_portal_enrollment_owner_operation' &&
+        values.at(2) === 'provider.account.create'
+      ) {
+        const row = attemptRow(admittedRevision, persistedState);
+        return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))([
+          {
+            ...row,
+            actor_principal_id: row.created_by_principal_id,
+            operation_outcome: 'FOUND',
+            owner_invocation_id: '50000000-0000-4000-8000-000000000002',
+            owner_module_key: 'commerce.portal-auth',
+            portal_enrollment_owner_operation_id: '50000000-0000-4000-8000-000000000001',
+            request_digest: 'a'.repeat(64),
+            required: true,
+            revision: 2,
+            status: 'SUCCEEDED',
+            transition_key: 'provider.account.create',
+          },
+        ]);
       }
       const rows =
         routine.name === 'read_portal_enrollment_attempt' ? [attemptRow(admittedRevision, persistedState)] : [];
@@ -199,6 +221,7 @@ const harness = Effect.fnUntraced(function* makeReleaseAdmissionHarness(
           calls.registry += 1;
           return Option.some(registeredOwner);
         }),
+      verificationRequired: () => Effect.succeed(persistedState === 'VERIFICATION_REQUIRED'),
     }),
     Layer.succeed(CommerceEnrollmentPreparationSubjectResolver, {
       resolve: () =>
@@ -521,5 +544,27 @@ it.effect('re-reads native admitted authority before any owner preparation under
     ]);
     expect(scripted.calls.durableClaims[0]).toMatchObject({ composition_revision: release.composition.revision });
     expect(scripted.calls.owner).toBe(1);
+  }),
+);
+
+it.effect('an unverified signup halts before subject resolution, Party claim or any owner lease', () =>
+  Effect.gen(function* noPreVerificationOwnerClaim() {
+    const release = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
+    const scripted = yield* harness(
+      Option.some(release),
+      { appId, buildMarker },
+      release.composition.revision,
+      'VERIFICATION_REQUIRED',
+    );
+    const result = yield* CommerceEnrollmentContinuation.pipe(
+      Effect.flatMap((continuation) => continuation.advance(attemptInput)),
+      Effect.provide(scripted.layer),
+    );
+    expect(result).toMatchObject({ halt: { reason: 'VERIFICATION_REQUIRED' }, outcome: 'HALTED' });
+    expect(scripted.calls.subject).toBe(0);
+    expect(scripted.calls.registry).toBe(0);
+    expect(scripted.calls.owner).toBe(0);
+    expect(scripted.calls.routines).not.toContain('claim_portal_enrollment_transition');
+    expect(scripted.calls.routines).not.toContain('set_portal_enrollment_verification_state');
   }),
 );

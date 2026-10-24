@@ -407,6 +407,7 @@ export const commercePortalAuthEnrollmentAccountCreationOutcome = Effect.fn(
     actorPrincipalId: operation.actorPrincipalId,
     expectedRevision: attempt.revision,
     leaseToken: lease.leaseToken,
+    nextState: attempt.journey === 'RETAIL_SELF_ENROLLMENT' ? 'VERIFICATION_REQUIRED' : 'IN_PROGRESS',
     outcomeCode,
     ownerInvocationId: claim.ownerInvocationId,
     ownerModuleKey: claim.ownerModuleKey,

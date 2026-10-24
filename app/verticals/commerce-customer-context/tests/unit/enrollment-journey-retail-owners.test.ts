@@ -177,6 +177,32 @@ const partyExecutors = (
   ...overrides,
 });
 
+it.effect('never creates a Party before exact provider verification evidence is available', () =>
+  Effect.gen(function* noPreVerificationParty() {
+    let creates = 0;
+    const owner = retailPartyCandidateOwnerEffect(
+      {
+        ...partyOwnerInput,
+        verifiedEvidence: Effect.fail(
+          new CommerceEnrollmentOwnerEffectUnavailable({
+            code: 'provider_email_verification_required',
+            reason: 'Email is not verified',
+          }),
+        ),
+      },
+      partyExecutors({
+        createParty: () =>
+          Effect.sync(() => {
+            creates += 1;
+            return { decisionRef, outcome: 'CREATED' as const, partyRef };
+          }),
+      }),
+    );
+    expect(yield* owner.dispatch(transition).pipe(Effect.isFailure)).toBe(true);
+    expect(creates).toBe(0);
+  }),
+);
+
 it.effect('records an exact matched Party as the owner outcome', () =>
   Effect.gen(function* matched() {
     const outcome = yield* retailPartyCandidateOwnerEffect(

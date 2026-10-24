@@ -780,7 +780,9 @@ it.live('records the created portal account on the transition the start route cl
         tenantId: Schema.decodeSync(EnrollmentTenantIdSchema)(tenantId),
       });
       expect(observed.accountSubject).toStrictEqual(recorded.attempt.accountSubject);
-      expect(observed.state).toBe('IN_PROGRESS');
+      expect(observed.state).toBe('VERIFICATION_REQUIRED');
+      expect(observed.lease).toBeUndefined();
+      expect(recorded.operation.lease).toBeUndefined();
 
       // A retry presenting the same Idempotency-Key replays that `CLAIMED` answer verbatim. The
       // journal is what refuses it a second account: the transition is recorded, so the route
@@ -2219,13 +2221,13 @@ it.live(
         const startedAttempt = started.attempt;
         expect(started.outcome).toBe('CREATED');
         expect(startedAttempt.journey).toBe('RETAIL_SELF_ENROLLMENT');
-        expect(startedAttempt.state).toBe('IN_PROGRESS');
+        expect(startedAttempt.state).toBe('VERIFICATION_REQUIRED');
         expect(startedAttempt.targetLegalEntityId).toBe(subject.legalEntityId);
 
         // The Attempt itself committed. A rolled-back result hash leaves this row absent entirely.
         expect(yield* enrollmentAttemptCount(fixture)).toBe(1);
         expect(yield* readEnrollmentAcceptanceAttempt(fixture, startedAttempt.portalEnrollmentAttemptId)).toStrictEqual(
-          { revision: startedAttempt.revision, state: 'IN_PROGRESS' },
+          { revision: startedAttempt.revision, state: 'VERIFICATION_REQUIRED' },
         );
 
         // The `claim-portal-enrollment-transition` Action committed too — its result carries the

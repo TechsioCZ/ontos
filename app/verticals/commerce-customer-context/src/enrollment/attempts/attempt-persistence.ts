@@ -1489,6 +1489,36 @@ export const failRejectedEnrollmentAttempt = (
     Effect.map((rows) => rows[0]?.failed === true),
   );
 
+/** A verified provider read may park/wake only lease-free Retail work at the observed revision. */
+const verificationStateRoutine = defineScopedRoutine({
+  name: 'set_portal_enrollment_verification_state',
+  ownerModuleKey: MODULE_KEY,
+  parameters: [{ source: 'tenantId', type: 'uuid' }, uuid(), integer(), boolean()],
+  resultSchema: Schema.Struct({ updated: Schema.Boolean }),
+  routineKey: 'portal-enrollment-attempt.verification-state',
+  schema: 'commerce_customer_context',
+});
+
+export const setEnrollmentVerificationState = (
+  transaction: EnrollmentAttemptScopedRoutineInvoker,
+  attempt: EnrollmentAttemptSnapshot,
+  verificationRequired: boolean,
+): Effect.Effect<void, CommerceEnrollmentAttemptError> =>
+  transaction
+    .invoke(verificationStateRoutine, [attempt.portalEnrollmentAttemptId, attempt.revision, verificationRequired])
+    .pipe(
+      Effect.mapError((cause) => unavailable(cause)),
+      Effect.filterOrFail(
+        (rows) => rows[0]?.updated === true,
+        () =>
+          attemptUnavailable(
+            'The Enrollment Attempt changed before its verification wait could settle',
+            attempt.portalEnrollmentAttemptId,
+          ),
+      ),
+      Effect.asVoid,
+    );
+
 /** Re-admit only parked work; native admission preserves origin, outcomes and all sweep/lease fences. */
 const admitAttemptRoutine = defineScopedRoutine({
   name: 'admit_portal_enrollment_attempt',

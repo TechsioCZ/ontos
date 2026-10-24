@@ -299,7 +299,9 @@ export const retailPartyCandidateOwnerEffect = (
   const submit = Effect.fn('RetailPartyCandidateOwnerEffect.submit')(function* submitCandidate(
     ownerInvocationId: string,
   ): Effect.fn.Return<PartySubmission, CommerceEnrollmentOwnerEffectError> {
-    // Canonical Create always decides first and retains a durable case when review is needed.
+    // The continuation checks before claiming; dispatch checks again before any Party effect.
+    yield* verifiedEvidence;
+    // Canonical Create decides first and retains a durable case when review is needed.
     // The same Party-owned acceptance path handles new enrollments and restart recovery.
     const created = yield* executors
       .createParty({ candidate }, { correlationId: requestCorrelation, idempotencyKey: ownerInvocationId })

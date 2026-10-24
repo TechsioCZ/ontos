@@ -37,7 +37,10 @@ import {
 } from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
 import type { CommerceEnrollmentPreparedOwnerBinding } from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
 
-import { verifiedRetailEnrollmentEvidence } from '../../src/enrollment/orchestration/owner-effect-registry.ts';
+import {
+  retailEnrollmentVerificationRequired,
+  verifiedRetailEnrollmentEvidence,
+} from '../../src/enrollment/orchestration/owner-effect-registry.ts';
 
 const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)('10000000-0000-4000-8000-0000000000a1');
 const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)('20000000-0000-4000-8000-0000000000a1');
@@ -270,6 +273,33 @@ const providerOperation = Schema.decodeUnknownSync(EnrollmentOwnerOperationSnaps
   status: 'SUCCEEDED',
   updatedAt: '2026-09-16T10:01:00.000Z',
 });
+it.effect('retail continuation gates on the exact creation invocation before preparing any owner claim', () =>
+  Effect.gen(function* verificationBeforeOwnerClaim() {
+    let verified = false;
+    const lookups: { ownerInvocationId: string; providerSubjectId: string }[] = [];
+    const lookup: CommercePortalAuthAccountLookup = {
+      ...accountLookupNeverRead,
+      verifiedEmailForOwnerInvocation: (input) =>
+        Effect.sync(() => {
+          lookups.push(input);
+          return verified;
+        }),
+    };
+    const context = { attempt: verifiedAttempt(), operations: [providerOperation] };
+    expect(yield* retailEnrollmentVerificationRequired(context, lookup)).toBe(true);
+    verified = true;
+    expect(yield* retailEnrollmentVerificationRequired(context, lookup)).toBe(false);
+    expect(lookups).toEqual([
+      { ownerInvocationId, providerSubjectId: 'provider-user-a1' },
+      { ownerInvocationId, providerSubjectId: 'provider-user-a1' },
+    ]);
+    expect(
+      yield* retailEnrollmentVerificationRequired({ ...context, operations: [] }, lookup).pipe(Effect.isFailure),
+    ).toBe(true);
+    expect(lookups).toHaveLength(2);
+  }),
+);
+
 const evidenceCandidate = {
   evidenceRefs: ['90000000-0000-4000-8000-0000000000a1'],
   officialIdentifiers: [],

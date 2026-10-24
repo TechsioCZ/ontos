@@ -59,6 +59,8 @@ export interface EnrollmentContinuationScript {
   readonly subject: RetailSelfEnrollmentPreparationSubject;
   /** Transition keys this deployment registers no owner effect for. */
   readonly unregistered?: readonly string[];
+  /** Provider-owned pre-claim gate; omitted only by scenarios unrelated to verification. */
+  readonly verificationRequired?: CommerceEnrollmentOwnerEffectRegistry['Service']['verificationRequired'];
 }
 
 const digestFor = (
@@ -103,6 +105,7 @@ export const makeEnrollmentContinuationHarness = Effect.fnUntraced(function* mak
           reconcile: owner.effect.reconcile,
         });
       }),
+    verificationRequired: script.verificationRequired ?? (() => Effect.succeed(false)),
   });
   const subjectLive = Layer.succeed(CommerceEnrollmentPreparationSubjectResolver, {
     resolve: (input) =>

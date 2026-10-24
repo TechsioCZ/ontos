@@ -118,6 +118,20 @@ const created = (overrides: Partial<CommercePortalAccountCreateResult> = {}): Co
   ...overrides,
 });
 
+it.effect('successful signup parks awaiting email verification when the provider lease is released', () =>
+  Effect.gen(function* signupAwaitsVerification() {
+    const claim = yield* claimFor();
+    const outcome = yield* commercePortalAuthEnrollmentAccountCreationOutcome(
+      claim,
+      attempt(),
+      operation(claim),
+      created(),
+    );
+    expect(outcome.status).toBe('SUCCEEDED');
+    expect(outcome.nextState).toBe('VERIFICATION_REQUIRED');
+  }),
+);
+
 it.effect('the recorded outcome binds the created account to the claim PostgreSQL committed', () =>
   Effect.gen(function* recordedOutcomeBindsTheClaim() {
     const claim = yield* claimFor();
