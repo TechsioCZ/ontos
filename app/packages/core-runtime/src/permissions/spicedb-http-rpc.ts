@@ -8,7 +8,14 @@ import {
   WriteRelationshipsRequest,
   WriteRelationshipsResponse,
 } from '@authzed/authzed-node/v1/permissions';
-import { WriteSchemaRequest, WriteSchemaResponse } from '@authzed/authzed-node/v1/schema';
+import {
+  DiffSchemaRequest,
+  DiffSchemaResponse,
+  ReadSchemaRequest,
+  ReadSchemaResponse,
+  WriteSchemaRequest,
+  WriteSchemaResponse,
+} from '@authzed/authzed-node/v1/schema';
 import { Effect, Option, Schema } from 'effect';
 import type { Redacted } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
@@ -165,11 +172,13 @@ export const spiceDbHttpRpc = (endpoint: SpiceDbHttpEndpoint): SpiceDbHttpRpc =>
         Effect.flatMap(readBulkResponse),
       ),
     checkPermission: unary('/v1/permissions/check', CheckPermissionRequest, CheckPermissionResponse),
+    diffSchema: unary('/v1/schema/diffschema', DiffSchemaRequest, DiffSchemaResponse),
     // A failed stream fails the whole read, as a failed gRPC stream rejects `readRelationships`.
     readRelationships: (request) =>
       post('/v1/relationships/read', ReadRelationshipsRequest, request, decodeStreamErrorCode).pipe(
         Effect.flatMap(readFrames),
       ),
+    readSchema: unary('/v1/schema/read', ReadSchemaRequest, ReadSchemaResponse),
     writeRelationships: unary('/v1/relationships/write', WriteRelationshipsRequest, WriteRelationshipsResponse),
     writeSchema: unary('/v1/schema/write', WriteSchemaRequest, WriteSchemaResponse),
   };

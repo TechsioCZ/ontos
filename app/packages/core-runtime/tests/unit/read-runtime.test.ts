@@ -1395,7 +1395,9 @@ const guardedSpiceDb = (events: string[]): SpiceDbRpc =>
         });
       }),
     close: constVoid,
+    diffSchema: unusedSpiceDbRpc,
     readRelationships: unusedSpiceDbRpc,
+    readSchema: unusedSpiceDbRpc,
     writeRelationships: unusedSpiceDbRpc,
     writeSchema: unusedSpiceDbRpc,
   });

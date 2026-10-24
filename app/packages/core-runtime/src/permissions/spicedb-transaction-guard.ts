@@ -16,7 +16,9 @@ export const guardSpiceDbRpc = (rpc: SpiceDbRpc): SpiceDbRpc =>
     checkBulkPermissions: outsideTransaction('CheckBulkPermissions', rpc.checkBulkPermissions),
     checkPermission: outsideTransaction('CheckPermission', rpc.checkPermission),
     close: rpc.close,
+    diffSchema: outsideTransaction('DiffSchema', rpc.diffSchema),
     readRelationships: outsideTransaction('ReadRelationships', rpc.readRelationships),
+    readSchema: outsideTransaction('ReadSchema', rpc.readSchema),
     writeRelationships: outsideTransaction('WriteRelationships', rpc.writeRelationships),
     writeSchema: outsideTransaction('WriteSchema', rpc.writeSchema),
   });

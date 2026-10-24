@@ -179,3 +179,32 @@ it.effect('a gateway that never replies is aborted at the deadline', () =>
     expect(requests.map(({ signal }) => signal.aborted)).toStrictEqual([true]);
   }),
 );
+
+it.effect('reads the live schema through the native schema read route', () =>
+  Effect.gen(function* readsNativeSchema() {
+    const { requests, withGateway } = gateway(() => Response.json({ schemaText: 'definition principal {}' }));
+    const response = yield* rpc.readSchema(v1.ReadSchemaRequest.create({})).pipe(withGateway);
+    expect(response.schemaText).toBe('definition principal {}');
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.url.pathname).toBe('/v1/schema/read');
+    expect(requests[0]?.request.headers['authorization']).toBe('Bearer test-key');
+  }),
+);
+
+it.effect('uses the native semantic schema diff route with the exact observed revision', () =>
+  Effect.gen(function* diffsNativeSchema() {
+    const { requests, withGateway } = gateway(() => Response.json({ diffs: [] }));
+    const response = yield* rpc
+      .diffSchema(
+        v1.DiffSchemaRequest.create({
+          comparisonSchema: 'definition principal {}',
+          consistency: {
+            requirement: { atExactSnapshot: { token: 'schema-read-token' }, oneofKind: 'atExactSnapshot' },
+          },
+        }),
+      )
+      .pipe(withGateway);
+    expect(response.diffs).toEqual([]);
+    expect(requests[0]?.url.pathname).toBe('/v1/schema/diffschema');
+  }),
+);

@@ -165,6 +165,24 @@ const transportParityProgram = Effect.gen(function* provesTransportParity() {
     ),
   ).toStrictEqual(failedWith(3));
 
+  // Schema reads and compiler-backed comparisons use the same native revision semantics.
+  const schemaRead = yield* parity(
+    transports,
+    (rpc) => rpc.readSchema(v1.ReadSchemaRequest.create({})),
+    ({ schemaText }) => schemaText,
+  );
+  expect(schemaRead.status).toBe('ok');
+  expect(
+    yield* parity(
+      transports,
+      (rpc) =>
+        rpc.diffSchema(
+          v1.DiffSchemaRequest.create({ comparisonSchema: ONTOS_SPICEDB_SCHEMA, consistency: fullyConsistent }),
+        ),
+      ({ diffs }) => diffs.map((diff) => v1.ReflectionSchemaDiff.toJson(diff)),
+    ),
+  ).toStrictEqual({ json: [], status: 'ok' });
+
   // WriteRelationships TOUCH is idempotent through either transport.
   expect(
     yield* parity(
@@ -294,6 +312,21 @@ const transportParityProgram = Effect.gen(function* provesTransportParity() {
   // A wrong preshared key is rejected with PERMISSION_DENIED by every RPC through either transport.
   const wrongKey = { grpc: transports.wrongKeyGrpc, http: transports.wrongKeyHttp };
   const permissionDenied = failedWith(7);
+  expect(
+    yield* parity(
+      wrongKey,
+      (rpc) => rpc.readSchema(v1.ReadSchemaRequest.create({})),
+      ({ schemaText }) => schemaText,
+    ),
+  ).toStrictEqual(permissionDenied);
+  expect(
+    yield* parity(
+      wrongKey,
+      (rpc) => rpc.diffSchema(v1.DiffSchemaRequest.create({ comparisonSchema: ONTOS_SPICEDB_SCHEMA })),
+      ({ diffs }) => diffs.length,
+    ),
+  ).toStrictEqual(permissionDenied);
+
   expect(
     yield* parity(wrongKey, (rpc) => rpc.checkPermission(checkAccess(tenantId, memberId)), checkJson),
   ).toStrictEqual(permissionDenied);
