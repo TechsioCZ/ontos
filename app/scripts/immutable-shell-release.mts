@@ -23,6 +23,7 @@ import {
   deployImmutableAssets,
   hash,
   immutableAssetsWranglerConfig,
+  immutableProviderScriptPresence,
   deriveImmutableApplicationReleasePlan,
   materializeImmutablePublicAssets,
   readImmutablePublicReleaseFiles,
@@ -164,10 +165,14 @@ const verifyShellOutput = Effect.fn('ImmutableShellRelease.output')(function* sh
   return { assets, assetsDirectory, config, output };
 });
 
-const verifyRetainedShellAssetBytes = (plan: ImmutableApplicationReleasePlan, assets: readonly ReleaseFile[]) =>
+const verifyRetainedShellAssetBytes = (
+  plan: ImmutableApplicationReleasePlan,
+  assets: readonly ReleaseFile[],
+  mode: 'new-upload' | 'retained-release' = 'new-upload',
+) =>
   Effect.forEach(
     assets.filter((file) => !['_headers', '_redirects', '.assetsignore'].includes(file.path)),
-    (file) => verifyRetainedPublicAsset(plan, file),
+    (file) => verifyRetainedPublicAsset(plan, file, mode),
     { concurrency: 4, discard: true },
   );
 
@@ -192,13 +197,13 @@ export const deployImmutableShellRelease = Effect.fn('ImmutableShellRelease.depl
         Effect.mapError(() => fail('the Shell asset provider request failed or exceeded its timeout')),
       );
     const current = yield* execute(HttpClientRequest.get(providerUrl));
-    if (current.status !== 404) {
-      return yield* fail(
-        current.status === 200
-          ? 'an immutable Shell asset release already exists; it must never be overwritten'
-          : 'provider Shell release absence could not be established',
-      );
+    const presence = immutableProviderScriptPresence(current.status);
+    if (presence === 'unknown') {
+      return yield* fail('provider Shell release absence could not be established');
     }
+    // A failed-job rerun may find the complete Shell asset release its earlier attempt uploaded. Never
+    // overwrite it: reuse it only after the exact byte and single-version deployment readback below.
+    const reuseExisting = presence === 'present';
     const retainedAssets = yield* materializeImmutablePublicAssets(compiledAssets, output);
     yield* fileSystem.writeFileString(path.join(retainedAssets, '_headers'), IMMUTABLE_HEADERS);
     const assets = yield* readReleaseFiles(retainedAssets);
@@ -216,8 +221,17 @@ export const deployImmutableShellRelease = Effect.fn('ImmutableShellRelease.depl
     );
     yield* requirePlannedSourceRevision(input.appDirectory, input.plan, SOURCE_MISMATCH);
     yield* readVerifiedReleaseFiles(output, input.plan, [retainedAssets, configFile], SHELL_RELEASE_ENVELOPE_KIND);
-    yield* deployImmutableAssets({ accountId, appDirectory: input.appDirectory, configFile, plan: input.plan, token });
-    yield* verifyRetainedShellAssetBytes(input.plan, assets);
+    // Only the upload can fail transiently, so a reused release never enters the retry's half-release removal.
+    if (!reuseExisting) {
+      yield* deployImmutableAssets({
+        accountId,
+        appDirectory: input.appDirectory,
+        configFile,
+        plan: input.plan,
+        token,
+      });
+    }
+    yield* verifyRetainedShellAssetBytes(input.plan, assets, reuseExisting ? 'retained-release' : 'new-upload');
     const assetsVersionId = yield* readRetainedImmutableWorkerVersion(accountId, token, input.plan.assetsScriptName);
     return { artifacts, assetsVersionId, plan: input.plan } satisfies ImmutableShellArtifactReceipt;
   },

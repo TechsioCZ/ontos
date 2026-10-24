@@ -78,6 +78,12 @@ const ACCOUNT_SUBDOMAIN_URL = `https://api.cloudflare.com/client/v4/accounts/${'
 const KV_URL = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/storage/kv/namespaces/${'b'.repeat(32)}/values/active`;
 const RETAINED_HEADERS =
   '/*\n  Access-Control-Allow-Origin: *\n  Cache-Control: public, max-age=31536000, immutable\n  X-Content-Type-Options: nosniff\n  X-Robots-Tag: noindex, nofollow\n';
+/** The headers a ready immutable asset is served with. */
+const IMMUTABLE_ASSET_HEADERS = {
+  'access-control-allow-origin': '*',
+  'cache-control': 'public, max-age=31536000, immutable',
+  'x-content-type-options': 'nosniff',
+} as const;
 const text = (value: string) => new TextEncoder().encode(value);
 const json = (value: Schema.Json) => text(JSON.stringify(value));
 const file = (path: string, bytes = text('retained Shell bytes')) => ({
@@ -779,11 +785,7 @@ for (const secretResponse of [
             Match.orElse(() => text('release asset is still propagating')),
           );
           const initialAssetResponse = new Response(initialAssetBytes, {
-            headers: {
-              'access-control-allow-origin': '*',
-              'cache-control': 'public, max-age=31536000, immutable',
-              'x-content-type-options': 'nosniff',
-            },
+            headers: IMMUTABLE_ASSET_HEADERS,
             status: corruptedAssetFirst ? 200 : 404,
           });
           if (corruptedAssetFirst) {
@@ -848,11 +850,7 @@ for (const secretResponse of [
                 Match.defined,
                 (retainedAsset) =>
                   new Response(retainedAsset.bytes, {
-                    headers: {
-                      'access-control-allow-origin': '*',
-                      'cache-control': 'public, max-age=31536000, immutable',
-                      'x-content-type-options': 'nosniff',
-                    },
+                    headers: IMMUTABLE_ASSET_HEADERS,
                   }),
               ),
               Match.orElse(() =>
@@ -1019,35 +1017,107 @@ for (const secretResponse of [
   );
 }
 
-it.effect('refuses an existing retained Shell asset identity before executing deployment commands', () =>
-  Effect.scoped(
-    Effect.gen(function* existingShellAssetIdentity() {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-shell-release-existing-' });
-      const appDirectory = nodePath.join(workspaceRoot, 'apps', APP_ID);
-      const plan = yield* planFor();
-      yield* writeNativeShellOutput(appDirectory, plan, [], false);
-      const commands: OpsCommand[] = [];
-      const requests: string[] = [];
-      const events: string[] = [];
-      const client = HttpClient.make((request, destination) => {
-        requests.push(destination.href);
-        return Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            destination.href === ACCOUNT_SUBDOMAIN_URL
-              ? Response.json({ result: { subdomain: WORKERS_DEV_SUBDOMAIN }, success: true })
-              : new Response(null, { status: 200 }),
+/** A provider that already retains this Shell asset release, answering its assets-only lookup with `presenceStatus`. */
+const retainedShellProvider = Effect.fn('test.retainedShellProvider')(function* retainedShellProviderEffect(input: {
+  readonly corruptAssetPath?: string;
+  readonly presenceStatus: number;
+}) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-shell-release-existing-' });
+  const appDirectory = nodePath.join(workspaceRoot, 'apps', APP_ID);
+  const plan = yield* planFor();
+  yield* writeNativeShellOutput(appDirectory, plan, [], false);
+  const providerUrl = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.assetsScriptName}`;
+  const commands: OpsCommand[] = [];
+  const requests: { readonly method: string; readonly url: string }[] = [];
+  const events: string[] = [];
+  const client = HttpClient.make((request, destination) => {
+    requests.push({ method: request.method, url: destination.href });
+    const asset = inventoryFor(plan).assets.find(
+      ({ path }) =>
+        `${plan.assetsOrigin}${path}` === `${destination.origin}${decodeURIComponent(destination.pathname)}`,
+    );
+    const response = Match.value(destination.href).pipe(
+      Match.when(ACCOUNT_SUBDOMAIN_URL, () =>
+        Response.json({ result: { subdomain: WORKERS_DEV_SUBDOMAIN }, success: true }),
+      ),
+      Match.when(providerUrl, () => new Response(null, { status: input.presenceStatus })),
+      Match.when(`${providerUrl}/deployments`, () =>
+        Response.json({
+          result: { deployments: [{ versions: [{ percentage: 100, version_id: PROVIDER_VERSION }] }] },
+          success: true,
+        }),
+      ),
+      Match.when(
+        () => asset !== undefined,
+        () =>
+          new Response(
+            asset?.path === input.corruptAssetPath
+              ? text('x'.repeat(asset?.bytes.byteLength ?? 0))
+              : new Uint8Array(asset?.bytes ?? []),
+            {
+              headers: IMMUTABLE_ASSET_HEADERS,
+            },
           ),
-        );
-      });
-      const failure = yield* deployImmutableShellRelease({ appDirectory, plan }).pipe(
-        Effect.provide(deploymentLayer(appDirectory, client, commands, events)),
-        Effect.flip,
-      );
-      expect(failure.message).toBe('an immutable Shell asset release already exists; it must never be overwritten');
-      expect(commands).toEqual([]);
-      expect(requests).toHaveLength(2);
+      ),
+      Match.orElse(() => new Response(null, { status: 404 })),
+    );
+    return Effect.succeed(HttpClientResponse.fromWeb(request, response));
+  });
+  return {
+    commands,
+    deploy: deployImmutableShellRelease({ appDirectory, plan }).pipe(
+      Effect.provide(deploymentLayer(appDirectory, client, commands, events)),
+    ),
+    plan,
+    requests,
+  };
+});
+
+for (const presenceStatus of [204, 200]) {
+  it.effect(
+    `reuses an exact byte-identical retained Shell asset release without uploading or deleting it (HTTP ${String(presenceStatus)})`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* reusesRetainedShellRelease() {
+          const provider = yield* retainedShellProvider({ presenceStatus });
+          const receipt = yield* provider.deploy;
+          expect(receipt.plan).toEqual(provider.plan);
+          expect(receipt.assetsVersionId).toBe(PROVIDER_VERSION);
+          expect(receipt.artifacts.runtimeContract.url).toBe(`${provider.plan.assetsOrigin}${CONTRACT_PATH}`);
+          expect(receipt.artifacts.federationManifest.url).toBe(`${provider.plan.assetsOrigin}${MANIFEST_PATH}`);
+          expect(provider.commands).toEqual([]);
+          expect(provider.requests.filter(({ method }) => method !== 'GET')).toEqual([]);
+          for (const asset of inventoryFor(provider.plan).assets) {
+            expect(provider.requests.map(({ url }) => url)).toContain(`${provider.plan.assetsOrigin}${asset.path}`);
+          }
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.effect('refuses a retained Shell asset release whose served bytes differ without uploading or deleting it', () =>
+  Effect.scoped(
+    Effect.gen(function* refusesCorruptedRetainedShellRelease() {
+      const provider = yield* retainedShellProvider({ corruptAssetPath: 'main.js', presenceStatus: 204 });
+      const failure = yield* provider.deploy.pipe(Effect.flip);
+      expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+      expect(failure.message).toBe('immutable release asset readback failed or exceeded its timeout');
+      expect(failure.cause).toMatchObject({ message: 'the retained immutable public asset does not match this build' });
+      expect(provider.commands).toEqual([]);
+      expect(provider.requests.filter(({ method }) => method !== 'GET')).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('refuses an unknown Shell provider answer before executing deployment commands', () =>
+  Effect.scoped(
+    Effect.gen(function* unknownShellProviderAnswer() {
+      const provider = yield* retainedShellProvider({ presenceStatus: 403 });
+      const failure = yield* provider.deploy.pipe(Effect.flip);
+      expect(failure.message).toBe('provider Shell release absence could not be established');
+      expect(provider.commands).toEqual([]);
+      expect(provider.requests).toHaveLength(2);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

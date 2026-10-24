@@ -938,7 +938,10 @@ const releaseLockDatabase = (timeline: string[]) =>
     ).pipe(Effect.map((executor) => ({ executor }))),
   );
 
-const refusesExistingProviderRelease = (existingBackend: boolean) =>
+const refusesExistingProviderRelease = (
+  statuses: { readonly assets: number; readonly backend: number },
+  expectedMessage: string,
+) =>
   Effect.scoped(
     Effect.gen(function* existingProviderRelease() {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -985,8 +988,9 @@ const refusesExistingProviderRelease = (existingBackend: boolean) =>
             ),
           );
         }
-        const existing = existingBackend ? plan.backendScriptName : plan.assetsScriptName;
-        const status = destination.pathname.endsWith(`/workers/scripts/${existing}`) ? 200 : 404;
+        const status = destination.pathname.endsWith(`/workers/scripts/${plan.backendScriptName}`)
+          ? statuses.backend
+          : statuses.assets;
         requests.push({ method: request.method, url: destination.href });
         return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status })));
       });
@@ -1019,9 +1023,9 @@ const refusesExistingProviderRelease = (existingBackend: boolean) =>
       }).pipe(Effect.provide(refusalLayer), Effect.flip);
 
       expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
-      expect(failure.message).toBe('an immutable release identity already exists; publication must never overwrite it');
+      expect(failure.message).toBe(expectedMessage);
       expect(commands).toEqual([]);
-      // Both identities' absence checks run side by side and only read; either existing one refuses.
+      // Both identities' presence checks run side by side and only read; a half release or an unknown answer refuses.
       expect(requests.map(({ method }) => method)).toEqual(['GET', 'GET', 'GET']);
       expect(requests[0]?.url).toBe(
         `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/subdomain`,
@@ -1046,12 +1050,18 @@ const refusesExistingProviderRelease = (existingBackend: boolean) =>
     }),
   ).pipe(Effect.provide(NodeServices.layer));
 
+const EXISTING_IDENTITY = 'an immutable release identity already exists; publication must never overwrite it';
+
 it.effect('refuses an existing backend identity before commands, secret writes, or generated deployment config', () =>
-  refusesExistingProviderRelease(true),
+  refusesExistingProviderRelease({ assets: 404, backend: 200 }, EXISTING_IDENTITY),
 );
 
 it.effect('refuses an existing assets identity before commands, secret writes, or generated deployment config', () =>
-  refusesExistingProviderRelease(false),
+  refusesExistingProviderRelease({ assets: 204, backend: 404 }, EXISTING_IDENTITY),
+);
+
+it.effect('refuses an unknown provider answer even when the other identity is present', () =>
+  refusesExistingProviderRelease({ assets: 403, backend: 200 }, 'provider release absence could not be established'),
 );
 
 const SECRETS_FILE_ARGUMENT = '--secrets-file';
@@ -1121,6 +1131,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     };
     readonly assetHeaders?: Readonly<Record<string, string>>;
     readonly assetsDeploymentVersions?: readonly { readonly percentage: number; readonly version_id: string }[];
+    readonly assetsPresenceStatus?: 200 | 204;
     readonly assetsSubdomainAcknowledgement?: {
       readonly enabled: boolean;
       readonly previews_enabled: boolean;
@@ -1371,7 +1382,11 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
       ),
       Match.orElse(() =>
         Effect.sync(() => {
-          const status = options.existingRelease !== true && absentChecks < 2 ? 404 : 200;
+          // The provider answers an assets-only Worker lookup with 204 and a Worker with code with 200.
+          const presentStatus = destination.pathname.endsWith(`/workers/scripts/${plan.assetsScriptName}`)
+            ? (options.assetsPresenceStatus ?? 204)
+            : 200;
+          const status = options.existingRelease !== true && absentChecks < 2 ? 404 : presentStatus;
           absentChecks += 1;
           return new Response(null, { status });
         }),
@@ -1659,25 +1674,33 @@ it.effect('uploads a release under its own identity lock, never the environment-
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect('reuses an exact complete retained release without uploading, writing secrets, or deleting identities', () =>
-  Effect.scoped(
-    Effect.gen(function* reusesRetainedRelease() {
-      const deployment = yield* prepareDeployment({
-        existingRelease: true,
-        ownerSecrets: { PRIVATE_KEY: 'test-only' },
-      });
-      const receipt = yield* deployment.deploy;
-      expect(receipt.backend.workerName).toBe(deployment.plan.backendScriptName);
-      expect(receipt.backend.versionId).toBe(BACKEND_VERSION_ID);
-      expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
-      expect(deployment.commands).toHaveLength(1);
-      expect(deployment.commands[0]?.args).toContain('--dry-run');
-      expect(deployment.commands[0]?.classifyTransientProviderFailure).toBe(false);
-      expect(deployment.capturedSecrets).toEqual([]);
-      expect(deployment.providerWrites).toEqual([]);
-    }),
-  ).pipe(Effect.provide(NodeServices.layer)),
-);
+for (const assetsPresenceStatus of [204, 200] as const) {
+  it.effect(
+    `reuses an exact complete retained release without uploading, writing secrets, or deleting identities (assets HTTP ${String(assetsPresenceStatus)})`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* reusesRetainedRelease() {
+          const deployment = yield* prepareDeployment({
+            assetsPresenceStatus,
+            existingRelease: true,
+            ownerSecrets: { PRIVATE_KEY: 'test-only' },
+          });
+          const receipt = yield* deployment.deploy;
+          expect(receipt.backend.workerName).toBe(deployment.plan.backendScriptName);
+          expect(receipt.backend.versionId).toBe(BACKEND_VERSION_ID);
+          expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
+          expect(deployment.requests).toContain(
+            `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${deployment.plan.assetsScriptName}`,
+          );
+          expect(deployment.commands).toHaveLength(1);
+          expect(deployment.commands[0]?.args).toContain('--dry-run');
+          expect(deployment.commands[0]?.classifyTransientProviderFailure).toBe(false);
+          expect(deployment.capturedSecrets).toEqual([]);
+          expect(deployment.providerWrites).toEqual([]);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
 
 it.effect('rejects retained content, entrypoint, and deployment mismatches without modifying previous identities', () =>
   Effect.scoped(

@@ -173,6 +173,17 @@ const providerScriptUrl = (accountId: string, scriptName: string) =>
   `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${scriptName}`;
 
 /**
+ * Classifies one provider Worker script lookup. The provider answers 200 for a Worker with its own code and
+ * 204 for an assets-only Worker; only 404 establishes absence. Every other answer establishes neither.
+ */
+export const immutableProviderScriptPresence = (status: number): 'absent' | 'present' | 'unknown' => {
+  if (status === 200 || status === 204) {
+    return 'present';
+  }
+  return status === 404 ? 'absent' : 'unknown';
+};
+
+/**
  * Removes what a transiently failed attempt may have created under its release identities. The attempt held
  * the identity lock and found every identity absent before it uploaded, so anything present now is its own
  * unpublished half release. Deletion is never forced: a release something already references stays, and the
@@ -1301,22 +1312,20 @@ const uploadImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease
     // holding the process open until the provider closes it (about a minute).
     const statusOnly = (request: HttpClientRequest.HttpClientRequest) =>
       execute(request).pipe(Effect.tap((response) => Effect.ignore(response.arrayBuffer)));
-    const absence = yield* Effect.forEach(
+    const presence = (yield* Effect.forEach(
       [backendScript, `/workers/scripts/${plan.assetsScriptName}`],
       (suffix) => statusOnly(HttpClientRequest.get(apiUrl(suffix))),
       { concurrency: 'unbounded' },
-    );
+    )).map((current) => immutableProviderScriptPresence(current.status));
+    if (presence.includes('unknown')) {
+      return yield* fail('provider release absence could not be established');
+    }
     // A failed-job rerun may find the complete release uploaded by its earlier attempt. Never
     // overwrite either identity: reuse only after the same full package and asset readback below.
-    const reuseExisting = absence.every((current) => current.status === 200);
-    for (const current of absence) {
-      if (!reuseExisting && current.status !== 404) {
-        return yield* fail(
-          current.status === 200
-            ? 'an immutable release identity already exists; publication must never overwrite it'
-            : 'provider release absence could not be established',
-        );
-      }
+    // A half release (exactly one identity present) is never reused.
+    const reuseExisting = presence.every((current) => current === 'present');
+    if (!reuseExisting && presence.includes('present')) {
+      return yield* fail('an immutable release identity already exists; publication must never overwrite it');
     }
     yield* markPhase('provider account and absence');
     const deployedAssetsDirectory = yield* materializeImmutablePublicAssets(compiledAssets);
