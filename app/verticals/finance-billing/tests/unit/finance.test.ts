@@ -18,7 +18,12 @@ import type { FinanceValidators } from '../../src/services/persistence.service.t
 const tenantId = 'a0000000-0000-4000-8000-000000000001';
 const legalEntityId = 'a0000000-0000-4000-8000-000000000002';
 const now = DateTime.makeUnsafe('2026-10-06T12:00:00Z');
-const capabilityScope = { correlationId: 'finance-read-capability', principalId: 'finance-actor' };
+const capabilityScope = {
+  correlationId: 'finance-read-capability',
+  legalEntityId,
+  principalId: 'finance-actor',
+  tenantId,
+};
 const input = { attemptId: 'attempt-retry', now, resourceId: 'invoice-new' };
 const scope = { legalEntityId, tenantId };
 const ref = {
@@ -335,7 +340,7 @@ it.layer(
           ...capabilityScope,
           authMethod: 'oauth_connection',
           connection: connection({ ...base, modules: 'all', writePolicy: 'read_only' }),
-        } as Parameters<typeof financeWriteCapability>[0]),
+        }),
       ).toBe(false);
       expect(
         yield* financeWriteCapability({
@@ -346,7 +351,7 @@ it.layer(
             modules: [{ access: 'write', moduleId: 'finance.billing' }],
             writePolicy: 'direct',
           }),
-        } as Parameters<typeof financeWriteCapability>[0]),
+        }),
       ).toBe(true);
     }),
   );

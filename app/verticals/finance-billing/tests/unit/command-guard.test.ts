@@ -77,79 +77,81 @@ const profileActionGrants = (writePolicy: AgentGrantWritePolicy) =>
     writePolicy,
   }).filter((relationship) => relationship.resource?.objectType === 'action_grant');
 
-it.effect('executes an API-key principal through the real Action when native execute is allowed', () =>
-  Effect.gen(function* apiKeyCommand() {
-    const saved: FinanceState[] = [];
-    expect(profileActionGrants('direct').map(({ relation }) => relation)).toEqual(['role']);
-    const harness = yield* makeActionTestHarness({
-      actionPermission: 'allowed',
-      services: [
-        bindActionTestServices(applyCommandAction, {
-          load: () => Effect.succeed({ revision: 0, state: { financialPlanEntries: [], invoices: [] } }),
-          loadDocument: unused,
-          loadStateRow: unused,
-          save: (state, revision) =>
-            Effect.sync(() => {
-              saved.push(state);
-              return revision + 1;
-            }),
-          validators: { invoice: () => Effect.void },
-          writeDocument: () => Effect.void,
-        }),
-      ],
-    });
+it.layer(unusedProductionServices)('Finance command authorization', (suite) => {
+  suite.effect('executes an API-key principal through the real Action when native execute is allowed', () =>
+    Effect.gen(function* apiKeyCommand() {
+      const saved: FinanceState[] = [];
+      expect(profileActionGrants('direct').map(({ relation }) => relation)).toEqual(['role']);
+      const harness = yield* makeActionTestHarness({
+        actionPermission: 'allowed',
+        services: [
+          bindActionTestServices(applyCommandAction, {
+            load: () => Effect.succeed({ revision: 0, state: { financialPlanEntries: [], invoices: [] } }),
+            loadDocument: unused,
+            loadStateRow: unused,
+            save: (state, revision) =>
+              Effect.sync(() => {
+                saved.push(state);
+                return revision + 1;
+              }),
+            validators: { invoice: () => Effect.void },
+            writeDocument: () => Effect.void,
+          }),
+        ],
+      });
 
-    expect(yield* harness.runtime.runAction(request)).toMatchObject({
-      changed: true,
-      invoice: { businessState: 'DRAFT', documentNumber: 'NATIVE-EXECUTE-001', totalMinor: 420_000 },
-      revision: 1,
-    });
-    const snapshot = harness.snapshot();
-    expect(saved).toHaveLength(1);
-    expect(saved[0]?.invoices).toHaveLength(1);
-    expect(applyCommandAction.descriptor.entrypoint.authorization).toEqual({
-      kind: 'action_execution',
-      provisioning: 'explicit',
-    });
-    expect(snapshot.invocations[0]?.principalId).toBe(principal.principalId);
-    expect(snapshot.invocations[0]?.status).toBe('succeeded');
-    expect(snapshot.transactionCount).toBe(1);
-    expect(snapshot.committed).toHaveLength(1);
-    expect(snapshot.stages).toContain('handler_executed');
-  }).pipe(Effect.provide(unusedProductionServices)),
-);
+      expect(yield* harness.runtime.runAction(request)).toMatchObject({
+        changed: true,
+        invoice: { businessState: 'DRAFT', documentNumber: 'NATIVE-EXECUTE-001', totalMinor: 420_000 },
+        revision: 1,
+      });
+      const snapshot = harness.snapshot();
+      expect(saved).toHaveLength(1);
+      expect(saved[0]?.invoices).toHaveLength(1);
+      expect(applyCommandAction.descriptor.entrypoint.authorization).toEqual({
+        kind: 'action_execution',
+        provisioning: 'explicit',
+      });
+      expect(snapshot.invocations[0]?.principalId).toBe(principal.principalId);
+      expect(snapshot.invocations[0]?.status).toBe('succeeded');
+      expect(snapshot.transactionCount).toBe(1);
+      expect(snapshot.committed).toHaveLength(1);
+      expect(snapshot.stages).toContain('handler_executed');
+    }),
+  );
 
-for (const authMethod of ['api_key', 'session'] as const) {
-  it.effect(`native Action denial blocks an authenticated ${authMethod} principal before owner services`, () =>
-    Effect.gen(function* nativeDenial() {
+  for (const authMethod of ['api_key', 'session'] as const) {
+    suite.effect(`native Action denial blocks an authenticated ${authMethod} principal before owner services`, () =>
+      Effect.gen(function* nativeDenial() {
+        const harness = yield* makeActionTestHarness({ actionPermission: 'denied' });
+        const failure = yield* harness.runtime
+          .runAction({ ...request, principal: { ...principal, authMethod } })
+          .pipe(Effect.flip);
+        const snapshot = harness.snapshot();
+
+        expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
+        expect(snapshot.permissionDenials).toHaveLength(1);
+        expect(snapshot.invocations[0]?.status).toBe('rejected');
+        expect(snapshot.transactionCount).toBe(0);
+        expect(snapshot.committed).toHaveLength(0);
+        expect(snapshot.stages).not.toContain('handler_executed');
+      }),
+    );
+  }
+
+  suite.effect('a proposal-only approval profile cannot execute billing commands with an API key', () =>
+    Effect.gen(function* approvalProfile() {
+      // The actual profile materializer grants propose only, never execute. The harness scripts
+      // the native execute denial; this unit test does not evaluate the SpiceDB schema itself.
+      expect(profileActionGrants('approval').map(({ relation }) => relation)).toEqual(['proposer_role']);
       const harness = yield* makeActionTestHarness({ actionPermission: 'denied' });
-      const failure = yield* harness.runtime
-        .runAction({ ...request, principal: { ...principal, authMethod } })
-        .pipe(Effect.flip);
+      const failure = yield* harness.runtime.runAction(request).pipe(Effect.flip);
       const snapshot = harness.snapshot();
 
       expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
-      expect(snapshot.permissionDenials).toHaveLength(1);
-      expect(snapshot.invocations[0]?.status).toBe('rejected');
       expect(snapshot.transactionCount).toBe(0);
       expect(snapshot.committed).toHaveLength(0);
       expect(snapshot.stages).not.toContain('handler_executed');
-    }).pipe(Effect.provide(unusedProductionServices)),
+    }),
   );
-}
-
-it.effect('a proposal-only approval profile cannot execute billing commands with an API key', () =>
-  Effect.gen(function* approvalProfile() {
-    // The actual profile materializer grants propose only, never execute. The harness scripts
-    // the native execute denial; this unit test does not evaluate the SpiceDB schema itself.
-    expect(profileActionGrants('approval').map(({ relation }) => relation)).toEqual(['proposer_role']);
-    const harness = yield* makeActionTestHarness({ actionPermission: 'denied' });
-    const failure = yield* harness.runtime.runAction(request).pipe(Effect.flip);
-    const snapshot = harness.snapshot();
-
-    expect(Predicate.isTagged(failure, 'ActionPermissionDenied')).toBe(true);
-    expect(snapshot.transactionCount).toBe(0);
-    expect(snapshot.committed).toHaveLength(0);
-    expect(snapshot.stages).not.toContain('handler_executed');
-  }).pipe(Effect.provide(unusedProductionServices)),
-);
+});
