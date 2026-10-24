@@ -138,7 +138,7 @@ const MembershipFileSchema = Schema.Struct({
       tenantId: TenantIdSchema,
     }),
   ),
-  schemaVersion: Schema.Literal(1),
+  schemaVersion: Schema.Literal(2),
 });
 const MembershipStateSchema = Schema.Struct({
   affiliation: Schema.OptionFromNullOr(Schema.String),
