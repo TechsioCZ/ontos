@@ -354,6 +354,39 @@ const roleContextPermissions = (role: DemoRole, moduleId: DemoModuleId, access: 
   ];
 };
 
+/** Admin already opens company modules and executes their Actions; named Workforce permissions remain explicit. */
+export const companyAdministratorWorkforceRelationships = (
+  legalEntityId: string,
+  tenantId: string = demoTenantId,
+): readonly DemoRelationship[] => {
+  const roleId = toScopedRoleObjectId({ legalEntityId, roleKey: 'admin', tenantId });
+  const legal = toLegalEntityAccessObjectId(tenantId, legalEntityId) ?? '';
+  return (['read', 'write'] as const).flatMap((access) => {
+    const resourceId =
+      toContextPermissionAccessObjectId(tenantId, legalEntityId, {
+        moduleId: workforceModule,
+        permission: contextPermissionKey(workforceModule, access),
+      }) ?? '';
+    return [
+      {
+        relation: 'tenant',
+        resourceId,
+        resourceType: 'context_permission',
+        subjectId: tenantId,
+        subjectType: 'tenant',
+      },
+      {
+        relation: 'legal_entity',
+        resourceId,
+        resourceType: 'context_permission',
+        subjectId: legal,
+        subjectType: 'legal_entity',
+      },
+      roleRelationship('context_permission', resourceId, 'role_grantee', roleId),
+    ];
+  });
+};
+
 /** Every relationship one principal needs for its role. `actions` is the current discovered Action set. */
 export const principalRelationships = (
   principalId: string,
@@ -442,7 +475,10 @@ export const principalRelationships = (
   if (role.companyRole !== undefined) {
     const adminRole = toScopedRoleObjectId({ legalEntityId, roleKey: role.companyRole, tenantId });
     add('scoped_role', adminRole, 'member', 'principal', principalId);
-    result.push(roleRelationship('legal_entity', legal, 'admin', adminRole));
+    result.push(
+      roleRelationship('legal_entity', legal, 'admin', adminRole),
+      ...companyAdministratorWorkforceRelationships(legalEntityId, tenantId),
+    );
   }
   if (role.tenantRole !== undefined) {
     const adminRole = toScopedRoleObjectId({ roleKey: role.tenantRole, tenantId });

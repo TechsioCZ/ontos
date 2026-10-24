@@ -6,6 +6,7 @@ import {
   ServiceGrantError,
   assertServiceMembershipsCompatible,
   desiredServiceGrants,
+  desiredCompanyAdministratorWorkforceGrants,
   reconcileServiceGrants,
   serviceGrantMemberships,
   stageServicePrincipals,
@@ -173,6 +174,22 @@ it.effect(
       expect(conditional.writes).toHaveLength(0);
     }),
 );
+
+it('reconciles Workforce company-admin policy without changing any principal or role membership', () => {
+  const grants = desiredCompanyAdministratorWorkforceGrants();
+  expect(grants).toHaveLength(30);
+  expect(grants.every((row) => row.resource?.objectType === 'context_permission')).toBe(true);
+  expect(
+    grants.filter((row) => row.resource?.objectType === 'context_permission' && row.relation === 'role_grantee'),
+  ).toHaveLength(10);
+  expect(
+    grants.some((row) => row.subject?.object?.objectType === 'principal' || row.resource?.objectType === 'scoped_role'),
+  ).toBe(false);
+  expect(
+    grants.some((row) => row.resource?.objectType === 'tenant' || row.resource?.objectType === 'legal_entity'),
+  ).toBe(false);
+  expect(new Set(grants.map((row) => v1.Relationship.toJsonString(row))).size).toBe(grants.length);
+});
 
 it('preserves scoped-role member usersets for service modules and exact Action grants', () => {
   const capabilities = desired.filter((row) => row.subject?.object?.objectType === 'scoped_role');

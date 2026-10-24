@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Stage-only canonical permission schema, additive grants and isolated verification provisioning. */
+/** Stage-only canonical schema, additive service/admin role policy and isolated verification provisioning. */
 import { reconcileStageServicePrincipals } from '@app/core-runtime/install/stage-context-bootstrap';
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
@@ -29,7 +29,9 @@ import {
   akrosStorefrontPrincipal,
   eshopDemoRoles,
   principalRelationships,
+  companyAdministratorWorkforceRelationships,
 } from './permissions.mts';
+import { administrators } from './accounts-admin-grants.mts';
 import { akrosDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
 
 import type { DemoAction } from './permissions.mts';
@@ -239,6 +241,21 @@ export const desiredServiceGrants = (actions: readonly DemoAction[]): readonly v
   ];
 };
 
+/** Reconcile only role policy: absent or revoked human memberships must stay absent. */
+export const desiredCompanyAdministratorWorkforceGrants = (): readonly v1.Relationship[] =>
+  [...new Set(administrators.map(({ legalEntityId }) => legalEntityId))].flatMap((legalEntityId) =>
+    companyAdministratorWorkforceRelationships(legalEntityId).map((item) =>
+      relationshipFrom(
+        item.resourceType,
+        item.resourceId,
+        item.relation,
+        item.subjectType,
+        item.subjectId,
+        item.subjectRelation,
+      ),
+    ),
+  );
+
 export const reconcileServiceGrants = Effect.fn('Stage.reconcileServiceGrants')(function* reconcileServiceGrantsEffect(
   rpc: ServiceGrantRpc,
   desired: readonly v1.Relationship[],
@@ -401,7 +418,7 @@ const command = Command.make(
         );
         const desired = yield* Effect.try({
           catch: () => new ServiceGrantError({ reason: 'Published scoped service policy is invalid' }),
-          try: () => desiredServiceGrants(actions),
+          try: () => [...desiredServiceGrants(actions), ...desiredCompanyAdministratorWorkforceGrants()],
         });
         return yield* reconcileServiceGrants(rpc, [...desired, ...verificationGrants], mode);
       }),

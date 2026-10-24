@@ -27,6 +27,7 @@ import {
   crmPersonaPrincipalIds,
   demoHumanAccounts,
   demoPermissionRelationships,
+  companyAdministratorWorkforceRelationships,
   demoCompanyMemberships,
   demoPrincipalRoleKey,
   principalRelationships,
@@ -56,6 +57,7 @@ import {
 } from '../demo/commerce-portal.mts';
 
 const operationsModule = 'facility.operations';
+const workforceModule = 'demo.workforce';
 
 const identityModule = 'core.identity';
 const partyModule = 'party.registry';
@@ -170,7 +172,7 @@ it('separates commercial stock, rental property, and warehouse membership throug
   expect(hasModule(administrator.principalId, demoLegalEntityId, portfolioModule)).toBe(false);
   expect(hasModule(administrator.principalId, rentalDemoLegalEntityId, merchandiseModule)).toBe(false);
   expect(hasModule(administrator.principalId, rentalDemoLegalEntityId, portfolioModule)).toBe(true);
-  expect(hasModule(salesRep.principalId, rentalDemoLegalEntityId, 'demo.workforce')).toBe(true);
+  expect(hasModule(salesRep.principalId, rentalDemoLegalEntityId, workforceModule)).toBe(true);
   expect(hasModule(accountant.principalId, rentalDemoLegalEntityId, billingModule)).toBe(true);
   expect(
     relationships.some(
@@ -226,11 +228,80 @@ it('assigns one explicit tenant superadmin and keeps named company administrator
   expect(new Set(relationships.map((row) => JSON.stringify(row))).size).toBe(relationships.length);
 });
 
-it('repairs administrators as scoped roles without global Action grants or workforce reachability grants', () => {
+it('repairs administrators as scoped roles without global Action grants or direct principal capabilities', () => {
   const rows = administratorRelationships();
   expect(rows.some((row) => row.resourceType === 'action' || row.relation === 'identity_admin')).toBe(false);
   expect(rows.filter((row) => row.relation === 'admin')).toHaveLength(5);
   expect(rows.filter((row) => row.relation === 'superadmin')).toHaveLength(1);
+});
+
+it('gives company administrators Workforce writes through their exact admin role in every seeded company', () => {
+  for (const legalEntityId of [
+    demoLegalEntityId,
+    rentalDemoLegalEntityId,
+    crmDemoLegalEntityId,
+    eshopDemoLegalEntityId,
+    akrosDemoLegalEntityId,
+  ]) {
+    const adminRole = toScopedRoleObjectId({ legalEntityId, roleKey: 'admin', tenantId: demoTenantId });
+    const policy = companyAdministratorWorkforceRelationships(legalEntityId);
+    expect(policy.length).toBeGreaterThan(0);
+    for (const row of policy) {
+      expect(relationships).toContainEqual(row);
+    }
+    expect(policy).toContainEqual({
+      relation: 'role_grantee',
+      resourceId: toContextPermissionAccessObjectId(demoTenantId, legalEntityId, {
+        moduleId: workforceModule,
+        permission: 'demo.workforce.write_all',
+      }),
+      resourceType: 'context_permission',
+      subjectId: adminRole,
+      subjectRelation: 'member',
+      subjectType: 'scoped_role',
+    });
+    // Policy-only reconciliation cannot grant a role to a zero-role member or resurrect a removed membership.
+    expect(policy.some((row) => row.subjectType === 'principal' || row.resourceType === 'scoped_role')).toBe(false);
+    expect(
+      policy
+        .filter((row) => row.subjectType === 'scoped_role')
+        .every((row) => row.subjectId === adminRole && row.subjectRelation === 'member'),
+    ).toBe(true);
+    const otherCompany = legalEntityId === demoLegalEntityId ? rentalDemoLegalEntityId : demoLegalEntityId;
+    expect(
+      policy.some(
+        (row) =>
+          row.subjectId ===
+          toScopedRoleObjectId({ legalEntityId: otherCompany, roleKey: 'admin', tenantId: demoTenantId }),
+      ),
+    ).toBe(false);
+  }
+});
+
+it('does not promote rental operators, salespeople or membership-only principals to Workforce writers', () => {
+  for (const principalId of [
+    salesRep.principalId,
+    ...siamparkRentalPersonas.slice(1).map((persona) => persona.principalId),
+  ]) {
+    expect(hasPermission(principalId, rentalDemoLegalEntityId, workforceModule, 'demo.workforce.write_all')).toBe(
+      false,
+    );
+    const adminRole = toScopedRoleObjectId({
+      legalEntityId: rentalDemoLegalEntityId,
+      roleKey: 'admin',
+      tenantId: demoTenantId,
+    });
+    expect(
+      relationships.some(
+        (row) => row.resourceType === 'scoped_role' && row.resourceId === adminRole && row.subjectId === principalId,
+      ),
+    ).toBe(false);
+  }
+  expect(
+    relationships
+      .filter((row) => row.subjectType === 'principal')
+      .every((row) => ['member', 'company_member'].includes(row.relation)),
+  ).toBe(true);
 });
 
 it('keeps CRM and e-shop personas inside their own company with role-specific CRM visibility', () => {
@@ -608,7 +679,7 @@ it.effect('refuses release bundles without usable owner workload metadata rather
 it('restores only seven reviewed human executors in two separately scoped named add-ons', () => {
   const operational = [
     actionDescriptor('crm.activities.apply-command', 'crm.activities'),
-    actionDescriptor('demo.workforce.apply-command', 'demo.workforce'),
+    actionDescriptor('demo.workforce.apply-command', workforceModule),
     actionDescriptor('demo.merchandise.apply-command', merchandiseModule),
     actionDescriptor('demo.sales-insights.apply-command', 'demo.sales-insights'),
     actionDescriptor('finance.billing.apply-command', billingModule),
