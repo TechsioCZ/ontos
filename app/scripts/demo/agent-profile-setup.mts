@@ -53,16 +53,18 @@ export type AgentProfileSetupInput = typeof AgentProfileSetupInputSchema.Type;
 export const ReviewedAgentProfilesSchema = Schema.Struct({
   profiles: Schema.Array(
     Schema.Struct({
+      description: ConfigureAgentPayloadSchema.fields.description,
       legalEntityId: IdentifierSchema,
       modules: ConfigureAgentPayloadSchema.fields.modules,
+      ownerPrincipalId: ConfigureAgentPayloadSchema.fields.ownerPrincipalId,
       principalId: IdentifierSchema,
       tenantId: IdentifierSchema,
       writePolicy: ConfigureAgentPayloadSchema.fields.writePolicy,
     }),
-  ).check(Schema.isLengthBetween(6, 6)),
-  schemaVersion: Schema.Literal(1),
+  ).check(Schema.isLengthBetween(9, 9)),
+  schemaVersion: Schema.Literal(2),
 });
-export const REVIEWED_AGENT_PROFILES_SHA256 = '5f19f2feb50a11a1f002fbf1841f7638694f51d7b4572de7a15bd6c2f64b7790';
+export const REVIEWED_AGENT_PROFILES_SHA256 = 'c0a7f70f85f40edea325b3eba1cbeafa6816cfc71899cb7fd4ec8e4d7c168504';
 export const AgentProfileSetupModeSchema = Schema.Literals(['dry-run', 'apply', 'verify']);
 export type AgentProfileSetupMode = typeof AgentProfileSetupModeSchema.Type;
 
@@ -71,7 +73,7 @@ export const readReviewedAgentProfiles = Effect.fn('AgentProfileSetup.readReview
   expectedSha256: string,
 ) {
   if (expectedSha256 !== REVIEWED_AGENT_PROFILES_SHA256) {
-    return yield* fail('The supplied fingerprint is not the approved six-row input fingerprint');
+    return yield* fail('The supplied fingerprint is not the approved nine-row input fingerprint');
   }
   const fs = yield* FileSystem.FileSystem;
   const bytes = yield* fs.readFile(path);
@@ -83,7 +85,7 @@ export const readReviewedAgentProfiles = Effect.fn('AgentProfileSetup.readReview
     onExcessProperty: 'error',
   })(Buffer.from(bytes).toString('utf-8'));
   const identities = document.profiles.map((row) => `${row.tenantId}:${row.legalEntityId}:${row.principalId}`);
-  if (new Set(identities).size !== 6) {
+  if (new Set(identities).size !== 9) {
     return yield* fail('Reviewed agent-profile input contains duplicate scope/principal rows');
   }
   return document;
@@ -114,6 +116,21 @@ const readProfile = Effect.fn('AgentProfileSetup.readProfile')(function* readPro
     ? undefined
     : yield* Schema.decodeUnknownEffect(ConfigureAgentAuditEvidenceSchema)(row.evidence);
 });
+const profileMatches = (
+  profile: typeof ConfigureAgentAuditEvidenceSchema.Type | undefined,
+  input: AgentProfileSetupInput,
+) =>
+  profile !== undefined &&
+  profile.description === input.description &&
+  profile.displayName === input.displayName &&
+  profile.ownerPrincipalId === input.ownerPrincipalId &&
+  profile.writePolicy === input.writePolicy &&
+  profile.modules.length === input.modules.length &&
+  profile.modules.every(
+    (module, index) =>
+      module.access === input.modules[index]?.access && module.moduleId === input.modules[index]?.moduleId,
+  );
+
 /** Turns reviewed data into configure-only payloads, preserving names/description/owners rather than inventing them. */
 export const reviewedProfileInputs = Effect.fn('AgentProfileSetup.reviewedInputs')(function* reviewedInputs(
   document: typeof ReviewedAgentProfilesSchema.Type,
@@ -121,7 +138,7 @@ export const reviewedProfileInputs = Effect.fn('AgentProfileSetup.reviewedInputs
   const { executor } = yield* AgentProfileReadDatabase;
   return yield* Effect.forEach(
     document.profiles,
-    Effect.fnUntraced(function* input(row) {
+    Effect.fnUntraced(function* reviewedInput(row) {
       const [principal] = yield* executor
         .select({ displayName: principals.displayName })
         .from(principals)
@@ -137,13 +154,17 @@ export const reviewedProfileInputs = Effect.fn('AgentProfileSetup.reviewedInputs
         return yield* fail(`Reviewed agent ${row.principalId} does not exist in the exact tenant`);
       }
       const current = yield* readProfile(row);
-      return {
+      const input = {
         ...row,
-        description: current?.description ?? null,
         displayName: principal.displayName,
         operation: configureOperation,
-        ownerPrincipalId: current?.ownerPrincipalId ?? null,
       };
+      if (current !== undefined && !profileMatches(current, input)) {
+        return yield* fail(
+          'A current native profile differs from the reviewed input; do not overwrite administrator evidence',
+        );
+      }
+      return input;
     }),
     { concurrency: 1 },
   );
@@ -172,21 +193,6 @@ export const explicitProfileInputs = Effect.fn('AgentProfileSetup.explicitInputs
     { concurrency: 1 },
   );
 });
-
-const profileMatches = (
-  profile: typeof ConfigureAgentAuditEvidenceSchema.Type | undefined,
-  input: AgentProfileSetupInput,
-) =>
-  profile !== undefined &&
-  profile.description === input.description &&
-  profile.displayName === input.displayName &&
-  profile.ownerPrincipalId === input.ownerPrincipalId &&
-  profile.writePolicy === input.writePolicy &&
-  profile.modules.length === input.modules.length &&
-  profile.modules.every(
-    (module, index) =>
-      module.access === input.modules[index]?.access && module.moduleId === input.modules[index]?.moduleId,
-  );
 
 /** All writes are the native audited Action, followed by the native scoped-policy materializer. */
 export const runAgentProfileSetup = Effect.fn('AgentProfileSetup.run')(function* runAgentProfileSetup(

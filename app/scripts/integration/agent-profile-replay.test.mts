@@ -88,6 +88,7 @@ import { AuthDatabase, makeAuthDatabase } from '../../apps/shell-super-app/api/a
 import { apikey, user } from '../../apps/shell-super-app/api/auth/db/schema.ts';
 import { makeApiKeyService } from '../../apps/shell-super-app/api/auth/api-key-service.ts';
 import { makeIdentityLifecycleService } from '../../apps/shell-super-app/api/auth/identity-lifecycle.ts';
+import { loadAgentProfiles } from '../../apps/shell-super-app/api/auth/agent-store.ts';
 import { AuthenticationService, makeAuthenticationService } from '../../apps/shell-super-app/api/auth/service.ts';
 import { makeInstalledModuleCatalogLayer } from '../../apps/shell-super-app/api/modules/installed-module-catalog.ts';
 import { runAgentOperatorSetup } from '../demo/setup-agent-operators.mts';
@@ -116,7 +117,7 @@ const relationship = (
   });
 
 it.live(
-  'fingerprints all six rows and replays native audited profiles/scoped grants with read-only modes and idempotence',
+  'fingerprints all nine rows and replays native audited profiles/scoped grants with read-only modes and idempotence',
   () =>
     Effect.gen(function* reviewedReplayProof() {
       const pair = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
@@ -138,7 +139,7 @@ it.live(
       );
       const [first] = document.profiles;
       if (first === undefined) {
-        return yield* Effect.die('Missing six-row approved input');
+        return yield* Effect.die('Missing nine-row approved input');
       }
       const { tenantId } = first;
       const companies = [...new Set(document.profiles.map((row) => row.legalEntityId))];
@@ -237,6 +238,31 @@ it.live(
         subjectType: 'user',
         tenantId,
       });
+      for (const profile of document.profiles) {
+        if (profile.ownerPrincipalId === null) {
+          continue;
+        }
+        yield* admin.executor
+          .insert(principals)
+          .values({
+            displayName: 'Reviewed responsible person',
+            kind: 'human',
+            principalId: profile.ownerPrincipalId,
+            status: 'active',
+            tenantId: profile.tenantId,
+          })
+          .onConflictDoNothing();
+        yield* admin.executor
+          .insert(principalCompanyMemberships)
+          .values({
+            affiliation: 'employee',
+            legalEntityId: profile.legalEntityId,
+            principalId: profile.ownerPrincipalId,
+            status: 'active',
+            tenantId: profile.tenantId,
+          })
+          .onConflictDoNothing();
+      }
       // Catalog personas are explicit test data, not authority: the graph stores their native role policies.
       const templateEmails = [
         'obchod@demo.ontos',
@@ -401,7 +427,7 @@ it.live(
             Effect.flip,
           ),
         ).toBeInstanceOf(AgentProfileSetupError);
-        // A bad final row must prevent the first five Actions, not leave a partially applied batch.
+        // A bad final row must prevent all earlier Actions, not leave a partially applied batch.
         const last = inputs.at(-1);
         if (last === undefined) {
           return yield* Effect.die('Missing final approved input');
@@ -425,15 +451,36 @@ it.live(
           'apply',
           REVIEWED_AGENT_PROFILES_SHA256,
         );
-        expect(applied.applied).toBe(6);
-        expect(yield* auditCount()).toBe(before + 6);
+        expect(applied.applied).toBe(9);
+        expect(yield* auditCount()).toBe(before + inputs.length);
+        const companyProfiles = yield* Effect.forEach(
+          companies,
+          (legalEntityId) =>
+            loadAgentProfiles(
+              tenantId,
+              legalEntityId,
+              inputs.filter((input) => input.legalEntityId === legalEntityId).map((input) => input.principalId),
+            ).pipe(Effect.provideService(AuthDatabase, authDatabase)),
+          { concurrency: 1 },
+        );
+        const visibleProfiles = new Map(companyProfiles.flatMap((profiles) => [...profiles]));
+        expect([...visibleProfiles.values()].filter((profile) => profile.hasProfile)).toHaveLength(9);
+        for (const input of inputs) {
+          expect(visibleProfiles.get(input.principalId)).toEqual({
+            description: input.description,
+            hasProfile: true,
+            modules: input.modules,
+            ownerPrincipalId: input.ownerPrincipalId,
+            writePolicy: input.writePolicy,
+          });
+        }
         expect(
           (yield* runAgentProfileSetup(operator.principal, inputs, 'verify', REVIEWED_AGENT_PROFILES_SHA256)).verified,
         ).toBe(true);
         expect(
           (yield* runAgentProfileSetup(operator.principal, inputs, 'apply', REVIEWED_AGENT_PROFILES_SHA256)).applied,
         ).toBe(0);
-        expect(yield* auditCount()).toBe(before + 6);
+        expect(yield* auditCount()).toBe(before + inputs.length);
         // A newer admin edit is not overwritten by replaying the old deterministic source key.
         const [original] = inputs;
         if (original === undefined) {
@@ -458,7 +505,8 @@ it.live(
             Effect.flip,
           ),
         ).toBeInstanceOf(AgentProfileSetupError);
-        expect(yield* auditCount()).toBe(before + 7);
+        expect(yield* auditCount()).toBe(before + inputs.length + 1);
+        expect(yield* reviewedProfileInputs(document).pipe(Effect.flip)).toBeInstanceOf(AgentProfileSetupError);
         // The same native managed lifecycle used by Shell and setup issues one-time provider keys.
         const keys = yield* makeApiKeyService().pipe(
           Effect.provideService(AuthConfig, authConfig),
