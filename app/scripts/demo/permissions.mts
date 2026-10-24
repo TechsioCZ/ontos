@@ -15,6 +15,7 @@ import {
   scopedActionRoleBootstrapRelationships,
 } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import type { ActionAuthorizationProvisioningAction } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
+import { toIdentityNamespaceAccessObjectId } from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { Schema } from 'effect';
 
@@ -37,6 +38,8 @@ const workforceModule = 'demo.workforce';
 const operationsModule = 'facility.operations';
 const tenantSuperadminRole = 'superadmin';
 const principalResource = 'core.principal';
+const crmReadAll = 'demo.crm.read_all';
+const crmWriteAll = 'demo.crm.write_all';
 const eshopAdministratorLabel = 'Správce e-shopu';
 
 /**
@@ -531,7 +534,7 @@ export const siamparkRentalPersonas = [
       const base = withFacilityOperations(rentalDemoRoles.headOfSales);
       return {
         ...base,
-        contextPermissions: { 'demo.crm': ['demo.crm.read_all', 'demo.crm.write_all', 'demo.crm.assign'] },
+        contextPermissions: { 'demo.crm': [crmReadAll, crmWriteAll, 'demo.crm.assign'] },
         modules: { ...base.modules, 'demo.crm': 'write' },
       } satisfies DemoRole;
     })(),
@@ -586,7 +589,7 @@ export const rentalPermissionRelationships = (actions: readonly DemoAction[]): r
  * hold `demo.crm.read_all` + `demo.crm.write_all` + `demo.crm.assign`, sales reps only `demo.crm.read_assigned` +
  * `demo.crm.write_assigned`, and the crm owner filters clients by the assigned principal for them.
  */
-const crmManagerPermissions = ['demo.crm.read_all', 'demo.crm.write_all', 'demo.crm.assign'] as const;
+const crmManagerPermissions = [crmReadAll, crmWriteAll, 'demo.crm.assign'] as const;
 const crmRepPermissions = ['demo.crm.read_assigned', 'demo.crm.write_assigned'] as const;
 export const crmDemoRoles = {
   crmAdmin: {
@@ -794,6 +797,163 @@ export const demoCompanyMemberships = [
   },
 ] as const;
 
+const COMMERCE_PORTAL = 'commerce-portal';
+
+export const commercePortalPrincipal = {
+  apiKeyName: COMMERCE_PORTAL,
+  displayName: 'Commerce · zákaznický portál',
+  legalEntityId: akrosDemoLegalEntityId,
+  principalId: demoId(principalResource, COMMERCE_PORTAL),
+} as const;
+
+export const privacyConsentPrincipal = {
+  apiKeyName: 'privacy-consent-authority',
+  displayName: 'Privacy · Commerce consent authority reader',
+  legalEntityId: akrosDemoLegalEntityId,
+  principalId: demoId(principalResource, 'privacy-consent-authority'),
+} as const;
+
+export const COMMERCE_PORTAL_NAMESPACE = 'ontos.commerce.portal.better-auth.v1';
+/** Exact company-scoped native reads; the Actions below are granted one by one. */
+const commercePortalRole: DemoRole = {
+  contextPermissions: { 'privacy.core': privacyReadContextPermissions },
+  label: 'Commerce portal (service)',
+  modules: { 'commerce.customer-context': 'read', 'party.registry': 'read', 'privacy.core': 'read' },
+};
+
+/** The Actions the enrollment owners run on behalf of a customer. */
+export const commercePortalActionKeys: readonly string[] = [
+  'core.identity.reserve-principal-binding',
+  'core.identity.activate-principal-binding',
+  'core.identity.change-principal-binding-status',
+  'privacy.core.create-privacy-subject',
+  'privacy.core.create-notice-version',
+  'privacy.core.record-notice-provision',
+  'privacy.core.consent-self-service',
+  'party.registry.create-party',
+  'party.registry.accept-retail-enrollment-evidence',
+  'party.registry.counterparty-customer-onboard',
+  'party.registry.add-contact-point',
+  // Customer self-service: the owner bridge edits the customer's own Party and contact points.
+  'party.registry.update-party',
+  'party.registry.update-contact-point',
+  'commerce.customer-context.ensure-retail-customer-profile',
+  'commerce.customer-context.bind-retail-portal-profile',
+  'commerce.customer-context.claim-portal-enrollment-transition',
+  'commerce.customer-context.record-portal-enrollment-outcome',
+];
+
+export const commercePortalRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
+  const { legalEntityId, principalId } = commercePortalPrincipal;
+  const namespace = toIdentityNamespaceAccessObjectId(demoTenantId, COMMERCE_PORTAL_NAMESPACE) ?? '';
+  const roleId = toScopedRoleObjectId({
+    legalEntityId,
+    roleKey: demoPrincipalRoleKey(principalId),
+    tenantId: demoTenantId,
+  });
+  const relationships: DemoRelationship[] = [
+    {
+      relation: 'tenant',
+      resourceId: namespace,
+      resourceType: 'identity_namespace',
+      subjectId: demoTenantId,
+      subjectType: 'tenant',
+    },
+    roleRelationship('identity_namespace', namespace, 'provisioner', roleId),
+    ...principalRelationships(principalId, commercePortalRole, actions, legalEntityId),
+    // Business authority is independent of the exact Action executor allowlist below.
+    // Keep module access read-only: a write role would automatically grant every Party Action.
+    roleRelationship('tenant', demoTenantId, 'party_identity_manager', roleId),
+    roleRelationship(
+      'legal_entity',
+      toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '',
+      'counterparty_manager',
+      roleId,
+    ),
+  ];
+  for (const action of actions.filter(({ actionKey }) => commercePortalActionKeys.includes(actionKey))) {
+    relationships.push(...scopedDemoActionRelationships(principalId, action, legalEntityId));
+  }
+  return [...new Map(relationships.map((relationship) => [relationshipKey(relationship), relationship])).values()];
+};
+
+/** Privacy can resolve only the two Commerce authority facts, not read customer groups or execute Actions. */
+export const privacyConsentAuthorityRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] =>
+  principalRelationships(
+    privacyConsentPrincipal.principalId,
+    {
+      contextPermissions: {
+        'commerce.customer-context': ['customer.consent.resolve_authority', 'customer.notice.resolve_authority'],
+      },
+      label: 'Privacy consent authority reader',
+      modules: { 'commerce.customer-context': 'read' },
+      restrictedModules: ['commerce.customer-context'],
+    },
+    actions,
+    privacyConsentPrincipal.legalEntityId,
+  );
+
+const intakeName = 'crm-party-intake';
+
+export const crmPartyIntakePrincipal = {
+  apiKeyName: intakeName,
+  displayName: 'CRM · zakládání klientů v Party Registry',
+  envVar: 'ONTOS_CRM_PARTY_INTAKE_API_KEY',
+  principalId: demoId(principalResource, intakeName),
+} as const;
+
+/** Companies whose CRM writes clients into the registry. */
+export const crmIntakeLegalEntityIds: readonly string[] = [rentalDemoLegalEntityId, crmDemoLegalEntityId];
+
+/**
+ * The only Actions the intake runs: four registry Actions and the CRM apply-command, where the CRM command guard
+ * lets this principal run `LinkClientParty` only (it reads the clients through demo.crm.read_all).
+ */
+export const crmIntakeActionKeys: readonly string[] = [
+  'party.registry.create-party',
+  'party.registry.resolve-duplicate-candidate-create',
+  'party.registry.counterparty-customer-onboard',
+  'party.registry.add-contact-point',
+  'demo.crm.apply-command',
+];
+const crmIntakePermissions = [crmReadAll, crmWriteAll] as const;
+
+export const crmIntakeRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
+  const { principalId } = crmPartyIntakePrincipal;
+  const relationships = crmIntakeLegalEntityIds.flatMap((legalEntityId) => {
+    const roleId = toScopedRoleObjectId({
+      legalEntityId,
+      roleKey: demoPrincipalRoleKey(principalId),
+      tenantId: demoTenantId,
+    });
+    return [
+      ...principalRelationships(
+        principalId,
+        {
+          contextPermissions: { 'demo.crm': crmIntakePermissions },
+          label: 'CRM Party intake',
+          modules: { 'demo.crm': 'read', 'party.registry': 'read' },
+        },
+        actions,
+        legalEntityId,
+      ),
+      ...['party_identity_manager', 'party_identity_reviewer'].map((relation) =>
+        roleRelationship('tenant', demoTenantId, relation, roleId),
+      ),
+      roleRelationship(
+        'legal_entity',
+        toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '',
+        'counterparty_manager',
+        roleId,
+      ),
+      ...actions
+        .filter(({ actionKey }) => crmIntakeActionKeys.includes(actionKey))
+        .flatMap((action) => scopedDemoActionRelationships(principalId, action, legalEntityId)),
+    ];
+  });
+  return [...new Map(relationships.map((row) => [relationshipKey(row), row])).values()];
+};
+
 /** Relationships for the four demo accounts and the bot, deduplicated. */
 export const demoPermissionRelationships = (actions: readonly DemoAction[]): readonly DemoRelationship[] => {
   const all = [
@@ -803,6 +963,9 @@ export const demoPermissionRelationships = (actions: readonly DemoAction[]): rea
     ...principalRelationships(agentBotPrincipal.principalId, demoRoles[agentBotPrincipal.role], actions),
     ...rentalPermissionRelationships(actions),
     ...companyPermissionRelationships(actions),
+    ...commercePortalRelationships(actions),
+    ...privacyConsentAuthorityRelationships(actions),
+    ...crmIntakeRelationships(actions),
   ];
   return companyMembershipAdmissionRelationships(
     [...new Map(all.map((relationship) => [relationshipKey(relationship), relationship])).values()],

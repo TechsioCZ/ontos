@@ -22,7 +22,6 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { toLegalEntityAccessObjectId } from '@app/core-runtime';
 import { NodeServices } from '@effect/platform-node';
 import { eq } from 'drizzle-orm';
 import { Config, ConfigProvider, Console, Effect, Exit, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
@@ -37,96 +36,13 @@ import { discoverCurrentActions } from '../provision-current-action-authorizatio
 import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from '../siampark/reset-configuration.mts';
 import type { DemoResetChildEnvironment } from '../siampark/reset-configuration.mts';
 import { writeBootstrapRelationships } from './bootstrap-relationships.mts';
-import type { BootstrapRelationship } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
-import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
 } from '../../packages/core-runtime/src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
-import {
-  principalRelationships,
-  roleRelationship,
-  demoPrincipalRoleKey,
-  scopedDemoActionRelationships,
-} from './permissions.mts';
-import type { DemoAction } from './permissions.mts';
-import { crmDemoLegalEntityId, demoId, demoTenantId, rentalDemoLegalEntityId } from './fixture-ids.mts';
-
-const intakeName = 'crm-party-intake';
-
-export const crmPartyIntakePrincipal = {
-  apiKeyName: intakeName,
-  displayName: 'CRM · zakládání klientů v Party Registry',
-  envVar: 'ONTOS_CRM_PARTY_INTAKE_API_KEY',
-  principalId: demoId('core.principal', intakeName),
-} as const;
-
-/** Companies whose CRM writes clients into the registry. */
-export const crmIntakeLegalEntityIds: readonly string[] = [rentalDemoLegalEntityId, crmDemoLegalEntityId];
-
-/**
- * The only Actions the intake runs: four registry Actions and the CRM apply-command, where the CRM command guard
- * lets this principal run `LinkClientParty` only (it reads the clients through demo.crm.read_all).
- */
-export const crmIntakeActionKeys: readonly string[] = [
-  'party.registry.create-party',
-  'party.registry.resolve-duplicate-candidate-create',
-  'party.registry.counterparty-customer-onboard',
-  'party.registry.add-contact-point',
-  'demo.crm.apply-command',
-];
-const crmIntakePermissions = ['demo.crm.read_all', 'demo.crm.write_all'] as const;
-
-export const crmIntakeRelationships = (actions: readonly DemoAction[]): readonly BootstrapRelationship[] => {
-  const { principalId } = crmPartyIntakePrincipal;
-  const relationships = crmIntakeLegalEntityIds.flatMap((legalEntityId) => {
-    const roleId = toScopedRoleObjectId({
-      legalEntityId,
-      roleKey: demoPrincipalRoleKey(principalId),
-      tenantId: demoTenantId,
-    });
-    return [
-      ...principalRelationships(
-        principalId,
-        {
-          contextPermissions: { 'demo.crm': crmIntakePermissions },
-          label: 'CRM Party intake',
-          modules: { 'demo.crm': 'read', 'party.registry': 'read' },
-        },
-        actions,
-        legalEntityId,
-      ),
-      ...['party_identity_manager', 'party_identity_reviewer'].map((relation) =>
-        roleRelationship('tenant', demoTenantId, relation, roleId),
-      ),
-      roleRelationship(
-        'legal_entity',
-        toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '',
-        'counterparty_manager',
-        roleId,
-      ),
-      ...actions
-        .filter(({ actionKey }) => crmIntakeActionKeys.includes(actionKey))
-        .flatMap((action) => scopedDemoActionRelationships(principalId, action, legalEntityId)),
-    ];
-  });
-  return [
-    ...new Map(
-      relationships.map((row) => [
-        [
-          row.resourceType,
-          row.resourceId,
-          row.relation,
-          row.subjectType,
-          row.subjectId,
-          row.subjectRelation ?? '',
-        ].join('|'),
-        row,
-      ]),
-    ).values(),
-  ];
-};
+import { crmPartyIntakePrincipal, crmIntakeActionKeys, crmIntakeRelationships } from './permissions.mts';
+import { crmDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
 
 class CrmIntakeError extends Schema.TaggedError<CrmIntakeError>()('CrmIntakeError', { reason: Schema.String }) {}
 const fail = (reason: string) => new CrmIntakeError({ reason });
@@ -315,7 +231,7 @@ const main = (skipKeys: boolean) =>
   });
 
 const command = Command.make(
-  intakeName,
+  crmPartyIntakePrincipal.apiKeyName,
   { skipKeys: Flag.Boolean('skip-keys').pipe(Flag.withDefault(false)) },
   ({ skipKeys }) =>
     Layer.build(Layer.effectDiscard(main(skipKeys).pipe(Effect.scoped)).pipe(Layer.provide(servicesLive))).pipe(

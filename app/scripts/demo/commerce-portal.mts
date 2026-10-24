@@ -38,145 +38,31 @@ import {
 import { Command, Flag } from 'effect/unstable/cli';
 import { Cookies, FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
 import { DatabaseConfig, parseDatabaseConfig } from '../../packages/core-runtime/src/db/config.ts';
-import {
-  toIdentityNamespaceAccessObjectId,
-  toLegalEntityAccessObjectId,
-} from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { principals } from '../../packages/core-runtime/src/db/schema.ts';
 import { AuthDatabase, AuthDatabaseFromDatabaseConfigLive } from '../../apps/shell-super-app/api/auth/db/client.ts';
 import { apikey } from '../../apps/shell-super-app/api/auth/db/schema.ts';
 import { discoverCurrentActions } from '../provision-current-action-authorization.mts';
 import { resetChildEnvironment, resetEnvironment, validateResetEnvironment } from '../siampark/reset-configuration.mts';
 import { writeBootstrapRelationships } from './bootstrap-relationships.mts';
-import type { BootstrapRelationship } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
-import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import {
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
 } from '../../packages/core-runtime/src/modules/active-application-composition.ts';
 import { ActiveApplicationCompositionSourceLive } from '../../packages/core-runtime/src/modules/active-application-composition-source.node.ts';
-import { akrosDemoLegalEntityId, demoId, demoTenantId } from './fixture-ids.mts';
+import { demoTenantId } from './fixture-ids.mts';
 import {
-  principalRelationships,
-  privacyReadContextPermissions,
-  demoPrincipalRoleKey,
-  roleRelationship,
-  scopedDemoActionRelationships,
+  COMMERCE_PORTAL_NAMESPACE,
+  commercePortalActionKeys,
+  commercePortalPrincipal,
+  commercePortalRelationships,
+  privacyConsentAuthorityRelationships,
+  privacyConsentPrincipal,
 } from './permissions.mts';
-import type { DemoAction, DemoRole } from './permissions.mts';
 
-const COMMERCE_PORTAL = 'commerce-portal';
-
-export const commercePortalPrincipal = {
-  apiKeyName: COMMERCE_PORTAL,
-  displayName: 'Commerce · zákaznický portál',
-  legalEntityId: akrosDemoLegalEntityId,
-  principalId: demoId('core.principal', COMMERCE_PORTAL),
-} as const;
-
-export const privacyConsentPrincipal = {
-  apiKeyName: 'privacy-consent-authority',
-  displayName: 'Privacy · Commerce consent authority reader',
-  legalEntityId: akrosDemoLegalEntityId,
-  principalId: demoId('core.principal', 'privacy-consent-authority'),
-} as const;
-
-const COMMERCE_PORTAL_NAMESPACE = 'ontos.commerce.portal.better-auth.v1';
 const STAFF_NAMESPACE = 'ontos.staff.better-auth.v1';
 const SHELL_AUDIENCE = 'shell-super-app';
 const GATEWAY_CONTEXT_AUDIENCES = ['commerce-customer-context', 'party-registry', 'privacy'] as const;
 const BINDING_OPERATIONS = ['activate', 'read', 'reserve', 'resolve', 'status'] as const;
-
-/** Exact company-scoped native reads; the Actions below are granted one by one. */
-const commercePortalRole: DemoRole = {
-  contextPermissions: { 'privacy.core': privacyReadContextPermissions },
-  label: 'Commerce portal (service)',
-  modules: { 'commerce.customer-context': 'read', 'party.registry': 'read', 'privacy.core': 'read' },
-};
-
-/** The Actions the enrollment owners run on behalf of a customer. */
-export const commercePortalActionKeys: readonly string[] = [
-  'core.identity.reserve-principal-binding',
-  'core.identity.activate-principal-binding',
-  'core.identity.change-principal-binding-status',
-  'privacy.core.create-privacy-subject',
-  'privacy.core.create-notice-version',
-  'privacy.core.record-notice-provision',
-  'privacy.core.consent-self-service',
-  'party.registry.create-party',
-  'party.registry.accept-retail-enrollment-evidence',
-  'party.registry.counterparty-customer-onboard',
-  'party.registry.add-contact-point',
-  // Customer self-service: the owner bridge edits the customer's own Party and contact points.
-  'party.registry.update-party',
-  'party.registry.update-contact-point',
-  'commerce.customer-context.ensure-retail-customer-profile',
-  'commerce.customer-context.bind-retail-portal-profile',
-  'commerce.customer-context.claim-portal-enrollment-transition',
-  'commerce.customer-context.record-portal-enrollment-outcome',
-];
-
-const relationshipKey = (relationship: BootstrapRelationship) =>
-  [
-    relationship.resourceType,
-    relationship.resourceId,
-    relationship.relation,
-    relationship.subjectType,
-    relationship.subjectId,
-    relationship.subjectRelation ?? '',
-  ].join('|');
-
-export const commercePortalRelationships = (actions: readonly DemoAction[]): readonly BootstrapRelationship[] => {
-  const { legalEntityId, principalId } = commercePortalPrincipal;
-  const namespace = toIdentityNamespaceAccessObjectId(demoTenantId, COMMERCE_PORTAL_NAMESPACE) ?? '';
-  const roleId = toScopedRoleObjectId({
-    legalEntityId,
-    roleKey: demoPrincipalRoleKey(principalId),
-    tenantId: demoTenantId,
-  });
-  const relationships: BootstrapRelationship[] = [
-    {
-      relation: 'tenant',
-      resourceId: namespace,
-      resourceType: 'identity_namespace',
-      subjectId: demoTenantId,
-      subjectType: 'tenant',
-    },
-    roleRelationship('identity_namespace', namespace, 'provisioner', roleId),
-    ...principalRelationships(principalId, commercePortalRole, actions, legalEntityId),
-    // Business authority is independent of the exact Action executor allowlist below.
-    // Keep module access read-only: a write role would automatically grant every Party Action.
-    roleRelationship('tenant', demoTenantId, 'party_identity_manager', roleId),
-    roleRelationship(
-      'legal_entity',
-      toLegalEntityAccessObjectId(demoTenantId, legalEntityId) ?? '',
-      'counterparty_manager',
-      roleId,
-    ),
-  ];
-  for (const action of actions.filter(({ actionKey }) => commercePortalActionKeys.includes(actionKey))) {
-    relationships.push(...scopedDemoActionRelationships(principalId, action, legalEntityId));
-  }
-  return [...new Map(relationships.map((relationship) => [relationshipKey(relationship), relationship])).values()];
-};
-
-/** Privacy can resolve only the two Commerce authority facts, not read customer groups or execute Actions. */
-export const privacyConsentAuthorityRelationships = (
-  actions: readonly DemoAction[],
-): readonly BootstrapRelationship[] =>
-  principalRelationships(
-    privacyConsentPrincipal.principalId,
-    {
-      contextPermissions: {
-        'commerce.customer-context': ['customer.consent.resolve_authority', 'customer.notice.resolve_authority'],
-      },
-      label: 'Privacy consent authority reader',
-      modules: { 'commerce.customer-context': 'read' },
-      restrictedModules: ['commerce.customer-context'],
-    },
-    actions,
-    privacyConsentPrincipal.legalEntityId,
-  );
 
 /** The Shell's external identity provider deployment data for the portal namespace. */
 export const commercePortalExternalIdentityDeployment = () => {
@@ -459,20 +345,23 @@ const servicesLive = Layer.mergeAll(
   ),
 );
 
-const command = Command.make(COMMERCE_PORTAL, { envFile: Flag.String('env-file').pipe(Flag.optional) }, ({ envFile }) =>
-  Layer.build(
-    Layer.effectDiscard(main(Option.getOrUndefined(envFile)).pipe(Effect.scoped)).pipe(Layer.provide(servicesLive)),
-  ).pipe(
-    Effect.scoped,
-    Effect.asVoid,
-    Effect.tapError((failure) =>
-      Console.error(
-        Schema.is(CommercePortalError)(failure)
-          ? `Commerce portal identity failed: ${failure.reason}`
-          : 'Commerce portal identity failed; see the error above',
+const command = Command.make(
+  commercePortalPrincipal.apiKeyName,
+  { envFile: Flag.String('env-file').pipe(Flag.optional) },
+  ({ envFile }) =>
+    Layer.build(
+      Layer.effectDiscard(main(Option.getOrUndefined(envFile)).pipe(Effect.scoped)).pipe(Layer.provide(servicesLive)),
+    ).pipe(
+      Effect.scoped,
+      Effect.asVoid,
+      Effect.tapError((failure) =>
+        Console.error(
+          Schema.is(CommercePortalError)(failure)
+            ? `Commerce portal identity failed: ${failure.reason}`
+            : 'Commerce portal identity failed; see the error above',
+        ),
       ),
     ),
-  ),
 );
 if (import.meta.main) {
   const runtimeLive = Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(

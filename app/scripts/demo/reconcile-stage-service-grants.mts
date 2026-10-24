@@ -26,9 +26,12 @@ import {
   commercePortalRelationships,
   privacyConsentAuthorityRelationships,
   privacyConsentPrincipal,
-} from './commerce-portal.mts';
+  akrosStorefrontPrincipal,
+  eshopDemoRoles,
+  principalRelationships,
+} from './permissions.mts';
 import { akrosDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
-import { akrosStorefrontPrincipal, eshopDemoRoles, principalRelationships } from './permissions.mts';
+
 import type { DemoAction } from './permissions.mts';
 import { ensureStageVerification } from './ensure-stage-verification.mts';
 import { verificationContext } from './verification-context.mts';

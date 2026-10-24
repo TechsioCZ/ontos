@@ -35,24 +35,21 @@ import {
   siamparkRentalPersonas,
   storefrontPrincipal,
   moduleActions,
-} from '../demo/permissions.mts';
-import type { DemoAction, DemoRelationship } from '../demo/permissions.mts';
-import { ensureDemoCompanies } from '../demo/reset-permissions.mts';
-import { administratorRelationships } from '../demo/accounts-admin-grants.mts';
-import {
   commercePortalActionKeys,
   commercePortalPrincipal,
   commercePortalRelationships,
-  commercePortalVerificationWorkloadGrants,
   privacyConsentAuthorityRelationships,
   privacyConsentPrincipal,
-} from '../demo/commerce-portal.mts';
-import {
   crmIntakeActionKeys,
   crmIntakeLegalEntityIds,
   crmPartyIntakePrincipal,
   crmIntakeRelationships,
-} from '../demo/crm-party-intake.mts';
+} from '../demo/permissions.mts';
+import type { DemoAction, DemoRelationship } from '../demo/permissions.mts';
+
+import { ensureDemoCompanies } from '../demo/reset-permissions.mts';
+import { administratorRelationships } from '../demo/accounts-admin-grants.mts';
+import { commercePortalVerificationWorkloadGrants } from '../demo/commerce-portal.mts';
 
 const operationsModule = 'facility.operations';
 
@@ -576,4 +573,28 @@ it('uses only explicitly linked organizational names for demo logins and preserv
     ['expedice@akros.demo', 'Expedice AKROS'],
     ['expedice@kavarna.demo', 'Ondřej Kříž'],
   ]);
+});
+
+it('includes every technical service grant in both transition and fresh-bootstrap authority', () => {
+  const rows = demoPermissionRelationships(descriptors);
+  const services = [commercePortalPrincipal, privacyConsentPrincipal, crmPartyIntakePrincipal];
+  const expected = [
+    ...commercePortalRelationships(descriptors),
+    ...privacyConsentAuthorityRelationships(descriptors),
+    ...crmIntakeRelationships(descriptors),
+  ];
+  for (const relationship of expected) {
+    expect(rows).toContainEqual(relationship);
+  }
+  for (const { principalId } of services) {
+    expect(demoCompanyMemberships.some((membership) => membership.principalId === principalId)).toBe(false);
+    expect(rows).toContainEqual({
+      relation: 'member',
+      resourceId: demoTenantId,
+      resourceType: 'tenant',
+      subjectId: principalId,
+      subjectType: 'principal',
+    });
+    expect(rows.some((row) => row.subjectId === principalId && row.relation === 'company_member')).toBe(false);
+  }
 });
