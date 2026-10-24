@@ -324,9 +324,9 @@ export const scopedDemoActionRelationships = (
   action: DemoAction,
   legalEntityId: string,
   tenantId: string = demoTenantId,
+  roleKey: string = demoPrincipalRoleKey(principalId),
 ): readonly DemoRelationship[] => {
   const scope = action.legalEntityScope === 'forbidden' ? { tenantId } : { legalEntityId, tenantId };
-  const roleKey = demoPrincipalRoleKey(principalId);
   const roleId = toScopedRoleObjectId({ ...scope, roleKey });
   return [
     {
@@ -363,15 +363,15 @@ export const principalRelationships = (
   actions: readonly DemoAction[],
   legalEntityId: string = demoLegalEntityId,
   tenantId: string = demoTenantId,
+  roleKey: string = demoPrincipalRoleKey(principalId),
 ): readonly DemoRelationship[] => {
   const result: DemoRelationship[] = [];
   const add = (resourceType: string, resourceId: string, relation: string, subjectType: string, subjectId: string) =>
     result.push({ relation, resourceId, resourceType, subjectId, subjectType });
-  const roleKey = demoPrincipalRoleKey(principalId);
   const companyRole = toScopedRoleObjectId({ legalEntityId, roleKey, tenantId });
   add('scoped_role', companyRole, 'member', 'principal', principalId);
   const grantAction = (descriptor: DemoAction) => {
-    result.push(...scopedDemoActionRelationships(principalId, descriptor, legalEntityId, tenantId));
+    result.push(...scopedDemoActionRelationships(principalId, descriptor, legalEntityId, tenantId, roleKey));
   };
   const grantContextPermission = (moduleId: DemoModuleId, permission: string) => {
     const objectId = toContextPermissionAccessObjectId(tenantId, legalEntityId, { moduleId, permission }) ?? '';

@@ -9,6 +9,7 @@ import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/c
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import {
   demoId,
+  demoTenantId,
   demoLegalEntityId,
   rentalDemoLegalEntityId,
   crmDemoLegalEntityId,
@@ -40,11 +41,13 @@ export const administratorRelationships = (): readonly BootstrapRelationship[] =
         : { companyRole: 'admin', label: 'Explicit administrator', modules: {} },
       [],
       account.legalEntityId,
+      demoTenantId,
+      'account-administration',
     ),
   );
 
 /** No read_all, Action grant, or workforce dependency: task owners return only assigned work. */
-const ownTaskRelationships = (): readonly BootstrapRelationship[] =>
+export const ownTaskRelationships = (): readonly BootstrapRelationship[] =>
   ['72000000-0000-4000-8000-000000000023', '72000000-0000-4000-8000-000000000024'].flatMap((principalId) =>
     principalRelationships(
       principalId,
@@ -55,6 +58,8 @@ const ownTaskRelationships = (): readonly BootstrapRelationship[] =>
       },
       [],
       rentalDemoLegalEntityId,
+      demoTenantId,
+      'assigned-task-reader',
     ),
   );
 

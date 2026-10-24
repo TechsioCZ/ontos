@@ -22,7 +22,7 @@ import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/c
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { toScopedRoleObjectId } from '../../packages/core-runtime/src/permissions/scoped-role.ts';
 import { demoTenantId, rentalDemoLegalEntityId } from './fixture-ids.mts';
-import { demoPrincipalRoleKey, principalRelationships, siamparkRentalPersonas } from './permissions.mts';
+import { principalRelationships, siamparkRentalPersonas } from './permissions.mts';
 
 const environmentLive = ConfigProvider.layer(
   Effect.gen(function* loadOperatorConfiguration() {
@@ -60,7 +60,7 @@ const program = Effect.gen(function* repairPublishedRolePermissions() {
     return yield* Effect.fail(new Error('External demo persona is missing'));
   }
   const relationships = yield* Effect.try(() =>
-    principalRelationships(persona.principalId, persona.role, actions, rentalDemoLegalEntityId),
+    principalRelationships(persona.principalId, persona.role, actions, rentalDemoLegalEntityId, demoTenantId, 'operational-repair-external'),
   );
   const client = yield* Effect.acquireRelease(
     Effect.try(() => openSpiceDbGrpcRpc(configuration, 5000)),
@@ -84,7 +84,7 @@ const program = Effect.gen(function* repairPublishedRolePermissions() {
           object: v1.ObjectReference.create({
             objectId: toScopedRoleObjectId({
               legalEntityId: rentalDemoLegalEntityId,
-              roleKey: demoPrincipalRoleKey(persona.principalId),
+              roleKey: 'operational-repair-external',
               tenantId: demoTenantId,
             }),
             objectType: 'scoped_role',

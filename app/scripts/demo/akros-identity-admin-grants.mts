@@ -4,7 +4,7 @@ import { NodeServices } from '@effect/platform-node';
 import { Console, Effect } from 'effect';
 
 import { repairAdministratorRelationships } from './accounts-admin-grants.mts';
-import { akrosDemoLegalEntityId, demoId } from './fixture-ids.mts';
+import { akrosDemoLegalEntityId, demoId, demoTenantId } from './fixture-ids.mts';
 import { principalRelationships } from './permissions.mts';
 
 const program = Effect.gen(function* repairAkrosCompanyAdministrator() {
@@ -14,6 +14,8 @@ const program = Effect.gen(function* repairAkrosCompanyAdministrator() {
       { companyRole: 'admin', label: 'Company administrator', modules: {} },
       [],
       akrosDemoLegalEntityId,
+      demoTenantId,
+      'account-administration',
     ),
   );
   yield* repairAdministratorRelationships(relationships);

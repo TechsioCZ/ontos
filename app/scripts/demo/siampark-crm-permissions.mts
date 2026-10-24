@@ -19,7 +19,7 @@ import { discoverCurrentActions } from '../provision-current-action-authorizatio
 import { bootstrapRelationshipRequest } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
 import { openSpiceDbGrpcRpc } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
-import { rentalDemoLegalEntityId } from './fixture-ids.mts';
+import { rentalDemoLegalEntityId, demoTenantId } from './fixture-ids.mts';
 import { principalRelationships, siamparkRentalPersonas } from './permissions.mts';
 
 const emails = new Set(['management@siampark.demo', 'external@siampark.demo']);
@@ -59,7 +59,7 @@ const program = Effect.gen(function* repairPublishedRolePermissions() {
     siamparkRentalPersonas
       .filter((persona) => emails.has(persona.email))
       .flatMap((persona) =>
-        principalRelationships(persona.principalId, persona.role, actions, rentalDemoLegalEntityId),
+        principalRelationships(persona.principalId, persona.role, actions, rentalDemoLegalEntityId, demoTenantId, persona.email === 'management@siampark.demo' ? 'crm-repair-management' : 'crm-repair-external'),
       ),
   );
   // SpiceDB rejects a write that names the same relationship twice (both personas share the company relations).
