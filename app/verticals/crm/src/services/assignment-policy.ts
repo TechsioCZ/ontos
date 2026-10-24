@@ -74,11 +74,12 @@ export const assignmentPolicy = defineMicroverticalPolicy<ApplyCommandPayload, '
       if (!requiresPreflight(payload.command)) {
         return;
       }
-      const { legalEntityId } = principal;
-      if (legalEntityId === undefined) {
-        yield* denyPolicy('assignment_scope_required', 'Vyberte firmu.');
-        return;
-      }
+      const legalEntityId = yield* Effect.succeed(principal.legalEntityId).pipe(
+        Effect.filterOrFail(
+          (value) => value !== undefined,
+          () => denyPolicy('assignment_scope_required', 'Vyberte firmu.'),
+        ),
+      );
       const { directory, value } = yield* loadAssignmentPreflightSnapshot(
         { ...principal, correlationId: transport.correlationId, legalEntityId },
         Effect.fn('Crm.assignmentSnapshot')(function* assignmentSnapshot(transaction) {

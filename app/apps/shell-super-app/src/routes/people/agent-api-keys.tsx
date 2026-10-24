@@ -479,7 +479,7 @@ export const AgentApiKeys = ({ agent }: { readonly agent: AgentEntity }) => {
   if (!agent.hasProfile || agent.status !== 'active') {
     return <p className="text-fg-secondary text-sm">{t(`${copyKey}.requiresProfile`)}</p>;
   }
-  const principalId = Schema.decodeUnknownOption(PrincipalIdSchema)(agent.principalId);
+  const principalId = Schema.decodeOption(PrincipalIdSchema)(agent.principalId);
   if (Option.isNone(principalId)) {
     return <StatusText status="error">{t(`${copyKey}.failed`)}</StatusText>;
   }

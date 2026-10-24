@@ -50,6 +50,7 @@ import { Cookies, HttpApiBuilder, HttpEffect, HttpServerResponse, Layer } from '
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import {
   Cause,
+  Crypto,
   Effect,
   Exit,
   Fiber,
@@ -2040,9 +2041,16 @@ const issueApiKeyContext = Effect.fn('ShellGateway.issueApiKeyContext')(function
     {},
   );
   const scopeResolver = yield* OperationalScopeResolver;
+  const random = yield* Crypto.Crypto;
   yield* scopeResolver
     .resolve({
-      correlationId: crypto.randomUUID(),
+      correlationId: yield* random.randomUUIDv4.pipe(
+        Effect.catch((error) =>
+          Effect.logError('Unable to create a gateway correlation identifier', error).pipe(
+            Effect.andThen(failApiKeyGatewayProblem(gatewayAuthorizationUnavailableProblem())),
+          ),
+        ),
+      ),
       legalEntityScope: 'optional',
       principal,
     })
@@ -2292,9 +2300,16 @@ const agentPlatformKeyCaller = Effect.fn('shell.agentPlatform.keyCaller')(functi
     },
   };
   const scopeResolver = yield* OperationalScopeResolver;
+  const random = yield* Crypto.Crypto;
   yield* scopeResolver
     .resolve({
-      correlationId: crypto.randomUUID(),
+      correlationId: yield* random.randomUUIDv4.pipe(
+        Effect.catch((error) =>
+          Effect.logError('Unable to create an agent correlation identifier', error).pipe(
+            Effect.andThen(failIdentityProblem(shellCapabilityUnavailableProblem())),
+          ),
+        ),
+      ),
       legalEntityScope: 'required',
       principal: caller.principal,
     })
