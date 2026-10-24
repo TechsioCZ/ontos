@@ -33,8 +33,14 @@ import {
 import type { AnyRelations, SQL, SQLWrapper } from 'drizzle-orm';
 import type { EffectPgDatabase } from 'drizzle-orm/effect-postgres';
 import type { PgColumn, PgTable } from 'drizzle-orm/pg-core';
-import { Context, Effect, flow, Option, Predicate, Schema } from 'effect';
+import { Effect, flow, Option, Predicate, Schema } from 'effect';
 import type { SqlError } from 'effect/unstable/sql/SqlError';
+
+import { ConsumedRowSchema, EffectDrizzleAuthTransactionHooks } from './transaction-hooks.ts';
+import type { EffectDrizzleAuthTransaction } from './transaction-hooks.ts';
+
+export { EffectDrizzleAuthTransactionHooks } from './transaction-hooks.ts';
+export type { EffectDrizzleAuthTransaction } from './transaction-hooks.ts';
 
 /** A Better Auth model or field that the Drizzle tables passed to the adapter do not declare. */
 export class EffectDrizzleAuthAdapterSchemaError extends Schema.TaggedError<EffectDrizzleAuthAdapterSchemaError>()(
@@ -49,16 +55,6 @@ export type EffectDrizzleAuthAdapter = (options: BetterAuthOptions) => DBAdapter
 export type EffectDrizzleAuthTables = Readonly<Record<string, PgTable>>;
 
 type Executor = Pick<EffectPgDatabase<AnyRelations>, 'delete' | 'insert' | 'select' | 'update'>;
-export type EffectDrizzleAuthTransaction = Parameters<Parameters<EffectPgDatabase<AnyRelations>['transaction']>[0]>[0];
-/** Runs only for a successful native consume inside its owning transaction; failure rolls everything back. */
-const ConsumedRowSchema = Schema.Record(Schema.String, Schema.Unknown);
-export const EffectDrizzleAuthTransactionHooks = Context.Service<{
-  readonly afterConsume: (
-    transaction: EffectDrizzleAuthTransaction,
-    model: string,
-    row: typeof ConsumedRowSchema.Type,
-  ) => Effect.Effect<void>;
-}>('@app/better-auth-effect-drizzle/TransactionHooks');
 type Row = Record<string, DBPrimitive>;
 type FieldName = Parameters<AdapterFactoryCustomizeAdapterCreator>[0]['getFieldName'];
 
@@ -294,7 +290,7 @@ const makeOperations =
         const { id, rows } = yield* firstMatchingId(target, query.where);
         const [row] = yield* executor.delete(target.table).where(inArray(id, rows)).returning();
         if (row !== undefined && afterConsume !== undefined) {
-          yield* afterConsume(query.model, yield* Schema.decodeUnknownEffect(ConsumedRowSchema)(row));
+          yield* afterConsume(query.model, yield* Schema.decodeEffect(ConsumedRowSchema)(row));
         }
         return row ?? null;
       }),
