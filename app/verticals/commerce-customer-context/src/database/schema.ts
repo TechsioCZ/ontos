@@ -259,6 +259,8 @@ export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.with
   {
     authenticationNamespaceId: text('authentication_namespace_id'),
     compositionRevision: text('composition_revision').notNull(),
+    /** Latest explicitly admitted continuation release; null until the first re-admission. */
+    continuationCompositionRevision: text('continuation_composition_revision'),
     createdAt: createdAt(),
     createdByPrincipalId: uuid('created_by_principal_id').notNull(),
     intentDigest: text('intent_digest').notNull(),
@@ -309,6 +311,10 @@ export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.with
     check(
       'ccc_portal_enrollment_attempts_composition_revision_ck',
       sql`${table.compositionRevision} ~ '^[0-9a-f]{64}$'`,
+    ),
+    check(
+      'ccc_enrollment_continuation_composition_ck',
+      sql`${table.continuationCompositionRevision} is null or ${table.continuationCompositionRevision} ~ '^[0-9a-f]{64}$'`,
     ),
     check(
       'ccc_portal_enrollment_attempts_state_ck',

@@ -97,7 +97,7 @@ interface TrackedAttempt extends AdvanceEntry {
 interface DueSweep {
   readonly entry: TrackedAttempt;
   /** The revision the journal named for it on this tick; `none` when this tick's listing had none. */
-  readonly revision: Option.Option<Pick<DueEnrollmentAttempt, 'compositionRevision' | 'revision'>>;
+  readonly revision: Option.Option<Pick<DueEnrollmentAttempt, 'revision'>>;
 }
 
 export interface CommerceEnrollmentContinuationSweepResult {
@@ -219,23 +219,31 @@ const claimedAdvance = (
   state: SweeperState,
   inner: CommerceEnrollmentContinuationSweepPass,
   entry: TrackedAttempt,
-  revision: Pick<DueEnrollmentAttempt, 'compositionRevision' | 'revision'>,
+  revision: Pick<DueEnrollmentAttempt, 'revision'>,
   claimTtlMillis: number,
 ): Effect.Effect<boolean> =>
-  inner.claimSweep({ ...entry.attempt, ...revision, claimTtlMillis, maxSweeps: SWEEP_BUDGET }).pipe(
-    Effect.matchCauseEffect({
-      onFailure: (cause) =>
-        Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper could not claim this sweep'), {
-          portalEnrollmentAttemptId: entry.attempt.portalEnrollmentAttemptId,
-          reason: String(cause),
-        }).pipe(Effect.as(false)),
-      onSuccess: Option.match({
-        onNone: () => Effect.succeed(false),
-        // The journal now holds this Attempt's budget, so the in-process counter has nothing to say.
-        onSome: () => advanceEntry(state, inner, { ...entry, journalled: true, sweeps: 0 }),
+  inner
+    .claimSweep({
+      ...entry.attempt,
+      ...revision,
+      claimTtlMillis,
+      compositionRevision: inner.compositionRevision,
+      maxSweeps: SWEEP_BUDGET,
+    })
+    .pipe(
+      Effect.matchCauseEffect({
+        onFailure: (cause) =>
+          Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper could not claim this sweep'), {
+            portalEnrollmentAttemptId: entry.attempt.portalEnrollmentAttemptId,
+            reason: String(cause),
+          }).pipe(Effect.as(false)),
+        onSuccess: Option.match({
+          onNone: () => Effect.succeed(false),
+          // The journal now holds this Attempt's budget, so the in-process counter has nothing to say.
+          onSome: () => advanceEntry(state, inner, { ...entry, journalled: true, sweeps: 0 }),
+        }),
       }),
-    }),
-  );
+    );
 
 /** One due Attempt: advanced under whichever budget this tick's listing left it under. */
 const sweepEntry = (
@@ -358,7 +366,7 @@ const dueEntries = (
         lastActivityMillis: tracked?.lastActivityMillis ?? DateTime.toEpochMillis(listed.updatedAt),
         sweeps: tracked?.sweeps ?? 0,
       },
-      revision: Option.some({ compositionRevision: listed.compositionRevision, revision: listed.revision }),
+      revision: Option.some({ revision: listed.revision }),
     });
   }
   for (const entry of registry.values()) {

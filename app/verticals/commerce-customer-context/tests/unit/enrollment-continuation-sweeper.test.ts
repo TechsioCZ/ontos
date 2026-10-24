@@ -329,7 +329,7 @@ it.effect('leaves an Attempt another replica has claimed alone, and charges it n
   }),
 );
 
-it.effect('claims the exact composition and Attempt revisions listed by the durable journal', () =>
+it.effect('claims the captured current composition without changing the listed Attempt revision or budget', () =>
   Effect.gen(function* originalRevisionIsClaimed() {
     const attempt: ReadEnrollmentAttemptInput = {
       portalEnrollmentAttemptId: attemptId(randomUUID()),
@@ -342,7 +342,7 @@ it.effect('claims the exact composition and Attempt revisions listed by the dura
       advance: (input) =>
         Ref.update(advanced, (calls) => [...calls, input]).pipe(Effect.as({ outcome: 'COMPLETE' as const })),
       claimSweep: (input) => Ref.update(claims, (calls) => [...calls, input]).pipe(Effect.as(Option.some(1))),
-      compositionRevision: ORIGINAL_COMPOSITION_REVISION,
+      compositionRevision: CHANGED_COMPOSITION_REVISION,
       listDue: () => Effect.succeed([listed]),
     };
     const service: CommerceEnrollmentContinuationService = {
@@ -356,13 +356,13 @@ it.effect('claims the exact composition and Attempt revisions listed by the dura
       {
         ...attempt,
         claimTtlMillis: 0,
-        compositionRevision: ORIGINAL_COMPOSITION_REVISION,
+        compositionRevision: CHANGED_COMPOSITION_REVISION,
         maxSweeps: SWEEP_BUDGET,
         revision: 17,
       },
     ]);
-    // The continuation addresses the Attempt and recovers its original revision itself. The
-    // sweeper never supplies a replacement snapshot or asks for the current composition.
+    // The journal can name a parked Attempt from an older release. Native claim/re-admission
+    // uses this pass's approved current release, not the Attempt's immutable creation provenance.
     expect(yield* Ref.get(advanced)).toStrictEqual([attempt]);
   }),
 );

@@ -1,3 +1,8 @@
+import { admitEnrollmentAttempt } from '../../../src/enrollment/attempts/attempt-persistence.ts';
+import {
+  ActiveApplicationCompositionService,
+  validateActiveApplicationCompositionSnapshot,
+} from '@app/core-runtime/modules/active-application-composition';
 import { createHmac } from 'node:crypto';
 
 import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
@@ -50,6 +55,7 @@ import type {
   CommercePortalAccountSubject,
   EnrollmentAttemptIdSchema,
   EnrollmentAttemptSnapshot,
+  ReadEnrollmentAttemptInput,
   EnrollmentOwnerOperationSnapshot,
 } from '../../../shared/enrollment-contracts.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../../shared/portal-auth-contracts.ts';
@@ -533,6 +539,35 @@ export const commercePortalAuthEnrollmentAccountVerificationOutcome = Effect.fn(
   }).pipe(Effect.catch(answerEnrollmentFailure(() => commercePortalAuthEnrollmentUnavailableProblem())));
 });
 
+/** A resumed HTTP proof uses the same native readmission as the background continuation. */
+const readEnrollmentForCurrentComposition = Effect.fn('CommercePortalAuthEnrollmentHttp.readAdmittedAttempt')(
+  function* readAdmittedAttempt(
+    store: CommerceEnrollmentOwnerAttemptStore,
+    run: CommerceEnrollmentOwnerTransactionRun,
+    identity: ReadEnrollmentAttemptInput,
+  ) {
+    const current = yield* store.read(identity);
+    const authority = yield* ActiveApplicationCompositionService;
+    const active = yield* authority.load.pipe(
+      Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+      Effect.mapError((cause) =>
+        attemptUnavailable(
+          'The resumed enrollment requires current composition authority',
+          identity.portalEnrollmentAttemptId,
+          cause,
+        ),
+      ),
+    );
+    if (isEnrollmentAttemptTerminal(current.state) || current.compositionRevision === active.composition.revision) {
+      return current;
+    }
+    yield* run({ tenantId: current.tenantId }, (transaction) =>
+      admitEnrollmentAttempt(transaction, identity, active.composition.revision),
+    );
+    return yield* store.read(identity);
+  },
+);
+
 /** Live-session ownership is read-only provider work, so an interrupted proof can be resolved honestly.
  * Native claim fences an expired lease; only then may native reconciliation settle the same invocation.
  */
@@ -938,12 +973,10 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
       { tenantId: started.attempt.tenantId },
       restartRunner.run,
     );
-    const current = yield* verifiedStore
-      .read({
-        portalEnrollmentAttemptId: started.attempt.portalEnrollmentAttemptId,
-        tenantId: started.attempt.tenantId,
-      })
-      .pipe(Effect.mapError(commercePortalAuthEnrollmentUnavailableProblem));
+    const current = yield* readEnrollmentForCurrentComposition(verifiedStore, restartRunner.run, {
+      portalEnrollmentAttemptId: started.attempt.portalEnrollmentAttemptId,
+      tenantId: started.attempt.tenantId,
+    }).pipe(Effect.mapError(commercePortalAuthEnrollmentUnavailableProblem));
     const journalled = yield* recoverEnrollmentAccountVerification(
       verifiedStore,
       verification,

@@ -95,8 +95,10 @@ const harness = Effect.fnUntraced(function* makeReleaseAdmissionHarness(
   persistedRevision: string,
   persistedState: 'COMPLETE' | 'IN_PROGRESS' = 'IN_PROGRESS',
   afterClaim?: Effect.Effect<void>,
+  readmissionRevision?: string,
 ) {
   const source = yield* Ref.make(initial);
+  let admittedRevision = persistedRevision;
   const dueRows = yield* Ref.make<readonly object[]>([]);
   const routines: string[] = [];
   const worker: string[] = [];
@@ -106,10 +108,17 @@ const harness = Effect.fnUntraced(function* makeReleaseAdmissionHarness(
   const invoke: EnrollmentAttemptScopedRoutineInvoker['invoke'] = (routine, values) =>
     Effect.gen(function* invokeOwnerRoutine() {
       calls.routines.push(routine.name);
+      if (routine.name === 'admit_portal_enrollment_attempt') {
+        const admitted = values.at(1) === readmissionRevision;
+        if (admitted && readmissionRevision !== undefined) {
+          admittedRevision = readmissionRevision;
+        }
+        return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))([{ admitted }]);
+      }
       if (routine.name === 'claim_portal_enrollment_transition' && afterClaim !== undefined) {
         const leaseToken = '60000000-0000-4000-8000-000000000001';
         const claim = {
-          ...attemptRow(persistedRevision, persistedState),
+          ...attemptRow(admittedRevision, persistedState),
           attempt_outcome: 'CLAIMED',
           lease_expires_at: '2099-09-17T10:00:00.000Z',
           lease_owner: values.at(2),
@@ -133,7 +142,7 @@ const harness = Effect.fnUntraced(function* makeReleaseAdmissionHarness(
         return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))([claim]);
       }
       const rows =
-        routine.name === 'read_portal_enrollment_attempt' ? [attemptRow(persistedRevision, persistedState)] : [];
+        routine.name === 'read_portal_enrollment_attempt' ? [attemptRow(admittedRevision, persistedState)] : [];
       return Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))(rows);
     });
   const dialect = new PgDialect();
@@ -460,7 +469,7 @@ it.effect('preserves a durable pending claim without owner effects when the capt
   }),
 );
 
-it.effect('rejects a different persisted original revision before resolution, claiming, or relabeling due work', () =>
+it.effect('requires native readmission before resolving a parked Attempt from an earlier release', () =>
   Effect.gen(function* rejectsAttemptFromAnotherRelease() {
     const release = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
     const originalRevision = 'b'.repeat(64);
@@ -469,7 +478,10 @@ it.effect('rejects a different persisted original revision before resolution, cl
       const continuation = yield* CommerceEnrollmentContinuation;
       const pass = yield* continuation.openSweepPass;
       expect(yield* Effect.flip(pass.advance(attemptInput))).toBeInstanceOf(CommerceEnrollmentAttemptUnavailable);
-      expect(scripted.calls.routines).toStrictEqual(['read_portal_enrollment_attempt']);
+      expect(scripted.calls.routines).toStrictEqual([
+        'read_portal_enrollment_attempt',
+        'admit_portal_enrollment_attempt',
+      ]);
       expect(scripted.calls.registry).toBe(0);
       expect(scripted.calls.subject).toBe(0);
       expect(scripted.calls.owner).toBe(0);
@@ -478,11 +490,36 @@ it.effect('rejects a different persisted original revision before resolution, cl
       );
       expect(scripted.calls.worker).toStrictEqual([]);
       yield* scripted.setDueRevision(originalRevision);
-      expect(yield* Effect.flip(pass.listDue(dueInput))).toBeInstanceOf(CommerceEnrollmentAttemptUnavailable);
+      expect((yield* pass.listDue(dueInput)).map((row) => row.compositionRevision)).toStrictEqual([originalRevision]);
       expect(scripted.calls.worker).toHaveLength(1);
       expect(yield* pass.claimSweep(sweepInput(release.composition.revision))).toStrictEqual(Option.some(1));
       expect(scripted.calls.claimRevisions).toStrictEqual([release.composition.revision]);
       expect(scripted.calls.loads).toBe(1);
     }).pipe(Effect.provide(scripted.layer));
+  }),
+);
+
+it.effect('re-reads native admitted authority before any owner preparation under the new release', () =>
+  Effect.gen(function* readmitsParkedAttemptBeforeOwnerResolution() {
+    const release = yield* makeEnrollmentApplicationCompositionSnapshot(buildMarker, []);
+    const scripted = yield* harness(
+      Option.some(release),
+      { appId, buildMarker },
+      'b'.repeat(64),
+      'IN_PROGRESS',
+      Effect.void,
+      release.composition.revision,
+    );
+    yield* CommerceEnrollmentContinuation.pipe(
+      Effect.flatMap((continuation) => continuation.advance(attemptInput)),
+      Effect.provide(scripted.layer),
+    );
+    expect(scripted.calls.routines.slice(0, 3)).toStrictEqual([
+      'read_portal_enrollment_attempt',
+      'admit_portal_enrollment_attempt',
+      'read_portal_enrollment_attempt',
+    ]);
+    expect(scripted.calls.durableClaims[0]).toMatchObject({ composition_revision: release.composition.revision });
+    expect(scripted.calls.owner).toBe(1);
   }),
 );

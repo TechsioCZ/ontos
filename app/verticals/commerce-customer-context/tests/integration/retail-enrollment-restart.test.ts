@@ -560,12 +560,24 @@ const restartTransaction =
     Effect.gen(function* nativeRestartTransaction() {
       const execute = (statement: Parameters<typeof transaction.execute>[0]) =>
         transaction.execute(statement, 'objects');
-      for (const name of ['20261024005000_existing-account-retail-restart']) {
+      const schemaRows = yield* execute(sql`select exists(select 1 from information_schema.columns
+        where table_schema = 'commerce_customer_context' and table_name = 'portal_enrollment_attempts'
+          and column_name = 'continuation_composition_revision') as installed`);
+      const [parkedSchema] = yield* Schema.decodeUnknownEffect(
+        Schema.Array(Schema.Struct({ installed: Schema.Boolean })),
+      )(schemaRows);
+      for (const name of [
+        '20261024005000_existing-account-retail-restart',
+        '20261024013000_parked-enrollment-composition-admission',
+      ]) {
         const migration = readFileSync(
           new URL(`../../drizzle/${name}/migration.sql`, import.meta.url),
           'utf-8',
         ).replaceAll('CREATE FUNCTION ', 'CREATE OR REPLACE FUNCTION ');
         for (const statement of migration.split('--> statement-breakpoint')) {
+          if (parkedSchema?.installed && statement.includes('ADD COLUMN continuation_composition_revision')) {
+            continue;
+          }
           yield* execute(sql.raw(statement));
         }
       }

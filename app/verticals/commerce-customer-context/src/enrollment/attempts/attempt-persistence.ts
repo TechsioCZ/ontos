@@ -1488,3 +1488,31 @@ export const failRejectedEnrollmentAttempt = (
     Effect.mapError((cause) => unavailable(cause)),
     Effect.map((rows) => rows[0]?.failed === true),
   );
+
+/** Re-admit only parked work; native admission preserves origin, outcomes and all sweep/lease fences. */
+const admitAttemptRoutine = defineScopedRoutine({
+  name: 'admit_portal_enrollment_attempt',
+  ownerModuleKey: MODULE_KEY,
+  parameters: [{ source: 'tenantId', type: 'uuid' }, uuid(), text()],
+  resultSchema: Schema.Struct({ admitted: Schema.Boolean }),
+  routineKey: 'portal-enrollment-attempt.admit',
+  schema: 'commerce_customer_context',
+});
+
+export const admitEnrollmentAttempt = (
+  transaction: EnrollmentAttemptScopedRoutineInvoker,
+  input: ReadEnrollmentAttemptInput,
+  compositionRevision: string,
+): Effect.Effect<void, CommerceEnrollmentAttemptError> =>
+  transaction.invoke(admitAttemptRoutine, [input.portalEnrollmentAttemptId, compositionRevision]).pipe(
+    Effect.mapError((cause) => unavailable(cause)),
+    Effect.filterOrFail(
+      (rows) => rows[0]?.admitted === true,
+      () =>
+        attemptUnavailable(
+          'The parked Enrollment Attempt was not admitted under the current composition',
+          input.portalEnrollmentAttemptId,
+        ),
+    ),
+    Effect.asVoid,
+  );
