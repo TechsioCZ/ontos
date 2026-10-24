@@ -5,6 +5,7 @@ import type { DemoAction } from './permissions.mts';
 
 const verificationName = 'Ověření připojení';
 const taskModule = 'work.tasks';
+export const verificationTaskWriterRoleKey = 'verification:task-writer';
 
 /** Isolated infrastructure identity: no memberships or grants in any customer demo tenant. */
 export const verificationAccount = {
@@ -24,10 +25,15 @@ export const verificationContext = Effect.fn('Demo.verificationContext')(functio
   const relationships = yield* Effect.try(() =>
     principalRelationships(
       principalId,
-      { label: verificationName, modules: { 'work.tasks': 'write' } },
+      {
+        actionKeys: { 'work.tasks': ['work.tasks.apply-command'] },
+        label: verificationName,
+        modules: { 'work.tasks': 'write' },
+      },
       actions,
       verificationLegalEntityId,
       verificationTenantId,
+      verificationTaskWriterRoleKey,
     ),
   );
   return {

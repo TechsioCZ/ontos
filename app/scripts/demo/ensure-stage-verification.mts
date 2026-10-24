@@ -4,7 +4,7 @@ import type { SpiceDbConfigValue } from '../../packages/core-runtime/src/permiss
 import { Config, Effect, FileSystem, Path, Redacted, Schema } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
-import { verificationAccount, verificationContext } from './verification-context.mts';
+import { verificationAccount, verificationContext, verificationTaskWriterRoleKey } from './verification-context.mts';
 
 export class StageVerificationBootstrapError extends Schema.TaggedError<StageVerificationBootstrapError>()(
   'StageVerificationBootstrapError',
@@ -28,7 +28,7 @@ export const stageVerificationAccounts = Effect.fn('Stage.verificationAccounts')
   }
   const scope = { legalEntityId: context.legalEntity.legalEntityId, tenantId: context.tenant.tenantId };
   const actionKey = 'work.tasks.apply-command';
-  const roleKey = 'verification:task-writer';
+  const roleKey = verificationTaskWriterRoleKey;
   return {
     actionAuthorization: {
       actionAssertions: [

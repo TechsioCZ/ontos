@@ -13,19 +13,20 @@ import {
 } from '../../packages/core-runtime/src/permissions/service.ts';
 import { stageVerificationAccounts } from '../demo/ensure-stage-verification.mts';
 import { stageAccountsAuthorization } from '../provision-current-action-authorization.mts';
-import { demoPrincipalRoleKey } from '../demo/permissions.mts';
+import { peopleModelTransitionFixtureRelationships } from '../demo/people-model-transition-fixture.mts';
 import {
   verificationAccount,
   verificationContext,
   verificationLegalEntityId,
   verificationTenantId,
+  verificationTaskWriterRoleKey,
 } from '../demo/verification-context.mts';
 
 const taskModule = 'work.tasks';
 const taskAction = 'work.tasks.apply-command';
 const roleId = toScopedRoleObjectId({
   legalEntityId: verificationLegalEntityId,
-  roleKey: demoPrincipalRoleKey(verificationAccount.principalId),
+  roleKey: verificationTaskWriterRoleKey,
   tenantId: verificationTenantId,
 });
 
@@ -164,4 +165,71 @@ it.effect('generates a v4 stage accounts policy confined to the verification ten
       },
     ]);
   }),
+);
+
+it.effect(
+  'preserves the reviewed CI company role in the canonical transition without creating absent memberships',
+  () =>
+    Effect.gen(function* verifiesTransitionFixture() {
+      const actions = [
+        ...[
+          'crm.activities',
+          'demo.workforce',
+          'demo.merchandise',
+          'demo.sales-insights',
+          'finance.billing',
+          'property.portfolio',
+          'property.leasing',
+        ].map((owningModuleKey) => ({
+          actionKey: `${owningModuleKey}.apply-command`,
+          legalEntityScope: 'required' as const,
+          owningModuleKey,
+          provisioning: 'explicit' as const,
+        })),
+        { actionKey: taskAction, legalEntityScope: 'required', owningModuleKey: taskModule, provisioning: 'explicit' },
+        {
+          actionKey: 'work.tasks.unreviewed-command',
+          legalEntityScope: 'required',
+          owningModuleKey: taskModule,
+          provisioning: 'explicit',
+        },
+      ] as const;
+      const membership = {
+        legalEntityId: verificationLegalEntityId,
+        principalId: verificationAccount.principalId,
+        tenantId: verificationTenantId,
+      };
+      const target = yield* peopleModelTransitionFixtureRelationships(actions, [membership]);
+      const context = yield* verificationContext(actions);
+      for (const row of context.relationships) {
+        expect(target).toContainEqual(row);
+      }
+      expect(target).toContainEqual({
+        relation: 'role',
+        resourceId: toSpiceDbActionGrantObjectId({ ...membership, actionKey: taskAction }),
+        resourceType: 'action_grant',
+        subjectId: roleId,
+        subjectRelation: 'member',
+        subjectType: 'scoped_role',
+      });
+      expect(context.relationships.filter((row) => row.resourceType === 'action_grant')).toHaveLength(1);
+      expect(target).toContainEqual({
+        relation: 'member',
+        resourceId: roleId,
+        resourceType: 'scoped_role',
+        subjectId: membership.principalId,
+        subjectType: 'principal',
+      });
+      expect(target).toContainEqual({
+        relation: 'company_member',
+        resourceId: membership.tenantId,
+        resourceType: 'tenant',
+        subjectId: membership.principalId,
+        subjectType: 'principal',
+      });
+      for (const rows of [[], [{ ...membership, tenantId: '70000000-0000-4000-8000-000000000020' }]]) {
+        const absent = yield* peopleModelTransitionFixtureRelationships(actions, rows);
+        expect(absent.some((row) => row.subjectId === membership.principalId || row.resourceId === roleId)).toBe(false);
+      }
+    }),
 );

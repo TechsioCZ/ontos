@@ -36,7 +36,6 @@ import {
 } from '../../packages/core-runtime/src/db/schema.ts';
 import {
   BootstrapCompanyMembershipSchema,
-  companyMembershipAdmissionRelationships,
   installBootstrapCompanyMemberships,
 } from '../../packages/core-runtime/src/install/context-bootstrap-shared.ts';
 import { currentAgentProfileRelationships } from '../../packages/core-runtime/src/permissions/agent-profile-lifecycle.ts';
@@ -73,13 +72,7 @@ import {
   runApplicationCompositionMigration,
   withApplicationCompositionPublicationLock,
 } from '../application-composition-authority-publication.mts';
-import {
-  demoPermissionRelationships,
-  localDevelopmentAdministratorFixture,
-  principalRelationships,
-  reviewedHumanActionAddonRelationships,
-} from './permissions.mts';
-import { ownTaskRelationships } from './accounts-admin-grants.mts';
+import { peopleModelTransitionFixtureRelationships } from './people-model-transition-fixture.mts';
 import { AgentProfileOperatorLive, authenticateAgentProfileOperator } from './agent-profile-operator.mts';
 import { readReviewedAgentProfiles, reviewedProfileInputs, runAgentProfileSetup } from './agent-profile-setup.mts';
 
@@ -523,22 +516,7 @@ const prepare = Effect.fn('PeopleModelTransition.prepare')(function* prepareTran
   const { deferred, expectedProfiles, profiles } = yield* validateProfiles(document, inventory);
   const tenantIds = [...new Set(document.rows.map((row) => row.tenantId))];
   const composition = yield* loadCurrentActionAuthorizationComposition(tenantIds, provisioningMode);
-  const local = localDevelopmentAdministratorFixture;
-  const fixture = companyMembershipAdmissionRelationships(
-    [
-      ...demoPermissionRelationships(composition.actions),
-      ...reviewedHumanActionAddonRelationships(composition.actions),
-      ...ownTaskRelationships(),
-      ...principalRelationships(
-        local.principalId,
-        local.role,
-        composition.actions,
-        local.legalEntityId,
-        local.tenantId,
-      ),
-    ],
-    document.rows,
-  );
+  const fixture = yield* peopleModelTransitionFixtureRelationships(composition.actions, document.rows);
   yield* validateFixture(
     document,
     fixture,
