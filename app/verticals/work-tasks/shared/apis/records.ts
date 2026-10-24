@@ -46,6 +46,8 @@ export const HistoryEntrySchema = Schema.Struct({
 export type HistoryEntry = typeof HistoryEntrySchema.Type;
 export const ProjectSchema = Schema.Struct({
   assignmentNeedsReassignment: Schema.optionalKey(Schema.Boolean),
+  /** Historical work assigned to an employee who had no linked login. Never an assignment target. */
+  assignmentWithoutLogin: Schema.optionalKey(Schema.Boolean),
   createdAt: Schema.DateTimeUtcFromString,
   history: Schema.optionalKey(Schema.Array(HistoryEntrySchema)),
   id: ProjectIdSchema,
@@ -86,6 +88,8 @@ export const StorefrontInquirySchema = Schema.Struct({
 export type StorefrontInquiry = typeof StorefrontInquirySchema.Type;
 export const TaskSchema = Schema.Struct({
   assignmentNeedsReassignment: Schema.optionalKey(Schema.Boolean),
+  /** Historical work assigned to an employee who had no linked login. Never an assignment target. */
+  assignmentWithoutLogin: Schema.optionalKey(Schema.Boolean),
   storefrontInquiry: Schema.optionalKey(StorefrontInquirySchema),
   /** Hidden from task lists (still opened by a direct link); only a completed or cancelled task can be hidden. */
   archivedAt: Schema.optionalKey(Schema.DateTimeUtcFromString),

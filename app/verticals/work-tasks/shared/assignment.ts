@@ -8,7 +8,11 @@ export const assignmentLabel = (
   principal: PrincipalRef | undefined,
   names: ReadonlyMap<string, string>,
   needsReassignment = false,
+  withoutLogin = false,
 ): string => {
+  if (principal === undefined && withoutLogin && !needsReassignment) {
+    return 'Řešitel bez přihlášení';
+  }
   if (needsReassignment) {
     return principal === undefined ? 'Nepřiřazeno – přeřadit' : 'Odešel – přeřadit';
   }

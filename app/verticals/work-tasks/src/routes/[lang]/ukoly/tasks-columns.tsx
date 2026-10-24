@@ -80,10 +80,20 @@ export const buildTaskColumns = ({
       sortFn: (rowA, rowB, columnId) => compareText(rowA.getValue<string>(columnId), rowB.getValue<string>(columnId)),
     },
     {
-      accessorFn: (task) => assignmentLabel(task.ownerPrincipalRef, principalNames, task.assignmentNeedsReassignment),
+      accessorFn: (task) =>
+        assignmentLabel(
+          task.ownerPrincipalRef,
+          principalNames,
+          task.assignmentNeedsReassignment,
+          task.assignmentWithoutLogin,
+        ),
       cell: (info) => {
-        const { assignmentNeedsReassignment, ownerPrincipalRef } = info.row.original;
-        if (ownerPrincipalRef === undefined && assignmentNeedsReassignment !== true) {
+        const { assignmentNeedsReassignment, assignmentWithoutLogin, ownerPrincipalRef } = info.row.original;
+        if (
+          ownerPrincipalRef === undefined &&
+          assignmentNeedsReassignment !== true &&
+          assignmentWithoutLogin !== true
+        ) {
           return <span className="text-fg-secondary">{t(`${key}.unassigned`)}</span>;
         }
         if (!lookups.principals) {
@@ -91,7 +101,7 @@ export const buildTaskColumns = ({
         }
         return (
           <span className="block truncate">
-            {assignmentLabel(ownerPrincipalRef, principalNames, assignmentNeedsReassignment)}
+            {assignmentLabel(ownerPrincipalRef, principalNames, assignmentNeedsReassignment, assignmentWithoutLogin)}
           </span>
         );
       },

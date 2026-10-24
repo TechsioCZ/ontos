@@ -169,7 +169,12 @@ const ProjectEditor = ({
         />
         {project !== undefined && (
           <p className="text-sm text-fg-secondary">
-            {assignmentLabel(project.responsiblePrincipalRef, principalNames, project.assignmentNeedsReassignment)}
+            {assignmentLabel(
+              project.responsiblePrincipalRef,
+              principalNames,
+              project.assignmentNeedsReassignment,
+              project.assignmentWithoutLogin,
+            )}
           </p>
         )}
         <Select
@@ -346,6 +351,7 @@ export const WorkPlanning = ({
                         project.responsiblePrincipalRef,
                         principalNames,
                         project.assignmentNeedsReassignment,
+                        project.assignmentWithoutLogin,
                       )}{' '}
                       · {formatDueDate(project.plannedStart)} – {formatDueDate(project.plannedEnd)}
                     </p>

@@ -297,14 +297,20 @@ export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWor
         return yield* Match.value(value).pipe(
           Match.tag('AssignTask', ({ ownerPrincipalRef }) =>
             Effect.succeed({
-              ...Struct.omit(existing, ['assignmentNeedsReassignment']),
+              ...Struct.omit(existing, ['assignmentNeedsReassignment', 'assignmentWithoutLogin']),
               ownerPrincipalRef,
               updatedAt: input.now,
             }),
           ),
           Match.tag('ChangeTaskState', ({ state: target }) =>
             legalTransitions[existing.state].some((candidate) => candidate === target)
-              ? Effect.succeed({ ...existing, state: target, updatedAt: input.now })
+              ? Effect.succeed({
+                  ...(taskStatusGroup(target) === 'DONE'
+                    ? Struct.omit(existing, ['assignmentNeedsReassignment'])
+                    : existing),
+                  state: target,
+                  updatedAt: input.now,
+                })
               : Effect.fail(
                   new WorkLifecycleConflict({
                     code: 'work_lifecycle_conflict',
@@ -320,7 +326,9 @@ export const evolveWorkState = Effect.fn('Work.evolveState')(function* evolveWor
               (existing.ownerPrincipalRef?.tenantId !== changes.ownerPrincipalRef.tenantId ||
                 existing.ownerPrincipalRef.principalId !== changes.ownerPrincipalRef.principalId);
             const updated = {
-              ...(ownerChanged ? Struct.omit(existing, ['assignmentNeedsReassignment']) : existing),
+              ...(ownerChanged
+                ? Struct.omit(existing, ['assignmentNeedsReassignment', 'assignmentWithoutLogin'])
+                : existing),
               ...changes,
               updatedAt: input.now,
             };
@@ -394,7 +402,11 @@ const bulkStep = (task: Task, command: BulkWorkCommand, now: DateTime.Utc): Resu
   Match.value(command).pipe(
     Match.tag('BulkChangeTaskState', ({ toState }) =>
       legalTransitions[task.state].some((candidate) => candidate === toState)
-        ? Result.succeed({ ...task, state: toState, updatedAt: now })
+        ? Result.succeed({
+            ...(taskStatusGroup(toState) === 'DONE' ? Struct.omit(task, ['assignmentNeedsReassignment']) : task),
+            state: toState,
+            updatedAt: now,
+          })
         : Result.fail('invalid_transition' as const),
     ),
     Match.tag('BulkAssignTasks', ({ ownerPrincipalRef }) => {
@@ -402,7 +414,7 @@ const bulkStep = (task: Task, command: BulkWorkCommand, now: DateTime.Utc): Resu
         return Result.fail('closed' as const);
       }
       const withoutAssignee = {
-        ...Struct.omit(task, ['ownerPrincipalRef', 'assignmentNeedsReassignment']),
+        ...Struct.omit(task, ['ownerPrincipalRef', 'assignmentNeedsReassignment', 'assignmentWithoutLogin']),
         updatedAt: now,
       };
       return Result.succeed(
@@ -634,17 +646,24 @@ export const finishWorkRecords = Effect.fn('Work.finishRecords')(function* finis
       member.membershipStatus === 'departed' ? [member.principalRef.principalId] : [],
     ),
   );
-  const historicalTasks = items.map((task) =>
-    task.ownerPrincipalRef?.tenantId === scope.tenantId && departedPrincipalIds.has(task.ownerPrincipalRef.principalId)
+  const historicalTasks = items.map((task): Task => {
+    if (taskStatusGroup(task.state) === 'DONE') {
+      return Struct.omit(task, ['assignmentNeedsReassignment']);
+    }
+    return task.ownerPrincipalRef?.tenantId === scope.tenantId &&
+      departedPrincipalIds.has(task.ownerPrincipalRef.principalId)
       ? { ...task, assignmentNeedsReassignment: true }
-      : task,
-  );
-  const historicalProjects = (grants.readAll ? (state.projects ?? []) : []).map((project) =>
-    project.responsiblePrincipalRef?.tenantId === scope.tenantId &&
-    departedPrincipalIds.has(project.responsiblePrincipalRef.principalId)
+      : task;
+  });
+  const historicalProjects = (grants.readAll ? (state.projects ?? []) : []).map((project): WorkProject => {
+    if (project.state === 'DONE') {
+      return Struct.omit(project, ['assignmentNeedsReassignment']);
+    }
+    return project.responsiblePrincipalRef?.tenantId === scope.tenantId &&
+      departedPrincipalIds.has(project.responsiblePrincipalRef.principalId)
       ? { ...project, assignmentNeedsReassignment: true }
-      : project,
-  );
+      : project;
+  });
   const named = withActorNames(historicalTasks, historicalProjects, loaded.names);
   const visiblePrincipalIds = new Set([
     scope.principalId,

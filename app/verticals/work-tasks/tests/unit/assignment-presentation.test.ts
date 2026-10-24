@@ -28,6 +28,11 @@ it('keeps historical departed work labeled without adding its owner to assignmen
   expect(assignmentOptions(principals).some(({ value }) => value === principalKey(departed))).toBe(false);
 });
 
+it('labels closed unlinked history neutrally without a reassignment call to action', () => {
+  expect(assignmentLabel(undefined, new Map(), false, true)).toBe('Řešitel bez přihlášení');
+  expect(assignmentLabel(undefined, new Map(), true, true)).toBe('Nepřiřazeno – přeřadit');
+});
+
 it('does not describe an unlinked migration row as a departed account', () => {
   expect(assignmentLabel(undefined, new Map(), true)).toBe('Nepřiřazeno – přeřadit');
   expect(assignmentLabel(undefined, new Map())).toBe('—');

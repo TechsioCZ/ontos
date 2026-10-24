@@ -230,6 +230,50 @@ it.effect('projects departed task and project owners without rewriting their sto
   }),
 );
 
+it.effect('closed unlinked records keep historical provenance but never advertise reassignment', () =>
+  Effect.gen(function* closedUnlinkedProjection() {
+    const initial = yield* Schema.decodeEffect(WorkStateSchema)(seed);
+    const created = yield* evolveWorkState(
+      initial,
+      { _tag: 'CreateTask', title: 'Unlinked history' },
+      { now, resourceId: 'unlinked', tenantId },
+    );
+    const state = yield* Schema.encodeEffect(WorkStateSchema)({
+      ...created.state,
+      tasks: (['DONE', 'CANCELLED', 'NEW'] as const).map((taskState) => ({
+        ...created.task,
+        assignmentNeedsReassignment: true,
+        assignmentWithoutLogin: true,
+        ref: { ...created.task.ref, resourceId: Schema.decodeUnknownSync(TaskRefSchema.fields.resourceId)(taskState) },
+        state: taskState,
+      })),
+    });
+    const records = yield* finishWorkRecords(
+      {},
+      {
+        assignmentDirectory: { legalEntityId: scope.legalEntityId, members: [], tenantId },
+        names: new Map(),
+        revision: 1,
+        state,
+      },
+      {
+        lookupAccess: { contracts: 'denied', customers: 'denied', opportunities: 'denied', properties: 'denied' },
+        readAll: true,
+        writeAll: true,
+      },
+      scope,
+    ).pipe(
+      Effect.provideService(ContextAccess, fakeAccess([])),
+      Effect.provideService(AssignablePrincipals, {
+        read: () => Effect.succeed([]),
+        resolveAssignee: () => Effect.fail(new AssigneeIneligible({ reason: 'Not used by a records read' })),
+      }),
+    );
+    expect(records.items.map((task) => task.assignmentNeedsReassignment === true)).toEqual([false, false, true]);
+    expect(records.items.every((task) => task.assignmentWithoutLogin === true)).toBe(true);
+  }),
+);
+
 it.effect('Title-only creation defaults to NEW without business context or principal', () =>
   Effect.gen(function* case1() {
     const state = yield* Schema.decodeEffect(WorkStateSchema)(seed);

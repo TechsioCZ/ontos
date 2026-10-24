@@ -718,9 +718,16 @@ export const TaskFormDialog = ({
             partyMessage={message('partyId')}
           />
           {task !== undefined &&
-            (task.ownerPrincipalRef !== undefined || task.assignmentNeedsReassignment === true) && (
+            (task.ownerPrincipalRef !== undefined ||
+              task.assignmentNeedsReassignment === true ||
+              task.assignmentWithoutLogin === true) && (
               <p className="text-sm text-fg-secondary">
-                {assignmentLabel(task.ownerPrincipalRef, principalNames, task.assignmentNeedsReassignment)}
+                {assignmentLabel(
+                  task.ownerPrincipalRef,
+                  principalNames,
+                  task.assignmentNeedsReassignment,
+                  task.assignmentWithoutLogin,
+                )}
               </p>
             )}
           {assignmentAvailable && (

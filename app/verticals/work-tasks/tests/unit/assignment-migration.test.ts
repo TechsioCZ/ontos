@@ -101,6 +101,28 @@ it('preserves already canonical human and agent assignments and is idempotent', 
   );
 });
 
+it('keeps closed unlinked work neutral while flagging only open work for reassignment', () => {
+  const employeeId = '50000000-0000-4000-8000-000000000002';
+  const migrated = migrateEmployeeAssignments(
+    {
+      ...state,
+      projects: [{ ...state.projects[0], responsibleEmployeeId: employeeId, state: 'DONE' }],
+      tasks: [
+        { ...task, assigneeEmployeeId: employeeId, state: 'NEW' },
+        { ...task, assigneeEmployeeId: employeeId, ref: { ...task.ref, resourceId: 'closed' }, state: 'DONE' },
+        { ...task, assigneeEmployeeId: employeeId, ref: { ...task.ref, resourceId: 'cancelled' }, state: 'CANCELLED' },
+      ],
+    },
+    new Map(),
+    tenantId,
+  );
+  expect(migrated.tasks[0]).toMatchObject({ assignmentNeedsReassignment: true, assignmentWithoutLogin: true });
+  for (const historical of [migrated.tasks[1], migrated.tasks[2], migrated.projects?.[0]]) {
+    expect(historical).toMatchObject({ assignmentWithoutLogin: true });
+    expect(historical).not.toHaveProperty('assignmentNeedsReassignment');
+  }
+});
+
 it('rejects cross-tenant reviewed login links rather than manufacturing a local principal', () => {
   const result = migrate(
     Schema.decodeUnknownSync(EmployeeAssignmentMigrationInputSchema)(state),

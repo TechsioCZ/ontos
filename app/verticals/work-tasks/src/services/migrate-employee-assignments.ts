@@ -67,10 +67,18 @@ export const prepareEmployeeAssignmentMigration = (
       kind: 'task',
       resource: task.ref.resourceId,
     });
-    const unowned = Struct.omit(canonical, ['assignmentNeedsReassignment', 'ownerPrincipalRef']);
-    return principal === undefined
-      ? { ...unowned, assignmentNeedsReassignment: true }
-      : { ...unowned, ownerPrincipalRef: principal };
+    const unowned = Struct.omit(canonical, [
+      'assignmentNeedsReassignment',
+      'assignmentWithoutLogin',
+      'ownerPrincipalRef',
+    ]);
+    if (principal !== undefined) {
+      return { ...unowned, ownerPrincipalRef: principal };
+    }
+    const historical = { ...unowned, assignmentWithoutLogin: true };
+    return task.state === 'DONE' || task.state === 'CANCELLED'
+      ? historical
+      : { ...historical, assignmentNeedsReassignment: true };
   });
   const projects = input.projects?.map((project): WorkProject => {
     const { responsibleEmployeeId, ...canonical } = project;
@@ -85,10 +93,16 @@ export const prepareEmployeeAssignmentMigration = (
       kind: 'project',
       resource: project.id,
     });
-    const unowned = Struct.omit(canonical, ['assignmentNeedsReassignment', 'responsiblePrincipalRef']);
-    return principal === undefined
-      ? { ...unowned, assignmentNeedsReassignment: true }
-      : { ...unowned, responsiblePrincipalRef: principal };
+    const unowned = Struct.omit(canonical, [
+      'assignmentNeedsReassignment',
+      'assignmentWithoutLogin',
+      'responsiblePrincipalRef',
+    ]);
+    if (principal !== undefined) {
+      return { ...unowned, responsiblePrincipalRef: principal };
+    }
+    const historical = { ...unowned, assignmentWithoutLogin: true };
+    return project.state === 'DONE' ? historical : { ...historical, assignmentNeedsReassignment: true };
   });
   const state: WorkState = projects === undefined ? { ...input, tasks } : { ...input, projects, tasks };
   if (
